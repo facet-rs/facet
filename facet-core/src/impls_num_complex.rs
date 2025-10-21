@@ -15,8 +15,12 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Complex<T> {
                     }
                     f.write_str(">")
                 })
-                .display(|| {
-                    if T::SHAPE == <f32 as Facet>::SHAPE || T::SHAPE == <f64 as Facet>::SHAPE {
+                .display({
+                    if matches!(
+                        T::SHAPE.ty,
+                        Type::Primitive(PrimitiveType::Numeric(NumericType::Float))
+                    ) && matches!(size_of::<T>(), 4 | 8)
+                    {
                         Some(|ptr, f| {
                             if T::SHAPE == <f32 as Facet>::SHAPE {
                                 let ptr = unsafe { &*(ptr.as_ptr() as *const Complex<f32>) };
@@ -32,12 +36,12 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Complex<T> {
                         None
                     }
                 })
-                .partial_eq(|| {
+                .partial_eq({
                     if T::SHAPE.vtable.has_partial_eq() {
                         Some(|l, r| {
                             let partial_eq = unsafe {
                                 core::mem::transmute::<PartialEqFn, PartialEqFnTyped<T>>(
-                                    (T::SHAPE.vtable.partial_eq)().unwrap(),
+                                    T::SHAPE.vtable.partial_eq.unwrap(),
                                 )
                             };
                             let l = l.get();
@@ -50,12 +54,12 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Complex<T> {
                         None
                     }
                 })
-                .hash(|| {
+                .hash({
                     if T::SHAPE.vtable.has_hash() {
                         Some(|this, hasher| {
                             let hash = unsafe {
                                 core::mem::transmute::<HashFn, HashFnTyped<T>>(
-                                    (T::SHAPE.vtable.hash)().unwrap(),
+                                    T::SHAPE.vtable.hash.unwrap(),
                                 )
                             };
                             let this = this.get();
@@ -66,12 +70,12 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Complex<T> {
                         None
                     }
                 })
-                .default_in_place(|| {
+                .default_in_place({
                     if T::SHAPE.vtable.has_default_in_place() {
                         Some(|mut mem| unsafe {
                             let default =
                                 core::mem::transmute::<DefaultInPlaceFn, DefaultInPlaceFnTyped<T>>(
-                                    (T::SHAPE.vtable.default_in_place)().unwrap(),
+                                    T::SHAPE.vtable.default_in_place.unwrap(),
                                 );
 
                             struct DropMem<T> {
@@ -105,7 +109,7 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Complex<T> {
         .type_identifier("Complex")
         .type_params(&[crate::TypeParam {
             name: "T",
-            shape: || T::SHAPE,
+            shape: T::SHAPE,
         }])
         .ty(crate::Type::User(crate::UserType::Struct(
             crate::StructType {
@@ -117,7 +121,7 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Complex<T> {
                 fields: &[
                     Field {
                         name: "re",
-                        shape: T::SHAPE,
+                        shape: || T::SHAPE,
                         offset: offset_of!(Self, re),
                         flags: FieldFlags::EMPTY,
                         attributes: &[],
@@ -130,7 +134,7 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Complex<T> {
                     },
                     Field {
                         name: "im",
-                        shape: T::SHAPE,
+                        shape: || T::SHAPE,
                         offset: offset_of!(Self, im),
                         flags: FieldFlags::EMPTY,
                         attributes: &[],

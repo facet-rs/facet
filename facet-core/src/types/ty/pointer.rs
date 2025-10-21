@@ -37,13 +37,13 @@ pub struct ValuePointerType {
     ///
     /// This needs to be indirect (behind a function), in order to allow recursive types without
     /// overflowing the const-eval system.
-    pub target: fn() -> &'static Shape,
+    pub target: &'static Shape,
 }
 
 impl ValuePointerType {
     /// Returns the shape of the pointer's pointee.
     #[inline]
-    pub fn target(&self) -> &'static Shape {
-        (self.target)()
+    pub const fn target(&self) -> &'static Shape {
+        self.target
     }
 }

@@ -88,13 +88,13 @@ For arrays like `[T; 1]`, we need to check if the inner type `T` implements `Par
 fn create_array_shape<'a, T: Facet<'a>>() {
     let vtable = {
         // Implementation of partial_ord for arrays
-        let partial_ord = || {
-            if (T::SHAPE.vtable.partial_ord)().is_some() {
+        let partial_ord = {
+            if T::SHAPE.vtable.partial_ord.is_some() {
                 Some(|a: PtrConst, b: PtrConst| {
                     let a = unsafe { a.get::<[T; 1]>() };
                     let b = unsafe { b.get::<[T; 1]>() };
                     unsafe {
-                        (T::SHAPE.vtable.partial_ord)().unwrap_unchecked()(
+                        T::SHAPE.vtable.partial_ord.unwrap_unchecked()(
                             PtrConst::new(NonNull::from(&a[0])),
                             PtrConst::new(NonNull::from(&b[0])),
                         )

@@ -21,7 +21,7 @@ unsafe impl Facet<'_> for Bytes {
                     Self::SHAPE.type_identifier
                 ));
                 {
-                    vtable.try_from = || {
+                    vtable.try_from = {
                         Some(
                             |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
                                 if source_shape.is_type::<BytesMut>() {
@@ -43,7 +43,7 @@ unsafe impl Facet<'_> for Bytes {
             })
             .ty(Type::User(UserType::Opaque))
             .type_identifier("Bytes")
-            .inner(|| BytesMut::SHAPE)
+            .inner(BytesMut::SHAPE)
             .def(Def::List(
                 ListDef::builder()
                     .vtable(
@@ -94,7 +94,7 @@ unsafe impl Facet<'_> for Bytes {
                                 .build()
                         },
                     )
-                    .t(|| u8::SHAPE)
+                    .t(u8::SHAPE)
                     .build(),
             ))
             .build()
@@ -180,7 +180,7 @@ unsafe impl Facet<'_> for BytesMut {
                                 .build()
                         },
                     )
-                    .t(|| u8::SHAPE)
+                    .t(u8::SHAPE)
                     .build(),
             ))
             .build()

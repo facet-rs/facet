@@ -20,7 +20,7 @@ where
         Shape::builder_for_sized::<Self>()
             .vtable(
                 ValueVTable::builder::<Self>()
-                    .marker_traits(|| {
+                    .marker_traits({
                         MarkerTraits::SEND
                             .union(MarkerTraits::SYNC)
                             .union(MarkerTraits::EQ)
@@ -36,7 +36,7 @@ where
                             write!(f, "HashSet<⋯>")
                         }
                     })
-                    .default_in_place(|| {
+                    .default_in_place({
                         Some(|target| unsafe { target.put(Self::default()).into() })
                     })
                     .build(),
@@ -45,17 +45,17 @@ where
             .type_params(&[
                 TypeParam {
                     name: "T",
-                    shape: || T::SHAPE,
+                    shape: T::SHAPE,
                 },
                 TypeParam {
                     name: "S",
-                    shape: || S::SHAPE,
+                    shape: S::SHAPE,
                 },
             ])
             .ty(Type::User(UserType::Opaque))
             .def(Def::Set(
                 SetDef::builder()
-                    .t(|| T::SHAPE)
+                    .t(T::SHAPE)
                     .vtable(
                         &const {
                             SetVTable::builder()
@@ -231,8 +231,10 @@ mod tests {
         assert_eq!(iter_items, strings.iter().copied().collect::<HashSet<_>>());
 
         // Get the function pointer for dropping the HashSet
-        let drop_fn =
-            (hashset_shape.vtable.drop_in_place)().expect("HashSet<T> should have drop_in_place");
+        let drop_fn = hashset_shape
+            .vtable
+            .drop_in_place
+            .expect("HashSet<T> should have drop_in_place");
 
         // Drop the HashSet in place
         unsafe { drop_fn(hashset_ptr) };

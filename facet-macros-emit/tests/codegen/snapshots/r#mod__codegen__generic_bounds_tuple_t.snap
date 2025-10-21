@@ -12,7 +12,7 @@ where
             [{
                 ::facet::Field::builder()
                     .name("0")
-                    .shape(::facet::shape_of(&|s: &Foo<T>| &s.0))
+                    .shape(|| ::facet::shape_of(&|s: &Foo<T>| &s.0))
                     .offset(::core::mem::offset_of!(Foo<T>, 0))
                     .build()
             }]
@@ -35,7 +35,7 @@ where
             .type_identifier("Foo")
             .type_params(&[::facet::TypeParam {
                 name: "T",
-                shape: || <T as ::facet::Facet>::SHAPE,
+                shape: <T as ::facet::Facet>::SHAPE,
             }])
             .ty(::facet::Type::User(::facet::UserType::Struct(
                 ::facet::StructType::builder()

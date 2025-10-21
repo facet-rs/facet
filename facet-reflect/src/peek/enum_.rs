@@ -144,7 +144,7 @@ impl<'mem, 'facet> PeekEnum<'mem, 'facet> {
                     for field in variant.data.fields {
                         let offset = field.offset
                             + field
-                                .shape
+                                .shape()
                                 .layout
                                 .sized_layout()
                                 .map(|v| v.size())

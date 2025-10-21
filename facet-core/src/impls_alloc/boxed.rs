@@ -49,11 +49,6 @@ unsafe fn try_into_inner<'a, 'src, 'dst, T: ?Sized + Facet<'a>>(
 }
 unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for Box<T> {
     const SHAPE: &'static crate::Shape = &const {
-        // Function to return inner type's shape
-        fn inner_shape<'a, T: ?Sized + Facet<'a>>() -> &'static Shape {
-            T::SHAPE
-        }
-
         crate::Shape::builder_for_sized::<Self>()
             .vtable({
                 unsafe fn try_borrow_inner<'a, 'src, T: ?Sized + Facet<'a>>(
@@ -75,21 +70,21 @@ unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for Box<T> {
                     Ok(())
                 });
                 if size_of::<*const T>() == size_of::<*const ()>() {
-                    vtable.try_from = || Some(try_from);
-                    vtable.try_into_inner = || Some(try_into_inner::<T>);
+                    vtable.try_from = Some(try_from);
+                    vtable.try_into_inner = Some(try_into_inner::<T>);
                 }
-                vtable.try_borrow_inner = || Some(try_borrow_inner::<T>);
+                vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
                 vtable
             })
             .type_identifier("Box")
             .type_params(&[crate::TypeParam {
                 name: "T",
-                shape: || T::SHAPE,
+                shape: T::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(
                 PointerDef::builder()
-                    .pointee(|| T::SHAPE)
+                    .pointee(T::SHAPE)
                     .flags(PointerFlags::EMPTY)
                     .known(KnownPointer::Box)
                     .vtable(
@@ -109,7 +104,7 @@ unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for Box<T> {
                     )
                     .build(),
             ))
-            .inner(inner_shape::<T>)
+            .inner(T::SHAPE)
             .build()
     };
 }
@@ -168,7 +163,10 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
         // Get the function pointer for dropping the Box
-        let drop_fn = (box_shape.vtable.drop_in_place)().expect("Box<T> should have drop_in_place");
+        let drop_fn = box_shape
+            .vtable
+            .drop_in_place
+            .expect("Box<T> should have drop_in_place");
 
         // Drop the Box in place
         // SAFETY: box_ptr points to a valid Box<String>

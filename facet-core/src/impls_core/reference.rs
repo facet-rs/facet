@@ -10,7 +10,7 @@ macro_rules! impl_for_ref {
                 Shape::builder_for_sized::<Self>()
                     .vtable(
                         ValueVTable::builder::<Self>()
-                            .marker_traits(|| {
+                            .marker_traits({
                                 let mut marker_traits = if stringify!($($modifiers)*).is_empty() {
                                     MarkerTraits::COPY.union(MarkerTraits::UNPIN)
                                 } else {
@@ -37,7 +37,7 @@ macro_rules! impl_for_ref {
 
                                 marker_traits
                             })
-                            .display(|| {
+                            .display({
                                 if T::SHAPE.vtable.has_display() {
                                     Some(|value, f| {
                                         let view = VTableView::<T>::of();
@@ -47,7 +47,7 @@ macro_rules! impl_for_ref {
                                     None
                                 }
                             })
-                            .debug(|| {
+                            .debug({
                                 if T::SHAPE.vtable.has_debug() {
                                     Some(|value, f| {
                                         let view = VTableView::<T>::of();
@@ -57,7 +57,7 @@ macro_rules! impl_for_ref {
                                     None
                                 }
                             })
-                            .clone_into(|| {
+                            .clone_into({
                                 if stringify!($($modifiers)*).is_empty() {
                                     Some(|src, dst| unsafe { dst.put(core::ptr::read(src.as_ptr())).into() })
                                 } else {
@@ -86,20 +86,20 @@ macro_rules! impl_for_ref {
                     .type_identifier("&")
                     .type_params(&[TypeParam {
                         name: "T",
-                        shape: || T::SHAPE,
+                        shape: T::SHAPE,
                     }])
                     .ty({
                         let vpt = ValuePointerType {
                             mutable: !stringify!($($modifiers)*).is_empty(),
                             wide: size_of::<*const T>() != size_of::<*const ()>(),
-                            target: || T::SHAPE,
+                            target: T::SHAPE,
                         };
 
                         Type::Pointer(PointerType::Reference(vpt))
                     })
                     .def(Def::Pointer(
                         PointerDef::builder()
-                            .pointee(|| T::SHAPE)
+                            .pointee(T::SHAPE)
                             .flags(PointerFlags::EMPTY)
                             .known(if stringify!($($modifiers)*).is_empty() {
                                 KnownPointer::SharedReference

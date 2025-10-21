@@ -11,21 +11,21 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for DataPacket {
                 {
                     ::facet::Field::builder()
                         .name("header")
-                        .shape(::facet::shape_of(&|s: &DataPacket| &s.header))
+                        .shape(|| ::facet::shape_of(&|s: &DataPacket| &s.header))
                         .offset(::core::mem::offset_of!(DataPacket, header))
                         .build()
                 },
                 {
                     ::facet::Field::builder()
                         .name("payload")
-                        .shape(::facet::shape_of(&|s: &DataPacket| &s.payload))
+                        .shape(|| ::facet::shape_of(&|s: &DataPacket| &s.payload))
                         .offset(::core::mem::offset_of!(DataPacket, payload))
                         .build()
                 },
                 {
                     ::facet::Field::builder()
                         .name("metadata")
-                        .shape(::facet::shape_of(&|s: &DataPacket| &s.metadata))
+                        .shape(|| ::facet::shape_of(&|s: &DataPacket| &s.metadata))
                         .offset(::core::mem::offset_of!(DataPacket, metadata))
                         .build()
                 },

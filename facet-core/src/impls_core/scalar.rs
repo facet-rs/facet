@@ -135,11 +135,6 @@ macro_rules! impl_facet_for_integer {
 
         unsafe impl<'a> Facet<'a> for NonZero<$type> {
             const SHAPE: &'static Shape = &const {
-                // Function to return inner type's shape
-                fn inner_shape() -> &'static Shape {
-                    <$type as Facet>::SHAPE
-                }
-
                 Shape::builder_for_sized::<Self>()
                     .vtable({
                         // Define conversion functions for transparency
@@ -158,7 +153,9 @@ macro_rules! impl_facet_for_integer {
                                 // Put the NonZero value into the destination
                                 Ok(unsafe { dst.put(nz) })
                             } else {
-                                let inner_try_from = (<$type as Facet>::SHAPE.vtable.try_from)()
+                                let inner_try_from = <$type as Facet>::SHAPE
+                                    .vtable
+                                    .try_from
                                     .ok_or(TryFromError::UnsupportedSourceShape {
                                         src_shape,
                                         expected: &[<$type as Facet>::SHAPE],
@@ -209,9 +206,9 @@ macro_rules! impl_facet_for_integer {
 
                         // Add our new transparency functions
                         {
-                            vtable.try_from = || Some(try_from);
-                            vtable.try_into_inner = || Some(try_into_inner);
-                            vtable.try_borrow_inner = || Some(try_borrow_inner);
+                            vtable.try_from = Some(try_from);
+                            vtable.try_into_inner = Some(try_into_inner);
+                            vtable.try_borrow_inner = Some(try_borrow_inner);
                         }
 
                         vtable
@@ -226,13 +223,13 @@ macro_rules! impl_facet_for_integer {
                                 .name("0")
                                 // TODO: is it correct to represent $type here, when we, in
                                 // fact, store $type::NonZeroInner.
-                                .shape(<$type>::SHAPE)
+                                .shape(|| <$type>::SHAPE)
                                 .offset(0)
                                 .flags(FieldFlags::EMPTY)
                                 .build()]
                         },
                     })))
-                    .inner(inner_shape)
+                    .inner(<$type as Facet>::SHAPE)
                     .build()
             };
         }
@@ -275,32 +272,30 @@ unsafe impl Facet<'_> for f64 {
                     value_vtable!(f64, |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier));
 
                 {
-                    vtable.try_from = || {
-                        Some(|source, source_shape, dest| {
-                            if source_shape == Self::SHAPE {
-                                return Ok(unsafe { dest.copy_from(source, source_shape)? });
-                            }
-                            if source_shape == u64::SHAPE {
-                                let value: u64 = *unsafe { source.get::<u64>() };
-                                let converted: f64 = value as f64;
-                                return Ok(unsafe { dest.put::<f64>(converted) });
-                            }
-                            if source_shape == i64::SHAPE {
-                                let value: i64 = *unsafe { source.get::<i64>() };
-                                let converted: f64 = value as f64;
-                                return Ok(unsafe { dest.put::<f64>(converted) });
-                            }
-                            if source_shape == f32::SHAPE {
-                                let value: f32 = *unsafe { source.get::<f32>() };
-                                let converted: f64 = value as f64;
-                                return Ok(unsafe { dest.put::<f64>(converted) });
-                            }
-                            Err(TryFromError::UnsupportedSourceShape {
-                                src_shape: source_shape,
-                                expected: &[Self::SHAPE, u64::SHAPE, i64::SHAPE, f32::SHAPE],
-                            })
+                    vtable.try_from = Some(|source, source_shape, dest| {
+                        if source_shape == Self::SHAPE {
+                            return Ok(unsafe { dest.copy_from(source, source_shape)? });
+                        }
+                        if source_shape == u64::SHAPE {
+                            let value: u64 = *unsafe { source.get::<u64>() };
+                            let converted: f64 = value as f64;
+                            return Ok(unsafe { dest.put::<f64>(converted) });
+                        }
+                        if source_shape == i64::SHAPE {
+                            let value: i64 = *unsafe { source.get::<i64>() };
+                            let converted: f64 = value as f64;
+                            return Ok(unsafe { dest.put::<f64>(converted) });
+                        }
+                        if source_shape == f32::SHAPE {
+                            let value: f32 = *unsafe { source.get::<f32>() };
+                            let converted: f64 = value as f64;
+                            return Ok(unsafe { dest.put::<f64>(converted) });
+                        }
+                        Err(TryFromError::UnsupportedSourceShape {
+                            src_shape: source_shape,
+                            expected: &[Self::SHAPE, u64::SHAPE, i64::SHAPE, f32::SHAPE],
                         })
-                    };
+                    });
                 }
 
                 vtable

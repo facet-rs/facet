@@ -13,7 +13,7 @@ unsafe impl Facet<'_> for alloc::string::String {
                 ));
 
                 let vtable_sized = &mut vtable;
-                vtable_sized.parse = || {
+                vtable_sized.parse = {
                     Some(|s, target| {
                         // For String, parsing from a string is just copying the string
                         Ok(unsafe { target.put(s.to_string()) })
@@ -67,7 +67,7 @@ mod tests {
     fn test_string_parse() {
         // Test that we can parse a string into a String
         let shape = String::SHAPE;
-        let parse_fn = (shape.vtable.parse)().unwrap();
+        let parse_fn = shape.vtable.parse.unwrap();
 
         // Allocate memory for the String
         let layout = shape.layout.sized_layout().unwrap();

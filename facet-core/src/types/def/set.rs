@@ -9,7 +9,7 @@ pub struct SetDef {
     /// vtable for interacting with the set
     pub vtable: &'static SetVTable,
     /// shape of the values in the set
-    pub t: fn() -> &'static Shape,
+    pub t: &'static Shape,
 }
 
 impl SetDef {
@@ -19,15 +19,15 @@ impl SetDef {
     }
 
     /// Returns the shape of the items in the set
-    pub fn t(&self) -> &'static Shape {
-        (self.t)()
+    pub const fn t(&self) -> &'static Shape {
+        self.t
     }
 }
 
 /// Builder for SetDef
 pub struct SetDefBuilder {
     vtable: Option<&'static SetVTable>,
-    t: Option<fn() -> &'static Shape>,
+    t: Option<&'static Shape>,
 }
 
 impl SetDefBuilder {
@@ -47,7 +47,7 @@ impl SetDefBuilder {
     }
 
     /// Sets the value shape for the SetDef
-    pub const fn t(mut self, t: fn() -> &'static Shape) -> Self {
+    pub const fn t(mut self, t: &'static Shape) -> Self {
         self.t = Some(t);
         self
     }

@@ -7,11 +7,6 @@ use crate::{
 };
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
     const SHAPE: &'static Shape = &const {
-        // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
-            T::SHAPE
-        }
-
         Shape::builder_for_sized::<Self>()
             .vtable({
                 // Define the functions for transparent conversion between Option<T> and T
@@ -66,7 +61,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
 
                 {
                     let vtable_sized = &mut vtable;
-                    vtable_sized.debug = || {
+                    vtable_sized.debug = {
                         if T::SHAPE.is_debug() {
                             Some(|this, f| {
                                 let this = unsafe { this.get::<Self>() };
@@ -84,7 +79,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                         }
                     };
 
-                    vtable_sized.parse = || {
+                    vtable_sized.parse = {
                         if T::SHAPE.is_from_str() {
                             Some(|str, target| {
                                 let mut t = MaybeUninit::<T>::uninit();
@@ -104,9 +99,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                         }
                     };
 
-                    vtable_sized.try_from = || Some(try_from::<T>);
-                    vtable_sized.try_into_inner = || Some(try_into_inner::<T>);
-                    vtable_sized.try_borrow_inner = || Some(try_borrow_inner::<T>);
+                    vtable_sized.try_from = Some(try_from::<T>);
+                    vtable_sized.try_into_inner = Some(try_into_inner::<T>);
+                    vtable_sized.try_borrow_inner = Some(try_borrow_inner::<T>);
                 }
 
                 vtable
@@ -114,7 +109,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
             .type_identifier("Option")
             .type_params(&[crate::TypeParam {
                 name: "T",
-                shape: || T::SHAPE,
+                shape: T::SHAPE,
             }])
             .ty(Type::User(
                 // Null-Pointer-Optimization - we verify that this Option variant has no
@@ -150,7 +145,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                                                 &const {
                                                     [Field::builder()
                                                         .name("0")
-                                                        .shape(T::SHAPE)
+                                                        .shape(|| T::SHAPE)
                                                         .offset(0)
                                                         .flags(FieldFlags::EMPTY)
                                                         .build()]
@@ -195,7 +190,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                     )
                     .build(),
             ))
-            .inner(inner_shape::<T>)
+            .inner(T::SHAPE)
             .build()
     };
 }

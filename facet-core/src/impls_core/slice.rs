@@ -19,13 +19,13 @@ where
                             write!(f, "[⋯]")
                         }
                     })
-                    .marker_traits(|| {
+                    .marker_traits({
                         T::SHAPE
                             .vtable
                             .marker_traits()
                             .difference(MarkerTraits::COPY)
                     })
-                    .debug(|| {
+                    .debug({
                         if T::SHAPE.vtable.has_debug() {
                             Some(|value, f| {
                                 let value = value.get();
@@ -42,7 +42,7 @@ where
                             None
                         }
                     })
-                    .partial_eq(|| {
+                    .partial_eq({
                         if T::SHAPE.vtable.has_partial_eq() {
                             Some(|a, b| {
                                 let a = a.get();
@@ -64,7 +64,7 @@ where
                             None
                         }
                     })
-                    .partial_ord(|| {
+                    .partial_ord({
                         if T::SHAPE.vtable.has_partial_ord() {
                             Some(|a, b| {
                                 let a = a.get();
@@ -86,7 +86,7 @@ where
                             None
                         }
                     })
-                    .ord(|| {
+                    .ord({
                         if T::SHAPE.vtable.has_ord() {
                             Some(|a, b| {
                                 let a = a.get();
@@ -104,7 +104,7 @@ where
                             None
                         }
                     })
-                    .hash(|| {
+                    .hash({
                         if T::SHAPE.vtable.has_hash() {
                             Some(|value, hasher| {
                                 for item in value.get().iter() {
@@ -120,7 +120,7 @@ where
             .type_identifier("[_]")
             .type_params(&[TypeParam {
                 name: "T",
-                shape: || T::SHAPE,
+                shape: T::SHAPE,
             }])
             .ty(Type::Sequence(SequenceType::Slice(SliceType {
                 t: T::SHAPE,

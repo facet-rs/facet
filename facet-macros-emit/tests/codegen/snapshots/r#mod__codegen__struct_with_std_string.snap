@@ -11,14 +11,14 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for FileInfo {
                 {
                     ::facet::Field::builder()
                         .name("path")
-                        .shape(::facet::shape_of(&|s: &FileInfo| &s.path))
+                        .shape(|| ::facet::shape_of(&|s: &FileInfo| &s.path))
                         .offset(::core::mem::offset_of!(FileInfo, path))
                         .build()
                 },
                 {
                     ::facet::Field::builder()
                         .name("size")
-                        .shape(::facet::shape_of(&|s: &FileInfo| &s.size))
+                        .shape(|| ::facet::shape_of(&|s: &FileInfo| &s.size))
                         .offset(::core::mem::offset_of!(FileInfo, size))
                         .build()
                 },

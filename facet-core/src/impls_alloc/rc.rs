@@ -12,11 +12,6 @@ use crate::{
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Rc<T> {
     const SHAPE: &'static crate::Shape = &const {
-        // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
-            T::SHAPE
-        }
-
         crate::Shape::builder_for_sized::<Self>()
             .vtable({
                 // Define the functions for transparent conversion between Rc<T> and T
@@ -66,21 +61,21 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Rc<T> {
                     Ok(())
                 });
                 {
-                    vtable.try_from = || Some(try_from::<T>);
-                    vtable.try_into_inner = || Some(try_into_inner::<T>);
-                    vtable.try_borrow_inner = || Some(try_borrow_inner::<T>);
+                    vtable.try_from = Some(try_from::<T>);
+                    vtable.try_into_inner = Some(try_into_inner::<T>);
+                    vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
                 }
                 vtable
             })
             .type_identifier("Rc")
             .type_params(&[crate::TypeParam {
                 name: "T",
-                shape: || T::SHAPE,
+                shape: T::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(
                 PointerDef::builder()
-                    .pointee(|| T::SHAPE)
+                    .pointee(T::SHAPE)
                     .flags(PointerFlags::EMPTY)
                     .known(KnownPointer::Rc)
                     .weak(|| <Weak<T> as Facet>::SHAPE)
@@ -104,18 +99,13 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Rc<T> {
                     )
                     .build(),
             ))
-            .inner(inner_shape::<T>)
+            .inner(T::SHAPE)
             .build()
     };
 }
 
 unsafe impl<'a> Facet<'a> for Rc<str> {
     const SHAPE: &'static crate::Shape = &const {
-        // Function to return inner type's shape
-        fn inner_shape() -> &'static Shape {
-            str::SHAPE
-        }
-
         crate::Shape::builder_for_sized::<Self>()
             .vtable({
                 value_vtable!(alloc::rc::Rc<str>, |f, opts| {
@@ -133,12 +123,12 @@ unsafe impl<'a> Facet<'a> for Rc<str> {
             .type_identifier("Rc")
             .type_params(&[crate::TypeParam {
                 name: "T",
-                shape: || str::SHAPE,
+                shape: str::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(
                 PointerDef::builder()
-                    .pointee(|| str::SHAPE)
+                    .pointee(str::SHAPE)
                     .flags(PointerFlags::EMPTY)
                     .known(KnownPointer::Rc)
                     .weak(|| <Weak<str> as Facet>::SHAPE)
@@ -158,18 +148,13 @@ unsafe impl<'a> Facet<'a> for Rc<str> {
                     )
                     .build(),
             ))
-            .inner(inner_shape)
+            .inner(str::SHAPE)
             .build()
     };
 }
 
 unsafe impl<'a, U: Facet<'a>> Facet<'a> for Rc<[U]> {
     const SHAPE: &'static crate::Shape = &const {
-        // Function to return inner type's shape
-        fn inner_shape<'a, U: Facet<'a>>() -> &'static Shape {
-            <[U]>::SHAPE
-        }
-
         fn slice_builder_new<'a, U: Facet<'a>>() -> PtrMut<'static> {
             let v = Box::new(Vec::<U>::new());
             let raw = Box::into_raw(v);
@@ -216,12 +201,12 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Rc<[U]> {
             .type_identifier("Rc")
             .type_params(&[crate::TypeParam {
                 name: "T",
-                shape: || <[U]>::SHAPE,
+                shape: <[U]>::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(
                 PointerDef::builder()
-                    .pointee(|| <[U]>::SHAPE)
+                    .pointee(<[U]>::SHAPE)
                     .flags(PointerFlags::EMPTY)
                     .known(KnownPointer::Rc)
                     .weak(|| <Weak<[U]> as Facet>::SHAPE)
@@ -251,18 +236,13 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Rc<[U]> {
                     )
                     .build(),
             ))
-            .inner(inner_shape::<U>)
+            .inner(<[U]>::SHAPE)
             .build()
     };
 }
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
     const SHAPE: &'static crate::Shape = &const {
-        // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
-            T::SHAPE
-        }
-
         crate::Shape::builder_for_sized::<Self>()
             .vtable({
                 value_vtable!(alloc::rc::Weak<T>, |f, opts| {
@@ -280,15 +260,15 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
             .type_identifier("Weak")
             .type_params(&[crate::TypeParam {
                 name: "T",
-                shape: || T::SHAPE,
+                shape: T::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(
                 PointerDef::builder()
-                    .pointee(|| T::SHAPE)
+                    .pointee(T::SHAPE)
                     .flags(PointerFlags::WEAK)
                     .known(KnownPointer::RcWeak)
-                    .strong(|| <Rc<T> as Facet>::SHAPE)
+                    .strong(<Rc<T> as Facet>::SHAPE)
                     .vtable(
                         &const {
                             PointerVTable::builder()
@@ -300,18 +280,13 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
                     )
                     .build(),
             ))
-            .inner(inner_shape::<T>)
+            .inner(T::SHAPE)
             .build()
     };
 }
 
 unsafe impl<'a> Facet<'a> for Weak<str> {
     const SHAPE: &'static crate::Shape = &const {
-        // Function to return inner type's shape
-        fn inner_shape() -> &'static Shape {
-            str::SHAPE
-        }
-
         crate::Shape::builder_for_sized::<Self>()
             .vtable({
                 value_vtable!(alloc::rc::Weak<str>, |f, opts| {
@@ -329,15 +304,15 @@ unsafe impl<'a> Facet<'a> for Weak<str> {
             .type_identifier("Weak")
             .type_params(&[crate::TypeParam {
                 name: "T",
-                shape: || str::SHAPE,
+                shape: str::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(
                 PointerDef::builder()
-                    .pointee(|| str::SHAPE)
+                    .pointee(str::SHAPE)
                     .flags(PointerFlags::WEAK)
                     .known(KnownPointer::RcWeak)
-                    .strong(|| <Rc<str> as Facet>::SHAPE)
+                    .strong(<Rc<str> as Facet>::SHAPE)
                     .vtable(
                         &const {
                             PointerVTable::builder()
@@ -349,17 +324,13 @@ unsafe impl<'a> Facet<'a> for Weak<str> {
                     )
                     .build(),
             ))
-            .inner(inner_shape)
+            .inner(str::SHAPE)
             .build()
     };
 }
 
 unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
     const SHAPE: &'static crate::Shape = &const {
-        fn inner_shape<'a, U: Facet<'a>>() -> &'static Shape {
-            <[U]>::SHAPE
-        }
-
         crate::Shape::builder_for_sized::<Self>()
             .vtable({
                 value_vtable!(alloc::rc::Weak<[U]>, |f, opts| {
@@ -377,15 +348,15 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
             .type_identifier("Weak")
             .type_params(&[crate::TypeParam {
                 name: "T",
-                shape: || <[U]>::SHAPE,
+                shape: <[U]>::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(
                 PointerDef::builder()
-                    .pointee(|| <[U]>::SHAPE)
+                    .pointee(<[U]>::SHAPE)
                     .flags(PointerFlags::WEAK)
                     .known(KnownPointer::RcWeak)
-                    .strong(|| <Rc<[U]> as Facet>::SHAPE)
+                    .strong(<Rc<[U]> as Facet>::SHAPE)
                     .vtable(
                         &const {
                             PointerVTable::builder()
@@ -397,7 +368,7 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
                     )
                     .build(),
             ))
-            .inner(inner_shape::<U>)
+            .inner(<[U]>::SHAPE)
             .build()
     };
 }
@@ -454,7 +425,10 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
         // Get the function pointer for dropping the Rc
-        let drop_fn = (rc_shape.vtable.drop_in_place)().expect("Rc<T> should have drop_in_place");
+        let drop_fn = rc_shape
+            .vtable
+            .drop_in_place
+            .expect("Rc<T> should have drop_in_place");
 
         // Drop the Rc in place
         // SAFETY: rc_ptr points to a valid Rc<String>
@@ -510,8 +484,8 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
         // 4. Drop everything and free memory
-        let rc_drop_fn = (rc_shape.vtable.drop_in_place)().unwrap();
-        let weak_drop_fn = (weak_shape.vtable.drop_in_place)().unwrap();
+        let rc_drop_fn = rc_shape.vtable.drop_in_place.unwrap();
+        let weak_drop_fn = weak_shape.vtable.drop_in_place.unwrap();
 
         unsafe {
             // Drop Rcs
@@ -556,7 +530,7 @@ mod tests {
         let weak1_ptr = unsafe { downgrade_into_fn(rc1_ptr, weak1_uninit_ptr) };
 
         // 3. Drop and free the strong pointer (rc1)
-        let rc_drop_fn = (rc_shape.vtable.drop_in_place)().unwrap();
+        let rc_drop_fn = rc_shape.vtable.drop_in_place.unwrap();
         unsafe {
             rc_drop_fn(rc1_ptr);
             rc_shape.deallocate_mut(rc1_ptr).unwrap();
@@ -575,7 +549,7 @@ mod tests {
         );
 
         // 5. Clean up: Deallocate the memory intended for the failed upgrade and drop/deallocate the weak pointer
-        let weak_drop_fn = (weak_shape.vtable.drop_in_place)().unwrap();
+        let weak_drop_fn = weak_shape.vtable.drop_in_place.unwrap();
         unsafe {
             // Deallocate the *uninitialized* memory allocated for the failed upgrade attempt
             rc_shape.deallocate_uninit(rc2_uninit_ptr).unwrap();

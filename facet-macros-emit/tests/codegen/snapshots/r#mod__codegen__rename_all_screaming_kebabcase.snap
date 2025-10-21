@@ -12,9 +12,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ScreamingKebabCaseExample {
                 {
                     ::facet::Field::builder()
                         .name("FIELD-ONE")
-                        .shape(::facet::shape_of(&|s: &ScreamingKebabCaseExample| {
-                            &s.field_one
-                        }))
+                        .shape(|| ::facet::shape_of(&|s: &ScreamingKebabCaseExample| &s.field_one))
                         .offset(::core::mem::offset_of!(
                             ScreamingKebabCaseExample,
                             field_one
@@ -24,9 +22,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for ScreamingKebabCaseExample {
                 {
                     ::facet::Field::builder()
                         .name("FIELD-TWO")
-                        .shape(::facet::shape_of(&|s: &ScreamingKebabCaseExample| {
-                            &s.field_two
-                        }))
+                        .shape(|| ::facet::shape_of(&|s: &ScreamingKebabCaseExample| &s.field_two))
                         .offset(::core::mem::offset_of!(
                             ScreamingKebabCaseExample,
                             field_two

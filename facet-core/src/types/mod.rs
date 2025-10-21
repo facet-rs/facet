@@ -85,7 +85,7 @@ pub struct Shape {
     /// Same for `Utf8PathBuf`, which is parsed from and serialized to "just a string".
     ///
     /// See Partial's `innermost_shape` function (and its support in `put`).
-    pub inner: Option<fn() -> &'static Shape>,
+    pub inner: Option<&'static Shape>,
 }
 
 /// Layout of the shape
@@ -205,7 +205,7 @@ pub struct ShapeBuilder {
     doc: &'static [&'static str],
     attributes: &'static [ShapeAttribute],
     type_tag: Option<&'static str>,
-    inner: Option<fn() -> &'static Shape>,
+    inner: Option<&'static Shape>,
 }
 
 impl ShapeBuilder {
@@ -312,7 +312,7 @@ impl ShapeBuilder {
     ///
     /// The function `inner_fn` should return the static shape of the inner type.
     #[inline]
-    pub const fn inner(mut self, inner_fn: fn() -> &'static Shape) -> Self {
+    pub const fn inner(mut self, inner_fn: &'static Shape) -> Self {
         self.inner = Some(inner_fn);
         self
     }
@@ -434,9 +434,9 @@ impl core::fmt::Debug for Shape {
                         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                             let mut iter = self.0.iter();
                             if let Some(first) = iter.next() {
-                                write!(f, "«({}: {}", first.name, (first.shape)())?;
+                                write!(f, "«({}: {}", first.name, first.shape)?;
                                 for next in iter {
-                                    write!(f, ", {}: {}", next.name, (next.shape)())?;
+                                    write!(f, ", {}: {}", next.name, next.shape)?;
                                 }
                                 write!(f, ")»")?;
                             } else {
@@ -459,7 +459,7 @@ impl core::fmt::Debug for Shape {
 
             // Omit the `inner` field if this shape is not a transparent wrapper.
             if let Some(inner) = self.inner {
-                field!("inner", "{:?}", (inner)());
+                field!("inner", "{:?}", inner);
             }
 
             // Uses `Display` to potentially format with shorthand syntax.
@@ -580,13 +580,13 @@ pub struct TypeParam {
     pub name: &'static str,
 
     /// The shape of the type parameter (e.g. `String`)
-    pub shape: fn() -> &'static Shape,
+    pub shape: &'static Shape,
 }
 
 impl TypeParam {
     /// Returns the shape of the type parameter.
     #[inline]
-    pub fn shape(&self) -> &'static Shape {
-        (self.shape)()
+    pub const fn shape(&self) -> &'static Shape {
+        self.shape
     }
 }

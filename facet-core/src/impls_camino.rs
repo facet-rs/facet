@@ -10,11 +10,6 @@ use crate::{
 
 unsafe impl Facet<'_> for Utf8PathBuf {
     const SHAPE: &'static Shape = &const {
-        // Function to return inner type's shape
-        fn inner_shape() -> &'static Shape {
-            <String as Facet>::SHAPE
-        }
-
         Shape::builder_for_sized::<Self>()
             .vtable({
                 // Define the functions for transparent conversion between Utf8PathBuf and String
@@ -49,16 +44,16 @@ unsafe impl Facet<'_> for Utf8PathBuf {
 
                 {
                     vtable.parse =
-                        || Some(|s, target| Ok(unsafe { target.put(Utf8Path::new(s).to_owned()) }));
-                    vtable.try_from = || Some(try_from);
-                    vtable.try_into_inner = || Some(try_into_inner);
+                        Some(|s, target| Ok(unsafe { target.put(Utf8Path::new(s).to_owned()) }));
+                    vtable.try_from = Some(try_from);
+                    vtable.try_into_inner = Some(try_into_inner);
                 }
                 vtable
             })
             .type_identifier("Utf8PathBuf")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
-            .inner(inner_shape)
+            .inner(<String as Facet>::SHAPE)
             .build()
     };
 }

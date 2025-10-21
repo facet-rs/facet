@@ -14,7 +14,7 @@ where
             [{
                 ::facet::Field::builder()
                     .name("inner")
-                    .shape(::facet::shape_of(&|s: &Foo<K, V>| &s.inner))
+                    .shape(|| ::facet::shape_of(&|s: &Foo<K, V>| &s.inner))
                     .offset(:: core :: mem :: offset_of ! (Foo < K , V > , inner))
                     .build()
             }]
@@ -40,11 +40,11 @@ where
             .type_params(&[
                 ::facet::TypeParam {
                     name: "K",
-                    shape: || <K as ::facet::Facet>::SHAPE,
+                    shape: <K as ::facet::Facet>::SHAPE,
                 },
                 ::facet::TypeParam {
                     name: "V",
-                    shape: || <V as ::facet::Facet>::SHAPE,
+                    shape: <V as ::facet::Facet>::SHAPE,
                 },
             ])
             .ty(::facet::Type::User(::facet::UserType::Struct(

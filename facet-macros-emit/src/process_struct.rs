@@ -171,7 +171,7 @@ pub(crate) fn gen_field_from_pfield(
                 // Use the effective name (after rename rules) for metadata
                 .name(#field_name_effective)
                 // Use the raw field name/index TokenStream for shape_of and offset_of
-                .shape(::facet::#shape_of(&|s: &#struct_name #bgp_without_bounds| &s.#field_name_raw))
+                .shape(|| ::facet::#shape_of(&|s: &#struct_name #bgp_without_bounds| &s.#field_name_raw))
                 .offset(#final_offset)
                 #maybe_flags
                 #maybe_attributes
@@ -328,7 +328,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 }
 
                 {
-                    vtable.invariants = || Some(invariants);
+                    vtable.invariants = Some(invariants);
                 }
             }
         } else {
@@ -416,9 +416,9 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 }
 
                 {
-                    vtable.try_from = || Some(try_from);
-                    vtable.try_into_inner = || Some(try_into_inner);
-                    vtable.try_borrow_inner = || Some(try_borrow_inner);
+                    vtable.try_from = Some(try_from);
+                    vtable.try_into_inner = Some(try_into_inner);
+                    vtable.try_borrow_inner = Some(try_borrow_inner);
                 }
             }
         } else {
@@ -441,7 +441,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 }
 
                 {
-                    vtable.try_from = || Some(try_from);
+                    vtable.try_from = Some(try_from);
                 }
 
                 // ZSTs cannot be meaningfully borrowed or converted *into* an inner value

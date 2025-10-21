@@ -103,7 +103,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// `false` if equality comparison is not supported for this scalar type
     #[inline]
     pub fn partial_eq(&self, other: &Peek<'_, '_>) -> Result<bool, ReflectError> {
-        if let Some(f) = (self.vtable().partial_eq)() {
+        if let Some(f) = self.vtable().partial_eq {
             if self.shape == other.shape {
                 return Ok(unsafe { f(self.data, other.data) });
             } else {
@@ -127,7 +127,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// `None` if comparison is not supported for this scalar type
     #[inline]
     pub fn partial_cmp(&self, other: &Peek<'_, '_>) -> Result<Option<Ordering>, ReflectError> {
-        if let Some(f) = (self.vtable().partial_ord)() {
+        if let Some(f) = self.vtable().partial_ord {
             if self.shape == other.shape {
                 return Ok(unsafe { f(self.data, other.data) });
             } else {
@@ -150,7 +150,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// `Err` if hashing is not supported for this scalar type, `Ok` otherwise
     #[inline(always)]
     pub fn hash(&self, hasher: &mut dyn core::hash::Hasher) -> Result<(), ReflectError> {
-        if let Some(hash_fn) = (self.vtable().hash)() {
+        if let Some(hash_fn) = self.vtable().hash {
             unsafe {
                 hash_fn(self.data, hasher);
                 return Ok(());
@@ -179,7 +179,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         f: &mut core::fmt::Formatter<'_>,
         opts: TypeNameOpts,
     ) -> core::fmt::Result {
-        (self.shape.vtable.type_name())(f, opts)
+        self.shape.vtable.type_name()(f, opts)
     }
 
     /// Returns the shape
@@ -226,7 +226,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         } else if let Some(ScalarType::String) = peek.scalar_type() {
             unsafe { Some(peek.data.get::<alloc::string::String>().as_str()) }
         } else if let Type::Pointer(PointerType::Reference(vpt)) = peek.shape.ty {
-            let target_shape = (vpt.target)();
+            let target_shape = vpt.target;
             if let Some(ScalarType::Str) = ScalarType::try_from_shape(target_shape) {
                 unsafe { Some(peek.data.get::<&str>()) }
             } else {
@@ -243,7 +243,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     pub fn as_bytes(&self) -> Option<&'mem [u8]> {
         // Check if it's a direct &[u8]
         if let Type::Pointer(PointerType::Reference(vpt)) = self.shape.ty {
-            let target_shape = (vpt.target)();
+            let target_shape = vpt.target;
             if let Def::Slice(sd) = target_shape.def {
                 if sd.t().is_type::<u8>() {
                     unsafe { return Some(self.data.get::<&[u8]>()) }
@@ -347,7 +347,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                 match self.shape.ty {
                     Type::Pointer(ptr) => match ptr {
                         PointerType::Reference(vpt) | PointerType::Raw(vpt) => {
-                            let target = (vpt.target)();
+                            let target = vpt.target;
                             match target.def {
                                 Def::Slice(def) => {
                                     let ptr = unsafe { self.data.as_ptr::<*const [()]>() };
@@ -439,18 +439,18 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     pub fn innermost_peek(self) -> Self {
         let mut current_peek = self;
         while let (Some(try_borrow_inner_fn), Some(inner_shape)) = (
-            (current_peek.shape.vtable.try_borrow_inner)(),
+            current_peek.shape.vtable.try_borrow_inner,
             current_peek.shape.inner,
         ) {
             unsafe {
                 let inner_data = try_borrow_inner_fn(current_peek.data).unwrap_or_else(|e| {
                     panic!("innermost_peek: try_borrow_inner returned an error! was trying to go from {} to {}. error: {e}", current_peek.shape,
-                        inner_shape())
+                        inner_shape)
                 });
 
                 current_peek = Peek {
                     data: inner_data,
-                    shape: inner_shape(),
+                    shape: inner_shape,
                     invariant: PhantomData,
                 };
             }
@@ -461,7 +461,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
 impl<'mem, 'facet> core::fmt::Display for Peek<'mem, 'facet> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(display_fn) = (self.vtable().display)() {
+        if let Some(display_fn) = self.vtable().display {
             return unsafe { display_fn(self.data, f) };
         }
         write!(f, "⟨{}⟩", self.shape)
@@ -470,7 +470,7 @@ impl<'mem, 'facet> core::fmt::Display for Peek<'mem, 'facet> {
 
 impl<'mem, 'facet> core::fmt::Debug for Peek<'mem, 'facet> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(debug_fn) = (self.vtable().debug)() {
+        if let Some(debug_fn) = self.vtable().debug {
             return unsafe { debug_fn(self.data, f) };
         }
 

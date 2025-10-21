@@ -10,7 +10,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Macroed {
             [{
                 ::facet::Field::builder()
                     .name("value")
-                    .shape(::facet::shape_of(&|s: &Macroed| &s.value))
+                    .shape(|| ::facet::shape_of(&|s: &Macroed| &s.value))
                     .offset(::core::mem::offset_of!(Macroed, value))
                     .build()
             }]

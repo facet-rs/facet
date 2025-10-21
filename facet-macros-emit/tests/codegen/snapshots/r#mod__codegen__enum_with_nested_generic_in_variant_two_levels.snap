@@ -36,12 +36,14 @@ where
                         [{
                             ::facet::Field::builder()
                                 .name("0")
-                                .shape(::facet::shape_of(
-                                    &|s: &__Shadow_RustRepr_Tuple_for_DeeplyNested_LevelOne<
-                                        '__facet,
-                                        T,
-                                    >| &s._0,
-                                ))
+                                .shape(|| {
+                                    ::facet::shape_of(
+                                        &|s: &__Shadow_RustRepr_Tuple_for_DeeplyNested_LevelOne<
+                                            '__facet,
+                                            T,
+                                        >| &s._0,
+                                    )
+                                })
                                 .offset(::core::mem::offset_of!(
                                     __Shadow_RustRepr_Tuple_for_DeeplyNested_LevelOne<'__facet, T>,
                                     _0
@@ -66,12 +68,14 @@ where
                         [{
                             ::facet::Field::builder()
                                 .name("0")
-                                .shape(::facet::shape_of(
-                                    &|s: &__Shadow_RustRepr_Tuple_for_DeeplyNested_Simple<
-                                        '__facet,
-                                        T,
-                                    >| &s._0,
-                                ))
+                                .shape(|| {
+                                    ::facet::shape_of(
+                                        &|s: &__Shadow_RustRepr_Tuple_for_DeeplyNested_Simple<
+                                            '__facet,
+                                            T,
+                                        >| &s._0,
+                                    )
+                                })
                                 .offset(::core::mem::offset_of!(
                                     __Shadow_RustRepr_Tuple_for_DeeplyNested_Simple<'__facet, T>,
                                     _0
@@ -110,7 +114,7 @@ where
             .type_identifier("DeeplyNested")
             .type_params(&[::facet::TypeParam {
                 name: "T",
-                shape: || <T as ::facet::Facet>::SHAPE,
+                shape: <T as ::facet::Facet>::SHAPE,
             }])
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()

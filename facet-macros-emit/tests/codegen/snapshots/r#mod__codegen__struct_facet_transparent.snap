@@ -10,7 +10,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
             [{
                 ::facet::Field::builder()
                     .name("0")
-                    .shape(::facet::shape_of(&|s: &Wrapper| &s.0))
+                    .shape(|| ::facet::shape_of(&|s: &Wrapper| &s.0))
                     .offset(::core::mem::offset_of!(Wrapper, 0))
                     .build()
             }]
@@ -64,9 +64,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
                     Ok(::facet::PtrConst::new(&wrapper.0 as *const _ as *const u8))
                 }
                 {
-                    vtable.try_from = || Some(try_from);
-                    vtable.try_into_inner = || Some(try_into_inner);
-                    vtable.try_borrow_inner = || Some(try_borrow_inner);
+                    vtable.try_from = Some(try_from);
+                    vtable.try_into_inner = Some(try_into_inner);
+                    vtable.try_borrow_inner = Some(try_borrow_inner);
                 }
                 vtable
             })

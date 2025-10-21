@@ -23,7 +23,7 @@ impl ArrayDef {
     }
 
     /// Returns the shape of the items in the array
-    pub fn t(&self) -> &'static Shape {
+    pub const fn t(&self) -> &'static Shape {
         self.t
     }
 }

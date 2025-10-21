@@ -506,40 +506,40 @@ pub struct ValueVTable {
     /// cf. [`TypeNameFn`]
     pub type_name: TypeNameFn,
     /// Marker traits implemented by the type
-    pub marker_traits: fn() -> MarkerTraits,
+    pub marker_traits: MarkerTraits,
 
     /// cf. [`DropInPlaceFn`] — if None, drops without side-effects
-    pub drop_in_place: fn() -> Option<DropInPlaceFn>,
+    pub drop_in_place: Option<DropInPlaceFn>,
 
     /// cf. [`InvariantsFn`]
-    pub invariants: fn() -> Option<InvariantsFn>,
+    pub invariants: Option<InvariantsFn>,
 
     /// cf. [`DisplayFn`]
-    pub display: fn() -> Option<DisplayFn>,
+    pub display: Option<DisplayFn>,
 
     /// cf. [`DebugFn`]
-    pub debug: fn() -> Option<DebugFn>,
+    pub debug: Option<DebugFn>,
 
     /// cf. [`DefaultInPlaceFn`]
-    pub default_in_place: fn() -> Option<DefaultInPlaceFn>,
+    pub default_in_place: Option<DefaultInPlaceFn>,
 
     /// cf. [`CloneIntoFn`]
-    pub clone_into: fn() -> Option<CloneIntoFn>,
+    pub clone_into: Option<CloneIntoFn>,
 
     /// cf. [`PartialEqFn`] for equality comparison
-    pub partial_eq: fn() -> Option<PartialEqFn>,
+    pub partial_eq: Option<PartialEqFn>,
 
     /// cf. [`PartialOrdFn`] for partial ordering comparison
-    pub partial_ord: fn() -> Option<PartialOrdFn>,
+    pub partial_ord: Option<PartialOrdFn>,
 
     /// cf. [`CmpFn`] for total ordering
-    pub ord: fn() -> Option<CmpFn>,
+    pub ord: Option<CmpFn>,
 
     /// cf. [`HashFn`]
-    pub hash: fn() -> Option<HashFn>,
+    pub hash: Option<HashFn>,
 
     /// cf. [`ParseFn`]
-    pub parse: fn() -> Option<ParseFn>,
+    pub parse: Option<ParseFn>,
 
     /// cf. [`TryFromFn`]
     ///
@@ -552,31 +552,31 @@ pub struct ValueVTable {
     ///   * `T` => `NonZero<T>`
     ///   * etc.
     ///
-    pub try_from: fn() -> Option<TryFromFn>,
+    pub try_from: Option<TryFromFn>,
 
     /// cf. [`TryIntoInnerFn`]
     ///
     /// This is used by transparent types to convert the wrapper type into its inner value.
     /// Primarily used during serialization.
-    pub try_into_inner: fn() -> Option<TryIntoInnerFn>,
+    pub try_into_inner: Option<TryIntoInnerFn>,
 
     /// cf. [`TryBorrowInnerFn`]
     ///
     /// This is used by transparent types to efficiently access the inner value without copying.
-    pub try_borrow_inner: fn() -> Option<TryBorrowInnerFn>,
+    pub try_borrow_inner: Option<TryBorrowInnerFn>,
 }
 
 macro_rules! has_fn {
     ($self:expr, $name:tt) => {
-        ($self.$name)().is_some()
+        $self.$name.is_some()
     };
 }
 
 impl ValueVTable {
     /// Get the marker traits implemented for the type
     #[inline]
-    pub fn marker_traits(&self) -> MarkerTraits {
-        (self.marker_traits)()
+    pub const fn marker_traits(&self) -> MarkerTraits {
+        self.marker_traits
     }
 
     /// Get the type name fn of the type
@@ -587,97 +587,97 @@ impl ValueVTable {
 
     /// Check if the type implements the [`Eq`] marker trait
     #[inline]
-    pub fn is_eq(&self) -> bool {
+    pub const fn is_eq(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::EQ)
     }
 
     /// Check if the type implements the [`Send`] marker trait
     #[inline]
-    pub fn is_send(&self) -> bool {
+    pub const fn is_send(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::SEND)
     }
 
     /// Check if the type implements the [`Sync`] marker trait
     #[inline]
-    pub fn is_sync(&self) -> bool {
+    pub const fn is_sync(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::SYNC)
     }
 
     /// Check if the type implements the [`Copy`] marker trait
     #[inline]
-    pub fn is_copy(&self) -> bool {
+    pub const fn is_copy(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::COPY)
     }
 
     /// Check if the type implements the [`Unpin`] marker trait
     #[inline]
-    pub fn is_unpin(&self) -> bool {
+    pub const fn is_unpin(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::UNPIN)
     }
 
     /// Check if the type implements the [`UnwindSafe`](core::panic::UnwindSafe) marker trait
     #[inline]
-    pub fn is_unwind_safe(&self) -> bool {
+    pub const fn is_unwind_safe(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::UNWIND_SAFE)
     }
 
     /// Check if the type implements the [`RefUnwindSafe`](core::panic::RefUnwindSafe) marker trait
     #[inline]
-    pub fn is_ref_unwind_safe(&self) -> bool {
+    pub const fn is_ref_unwind_safe(&self) -> bool {
         self.marker_traits().contains(MarkerTraits::REF_UNWIND_SAFE)
     }
 
     /// Returns `true` if the type implements the [`Display`](core::fmt::Display) trait and the `display` function is available in the vtable.
     #[inline]
-    pub fn has_display(&self) -> bool {
+    pub const fn has_display(&self) -> bool {
         has_fn!(self, display)
     }
 
     /// Returns `true` if the type implements the [`Debug`] trait and the `debug` function is available in the vtable.
     #[inline]
-    pub fn has_debug(&self) -> bool {
+    pub const fn has_debug(&self) -> bool {
         has_fn!(self, debug)
     }
 
     /// Returns `true` if the type implements the [`PartialEq`] trait and the `partial_eq` function is available in the vtable.
     #[inline]
-    pub fn has_partial_eq(&self) -> bool {
+    pub const fn has_partial_eq(&self) -> bool {
         has_fn!(self, partial_eq)
     }
 
     /// Returns `true` if the type implements the [`PartialOrd`] trait and the `partial_ord` function is available in the vtable.
     #[inline]
-    pub fn has_partial_ord(&self) -> bool {
+    pub const fn has_partial_ord(&self) -> bool {
         has_fn!(self, partial_ord)
     }
 
     /// Returns `true` if the type implements the [`Ord`] trait and the `ord` function is available in the vtable.
     #[inline]
-    pub fn has_ord(&self) -> bool {
+    pub const fn has_ord(&self) -> bool {
         has_fn!(self, ord)
     }
 
     /// Returns `true` if the type implements the [`Hash`] trait and the `hash` function is available in the vtable.
     #[inline]
-    pub fn has_hash(&self) -> bool {
+    pub const fn has_hash(&self) -> bool {
         has_fn!(self, hash)
     }
 
     /// Returns `true` if the type supports default-in-place construction via the vtable.
     #[inline]
-    pub fn has_default_in_place(&self) -> bool {
+    pub const fn has_default_in_place(&self) -> bool {
         has_fn!(self, default_in_place)
     }
 
     /// Returns `true` if the type supports in-place cloning via the vtable.
     #[inline]
-    pub fn has_clone_into(&self) -> bool {
+    pub const fn has_clone_into(&self) -> bool {
         has_fn!(self, clone_into)
     }
 
     /// Returns `true` if the type supports parsing from a string via the vtable.
     #[inline]
-    pub fn has_parse(&self) -> bool {
+    pub const fn has_parse(&self) -> bool {
         has_fn!(self, parse)
     }
     /// Creates a new [`ValueVTableBuilder`]
@@ -706,7 +706,7 @@ impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<&'a T> {
 
 macro_rules! get_fn {
     ($self:expr, $name:tt) => {
-        ($self.0.$name)().map(|f| unsafe { mem::transmute(f) })
+        $self.0.$name.map(|f| unsafe { mem::transmute(f) })
     };
 }
 
@@ -787,7 +787,7 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
     /// cf. [`DefaultInPlaceFn`]
     #[inline(always)]
     pub fn default_in_place(&self) -> Option<DefaultInPlaceFnTyped<T>> {
-        (self.0.default_in_place)().map(|default_in_place| unsafe {
+        self.0.default_in_place.map(|default_in_place| unsafe {
             mem::transmute::<DefaultInPlaceFn, DefaultInPlaceFnTyped<T>>(default_in_place)
         })
     }
@@ -795,7 +795,7 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
     /// cf. [`CloneIntoFn`]
     #[inline(always)]
     pub fn clone_into(&self) -> Option<CloneIntoFnTyped<T>> {
-        (self.0.clone_into)().map(|clone_into| unsafe {
+        self.0.clone_into.map(|clone_into| unsafe {
             mem::transmute::<CloneIntoFn, CloneIntoFnTyped<T>>(clone_into)
         })
     }
@@ -803,7 +803,9 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
     /// cf. [`ParseFn`]
     #[inline(always)]
     pub fn parse(&self) -> Option<ParseFnTyped<T>> {
-        (self.0.parse)().map(|parse| unsafe { mem::transmute::<ParseFn, ParseFnTyped<T>>(parse) })
+        self.0
+            .parse
+            .map(|parse| unsafe { mem::transmute::<ParseFn, ParseFnTyped<T>>(parse) })
     }
 
     /// cf. [`TryFromFn`]
@@ -819,7 +821,8 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
     ///
     #[inline(always)]
     pub fn try_from(&self) -> Option<TryFromFnTyped<T>> {
-        (self.0.try_from)()
+        self.0
+            .try_from
             .map(|try_from| unsafe { mem::transmute::<TryFromFn, TryFromFnTyped<T>>(try_from) })
     }
 
@@ -829,7 +832,7 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
     /// Primarily used during serialization.
     #[inline(always)]
     pub fn try_into_inner(&self) -> Option<TryIntoInnerFnTyped<T>> {
-        (self.0.try_into_inner)().map(|try_into_inner| unsafe {
+        self.0.try_into_inner.map(|try_into_inner| unsafe {
             mem::transmute::<TryIntoInnerFn, TryIntoInnerFnTyped<T>>(try_into_inner)
         })
     }
@@ -837,21 +840,21 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
 /// Builds a [`ValueVTable`]
 pub struct ValueVTableBuilder<T: ?Sized> {
     type_name: Option<TypeNameFn>,
-    display: fn() -> Option<DisplayFn>,
-    debug: fn() -> Option<DebugFn>,
-    default_in_place: fn() -> Option<DefaultInPlaceFn>,
-    clone_into: fn() -> Option<CloneIntoFn>,
-    marker_traits: fn() -> MarkerTraits,
-    partial_eq: fn() -> Option<PartialEqFn>,
-    partial_ord: fn() -> Option<PartialOrdFn>,
-    ord: fn() -> Option<CmpFn>,
-    hash: fn() -> Option<HashFn>,
-    drop_in_place: fn() -> Option<DropInPlaceFn>,
-    invariants: fn() -> Option<InvariantsFn>,
-    parse: fn() -> Option<ParseFn>,
-    try_from: fn() -> Option<TryFromFn>,
-    try_into_inner: fn() -> Option<TryIntoInnerFn>,
-    try_borrow_inner: fn() -> Option<TryBorrowInnerFn>,
+    display: Option<DisplayFn>,
+    debug: Option<DebugFn>,
+    default_in_place: Option<DefaultInPlaceFn>,
+    clone_into: Option<CloneIntoFn>,
+    marker_traits: MarkerTraits,
+    partial_eq: Option<PartialEqFn>,
+    partial_ord: Option<PartialOrdFn>,
+    ord: Option<CmpFn>,
+    hash: Option<HashFn>,
+    drop_in_place: Option<DropInPlaceFn>,
+    invariants: Option<InvariantsFn>,
+    parse: Option<ParseFn>,
+    try_from: Option<TryFromFn>,
+    try_into_inner: Option<TryIntoInnerFn>,
+    try_borrow_inner: Option<TryBorrowInnerFn>,
     _pd: PhantomData<T>,
 }
 
@@ -861,27 +864,25 @@ impl<T: ?Sized> ValueVTableBuilder<T> {
     pub const fn new() -> Self {
         Self {
             type_name: None,
-            display: || None,
-            debug: || None,
-            default_in_place: || None,
-            clone_into: || None,
-            marker_traits: || MarkerTraits::empty(),
-            partial_eq: || None,
-            partial_ord: || None,
-            ord: || None,
-            hash: || None,
-            drop_in_place: || {
-                if mem::needs_drop::<T>() {
-                    Some(|value| unsafe { value.drop_in_place::<T>() })
-                } else {
-                    None
-                }
+            display: None,
+            debug: None,
+            default_in_place: None,
+            clone_into: None,
+            marker_traits: MarkerTraits::empty(),
+            partial_eq: None,
+            partial_ord: None,
+            ord: None,
+            hash: None,
+            drop_in_place: if mem::needs_drop::<T>() {
+                Some(|value| unsafe { value.drop_in_place::<T>() })
+            } else {
+                None
             },
-            invariants: || None,
-            parse: || None,
-            try_from: || None,
-            try_into_inner: || None,
-            try_borrow_inner: || None,
+            invariants: None,
+            parse: None,
+            try_from: None,
+            try_into_inner: None,
+            try_borrow_inner: None,
             _pd: PhantomData,
         }
     }
@@ -893,129 +894,106 @@ impl<T: ?Sized> ValueVTableBuilder<T> {
     }
 
     /// Sets the display function for this builder.
-    pub const fn display(mut self, display: fn() -> Option<DisplayFnTyped<T>>) -> Self {
-        self.display = unsafe {
-            mem::transmute::<fn() -> Option<DisplayFnTyped<T>>, fn() -> Option<DisplayFn>>(display)
-        };
+    pub const fn display(mut self, display: Option<DisplayFnTyped<T>>) -> Self {
+        self.display =
+            unsafe { mem::transmute::<Option<DisplayFnTyped<T>>, Option<DisplayFn>>(display) };
         self
     }
 
     /// Sets the debug function for this builder.
-    pub const fn debug(mut self, debug: fn() -> Option<DebugFnTyped<T>>) -> Self {
-        self.debug = unsafe {
-            mem::transmute::<fn() -> Option<DebugFnTyped<T>>, fn() -> Option<DebugFn>>(debug)
-        };
+    pub const fn debug(mut self, debug: Option<DebugFnTyped<T>>) -> Self {
+        self.debug = unsafe { mem::transmute::<Option<DebugFnTyped<T>>, Option<DebugFn>>(debug) };
         self
     }
 
     /// Sets the default_in_place function for this builder.
     pub const fn default_in_place(
         mut self,
-        default_in_place: fn() -> Option<DefaultInPlaceFnTyped<T>>,
+        default_in_place: Option<DefaultInPlaceFnTyped<T>>,
     ) -> Self {
         self.default_in_place = unsafe {
-            mem::transmute::<
-                fn() -> Option<DefaultInPlaceFnTyped<T>>,
-                fn() -> Option<DefaultInPlaceFn>,
-            >(default_in_place)
+            mem::transmute::<Option<DefaultInPlaceFnTyped<T>>, Option<DefaultInPlaceFn>>(
+                default_in_place,
+            )
         };
         self
     }
 
     /// Sets the clone_into function for this builder.
-    pub const fn clone_into(mut self, clone_into: fn() -> Option<CloneIntoFnTyped<T>>) -> Self {
+    pub const fn clone_into(mut self, clone_into: Option<CloneIntoFnTyped<T>>) -> Self {
         self.clone_into = unsafe {
-            mem::transmute::<fn() -> Option<CloneIntoFnTyped<T>>, fn() -> Option<CloneIntoFn>>(
-                clone_into,
-            )
+            mem::transmute::<Option<CloneIntoFnTyped<T>>, Option<CloneIntoFn>>(clone_into)
         };
         self
     }
 
     /// Sets the marker traits for this builder.
-    pub const fn marker_traits(mut self, marker_traits: fn() -> MarkerTraits) -> Self {
+    pub const fn marker_traits(mut self, marker_traits: MarkerTraits) -> Self {
         self.marker_traits = marker_traits;
         self
     }
 
     /// Sets the partial_eq function for this builder.
-    pub const fn partial_eq(mut self, partial_eq: fn() -> Option<PartialEqFnTyped<T>>) -> Self {
+    pub const fn partial_eq(mut self, partial_eq: Option<PartialEqFnTyped<T>>) -> Self {
         self.partial_eq = unsafe {
-            mem::transmute::<fn() -> Option<PartialEqFnTyped<T>>, fn() -> Option<PartialEqFn>>(
-                partial_eq,
-            )
+            mem::transmute::<Option<PartialEqFnTyped<T>>, Option<PartialEqFn>>(partial_eq)
         };
         self
     }
 
     /// Sets the partial_ord function for this builder.
-    pub const fn partial_ord(mut self, partial_ord: fn() -> Option<PartialOrdFnTyped<T>>) -> Self {
+    pub const fn partial_ord(mut self, partial_ord: Option<PartialOrdFnTyped<T>>) -> Self {
         self.partial_ord = unsafe {
-            mem::transmute::<fn() -> Option<PartialOrdFnTyped<T>>, fn() -> Option<PartialOrdFn>>(
-                partial_ord,
-            )
+            mem::transmute::<Option<PartialOrdFnTyped<T>>, Option<PartialOrdFn>>(partial_ord)
         };
         self
     }
 
     /// Sets the ord function for this builder.
-    pub const fn ord(mut self, ord: fn() -> Option<CmpFnTyped<T>>) -> Self {
-        self.ord =
-            unsafe { mem::transmute::<fn() -> Option<CmpFnTyped<T>>, fn() -> Option<CmpFn>>(ord) };
+    pub const fn ord(mut self, ord: Option<CmpFnTyped<T>>) -> Self {
+        self.ord = unsafe { mem::transmute::<Option<CmpFnTyped<T>>, Option<CmpFn>>(ord) };
         self
     }
 
     /// Sets the hash function for this builder.
-    pub const fn hash(mut self, hash: fn() -> Option<HashFnTyped<T>>) -> Self {
-        self.hash = unsafe {
-            mem::transmute::<fn() -> Option<HashFnTyped<T>>, fn() -> Option<HashFn>>(hash)
-        };
+    pub const fn hash(mut self, hash: Option<HashFnTyped<T>>) -> Self {
+        self.hash = unsafe { mem::transmute::<Option<HashFnTyped<T>>, Option<HashFn>>(hash) };
         self
     }
 
     /// Overwrites the drop_in_place function for this builder.
     ///
     /// This is usually not necessary, the builder builder will default this to the appropriate type.
-    pub const fn drop_in_place(mut self, drop_in_place: fn() -> Option<DropInPlaceFn>) -> Self {
+    pub const fn drop_in_place(mut self, drop_in_place: Option<DropInPlaceFn>) -> Self {
         self.drop_in_place = drop_in_place;
         self
     }
 
     /// Sets the invariants function for this builder.
-    pub const fn invariants(mut self, invariants: fn() -> Option<InvariantsFnTyped<T>>) -> Self {
+    pub const fn invariants(mut self, invariants: Option<InvariantsFnTyped<T>>) -> Self {
         self.invariants = unsafe {
-            mem::transmute::<fn() -> Option<InvariantsFnTyped<T>>, fn() -> Option<InvariantsFn>>(
-                invariants,
-            )
+            mem::transmute::<Option<InvariantsFnTyped<T>>, Option<InvariantsFn>>(invariants)
         };
         self
     }
 
     /// Sets the parse function for this builder.
-    pub const fn parse(mut self, parse: fn() -> Option<ParseFnTyped<T>>) -> Self {
-        self.parse = unsafe {
-            mem::transmute::<fn() -> Option<ParseFnTyped<T>>, fn() -> Option<ParseFn>>(parse)
-        };
+    pub const fn parse(mut self, parse: Option<ParseFnTyped<T>>) -> Self {
+        self.parse = unsafe { mem::transmute::<Option<ParseFnTyped<T>>, Option<ParseFn>>(parse) };
         self
     }
 
     /// Sets the try_from function for this builder.
-    pub const fn try_from(mut self, try_from: fn() -> Option<TryFromFnTyped<T>>) -> Self {
-        self.try_from = unsafe {
-            mem::transmute::<fn() -> Option<TryFromFnTyped<T>>, fn() -> Option<TryFromFn>>(try_from)
-        };
+    pub const fn try_from(mut self, try_from: Option<TryFromFnTyped<T>>) -> Self {
+        self.try_from =
+            unsafe { mem::transmute::<Option<TryFromFnTyped<T>>, Option<TryFromFn>>(try_from) };
         self
     }
 
     /// Sets the try_into_inner function for this builder.
-    pub const fn try_into_inner(
-        mut self,
-        try_into_inner: fn() -> Option<TryIntoInnerFnTyped<T>>,
-    ) -> Self {
+    pub const fn try_into_inner(mut self, try_into_inner: Option<TryIntoInnerFnTyped<T>>) -> Self {
         self.try_into_inner = unsafe {
-            mem::transmute::<fn() -> Option<TryIntoInnerFnTyped<T>>, fn() -> Option<TryIntoInnerFn>>(
-                try_into_inner,
-            )
+            mem::transmute::<Option<TryIntoInnerFnTyped<T>>, Option<TryIntoInnerFn>>(try_into_inner)
         };
         self
     }
@@ -1023,13 +1001,12 @@ impl<T: ?Sized> ValueVTableBuilder<T> {
     /// Sets the borrow_inner function for this builder.
     pub const fn try_borrow_inner(
         mut self,
-        try_borrow_inner: fn() -> Option<TryBorrowInnerFnTyped<T>>,
+        try_borrow_inner: Option<TryBorrowInnerFnTyped<T>>,
     ) -> Self {
         self.try_borrow_inner = unsafe {
-            mem::transmute::<
-                fn() -> Option<TryBorrowInnerFnTyped<T>>,
-                fn() -> Option<TryBorrowInnerFn>,
-            >(try_borrow_inner)
+            mem::transmute::<Option<TryBorrowInnerFnTyped<T>>, Option<TryBorrowInnerFn>>(
+                try_borrow_inner,
+            )
         };
         self
     }

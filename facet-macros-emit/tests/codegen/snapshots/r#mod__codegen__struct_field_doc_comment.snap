@@ -10,7 +10,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Foo {
             [{
                 ::facet::Field::builder()
                     .name("bar")
-                    .shape(::facet::shape_of(&|s: &Foo| &s.bar))
+                    .shape(|| ::facet::shape_of(&|s: &Foo| &s.bar))
                     .offset(::core::mem::offset_of!(Foo, bar))
                     .doc(&[" This field has a doc comment"])
                     .build()

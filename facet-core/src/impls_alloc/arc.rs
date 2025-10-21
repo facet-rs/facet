@@ -12,11 +12,6 @@ use crate::{
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
     const SHAPE: &'static crate::Shape = &const {
-        // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
-            T::SHAPE
-        }
-
         crate::Shape::builder_for_sized::<Self>()
             .vtable({
                 // Define the functions for transparent conversion between Arc<T> and T
@@ -76,21 +71,21 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
                 });
 
                 {
-                    vtable.try_from = || Some(try_from::<T>);
-                    vtable.try_into_inner = || Some(try_into_inner::<T>);
-                    vtable.try_borrow_inner = || Some(try_borrow_inner::<T>);
+                    vtable.try_from = Some(try_from::<T>);
+                    vtable.try_into_inner = Some(try_into_inner::<T>);
+                    vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
                 }
                 vtable
             })
             .type_identifier("Arc")
             .type_params(&[crate::TypeParam {
                 name: "T",
-                shape: || T::SHAPE,
+                shape: T::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(
                 PointerDef::builder()
-                    .pointee(|| T::SHAPE)
+                    .pointee(T::SHAPE)
                     .flags(PointerFlags::ATOMIC)
                     .known(KnownPointer::Arc)
                     .weak(|| <Weak<T> as Facet>::SHAPE)
@@ -115,18 +110,13 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
                     )
                     .build(),
             ))
-            .inner(inner_shape::<T>)
+            .inner(T::SHAPE)
             .build()
     };
 }
 
 unsafe impl<'a> Facet<'a> for Arc<str> {
     const SHAPE: &'static crate::Shape = &const {
-        // Function to return inner type's shape
-        fn inner_shape() -> &'static Shape {
-            str::SHAPE
-        }
-
         crate::Shape::builder_for_sized::<Self>()
             .vtable({
                 value_vtable!(alloc::sync::Arc<str>, |f, opts| {
@@ -144,12 +134,12 @@ unsafe impl<'a> Facet<'a> for Arc<str> {
             .type_identifier("Arc")
             .type_params(&[crate::TypeParam {
                 name: "T",
-                shape: || str::SHAPE,
+                shape: str::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(
                 PointerDef::builder()
-                    .pointee(|| str::SHAPE)
+                    .pointee(str::SHAPE)
                     .flags(PointerFlags::ATOMIC)
                     .known(KnownPointer::Arc)
                     .weak(|| <Weak<str> as Facet>::SHAPE)
@@ -169,18 +159,13 @@ unsafe impl<'a> Facet<'a> for Arc<str> {
                     )
                     .build(),
             ))
-            .inner(inner_shape)
+            .inner(str::SHAPE)
             .build()
     };
 }
 
 unsafe impl<'a, U: Facet<'a>> Facet<'a> for Arc<[U]> {
     const SHAPE: &'static crate::Shape = &const {
-        // Function to return inner type's shape
-        fn inner_shape<'a, U: Facet<'a>>() -> &'static Shape {
-            <[U]>::SHAPE
-        }
-
         fn slice_builder_new<'a, U: Facet<'a>>() -> PtrMut<'static> {
             let v = Box::new(Vec::<U>::new());
             let raw = Box::into_raw(v);
@@ -227,12 +212,12 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Arc<[U]> {
             .type_identifier("Arc")
             .type_params(&[crate::TypeParam {
                 name: "T",
-                shape: || <[U]>::SHAPE,
+                shape: <[U]>::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(
                 PointerDef::builder()
-                    .pointee(|| <[U]>::SHAPE)
+                    .pointee(<[U]>::SHAPE)
                     .flags(PointerFlags::ATOMIC)
                     .known(KnownPointer::Arc)
                     .weak(|| <Weak<[U]> as Facet>::SHAPE)
@@ -262,18 +247,13 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Arc<[U]> {
                     )
                     .build(),
             ))
-            .inner(inner_shape::<U>)
+            .inner(<[U]>::SHAPE)
             .build()
     };
 }
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
     const SHAPE: &'static crate::Shape = &const {
-        // Function to return inner type's shape
-        fn inner_shape<'a, T: Facet<'a>>() -> &'static Shape {
-            T::SHAPE
-        }
-
         crate::Shape::builder_for_sized::<Self>()
             .vtable({
                 value_vtable!(alloc::sync::Weak<T>, |f, opts| {
@@ -291,15 +271,15 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
             .type_identifier("Weak")
             .type_params(&[crate::TypeParam {
                 name: "T",
-                shape: || T::SHAPE,
+                shape: T::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(
                 PointerDef::builder()
-                    .pointee(|| T::SHAPE)
+                    .pointee(T::SHAPE)
                     .flags(PointerFlags::ATOMIC.union(PointerFlags::WEAK))
                     .known(KnownPointer::ArcWeak)
-                    .strong(|| <Arc<T> as Facet>::SHAPE)
+                    .strong(<Arc<T> as Facet>::SHAPE)
                     .vtable(
                         &const {
                             PointerVTable::builder()
@@ -311,18 +291,13 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
                     )
                     .build(),
             ))
-            .inner(inner_shape::<T>)
+            .inner(T::SHAPE)
             .build()
     };
 }
 
 unsafe impl<'a> Facet<'a> for Weak<str> {
     const SHAPE: &'static crate::Shape = &const {
-        // Function to return inner type's shape
-        fn inner_shape() -> &'static Shape {
-            str::SHAPE
-        }
-
         crate::Shape::builder_for_sized::<Self>()
             .vtable({
                 value_vtable!(alloc::sync::Weak<str>, |f, opts| {
@@ -340,15 +315,15 @@ unsafe impl<'a> Facet<'a> for Weak<str> {
             .type_identifier("Weak")
             .type_params(&[crate::TypeParam {
                 name: "T",
-                shape: || str::SHAPE,
+                shape: str::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(
                 PointerDef::builder()
-                    .pointee(|| str::SHAPE)
+                    .pointee(str::SHAPE)
                     .flags(PointerFlags::ATOMIC.union(PointerFlags::WEAK))
                     .known(KnownPointer::ArcWeak)
-                    .strong(|| <Arc<str> as Facet>::SHAPE)
+                    .strong(<Arc<str> as Facet>::SHAPE)
                     .vtable(
                         &const {
                             PointerVTable::builder()
@@ -360,17 +335,13 @@ unsafe impl<'a> Facet<'a> for Weak<str> {
                     )
                     .build(),
             ))
-            .inner(inner_shape)
+            .inner(str::SHAPE)
             .build()
     };
 }
 
 unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
     const SHAPE: &'static crate::Shape = &const {
-        fn inner_shape<'a, U: Facet<'a>>() -> &'static Shape {
-            <[U]>::SHAPE
-        }
-
         crate::Shape::builder_for_sized::<Self>()
             .vtable({
                 value_vtable!(alloc::sync::Weak<[U]>, |f, opts| {
@@ -388,15 +359,15 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
             .type_identifier("Weak")
             .type_params(&[crate::TypeParam {
                 name: "T",
-                shape: || <[U]>::SHAPE,
+                shape: <[U]>::SHAPE,
             }])
             .ty(Type::User(UserType::Opaque))
             .def(Def::Pointer(
                 PointerDef::builder()
-                    .pointee(|| <[U]>::SHAPE)
+                    .pointee(<[U]>::SHAPE)
                     .flags(PointerFlags::ATOMIC.union(PointerFlags::WEAK))
                     .known(KnownPointer::ArcWeak)
-                    .strong(|| <Arc<[U]> as Facet>::SHAPE)
+                    .strong(<Arc<[U]> as Facet>::SHAPE)
                     .vtable(
                         &const {
                             PointerVTable::builder()
@@ -408,7 +379,7 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
                     )
                     .build(),
             ))
-            .inner(inner_shape::<U>)
+            .inner(<[U]>::SHAPE)
             .build()
     };
 }
@@ -467,7 +438,10 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
         // Get the function pointer for dropping the Arc
-        let drop_fn = (arc_shape.vtable.drop_in_place)().expect("Arc<T> should have drop_in_place");
+        let drop_fn = arc_shape
+            .vtable
+            .drop_in_place
+            .expect("Arc<T> should have drop_in_place");
 
         // Drop the Arc in place
         // SAFETY: arc_ptr points to a valid Arc<String>
@@ -523,8 +497,8 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "example");
 
         // 4. Drop everything and free memory
-        let arc_drop_fn = (arc_shape.vtable.drop_in_place)().unwrap();
-        let weak_drop_fn = (weak_shape.vtable.drop_in_place)().unwrap();
+        let arc_drop_fn = arc_shape.vtable.drop_in_place.unwrap();
+        let weak_drop_fn = weak_shape.vtable.drop_in_place.unwrap();
 
         unsafe {
             // Drop Arcs
@@ -569,7 +543,7 @@ mod tests {
         let weak1_ptr = unsafe { downgrade_into_fn(arc1_ptr, weak1_uninit_ptr) };
 
         // 3. Drop and free the strong pointer (arc1)
-        let arc_drop_fn = (arc_shape.vtable.drop_in_place)().unwrap();
+        let arc_drop_fn = arc_shape.vtable.drop_in_place.unwrap();
         unsafe {
             arc_drop_fn(arc1_ptr);
             arc_shape.deallocate_mut(arc1_ptr).unwrap();
@@ -588,7 +562,7 @@ mod tests {
         );
 
         // 5. Clean up: Deallocate the memory intended for the failed upgrade and drop/deallocate the weak pointer
-        let weak_drop_fn = (weak_shape.vtable.drop_in_place)().unwrap();
+        let weak_drop_fn = weak_shape.vtable.drop_in_place.unwrap();
         unsafe {
             // Deallocate the *uninitialized* memory allocated for the failed upgrade attempt
             arc_shape.deallocate_uninit(arc2_uninit_ptr).unwrap();
@@ -619,7 +593,10 @@ mod tests {
         let arc_uninit_ptr = arc_shape.allocate().unwrap();
 
         // 3. Get the try_from function from the Arc<String> shape's ValueVTable
-        let try_from_fn = (arc_shape.vtable.try_from)().expect("Arc<T> should have try_from");
+        let try_from_fn = arc_shape
+            .vtable
+            .try_from
+            .expect("Arc<T> should have try_from");
 
         // 4. Try to convert String to Arc<String>
         let arc_ptr = unsafe { try_from_fn(value_ptr, string_shape, arc_uninit_ptr) }
@@ -636,7 +613,10 @@ mod tests {
         assert_eq!(unsafe { borrowed_ptr.get::<String>() }, "try_from test");
 
         // 6. Clean up
-        let drop_fn = (arc_shape.vtable.drop_in_place)().expect("Arc<T> should have drop_in_place");
+        let drop_fn = arc_shape
+            .vtable
+            .drop_in_place
+            .expect("Arc<T> should have drop_in_place");
 
         unsafe {
             drop_fn(arc_ptr);
@@ -671,8 +651,10 @@ mod tests {
         let string_uninit_ptr = string_shape.allocate().unwrap();
 
         // 3. Get the try_into_inner function from the Arc<String>'s ValueVTable
-        let try_into_inner_fn =
-            (arc_shape.vtable.try_into_inner)().expect("Arc<T> Shape should have try_into_inner");
+        let try_into_inner_fn = arc_shape
+            .vtable
+            .try_into_inner
+            .expect("Arc<T> Shape should have try_into_inner");
 
         // 4. Try to extract the String from the Arc<String>
         // This should succeed because we have exclusive access to the Arc (strong count = 1)
@@ -686,8 +668,10 @@ mod tests {
         );
 
         // 6. Clean up
-        let string_drop_fn =
-            (string_shape.vtable.drop_in_place)().expect("String should have drop_in_place");
+        let string_drop_fn = string_shape
+            .vtable
+            .drop_in_place
+            .expect("String should have drop_in_place");
 
         unsafe {
             // The Arc should already be dropped by try_into_inner
