@@ -14,35 +14,36 @@ where
     K: Facet<'a> + core::cmp::Eq + core::cmp::Ord,
     V: Facet<'a>,
 {
-    const VTABLE: &'static ValueVTable = &const {
-        ValueVTable::builder::<Self>()
-            .marker_traits(|| {
-                let arg_dependent_traits = MarkerTraits::SEND
-                    .union(MarkerTraits::SYNC)
-                    .union(MarkerTraits::EQ);
-                arg_dependent_traits
-                    .intersection(V::SHAPE.vtable.marker_traits())
-                    .intersection(K::SHAPE.vtable.marker_traits())
-                    // only depends on `A` which we are not generic over (yet)
-                    .union(MarkerTraits::UNPIN)
-            })
-            .type_name(|f, opts| {
-                if let Some(opts) = opts.for_children() {
-                    write!(f, "{}<", Self::SHAPE.type_identifier)?;
-                    K::SHAPE.vtable.type_name()(f, opts)?;
-                    write!(f, ", ")?;
-                    V::SHAPE.vtable.type_name()(f, opts)?;
-                    write!(f, ">")
-                } else {
-                    write!(f, "BTreeMap<⋯>")
-                }
-            })
-            .default_in_place(|| Some(|target| unsafe { target.put(Self::default()).into() }))
-            .build()
-    };
-
     const SHAPE: &'static crate::Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .vtable({
+                ValueVTable::builder::<Self>()
+                    .marker_traits(|| {
+                        let arg_dependent_traits = MarkerTraits::SEND
+                            .union(MarkerTraits::SYNC)
+                            .union(MarkerTraits::EQ);
+                        arg_dependent_traits
+                            .intersection(V::SHAPE.vtable.marker_traits())
+                            .intersection(K::SHAPE.vtable.marker_traits())
+                            // only depends on `A` which we are not generic over (yet)
+                            .union(MarkerTraits::UNPIN)
+                    })
+                    .type_name(|f, opts| {
+                        if let Some(opts) = opts.for_children() {
+                            write!(f, "{}<", Self::SHAPE.type_identifier)?;
+                            K::SHAPE.vtable.type_name()(f, opts)?;
+                            write!(f, ", ")?;
+                            V::SHAPE.vtable.type_name()(f, opts)?;
+                            write!(f, ">")
+                        } else {
+                            write!(f, "BTreeMap<⋯>")
+                        }
+                    })
+                    .default_in_place(|| {
+                        Some(|target| unsafe { target.put(Self::default()).into() })
+                    })
+                    .build()
+            })
             .type_identifier("BTreeMap")
             .type_params(&[
                 crate::TypeParam {

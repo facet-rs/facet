@@ -13,21 +13,6 @@ where
     '__facet: 'a,
     T: ::facet::Facet<'__facet>,
 {
-    const VTABLE: &'static ::facet::ValueVTable = &const {
-        ::facet::value_vtable!(Self, |f, opts| {
-            write!(f, "E")?;
-            if let Some(opts) = opts.for_children() {
-                write!(f, "<")?;
-                <T as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
-                write!(f, ", ")?;
-                write!(f, "{:?}", C)?;
-                write!(f, ">")?;
-            } else {
-                write!(f, "<…>")?;
-            }
-            Ok(())
-        })
-    };
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
@@ -204,6 +189,21 @@ where
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                ::facet::value_vtable!(Self, |f, opts| {
+                    write!(f, "E")?;
+                    if let Some(opts) = opts.for_children() {
+                        write!(f, "<")?;
+                        <T as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
+                        write!(f, ", ")?;
+                        write!(f, "{:?}", C)?;
+                        write!(f, ">")?;
+                    } else {
+                        write!(f, "<…>")?;
+                    }
+                    Ok(())
+                })
+            })
             .type_identifier("E")
             .type_params(&[::facet::TypeParam {
                 name: "T",

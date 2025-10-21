@@ -16,30 +16,31 @@ unsafe impl<'a, T> Facet<'a> for BTreeSet<T>
 where
     T: Facet<'a> + core::cmp::Eq + core::cmp::Ord,
 {
-    const VTABLE: &'static ValueVTable = &const {
-        ValueVTable::builder::<Self>()
-            .marker_traits(|| {
-                MarkerTraits::SEND
-                    .union(MarkerTraits::SYNC)
-                    .union(MarkerTraits::EQ)
-                    .union(MarkerTraits::UNPIN)
-                    .intersection(T::SHAPE.vtable.marker_traits())
-            })
-            .type_name(|f, opts| {
-                if let Some(opts) = opts.for_children() {
-                    write!(f, "{}<", Self::SHAPE.type_identifier)?;
-                    T::SHAPE.vtable.type_name()(f, opts)?;
-                    write!(f, ">")
-                } else {
-                    write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
-                }
-            })
-            .default_in_place(|| Some(|target| unsafe { target.put(Self::default()).into() }))
-            .build()
-    };
-
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .vtable({
+                ValueVTable::builder::<Self>()
+                    .marker_traits(|| {
+                        MarkerTraits::SEND
+                            .union(MarkerTraits::SYNC)
+                            .union(MarkerTraits::EQ)
+                            .union(MarkerTraits::UNPIN)
+                            .intersection(T::SHAPE.vtable.marker_traits())
+                    })
+                    .type_name(|f, opts| {
+                        if let Some(opts) = opts.for_children() {
+                            write!(f, "{}<", Self::SHAPE.type_identifier)?;
+                            T::SHAPE.vtable.type_name()(f, opts)?;
+                            write!(f, ">")
+                        } else {
+                            write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
+                        }
+                    })
+                    .default_in_place(|| {
+                        Some(|target| unsafe { target.put(Self::default()).into() })
+                    })
+                    .build()
+            })
             .type_identifier("BTreeSet")
             .type_params(&[TypeParam {
                 name: "T",

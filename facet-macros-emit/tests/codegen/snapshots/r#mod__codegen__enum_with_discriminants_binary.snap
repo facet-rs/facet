@@ -6,11 +6,6 @@ static BIT_FLAGS_SHAPE: &'static ::facet::Shape = <BitFlags as ::facet::Facet>::
 #[automatically_derived]
 #[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for BitFlags {
-    const VTABLE: &'static ::facet::ValueVTable = &const {
-        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
-            f, "BitFlags"
-        ))
-    };
     const SHAPE: &'static ::facet::Shape = &const {
         let __facet_variants: &'static [::facet::Variant] = &const {
             [
@@ -67,6 +62,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for BitFlags {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                    f, "BitFlags"
+                ))
+            })
             .type_identifier("BitFlags")
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()

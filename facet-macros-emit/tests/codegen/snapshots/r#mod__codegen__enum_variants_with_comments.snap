@@ -6,12 +6,6 @@ static COMMENTED_ENUM_SHAPE: &'static ::facet::Shape = <CommentedEnum as ::facet
 #[automatically_derived]
 #[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
-    const VTABLE: &'static ::facet::ValueVTable = &const {
-        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
-            f,
-            "CommentedEnum"
-        ))
-    };
     const SHAPE: &'static ::facet::Shape = &const {
         #[repr(C)]
         #[allow(non_snake_case, dead_code)]
@@ -122,6 +116,12 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for CommentedEnum {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                    f,
+                    "CommentedEnum"
+                ))
+            })
             .type_identifier("CommentedEnum")
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()

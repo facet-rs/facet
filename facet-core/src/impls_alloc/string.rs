@@ -1,28 +1,27 @@
-use crate::{Def, Facet, Shape, Type, UserType, ValueVTable, value_vtable};
+use crate::{Def, Facet, Shape, Type, UserType, value_vtable};
 use alloc::string::ToString;
 
 #[cfg(feature = "alloc")]
 unsafe impl Facet<'_> for alloc::string::String {
-    const VTABLE: &'static ValueVTable = &const {
-        let mut vtable = value_vtable!(alloc::string::String, |f, _opts| write!(
-            f,
-            "{}",
-            Self::SHAPE.type_identifier
-        ));
-
-        let vtable_sized = &mut vtable;
-        vtable_sized.parse = || {
-            Some(|s, target| {
-                // For String, parsing from a string is just copying the string
-                Ok(unsafe { target.put(s.to_string()) })
-            })
-        };
-
-        vtable
-    };
-
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .vtable({
+                let mut vtable = value_vtable!(alloc::string::String, |f, _opts| write!(
+                    f,
+                    "{}",
+                    Self::SHAPE.type_identifier
+                ));
+
+                let vtable_sized = &mut vtable;
+                vtable_sized.parse = || {
+                    Some(|s, target| {
+                        // For String, parsing from a string is just copying the string
+                        Ok(unsafe { target.put(s.to_string()) })
+                    })
+                };
+
+                vtable
+            })
             .def(Def::Scalar)
             .type_identifier("String")
             .ty(Type::User(UserType::Opaque))
@@ -31,15 +30,14 @@ unsafe impl Facet<'_> for alloc::string::String {
 }
 
 unsafe impl<'a> Facet<'a> for alloc::borrow::Cow<'a, str> {
-    const VTABLE: &'static ValueVTable = &const {
-        value_vtable!(alloc::borrow::Cow<'_, str>, |f, _opts| write!(
-            f,
-            "Cow<'_, str>"
-        ))
-    };
-
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .vtable({
+                value_vtable!(alloc::borrow::Cow<'_, str>, |f, _opts| write!(
+                    f,
+                    "Cow<'_, str>"
+                ))
+            })
             .def(Def::Scalar)
             .type_identifier("Cow")
             .ty(Type::User(UserType::Opaque))

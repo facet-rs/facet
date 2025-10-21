@@ -60,39 +60,39 @@ macro_rules! impl_facet_for_tuple {
         where
             $($elems: Facet<'a>,)+
         {
-            const VTABLE: &'static ValueVTable = &const {
-                ValueVTable::builder::<Self>()
-                    .type_name(|f, opts| {
-                        write_type_name_list(f, opts, "(", ", ", ")", &[$($elems::SHAPE),+])
-                    })
-                    .drop_in_place(|| Some(|data| unsafe { data.drop_in_place::<Self>() }))
-                    .marker_traits(||
-                        MarkerTraits::all()
-                            $(.intersection($elems::SHAPE.vtable.marker_traits()))+
-                    )
-                    .default_in_place(|| {
-                        let elem_shapes = const { &[$($elems::SHAPE),+] };
-                        if Characteristic::all_default(elem_shapes) {
-                            Some(|mut dst| {
-                                $(
-                                    unsafe {
-                                        (<VTableView<$elems>>::of().default_in_place().unwrap())(
-                                            dst.field_uninit_at(mem::offset_of!(Self, $idx))
-                                        );
-                                    }
-                                )+
-
-                                unsafe { dst.assume_init().into() }
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                    .build()
-            };
 
             const SHAPE: &'static Shape = &const {
                 Shape::builder_for_sized::<Self>()
+                    .vtable(
+                        ValueVTable::builder::<Self>()
+                            .type_name(|f, opts| {
+                                write_type_name_list(f, opts, "(", ", ", ")", &[$($elems::SHAPE),+])
+                            })
+                            .drop_in_place(|| Some(|data| unsafe { data.drop_in_place::<Self>() }))
+                            .marker_traits(||
+                                MarkerTraits::all()
+                                    $(.intersection($elems::SHAPE.vtable.marker_traits()))+
+                            )
+                            .default_in_place(|| {
+                                let elem_shapes = const { &[$($elems::SHAPE),+] };
+                                if Characteristic::all_default(elem_shapes) {
+                                    Some(|mut dst| {
+                                        $(
+                                            unsafe {
+                                                (<VTableView<$elems>>::of().default_in_place().unwrap())(
+                                                    dst.field_uninit_at(mem::offset_of!(Self, $idx))
+                                                );
+                                            }
+                                        )+
+
+                                        unsafe { dst.assume_init().into() }
+                                    })
+                                } else {
+                                    None
+                                }
+                            })
+                            .build()
+                    )
                     .type_identifier(const {
                         let fields = [
                             $(field_in_type!(Self, $idx),)+

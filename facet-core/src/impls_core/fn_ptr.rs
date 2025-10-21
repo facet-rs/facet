@@ -1,8 +1,8 @@
 use core::{fmt, hash::Hash, ptr::fn_addr_eq};
 
 use crate::{
-    Facet, FunctionAbi, FunctionPointerDef, HasherProxy, MarkerTraits, PointerType, Shape, Type,
-    TypeNameOpts, TypeParam, ValueVTable,
+    Facet, FunctionAbi, FunctionPointerDef, MarkerTraits, PointerType, Shape, Type, TypeNameOpts,
+    TypeParam, ValueVTable,
 };
 
 #[inline(always)]
@@ -63,44 +63,41 @@ macro_rules! impl_facet_for_fn_ptr {
             $($args: Facet<'a>,)*
             R: Facet<'a>,
         {
-            const VTABLE: &'static ValueVTable = &const {
-                ValueVTable::builder::<Self>()
-                    .type_name(|f, opts| {
-                        write_type_name_list(f, opts, $abi, &[$($args::SHAPE),*], R::SHAPE)
-                    })
-                    .debug(|| Some(|data, f| fmt::Debug::fmt(data.get(), f)))
-                    .clone_into(|| Some(|src, dst| unsafe { dst.put(src.get().clone()).into() }))
-                    .marker_traits(||
-                        MarkerTraits::EQ
-                            .union(MarkerTraits::SEND)
-                            .union(MarkerTraits::SYNC)
-                            .union(MarkerTraits::COPY)
-                            .union(MarkerTraits::UNPIN)
-                            .union(MarkerTraits::UNWIND_SAFE)
-                            .union(MarkerTraits::REF_UNWIND_SAFE)
-                    )
-                    .partial_eq(|| Some(|left, right| {
-                        fn_addr_eq(*left.get(), *right.get())
-                    }))
-                    .partial_ord(|| Some(|left, right| {
-                        #[allow(unpredictable_function_pointer_comparisons)]
-                        left.get().partial_cmp(right.get())
-                    }))
-                    .ord(|| Some(|left, right| {
-                        #[allow(unpredictable_function_pointer_comparisons)]
-                        left.get().cmp(right.get())
-                    }))
-                    .hash(|| Some(|value, hasher_this, hasher_write_fn| {
-                        value.get().hash(&mut unsafe {
-                                HasherProxy::new(hasher_this, hasher_write_fn)
-                            })
-                    }))
-                    .build()
-            };
-
             const SHAPE: &'static Shape = &const {
                 Shape::builder_for_sized::<Self>()
                     .type_identifier("fn")
+                    .vtable(
+                        ValueVTable::builder::<Self>()
+                            .type_name(|f, opts| {
+                                write_type_name_list(f, opts, $abi, &[$($args::SHAPE),*], R::SHAPE)
+                            })
+                            .debug(|| Some(|data, f| fmt::Debug::fmt(data.get(), f)))
+                            .clone_into(|| Some(|src, dst| unsafe { dst.put(src.get().clone()).into() }))
+                            .marker_traits(||
+                                MarkerTraits::EQ
+                                    .union(MarkerTraits::SEND)
+                                    .union(MarkerTraits::SYNC)
+                                    .union(MarkerTraits::COPY)
+                                    .union(MarkerTraits::UNPIN)
+                                    .union(MarkerTraits::UNWIND_SAFE)
+                                    .union(MarkerTraits::REF_UNWIND_SAFE)
+                            )
+                            .partial_eq(|| Some(|left, right| {
+                                fn_addr_eq(*left.get(), *right.get())
+                            }))
+                            .partial_ord(|| Some(|left, right| {
+                                #[allow(unpredictable_function_pointer_comparisons)]
+                                left.get().partial_cmp(right.get())
+                            }))
+                            .ord(|| Some(|left, right| {
+                                #[allow(unpredictable_function_pointer_comparisons)]
+                                left.get().cmp(right.get())
+                            }))
+                            .hash(|| Some(|value, hasher| {
+                                value.get().hash(&mut { hasher })
+                            }))
+                            .build()
+                    )
                     .type_params(&[
                         $(TypeParam { name: stringify!($args), shape: || $args::SHAPE },)*
                     ])

@@ -6,9 +6,6 @@ static TEST_SHAPE: &'static ::facet::Shape = <Test as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 #[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for Test {
-    const VTABLE: &'static ::facet::ValueVTable = &const {
-        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Test"))
-    };
     const SHAPE: &'static ::facet::Shape = &const {
         let __facet_variants: &'static [::facet::Variant] = &const {
             [
@@ -55,6 +52,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Test {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Test"))
+            })
             .type_identifier("Test")
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()

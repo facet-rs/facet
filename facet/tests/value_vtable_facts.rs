@@ -26,7 +26,7 @@ impl<'mem> BoxPtrUninit<'mem> {
     // This will panic when `T` is not `Sized`.
     fn new_sized<'a, T: Facet<'a> + ?Sized>() -> Self {
         let layout = T::SHAPE.layout.sized_layout().expect("T must be Sized");
-        let drop_in_place = (T::VTABLE.drop_in_place)();
+        let drop_in_place = (T::SHAPE.vtable.drop_in_place)();
 
         let ptr = if layout.size() == 0 {
             core::ptr::without_provenance_mut(layout.align())
@@ -226,14 +226,14 @@ where
     }
 
     // Test default_in_place
-    if let Some(default_in_place) = (T::VTABLE.default_in_place)() {
+    if let Some(default_in_place) = (T::SHAPE.vtable.default_in_place)() {
         facts.insert(Fact::Default);
 
         let ptr = BoxPtrUninit::new_sized::<T>();
 
         unsafe { default_in_place(ptr.ptr) };
         let ptr = unsafe { ptr.assume_init() };
-        let debug = unsafe { debug(T::VTABLE, ptr.ptr.as_const()) };
+        let debug = unsafe { debug(&T::SHAPE.vtable, ptr.ptr.as_const()) };
         eprintln!(
             "Default:    {}",
             format_args!("{debug:?}").style(REMARKABLE)
@@ -241,7 +241,7 @@ where
     }
 
     // Test clone
-    if let Some(clone_into) = (T::VTABLE.clone_into)() {
+    if let Some(clone_into) = (T::SHAPE.vtable.clone_into)() {
         facts.insert(Fact::Clone);
 
         let src_ptr = PtrConst::new(NonNull::from(val1).cast::<u8>());
@@ -249,7 +249,7 @@ where
         let ptr = BoxPtrUninit::new_sized::<T>();
         unsafe { clone_into(src_ptr, ptr.ptr) };
         let ptr = unsafe { ptr.assume_init() };
-        let debug = unsafe { debug(T::VTABLE, ptr.ptr.as_const()) };
+        let debug = unsafe { debug(&T::SHAPE.vtable, ptr.ptr.as_const()) };
         eprintln!(
             "Clone:      {}",
             format_args!("{debug:?}").style(REMARKABLE)
@@ -257,7 +257,13 @@ where
     }
 
     // Marker traits
-    facts.extend(T::VTABLE.marker_traits().iter().map(Fact::MarkerTrait));
+    facts.extend(
+        T::SHAPE
+            .vtable
+            .marker_traits()
+            .iter()
+            .map(Fact::MarkerTrait),
+    );
 
     facts
 }
@@ -315,7 +321,7 @@ fn check_facts<'a, 'b: 'a, T>(
 
     expected_facts.extend(marker_traits.marker_traits.iter().map(Fact::MarkerTrait));
 
-    dbg!(T::VTABLE.marker_traits());
+    dbg!(T::SHAPE.vtable.marker_traits());
 
     report_maybe_mismatch(val1, val2, expected_facts, facts);
 }

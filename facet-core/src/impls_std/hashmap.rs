@@ -18,36 +18,37 @@ where
     V: Facet<'a>,
     S: 'a + Default + BuildHasher,
 {
-    const VTABLE: &'static ValueVTable = &const {
-        ValueVTable::builder::<Self>()
-            .marker_traits(|| {
-                let arg_dependent_traits = MarkerTraits::SEND
-                    .union(MarkerTraits::SYNC)
-                    .union(MarkerTraits::EQ)
-                    .union(MarkerTraits::UNPIN)
-                    .union(MarkerTraits::UNWIND_SAFE)
-                    .union(MarkerTraits::REF_UNWIND_SAFE);
-                arg_dependent_traits
-                    .intersection(V::SHAPE.vtable.marker_traits())
-                    .intersection(K::SHAPE.vtable.marker_traits())
-            })
-            .type_name(|f, opts| {
-                if let Some(opts) = opts.for_children() {
-                    write!(f, "{}<", Self::SHAPE.type_identifier)?;
-                    K::SHAPE.vtable.type_name()(f, opts)?;
-                    write!(f, ", ")?;
-                    V::SHAPE.vtable.type_name()(f, opts)?;
-                    write!(f, ">")
-                } else {
-                    write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
-                }
-            })
-            .default_in_place(|| Some(|target| unsafe { target.put(Self::default()).into() }))
-            .build()
-    };
-
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .vtable(
+                ValueVTable::builder::<Self>()
+                    .marker_traits(|| {
+                        let arg_dependent_traits = MarkerTraits::SEND
+                            .union(MarkerTraits::SYNC)
+                            .union(MarkerTraits::EQ)
+                            .union(MarkerTraits::UNPIN)
+                            .union(MarkerTraits::UNWIND_SAFE)
+                            .union(MarkerTraits::REF_UNWIND_SAFE);
+                        arg_dependent_traits
+                            .intersection(V::SHAPE.vtable.marker_traits())
+                            .intersection(K::SHAPE.vtable.marker_traits())
+                    })
+                    .type_name(|f, opts| {
+                        if let Some(opts) = opts.for_children() {
+                            write!(f, "{}<", Self::SHAPE.type_identifier)?;
+                            K::SHAPE.vtable.type_name()(f, opts)?;
+                            write!(f, ", ")?;
+                            V::SHAPE.vtable.type_name()(f, opts)?;
+                            write!(f, ">")
+                        } else {
+                            write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
+                        }
+                    })
+                    .default_in_place(|| {
+                        Some(|target| unsafe { target.put(Self::default()).into() })
+                    })
+                    .build(),
+            )
             .type_identifier("HashMap")
             .type_params(&[
                 TypeParam {
@@ -128,11 +129,13 @@ where
 }
 
 unsafe impl Facet<'_> for RandomState {
-    const VTABLE: &'static ValueVTable =
-        &const { value_vtable!((), |f, _opts| write!(f, "{}", Self::SHAPE.type_identifier)) };
-
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .vtable(value_vtable!((), |f, _opts| write!(
+                f,
+                "{}",
+                Self::SHAPE.type_identifier
+            )))
             .type_identifier("RandomState")
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)

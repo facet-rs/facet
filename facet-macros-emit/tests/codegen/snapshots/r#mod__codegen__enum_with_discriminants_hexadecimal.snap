@@ -6,9 +6,6 @@ static COLOR_SHAPE: &'static ::facet::Shape = <Color as ::facet::Facet>::SHAPE;
 #[automatically_derived]
 #[allow(non_camel_case_types)]
 unsafe impl<'__facet> ::facet::Facet<'__facet> for Color {
-    const VTABLE: &'static ::facet::ValueVTable = &const {
-        ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Color"))
-    };
     const SHAPE: &'static ::facet::Shape = &const {
         let __facet_variants: &'static [::facet::Variant] = &const {
             [
@@ -75,6 +72,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Color {
             ]
         };
         ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Color"))
+            })
             .type_identifier("Color")
             .ty(::facet::Type::User(::facet::UserType::Enum(
                 ::facet::EnumType::builder()

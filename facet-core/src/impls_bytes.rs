@@ -6,42 +6,41 @@ use bytes::{BufMut as _, Bytes, BytesMut};
 
 use crate::{
     Def, Facet, IterVTable, ListDef, ListVTable, PtrConst, PtrMut, PtrUninit, Shape, Type,
-    UserType, ValueVTable, value_vtable,
+    UserType, value_vtable,
 };
 
 type BytesIterator<'mem> = core::slice::Iter<'mem, u8>;
 
 unsafe impl Facet<'_> for Bytes {
-    const VTABLE: &'static ValueVTable = &const {
-        let mut vtable = value_vtable!(Bytes, |f, _opts| write!(
-            f,
-            "{}",
-            Self::SHAPE.type_identifier
-        ));
-        {
-            vtable.try_from = || {
-                Some(
-                    |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
-                        if source_shape.is_type::<BytesMut>() {
-                            let source = unsafe { source.read::<BytesMut>() };
-                            let bytes = source.freeze();
-                            Ok(unsafe { target.put(bytes) })
-                        } else {
-                            Err(crate::TryFromError::UnsupportedSourceShape {
-                                src_shape: source_shape,
-                                expected: &[Bytes::SHAPE],
-                            })
-                        }
-                    },
-                )
-            };
-        }
-
-        vtable
-    };
-
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .vtable({
+                let mut vtable = value_vtable!(Bytes, |f, _opts| write!(
+                    f,
+                    "{}",
+                    Self::SHAPE.type_identifier
+                ));
+                {
+                    vtable.try_from = || {
+                        Some(
+                            |source: PtrConst, source_shape: &Shape, target: PtrUninit| {
+                                if source_shape.is_type::<BytesMut>() {
+                                    let source = unsafe { source.read::<BytesMut>() };
+                                    let bytes = source.freeze();
+                                    Ok(unsafe { target.put(bytes) })
+                                } else {
+                                    Err(crate::TryFromError::UnsupportedSourceShape {
+                                        src_shape: source_shape,
+                                        expected: &[Bytes::SHAPE],
+                                    })
+                                }
+                            },
+                        )
+                    };
+                }
+
+                vtable
+            })
             .ty(Type::User(UserType::Opaque))
             .type_identifier("Bytes")
             .inner(|| BytesMut::SHAPE)
@@ -103,16 +102,15 @@ unsafe impl Facet<'_> for Bytes {
 }
 
 unsafe impl Facet<'_> for BytesMut {
-    const VTABLE: &'static ValueVTable = &const {
-        value_vtable!(BytesMut, |f, _opts| write!(
-            f,
-            "{}",
-            Self::SHAPE.type_identifier
-        ))
-    };
-
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
+            .vtable({
+                value_vtable!(BytesMut, |f, _opts| write!(
+                    f,
+                    "{}",
+                    Self::SHAPE.type_identifier
+                ))
+            })
             .type_identifier("BytesMut")
             .ty(Type::User(UserType::Opaque))
             .def(Def::List(

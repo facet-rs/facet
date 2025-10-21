@@ -37,7 +37,7 @@ pub struct Shape {
     /// If the shape has `ShapeLayout::Unsized`, then the parent pointer needs to be passed.
     ///
     /// There are more specific vtables in variants of [`Def`]
-    pub vtable: &'static ValueVTable,
+    pub vtable: ValueVTable,
 
     /// Underlying type: primitive, sequence, user, pointer.
     ///
@@ -141,17 +141,15 @@ pub enum ShapeAttribute {
 
 impl Shape {
     /// Returns a builder for a shape for some type `T`.
-    pub const fn builder_for_sized<'a, T: Facet<'a>>() -> ShapeBuilder {
-        ShapeBuilder::new(T::VTABLE)
+    pub const fn builder_for_sized<'a, T>() -> ShapeBuilder {
+        ShapeBuilder::new()
             .layout(Layout::new::<T>())
             .id(ConstTypeId::of::<T>())
     }
 
     /// Returns a builder for a shape for some type `T`.
-    pub const fn builder_for_unsized<'a, T: Facet<'a> + ?Sized>() -> ShapeBuilder {
-        ShapeBuilder::new(T::VTABLE)
-            .set_unsized()
-            .id(ConstTypeId::of::<T>())
+    pub const fn builder_for_unsized<'a, T: ?Sized>() -> ShapeBuilder {
+        ShapeBuilder::new().set_unsized().id(ConstTypeId::of::<T>())
     }
 
     /// Check if this shape is of the given type
@@ -199,7 +197,7 @@ impl Shape {
 pub struct ShapeBuilder {
     id: Option<ConstTypeId>,
     layout: Option<ShapeLayout>,
-    vtable: &'static ValueVTable,
+    vtable: Option<ValueVTable>,
     def: Def,
     ty: Option<Type>,
     type_identifier: Option<&'static str>,
@@ -213,11 +211,11 @@ pub struct ShapeBuilder {
 impl ShapeBuilder {
     /// Creates a new `ShapeBuilder` with all fields set to `None`.
     #[allow(clippy::new_without_default)]
-    pub const fn new(vtable: &'static ValueVTable) -> Self {
+    pub const fn new() -> Self {
         Self {
             id: None,
             layout: None,
-            vtable,
+            vtable: None,
             def: Def::Undefined,
             ty: None,
             type_identifier: None,
@@ -229,10 +227,17 @@ impl ShapeBuilder {
         }
     }
 
-    /// Sets the id field of the `ShapeBuilder`.
+    /// Sets the `id` field of the `ShapeBuilder`.
     #[inline]
     pub const fn id(mut self, id: ConstTypeId) -> Self {
         self.id = Some(id);
+        self
+    }
+
+    /// Sets the `vtable` field of the `ShapeBuilder`.
+    #[inline]
+    pub const fn vtable(mut self, vtable: ValueVTable) -> Self {
+        self.vtable = Some(vtable);
         self
     }
 
@@ -322,7 +327,7 @@ impl ShapeBuilder {
         Shape {
             id: self.id.unwrap(),
             layout: self.layout.unwrap(),
-            vtable: self.vtable,
+            vtable: self.vtable.unwrap(),
             type_identifier: self.type_identifier.unwrap(),
             type_params: self.type_params,
             def: self.def,

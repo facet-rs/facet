@@ -494,19 +494,18 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
         #[automatically_derived]
         unsafe impl #bgp_def ::facet::Facet<'__facet> for #struct_name_ident #bgp_without_bounds #where_clauses {
-            const VTABLE: &'static ::facet::ValueVTable = &const {
-                let mut vtable = ::facet::value_vtable!(Self, #type_name_fn);
-                #invariant_maybe
-                #try_from_inner_code // Use the generated code for transparent types
-                vtable
-            };
-
             const SHAPE: &'static ::facet::Shape = &const {
                 let fields: &'static [::facet::Field] = &const {[#(#fields_vec),*]};
 
                 #inner_shape_fn // Include inner_shape function if needed
 
                 ::facet::Shape::builder_for_sized::<Self>()
+                    .vtable({
+                        let mut vtable = ::facet::value_vtable!(Self, #type_name_fn);
+                        #invariant_maybe
+                        #try_from_inner_code // Use the generated code for transparent types
+                        vtable
+                    })
                     .type_identifier(#struct_name_str)
                     #type_params // Still from parsed.generics
                     .ty(::facet::Type::User(::facet::UserType::Struct(::facet::StructType::builder()

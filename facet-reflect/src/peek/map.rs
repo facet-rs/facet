@@ -1,6 +1,6 @@
-use core::ptr::NonNull;
+use facet_core::{MapDef, PtrMut};
 
-use facet_core::{MapDef, PtrConst, PtrMut};
+use crate::ReflectError;
 
 use super::Peek;
 
@@ -79,36 +79,53 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
 
     /// Check if the map contains a key
     #[inline]
-    pub fn contains_key(&self, key: &impl facet_core::Facet<'facet>) -> bool {
-        unsafe {
-            let key_ptr = PtrConst::new(NonNull::from(key));
-            (self.def.vtable.contains_key_fn)(self.value.data(), key_ptr)
-        }
+    pub fn contains_key(&self, key: &impl facet_core::Facet<'facet>) -> Result<bool, ReflectError> {
+        self.contains_key_peek(Peek::new(key))
     }
 
     /// Get a value from the map for the given key
     #[inline]
-    pub fn get<'k>(&self, key: &'k impl facet_core::Facet<'facet>) -> Option<Peek<'mem, 'facet>> {
-        unsafe {
-            let key_ptr = PtrConst::new(NonNull::from(key));
-            let value_ptr = (self.def.vtable.get_value_ptr_fn)(self.value.data(), key_ptr)?;
-            Some(Peek::unchecked_new(value_ptr, self.def.v()))
-        }
+    pub fn get<'k>(
+        &self,
+        key: &'k impl facet_core::Facet<'facet>,
+    ) -> Result<Option<Peek<'mem, 'facet>>, ReflectError> {
+        self.get_peek(Peek::new(key))
     }
 
     /// Check if the map contains a key
     #[inline]
-    pub fn contains_key_peek(&self, key: Peek<'_, 'facet>) -> bool {
-        unsafe { (self.def.vtable.contains_key_fn)(self.value.data(), key.data()) }
+    pub fn contains_key_peek(&self, key: Peek<'_, 'facet>) -> Result<bool, ReflectError> {
+        if self.def.k() == key.shape {
+            return Ok(unsafe { (self.def.vtable.contains_key_fn)(self.value.data(), key.data()) });
+        }
+
+        Err(ReflectError::WrongShape {
+            expected: self.def.k(),
+            actual: key.shape,
+        })
     }
 
     /// Get a value from the map for the given key
     #[inline]
-    pub fn get_peek(&self, key: Peek<'_, 'facet>) -> Option<Peek<'mem, 'facet>> {
-        unsafe {
-            let value_ptr = (self.def.vtable.get_value_ptr_fn)(self.value.data(), key.data())?;
-            Some(Peek::unchecked_new(value_ptr, self.def.v()))
+    pub fn get_peek(
+        &self,
+        key: Peek<'_, 'facet>,
+    ) -> Result<Option<Peek<'mem, 'facet>>, ReflectError> {
+        if self.def.k() == key.shape {
+            return Ok(unsafe {
+                let Some(value_ptr) =
+                    (self.def.vtable.get_value_ptr_fn)(self.value.data(), key.data())
+                else {
+                    return Ok(None);
+                };
+                Some(Peek::unchecked_new(value_ptr, self.def.v()))
+            });
         }
+
+        Err(ReflectError::WrongShape {
+            expected: self.def.k(),
+            actual: key.shape,
+        })
     }
 
     /// Returns an iterator over the key-value pairs in the map
