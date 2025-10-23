@@ -12,6 +12,7 @@ use crate::{
 
 type HashMapIterator<'mem, K, V> = std::collections::hash_map::Iter<'mem, K, V>;
 
+// TODO: Debug, PartialEq, Eq for HashMap, HashSet
 unsafe impl<'a, K, V, S> Facet<'a> for HashMap<K, V, S>
 where
     K: Facet<'a> + core::cmp::Eq + core::hash::Hash,
@@ -34,15 +35,15 @@ where
                             .intersection(K::SHAPE.vtable.marker_traits())
                     })
                     .type_name(|f, opts| {
+                        write!(f, "{}<", Self::SHAPE.type_identifier)?;
                         if let Some(opts) = opts.for_children() {
-                            write!(f, "{}<", Self::SHAPE.type_identifier)?;
                             K::SHAPE.vtable.type_name()(f, opts)?;
                             write!(f, ", ")?;
                             V::SHAPE.vtable.type_name()(f, opts)?;
-                            write!(f, ">")
                         } else {
-                            write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
+                            write!(f, "…")?;
                         }
+                        write!(f, ">")
                     })
                     .default_in_place({
                         Some(|target| unsafe { target.put(Self::default()).into() })

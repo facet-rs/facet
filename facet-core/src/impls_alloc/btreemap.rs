@@ -9,6 +9,7 @@ use crate::{
 
 type BTreeMapIterator<'mem, K, V> = alloc::collections::btree_map::Iter<'mem, K, V>;
 
+// TODO: Debug, Hash, PartialEq, Eq, PartialOrd, Ord, for BTreeMap, BTreeSet
 unsafe impl<'a, K, V> Facet<'a> for BTreeMap<K, V>
 where
     K: Facet<'a> + core::cmp::Eq + core::cmp::Ord,
@@ -29,15 +30,15 @@ where
                             .union(MarkerTraits::UNPIN)
                     })
                     .type_name(|f, opts| {
+                        write!(f, "{}<", Self::SHAPE.type_identifier)?;
                         if let Some(opts) = opts.for_children() {
-                            write!(f, "{}<", Self::SHAPE.type_identifier)?;
                             K::SHAPE.vtable.type_name()(f, opts)?;
                             write!(f, ", ")?;
                             V::SHAPE.vtable.type_name()(f, opts)?;
-                            write!(f, ">")
                         } else {
-                            write!(f, "BTreeMap<⋯>")
+                            write!(f, "…")?;
                         }
+                        write!(f, ">")
                     })
                     .default_in_place({
                         Some(|target| unsafe { target.put(Self::default()).into() })

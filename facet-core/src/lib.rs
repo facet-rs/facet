@@ -88,3 +88,5 @@ pub unsafe trait Facet<'facet>: 'facet {
     /// Shape embeds all other constants of this trait.
     const SHAPE: &'static Shape;
 }
+
+mod shape_util;

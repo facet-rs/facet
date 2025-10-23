@@ -4,6 +4,7 @@ use alloc::boxed::Box;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
+use crate::shape_util::vtable_builder_for_ptr;
 use crate::{
     Def, Facet, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrMut, PtrUninit,
     Shape, SliceBuilderVTable, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type,
@@ -58,17 +59,19 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
                     Ok(PtrConst::new(NonNull::from(&**arc)))
                 }
 
-                let mut vtable = value_vtable!(alloc::sync::Arc<T>, |f, opts| {
-                    write!(f, "{}", Self::SHAPE.type_identifier)?;
-                    if let Some(opts) = opts.for_children() {
-                        write!(f, "<")?;
-                        (T::SHAPE.vtable.type_name())(f, opts)?;
-                        write!(f, ">")?;
-                    } else {
-                        write!(f, "<…>")?;
-                    }
-                    Ok(())
-                });
+                let mut vtable = vtable_builder_for_ptr::<T, Self>()
+                    .type_name(|f, opts| {
+                        write!(f, "{}", Self::SHAPE.type_identifier)?;
+                        if let Some(opts) = opts.for_children() {
+                            write!(f, "<")?;
+                            (T::SHAPE.vtable.type_name())(f, opts)?;
+                            write!(f, ">")?;
+                        } else {
+                            write!(f, "<…>")?;
+                        }
+                        Ok(())
+                    })
+                    .build();
 
                 {
                     vtable.try_from = Some(try_from::<T>);
@@ -119,17 +122,19 @@ unsafe impl<'a> Facet<'a> for Arc<str> {
     const SHAPE: &'static crate::Shape = &const {
         crate::Shape::builder_for_sized::<Self>()
             .vtable({
-                value_vtable!(alloc::sync::Arc<str>, |f, opts| {
-                    write!(f, "{}", Self::SHAPE.type_identifier)?;
-                    if let Some(opts) = opts.for_children() {
-                        write!(f, "<")?;
-                        (str::SHAPE.vtable.type_name())(f, opts)?;
-                        write!(f, ">")?;
-                    } else {
-                        write!(f, "<…>")?;
-                    }
-                    Ok(())
-                })
+                vtable_builder_for_ptr::<str, Self>()
+                    .type_name(|f, opts| {
+                        write!(f, "{}", Self::SHAPE.type_identifier)?;
+                        if let Some(opts) = opts.for_children() {
+                            write!(f, "<")?;
+                            (str::SHAPE.vtable.type_name())(f, opts)?;
+                            write!(f, ">")?;
+                        } else {
+                            write!(f, "<…>")?;
+                        }
+                        Ok(())
+                    })
+                    .build()
             })
             .type_identifier("Arc")
             .type_params(&[crate::TypeParam {
@@ -197,17 +202,19 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Arc<[U]> {
 
         crate::Shape::builder_for_sized::<Self>()
             .vtable({
-                value_vtable!(alloc::sync::Arc<[U]>, |f, opts| {
-                    write!(f, "{}", Self::SHAPE.type_identifier)?;
-                    if let Some(opts) = opts.for_children() {
-                        write!(f, "<")?;
-                        (<[U]>::SHAPE.vtable.type_name())(f, opts)?;
-                        write!(f, ">")?;
-                    } else {
-                        write!(f, "<…>")?;
-                    }
-                    Ok(())
-                })
+                vtable_builder_for_ptr::<[U], Self>()
+                    .type_name(|f, opts| {
+                        write!(f, "{}", Self::SHAPE.type_identifier)?;
+                        if let Some(opts) = opts.for_children() {
+                            write!(f, "<")?;
+                            (<[U]>::SHAPE.vtable.type_name())(f, opts)?;
+                            write!(f, ">")?;
+                        } else {
+                            write!(f, "<…>")?;
+                        }
+                        Ok(())
+                    })
+                    .build()
             })
             .type_identifier("Arc")
             .type_params(&[crate::TypeParam {

@@ -1,5 +1,6 @@
 use core::ptr::NonNull;
 
+use crate::shape_util::*;
 use crate::*;
 
 use alloc::boxed::Box;
@@ -14,14 +15,14 @@ where
     const SHAPE: &'static Shape = &const {
         Shape::builder_for_sized::<Self>()
             .vtable({
-                ValueVTable::builder::<Self>()
+                vtable_builder_for_list::<T, Self>()
                     .type_name(|f, opts| {
                         if let Some(opts) = opts.for_children() {
                             write!(f, "{}<", Self::SHAPE.type_identifier)?;
                             T::SHAPE.vtable.type_name()(f, opts)?;
                             write!(f, ">")
                         } else {
-                            write!(f, "{}<⋯>", Self::SHAPE.type_identifier)
+                            write!(f, "{}<…>", Self::SHAPE.type_identifier)
                         }
                     })
                     .default_in_place({

@@ -57,6 +57,46 @@ macro_rules! impl_for_ref {
                                     None
                                 }
                             })
+                            .hash({
+                                if T::SHAPE.vtable.has_hash() {
+                                    Some(|value, hasher| {
+                                        let view = VTableView::<T>::of();
+                                        view.hash().unwrap()((&**value.get()).into(), hasher)
+                                    })
+                                } else {
+                                    None
+                                }
+                            })
+                            .partial_eq({
+                                if T::SHAPE.vtable.has_partial_eq() {
+                                    Some(|a, b| {
+                                        let view = VTableView::<T>::of();
+                                        view.partial_eq().unwrap()((&**a.get()).into(), (&**b.get()).into())
+                                    })
+                                } else {
+                                    None
+                                }
+                            })
+                            .partial_ord({
+                                if T::SHAPE.vtable.has_partial_ord() {
+                                    Some(|a, b| {
+                                        let view = VTableView::<T>::of();
+                                        view.partial_ord().unwrap()((&**a.get()).into(), (&**b.get()).into())
+                                    })
+                                } else {
+                                    None
+                                }
+                            })
+                            .ord({
+                                if T::SHAPE.vtable.has_ord() {
+                                    Some(|a, b| {
+                                        let view = VTableView::<T>::of();
+                                        view.ord().unwrap()((&**a.get()).into(), (&**b.get()).into())
+                                    })
+                                } else {
+                                    None
+                                }
+                            })
                             .clone_into({
                                 if stringify!($($modifiers)*).is_empty() {
                                     Some(|src, dst| unsafe { dst.put(core::ptr::read(src.as_ptr())).into() })
@@ -70,14 +110,14 @@ macro_rules! impl_for_ref {
                                         write!(f, "&")?;
                                         (T::SHAPE.vtable.type_name())(f, opts)
                                     } else {
-                                        write!(f, "&⋯")
+                                        write!(f, "&…")
                                     }
                                 } else {
                                     if let Some(opts) = opts.for_children() {
                                         write!(f, "&mut ")?;
                                         (T::SHAPE.vtable.type_name())(f, opts)
                                     } else {
-                                        write!(f, "&mut ⋯")
+                                        write!(f, "&mut …")
                                     }
                                 }
                             })

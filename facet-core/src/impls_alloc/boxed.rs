@@ -4,7 +4,8 @@ use alloc::boxed::Box;
 
 use crate::{
     Def, Facet, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrMut, PtrUninit,
-    Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType, value_vtable,
+    Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType,
+    shape_util::vtable_builder_for_ptr,
 };
 
 // Define the functions for transparent conversion between Box<T> and T
@@ -58,17 +59,19 @@ unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for Box<T> {
                     Ok(PtrConst::new(NonNull::from(&**boxed)))
                 }
 
-                let mut vtable = value_vtable!(alloc::boxed::Box<T>, |f, opts| {
-                    write!(f, "{}", Self::SHAPE.type_identifier)?;
-                    if let Some(opts) = opts.for_children() {
-                        write!(f, "<")?;
-                        (T::SHAPE.vtable.type_name())(f, opts)?;
-                        write!(f, ">")?;
-                    } else {
-                        write!(f, "<…>")?;
-                    }
-                    Ok(())
-                });
+                let mut vtable = vtable_builder_for_ptr::<T, Self>()
+                    .type_name(|f, opts| {
+                        write!(f, "{}", Self::SHAPE.type_identifier)?;
+                        if let Some(opts) = opts.for_children() {
+                            write!(f, "<")?;
+                            (T::SHAPE.vtable.type_name())(f, opts)?;
+                            write!(f, ">")?;
+                        } else {
+                            write!(f, "<…>")?;
+                        }
+                        Ok(())
+                    })
+                    .build();
                 if size_of::<*const T>() == size_of::<*const ()>() {
                     vtable.try_from = Some(try_from);
                     vtable.try_into_inner = Some(try_into_inner::<T>);

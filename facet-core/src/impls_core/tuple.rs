@@ -23,7 +23,7 @@ pub fn write_type_name_list(
             shape.write_type_name(f, opts)?;
         }
     } else {
-        write!(f, "⋯")?;
+        write!(f, "…")?;
     }
     f.pad(close)?;
     Ok(())
@@ -99,7 +99,7 @@ macro_rules! impl_facet_for_tuple {
                         if fields.len() == 1 {
                             "(_)"
                         } else {
-                            "(⋯)"
+                            "(…)"
                         }
                     })
                     .ty(Type::User(UserType::Struct(StructType {

@@ -1,9 +1,10 @@
-use core::{mem::MaybeUninit, ptr::NonNull};
+use core::{cmp::Ordering, hash::Hash, mem::MaybeUninit, ptr::NonNull};
 
 use crate::{
     Def, EnumRepr, EnumType, Facet, Field, FieldFlags, OptionDef, OptionVTable, PtrConst, PtrMut,
     PtrUninit, Repr, Shape, StructKind, StructType, TryBorrowInnerError, TryFromError,
-    TryIntoInnerError, Type, TypedPtrUninit, UserType, VTableView, Variant, value_vtable,
+    TryIntoInnerError, Type, TypedPtrUninit, UserType, VTableView, Variant, shape_util,
+    value_vtable,
 };
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
     const SHAPE: &'static Shape = &const {
@@ -61,22 +62,89 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
 
                 {
                     let vtable_sized = &mut vtable;
-                    vtable_sized.debug = {
-                        if T::SHAPE.is_debug() {
-                            Some(|this, f| {
-                                let this = unsafe { this.get::<Self>() };
-                                if let Some(value) = &this {
-                                    write!(f, "Some(")?;
-                                    (<VTableView<T>>::of().debug().unwrap())(value.into(), f)?;
-                                    write!(f, ")")?;
-                                } else {
-                                    write!(f, "None")?;
-                                }
-                                Ok(())
-                            })
-                        } else {
-                            None
-                        }
+                    vtable_sized.debug = if T::SHAPE.is_debug() {
+                        Some(|this, f| {
+                            let this = unsafe { this.get::<Self>() };
+                            if let Some(value) = &this {
+                                f.debug_tuple("Some")
+                                    .field(&shape_util::Debug {
+                                        ptr: PtrConst::new(value.into()),
+                                        f: T::SHAPE.vtable.debug.unwrap(),
+                                    })
+                                    .finish()
+                            } else {
+                                write!(f, "None")
+                            }
+                        })
+                    } else {
+                        None
+                    };
+
+                    vtable_sized.hash = if T::SHAPE.is_hash() {
+                        Some(|this, hasher| unsafe {
+                            let this = this.get::<Self>();
+                            this.as_ref()
+                                .map(|this| shape_util::Hash {
+                                    ptr: PtrConst::new(this.into()),
+                                    f: T::SHAPE.vtable.hash.unwrap(),
+                                })
+                                .hash(&mut { hasher });
+                        })
+                    } else {
+                        None
+                    };
+
+                    vtable_sized.partial_eq = if T::SHAPE.is_partial_eq() {
+                        Some(|a, b| unsafe {
+                            let a = a.get::<Self>();
+                            let b = b.get::<Self>();
+                            match (a, b) {
+                                (None, None) => true,
+                                (Some(a), Some(b)) => T::SHAPE.vtable.partial_eq.unwrap()(
+                                    PtrConst::new(a.into()),
+                                    PtrConst::new(b.into()),
+                                ),
+                                _ => false,
+                            }
+                        })
+                    } else {
+                        None
+                    };
+
+                    vtable_sized.partial_ord = if T::SHAPE.is_partial_ord() {
+                        Some(|a, b| unsafe {
+                            let a = a.get::<Self>();
+                            let b = b.get::<Self>();
+                            match (a, b) {
+                                (None, None) => Some(Ordering::Equal),
+                                (None, Some(_)) => Some(Ordering::Less),
+                                (Some(_), None) => Some(Ordering::Greater),
+                                (Some(a), Some(b)) => T::SHAPE.vtable.partial_ord.unwrap()(
+                                    PtrConst::new(a.into()),
+                                    PtrConst::new(b.into()),
+                                ),
+                            }
+                        })
+                    } else {
+                        None
+                    };
+
+                    vtable_sized.ord = if T::SHAPE.is_ord() {
+                        Some(|a, b| unsafe {
+                            let a = a.get::<Self>();
+                            let b = b.get::<Self>();
+                            match (a, b) {
+                                (None, None) => Ordering::Equal,
+                                (None, Some(_)) => Ordering::Less,
+                                (Some(_), None) => Ordering::Greater,
+                                (Some(a), Some(b)) => T::SHAPE.vtable.ord.unwrap()(
+                                    PtrConst::new(a.into()),
+                                    PtrConst::new(b.into()),
+                                ),
+                            }
+                        })
+                    } else {
+                        None
                     };
 
                     vtable_sized.parse = {

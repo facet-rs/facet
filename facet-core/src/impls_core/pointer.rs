@@ -1,4 +1,5 @@
 use core::fmt;
+use core::hash::Hash;
 
 use crate::{
     Facet, MarkerTraits, PointerType, Shape, Type, TypeParam, ValuePointerType, ValueVTable,
@@ -28,13 +29,26 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *const T {
                         marker_traits
                     })
                     .debug(Some(|p, f| fmt::Debug::fmt(p.get(), f)))
+                    .partial_eq(Some(|a, b| {
+                        #[allow(ambiguous_wide_pointer_comparisons)]
+                        (*a.get() == *b.get())
+                    }))
+                    .partial_ord(Some(|a, b| {
+                        #[allow(ambiguous_wide_pointer_comparisons)]
+                        (a.get().partial_cmp(b.get()))
+                    }))
+                    .ord(Some(|a, b| {
+                        #[allow(ambiguous_wide_pointer_comparisons)]
+                        (a.get().cmp(b.get()))
+                    }))
+                    .hash(Some(|value, hasher| value.get().hash(&mut { hasher })))
                     .clone_into(Some(|src, dst| unsafe { dst.put(*src.get()).into() }))
                     .type_name(|f, opts| {
                         if let Some(opts) = opts.for_children() {
                             write!(f, "*const ")?;
                             (T::SHAPE.vtable.type_name())(f, opts)
                         } else {
-                            write!(f, "*const ⋯")
+                            write!(f, "*const …")
                         }
                     })
                     .build(),
@@ -82,6 +96,19 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
 
                         marker_traits
                     })
+                    .partial_eq(Some(|a, b| {
+                        #[allow(ambiguous_wide_pointer_comparisons)]
+                        (*a.get() == *b.get())
+                    }))
+                    .partial_ord(Some(|a, b| {
+                        #[allow(ambiguous_wide_pointer_comparisons)]
+                        (a.get().partial_cmp(b.get()))
+                    }))
+                    .ord(Some(|a, b| {
+                        #[allow(ambiguous_wide_pointer_comparisons)]
+                        (a.get().cmp(b.get()))
+                    }))
+                    .hash(Some(|value, hasher| value.get().hash(&mut { hasher })))
                     .debug(Some(|p, f| fmt::Debug::fmt(p.get(), f)))
                     .clone_into(Some(|src, dst| unsafe { dst.put(*src.get()).into() }))
                     .type_name(|f, opts| {
@@ -89,7 +116,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
                             write!(f, "*mut ")?;
                             (T::SHAPE.vtable.type_name())(f, opts)
                         } else {
-                            write!(f, "*mut ⋯")
+                            write!(f, "*mut …")
                         }
                     })
                     .build(),

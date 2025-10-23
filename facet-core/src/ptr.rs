@@ -15,6 +15,24 @@ impl<'mem, T: ?Sized> From<TypedPtrUninit<'mem, T>> for PtrUninit<'mem> {
     }
 }
 
+impl<'mem, T: ?Sized> From<TypedPtrConst<'mem, T>> for PtrConst<'mem> {
+    fn from(ptr: TypedPtrConst<'mem, T>) -> Self {
+        PtrConst {
+            ptr: ptr.0,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<'mem, T: ?Sized> From<TypedPtrMut<'mem, T>> for PtrMut<'mem> {
+    fn from(ptr: TypedPtrMut<'mem, T>) -> Self {
+        PtrMut {
+            ptr: ptr.0,
+            phantom: PhantomData,
+        }
+    }
+}
+
 /// A pointer to an uninitialized value with a lifetime.
 #[repr(transparent)]
 pub struct TypedPtrUninit<'mem, T: ?Sized>(Ptr, PhantomData<&'mem mut T>);
