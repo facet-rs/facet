@@ -268,6 +268,7 @@ where
     facts
 }
 
+#[track_caller]
 fn report_maybe_mismatch<'a, T>(
     val1: &T,
     val2: &T,
@@ -306,6 +307,7 @@ fn report_maybe_mismatch<'a, T>(
     );
 }
 
+#[track_caller]
 fn check_facts<'a, 'b: 'a, T>(
     val1: &'b T,
     val2: &'b T,
@@ -328,27 +330,39 @@ fn check_facts<'a, 'b: 'a, T>(
 
 // slightly different version to overwrite the equality parts as miri juggles the addresses
 #[cfg(feature = "fn-ptr")]
+#[track_caller]
 fn check_facts_no_cmp<'a, 'b: 'a, T>(
     val1: &'b T,
     val2: &'b T,
-    mut expected_facts: BTreeSet<Fact>,
+    expected_facts: BTreeSet<Fact>,
     marker_traits: TypedMarkerTraits<T>,
 ) where
     T: Facet<'a> + ?Sized,
 {
-    let name = format!("{}", T::SHAPE);
-    eprint!("{}", format_args!("== {name}: ").yellow());
-
-    let facts = collect_facts(val1, val1);
-    for &fact in facts.iter() {
-        if let Fact::PartialEqAnd { .. } | Fact::OrdAnd { .. } | Fact::PartialOrdAnd { .. } = fact {
-            expected_facts.insert(fact);
-        }
+    #[cfg(not(miri))]
+    {
+        check_facts(val1, val2, expected_facts, marker_traits)
     }
 
-    expected_facts.extend(marker_traits.marker_traits.iter().map(Fact::MarkerTrait));
+    #[cfg(miri)]
+    {
+        let mut expected_facts = expected_facts;
+        let name = format!("{}", T::SHAPE);
+        eprint!("{}", format_args!("== {name}: ").yellow());
 
-    report_maybe_mismatch(val1, val2, expected_facts, facts);
+        let facts = collect_facts(val1, val1);
+        for &fact in facts.iter() {
+            if let Fact::PartialEqAnd { .. } | Fact::OrdAnd { .. } | Fact::PartialOrdAnd { .. } =
+                fact
+            {
+                expected_facts.insert(fact);
+            }
+        }
+
+        expected_facts.extend(marker_traits.marker_traits.iter().map(Fact::MarkerTrait));
+
+        report_maybe_mismatch(val1, val2, expected_facts, facts);
+    }
 }
 
 #[derive(Default)]
@@ -806,7 +820,13 @@ fn test_string_traits() {
     check_facts(
         &"hello",
         &"world",
-        FactBuilder::new().debug().display().clone().build(),
+        FactBuilder::new()
+            .debug()
+            .display()
+            .partial_eq_and(false)
+            .correct_ord_and(Ordering::Less)
+            .clone()
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -960,7 +980,11 @@ fn test_slice_traits() {
     check_facts(
         &["hello", "world"][..],
         &["foo", "bar"][..],
-        FactBuilder::new().debug().build(),
+        FactBuilder::new()
+            .debug()
+            .partial_eq_and(false)
+            .correct_ord_and(Ordering::Greater)
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -977,7 +1001,12 @@ fn test_slice_ref_traits() {
     check_facts(
         &&[1, 2, 3][..],
         &&[4, 5, 6][..],
-        FactBuilder::new().debug().clone().build(),
+        FactBuilder::new()
+            .debug()
+            .partial_eq_and(false)
+            .correct_ord_and(Ordering::Less)
+            .clone()
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -992,7 +1021,12 @@ fn test_slice_ref_traits() {
     check_facts(
         &&["hello", "world"][..],
         &&["foo", "bar"][..],
-        FactBuilder::new().debug().clone().build(),
+        FactBuilder::new()
+            .debug()
+            .partial_eq_and(false)
+            .correct_ord_and(Ordering::Greater)
+            .clone()
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -1027,7 +1061,12 @@ fn test_vecs() {
     check_facts(
         &vec![1, 2, 3],
         &vec![4, 5, 6],
-        FactBuilder::new().default().build(),
+        FactBuilder::new()
+            .debug()
+            .partial_eq_and(false)
+            .correct_ord_and(Ordering::Less)
+            .default()
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -1353,7 +1392,12 @@ fn test_fn_ptr() {
     check_facts_no_cmp::<fn(u32) -> u32>(
         &c,
         &c,
-        FactBuilder::new().debug().clone().build(),
+        FactBuilder::new()
+            .debug()
+            .partial_eq_and(true)
+            .correct_ord_and(Ordering::Equal)
+            .clone()
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -1373,7 +1417,12 @@ fn test_fn_ptr() {
     check_facts_no_cmp::<extern "C" fn(usize) -> u32>(
         &foo,
         &foo,
-        FactBuilder::new().debug().clone().build(),
+        FactBuilder::new()
+            .debug()
+            .partial_eq_and(true)
+            .correct_ord_and(Ordering::Equal)
+            .clone()
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -1384,10 +1433,20 @@ fn test_fn_ptr() {
             .ref_unwind_safe(),
     );
 
+    let l = (|_| 0) as fn(_) -> _;
+    let r = (|_| 1) as fn(_) -> _;
     check_facts_no_cmp::<fn(u32) -> u32>(
-        &((|_| 0) as fn(_) -> _),
-        &((|_| 1) as fn(_) -> _),
-        FactBuilder::new().debug().clone().build(),
+        &l,
+        &r,
+        FactBuilder::new()
+            .debug()
+            .partial_eq_and(false)
+            .correct_ord_and(
+                #[allow(unpredictable_function_pointer_comparisons)]
+                l.cmp(&r),
+            )
+            .clone()
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -1407,7 +1466,13 @@ fn test_ptr() {
     check_facts(
         &ptr,
         &ptr,
-        FactBuilder::new().debug().clone().build(),
+        FactBuilder::new()
+            .clone()
+            .debug()
+            .partial_eq_and(true)
+            .ord_and(Ordering::Equal)
+            .partial_ord_and(Some(Ordering::Equal))
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .copy()
@@ -1419,7 +1484,13 @@ fn test_ptr() {
     check_facts(
         &ptr.cast_mut(),
         &ptr.cast_mut(),
-        FactBuilder::new().debug().clone().build(),
+        FactBuilder::new()
+            .clone()
+            .debug()
+            .partial_eq_and(true)
+            .ord_and(Ordering::Equal)
+            .partial_ord_and(Some(Ordering::Equal))
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .copy()
@@ -1434,7 +1505,13 @@ fn test_ptr() {
     check_facts(
         &ptr,
         &ptr,
-        FactBuilder::new().debug().clone().build(),
+        FactBuilder::new()
+            .clone()
+            .debug()
+            .partial_eq_and(true)
+            .ord_and(Ordering::Equal)
+            .partial_ord_and(Some(Ordering::Equal))
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .copy()
@@ -1446,7 +1523,13 @@ fn test_ptr() {
     check_facts(
         &ptr.cast_mut(),
         &ptr.cast_mut(),
-        FactBuilder::new().debug().clone().build(),
+        FactBuilder::new()
+            .clone()
+            .debug()
+            .partial_eq_and(true)
+            .ord_and(Ordering::Equal)
+            .partial_ord_and(Some(Ordering::Equal))
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .copy()
@@ -1458,7 +1541,12 @@ fn test_ptr() {
     check_facts(
         &ptr,
         &&raw const s[..1],
-        FactBuilder::new().debug().clone().build(),
+        FactBuilder::new()
+            .clone()
+            .debug()
+            .partial_eq_and(false)
+            .correct_ord_and(ptr.cmp(&&raw const s[..1]))
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .copy()
@@ -1470,7 +1558,12 @@ fn test_ptr() {
     check_facts(
         &ptr.cast_mut(),
         &core::ptr::from_ref(&s[..1]).cast_mut(),
-        FactBuilder::new().debug().clone().build(),
+        FactBuilder::new()
+            .clone()
+            .debug()
+            .partial_eq_and(false)
+            .correct_ord_and(ptr.cmp(&&raw const s[..1]))
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .copy()
@@ -1485,7 +1578,13 @@ fn test_ref() {
     check_facts(
         &&(),
         &&(),
-        FactBuilder::new().debug().clone().build(),
+        FactBuilder::new()
+            .debug()
+            .partial_eq_and(true)
+            .ord_and(Ordering::Equal)
+            .partial_ord_and(Some(Ordering::Equal))
+            .clone()
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -1502,7 +1601,13 @@ fn test_ref() {
     check_facts(
         &&ptr,
         &&ptr,
-        FactBuilder::new().debug().clone().build(),
+        FactBuilder::new()
+            .debug()
+            .partial_eq_and(true)
+            .ord_and(Ordering::Equal)
+            .partial_ord_and(Some(Ordering::Equal))
+            .clone()
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .copy()
@@ -1517,7 +1622,12 @@ fn test_mut_ref() {
     check_facts(
         &&mut (),
         &&mut (),
-        FactBuilder::new().debug().build(),
+        FactBuilder::new()
+            .debug()
+            .partial_eq_and(true)
+            .ord_and(Ordering::Equal)
+            .partial_ord_and(Some(Ordering::Equal))
+            .build(),
         TypedMarkerTraits::new()
             .eq()
             .send()
@@ -1535,7 +1645,12 @@ fn test_mut_ref() {
     check_facts(
         &ref1,
         &ref2,
-        FactBuilder::new().debug().build(),
+        FactBuilder::new()
+            .debug()
+            .partial_eq_and(true)
+            .ord_and(Ordering::Equal)
+            .partial_ord_and(Some(Ordering::Equal))
+            .build(),
         TypedMarkerTraits::new().eq().unpin().ref_unwind_safe(),
     );
 }
@@ -1572,14 +1687,24 @@ fn test_rc_weak() {
     check_facts(
         &ptr,
         &ptr,
-        FactBuilder::new().clone().debug().build(),
+        FactBuilder::new()
+            .clone()
+            .debug()
+            .partial_eq_and(true)
+            .correct_ord_and(Ordering::Equal)
+            .build(),
         TypedMarkerTraits::new().eq().copy().unpin(),
     );
 
     check_facts(
         &ptr.cast_mut(),
         &ptr.cast_mut(),
-        FactBuilder::new().clone().debug().build(),
+        FactBuilder::new()
+            .clone()
+            .debug()
+            .partial_eq_and(true)
+            .correct_ord_and(Ordering::Equal)
+            .build(),
         TypedMarkerTraits::new().eq().copy().unpin(),
     );
 }

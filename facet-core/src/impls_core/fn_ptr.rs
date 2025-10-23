@@ -30,7 +30,7 @@ pub fn write_type_name_list(
             shape.write_type_name(f, opts)?;
         }
     } else {
-        write!(f, "⋯")?;
+        write!(f, "…")?;
     }
     f.pad(") -> ")?;
     ret_type.write_type_name(f, opts)?;

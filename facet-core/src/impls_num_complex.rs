@@ -22,12 +22,23 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Complex<T> {
                     ) && matches!(size_of::<T>(), 4 | 8)
                     {
                         Some(|ptr, f| {
-                            if T::SHAPE == <f32 as Facet>::SHAPE {
-                                let ptr = unsafe { &*(ptr.as_ptr() as *const Complex<f32>) };
-                                fmt::Display::fmt(ptr, f)
-                            } else if T::SHAPE == <f64 as Facet>::SHAPE {
-                                let ptr = unsafe { &*(ptr.as_ptr() as *const Complex<f64>) };
-                                fmt::Display::fmt(ptr, f)
+                            if const {
+                                matches!(
+                                    T::SHAPE.ty,
+                                    Type::Primitive(PrimitiveType::Numeric(NumericType::Float))
+                                )
+                            } {
+                                if const { size_of::<T>() == 4 } {
+                                    assert_eq!(T::SHAPE, <f32 as Facet>::SHAPE);
+                                    let ptr = unsafe { &*(ptr.as_ptr() as *const Complex<f32>) };
+                                    fmt::Display::fmt(ptr, f)
+                                } else if const { size_of::<T>() == 8 } {
+                                    assert_eq!(T::SHAPE, <f64 as Facet>::SHAPE);
+                                    let ptr = unsafe { &*(ptr.as_ptr() as *const Complex<f64>) };
+                                    fmt::Display::fmt(ptr, f)
+                                } else {
+                                    unreachable!()
+                                }
                             } else {
                                 unreachable!()
                             }
@@ -36,19 +47,28 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Complex<T> {
                         None
                     }
                 })
+                .debug({
+                    if T::SHAPE.vtable.has_debug() {
+                        Some(|this, f| unsafe {
+                            crate::shape_util::debug_struct(
+                                this.into(),
+                                f.debug_struct("Complex"),
+                                complex_fields::<T>(),
+                            )
+                            .finish()
+                        })
+                    } else {
+                        None
+                    }
+                })
                 .partial_eq({
                     if T::SHAPE.vtable.has_partial_eq() {
-                        Some(|l, r| {
-                            let partial_eq = unsafe {
-                                core::mem::transmute::<PartialEqFn, PartialEqFnTyped<T>>(
-                                    T::SHAPE.vtable.partial_eq.unwrap(),
-                                )
-                            };
-                            let l = l.get();
-                            let r = r.get();
-
-                            partial_eq((&l.re).into(), (&r.re).into())
-                                && partial_eq((&l.im).into(), (&r.im).into())
+                        Some(|l, r| unsafe {
+                            crate::shape_util::partial_eq_fields(
+                                l.into(),
+                                r.into(),
+                                complex_fields::<T>(),
+                            )
                         })
                     } else {
                         None
@@ -56,15 +76,12 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Complex<T> {
                 })
                 .hash({
                     if T::SHAPE.vtable.has_hash() {
-                        Some(|this, hasher| {
-                            let hash = unsafe {
-                                core::mem::transmute::<HashFn, HashFnTyped<T>>(
-                                    T::SHAPE.vtable.hash.unwrap(),
-                                )
-                            };
-                            let this = this.get();
-                            hash((&this.re).into(), hasher);
-                            hash((&this.im).into(), hasher);
+                        Some(|this, hasher| unsafe {
+                            crate::shape_util::hash_fields(
+                                this.into(),
+                                complex_fields::<T>(),
+                                hasher,
+                            )
                         })
                     } else {
                         None
@@ -118,37 +135,41 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Complex<T> {
                     packed: false,
                 },
                 kind: crate::StructKind::Struct,
-                fields: &[
-                    Field {
-                        name: "re",
-                        shape: || T::SHAPE,
-                        offset: offset_of!(Self, re),
-                        flags: FieldFlags::EMPTY,
-                        attributes: &[],
-                        doc: &["Real portion of the complex number"],
-                        vtable: &crate::FieldVTable {
-                            skip_serializing_if: None,
-                            default_fn: None,
-                        },
-                        flattened: false,
-                    },
-                    Field {
-                        name: "im",
-                        shape: || T::SHAPE,
-                        offset: offset_of!(Self, im),
-                        flags: FieldFlags::EMPTY,
-                        attributes: &[],
-                        doc: &["Imaginary portion of the complex number"],
-                        vtable: &crate::FieldVTable {
-                            skip_serializing_if: None,
-                            default_fn: None,
-                        },
-                        flattened: false,
-                    },
-                ],
+                fields: complex_fields::<T>(),
             },
         )))
         .def(crate::Def::Undefined)
         .doc(&["A complex number in Cartesian form"])
         .build();
+}
+
+const fn complex_fields<'facet, T: Facet<'facet>>() -> &'static [Field; 2] {
+    &[
+        Field {
+            name: "re",
+            shape: || T::SHAPE,
+            offset: offset_of!(Complex<T>, re),
+            flags: FieldFlags::EMPTY,
+            attributes: &[],
+            doc: &["Real portion of the complex number"],
+            vtable: &crate::FieldVTable {
+                skip_serializing_if: None,
+                default_fn: None,
+            },
+            flattened: false,
+        },
+        Field {
+            name: "im",
+            shape: || T::SHAPE,
+            offset: offset_of!(Complex<T>, im),
+            flags: FieldFlags::EMPTY,
+            attributes: &[],
+            doc: &["Imaginary portion of the complex number"],
+            vtable: &crate::FieldVTable {
+                skip_serializing_if: None,
+                default_fn: None,
+            },
+            flattened: false,
+        },
+    ]
 }

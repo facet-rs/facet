@@ -17,7 +17,7 @@ where
                             (T::SHAPE.vtable.type_name())(f, opts)?;
                             write!(f, "; {L}]")
                         } else {
-                            write!(f, "[⋯; {L}]")
+                            write!(f, "[…; {L}]")
                         }
                     })
                     .default_in_place({
