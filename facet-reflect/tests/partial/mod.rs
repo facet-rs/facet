@@ -1,6 +1,7 @@
 #![cfg(feature = "std")]
 
 mod array_building;
+mod deserialize;
 mod empty_tuples;
 mod invariant;
 mod list_leak;

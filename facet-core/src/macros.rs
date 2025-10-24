@@ -17,6 +17,13 @@ where
     Opaque::<TField>::SHAPE
 }
 
+#[doc(hidden)]
+pub const fn shape_of_deserialize_with_source<'facet, Source: Facet<'facet>, Target>(
+    _f: &dyn Fn(&Source) -> Target,
+) -> &'static Shape {
+    Source::SHAPE
+}
+
 /// Creates a `ValueVTable` for a given type.
 ///
 /// This macro generates a `ValueVTable` with implementations for various traits

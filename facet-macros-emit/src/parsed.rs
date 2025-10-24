@@ -53,7 +53,9 @@ pub enum PFacetAttr {
     /// Valid in container
     /// `#[facet(invariants = "Self::invariants_func")]` — returns a bool, is called
     /// when doing `Partial::build`
-    Invariants { expr: TokenStream },
+    Invariants {
+        expr: TokenStream,
+    },
 
     /// Valid in container
     /// `#[facet(deny_unknown_fields)]`
@@ -61,7 +63,9 @@ pub enum PFacetAttr {
 
     /// Valid in field
     /// `#[facet(default = expr)]` — when deserializing and missing, use `fn_name` to provide a default value
-    DefaultEquals { expr: TokenStream },
+    DefaultEquals {
+        expr: TokenStream,
+    },
 
     /// Valid in field
     /// `#[facet(default)]` — when deserializing and missing, use the field's value from
@@ -71,11 +75,15 @@ pub enum PFacetAttr {
     /// Valid in field, enum variant, container
     /// An arbitrary/unknown string, like,
     /// `#[facet(bleh)]`
-    Arbitrary { content: String },
+    Arbitrary {
+        content: String,
+    },
 
     /// Valid in container
     /// `#[facet(rename_all = "rule")]` — rename all fields following a rule
-    RenameAll { rule: RenameRule },
+    RenameAll {
+        rule: RenameRule,
+    },
 
     /// Valid in field, enum variant, or container
     /// `#[facet(skip_serializing)]` — skip serializing this field. Like serde.
@@ -83,11 +91,21 @@ pub enum PFacetAttr {
 
     /// Valid in field, enum variant, or container
     /// `#[facet(skip_serializing_if = "func")]` — skip serializing if the function returns true.
-    SkipSerializingIf { expr: TokenStream },
+    SkipSerializingIf {
+        expr: TokenStream,
+    },
 
     /// Valid in container
     /// `#[facet(type_tag = "com.example.MyType")]` — identify type by tag and serialize with this tag
-    TypeTag { content: String },
+    TypeTag {
+        content: String,
+    },
+
+    /// Valid in field, enum variant, or container
+    /// `#[facet(deserialize_with = func)]` — support deserialization of the field using the specified function. takes the form `fn(&input_shape) -> output_type. where output_type can be any type, including opaque types.
+    DeserializeWith {
+        expr: TokenStream,
+    },
 }
 
 impl PFacetAttr {
@@ -144,6 +162,11 @@ impl PFacetAttr {
                 FacetInner::TypeTag(type_tag) => {
                     dest.push(PFacetAttr::TypeTag {
                         content: type_tag.expr.as_str().to_string(),
+                    });
+                }
+                FacetInner::DeserializeWith(deserialize_with) => {
+                    dest.push(PFacetAttr::DeserializeWith {
+                        expr: deserialize_with.expr.to_token_stream(),
                     });
                 }
             }

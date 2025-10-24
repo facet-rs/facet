@@ -1,4 +1,4 @@
-use crate::PtrConst;
+use crate::{PtrConst, PtrUninit};
 
 use super::{DefaultInPlaceFn, Shape};
 use bitflags::bitflags;
@@ -61,11 +61,17 @@ pub struct FieldVTable {
 
     /// Function to get the default value for this field
     pub default_fn: Option<DefaultInPlaceFn>,
+
+    /// Function to call to deserialize from a source shape to the field type
+    pub deserialize_with: Option<DeserializeWithFn>,
 }
 
 /// A function that, if present, determines whether field should be included in the serialization
 /// step.
 pub type SkipSerializingIfFn = for<'mem> unsafe fn(value: PtrConst<'mem>) -> bool;
+
+/// A function that, if present, is called during custom deserialization to convert the source shape into the target type
+pub type DeserializeWithFn = for<'mem> unsafe fn(source: PtrConst<'mem>, target: PtrUninit<'mem>);
 
 impl Field {
     /// Returns the shape of the inner type
@@ -88,6 +94,8 @@ impl Field {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 pub enum FieldAttribute {
+    /// Provides the shape to use for custom deserialization
+    DeserializeFrom(&'static Shape),
     /// Custom field attribute containing arbitrary text
     Arbitrary(&'static str),
 }
@@ -96,6 +104,7 @@ pub enum FieldAttribute {
 pub struct FieldVTableBuilder {
     skip_serializing_if: Option<SkipSerializingIfFn>,
     default_fn: Option<DefaultInPlaceFn>,
+    deserialize_with: Option<DeserializeWithFn>,
 }
 
 impl FieldVTableBuilder {
@@ -105,6 +114,7 @@ impl FieldVTableBuilder {
         Self {
             skip_serializing_if: None,
             default_fn: None,
+            deserialize_with: None,
         }
     }
 
@@ -120,11 +130,18 @@ impl FieldVTableBuilder {
         self
     }
 
+    /// Sets the deserialize_with function for the FieldVTable
+    pub const fn deserialize_with(mut self, func: DeserializeWithFn) -> Self {
+        self.deserialize_with = Some(func);
+        self
+    }
+
     /// Builds the FieldVTable
     pub const fn build(self) -> FieldVTable {
         FieldVTable {
             skip_serializing_if: self.skip_serializing_if,
             default_fn: self.default_fn,
+            deserialize_with: self.deserialize_with,
         }
     }
 }
@@ -162,6 +179,7 @@ impl FieldBuilder {
                 FieldVTable {
                     skip_serializing_if: None,
                     default_fn: None,
+                    deserialize_with: None,
                 }
             },
         }

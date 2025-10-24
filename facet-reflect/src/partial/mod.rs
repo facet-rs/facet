@@ -126,7 +126,7 @@ mod heap_value;
 pub use heap_value::*;
 
 use facet_core::{
-    Def, EnumType, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
+    Def, EnumType, Field, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
 };
 use iset::ISet;
 
@@ -224,6 +224,9 @@ struct Frame {
 
     /// Whether this frame owns the allocation or is just a field pointer
     ownership: FrameOwnership,
+
+    /// Whether this frame is for a custom deserialization pipeline
+    using_custom_deserialization: bool,
 }
 
 #[derive(Debug)]
@@ -340,6 +343,7 @@ impl Frame {
             shape,
             tracker,
             ownership,
+            using_custom_deserialization: false,
         }
     }
 
@@ -651,6 +655,39 @@ impl Frame {
                 expected: "enum",
                 actual: self.shape,
             }),
+        }
+    }
+
+    pub(crate) fn get_field(&self) -> Option<&Field> {
+        match self.shape.ty {
+            Type::User(user_type) => match user_type {
+                UserType::Struct(struct_type) => {
+                    // Try to get currently active field index
+                    if let Tracker::Struct {
+                        current_child: Some(idx),
+                        ..
+                    } = &self.tracker
+                    {
+                        struct_type.fields.get(*idx)
+                    } else {
+                        None
+                    }
+                }
+                UserType::Enum(_enum_type) => {
+                    if let Tracker::Enum {
+                        variant,
+                        current_child: Some(idx),
+                        ..
+                    } = &self.tracker
+                    {
+                        variant.data.fields.get(*idx)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
         }
     }
 }
