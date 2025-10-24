@@ -1140,3 +1140,164 @@ fn emum_with_generic_complex_constaint() {
         "#
     ));
 }
+
+#[test]
+fn struct_with_deserialize_with() {
+    // Test deserialize_with attribute on a struct field
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        struct Container {
+            #[facet(deserialize_with = from_string)]
+            value: u64,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn struct_with_serialize_with() {
+    // Test serialize_with attribute on a struct field
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        struct Container {
+            #[facet(serialize_with = to_string)]
+            value: u64,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn struct_with_both_serialize_deserialize_with() {
+    // Test both serialize_with and deserialize_with on the same field
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        struct Container {
+            #[facet(deserialize_with = from_string, serialize_with = to_string)]
+            value: u64,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn struct_with_opaque_and_deserialize_with() {
+    // Test opaque combined with deserialize_with (common pattern for non-Facet types)
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        struct Container {
+            #[facet(opaque, deserialize_with = deserialize_custom)]
+            inner: NotDerivingFacet,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn struct_with_opaque_and_serialize_with() {
+    // Test opaque combined with serialize_with
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        struct Container {
+            #[facet(opaque, serialize_with = serialize_custom)]
+            inner: NotDerivingFacet,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn struct_with_opaque_and_both_serde_with() {
+    // Test opaque combined with both deserialize_with and serialize_with
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        struct Container {
+            #[facet(opaque, deserialize_with = deserialize_custom, serialize_with = serialize_custom)]
+            inner: NotDerivingFacet,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn enum_with_deserialize_with_on_tuple_variant() {
+    // Test deserialize_with on an enum tuple variant field
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[repr(u8)]
+        enum Choice {
+            Custom(#[facet(opaque, deserialize_with = from_u64)] NotDerivingFacet),
+            Plain(u32),
+        }
+        "#
+    ));
+}
+
+#[test]
+fn enum_with_serialize_with_on_struct_variant() {
+    // Test serialize_with on an enum struct variant field
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[repr(u8)]
+        enum Choice {
+            Custom {
+                #[facet(opaque, serialize_with = to_u64)]
+                value: NotDerivingFacet,
+            },
+            Plain {
+                value: u32,
+            },
+        }
+        "#
+    ));
+}
+
+#[test]
+fn struct_with_path_deserialize_with() {
+    // Test deserialize_with with a module path
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        struct Container {
+            #[facet(deserialize_with = converters::from_string)]
+            value: u64,
+        }
+        "#
+    ));
+}
+
+#[test]
+fn tuple_struct_with_deserialize_with() {
+    // Test deserialize_with on a tuple struct field
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        struct Wrapper(
+            #[facet(opaque, deserialize_with = from_u64)]
+            NotDerivingFacet,
+        );
+        "#
+    ));
+}
+
+#[test]
+fn tuple_struct_with_serialize_with() {
+    // Test serialize_with on a tuple struct field
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        struct Wrapper(
+            #[facet(opaque, serialize_with = to_u64)]
+            NotDerivingFacet,
+        );
+        "#
+    ));
+}

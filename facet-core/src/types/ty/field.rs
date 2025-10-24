@@ -1,4 +1,6 @@
 use crate::PtrConst;
+#[cfg(feature = "alloc")]
+use crate::{PtrMut, PtrUninit};
 
 use super::{DefaultInPlaceFn, Shape};
 use bitflags::bitflags;
@@ -61,11 +63,33 @@ pub struct FieldVTable {
 
     /// Function to get the default value for this field
     pub default_fn: Option<DefaultInPlaceFn>,
+
+    #[cfg(feature = "alloc")]
+    /// Function to call to deserialize from a source shape to the field type
+    pub deserialize_with: Option<DeserializeWithFn>,
+
+    #[cfg(feature = "alloc")]
+    /// Function to call to serialize from a source type to the serializable shape
+    pub serialize_with: Option<SerializeWithFn>,
 }
 
 /// A function that, if present, determines whether field should be included in the serialization
 /// step.
 pub type SkipSerializingIfFn = for<'mem> unsafe fn(value: PtrConst<'mem>) -> bool;
+
+#[cfg(feature = "alloc")]
+/// A function that, if present, is called during custom deserialization to convert the source shape into the target type
+pub type DeserializeWithFn = for<'mem> unsafe fn(
+    source: PtrConst<'mem>,
+    target: PtrUninit<'mem>,
+) -> Result<PtrMut<'mem>, alloc::string::String>;
+
+#[cfg(feature = "alloc")]
+/// A function that, if preset, is called during custom serialization to convert the source type into the target shape, which is then serialized in place of the source type.
+pub type SerializeWithFn = for<'mem> unsafe fn(
+    source: PtrConst<'mem>,
+    target: PtrUninit<'mem>,
+) -> Result<PtrMut<'mem>, alloc::string::String>;
 
 impl Field {
     /// Returns the shape of the inner type
@@ -88,6 +112,10 @@ impl Field {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[repr(C)]
 pub enum FieldAttribute {
+    /// Provides the shape to use for custom deserialization
+    DeserializeFrom(&'static Shape),
+    /// Provides the shape to use for custom serialization
+    SerializeInto(&'static Shape),
     /// Custom field attribute containing arbitrary text
     Arbitrary(&'static str),
 }
@@ -96,6 +124,10 @@ pub enum FieldAttribute {
 pub struct FieldVTableBuilder {
     skip_serializing_if: Option<SkipSerializingIfFn>,
     default_fn: Option<DefaultInPlaceFn>,
+    #[cfg(feature = "alloc")]
+    deserialize_with: Option<DeserializeWithFn>,
+    #[cfg(feature = "alloc")]
+    serialize_with: Option<SerializeWithFn>,
 }
 
 impl FieldVTableBuilder {
@@ -105,6 +137,10 @@ impl FieldVTableBuilder {
         Self {
             skip_serializing_if: None,
             default_fn: None,
+            #[cfg(feature = "alloc")]
+            deserialize_with: None,
+            #[cfg(feature = "alloc")]
+            serialize_with: None,
         }
     }
 
@@ -120,11 +156,29 @@ impl FieldVTableBuilder {
         self
     }
 
+    #[cfg(feature = "alloc")]
+    /// Sets the deserialize_with function for the FieldVTable
+    pub const fn deserialize_with(mut self, func: DeserializeWithFn) -> Self {
+        self.deserialize_with = Some(func);
+        self
+    }
+
+    #[cfg(feature = "alloc")]
+    /// Sets the serialize_with function for the FieldVTable
+    pub const fn serialize_with(mut self, func: SerializeWithFn) -> Self {
+        self.serialize_with = Some(func);
+        self
+    }
+
     /// Builds the FieldVTable
     pub const fn build(self) -> FieldVTable {
         FieldVTable {
             skip_serializing_if: self.skip_serializing_if,
             default_fn: self.default_fn,
+            #[cfg(feature = "alloc")]
+            deserialize_with: self.deserialize_with,
+            #[cfg(feature = "alloc")]
+            serialize_with: self.serialize_with,
         }
     }
 }
@@ -162,6 +216,10 @@ impl FieldBuilder {
                 FieldVTable {
                     skip_serializing_if: None,
                     default_fn: None,
+                    #[cfg(feature = "alloc")]
+                    deserialize_with: None,
+                    #[cfg(feature = "alloc")]
+                    serialize_with: None,
                 }
             },
         }

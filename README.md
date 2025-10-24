@@ -7,7 +7,7 @@
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
 
-facet provides reflection for Rust: it gives types a `SHAPE` associated
+facet provides reflection for Rust: it gives types a [`SHAPE`](Facet::SHAPE) associated
 const with details on the layout, fields, doc comments, attributes, etc.
 
 It can be used for many things, from (de)serialization to pretty-printing,
@@ -21,11 +21,11 @@ See <https://facet.rs> for details.
 The main `facet` crate re-exports symbols from:
 
 - [facet-core](https://github.com/facet-rs/facet/tree/main/facet-core), which defines the main components:
-  - The `Facet` trait and implementations for foreign types (mostly `libstd`)
-  - The `Shape` struct along with various vtables and the whole `Def` tree
-  - Type-erased pointer helpers like `PtrUninit`, `PtrConst`, and `Opaque`
+  - The [`Facet`] trait and implementations for foreign types (mostly `libstd`)
+  - The [`Shape`] struct along with various vtables and the whole [`Def`] tree
+  - Type-erased pointer helpers like [`PtrUninit`], [`PtrConst`], and [`Opaque`]
   - Autoderef specialization trick needed for `facet-macros`
-- [facet-macros](https://github.com/facet-rs/facet/tree/main/facet-macros), which implements the `Facet` derive attribute as a fast/light proc macro powered by [unsynn](https://docs.rs/unsynn)
+- [facet-macros](https://github.com/facet-rs/facet/tree/main/facet-macros), which implements the [`Facet`] derive attribute as a fast/light proc macro powered by [unsynn](https://docs.rs/unsynn)
 
 For struct manipulation and reflection, we have:
 

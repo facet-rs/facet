@@ -1,5 +1,11 @@
 use crate::{Facet, Opaque, Shape};
 
+/// Helper for the derive macro to infer the shape of a struct field.
+///
+/// This function is never actually called at runtime — it exists purely to let
+/// the compiler infer `TField` from a field accessor closure like `|s: &MyStruct| &s.field`.
+/// By passing a reference to that closure, the compiler resolves `TField` and we can
+/// return `TField::SHAPE` at compile time.
 #[doc(hidden)]
 pub const fn shape_of<'facet, TStruct, TField: Facet<'facet>>(
     _f: &dyn Fn(&TStruct) -> &TField,
@@ -7,6 +13,11 @@ pub const fn shape_of<'facet, TStruct, TField: Facet<'facet>>(
     TField::SHAPE
 }
 
+/// Helper for the derive macro to infer the shape of an opaque struct field.
+///
+/// Similar to [`shape_of`], but wraps the field type in [`Opaque`] for types that
+/// don't implement `Facet` directly. The closure `|s: &MyStruct| &s.field` lets the
+/// compiler infer `TField`, and we return `Opaque::<TField>::SHAPE`.
 #[doc(hidden)]
 pub const fn shape_of_opaque<'a, TStruct, TField>(
     _f: &dyn Fn(&TStruct) -> &TField,
@@ -15,6 +26,32 @@ where
     Opaque<TField>: Facet<'a>,
 {
     Opaque::<TField>::SHAPE
+}
+
+/// Helper for the derive macro to infer the source shape for `#[facet(deserialize_with = ...)]`.
+///
+/// Given a `deserialize_with` function like `fn(&Source) -> Result<Target, E>`, this helper
+/// infers `Source` from the function signature and returns `Source::SHAPE`. This shape is
+/// stored as a [`FieldAttribute::DeserializeFrom`] so the reflection system knows what
+/// intermediate type to construct before calling the conversion function.
+#[doc(hidden)]
+pub const fn shape_of_deserialize_with_source<'facet, Source: Facet<'facet>, Target>(
+    _f: &dyn Fn(&Source) -> Target,
+) -> &'static Shape {
+    Source::SHAPE
+}
+
+/// Helper for the derive macro to infer the target shape for `#[facet(serialize_with = ...)]`.
+///
+/// Given a `serialize_with` function like `fn(&Source) -> Result<Target, &'static str>`, this
+/// helper infers `Target` from the function signature and returns `Target::SHAPE`. This shape
+/// is stored as a [`FieldAttribute::SerializeInto`] so the reflection system knows what
+/// type to serialize instead of the original field type.
+#[doc(hidden)]
+pub const fn shape_of_serialize_with_target<'facet, Source, Target: Facet<'facet>>(
+    _f: &dyn Fn(&Source) -> Result<Target, &'static str>,
+) -> &'static Shape {
+    Target::SHAPE
 }
 
 /// Creates a `ValueVTable` for a given type.

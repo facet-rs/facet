@@ -88,6 +88,14 @@ pub enum PFacetAttr {
     /// Valid in container
     /// `#[facet(type_tag = "com.example.MyType")]` — identify type by tag and serialize with this tag
     TypeTag { content: String },
+
+    /// Valid in field, enum variant, or container
+    /// `#[facet(deserialize_with = func)]` — support deserialization of the field using the specified function. takes the form `fn(&input_shape) -> output_type. where output_type can be any type, including opaque types.
+    DeserializeWith { expr: TokenStream },
+
+    /// Valid in field, enum variant, or container
+    /// `#[facet(serialize_with = func)]` — support serialization of the field using the specified function. takes the form `fn(&input_type) -> output_shape. where input_type can be any type, including opaque types.
+    SerializeWith { expr: TokenStream },
 }
 
 impl PFacetAttr {
@@ -144,6 +152,16 @@ impl PFacetAttr {
                 FacetInner::TypeTag(type_tag) => {
                     dest.push(PFacetAttr::TypeTag {
                         content: type_tag.expr.as_str().to_string(),
+                    });
+                }
+                FacetInner::DeserializeWith(deserialize_with) => {
+                    dest.push(PFacetAttr::DeserializeWith {
+                        expr: deserialize_with.expr.to_token_stream(),
+                    });
+                }
+                FacetInner::SerializeWith(serialize_with) => {
+                    dest.push(PFacetAttr::SerializeWith {
+                        expr: serialize_with.expr.to_token_stream(),
                     });
                 }
             }

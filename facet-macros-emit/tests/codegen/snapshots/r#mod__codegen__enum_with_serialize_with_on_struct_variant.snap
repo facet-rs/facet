@@ -1,0 +1,126 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum Choice {\n            Custom {\n                #[facet(opaque, serialize_with = to_u64)]\n                value: NotDerivingFacet,\n            },\n            Plain {\n                value: u32,\n            },\n        }\n        \"#)"
+---
+static CHOICE_SHAPE: &'static ::facet::Shape = <Choice as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+#[allow(non_camel_case_types)]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for Choice {
+    const SHAPE: &'static ::facet::Shape = &const {
+        #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
+        struct __Shadow_RustRepr_Struct_for_Choice_Custom<'__facet> {
+            _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+            value: NotDerivingFacet,
+        }
+        #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
+        struct __Shadow_RustRepr_Struct_for_Choice_Plain<'__facet> {
+            _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+            value: u32,
+        }
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [{
+                            ::facet::Field::builder()
+                                .name("value")
+                                .shape(|| {
+                                    ::facet::shape_of_opaque(
+                                        &|s: &__Shadow_RustRepr_Struct_for_Choice_Custom<
+                                            '__facet,
+                                        >| &s.value,
+                                    )
+                                })
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Struct_for_Choice_Custom<'__facet>,
+                                    value
+                                ))
+                                .attributes(
+                                    &const {
+                                        [::facet::FieldAttribute::SerializeInto(
+                                            ::facet::shape_of_serialize_with_target(&to_u64),
+                                        )]
+                                    },
+                                )
+                                .vtable(
+                                    &const {
+                                        ::facet::FieldVTable::builder()
+                                            .serialize_with(
+                                                |sptr, tptr| -> Result<::facet::PtrMut<'_>, _> {
+                                                    let sval: &NotDerivingFacet =
+                                                        unsafe { sptr.get::<NotDerivingFacet>() };
+                                                    let res: Result<_, _> = to_u64(sval);
+                                                    let tval = res.map_err(|e| format!("{e}"))?;
+                                                    Ok(unsafe { tptr.put(tval) })
+                                                },
+                                            )
+                                            .build()
+                                    },
+                                )
+                                .build()
+                        }]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Custom")
+                        .discriminant(0i64 as i64)
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
+                                .struct_()
+                                .fields(fields)
+                                .build(),
+                        )
+                        .build()
+                },
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [{
+                            ::facet::Field::builder()
+                                .name("value")
+                                .shape(|| {
+                                    ::facet::shape_of(
+                                        &|s: &__Shadow_RustRepr_Struct_for_Choice_Plain<
+                                            '__facet,
+                                        >| &s.value,
+                                    )
+                                })
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Struct_for_Choice_Plain<'__facet>,
+                                    value
+                                ))
+                                .build()
+                        }]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Plain")
+                        .discriminant(1i64 as i64)
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
+                                .struct_()
+                                .fields(fields)
+                                .build(),
+                        )
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Choice"))
+            })
+            .type_identifier("Choice")
+            .ty(::facet::Type::User(::facet::UserType::Enum(
+                ::facet::EnumType::builder()
+                    .variants(__facet_variants)
+                    .repr(::facet::Repr::default())
+                    .enum_repr(::facet::EnumRepr::U8)
+                    .build(),
+            )))
+            .build()
+    };
+}

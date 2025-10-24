@@ -1,0 +1,67 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        struct Container {\n            #[facet(deserialize_with = from_string, serialize_with = to_string)]\n            value: u64,\n        }\n        \"#)"
+---
+static CONTAINER_SHAPE: &'static ::facet::Shape = <Container as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for Container {
+    const SHAPE: &'static ::facet::Shape = &const {
+        let fields: &'static [::facet::Field] = &const {
+            [{
+                ::facet::Field::builder()
+                    .name("value")
+                    .shape(|| ::facet::shape_of(&|s: &Container| &s.value))
+                    .offset(::core::mem::offset_of!(Container, value))
+                    .attributes(
+                        &const {
+                            [
+                                ::facet::FieldAttribute::DeserializeFrom(
+                                    ::facet::shape_of_deserialize_with_source(&from_string),
+                                ),
+                                ::facet::FieldAttribute::SerializeInto(
+                                    ::facet::shape_of_serialize_with_target(&to_string),
+                                ),
+                            ]
+                        },
+                    )
+                    .vtable(
+                        &const {
+                            ::facet::FieldVTable::builder()
+                                .deserialize_with(|sptr, tptr| -> Result<::facet::PtrMut<'_>, _> {
+                                    let sval = unsafe { sptr.get() };
+                                    let res: Result<u64, _> = from_string(sval);
+                                    let tval = res.map_err(|e| format!("{e}"))?;
+                                    Ok(unsafe { tptr.put(tval) })
+                                })
+                                .serialize_with(|sptr, tptr| -> Result<::facet::PtrMut<'_>, _> {
+                                    let sval: &u64 = unsafe { sptr.get::<u64>() };
+                                    let res: Result<_, _> = to_string(sval);
+                                    let tval = res.map_err(|e| format!("{e}"))?;
+                                    Ok(unsafe { tptr.put(tval) })
+                                })
+                                .build()
+                        },
+                    )
+                    .build()
+            }]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                let mut vtable =
+                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                        f,
+                        "Container"
+                    ));
+                vtable
+            })
+            .type_identifier("Container")
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::default())
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            )))
+            .build()
+    };
+}

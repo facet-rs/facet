@@ -1,0 +1,126 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(u8)]\n        enum Choice {\n            Custom(#[facet(opaque, deserialize_with = from_u64)] NotDerivingFacet),\n            Plain(u32),\n        }\n        \"#)"
+---
+static CHOICE_SHAPE: &'static ::facet::Shape = <Choice as ::facet::Facet>::SHAPE;
+#[automatically_derived]
+#[allow(non_camel_case_types)]
+unsafe impl<'__facet> ::facet::Facet<'__facet> for Choice {
+    const SHAPE: &'static ::facet::Shape = &const {
+        #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
+        struct __Shadow_RustRepr_Tuple_for_Choice_Custom<'__facet> {
+            _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+            _0: NotDerivingFacet,
+        }
+        #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
+        struct __Shadow_RustRepr_Tuple_for_Choice_Plain<'__facet> {
+            _discriminant: u8,
+            _phantom: ::core::marker::PhantomData<(*mut &'__facet ())>,
+            _0: u32,
+        }
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [{
+                            ::facet::Field::builder()
+                                .name("0")
+                                .shape(|| {
+                                    ::facet::shape_of_opaque(
+                                        &|s: &__Shadow_RustRepr_Tuple_for_Choice_Custom<
+                                            '__facet,
+                                        >| &s._0,
+                                    )
+                                })
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Tuple_for_Choice_Custom<'__facet>,
+                                    _0
+                                ))
+                                .attributes(
+                                    &const {
+                                        [::facet::FieldAttribute::DeserializeFrom(
+                                            ::facet::shape_of_deserialize_with_source(&from_u64),
+                                        )]
+                                    },
+                                )
+                                .vtable(
+                                    &const {
+                                        ::facet::FieldVTable::builder()
+                                            .deserialize_with(
+                                                |sptr, tptr| -> Result<::facet::PtrMut<'_>, _> {
+                                                    let sval = unsafe { sptr.get() };
+                                                    let res: Result<NotDerivingFacet, _> =
+                                                        from_u64(sval);
+                                                    let tval = res.map_err(|e| format!("{e}"))?;
+                                                    Ok(unsafe { tptr.put(tval) })
+                                                },
+                                            )
+                                            .build()
+                                    },
+                                )
+                                .build()
+                        }]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Custom")
+                        .discriminant(0i64 as i64)
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
+                                .tuple()
+                                .fields(fields)
+                                .build(),
+                        )
+                        .build()
+                },
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [{
+                            ::facet::Field::builder()
+                                .name("0")
+                                .shape(|| {
+                                    ::facet::shape_of(
+                                        &|s: &__Shadow_RustRepr_Tuple_for_Choice_Plain<
+                                            '__facet,
+                                        >| &s._0,
+                                    )
+                                })
+                                .offset(::core::mem::offset_of!(
+                                    __Shadow_RustRepr_Tuple_for_Choice_Plain<'__facet>,
+                                    _0
+                                ))
+                                .build()
+                        }]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Plain")
+                        .discriminant(1i64 as i64)
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
+                                .tuple()
+                                .fields(fields)
+                                .build(),
+                        )
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(f, "Choice"))
+            })
+            .type_identifier("Choice")
+            .ty(::facet::Type::User(::facet::UserType::Enum(
+                ::facet::EnumType::builder()
+                    .variants(__facet_variants)
+                    .repr(::facet::Repr::default())
+                    .enum_repr(::facet::EnumRepr::U8)
+                    .build(),
+            )))
+            .build()
+    };
+}
