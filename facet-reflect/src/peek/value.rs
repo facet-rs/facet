@@ -2,6 +2,8 @@ use core::{cmp::Ordering, marker::PhantomData, ptr::NonNull};
 use facet_core::{
     Def, Facet, PointerType, PtrConst, Shape, StructKind, Type, TypeNameOpts, UserType, ValueVTable,
 };
+#[cfg(feature = "alloc")]
+use facet_core::{Field, FieldAttribute};
 
 use crate::{PeekNdArray, PeekSet, ReflectError, ScalarType};
 
@@ -9,6 +11,9 @@ use super::{
     ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekOption, PeekPointer, PeekStruct,
     PeekTuple, tuple::TupleType,
 };
+
+#[cfg(feature = "alloc")]
+use super::OwnedPeek;
 
 /// A unique identifier for a peek value
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -456,6 +461,60 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
             }
         }
         current_peek
+    }
+
+    /// Performs custom serialization of the current peek using the provided field's metadata.
+    ///
+    /// Returns an `OwnedPeek` that points to the final type that should be serialized in place
+    /// of the current peek.
+    #[cfg(feature = "alloc")]
+    pub fn custom_serialization(&self, field: Field) -> Result<OwnedPeek<'mem>, ReflectError> {
+        if let Some(serialize_with) = field.vtable.serialize_with {
+            let Some(&FieldAttribute::SerializeInto(target_shape)) = field
+                .attributes
+                .iter()
+                .find(|&p| matches!(p, FieldAttribute::SerializeInto(_)))
+            else {
+                panic!("expected field attribute to be present with deserialize_with");
+            };
+            let tptr = target_shape.allocate().map_err(|_| ReflectError::Unsized {
+                shape: target_shape,
+                operation: "Not a Sized type",
+            })?;
+            let ser_res = unsafe { serialize_with(self.data(), tptr) };
+            let err = match ser_res {
+                Ok(rptr) => {
+                    if rptr.as_uninit() != tptr {
+                        ReflectError::CustomSerializationError {
+                            message: "serialize_with did not return the expected pointer".into(),
+                            src_shape: self.shape,
+                            dst_shape: target_shape,
+                        }
+                    } else {
+                        return Ok(OwnedPeek {
+                            shape: target_shape,
+                            data: rptr,
+                        });
+                    }
+                }
+                Err(message) => ReflectError::CustomSerializationError {
+                    message,
+                    src_shape: self.shape,
+                    dst_shape: target_shape,
+                },
+            };
+            // if we reach here we have an error and we need to deallocate the target allocation
+            unsafe {
+                // SAFETY: unwrap should be ok since the allocation was ok
+                target_shape.deallocate_uninit(tptr).unwrap()
+            };
+            Err(err)
+        } else {
+            Err(ReflectError::OperationFailed {
+                shape: self.shape,
+                operation: "field does not have a serialize_with function",
+            })
+        }
     }
 }
 

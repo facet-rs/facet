@@ -126,7 +126,7 @@ mod heap_value;
 pub use heap_value::*;
 
 use facet_core::{
-    Def, EnumType, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
+    Def, EnumType, Field, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
 };
 use iset::ISet;
 
@@ -224,6 +224,9 @@ struct Frame {
 
     /// Whether this frame owns the allocation or is just a field pointer
     ownership: FrameOwnership,
+
+    /// Whether this frame is for a custom deserialization pipeline
+    using_custom_deserialization: bool,
 }
 
 #[derive(Debug)]
@@ -340,6 +343,7 @@ impl Frame {
             shape,
             tracker,
             ownership,
+            using_custom_deserialization: false,
         }
     }
 
@@ -378,12 +382,18 @@ impl Frame {
             Tracker::Struct { iset, .. } => {
                 // Drop initialized struct fields
                 if let Type::User(UserType::Struct(struct_type)) = self.shape.ty {
-                    for (idx, field) in struct_type.fields.iter().enumerate() {
-                        if iset.get(idx) {
-                            // This field was initialized, drop it
-                            let field_ptr = unsafe { self.data.field_init_at(field.offset) };
-                            if let Some(drop_fn) = field.shape().vtable.drop_in_place {
-                                unsafe { drop_fn(field_ptr) };
+                    if iset.all_set() && self.shape.vtable.drop_in_place.is_some() {
+                        unsafe {
+                            (self.shape.vtable.drop_in_place.unwrap())(self.data.assume_init())
+                        };
+                    } else {
+                        for (idx, field) in struct_type.fields.iter().enumerate() {
+                            if iset.get(idx) {
+                                // This field was initialized, drop it
+                                let field_ptr = unsafe { self.data.field_init_at(field.offset) };
+                                if let Some(drop_fn) = field.shape().vtable.drop_in_place {
+                                    unsafe { drop_fn(field_ptr) };
+                                }
                             }
                         }
                     }
@@ -651,6 +661,39 @@ impl Frame {
                 expected: "enum",
                 actual: self.shape,
             }),
+        }
+    }
+
+    pub(crate) fn get_field(&self) -> Option<&Field> {
+        match self.shape.ty {
+            Type::User(user_type) => match user_type {
+                UserType::Struct(struct_type) => {
+                    // Try to get currently active field index
+                    if let Tracker::Struct {
+                        current_child: Some(idx),
+                        ..
+                    } = &self.tracker
+                    {
+                        struct_type.fields.get(*idx)
+                    } else {
+                        None
+                    }
+                }
+                UserType::Enum(_enum_type) => {
+                    if let Tracker::Enum {
+                        variant,
+                        current_child: Some(idx),
+                        ..
+                    } = &self.tracker
+                    {
+                        variant.data.fields.get(*idx)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
         }
     }
 }

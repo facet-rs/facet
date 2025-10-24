@@ -15,8 +15,8 @@ use crate::{
     trace,
 };
 use facet_core::{
-    ArrayType, Characteristic, Def, EnumRepr, EnumType, Facet, Field, KnownPointer, PtrConst,
-    PtrMut, PtrUninit, SequenceType, Shape, StructType, Type, UserType, Variant,
+    ArrayType, Characteristic, Def, EnumRepr, EnumType, Facet, Field, FieldAttribute, KnownPointer,
+    PtrConst, PtrMut, PtrUninit, SequenceType, Shape, StructType, Type, UserType, Variant,
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -142,6 +142,47 @@ impl<'facet> Partial<'facet> {
 
         // Pop the frame and save its data pointer for SmartPointer handling
         let mut popped_frame = self.frames.pop().unwrap();
+
+        // check if this needs deserialization from a different shape
+        if popped_frame.using_custom_deserialization {
+            if let Some(deserialize_with) = self
+                .parent_field()
+                .and_then(|field| field.vtable.deserialize_with)
+            {
+                let parent_frame = self.frames.last_mut().unwrap();
+
+                trace!(
+                    "Detected custom conversion needed from {} to {}",
+                    popped_frame.shape, parent_frame.shape
+                );
+
+                unsafe {
+                    let res = {
+                        let inner_value_ptr = popped_frame.data.assume_init().as_const();
+                        (deserialize_with)(inner_value_ptr, parent_frame.data)
+                    };
+                    let popped_frame_shape = popped_frame.shape;
+
+                    // we need to do this before any error handling to avoid leaks
+                    popped_frame.deinit();
+                    popped_frame.dealloc();
+                    let rptr = res.map_err(|message| ReflectError::CustomDeserializationError {
+                        message,
+                        src_shape: popped_frame_shape,
+                        dst_shape: parent_frame.shape,
+                    })?;
+                    if rptr.as_uninit() != parent_frame.data {
+                        return Err(ReflectError::CustomDeserializationError {
+                            message: "deserialize_with did not return the expected pointer".into(),
+                            src_shape: popped_frame_shape,
+                            dst_shape: parent_frame.shape,
+                        });
+                    }
+                    parent_frame.mark_as_init();
+                }
+                return Ok(self);
+            }
+        }
 
         // Update parent frame's tracking when popping from a child
         let parent_frame = self.frames.last_mut().unwrap();
@@ -649,6 +690,11 @@ impl<'facet> Partial<'facet> {
             out.push_str(&component);
         }
         out
+    }
+
+    /// Get the field for the parent frame
+    pub fn parent_field(&self) -> Option<&Field> {
+        self.frames.iter().rev().nth(1).and_then(|f| f.get_field())
     }
 }
 
@@ -2057,6 +2103,51 @@ impl Partial<'_> {
             Err(ReflectError::OperationFailed {
                 shape: parent_shape,
                 operation: "type does not have an inner value",
+            })
+        }
+    }
+
+    /// Begin bulding the source shape for custom deserialization, calling end() for this frame will
+    /// call the deserialize_with function provided by the field and set the field using the result.
+    pub fn begin_custom_deserialization(&mut self) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
+
+        let current_frame = self.frames.last().unwrap();
+        let target_shape = current_frame.shape;
+        if let Some(field) = self.parent_field() {
+            if field.vtable.deserialize_with.is_some() {
+                // TODO: can we assume that this is set if the vtable element is set?
+                // TODO: can we get the shape some other way?
+                let Some(FieldAttribute::DeserializeFrom(source_shape)) = field
+                    .attributes
+                    .iter()
+                    .find(|&p| matches!(p, FieldAttribute::DeserializeFrom(_)))
+                else {
+                    panic!("expected field attribute to be present with deserialize_with");
+                };
+                let source_data = source_shape.allocate().map_err(|_| ReflectError::Unsized {
+                    shape: target_shape,
+                    operation: "Not a Sized type",
+                })?;
+
+                trace!(
+                    "begin_custom_deserialization: Creating frame for deserialization type {source_shape}"
+                );
+                let mut new_frame = Frame::new(source_data, source_shape, FrameOwnership::Owned);
+                new_frame.using_custom_deserialization = true;
+                self.frames.push(new_frame);
+
+                Ok(self)
+            } else {
+                Err(ReflectError::OperationFailed {
+                    shape: target_shape,
+                    operation: "field does not have a deserialize_with function",
+                })
+            }
+        } else {
+            Err(ReflectError::OperationFailed {
+                shape: target_shape,
+                operation: "not currently processing a field",
             })
         }
     }

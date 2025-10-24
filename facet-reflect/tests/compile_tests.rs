@@ -272,3 +272,15 @@ fn test_peek_invariant_shrinking() {
 
     run_compilation_test(&test);
 }
+
+#[test]
+#[cfg(not(miri))]
+fn test_peek_owned_dropped_before_ref() {
+    let test = CompilationTest {
+        name: "owned_dropped_before_ref",
+        source: include_str!("peek/compile_tests/owned_dropped_before_ref.rs"),
+        expected_errors: &["error[E0505]: cannot move out of `owned` because it is borrowed"],
+    };
+
+    run_compilation_test(&test);
+}

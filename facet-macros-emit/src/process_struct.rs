@@ -115,6 +115,30 @@ pub(crate) fn gen_field_from_pfield(
                     .skip_serializing_if(unsafe { ::core::mem::transmute((#predicate) as fn(&#field_ty) -> bool) })
                 });
             }
+            PFacetAttr::DeserializeWith { expr } => {
+                let deserialize_with_fn = expr;
+                vtable_items.push(quote! {
+                    .deserialize_with(|sptr, tptr| -> Result<::facet::PtrMut<'_>, _> {
+                        let sval = unsafe { sptr.get() };
+                        let res: Result<#field_type, _> = #deserialize_with_fn(sval);
+                        let tval = res.map_err(|e| format!("{e}"))?;
+                        Ok(unsafe { tptr.put(tval) })
+                    })
+                });
+                attribute_list.push(quote! { ::facet::FieldAttribute::DeserializeFrom(::facet::shape_of_deserialize_with_source(&#deserialize_with_fn)) });
+            }
+            PFacetAttr::SerializeWith { expr } => {
+                let serialize_with_fn = expr;
+                vtable_items.push(quote! {
+                    .serialize_with(|sptr, tptr| -> Result<::facet::PtrMut<'_>, _> {
+                        let sval: &#field_type = unsafe { sptr.get::<#field_type>() };
+                        let res: Result<_, _> = #serialize_with_fn(sval);
+                        let tval = res.map_err(|e| format!("{e}"))?;
+                        Ok(unsafe { tptr.put(tval) })
+                    })
+                });
+                attribute_list.push(quote! { ::facet::FieldAttribute::SerializeInto(::facet::shape_of_serialize_with_target(&#serialize_with_fn)) });
+            }
             // These are handled by PName or are container-level, so ignore them for field attributes.
             PFacetAttr::RenameAll { .. } => {} // Explicitly ignore rename attributes here
             PFacetAttr::Transparent
@@ -287,6 +311,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 | PFacetAttr::Invariants { .. }
                 | PFacetAttr::SkipSerializing
                 | PFacetAttr::SkipSerializingIf { .. }
+                | PFacetAttr::DeserializeWith { .. }
+                | PFacetAttr::SerializeWith { .. }
                 | PFacetAttr::Flatten
                 | PFacetAttr::Child
                 | PFacetAttr::TypeTag { .. } => {}

@@ -308,6 +308,16 @@ impl<'facet, T: ?Sized> TypedPartial<'facet, T> {
         self.inner.steal_nth_field(&mut src.inner, field_index)?;
         Ok(self)
     }
+
+    /// For a field that supports custom deserialization via the `deserialize_with` attribute begin
+    /// the process of constructing the shape to be used as input to the `deserialize_with` method.
+    /// Calling end after constructing the shape will pass it to the `deserialize_with` associated method
+    /// and store the result in the frame's pointer.
+    #[inline]
+    pub fn begin_custom_deserialization(&mut self) -> Result<&mut Self, ReflectError> {
+        self.inner.begin_custom_deserialization()?;
+        Ok(self)
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
