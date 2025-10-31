@@ -1373,30 +1373,14 @@ impl Partial<'_> {
 
         // Check that we have a SmartPointer
         match &frame.shape.def {
-            Def::Pointer(smart_ptr_def) => {
-                // Check for supported smart pointer types
-                match smart_ptr_def.known {
-                    Some(KnownPointer::Box)
-                    | Some(KnownPointer::Rc)
-                    | Some(KnownPointer::Arc)
-                    | Some(KnownPointer::SharedReference) => {
-                        // Supported types, continue
-                    }
-                    _ => {
-                        return Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
-                            operation: "only the following pointers are currently supported: Box<T>, Rc<T>, Arc<T>, and &T",
-                        });
-                    }
-                }
-
+            Def::Pointer(smart_ptr_def) if smart_ptr_def.vtable.new_into_fn.is_some() => {
                 // Get the pointee shape
                 let pointee_shape = match smart_ptr_def.pointee() {
                     Some(shape) => shape,
                     None => {
                         return Err(ReflectError::OperationFailed {
                             shape: frame.shape,
-                            operation: "Box must have a pointee shape",
+                            operation: "Smart pointer must have a pointee shape",
                         });
                     }
                 };
@@ -1436,6 +1420,16 @@ impl Partial<'_> {
                     ));
                 } else {
                     // pointee is unsized, we only support a handful of cases there
+                    if !matches!(
+                        smart_ptr_def.known,
+                        Some(KnownPointer::Box | KnownPointer::Rc | KnownPointer::Arc)
+                    ) {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "push_smart_ptr can only be called with Box, Rc and Arc with an unsized pointee",
+                        });
+                    }
+
                     if pointee_shape == str::SHAPE {
                         crate::trace!("Pointee is str");
 
@@ -1493,7 +1487,10 @@ impl Partial<'_> {
                         // The slice builder memory is managed by the vtable, not by us
                         frame.ownership = FrameOwnership::ManagedElsewhere;
                     } else {
-                        todo!("unsupported unsize pointee shape: {}", pointee_shape)
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "push_smart_ptr can only be called on pointers to supported pointee types",
+                        });
                     }
                 }
 
