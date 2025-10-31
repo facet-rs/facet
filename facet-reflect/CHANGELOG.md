@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.3](https://github.com/facet-rs/facet/compare/facet-reflect-v0.31.2...facet-reflect-v0.31.3) - 2025-10-31
+
+### Other
+
+- move the contrived constructibility check to a helper function
+- hoist the pointer check outside the match arm
+- error on unsupported types in begin_smart_ptr
+
 ## [0.31.0](https://github.com/facet-rs/facet/compare/facet-reflect-v0.30.0...facet-reflect-v0.31.0) - 2025-10-31
 
 ### Fixed

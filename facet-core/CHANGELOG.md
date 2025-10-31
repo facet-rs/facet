@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.3](https://github.com/facet-rs/facet/compare/facet-core-v0.31.2...facet-core-v0.31.3) - 2025-10-31
+
+### Other
+
+- move the contrived constructibility check to a helper function
+
 ## [0.31.2](https://github.com/facet-rs/facet/compare/facet-core-v0.31.1...facet-core-v0.31.2) - 2025-10-31
 
 ### Fixed

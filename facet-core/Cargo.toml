@@ -1,6 +1,6 @@
 [package]
 name = "facet-core"
-version = "0.31.2"
+version = "0.31.3"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
