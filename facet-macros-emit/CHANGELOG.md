@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0](https://github.com/facet-rs/facet/compare/facet-macros-emit-v0.30.0...facet-macros-emit-v0.31.0) - 2025-10-31
+
+### Other
+
+- remove fn() layer of indirection where possible
+- remove redundant VALUE const, add num-complex impl, fix soundness holes
+- make all pointers wide for better ?Sized support and less redundant api
+
 ## [0.28.1](https://github.com/facet-rs/facet/compare/facet-macros-emit-v0.28.0...facet-macros-emit-v0.28.1) - 2025-08-25
 
 ### Other

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0](https://github.com/facet-rs/facet/compare/facet-core-v0.30.0...facet-core-v0.31.0) - 2025-10-31
+
+### Fixed
+
+- fix no-std imports
+- fix clippies
+- fix outdated docs
+- fix impls for non-default features
+
+### Other
+
+- more vtable trait impls
+- remove fn() layer of indirection where possible
+- remove redundant VALUE const, add num-complex impl, fix soundness holes
+- document dst layout tricks
+- make all pointers wide for better ?Sized support and less redundant api
+
 ## [0.30.0](https://github.com/facet-rs/facet/compare/facet-core-v0.29.1...facet-core-v0.30.0) - 2025-10-18
 
 ### Fixed

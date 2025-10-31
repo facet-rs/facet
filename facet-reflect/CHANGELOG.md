@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.0](https://github.com/facet-rs/facet/compare/facet-reflect-v0.30.0...facet-reflect-v0.31.0) - 2025-10-31
+
+### Fixed
+
+- fix docs and memory leak in error path
+
+### Other
+
+- remove fn() layer of indirection where possible
+- use a more descriptive ReflectError variant
+- remove redundant VALUE const, add num-complex impl, fix soundness holes
+- make all pointers wide for better ?Sized support and less redundant api
+
 ## [0.30.0](https://github.com/facet-rs/facet/compare/facet-reflect-v0.29.1...facet-reflect-v0.30.0) - 2025-10-18
 
 ### Fixed
