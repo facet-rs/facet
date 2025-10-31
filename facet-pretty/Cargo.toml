@@ -20,12 +20,12 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc"] # Enables alloc support
 camino = ["alloc", "facet-core/camino"]
 
 [dependencies]
-facet-core = { version = "0.30" }
-facet-reflect = { version = "0.30" }
+facet-core = { version = "0.31" }
+facet-reflect = { version = "0.31" }
 
 [dev-dependencies]
 camino = "1.1.10"
 cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
-facet = { version = "0.30" }
-facet-testhelpers = { version = "0.30" }
+facet = { version = "0.31" }
+facet-testhelpers = { version = "0.31" }
 insta = "1.43.1"
