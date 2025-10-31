@@ -59,8 +59,10 @@ unsafe impl Facet<'_> for Bytes {
                                     Some(PtrConst::new(item.into()))
                                 })
                                 .as_ptr(|ptr| unsafe {
-                                    let bytes = ptr.get::<Self>();
-                                    PtrConst::new(bytes.into())
+                                    let bytes: &Self = ptr.get::<Self>();
+                                    PtrConst::new(core::ptr::NonNull::new_unchecked(
+                                        bytes.as_ptr() as *mut u8
+                                    ))
                                 })
                                 .iter_vtable(
                                     IterVTable::builder()
@@ -142,11 +144,15 @@ unsafe impl Facet<'_> for BytesMut {
                                 })
                                 .as_ptr(|ptr| unsafe {
                                     let bytes = ptr.get::<Self>();
-                                    PtrConst::new(bytes.into())
+                                    PtrConst::new(core::ptr::NonNull::new_unchecked(
+                                        bytes.as_ptr() as *mut u8
+                                    ))
                                 })
                                 .as_mut_ptr(|ptr| unsafe {
                                     let bytes = ptr.as_mut::<Self>();
-                                    PtrMut::new(bytes.into())
+                                    PtrMut::new(core::ptr::NonNull::new_unchecked(
+                                        bytes.as_mut_ptr(),
+                                    ))
                                 })
                                 .iter_vtable(
                                     IterVTable::builder()
@@ -185,4 +191,38 @@ unsafe impl Facet<'_> for BytesMut {
             ))
             .build()
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_as_ptr() {
+        let bytes = Bytes::from(vec![0, 1, 2, 3, 4]);
+        let expected = bytes.as_ptr();
+        let Def::List(def) = Bytes::SHAPE.def else {
+            panic!()
+        };
+        let actual =
+            unsafe { (def.vtable.as_ptr).unwrap()(PtrConst::new((&bytes).into())) }.as_byte_ptr();
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_as_ptr_mut() {
+        let bytes = Bytes::from(vec![0, 1, 2, 3, 4]);
+        let mut bytes = BytesMut::from(bytes);
+        let expected = bytes.as_ptr();
+        let Def::List(def) = BytesMut::SHAPE.def else {
+            panic!()
+        };
+        let actual =
+            unsafe { (def.vtable.as_ptr).unwrap()(PtrConst::new((&bytes).into())) }.as_byte_ptr();
+        assert_eq!(expected, actual);
+
+        let actual = unsafe { (def.vtable.as_mut_ptr).unwrap()(PtrMut::new((&mut bytes).into())) }
+            .as_byte_ptr();
+        assert_eq!(expected, actual);
+    }
 }

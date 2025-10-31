@@ -15,9 +15,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
                     .build()
             }]
         };
-        fn inner_shape() -> &'static ::facet::Shape {
-            <u32 as ::facet::Facet>::SHAPE
-        }
         ::facet::Shape::builder_for_sized::<Self>()
             .vtable({
                 let mut vtable =
@@ -29,7 +26,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
                     src_shape: &'static ::facet::Shape,
                     dst: ::facet::PtrUninit<'dst>,
                 ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {
-                    let inner_result = match (<u32 as ::facet::Facet>::SHAPE.vtable.try_from)() {
+                    let inner_result = match <u32 as ::facet::Facet>::SHAPE.vtable.try_from {
                         Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
                         None => Err(::facet::TryFromError::UnsupportedSourceShape {
                             src_shape,
@@ -61,7 +58,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
                     src_ptr: ::facet::PtrConst<'src>,
                 ) -> Result<::facet::PtrConst<'src>, ::facet::TryBorrowInnerError> {
                     let wrapper = unsafe { src_ptr.get::<Wrapper>() };
-                    Ok(::facet::PtrConst::new(&wrapper.0 as *const _ as *const u8))
+                    Ok(::facet::PtrConst::new(::core::ptr::NonNull::from(
+                        &wrapper.0,
+                    )))
                 }
                 {
                     vtable.try_from = Some(try_from);
@@ -78,7 +77,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for Wrapper {
                     .fields(fields)
                     .build(),
             )))
-            .inner(inner_shape)
+            .inner(<u32 as ::facet::Facet>::SHAPE)
             .attributes(&[::facet::ShapeAttribute::Transparent])
             .build()
     };
