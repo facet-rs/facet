@@ -268,7 +268,7 @@ impl PrettyPrinter {
                         }
                         (_, Type::Pointer(PointerType::Reference(r))) => {
                             'handle: {
-                                let target = (r.target)();
+                                let target = r.target;
                                 match target.ty {
                                     Type::Sequence(
                                         SequenceType::Slice(_) | SequenceType::Array(_),
