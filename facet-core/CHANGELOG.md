@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.1](https://github.com/facet-rs/facet/compare/facet-core-v0.31.0...facet-core-v0.31.1) - 2025-10-31
+
+### Other
+
+- Start fixing repr(transparent)
+
 ## [0.31.0](https://github.com/facet-rs/facet/compare/facet-core-v0.30.0...facet-core-v0.31.0) - 2025-10-31
 
 ### Fixed
