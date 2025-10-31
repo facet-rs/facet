@@ -310,10 +310,10 @@ impl ShapeBuilder {
     /// like a newtype or smart pointer, and should be treated as such for serialization
     /// and deserialization.
     ///
-    /// The function `inner_fn` should return the static shape of the inner type.
+    /// The `inner_shape` parameter should be the static shape of the inner type.
     #[inline]
-    pub const fn inner(mut self, inner_fn: &'static Shape) -> Self {
-        self.inner = Some(inner_fn);
+    pub const fn inner(mut self, inner_shape: &'static Shape) -> Self {
+        self.inner = Some(inner_shape);
         self
     }
 

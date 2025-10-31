@@ -610,3 +610,34 @@ fn test_skip_field_in_derive() {
         name: NotFacet,
     }
 }
+
+#[test]
+fn test_transparent_newtype() {
+    #[derive(Facet)]
+    #[facet(transparent)]
+    struct UserId(u32);
+
+    let shape = UserId::SHAPE;
+
+    // Check the name using Display
+    assert_eq!(format!("{shape}"), "UserId");
+
+    let layout = shape.layout.sized_layout().unwrap();
+    assert_eq!(layout.size(), 4);
+    assert_eq!(layout.align(), 4);
+
+    if let Type::User(UserType::Struct(StructType { kind, fields, .. })) = shape.ty {
+        assert_eq!(kind, StructKind::TupleStruct);
+        assert_eq!(fields.len(), 1);
+
+        let field = &fields[0];
+        assert_eq!(field.name, "0");
+
+        let field_layout = field.shape().layout.sized_layout().unwrap();
+        assert_eq!(field_layout.size(), 4);
+        assert_eq!(field_layout.align(), 4);
+        assert_eq!(field.offset, offset_of!(UserId, 0));
+    } else {
+        panic!("Expected Struct innards");
+    }
+}

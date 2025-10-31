@@ -372,7 +372,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     dst: ::facet::PtrUninit<'dst>
                 ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {
                     // Try the inner type's try_from function if it exists
-                    let inner_result = match (<#inner_field_type as ::facet::Facet>::SHAPE.vtable.try_from)() {
+                    let inner_result = match <#inner_field_type as ::facet::Facet>::SHAPE.vtable.try_from {
                         Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
                         None => Err(::facet::TryFromError::UnsupportedSourceShape {
                             src_shape,
@@ -412,7 +412,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 ) -> Result<::facet::PtrConst<'src>, ::facet::TryBorrowInnerError> {
                     let wrapper = unsafe { src_ptr.get::<#struct_name_ident #bgp_without_bounds>() };
                     // Return a pointer to the inner field (field 0 for tuple struct)
-                    Ok(::facet::PtrConst::new(&wrapper.0 as *const _ as *const u8))
+                    Ok(::facet::PtrConst::new(::core::ptr::NonNull::from(&wrapper.0)))
                 }
 
                 {
@@ -453,29 +453,15 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     };
 
     // Generate the inner shape function for transparent types
-    let inner_shape_fn = if ps.container.attrs.is_transparent() {
-        if let Some(inner_field) = &inner_field {
+    let inner_setter = if ps.container.attrs.is_transparent() {
+        let inner_shape_val = if let Some(inner_field) = &inner_field {
             let ty = &inner_field.ty;
-            quote! {
-                // Function to return inner type's shape
-                fn inner_shape() -> &'static ::facet::Shape {
-                    <#ty as ::facet::Facet>::SHAPE
-                }
-            }
+            quote! { <#ty as ::facet::Facet>::SHAPE }
         } else {
             // Transparent ZST case
-            quote! {
-                fn inner_shape() -> &'static ::facet::Shape {
-                    <() as ::facet::Facet>::SHAPE // Inner shape is unit
-                }
-            }
-        }
-    } else {
-        quote! {}
-    };
-
-    let inner_setter = if ps.container.attrs.is_transparent() {
-        quote! { .inner(inner_shape) }
+            quote! { <() as ::facet::Facet>::SHAPE }
+        };
+        quote! { .inner(#inner_shape_val) }
     } else {
         quote! {}
     };
@@ -496,8 +482,6 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         unsafe impl #bgp_def ::facet::Facet<'__facet> for #struct_name_ident #bgp_without_bounds #where_clauses {
             const SHAPE: &'static ::facet::Shape = &const {
                 let fields: &'static [::facet::Field] = &const {[#(#fields_vec),*]};
-
-                #inner_shape_fn // Include inner_shape function if needed
 
                 ::facet::Shape::builder_for_sized::<Self>()
                     .vtable({
