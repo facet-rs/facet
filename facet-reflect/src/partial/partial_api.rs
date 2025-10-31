@@ -1373,7 +1373,13 @@ impl Partial<'_> {
 
         // Check that we have a SmartPointer
         match &frame.shape.def {
-            Def::Pointer(smart_ptr_def) if smart_ptr_def.vtable.new_into_fn.is_some() => {
+            Def::Pointer(smart_ptr_def)
+                if smart_ptr_def.vtable.new_into_fn.is_some()
+                    || matches!(
+                        smart_ptr_def.known,
+                        Some(KnownPointer::Box | KnownPointer::Rc | KnownPointer::Arc)
+                    ) =>
+            {
                 // Get the pointee shape
                 let pointee_shape = match smart_ptr_def.pointee() {
                     Some(shape) => shape,
@@ -1420,16 +1426,6 @@ impl Partial<'_> {
                     ));
                 } else {
                     // pointee is unsized, we only support a handful of cases there
-                    if !matches!(
-                        smart_ptr_def.known,
-                        Some(KnownPointer::Box | KnownPointer::Rc | KnownPointer::Arc)
-                    ) {
-                        return Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
-                            operation: "push_smart_ptr can only be called with Box, Rc and Arc with an unsized pointee",
-                        });
-                    }
-
                     if pointee_shape == str::SHAPE {
                         crate::trace!("Pointee is str");
 
