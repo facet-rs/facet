@@ -1373,13 +1373,7 @@ impl Partial<'_> {
 
         // Check that we have a SmartPointer
         match &frame.shape.def {
-            Def::Pointer(smart_ptr_def)
-                if smart_ptr_def.vtable.new_into_fn.is_some()
-                    || matches!(
-                        smart_ptr_def.known,
-                        Some(KnownPointer::Box | KnownPointer::Rc | KnownPointer::Arc)
-                    ) =>
-            {
+            Def::Pointer(smart_ptr_def) if smart_ptr_def.constructible_from_pointee() => {
                 // Get the pointee shape
                 let pointee_shape = match smart_ptr_def.pointee() {
                     Some(shape) => shape,

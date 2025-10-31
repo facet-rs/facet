@@ -59,6 +59,15 @@ impl PointerDef {
     pub fn strong(&self) -> Option<&'static Shape> {
         self.strong
     }
+
+    /// Whether a new pointer can be constructed from an owned value of its pointee type.
+    pub const fn constructible_from_pointee(&self) -> bool {
+        self.vtable.new_into_fn.is_some()
+            || matches!(
+                self.known,
+                Some(KnownPointer::Box | KnownPointer::Rc | KnownPointer::Arc)
+            )
+    }
 }
 
 /// Builder for creating a `PointerDef`.
