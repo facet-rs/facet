@@ -1,6 +1,6 @@
 [package]
 name = "facet"
-version = "0.31.1"
+version = "0.31.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -49,9 +49,9 @@ tuples-12 = ["facet-core/tuples-12"]
 fn-ptr = ["facet-core/fn-ptr"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "=0.31.1", default-features = false }
-facet-macros = { path = "../facet-macros", version = "=0.31.1" }
-facet-reflect = { path = "../facet-reflect", version = "=0.31.1", optional = true }
+facet-core = { path = "../facet-core", version = "=0.31.2", default-features = false }
+facet-macros = { path = "../facet-macros", version = "=0.31.2" }
+facet-reflect = { path = "../facet-reflect", version = "=0.31.2", optional = true }
 static_assertions = "1.1.0"
 
 [dev-dependencies]
