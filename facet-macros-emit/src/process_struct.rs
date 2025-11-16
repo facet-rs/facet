@@ -118,10 +118,12 @@ pub(crate) fn gen_field_from_pfield(
             PFacetAttr::DeserializeWith { expr } => {
                 let deserialize_with_fn = expr;
                 vtable_items.push(quote! {
-                    .deserialize_with(|sptr, tptr| {
+                    .deserialize_with(|sptr, tptr| -> Result<(), &'static str> {
                         let sval = unsafe { sptr.read() };
-                        let tval = #deserialize_with_fn(&sval);
+                        let res: Result<#field_type, &'static str> = #deserialize_with_fn(&sval);
+                        let tval = res?;
                         unsafe { tptr.put(tval) };
+                        Ok(())
                     })
                 });
                 attribute_list.push(quote! { ::facet::FieldAttribute::DeserializeFrom(::facet::shape_of_deserialize_with_source(&#deserialize_with_fn)) });

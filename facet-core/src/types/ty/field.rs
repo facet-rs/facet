@@ -71,7 +71,10 @@ pub struct FieldVTable {
 pub type SkipSerializingIfFn = for<'mem> unsafe fn(value: PtrConst<'mem>) -> bool;
 
 /// A function that, if present, is called during custom deserialization to convert the source shape into the target type
-pub type DeserializeWithFn = for<'mem> unsafe fn(source: PtrConst<'mem>, target: PtrUninit<'mem>);
+pub type DeserializeWithFn = for<'mem> unsafe fn(
+    source: PtrConst<'mem>,
+    target: PtrUninit<'mem>,
+) -> Result<(), &'static str>;
 
 impl Field {
     /// Returns the shape of the inner type

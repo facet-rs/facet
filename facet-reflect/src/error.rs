@@ -183,6 +183,16 @@ pub enum ReflectError {
         /// the shape we're stealing a field for
         dst_shape: &'static Shape,
     },
+
+    /// Error during custom deserialization
+    CustomDeserializationError {
+        /// Error message provided by the deserialize_with method
+        message: &'static str,
+        /// Shape that was passed to deserialize_with
+        src_shape: &'static Shape,
+        /// the shape of the target type
+        dst_shape: &'static Shape,
+    },
 }
 
 impl core::fmt::Display for ReflectError {
@@ -293,6 +303,16 @@ impl core::fmt::Display for ReflectError {
                 write!(
                     f,
                     "Tried to steal_nth_field from {src_shape} into {dst_shape}"
+                )
+            }
+            ReflectError::CustomDeserializationError {
+                message,
+                src_shape,
+                dst_shape,
+            } => {
+                write!(
+                    f,
+                    "Custom deserialization of shape '{src_shape}' into '{dst_shape}' failed: {message}"
                 )
             }
         }

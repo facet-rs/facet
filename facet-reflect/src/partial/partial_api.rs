@@ -158,7 +158,13 @@ impl<'facet> Partial<'facet> {
 
                 unsafe {
                     let inner_value_ptr = popped_frame.data.assume_init().as_const();
-                    (deserialize_with)(inner_value_ptr, parent_frame.data);
+                    (deserialize_with)(inner_value_ptr, parent_frame.data).map_err(|message| {
+                        ReflectError::CustomDeserializationError {
+                            message,
+                            src_shape: popped_frame.shape,
+                            dst_shape: parent_frame.shape,
+                        }
+                    })?;
                     parent_frame.mark_as_init();
                 }
                 popped_frame.tracker = Tracker::Uninit;
@@ -2140,7 +2146,7 @@ impl Partial<'_> {
             } else {
                 Err(ReflectError::OperationFailed {
                     shape: target_shape,
-                    operation: "field does now have a deserialize_with function",
+                    operation: "field does not have a deserialize_with function",
                 })
             }
         } else {
