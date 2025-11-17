@@ -395,8 +395,13 @@ impl PAttrs {
         for attr in attrs {
             match &attr.body.content {
                 facet_macros_parse::AttributeInner::Doc(doc_attr) => {
-                    // Handle doc comments
-                    doc_lines.push(doc_attr.value.as_str().replace("\\\"", "\""));
+                    // Handle doc comments - unescape both double quotes and single quotes
+                    let unescaped = doc_attr
+                        .value
+                        .as_str()
+                        .replace("\\\"", "\"")
+                        .replace("\\'", "'");
+                    doc_lines.push(unescaped);
                 }
                 facet_macros_parse::AttributeInner::Repr(repr_attr) => {
                     if repr.is_some() {

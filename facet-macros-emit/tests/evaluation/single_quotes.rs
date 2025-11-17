@@ -14,5 +14,5 @@ fn main() {
         unreachable!("Expected EntityId to be an enum");
     };
     let doc = ty.variants[0].doc[0];
-    assert!(doc == "Welcome to Joe's!", "Unexpected docstring, does it contain any unexpected escape sequences? : {}", doc);
+    assert!(doc == " Welcome to Joe's!", "Unexpected docstring, does it contain any unexpected escape sequences? : {}", doc);
 }
