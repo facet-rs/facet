@@ -181,3 +181,15 @@ fn test_double_quotes() {
     // Run the test
     run_evaluation_test(&test);
 }
+
+#[test]
+fn test_backslash() {
+    // Define the test case
+    let test = EvaluationTest {
+        name: "backslash_test",
+        source: include_str!("./backslash_test.rs"),
+    };
+
+    // Run the test
+    run_evaluation_test(&test);
+}

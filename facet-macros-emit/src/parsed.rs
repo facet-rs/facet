@@ -395,12 +395,14 @@ impl PAttrs {
         for attr in attrs {
             match &attr.body.content {
                 facet_macros_parse::AttributeInner::Doc(doc_attr) => {
-                    // Handle doc comments - unescape both double quotes and single quotes
+                    // Handle doc comments - unescape quotes and backslashes
+                    // Note: Order matters - we must unescape \\ last to avoid double-unescaping
                     let unescaped = doc_attr
                         .value
                         .as_str()
                         .replace("\\\"", "\"")
-                        .replace("\\'", "'");
+                        .replace("\\'", "'")
+                        .replace("\\\\", "\\");
                     doc_lines.push(unescaped);
                 }
                 facet_macros_parse::AttributeInner::Repr(repr_attr) => {
