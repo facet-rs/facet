@@ -169,3 +169,15 @@ fn test_single_quotes() {
     // Run the test
     run_evaluation_test(&test);
 }
+
+#[test]
+fn test_double_quotes() {
+    // Define the test case
+    let test = EvaluationTest {
+        name: "double_quotes",
+        source: include_str!("./double_quotes.rs"),
+    };
+
+    // Run the test
+    run_evaluation_test(&test);
+}
