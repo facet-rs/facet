@@ -2,3 +2,5 @@
 mod compile_tests;
 
 mod codegen;
+
+mod evaluation;
