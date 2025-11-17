@@ -15,6 +15,8 @@ mod process_struct;
 mod derive;
 pub use derive::*;
 
+mod unescaping;
+
 #[cfg(feature = "function")]
 pub mod function;
 

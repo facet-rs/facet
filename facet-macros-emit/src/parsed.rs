@@ -1,4 +1,4 @@
-use crate::{BoundedGenericParams, RenameRule};
+use crate::{BoundedGenericParams, RenameRule, unescaping::unescape};
 use facet_macros_parse::{Ident, ReprInner, ToTokens, TokenStream};
 use quote::quote;
 
@@ -395,8 +395,9 @@ impl PAttrs {
         for attr in attrs {
             match &attr.body.content {
                 facet_macros_parse::AttributeInner::Doc(doc_attr) => {
-                    // Handle doc comments
-                    doc_lines.push(doc_attr.value.as_str().replace("\\\"", "\""));
+                    let unescaped_text =
+                        unescape(doc_attr).expect("invalid escape sequence in doc string");
+                    doc_lines.push(unescaped_text);
                 }
                 facet_macros_parse::AttributeInner::Repr(repr_attr) => {
                     if repr.is_some() {
