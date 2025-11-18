@@ -1,4 +1,4 @@
-use crate::{PtrConst, PtrUninit};
+use crate::{PtrConst, PtrMut, PtrUninit};
 
 use super::{DefaultInPlaceFn, Shape};
 use bitflags::bitflags;
@@ -64,6 +64,9 @@ pub struct FieldVTable {
 
     /// Function to call to deserialize from a source shape to the field type
     pub deserialize_with: Option<DeserializeWithFn>,
+
+    /// Function to call to serialize from a source type to the serializable shape
+    pub serialize_with: Option<SerializeWithFn>,
 }
 
 /// A function that, if present, determines whether field should be included in the serialization
@@ -74,7 +77,13 @@ pub type SkipSerializingIfFn = for<'mem> unsafe fn(value: PtrConst<'mem>) -> boo
 pub type DeserializeWithFn = for<'mem> unsafe fn(
     source: PtrConst<'mem>,
     target: PtrUninit<'mem>,
-) -> Result<(), &'static str>;
+) -> Result<PtrMut<'mem>, &'static str>;
+
+/// A function that, if preset, is called during custom serialization to convert the source type into the target shape, which is then serialized in place of the source type.
+pub type SerializeWithFn = for<'mem> unsafe fn(
+    source: PtrConst<'mem>,
+    target: PtrUninit<'mem>,
+) -> Result<PtrMut<'mem>, &'static str>;
 
 impl Field {
     /// Returns the shape of the inner type
@@ -99,6 +108,8 @@ impl Field {
 pub enum FieldAttribute {
     /// Provides the shape to use for custom deserialization
     DeserializeFrom(&'static Shape),
+    /// Provides the shape to use for custom serialization
+    SerializeInto(&'static Shape),
     /// Custom field attribute containing arbitrary text
     Arbitrary(&'static str),
 }
@@ -108,6 +119,7 @@ pub struct FieldVTableBuilder {
     skip_serializing_if: Option<SkipSerializingIfFn>,
     default_fn: Option<DefaultInPlaceFn>,
     deserialize_with: Option<DeserializeWithFn>,
+    serialize_with: Option<SerializeWithFn>,
 }
 
 impl FieldVTableBuilder {
@@ -118,6 +130,7 @@ impl FieldVTableBuilder {
             skip_serializing_if: None,
             default_fn: None,
             deserialize_with: None,
+            serialize_with: None,
         }
     }
 
@@ -139,12 +152,19 @@ impl FieldVTableBuilder {
         self
     }
 
+    /// Sets the serialize_with function for the FieldVTable
+    pub const fn serialize_with(mut self, func: SerializeWithFn) -> Self {
+        self.serialize_with = Some(func);
+        self
+    }
+
     /// Builds the FieldVTable
     pub const fn build(self) -> FieldVTable {
         FieldVTable {
             skip_serializing_if: self.skip_serializing_if,
             default_fn: self.default_fn,
             deserialize_with: self.deserialize_with,
+            serialize_with: self.serialize_with,
         }
     }
 }
@@ -183,6 +203,7 @@ impl FieldBuilder {
                     skip_serializing_if: None,
                     default_fn: None,
                     deserialize_with: None,
+                    serialize_with: None,
                 }
             },
         }

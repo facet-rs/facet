@@ -60,6 +60,8 @@ keyword! {
     pub KTypeTag = "type_tag";
     /// The "deserialize_with" keyword.
     pub KDeserializeWith = "deserialize_with";
+    /// The "serialize_with" keyword.
+    pub KSerializeWith = "serialize_with";
 }
 
 operator! {
@@ -169,6 +171,8 @@ unsynn! {
         TypeTag(TypeTagInner),
         /// A function to define how to deserializize the target
         DeserializeWith(DeserializeWithInner),
+        /// A function to define how to serializize the target
+        SerializeWith(SerializeWithInner),
         /// Any other attribute represented as a sequence of token trees.
         Arbitrary(VerbatimUntil<Comma>),
     }
@@ -215,6 +219,16 @@ unsynn! {
     pub struct DeserializeWithInner {
         /// The "deserialize_with" keyword.
         pub _kw_deserialize_with: KDeserializeWith,
+        /// The equals sign '='.
+        pub _eq: Eq,
+        /// The conditional expression as verbatim until comma.
+        pub expr: VerbatimUntil<Comma>,
+    }
+
+    /// Inner value for #[facet(serialize_with = ...)]
+    pub struct SerializeWithInner {
+        /// The "serialize_with" keyword.
+        pub _kw_serialize_with: KSerializeWith,
         /// The equals sign '='.
         pub _eq: Eq,
         /// The conditional expression as verbatim until comma.

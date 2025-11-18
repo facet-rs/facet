@@ -35,3 +35,6 @@ pub use pointer::*;
 
 mod tuple;
 pub use tuple::*;
+
+mod owned;
+pub use owned::*;

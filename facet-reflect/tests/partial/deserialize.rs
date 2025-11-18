@@ -1,15 +1,15 @@
 use facet_testhelpers::{IPanic, test};
 
 use facet::{Facet, Opaque};
-use facet_reflect::Partial;
+use facet_reflect::{Partial, ReflectError};
 
 #[test]
 fn wip_opaque_custom_deserialize() -> Result<(), IPanic> {
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub struct NotDerivingFacet(u64);
 
-    fn deserialize_with(val: &u64) -> NotDerivingFacet {
-        NotDerivingFacet(*val)
+    fn deserialize_with(val: &u64) -> Result<NotDerivingFacet, &'static str> {
+        Ok(NotDerivingFacet(*val))
     }
 
     #[derive(Facet)]
@@ -52,10 +52,10 @@ fn wip_shaped_custom_deserialize() -> Result<(), IPanic> {
         sum: String,
     }
 
-    fn deserialize_with(val: &Struct2) -> Struct1 {
-        Struct1 {
+    fn deserialize_with(val: &Struct2) -> Result<Struct1, &'static str> {
+        Ok(Struct1 {
             val: val.sum.parse().unwrap(),
-        }
+        })
     }
 
     #[derive(Facet)]
@@ -116,10 +116,11 @@ fn wip_opaque_custom_deserialize_enum_tuple() -> Result<(), IPanic> {
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub struct NotDerivingFacet(u64);
 
-    fn deserialize_with(val: &u64) -> NotDerivingFacet {
-        NotDerivingFacet(*val)
+    fn deserialize_with(val: &u64) -> Result<NotDerivingFacet, &'static str> {
+        Ok(NotDerivingFacet(*val))
     }
 
+    #[allow(dead_code)]
     #[derive(Facet)]
     #[repr(u8)]
     pub enum Choices {
@@ -155,10 +156,11 @@ fn wip_opaque_custom_deserialize_enum_fields() -> Result<(), IPanic> {
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub struct NotDerivingFacet(u64);
 
-    fn deserialize_with(val: &u64) -> NotDerivingFacet {
-        NotDerivingFacet(*val)
+    fn deserialize_with(val: &u64) -> Result<NotDerivingFacet, &'static str> {
+        Ok(NotDerivingFacet(*val))
     }
 
+    #[allow(dead_code)]
     #[derive(Facet)]
     #[repr(u8)]
     pub enum Choices {
@@ -198,6 +200,47 @@ fn wip_opaque_custom_deserialize_enum_fields() -> Result<(), IPanic> {
             f1: NotDerivingFacet(35)
         }
     ));
+
+    Ok(())
+}
+
+#[test]
+fn wip_custom_deserialize_errors() -> Result<(), IPanic> {
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub struct NotDerivingFacet(u64);
+
+    fn deserialize_with(val: &u64) -> Result<NotDerivingFacet, &'static str> {
+        if *val == 35 {
+            Err("35 is not allowed!")
+        } else {
+            Ok(NotDerivingFacet(*val))
+        }
+    }
+
+    #[derive(Facet)]
+    pub struct Container {
+        #[facet(opaque, deserialize_with=deserialize_with)]
+        inner: NotDerivingFacet,
+    }
+
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_field("inner")?;
+    partial.begin_custom_deserialization()?;
+    assert_eq!(partial.shape(), u64::SHAPE);
+    partial.set(35u64)?;
+    let end_result = partial.end();
+    if let Err(ReflectError::CustomDeserializationError {
+        message,
+        src_shape,
+        dst_shape,
+    }) = end_result
+    {
+        assert_eq!(message, "35 is not allowed!");
+        assert_eq!(src_shape, u64::SHAPE);
+        assert_eq!(dst_shape, Opaque::<NotDerivingFacet>::SHAPE);
+    } else {
+        assert!(false, "expected custom deserialization error");
+    }
 
     Ok(())
 }

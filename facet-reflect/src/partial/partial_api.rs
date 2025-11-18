@@ -158,13 +158,20 @@ impl<'facet> Partial<'facet> {
 
                 unsafe {
                     let inner_value_ptr = popped_frame.data.assume_init().as_const();
-                    (deserialize_with)(inner_value_ptr, parent_frame.data).map_err(|message| {
-                        ReflectError::CustomDeserializationError {
+                    let rptr = (deserialize_with)(inner_value_ptr, parent_frame.data).map_err(
+                        |message| ReflectError::CustomDeserializationError {
                             message,
                             src_shape: popped_frame.shape,
                             dst_shape: parent_frame.shape,
-                        }
-                    })?;
+                        },
+                    )?;
+                    if rptr.as_uninit() != parent_frame.data {
+                        return Err(ReflectError::CustomDeserializationError {
+                            message: "deserialize_with did not return the expected pointer",
+                            src_shape: popped_frame.shape,
+                            dst_shape: parent_frame.shape,
+                        });
+                    }
                     parent_frame.mark_as_init();
                 }
                 popped_frame.tracker = Tracker::Uninit;
@@ -2120,7 +2127,7 @@ impl Partial<'_> {
                         .sized_layout()
                         .map_err(|_| ReflectError::Unsized {
                             shape: source_shape,
-                            operation: "begin_custom_deserializatio, getting source layout",
+                            operation: "begin_custom_deserialization, getting source layout",
                         })?;
 
                 let source_data = if source_layout.size() == 0 {
