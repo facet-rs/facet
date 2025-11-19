@@ -219,9 +219,6 @@ fn peek_opaque_custom_serialize_enum_feels() -> Result<(), IPanic> {
 
 #[test]
 fn peek_shaped_custom_serialize_pointers() -> Result<(), IPanic> {
-    // TODO: this is doing bad things (i think) due to the `ptr.read<Arc<...>>()`
-    // in the generated serialize_with
-
     #[derive(Facet, Copy, Clone, Debug, Eq, PartialEq)]
     pub struct Struct1 {
         val: u64,

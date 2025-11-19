@@ -382,12 +382,18 @@ impl Frame {
             Tracker::Struct { iset, .. } => {
                 // Drop initialized struct fields
                 if let Type::User(UserType::Struct(struct_type)) = self.shape.ty {
-                    for (idx, field) in struct_type.fields.iter().enumerate() {
-                        if iset.get(idx) {
-                            // This field was initialized, drop it
-                            let field_ptr = unsafe { self.data.field_init_at(field.offset) };
-                            if let Some(drop_fn) = field.shape().vtable.drop_in_place {
-                                unsafe { drop_fn(field_ptr) };
+                    if iset.all_set() && self.shape.vtable.drop_in_place.is_some() {
+                        unsafe {
+                            (self.shape.vtable.drop_in_place.unwrap())(self.data.assume_init())
+                        };
+                    } else {
+                        for (idx, field) in struct_type.fields.iter().enumerate() {
+                            if iset.get(idx) {
+                                // This field was initialized, drop it
+                                let field_ptr = unsafe { self.data.field_init_at(field.offset) };
+                                if let Some(drop_fn) = field.shape().vtable.drop_in_place {
+                                    unsafe { drop_fn(field_ptr) };
+                                }
                             }
                         }
                     }

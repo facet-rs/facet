@@ -36,5 +36,7 @@ pub use pointer::*;
 mod tuple;
 pub use tuple::*;
 
+#[cfg(feature = "alloc")]
 mod owned;
+#[cfg(feature = "alloc")]
 pub use owned::*;

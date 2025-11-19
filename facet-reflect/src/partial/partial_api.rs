@@ -157,25 +157,29 @@ impl<'facet> Partial<'facet> {
                 );
 
                 unsafe {
-                    let inner_value_ptr = popped_frame.data.assume_init().as_const();
-                    let rptr = (deserialize_with)(inner_value_ptr, parent_frame.data).map_err(
-                        |message| ReflectError::CustomDeserializationError {
-                            message,
-                            src_shape: popped_frame.shape,
-                            dst_shape: parent_frame.shape,
-                        },
-                    )?;
+                    let res = {
+                        let inner_value_ptr = popped_frame.data.assume_init().as_const();
+                        (deserialize_with)(inner_value_ptr, parent_frame.data)
+                    };
+                    let popped_frame_shape = popped_frame.shape;
+
+                    // we need to do this before any error handling to avoid leaks
+                    popped_frame.deinit();
+                    popped_frame.dealloc();
+                    let rptr = res.map_err(|message| ReflectError::CustomDeserializationError {
+                        message,
+                        src_shape: popped_frame_shape,
+                        dst_shape: parent_frame.shape,
+                    })?;
                     if rptr.as_uninit() != parent_frame.data {
                         return Err(ReflectError::CustomDeserializationError {
                             message: "deserialize_with did not return the expected pointer",
-                            src_shape: popped_frame.shape,
+                            src_shape: popped_frame_shape,
                             dst_shape: parent_frame.shape,
                         });
                     }
                     parent_frame.mark_as_init();
                 }
-                popped_frame.tracker = Tracker::Uninit;
-                popped_frame.dealloc();
                 return Ok(self);
             }
         }
@@ -2105,6 +2109,7 @@ impl Partial<'_> {
 
     /// Begin bulding the source shape for custom deserialization, calling end() for this frame will
     /// call the deserialize_with function provided by the field and set the field using the result.
+    #[cfg(feature = "alloc")]
     pub fn begin_custom_deserialization(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
@@ -2121,26 +2126,10 @@ impl Partial<'_> {
                 else {
                     panic!("expected field attribute to be present with deserialize_with");
                 };
-                let source_layout =
-                    source_shape
-                        .layout
-                        .sized_layout()
-                        .map_err(|_| ReflectError::Unsized {
-                            shape: source_shape,
-                            operation: "begin_custom_deserialization, getting source layout",
-                        })?;
-
-                let source_data = if source_layout.size() == 0 {
-                    // For ZST, use a non-null but unallocated pointer
-                    PtrUninit::new(NonNull::<u8>::dangling())
-                } else {
-                    // Allocate memory for the inner value
-                    let ptr = unsafe { alloc::alloc::alloc(source_layout) };
-                    let Some(ptr) = NonNull::new(ptr) else {
-                        alloc::alloc::handle_alloc_error(source_layout);
-                    };
-                    PtrUninit::new(ptr)
-                };
+                let source_data = source_shape.allocate().map_err(|_| ReflectError::Unsized {
+                    shape: target_shape,
+                    operation: "Not a Sized type",
+                })?;
 
                 trace!(
                     "begin_custom_deserialization: Creating frame for deserialization type {source_shape}"

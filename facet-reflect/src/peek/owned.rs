@@ -27,6 +27,9 @@ impl<'mem, 'facet> OwnedPeek<'mem> {
 impl<'mem> Drop for OwnedPeek<'mem> {
     fn drop(&mut self) {
         trace!("Dropping owned peek of shape '{}'", self.shape);
+        if let Some(drop_fn) = self.shape.vtable.drop_in_place {
+            unsafe { drop_fn(self.data) };
+        }
         let _ = unsafe { self.shape.deallocate_mut(self.data) };
     }
 }

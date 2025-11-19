@@ -7,9 +7,12 @@ use facet_core::{
 use crate::{PeekNdArray, PeekSet, ReflectError, ScalarType};
 
 use super::{
-    ListLikeDef, OwnedPeek, PeekEnum, PeekList, PeekListLike, PeekMap, PeekOption, PeekPointer,
-    PeekStruct, PeekTuple, tuple::TupleType,
+    ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekOption, PeekPointer, PeekStruct,
+    PeekTuple, tuple::TupleType,
 };
+
+#[cfg(feature = "alloc")]
+use super::OwnedPeek;
 
 /// A unique identifier for a peek value
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -463,9 +466,10 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     ///
     /// Returns an `OwnedPeek` that points to the final type that should be serialized in place
     /// of the current peek.
+    #[cfg(feature = "alloc")]
     pub fn custom_serialization(&self, field: Field) -> Result<OwnedPeek<'mem>, ReflectError> {
         if let Some(serialize_with) = field.vtable.serialize_with {
-            let Some(FieldAttribute::SerializeInto(target_shape)) = field
+            let Some(&FieldAttribute::SerializeInto(target_shape)) = field
                 .attributes
                 .iter()
                 .find(|&p| matches!(p, FieldAttribute::SerializeInto(_)))
@@ -476,24 +480,34 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                 shape: target_shape,
                 operation: "Not a Sized type",
             })?;
-            let rptr = unsafe { serialize_with(self.data(), tptr) }.map_err(|e| {
-                ReflectError::CustomDeserializationError {
-                    message: e,
-                    src_shape: self.shape,
-                    dst_shape: target_shape,
+            let ser_res = unsafe { serialize_with(self.data(), tptr) };
+            let err = match ser_res {
+                Ok(rptr) => {
+                    if rptr.as_uninit() != tptr {
+                        ReflectError::CustomDeserializationError {
+                            message: "serialize_with did not return the expected pointer",
+                            src_shape: self.shape,
+                            dst_shape: target_shape,
+                        }
+                    } else {
+                        return Ok(OwnedPeek {
+                            shape: target_shape,
+                            data: rptr,
+                        });
+                    }
                 }
-            })?;
-            if rptr.as_uninit() != tptr {
-                return Err(ReflectError::CustomDeserializationError {
-                    message: "serialize_with did not return the expected pointer",
+                Err(message) => ReflectError::CustomDeserializationError {
+                    message,
                     src_shape: self.shape,
                     dst_shape: target_shape,
-                });
-            }
-            Ok(OwnedPeek {
-                shape: target_shape,
-                data: rptr,
-            })
+                },
+            };
+            // if we reach here we have an error and we need to deallocate the target allocation
+            unsafe {
+                // SAFETY: unwrap should be ok since the allocation was ok
+                target_shape.deallocate_uninit(tptr).unwrap()
+            };
+            Err(err)
         } else {
             Err(ReflectError::OperationFailed {
                 shape: self.shape,

@@ -76,9 +76,7 @@ fn wip_shaped_custom_deserialize() -> Result<(), IPanic> {
     partial.begin_field("inner")?;
     partial.begin_custom_deserialization()?;
     assert_eq!(partial.shape(), Struct2::SHAPE);
-    partial.set(Struct2 {
-        sum: "10".to_string(),
-    })?;
+    partial.set(Struct2 { sum: "10".into() })?;
     partial.end()?;
     partial.end()?;
     let result = *partial.build()?;
@@ -89,7 +87,7 @@ fn wip_shaped_custom_deserialize() -> Result<(), IPanic> {
     partial.begin_field("inner")?;
     partial.begin_custom_deserialization()?;
     partial.begin_field("sum")?;
-    partial.set("10".to_string())?;
+    partial.set::<String>("10".into())?;
     partial.end()?;
     partial.end()?;
     partial.end()?;
