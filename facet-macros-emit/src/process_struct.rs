@@ -198,7 +198,10 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let struct_name = &ps.container.name;
     let struct_name_str = struct_name.to_string();
 
-    let type_name_fn = generate_type_name_fn(struct_name, parsed.generics.as_ref());
+    let opaque = ps.container.attrs.facet.iter()
+        .any(|a| matches!(a, PFacetAttr::Opaque));
+
+    let type_name_fn = generate_type_name_fn(struct_name, parsed.generics.as_ref(), opaque);
 
     // TODO: I assume the `PrimitiveRepr` is only relevant for enums, and does not need to be preserved?
     let repr = match &ps.container.attrs.repr {
@@ -237,8 +240,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         StructKind::TupleStruct { clauses, .. } => clauses.as_ref(),
         StructKind::UnitStruct { clauses, .. } => clauses.as_ref(),
     };
-    let where_clauses = build_where_clauses(where_clauses_ast, parsed.generics.as_ref());
-    let type_params = build_type_params(parsed.generics.as_ref());
+    let where_clauses = build_where_clauses(where_clauses_ast, parsed.generics.as_ref(), opaque);
+    let type_params = build_type_params(parsed.generics.as_ref(), opaque);
 
     // Static decl using PStruct BGP
     let static_decl = if ps.container.bgp.params.is_empty() {
@@ -474,6 +477,24 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let bgp_def = facet_bgp.display_with_bounds();
     let bgp_without_bounds = ps.container.bgp.display_without_bounds();
 
+    let ty = if opaque {
+        quote! {
+            .ty(::facet::Type::User(::facet::UserType::Opaque))
+        }
+    } else {
+        quote! {
+            .ty(::facet::Type::User(::facet::UserType::Struct(::facet::StructType::builder()
+                .repr(#repr)
+                .kind(#kind)
+                .fields({
+                    let fields: &'static [::facet::Field] = &const {[#(#fields_vec),*]};
+                    fields
+                })
+                .build()
+            )))
+        }
+    };
+
     // Final quote block using refactored parts
     let result = quote! {
         #static_decl
@@ -481,8 +502,6 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         #[automatically_derived]
         unsafe impl #bgp_def ::facet::Facet<'__facet> for #struct_name_ident #bgp_without_bounds #where_clauses {
             const SHAPE: &'static ::facet::Shape = &const {
-                let fields: &'static [::facet::Field] = &const {[#(#fields_vec),*]};
-
                 ::facet::Shape::builder_for_sized::<Self>()
                     .vtable({
                         let mut vtable = ::facet::value_vtable!(Self, #type_name_fn);
@@ -492,12 +511,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     })
                     .type_identifier(#struct_name_str)
                     #type_params // Still from parsed.generics
-                    .ty(::facet::Type::User(::facet::UserType::Struct(::facet::StructType::builder()
-                        .repr(#repr)
-                        .kind(#kind)
-                        .fields(fields)
-                        .build()
-                    )))
+                    #ty
                     #inner_setter // Use transparency flag from PStruct
                     #maybe_container_doc // From ps.container.attrs.doc
                     #container_attributes_tokens // From ps.container.attrs.facet

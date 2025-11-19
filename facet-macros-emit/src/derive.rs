@@ -33,6 +33,7 @@ pub(crate) fn generate_static_decl(type_name: &Ident) -> TokenStream {
 pub(crate) fn build_where_clauses(
     where_clauses: Option<&WhereClauses>,
     generics: Option<&GenericParams>,
+    opaque: bool,
 ) -> TokenStream {
     let mut where_clause_tokens = TokenStream::new();
     let mut has_clauses = false;
@@ -68,7 +69,12 @@ pub(crate) fn build_where_clauses(
                     if has_clauses {
                         where_clause_tokens.extend(quote! { , });
                     }
-                    where_clause_tokens.extend(quote! { #name: ::facet::Facet<'__facet> });
+                    // Only specify lifetime bound for opaque containers
+                    if opaque {
+                        where_clause_tokens.extend(quote! { #name: '__facet });
+                    } else {
+                        where_clause_tokens.extend(quote! { #name: ::facet::Facet<'__facet> });
+                    }
                     has_clauses = true;
                 }
             }
@@ -82,7 +88,11 @@ pub(crate) fn build_where_clauses(
     }
 }
 
-pub(crate) fn build_type_params(generics: Option<&GenericParams>) -> TokenStream {
+pub(crate) fn build_type_params(generics: Option<&GenericParams>, opaque: bool) -> TokenStream {
+    if opaque {
+        return quote! {}
+    }
+    
     let mut type_params = Vec::new();
     if let Some(generics) = generics {
         for p in &generics.params.0 {
@@ -118,10 +128,11 @@ pub(crate) fn build_type_params(generics: Option<&GenericParams>) -> TokenStream
 pub(crate) fn generate_type_name_fn(
     type_name: &Ident,
     generics: Option<&GenericParams>,
+    opaque: bool,
 ) -> TokenStream {
     let type_name_str = type_name.to_string();
 
-    let write_generics = generics.and_then(|generics| {
+    let write_generics = (!opaque).then_some(generics).flatten().and_then(|generics| {
         let params = generics.params.0.iter();
         let write_each = params.filter_map(|param| match &param.value {
             // Lifetimes not shown by `std::any::type_name`, this is parity.
