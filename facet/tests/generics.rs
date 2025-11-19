@@ -122,6 +122,49 @@ fn enum_vec_variant_wrapper() {
 }
 
 #[test]
+fn opaque_struct() {
+    #[derive(Debug)]
+    struct NonFacet;
+    
+    #[derive(Facet, Debug)]
+    #[facet(opaque)]
+    struct GenStruct<T: core::fmt::Debug>(T);
+
+    let shape = GenStruct::<NonFacet>::SHAPE;
+    match shape.ty {
+        Type::User(UserType::Opaque) => {
+            eprintln!("Enum shape {shape} looks correct");
+        }
+        _ => unreachable!(),
+    }
+
+    assert!(shape.vtable.debug.is_some());
+    assert_eq!(shape.type_params.len(), 0);
+}
+
+#[test]
+fn opaque_enum() {
+    #[derive(Debug)]
+    struct NonFacet;
+    
+    #[derive(Facet, Debug)]
+    #[facet(opaque)]
+    struct GenEnum<T: core::fmt::Debug>(T);
+
+    let shape = GenEnum::<NonFacet>::SHAPE;
+    match shape.ty {
+        Type::User(UserType::Opaque) => {
+            eprintln!("Enum shape {shape} looks correct");
+        }
+        _ => unreachable!(),
+    }
+
+    assert!(shape.vtable.debug.is_some());
+    assert_eq!(shape.type_params.len(), 0);
+}
+
+
+#[test]
 fn type_params_vec_f64() {
     let shape = Vec::<f64>::SHAPE;
     assert_eq!(shape.type_params.len(), 1);
