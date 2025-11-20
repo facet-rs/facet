@@ -14,7 +14,11 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     let enum_name = &pe.container.name;
     let enum_name_str = enum_name.to_string();
 
-    let opaque = pe.container.attrs.facet.iter()
+    let opaque = pe
+        .container
+        .attrs
+        .facet
+        .iter()
         .any(|a| matches!(a, PFacetAttr::Opaque));
 
     let type_name_fn = generate_type_name_fn(enum_name, parsed.generics.as_ref(), opaque);
@@ -577,26 +581,31 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     let bgp_def = facet_bgp.display_with_bounds();
     let bgp_without_bounds = bgp.display_without_bounds();
 
-    let ty = if opaque {
-        quote! {
-            .ty(::facet::Type::User(::facet::UserType::Opaque))
-        }
+    let (ty, fields) = if opaque {
+        (
+            quote! {
+                .ty(::facet::Type::User(::facet::UserType::Opaque))
+            },
+            quote! {},
+        )
     } else {
-        quote! {
-            .ty(::facet::Type::User(::facet::UserType::Enum(::facet::EnumType::builder()
-                    // Use variant expressions that just reference the shadow structs
-                    // which are now defined above
-                    .variants({
-                        let __facet_variants: &'static [::facet::Variant] = &const {[
-                            #(#variant_expressions),*
-                        ]};
-                        __facet_variants
-                    })
-                    .repr(#repr)
-                    .enum_repr(#enum_repr_type_tokenstream)
-                    .build())
-            ))
-        }
+        (
+            quote! {
+                .ty(::facet::Type::User(::facet::UserType::Enum(::facet::EnumType::builder()
+                        // Use variant expressions that just reference the shadow structs
+                        // which are now defined above
+                        .variants(__facet_variants)
+                        .repr(#repr)
+                        .enum_repr(#enum_repr_type_tokenstream)
+                        .build())
+                ))
+            },
+            quote! {
+                let __facet_variants: &'static [::facet::Variant] = &const {[
+                    #(#variant_expressions),*
+                ]};
+            },
+        )
     };
 
     // Generate the impl
@@ -608,6 +617,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         unsafe impl #bgp_def ::facet::Facet<'__facet> for #enum_name #bgp_without_bounds #where_clauses_tokens {
             const SHAPE: &'static ::facet::Shape = &const {
                 #(#shadow_struct_defs)*
+                #fields
                 ::facet::Shape::builder_for_sized::<Self>()
                     .vtable({
                         ::facet::value_vtable!(Self, #type_name_fn)

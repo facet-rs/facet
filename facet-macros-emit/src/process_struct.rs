@@ -198,7 +198,11 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let struct_name = &ps.container.name;
     let struct_name_str = struct_name.to_string();
 
-    let opaque = ps.container.attrs.facet.iter()
+    let opaque = ps
+        .container
+        .attrs
+        .facet
+        .iter()
         .any(|a| matches!(a, PFacetAttr::Opaque));
 
     let type_name_fn = generate_type_name_fn(struct_name, parsed.generics.as_ref(), opaque);
@@ -477,22 +481,27 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let bgp_def = facet_bgp.display_with_bounds();
     let bgp_without_bounds = ps.container.bgp.display_without_bounds();
 
-    let ty = if opaque {
-        quote! {
-            .ty(::facet::Type::User(::facet::UserType::Opaque))
-        }
+    let (ty, fields) = if opaque {
+        (
+            quote! {
+                .ty(::facet::Type::User(::facet::UserType::Opaque))
+            },
+            quote! {},
+        )
     } else {
-        quote! {
-            .ty(::facet::Type::User(::facet::UserType::Struct(::facet::StructType::builder()
-                .repr(#repr)
-                .kind(#kind)
-                .fields({
-                    let fields: &'static [::facet::Field] = &const {[#(#fields_vec),*]};
-                    fields
-                })
-                .build()
-            )))
-        }
+        (
+            quote! {
+                .ty(::facet::Type::User(::facet::UserType::Struct(::facet::StructType::builder()
+                    .repr(#repr)
+                    .kind(#kind)
+                    .fields(fields)
+                    .build()
+                )))
+            },
+            quote! {
+                let fields: &'static [::facet::Field] = &const {[#(#fields_vec),*]};
+            },
+        )
     };
 
     // Final quote block using refactored parts
@@ -502,6 +511,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         #[automatically_derived]
         unsafe impl #bgp_def ::facet::Facet<'__facet> for #struct_name_ident #bgp_without_bounds #where_clauses {
             const SHAPE: &'static ::facet::Shape = &const {
+                #fields
+
                 ::facet::Shape::builder_for_sized::<Self>()
                     .vtable({
                         let mut vtable = ::facet::value_vtable!(Self, #type_name_fn);
