@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.4](https://github.com/facet-rs/facet/compare/facet-macros-emit-v0.31.3...facet-macros-emit-v0.31.4) - 2025-11-20
+
+### Fixed
+
+- fix codegen tests
+
+### Other
+
+- allow `#[facet(opaque)]` attribute for container
+
 ## [0.31.1](https://github.com/facet-rs/facet/compare/facet-macros-emit-v0.31.0...facet-macros-emit-v0.31.1) - 2025-10-31
 
 ### Other
