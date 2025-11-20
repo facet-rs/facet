@@ -242,3 +242,67 @@ fn wip_custom_deserialize_errors() -> Result<(), IPanic> {
 
     Ok(())
 }
+
+#[test]
+fn wip_custom_deserialize_zst() -> Result<(), IPanic> {
+    enum DeserializeWithError {
+        MustBeThirtyFive,
+        MustNeverBeTwenty,
+    }
+
+    impl std::fmt::Display for DeserializeWithError {
+        fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+            let s = match self {
+                DeserializeWithError::MustBeThirtyFive => "must be 35!",
+                DeserializeWithError::MustNeverBeTwenty => "must never be 20!",
+            };
+            write!(f, "{s}")
+        }
+    }
+
+    fn deserialize_with(val: &u64) -> Result<(), DeserializeWithError> {
+        if *val == 20 {
+            Err(DeserializeWithError::MustNeverBeTwenty)
+        } else if *val != 35 {
+            Err(DeserializeWithError::MustBeThirtyFive)
+        } else {
+            Ok(())
+        }
+    }
+
+    #[derive(Facet)]
+    pub struct Container {
+        #[facet(deserialize_with=deserialize_with)]
+        inner: (),
+    }
+
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_field("inner")?;
+    partial.begin_custom_deserialization()?;
+    assert_eq!(partial.shape(), u64::SHAPE);
+    partial.set(35u64)?;
+    partial.end()?;
+    partial.end()?;
+    let _result = *partial.build()?;
+
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_field("inner")?;
+    partial.begin_custom_deserialization()?;
+    assert_eq!(partial.shape(), u64::SHAPE);
+    partial.set(20u64)?;
+    let end_result = partial.end();
+    if let Err(ReflectError::CustomDeserializationError {
+        message,
+        src_shape,
+        dst_shape,
+    }) = end_result
+    {
+        assert_eq!(message, "must never be 20!");
+        assert_eq!(src_shape, u64::SHAPE);
+        assert_eq!(dst_shape, <() as Facet>::SHAPE);
+    } else {
+        assert!(false, "expected custom deserialization error");
+    }
+
+    Ok(())
+}

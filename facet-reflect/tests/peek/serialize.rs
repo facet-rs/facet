@@ -328,3 +328,46 @@ fn peek_custom_serialize_errors() -> Result<(), IPanic> {
     assert!(tested);
     Ok(())
 }
+
+#[test]
+fn peek_custom_serialize_zst() -> Result<(), IPanic> {
+    fn serialize_with(_: &()) -> Result<u64, &'static str> {
+        Ok(35)
+    }
+
+    #[derive(Facet)]
+    pub struct Container {
+        #[facet(serialize_with=serialize_with)]
+        inner: (),
+    }
+
+    let container = Container { inner: () };
+
+    let peek_value = Peek::new(&container);
+
+    let peek_struct = peek_value
+        .into_struct()
+        .expect("Should be convertible to struct");
+
+    let inner_field = peek_struct
+        .field_by_name("inner")
+        .expect("Should have an inner field");
+
+    let mut tested = false;
+    for (field, peek) in peek_struct.fields_for_serialize() {
+        tested = true;
+        assert_eq!(inner_field, peek);
+        assert!(field.vtable.serialize_with.is_some());
+        let owned = peek
+            .custom_serialization(field)
+            .expect("should return owned peek");
+        // Test field values
+        let peek = owned.as_peek();
+        let proxy_value = peek.get::<u64>().unwrap();
+        assert_eq!(*proxy_value, 35);
+        break;
+    }
+    assert!(tested);
+
+    Ok(())
+}
