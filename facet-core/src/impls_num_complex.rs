@@ -155,7 +155,9 @@ const fn complex_fields<'facet, T: Facet<'facet>>() -> &'static [Field; 2] {
             vtable: &crate::FieldVTable {
                 skip_serializing_if: None,
                 default_fn: None,
+                #[cfg(feature = "alloc")]
                 deserialize_with: None,
+                #[cfg(feature = "alloc")]
                 serialize_with: None,
             },
             flattened: false,
@@ -170,7 +172,9 @@ const fn complex_fields<'facet, T: Facet<'facet>>() -> &'static [Field; 2] {
             vtable: &crate::FieldVTable {
                 skip_serializing_if: None,
                 default_fn: None,
+                #[cfg(feature = "alloc")]
                 deserialize_with: None,
+                #[cfg(feature = "alloc")]
                 serialize_with: None,
             },
             flattened: false,

@@ -173,7 +173,7 @@ impl<'facet> Partial<'facet> {
                     })?;
                     if rptr.as_uninit() != parent_frame.data {
                         return Err(ReflectError::CustomDeserializationError {
-                            message: "deserialize_with did not return the expected pointer",
+                            message: "deserialize_with did not return the expected pointer".into(),
                             src_shape: popped_frame_shape,
                             dst_shape: parent_frame.shape,
                         });

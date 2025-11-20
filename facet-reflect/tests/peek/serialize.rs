@@ -311,7 +311,7 @@ fn peek_custom_serialize_errors() -> Result<(), IPanic> {
         assert_eq!(inner_field, peek);
         assert!(field.vtable.serialize_with.is_some());
         let cust_ser_result = peek.custom_serialization(field);
-        if let Err(ReflectError::CustomDeserializationError {
+        if let Err(ReflectError::CustomSerializationError {
             message,
             src_shape,
             dst_shape,

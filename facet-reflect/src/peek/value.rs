@@ -484,8 +484,8 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
             let err = match ser_res {
                 Ok(rptr) => {
                     if rptr.as_uninit() != tptr {
-                        ReflectError::CustomDeserializationError {
-                            message: "serialize_with did not return the expected pointer",
+                        ReflectError::CustomSerializationError {
+                            message: "serialize_with did not return the expected pointer".into(),
                             src_shape: self.shape,
                             dst_shape: target_shape,
                         }
@@ -496,7 +496,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                         });
                     }
                 }
-                Err(message) => ReflectError::CustomDeserializationError {
+                Err(message) => ReflectError::CustomSerializationError {
                     message,
                     src_shape: self.shape,
                     dst_shape: target_shape,

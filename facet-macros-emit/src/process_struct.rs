@@ -118,10 +118,10 @@ pub(crate) fn gen_field_from_pfield(
             PFacetAttr::DeserializeWith { expr } => {
                 let deserialize_with_fn = expr;
                 vtable_items.push(quote! {
-                    .deserialize_with(|sptr, tptr| -> Result<::facet::PtrMut<'_>, &'static str> {
+                    .deserialize_with(|sptr, tptr| -> Result<::facet::PtrMut<'_>, _> {
                         let sval = unsafe { sptr.get() };
-                        let res: Result<#field_type, &'static str> = #deserialize_with_fn(sval);
-                        let tval = res?;
+                        let res: Result<#field_type, _> = #deserialize_with_fn(sval);
+                        let tval = res.map_err(|e| format!("{e}"))?;
                         Ok(unsafe { tptr.put(tval) })
                     })
                 });
@@ -130,10 +130,10 @@ pub(crate) fn gen_field_from_pfield(
             PFacetAttr::SerializeWith { expr } => {
                 let serialize_with_fn = expr;
                 vtable_items.push(quote! {
-                    .serialize_with(|sptr, tptr| -> Result<::facet::PtrMut<'_>, &'static str> {
+                    .serialize_with(|sptr, tptr| -> Result<::facet::PtrMut<'_>, _> {
                         let sval: &#field_type = unsafe { sptr.get::<#field_type>() };
-                        let res: Result<_, &'static str> = #serialize_with_fn(sval);
-                        let tval = res?;
+                        let res: Result<_, _> = #serialize_with_fn(sval);
+                        let tval = res.map_err(|e| format!("{e}"))?;
                         Ok(unsafe { tptr.put(tval) })
                     })
                 });
