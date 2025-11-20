@@ -1,4 +1,6 @@
-use crate::{PtrConst, PtrMut, PtrUninit};
+use crate::PtrConst;
+#[cfg(feature = "alloc")]
+use crate::{PtrMut, PtrUninit};
 
 use super::{DefaultInPlaceFn, Shape};
 use bitflags::bitflags;

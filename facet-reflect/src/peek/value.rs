@@ -1,8 +1,9 @@
 use core::{cmp::Ordering, marker::PhantomData, ptr::NonNull};
 use facet_core::{
-    Def, Facet, Field, FieldAttribute, PointerType, PtrConst, Shape, StructKind, Type,
-    TypeNameOpts, UserType, ValueVTable,
+    Def, Facet, PointerType, PtrConst, Shape, StructKind, Type, TypeNameOpts, UserType, ValueVTable,
 };
+#[cfg(feature = "alloc")]
+use facet_core::{Field, FieldAttribute};
 
 use crate::{PeekNdArray, PeekSet, ReflectError, ScalarType};
 
