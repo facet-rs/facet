@@ -189,3 +189,15 @@ fn test_backslash() {
     // Run the test
     run_evaluation_test(&test);
 }
+
+#[test]
+fn test_complex_doc() {
+    // Define the test case
+    let test = EvaluationTest {
+        name: "complex_doc",
+        source: include_str!("./complex_doc.rs"),
+    };
+
+    // Run the test
+    run_evaluation_test(&test);
+}

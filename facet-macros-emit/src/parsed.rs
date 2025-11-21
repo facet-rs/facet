@@ -395,7 +395,11 @@ impl PAttrs {
         for attr in attrs {
             match &attr.body.content {
                 facet_macros_parse::AttributeInner::Doc(doc_attr) => {
-                    doc_lines.push(unescape(doc_attr));
+                    // https://github.com/facet-rs/facet/issues/914
+                    // [Bug] Variant::doc field introduces escape sequences for single quotes, double quotes, and backslashes
+                    let unescaped_text =
+                        unescape(doc_attr).expect("invalid escape sequence in doc string");
+                    doc_lines.push(unescaped_text);
                 }
                 facet_macros_parse::AttributeInner::Repr(repr_attr) => {
                     if repr.is_some() {
