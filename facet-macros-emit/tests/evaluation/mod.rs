@@ -189,6 +189,3 @@ fn test_backslash() {
     // Run the test
     run_evaluation_test(&test);
 }
-    // Run the test
-    run_evaluation_test(&test);
-}
