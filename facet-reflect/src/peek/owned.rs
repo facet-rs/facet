@@ -19,7 +19,7 @@ impl<'mem, 'facet> OwnedPeek<'mem> {
     }
 
     /// returns a borrowed version of the peek
-    pub fn as_peek(&self) -> Peek<'mem, 'facet> {
+    pub fn as_peek(&'mem self) -> Peek<'mem, 'facet> {
         unsafe { Peek::unchecked_new(self.data.as_const(), self.shape) }
     }
 }
