@@ -237,7 +237,7 @@ fn wip_custom_deserialize_errors() -> Result<(), IPanic> {
         assert_eq!(src_shape, u64::SHAPE);
         assert_eq!(dst_shape, Opaque::<NotDerivingFacet>::SHAPE);
     } else {
-        assert!(false, "expected custom deserialization error");
+        panic!("expected custom deserialization error");
     }
 
     Ok(())
@@ -301,7 +301,7 @@ fn wip_custom_deserialize_zst() -> Result<(), IPanic> {
         assert_eq!(src_shape, u64::SHAPE);
         assert_eq!(dst_shape, <() as Facet>::SHAPE);
     } else {
-        assert!(false, "expected custom deserialization error");
+        panic!("expected custom deserialization error");
     }
 
     Ok(())

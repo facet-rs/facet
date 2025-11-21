@@ -33,7 +33,7 @@ fn peek_opaque_custom_serialize() -> Result<(), IPanic> {
         .expect("Should have an inner field");
 
     let mut tested = false;
-    for (field, peek) in peek_struct.fields_for_serialize() {
+    if let Some((field, peek)) = peek_struct.fields_for_serialize().next() {
         tested = true;
         assert_eq!(inner_field, peek);
         assert!(field.vtable.serialize_with.is_some());
@@ -88,7 +88,7 @@ fn peek_shaped_custom_serialize() -> Result<(), IPanic> {
         .expect("Should have an inner field");
 
     let mut tested = false;
-    for (field, peek) in peek_struct.fields_for_serialize() {
+    if let Some((field, peek)) = peek_struct.fields_for_serialize().next() {
         tested = true;
         assert_eq!(inner_field, peek);
         assert!(field.vtable.serialize_with.is_some());
@@ -142,7 +142,7 @@ fn peek_opaque_custom_serialize_enum_tuple() -> Result<(), IPanic> {
         .expect("Should have an field");
 
     let mut tested = false;
-    for (field, peek) in peek_enum.fields_for_serialize() {
+    if let Some((field, peek)) = peek_enum.fields_for_serialize().next() {
         tested = true;
         assert_eq!(inner_field, peek);
         assert!(field.vtable.serialize_with.is_some());
@@ -201,7 +201,7 @@ fn peek_opaque_custom_serialize_enum_feels() -> Result<(), IPanic> {
         .expect("Should have an field");
 
     let mut tested = false;
-    for (field, peek) in peek_enum.fields_for_serialize() {
+    if let Some((field, peek)) = peek_enum.fields_for_serialize().next() {
         tested = true;
         assert_eq!(inner_field, peek);
         assert!(field.vtable.serialize_with.is_some());
@@ -256,7 +256,7 @@ fn peek_shaped_custom_serialize_pointers() -> Result<(), IPanic> {
         .expect("Should have an inner field");
 
     let mut tested = false;
-    for (field, peek) in peek_struct.fields_for_serialize() {
+    if let Some((field, peek)) = peek_struct.fields_for_serialize().next() {
         tested = true;
         assert_eq!(inner_field, peek);
         assert!(field.vtable.serialize_with.is_some());
@@ -306,7 +306,7 @@ fn peek_custom_serialize_errors() -> Result<(), IPanic> {
         .expect("Should have an inner field");
 
     let mut tested = false;
-    for (field, peek) in peek_struct.fields_for_serialize() {
+    if let Some((field, peek)) = peek_struct.fields_for_serialize().next() {
         tested = true;
         assert_eq!(inner_field, peek);
         assert!(field.vtable.serialize_with.is_some());
@@ -321,9 +321,8 @@ fn peek_custom_serialize_errors() -> Result<(), IPanic> {
             assert_eq!(src_shape, Opaque::<NotDerivingFacet>::SHAPE);
             assert_eq!(dst_shape, u64::SHAPE);
         } else {
-            assert!(false, "expected custom deserialization error");
+            panic!("expected custom deserialization error");
         }
-        break;
     }
     assert!(tested);
     Ok(())
@@ -354,7 +353,7 @@ fn peek_custom_serialize_zst() -> Result<(), IPanic> {
         .expect("Should have an inner field");
 
     let mut tested = false;
-    for (field, peek) in peek_struct.fields_for_serialize() {
+    if let Some((field, peek)) = peek_struct.fields_for_serialize().next() {
         tested = true;
         assert_eq!(inner_field, peek);
         assert!(field.vtable.serialize_with.is_some());
@@ -365,7 +364,6 @@ fn peek_custom_serialize_zst() -> Result<(), IPanic> {
         let peek = owned.as_peek();
         let proxy_value = peek.get::<u64>().unwrap();
         assert_eq!(*proxy_value, 35);
-        break;
     }
     assert!(tested);
 
