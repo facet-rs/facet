@@ -82,11 +82,11 @@ facet-reflect = {{ path = {:?} }}
 
         // Print the build output for debugging
         println!("{}", "\nCompiler error output:".yellow().bold());
-        println!("{}", build_stderr);
+        println!("{build_stderr}");
 
         if !build_stdout.is_empty() {
             println!("{}", "\nCompiler standard output:".yellow());
-            println!("{}", build_stdout);
+            println!("{build_stdout}");
         }
 
         panic!(
@@ -116,22 +116,18 @@ facet-reflect = {{ path = {:?} }}
         println!("{}", "❌ Test failed:".bright_red().bold());
         println!(
             "{}",
-            format_args!(
-                "  The program exited with non-zero status code: {}",
-                run_exit_code
-            )
-            .red()
+            format_args!("  The program exited with non-zero status code: {run_exit_code}").red()
         );
 
         // Print the runtime output for debugging
         if !run_stdout.is_empty() {
             println!("{}", "\nProgram standard output:".yellow().bold());
-            println!("{}", run_stdout);
+            println!("{run_stdout}");
         }
 
         if !run_stderr.is_empty() {
             println!("{}", "\nProgram error output:".yellow().bold());
-            println!("{}", run_stderr);
+            println!("{run_stderr}");
         }
 
         panic!(
@@ -190,6 +186,9 @@ fn test_backslash() {
         source: include_str!("./backslash_test.rs"),
     };
 
+    // Run the test
+    run_evaluation_test(&test);
+}
     // Run the test
     run_evaluation_test(&test);
 }
