@@ -12,14 +12,15 @@ struct EvaluationTest {
 }
 
 /// Run a single evaluation test that is expected to compile and run successfully
-fn run_evaluation_test(test: &EvaluationTest) {
+fn run_evaluation_test(test: &EvaluationTest) -> Result<(), String> {
     println!(
         "{}",
         format_args!("Running test: {}", test.name).blue().bold()
     );
 
     // Create a random temp directory for the Cargo project
-    let temp_dir = tempfile::tempdir().expect("Failed to create temp directory");
+    let temp_dir =
+        tempfile::tempdir().map_err(|e| format!("Failed to create temp directory: {}", e))?;
     let project_dir = temp_dir.path();
     println!(
         "{}",
@@ -32,13 +33,15 @@ fn run_evaluation_test(test: &EvaluationTest) {
     let facet_reflect_path = workspace_dir.join("facet-reflect");
 
     // Create src directory
-    fs::create_dir(project_dir.join("src")).expect("Failed to create src directory");
+    fs::create_dir(project_dir.join("src"))
+        .map_err(|e| format!("Failed to create src directory: {}", e))?;
 
     // Create Cargo.toml with dependencies
+    // Use a unique package name to avoid race conditions when sharing CARGO_TARGET_DIR
     let cargo_toml = format!(
         r#"
 [package]
-name = "facet-test-project"
+name = "facet-test-project-{}"
 version = "0.1.0"
 edition = "2021"
 
@@ -47,16 +50,18 @@ eyre = "0.6"
 facet = {{ path = {:?} }}
 facet-reflect = {{ path = {:?} }}
     "#,
+        test.name,
         facet_path.display(),
         facet_reflect_path.display()
     );
 
     // Write the Cargo.toml file
-    fs::write(project_dir.join("Cargo.toml"), cargo_toml).expect("Failed to write Cargo.toml");
+    fs::write(project_dir.join("Cargo.toml"), cargo_toml)
+        .map_err(|e| format!("Failed to write Cargo.toml: {}", e))?;
 
     // Write the main.rs file
     fs::write(project_dir.join("src").join("main.rs"), test.source)
-        .expect("Failed to write main.rs");
+        .map_err(|e| format!("Failed to write main.rs: {}", e))?;
 
     // Run cargo build
     let mut build_cmd = std::process::Command::new("cargo");
@@ -66,7 +71,9 @@ facet-reflect = {{ path = {:?} }}
         .env("CARGO_TERM_COLOR", "always")
         .env("CARGO_TARGET_DIR", "/tmp/ui_tests/target"); // Set consistent target directory
 
-    let build_output = build_cmd.output().expect("Failed to execute cargo build");
+    let build_output = build_cmd
+        .output()
+        .map_err(|e| format!("Failed to execute cargo build: {}", e))?;
 
     // Check if compilation succeeded
     let build_exit_code = build_output.status.code().unwrap_or(1);
@@ -89,10 +96,10 @@ facet-reflect = {{ path = {:?} }}
             println!("{build_stdout}");
         }
 
-        panic!(
+        return Err(format!(
             "Test '{}' failed to compile with exit code {}",
             test.name, build_exit_code
-        );
+        ));
     } else {
         println!("{}", "  ✓ Compilation succeeded".green());
     }
@@ -105,7 +112,9 @@ facet-reflect = {{ path = {:?} }}
         .env("CARGO_TERM_COLOR", "always")
         .env("CARGO_TARGET_DIR", "/tmp/ui_tests/target");
 
-    let run_output = run_cmd.output().expect("Failed to execute cargo run");
+    let run_output = run_cmd
+        .output()
+        .map_err(|e| format!("Failed to execute cargo run: {}", e))?;
 
     // Check if the program ran successfully
     let run_exit_code = run_output.status.code().unwrap_or(1);
@@ -130,10 +139,10 @@ facet-reflect = {{ path = {:?} }}
             println!("{run_stderr}");
         }
 
-        panic!(
+        return Err(format!(
             "Test '{}' exited with non-zero status code: {}",
             test.name, run_exit_code
-        );
+        ));
     } else {
         println!("{}", "  ✓ Program ran successfully".green());
     }
@@ -152,10 +161,11 @@ facet-reflect = {{ path = {:?} }}
             .green()
             .bold()
     );
+    Ok(())
 }
 
 #[test]
-fn test_single_quotes() {
+fn test_single_quotes() -> Result<(), String> {
     // Define the test case
     let test = EvaluationTest {
         name: "single_quotes",
@@ -163,11 +173,12 @@ fn test_single_quotes() {
     };
 
     // Run the test
-    run_evaluation_test(&test);
+    run_evaluation_test(&test)?;
+    Ok(())
 }
 
 #[test]
-fn test_double_quotes() {
+fn test_double_quotes() -> Result<(), String> {
     // Define the test case
     let test = EvaluationTest {
         name: "double_quotes",
@@ -175,11 +186,12 @@ fn test_double_quotes() {
     };
 
     // Run the test
-    run_evaluation_test(&test);
+    run_evaluation_test(&test)?;
+    Ok(())
 }
 
 #[test]
-fn test_backslash() {
+fn test_backslash() -> Result<(), String> {
     // Define the test case
     let test = EvaluationTest {
         name: "backslash_test",
@@ -187,11 +199,12 @@ fn test_backslash() {
     };
 
     // Run the test
-    run_evaluation_test(&test);
+    run_evaluation_test(&test)?;
+    Ok(())
 }
 
 #[test]
-fn test_complex_doc() {
+fn test_complex_doc() -> Result<(), String> {
     // Define the test case
     let test = EvaluationTest {
         name: "complex_doc",
@@ -199,5 +212,6 @@ fn test_complex_doc() {
     };
 
     // Run the test
-    run_evaluation_test(&test);
+    run_evaluation_test(&test)?;
+    Ok(())
 }
