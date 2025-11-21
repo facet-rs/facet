@@ -2109,7 +2109,6 @@ impl Partial<'_> {
 
     /// Begin bulding the source shape for custom deserialization, calling end() for this frame will
     /// call the deserialize_with function provided by the field and set the field using the result.
-    #[cfg(feature = "alloc")]
     pub fn begin_custom_deserialization(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
