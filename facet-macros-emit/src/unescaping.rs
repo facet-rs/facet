@@ -23,8 +23,7 @@ impl std::fmt::Display for UnescapeError {
             } => {
                 write!(
                     f,
-                    "Illegal character following a backslash at index {} in {:?}: found '{}'",
-                    character_index, string, found
+                    "Illegal character following a backslash at index {character_index} in {string:?}: found '{found}'"
                 )
             }
             UnescapeError::UnexpectedEofFollowingBackslash {
@@ -33,8 +32,7 @@ impl std::fmt::Display for UnescapeError {
             } => {
                 write!(
                     f,
-                    "Unexpected end of file following a backslash at index {} in {:?}",
-                    character_index, string
+                    "Unexpected end of file following a backslash at index {character_index} in {string:?}"
                 )
             }
         }

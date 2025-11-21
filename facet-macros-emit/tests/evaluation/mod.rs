@@ -20,7 +20,7 @@ fn run_evaluation_test(test: &EvaluationTest) -> Result<(), String> {
 
     // Create a random temp directory for the Cargo project
     let temp_dir =
-        tempfile::tempdir().map_err(|e| format!("Failed to create temp directory: {}", e))?;
+        tempfile::tempdir().map_err(|e| format!("Failed to create temp directory: {e}"))?;
     let project_dir = temp_dir.path();
     println!(
         "{}",
@@ -34,7 +34,7 @@ fn run_evaluation_test(test: &EvaluationTest) -> Result<(), String> {
 
     // Create src directory
     fs::create_dir(project_dir.join("src"))
-        .map_err(|e| format!("Failed to create src directory: {}", e))?;
+        .map_err(|e| format!("Failed to create src directory: {e}"))?;
 
     // Create Cargo.toml with dependencies
     // Use a unique package name to avoid race conditions when sharing CARGO_TARGET_DIR
@@ -57,11 +57,11 @@ facet-reflect = {{ path = {:?} }}
 
     // Write the Cargo.toml file
     fs::write(project_dir.join("Cargo.toml"), cargo_toml)
-        .map_err(|e| format!("Failed to write Cargo.toml: {}", e))?;
+        .map_err(|e| format!("Failed to write Cargo.toml: {e}"))?;
 
     // Write the main.rs file
     fs::write(project_dir.join("src").join("main.rs"), test.source)
-        .map_err(|e| format!("Failed to write main.rs: {}", e))?;
+        .map_err(|e| format!("Failed to write main.rs: {e}"))?;
 
     // Run cargo build
     let mut build_cmd = std::process::Command::new("cargo");
@@ -73,7 +73,7 @@ facet-reflect = {{ path = {:?} }}
 
     let build_output = build_cmd
         .output()
-        .map_err(|e| format!("Failed to execute cargo build: {}", e))?;
+        .map_err(|e| format!("Failed to execute cargo build: {e}"))?;
 
     // Check if compilation succeeded
     let build_exit_code = build_output.status.code().unwrap_or(1);
@@ -114,7 +114,7 @@ facet-reflect = {{ path = {:?} }}
 
     let run_output = run_cmd
         .output()
-        .map_err(|e| format!("Failed to execute cargo run: {}", e))?;
+        .map_err(|e| format!("Failed to execute cargo run: {e}"))?;
 
     // Check if the program ran successfully
     let run_exit_code = run_output.status.code().unwrap_or(1);
@@ -151,7 +151,7 @@ facet-reflect = {{ path = {:?} }}
     if !run_stdout.is_empty() {
         println!(
             "{}",
-            format_args!("  Program output:\n{}", run_stdout).dimmed()
+            format_args!("  Program output:\n{run_stdout}").dimmed()
         );
     }
 
