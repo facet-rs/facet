@@ -340,9 +340,9 @@ unsynn! {
     /// e.g., `T: Trait` or `'a: 'b`.
     #[derive(Clone)]
     pub struct WhereClause {
-        // FIXME: This likely breaks for absolute `::` paths
         /// The type or lifetime being constrained (e.g., `T` or `'a`).
-        pub _pred: VerbatimUntil<Colon>,
+        /// We specifically required a single colon, not 2 because of `<A as B>::Thingy`
+        pub _pred: VerbatimUntil<Cons<Colon, Except<Colon>>>,
         /// The colon separating the constrained item and its bounds.
         pub _colon: Colon,
         /// The bounds applied to the type or lifetime (e.g., `Trait` or `'b`).

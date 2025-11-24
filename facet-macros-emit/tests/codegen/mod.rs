@@ -1123,3 +1123,20 @@ fn pub_crate_enum() {
         "#
     ));
 }
+
+#[test]
+fn emum_with_generic_complex_constaint() {
+    insta::assert_snapshot!(expand(
+        r#"
+        #[derive(Facet)]
+        #[repr(C)]
+        pub enum BoxCow<'a, B>
+        where
+            <B as ToOwned>::Owned: Facet<'a>,
+        {
+            Borrowed(&'a B),
+            Owned(Box<<B as ToOwned>::Owned>),
+        }
+        "#
+    ));
+}

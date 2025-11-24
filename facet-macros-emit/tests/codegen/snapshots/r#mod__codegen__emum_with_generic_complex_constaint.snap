@@ -1,0 +1,178 @@
+---
+source: facet-macros-emit/tests/codegen/mod.rs
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[repr(C)]\n        pub enum BoxCow<'a, B>\n        where\n            <B as ToOwned>::Owned: Facet<'a>,\n        {\n            Borrowed(&'a B),\n            Owned(Box<<B as ToOwned>::Owned>),\n        }\n        \"#)"
+---
+#[automatically_derived]
+#[allow(non_camel_case_types)]
+unsafe impl<'a, '__facet, B> ::facet::Facet<'__facet> for BoxCow<'a, B>
+where
+    <B as ToOwned>::Owned: Facet<'a>,
+    'a: '__facet,
+    '__facet: 'a,
+    B: ::facet::Facet<'__facet>,
+{
+    const SHAPE: &'static ::facet::Shape = &const {
+        #[repr(C)]
+        #[allow(dead_code)]
+        enum __Shadow_CRepr_Discriminant_for_BoxCow {
+            Borrowed,
+            Owned,
+        }
+        #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
+        union __Shadow_CRepr_Fields_Union_for_BoxCow<'a, '__facet, B>
+        where
+            <B as ToOwned>::Owned: Facet<'a>,
+            'a: '__facet,
+            '__facet: 'a,
+            B: ::facet::Facet<'__facet>,
+        {
+            Borrowed:
+                ::core::mem::ManuallyDrop<__Shadow_CRepr_FieldBoxCow_Borrowed<'a, '__facet, B>>,
+            Owned: ::core::mem::ManuallyDrop<__Shadow_CRepr_FieldBoxCow_Owned<'a, '__facet, B>>,
+        }
+        #[repr(C)]
+        #[allow(non_snake_case)]
+        #[allow(dead_code)]
+        struct __Shadow_CRepr_Struct_for_BoxCow<'a, '__facet, B>
+        where
+            <B as ToOwned>::Owned: Facet<'a>,
+            'a: '__facet,
+            '__facet: 'a,
+            B: ::facet::Facet<'__facet>,
+        {
+            _discriminant: __Shadow_CRepr_Discriminant_for_BoxCow,
+            _phantom: ::core::marker::PhantomData<(*mut &'a (), *mut &'__facet (), B)>,
+            _fields: __Shadow_CRepr_Fields_Union_for_BoxCow<'a, '__facet, B>,
+        }
+        #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
+        struct __Shadow_CRepr_FieldBoxCow_Borrowed<'a, '__facet, B>
+        where
+            <B as ToOwned>::Owned: Facet<'a>,
+            'a: '__facet,
+            '__facet: 'a,
+            B: ::facet::Facet<'__facet>,
+        {
+            _0: &'a B,
+            _phantom: ::core::marker::PhantomData<(*mut &'a (), *mut &'__facet (), B)>,
+        }
+        #[repr(C)]
+        #[allow(non_snake_case, dead_code)]
+        struct __Shadow_CRepr_FieldBoxCow_Owned<'a, '__facet, B>
+        where
+            <B as ToOwned>::Owned: Facet<'a>,
+            'a: '__facet,
+            '__facet: 'a,
+            B: ::facet::Facet<'__facet>,
+        {
+            _0: Box<<B as ToOwned>::Owned>,
+            _phantom: ::core::marker::PhantomData<(*mut &'a (), *mut &'__facet (), B)>,
+        }
+        let __facet_variants: &'static [::facet::Variant] = &const {
+            [
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [{
+                            ::facet::Field::builder()
+                                .name("0")
+                                .shape(|| {
+                                    ::facet::shape_of(&|s: &__Shadow_CRepr_FieldBoxCow_Borrowed<
+                                        'a,
+                                        '__facet,
+                                        B,
+                                    >| &s._0)
+                                })
+                                .offset(
+                                    ::core::mem::offset_of!(
+                                        __Shadow_CRepr_Struct_for_BoxCow<'a, '__facet, B>,
+                                        _fields
+                                    ) + ::core::mem::offset_of!(
+                                        __Shadow_CRepr_FieldBoxCow_Borrowed<'a, '__facet, B>,
+                                        _0
+                                    ),
+                                )
+                                .build()
+                        }]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Borrowed")
+                        .discriminant(0i64 as i64)
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
+                                .tuple()
+                                .fields(fields)
+                                .build(),
+                        )
+                        .build()
+                },
+                {
+                    let fields: &'static [::facet::Field] = &const {
+                        [{
+                            ::facet::Field::builder()
+                                .name("0")
+                                .shape(|| {
+                                    ::facet::shape_of(&|s: &__Shadow_CRepr_FieldBoxCow_Owned<
+                                        'a,
+                                        '__facet,
+                                        B,
+                                    >| &s._0)
+                                })
+                                .offset(
+                                    ::core::mem::offset_of!(
+                                        __Shadow_CRepr_Struct_for_BoxCow<'a, '__facet, B>,
+                                        _fields
+                                    ) + ::core::mem::offset_of!(
+                                        __Shadow_CRepr_FieldBoxCow_Owned<'a, '__facet, B>,
+                                        _0
+                                    ),
+                                )
+                                .build()
+                        }]
+                    };
+                    ::facet::Variant::builder()
+                        .name("Owned")
+                        .discriminant(1i64 as i64)
+                        .data(
+                            ::facet::StructType::builder()
+                                .repr(::facet::Repr::c())
+                                .tuple()
+                                .fields(fields)
+                                .build(),
+                        )
+                        .build()
+                },
+            ]
+        };
+        ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                ::facet::value_vtable!(Self, |f, opts| {
+                    write!(f, "BoxCow")?;
+                    if let Some(opts) = opts.for_children() {
+                        write!(f, "<")?;
+                        <B as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
+                        write!(f, ">")?;
+                    } else {
+                        write!(f, "<…>")?;
+                    }
+                    Ok(())
+                })
+            })
+            .type_identifier("BoxCow")
+            .type_params(&[::facet::TypeParam {
+                name: "B",
+                shape: <B as ::facet::Facet>::SHAPE,
+            }])
+            .ty(::facet::Type::User(::facet::UserType::Enum(
+                ::facet::EnumType::builder()
+                    .variants(__facet_variants)
+                    .repr(::facet::Repr::c())
+                    .enum_repr(::facet::EnumRepr::from_discriminant_size::<
+                        __Shadow_CRepr_Discriminant_for_BoxCow,
+                    >())
+                    .build(),
+            )))
+            .build()
+    };
+}
