@@ -1,0 +1,34 @@
+# The URL the site will be built for
+base_url = "https://facet.rs"
+
+# Title of the site
+title = "facet"
+description = "Runtime reflection for Rust"
+
+# Theme to use (we'll create a custom one)
+# theme = ""
+
+# Whether to automatically compile all Sass files in the `sass` directory
+compile_sass = true
+
+# Whether to build a search index
+build_search_index = false
+
+# The default language
+default_language = "en"
+
+# Whether to generate a feed
+generate_feeds = false
+
+# Whether to minify HTML
+minify_html = false
+
+[markdown]
+# Whether to do syntax highlighting
+highlight_code = true
+highlight_theme = "css"
+# Enable smart punctuation
+smart_punctuation = true
+
+[extra]
+# Custom variables accessible in templates
