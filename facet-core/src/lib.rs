@@ -62,6 +62,9 @@ mod impls_jiff;
 #[cfg(feature = "num-complex")]
 mod impls_num_complex;
 
+#[cfg(feature = "ruint")]
+mod impls_ruint;
+
 // Const type Id
 mod typeid;
 pub use typeid::*;
