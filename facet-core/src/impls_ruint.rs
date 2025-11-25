@@ -29,3 +29,30 @@ unsafe impl<'facet, const BITS: usize, const LIMBS: usize> Facet<'facet> for Bit
             .build()
     };
 }
+
+#[cfg(test)]
+mod tests {
+    use ruint::aliases::{B128, U256};
+
+    use crate::{Facet, Shape, ShapeLayout};
+
+    #[test]
+    fn test_uint() {
+        const SHAPE: &Shape = U256::SHAPE;
+        assert_eq!(SHAPE.type_identifier, "Uint");
+        assert!(matches!(SHAPE.layout, ShapeLayout::Sized(..)));
+        let layout = SHAPE.layout.sized_layout().unwrap();
+        assert_eq!(layout.size(), 32);
+        assert_eq!(layout.align(), 8);
+    }
+
+    #[test]
+    fn test_bits() {
+        const SHAPE: &Shape = B128::SHAPE;
+        assert_eq!(SHAPE.type_identifier, "Bits");
+        assert!(matches!(SHAPE.layout, ShapeLayout::Sized(..)));
+        let layout = SHAPE.layout.sized_layout().unwrap();
+        assert_eq!(layout.size(), 16);
+        assert_eq!(layout.align(), 8);
+    }
+}
