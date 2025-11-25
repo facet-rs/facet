@@ -55,9 +55,9 @@ checksum = "7b02b629252fe8ef6460461409564e2c21d0c8e77e0944f3d189ff06c4e932ad"
 
 [[package]]
 name = "cc"
-version = "1.2.46"
+version = "1.2.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b97463e1064cb1b1c1384ad0a0b9c8abd0988e2a91f52606c80ef14aadb63e36"
+checksum = "cd405d82c84ff7f35739f175f67d8b9fb7687a0e84ccdc78bd3568839827cf07"
 dependencies = [
  "find-msvc-tools",
  "shlex",
@@ -156,7 +156,7 @@ dependencies = [
 
 [[package]]
 name = "facet"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "cargo-husky",
  "eyre",
@@ -170,7 +170,7 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "bitflags",
  "bytes",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macros"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "facet-core",
  "facet-macros-emit",
@@ -197,7 +197,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macros-emit"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "facet-macros-parse",
  "insta",
@@ -209,7 +209,7 @@ dependencies = [
 
 [[package]]
 name = "facet-macros-parse"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -218,7 +218,7 @@ dependencies = [
 
 [[package]]
 name = "facet-reflect"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "bitflags",
  "camino",
@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers"
-version = "0.31.4"
+version = "0.31.5"
 dependencies = [
  "color-backtrace",
  "facet-testhelpers-macros",
@@ -245,7 +245,7 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers-macros"
-version = "0.29.0"
+version = "0.29.1"
 dependencies = [
  "quote",
  "unsynn",
@@ -758,9 +758,9 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "syn"
-version = "2.0.110"
+version = "2.0.111"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a99801b5bd34ede4cf3fc688c5919368fea4e4814a4664359503e6015b280aea"
+checksum = "390cc9a294ab71bdb1aa2e99d13be9c753cd2d7bd6560c77118597410c4d2e87"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1146,18 +1146,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.27"
+version = "0.8.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0894878a5fa3edfd6da3f88c4805f4c8558e2b996227a3d864f47fe11e38282c"
+checksum = "4ea879c944afe8a2b25fef16bb4ba234f47c694565e97383b36f3a878219065c"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.27"
+version = "0.8.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88d2b8d9c68ad2b9e4340d7832716a4d21a22a1154777ad56ea55c51a9cf3831"
+checksum = "cf955aa904d6040f70dc8e9384444cb1030aed272ba3cb09bbc4ab9e7c1f34f5"
 dependencies = [
  "proc-macro2",
  "quote",

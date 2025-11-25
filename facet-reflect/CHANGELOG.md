@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.5](https://github.com/facet-rs/facet/compare/facet-reflect-v0.31.4...facet-reflect-v0.31.5) - 2025-11-25
+
+### Other
+
+- Add support for {de,}serialize_with
+
 ## [0.31.3](https://github.com/facet-rs/facet/compare/facet-reflect-v0.31.2...facet-reflect-v0.31.3) - 2025-10-31
 
 ### Other

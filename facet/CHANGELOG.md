@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.5](https://github.com/facet-rs/facet/compare/facet-v0.31.4...facet-v0.31.5) - 2025-11-25
+
+### Other
+
+- Add support for {de,}serialize_with
+
 ## [0.31.4](https://github.com/facet-rs/facet/compare/facet-v0.31.3...facet-v0.31.4) - 2025-11-20
 
 ### Other

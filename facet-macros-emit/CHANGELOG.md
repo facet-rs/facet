@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.5](https://github.com/facet-rs/facet/compare/facet-macros-emit-v0.31.4...facet-macros-emit-v0.31.5) - 2025-11-25
+
+### Fixed
+
+- fix double colon in where clause
+
+### Other
+
+- Upgrade to unsynn 0.3.0
+- Add support for {de,}serialize_with
+- Unescape double-quotes and backslash in docstrings
+
 ## [0.31.4](https://github.com/facet-rs/facet/compare/facet-macros-emit-v0.31.3...facet-macros-emit-v0.31.4) - 2025-11-20
 
 ### Fixed
