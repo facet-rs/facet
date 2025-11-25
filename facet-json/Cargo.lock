@@ -46,12 +46,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "46c5e41b57b8bba42a04676d81cb89e9ee8e859a1a66f80a5a72e1cb76b34d43"
 
 [[package]]
-name = "byteorder"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
-
-[[package]]
 name = "bytes"
 version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -236,7 +230,7 @@ checksum = "f83fa3411d7799bf21884704f595042d8bd4d8fac9dd03ac8f940ff558bf6851"
 dependencies = [
  "proc-macro2",
  "quote",
- "unsynn 0.3.0",
+ "unsynn",
 ]
 
 [[package]]
@@ -262,9 +256,9 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers"
-version = "0.31.4"
+version = "0.31.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1286df6bea29c0026e8def3b77e58b72bd943e13cb51e390d163f1a37a8e0394"
+checksum = "b9800ef62a36bfc35499effc4151fad68d755f06974a13f11d78a0fcb16b8bfc"
 dependencies = [
  "color-backtrace",
  "facet-testhelpers-macros",
@@ -274,12 +268,12 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers-macros"
-version = "0.29.0"
+version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f9a8e7044c1b922568e4061d6f3ee1bd391d053f11c371db348a0a6b649cbed"
+checksum = "222f3e6ef7143b86c0af4f0919aba0b809aef9206cbd717a533cc377cf3997ec"
 dependencies = [
  "quote",
- "unsynn 0.1.1",
+ "unsynn",
 ]
 
 [[package]]
@@ -287,15 +281,6 @@ name = "find-msvc-tools"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52051878f80a721bb68ebfbc930e07b65ba72f2da88968ea5c06fd6ca3d3a127"
-
-[[package]]
-name = "fxhash"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c31b6d751ae2c7f11320402d34e41349dd1016f8d5d45e48c4312bc8625af50c"
-dependencies = [
- "byteorder",
-]
 
 [[package]]
 name = "getrandom"
@@ -617,12 +602,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "shadow_counted"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65da48d447333cebe1aadbdd3662f3ba56e76e67f53bc46f3dd5f67c74629d6b"
-
-[[package]]
 name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -712,18 +691,6 @@ name = "unicode-width"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
-
-[[package]]
-name = "unsynn"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7940603a9e25cf11211cc43b81f4fcad2b8ab4df291ca855f32c40e1ac22d5bc"
-dependencies = [
- "fxhash",
- "mutants",
- "proc-macro2",
- "shadow_counted",
-]
 
 [[package]]
 name = "unsynn"
