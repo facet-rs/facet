@@ -26,7 +26,12 @@ pub fn from_str<'input, 'facet, T: Facet<'facet>>(
 where
     'input: 'facet,
 {
-    from_slice(input.as_bytes())
+    let input_bytes = input.as_bytes();
+
+    if input_bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
+        return from_slice(&input_bytes[3..]);
+    }
+    from_slice(input_bytes)
 }
 
 impl Format for crate::Json {
