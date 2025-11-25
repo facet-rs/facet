@@ -141,9 +141,9 @@ checksum = "34aa73646ffb006b8f5147f3dc182bd4bcb190227ce861fc4a4844bf8e3cb2c0"
 
 [[package]]
 name = "facet"
-version = "0.31.4"
+version = "0.31.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a87bd67a5da33ef6447bd46db33d734c724003884f6207ae4222f6d7863d1492"
+checksum = "d9bfbe76dbbe8f984b5069a8ba7a50554736abf71a6ab212e84403313d6708d9"
 dependencies = [
  "facet-core",
  "facet-macros",
@@ -152,9 +152,9 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.31.4"
+version = "0.31.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aaf9e8a182bc18995dce44bada25f2acb522f85570b1f878b1467db325ce1f94"
+checksum = "18e2a2a241aa121d4e30012c1a31b27b308b1df51d2ec0c31cf07ae297d63a8f"
 dependencies = [
  "bitflags",
  "bytes",
@@ -210,9 +210,9 @@ dependencies = [
 
 [[package]]
 name = "facet-macros"
-version = "0.31.4"
+version = "0.31.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b832085f0853338abf9bec1270ad405baaaf33ff0fe95c453a6e0a2fb2a65b4"
+checksum = "61371ab847c33e61195854708f0fed1bdeea0b09eaada9182564baa4731a14f3"
 dependencies = [
  "facet-core",
  "facet-macros-emit",
@@ -220,9 +220,9 @@ dependencies = [
 
 [[package]]
 name = "facet-macros-emit"
-version = "0.31.4"
+version = "0.31.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d94ee92f53e9fb6ae00437e1ce55a76ccdb7b433914dc8ef13b175450a1ee9cb"
+checksum = "2215f836e82e3687db0a187f887aad08967c62a7093d6b6719bd40480dcbd0a0"
 dependencies = [
  "facet-macros-parse",
  "quote",
@@ -230,13 +230,13 @@ dependencies = [
 
 [[package]]
 name = "facet-macros-parse"
-version = "0.31.4"
+version = "0.31.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ca1f73f3cec7bef18721c88f483292d9de006c1644c5b72a445abde3a5393d78"
+checksum = "f83fa3411d7799bf21884704f595042d8bd4d8fac9dd03ac8f940ff558bf6851"
 dependencies = [
  "proc-macro2",
  "quote",
- "unsynn",
+ "unsynn 0.3.0",
 ]
 
 [[package]]
@@ -279,7 +279,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f9a8e7044c1b922568e4061d6f3ee1bd391d053f11c371db348a0a6b649cbed"
 dependencies = [
  "quote",
- "unsynn",
+ "unsynn 0.1.1",
 ]
 
 [[package]]
@@ -570,6 +570,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustc-hash"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
+
+[[package]]
 name = "rustversion"
 version = "1.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -717,6 +723,17 @@ dependencies = [
  "mutants",
  "proc-macro2",
  "shadow_counted",
+]
+
+[[package]]
+name = "unsynn"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "501a7adf1a4bd9951501e5c66621e972ef8874d787628b7f90e64f936ef7ec0a"
+dependencies = [
+ "mutants",
+ "proc-macro2",
+ "rustc-hash",
 ]
 
 [[package]]
