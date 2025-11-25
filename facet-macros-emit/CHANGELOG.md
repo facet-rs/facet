@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.7](https://github.com/facet-rs/facet/compare/facet-macros-emit-v0.31.6...facet-macros-emit-v0.31.7) - 2025-11-25
+
+### Fixed
+
+- *(macros)* support standard Rust escape sequences in doc strings
+
 ## [0.31.5](https://github.com/facet-rs/facet/compare/facet-macros-emit-v0.31.4...facet-macros-emit-v0.31.5) - 2025-11-25
 
 ### Fixed
