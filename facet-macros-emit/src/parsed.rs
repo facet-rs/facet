@@ -108,7 +108,7 @@ impl PFacetAttr {
     ) {
         use facet_macros_parse::FacetInner;
 
-        for attr in facet_attr.inner.content.0.iter().map(|d| &d.value) {
+        for attr in facet_attr.inner.content.iter().map(|d| &d.value) {
             match attr {
                 FacetInner::Sensitive(_) => dest.push(PFacetAttr::Sensitive),
                 FacetInner::Opaque(_) => dest.push(PFacetAttr::Opaque),
@@ -250,7 +250,7 @@ impl PRepr {
             C,
         }
 
-        let items = s.attr.content.0.as_slice();
+        let items = s.attr.content.as_slice();
         let mut repr_kind: Option<ReprKind> = None;
         let mut primitive_repr: Option<PrimitiveRepr> = None;
         let mut is_transparent = false;
@@ -531,7 +531,6 @@ impl PEnum {
         let variants = e
             .body
             .content
-            .0
             .iter()
             .map(|delim| PVariant::parse(&delim.value, container_rename_all_rule))
             .collect();
@@ -675,7 +674,6 @@ impl PStructKind {
             facet_macros_parse::StructKind::Struct { clauses: _, fields } => {
                 let parsed_fields = fields
                     .content
-                    .0
                     .iter()
                     .map(|delim| PStructField::from_struct_field(&delim.value, rename_all_rule))
                     .collect();
@@ -690,7 +688,6 @@ impl PStructKind {
             } => {
                 let parsed_fields = fields
                     .content
-                    .0
                     .iter()
                     .enumerate()
                     .map(|(idx, delim)| {
@@ -820,7 +817,6 @@ impl PVariant {
             EnumVariantData::Tuple(TupleVariant { fields, .. }) => {
                 let parsed_fields = fields
                     .content
-                    .0
                     .iter()
                     .enumerate()
                     .map(|(idx, delim)| {
@@ -839,7 +835,6 @@ impl PVariant {
             EnumVariantData::Struct(StructEnumVariant { fields, .. }) => {
                 let parsed_fields = fields
                     .content
-                    .0
                     .iter()
                     .map(|delim| {
                         PStructField::from_struct_field(

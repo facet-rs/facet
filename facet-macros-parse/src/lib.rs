@@ -553,7 +553,7 @@ pub struct VerbatimDisplay<'a, C>(pub &'a VerbatimUntil<C>);
 
 impl<C> core::fmt::Display for VerbatimDisplay<'_, C> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        for tt in self.0.0.iter() {
+        for tt in self.0.iter() {
             write!(f, "{}", tt.value.second)?;
         }
         Ok(())
@@ -578,7 +578,7 @@ impl core::fmt::Display for Lifetime {
 impl core::fmt::Display for WhereClauses {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "where ")?;
-        for clause in self.clauses.0.iter() {
+        for clause in self.clauses.iter() {
             write!(f, "{},", clause.value)?;
         }
         Ok(())
@@ -611,7 +611,7 @@ impl Struct {
         self.attributes
             .iter()
             .filter_map(|attr| match &attr.body.content {
-                AttributeInner::Facet(f) => Some(&f.inner.content.0),
+                AttributeInner::Facet(f) => Some(f.inner.content.as_slice()),
                 _ => None,
             })
             .flatten()
@@ -648,11 +648,10 @@ mod tests {
 
         // Extract fields from the struct
         if let StructKind::Struct { fields, .. } = &parsed.kind {
-            let field_list = &fields.content.0;
-            assert_eq!(field_list.len(), 1);
+            assert_eq!(fields.content.len(), 1);
 
             // Check first field (id)
-            let id_field = &field_list[0].value;
+            let id_field = &fields.content[0].value;
             assert_eq!(id_field.name.to_string(), "id");
 
             // Extract doc comments from id field

@@ -13,7 +13,6 @@ pub fn extract_type_params(generics_ts: TokenStream) -> TokenStream {
         Ok(generics) => {
             let type_param_names: Vec<_> = generics
                 .params
-                .0
                 .into_iter()
                 .map(|delim| delim.value.name)
                 .collect();

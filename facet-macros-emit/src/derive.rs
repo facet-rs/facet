@@ -4,7 +4,7 @@ use quote::{TokenStreamExt as _, quote};
 use crate::{LifetimeName, RenameRule, process_enum, process_struct};
 
 pub fn facet_macros(input: TokenStream) -> TokenStream {
-    let mut i = input.to_token_iter();
+    let mut i = input.clone().to_token_iter();
 
     // Parse as TypeDecl
     match i.parse::<Cons<AdtDecl, EndOfStream>>() {
@@ -39,7 +39,7 @@ pub(crate) fn build_where_clauses(
     let mut has_clauses = false;
 
     if let Some(wc) = where_clauses {
-        for c in &wc.clauses.0 {
+        for c in wc.clauses.iter() {
             if has_clauses {
                 where_clause_tokens.extend(quote! { , });
             }
@@ -49,7 +49,7 @@ pub(crate) fn build_where_clauses(
     }
 
     if let Some(generics) = generics {
-        for p in &generics.params.0 {
+        for p in generics.params.iter() {
             match &p.value {
                 GenericParam::Lifetime { name, .. } => {
                     let facet_lifetime = LifetimeName(quote::format_ident!("{}", "__facet"));
@@ -90,12 +90,12 @@ pub(crate) fn build_where_clauses(
 
 pub(crate) fn build_type_params(generics: Option<&GenericParams>, opaque: bool) -> TokenStream {
     if opaque {
-        return quote! {}
+        return quote! {};
     }
-    
+
     let mut type_params = Vec::new();
     if let Some(generics) = generics {
-        for p in &generics.params.0 {
+        for p in generics.params.iter() {
             match &p.value {
                 GenericParam::Lifetime { .. } => {
                     // ignore for now
@@ -132,27 +132,30 @@ pub(crate) fn generate_type_name_fn(
 ) -> TokenStream {
     let type_name_str = type_name.to_string();
 
-    let write_generics = (!opaque).then_some(generics).flatten().and_then(|generics| {
-        let params = generics.params.0.iter();
-        let write_each = params.filter_map(|param| match &param.value {
-            // Lifetimes not shown by `std::any::type_name`, this is parity.
-            GenericParam::Lifetime { .. } => None,
-            GenericParam::Const { name, .. } => Some(quote! {
-                write!(f, "{:?}", #name)?;
-            }),
-            GenericParam::Type { name, .. } => Some(quote! {
-                <#name as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
-            }),
+    let write_generics = (!opaque)
+        .then_some(generics)
+        .flatten()
+        .and_then(|generics| {
+            let params = generics.params.iter();
+            let write_each = params.filter_map(|param| match &param.value {
+                // Lifetimes not shown by `std::any::type_name`, this is parity.
+                GenericParam::Lifetime { .. } => None,
+                GenericParam::Const { name, .. } => Some(quote! {
+                    write!(f, "{:?}", #name)?;
+                }),
+                GenericParam::Type { name, .. } => Some(quote! {
+                    <#name as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
+                }),
+            });
+            // TODO: is there a way to construct a DelimitedVec from an iterator?
+            let mut tokens = TokenStream::new();
+            tokens.append_separated(write_each, quote! { write!(f, ", ")?; });
+            if tokens.is_empty() {
+                None
+            } else {
+                Some(tokens)
+            }
         });
-        // TODO: is there a way to construct a DelimitedVec from an iterator?
-        let mut tokens = TokenStream::new();
-        tokens.append_separated(write_each, quote! { write!(f, ", ")?; });
-        if tokens.is_empty() {
-            None
-        } else {
-            Some(tokens)
-        }
-    });
 
     if let Some(write_generics) = write_generics {
         quote! {

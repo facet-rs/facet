@@ -54,47 +54,47 @@ mod tests {
     fn test_simple_generics() {
         let input = quote! { <T> };
         let generics = parse_generics_for_test(input).expect("should parse");
-        assert_eq!(generics.params.0.len(), 1);
-        assert_eq!(generics.params.0[0].value.name.to_string(), "T");
-        assert!(generics.params.0[0].value.bounds.is_none());
+        assert_eq!(generics.params.len(), 1);
+        assert_eq!(generics.params[0].value.name.to_string(), "T");
+        assert!(generics.params[0].value.bounds.is_none());
     }
 
     #[test]
     fn test_multiple_generics() {
         let input = quote! { <T, U, V> };
         let generics = parse_generics_for_test(input).expect("should parse");
-        assert_eq!(generics.params.0.len(), 3);
-        assert_eq!(generics.params.0[0].value.name.to_string(), "T");
-        assert_eq!(generics.params.0[1].value.name.to_string(), "U");
-        assert_eq!(generics.params.0[2].value.name.to_string(), "V");
+        assert_eq!(generics.params.len(), 3);
+        assert_eq!(generics.params[0].value.name.to_string(), "T");
+        assert_eq!(generics.params[1].value.name.to_string(), "U");
+        assert_eq!(generics.params[2].value.name.to_string(), "V");
     }
 
     #[test]
     fn test_generics_with_bounds() {
         let input = quote! { <T: Clone, U: Send> };
         let generics = parse_generics_for_test(input).expect("should parse");
-        assert_eq!(generics.params.0.len(), 2);
-        assert_eq!(generics.params.0[0].value.name.to_string(), "T");
-        assert!(generics.params.0[0].value.bounds.is_some());
-        assert_eq!(generics.params.0[1].value.name.to_string(), "U");
-        assert!(generics.params.0[1].value.bounds.is_some());
+        assert_eq!(generics.params.len(), 2);
+        assert_eq!(generics.params[0].value.name.to_string(), "T");
+        assert!(generics.params[0].value.bounds.is_some());
+        assert_eq!(generics.params[1].value.name.to_string(), "U");
+        assert!(generics.params[1].value.bounds.is_some());
     }
 
     #[test]
     fn test_complex_generics() {
         let input = quote! { <T: Add<Output = T>, U: Iterator<Item = String>> };
         let generics = parse_generics_for_test(input).expect("should parse");
-        assert_eq!(generics.params.0.len(), 2);
-        assert_eq!(generics.params.0[0].value.name.to_string(), "T");
-        assert_eq!(generics.params.0[1].value.name.to_string(), "U");
-        assert!(generics.params.0[0].value.bounds.is_some());
-        assert!(generics.params.0[1].value.bounds.is_some());
+        assert_eq!(generics.params.len(), 2);
+        assert_eq!(generics.params[0].value.name.to_string(), "T");
+        assert_eq!(generics.params[1].value.name.to_string(), "U");
+        assert!(generics.params[0].value.bounds.is_some());
+        assert!(generics.params[1].value.bounds.is_some());
     }
 
     #[test]
     fn test_empty_generics() {
         let input = quote! { <> };
         let generics = parse_generics_for_test(input).expect("should parse");
-        assert_eq!(generics.params.0.len(), 0);
+        assert_eq!(generics.params.len(), 0);
     }
 }
