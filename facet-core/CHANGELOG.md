@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.6](https://github.com/facet-rs/facet/compare/facet-core-v0.31.5...facet-core-v0.31.6) - 2025-11-25
+
+### Added
+
+- *(core)* add ruint implementations
+
+### Other
+
+- *(core)* add comments
+- *(core)* add tests for ruint impl
+
 ## [0.31.5](https://github.com/facet-rs/facet/compare/facet-core-v0.31.4...facet-core-v0.31.5) - 2025-11-25
 
 ### Other

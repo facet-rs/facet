@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.6](https://github.com/facet-rs/facet/compare/facet-v0.31.5...facet-v0.31.6) - 2025-11-25
+
+### Other
+
+- *(facet)* add feature flag for ruint
+
 ## [0.31.5](https://github.com/facet-rs/facet/compare/facet-v0.31.4...facet-v0.31.5) - 2025-11-25
 
 ### Other
