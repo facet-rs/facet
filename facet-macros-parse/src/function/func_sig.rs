@@ -52,7 +52,7 @@ pub struct FunctionSignature {
 /// Extract documentation from attributes
 pub fn extract_documentation(attributes: &Option<Many<Attribute>>) -> Vec<String> {
     let attrs = match attributes {
-        Some(many_attrs) => &many_attrs.0,
+        Some(many_attrs) => many_attrs.as_slice(),
         None => return Vec::new(),
     };
 

@@ -289,7 +289,7 @@ impl BoundedGenericParams {
 
         let mut params = Vec::new();
 
-        for param in generics.params.0.iter() {
+        for param in generics.params.iter() {
             match &param.value {
                 GenericParam::Type {
                     name,

@@ -14,4 +14,4 @@ proc-macro = true
 
 [dependencies]
 quote = "1.0.40"
-unsynn = "0.1.1"
+unsynn = "0.3.0"

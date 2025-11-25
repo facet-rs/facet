@@ -28,7 +28,7 @@ pub fn parse_fn_parameters(params_ts: TokenStream) -> Vec<Parameter> {
 
     // Parse as comma-delimited list of parameters
     match it.parse::<CommaDelimitedVec<Parameter>>() {
-        Ok(params) => params.0.into_iter().map(|delim| delim.value).collect(),
+        Ok(params) => params.into_iter().map(|delim| delim.value).collect(),
         Err(_) => Vec::new(), // Empty parameter list
     }
 }
