@@ -42,7 +42,7 @@ mod tests {
         assert_eq!(SHAPE.type_identifier, "Uint");
         assert!(matches!(SHAPE.layout, ShapeLayout::Sized(..)));
         let layout = SHAPE.layout.sized_layout().unwrap();
-        assert_eq!(layout.size(), 32);
+        assert_eq!(layout.size(), 32); // 4 limbs with type u64 -> 32 bytes
         assert_eq!(layout.align(), 8);
     }
 
@@ -52,7 +52,7 @@ mod tests {
         assert_eq!(SHAPE.type_identifier, "Bits");
         assert!(matches!(SHAPE.layout, ShapeLayout::Sized(..)));
         let layout = SHAPE.layout.sized_layout().unwrap();
-        assert_eq!(layout.size(), 16);
+        assert_eq!(layout.size(), 16); // 2 limbs with type u64 -> 16 bytes
         assert_eq!(layout.align(), 8);
     }
 }
