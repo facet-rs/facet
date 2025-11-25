@@ -40,6 +40,9 @@ chrono = [
     "facet-core/chrono",
 ] # Provide Facet trait implementations for chrono crate types
 url = ["facet-core/url"] # Provide Facet trait implementations for url::Url
+ruint = [
+    "facet-core/ruint",
+] # Provide Facet trait implementations for ruint types
 
 # Provide Facet trait implementations for tuples up to size 12. Without it,
 # Facet is only implemented for tuples up to size 4.
