@@ -1540,3 +1540,120 @@ fn set_using_begin_set_item() -> Result<(), IPanic> {
     assert!(set.contains(&200));
     Ok(())
 }
+
+#[test]
+fn set_duplicate_drops_new_value() -> Result<(), IPanic> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    use std::collections::HashSet;
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct DropTracker {
+        id: u64,
+    }
+
+    impl PartialEq for DropTracker {
+        fn eq(&self, other: &Self) -> bool {
+            // All DropTrackers with the same id are "equal"
+            self.id == other.id
+        }
+    }
+
+    impl Eq for DropTracker {}
+
+    impl core::hash::Hash for DropTracker {
+        fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+            self.id.hash(state);
+        }
+    }
+
+    impl Drop for DropTracker {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping DropTracker with id: {}", self.id);
+        }
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    {
+        let hv = Partial::alloc::<HashSet<DropTracker>>()?
+            .begin_set()?
+            .insert(DropTracker { id: 1 })?
+            .insert(DropTracker { id: 2 })?
+            .insert(DropTracker { id: 1 })? // Duplicate! Should drop the new one
+            .insert(DropTracker { id: 3 })?
+            .insert(DropTracker { id: 2 })? // Duplicate! Should drop the new one
+            .build()?;
+
+        let set: &HashSet<DropTracker> = hv.as_ref();
+        assert_eq!(set.len(), 3, "Set should have 3 unique elements");
+
+        // At this point, 2 duplicates should have been dropped
+        assert_eq!(
+            DROP_COUNT.load(Ordering::SeqCst),
+            2,
+            "Two duplicate values should have been dropped"
+        );
+    }
+
+    // After dropping the set, all 3 remaining elements should be dropped
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        5,
+        "All 5 created values should have been dropped (2 duplicates + 3 in set)"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn set_partial_initialization_drop() -> Result<(), IPanic> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    use std::collections::HashSet;
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct DropTracker {
+        id: u64,
+    }
+
+    impl PartialEq for DropTracker {
+        fn eq(&self, other: &Self) -> bool {
+            self.id == other.id
+        }
+    }
+
+    impl Eq for DropTracker {}
+
+    impl core::hash::Hash for DropTracker {
+        fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+            self.id.hash(state);
+        }
+    }
+
+    impl Drop for DropTracker {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping DropTracker with id: {}", self.id);
+        }
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    {
+        let mut partial = Partial::alloc::<HashSet<DropTracker>>()?;
+        partial
+            .begin_set()?
+            .insert(DropTracker { id: 1 })?
+            .insert(DropTracker { id: 2 })?;
+        // Don't build - just drop the partial
+    }
+
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        2,
+        "Should drop the two inserted values when partial is dropped"
+    );
+    Ok(())
+}
