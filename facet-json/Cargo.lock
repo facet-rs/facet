@@ -256,9 +256,9 @@ dependencies = [
 
 [[package]]
 name = "facet-testhelpers"
-version = "0.31.6"
+version = "0.31.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9800ef62a36bfc35499effc4151fad68d755f06974a13f11d78a0fcb16b8bfc"
+checksum = "7a15db461e4d844d8b25d641db4564b6992ac5669b4790132ec04d8fd9b4673d"
 dependencies = [
  "color-backtrace",
  "facet-testhelpers-macros",
