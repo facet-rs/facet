@@ -13,10 +13,12 @@ default: precommit prepush
 precommit: gen
 
 gen *args:
-    cargo run -p facet-dev generate -- {{args}}
+    cargo install --git https://github.com/facet-rs/facet-dev
+    facet-dev generate -- {{args}}
 
 prepush:
-    cargo run -p facet-dev prepush
+    cargo install --git https://github.com/facet-rs/facet-dev
+    facet-dev prepush
 
 ci: precommit prepush docs msrv miri
 
