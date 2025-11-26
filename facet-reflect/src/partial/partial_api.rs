@@ -431,6 +431,38 @@ impl<'facet> Partial<'facet> {
                     }
                 }
             }
+            Tracker::Set {
+                is_initialized: true,
+                current_child,
+            } => {
+                if *current_child {
+                    // We just popped an element frame, now insert it into the set
+                    if let Def::Set(set_def) = parent_frame.shape.def {
+                        let insert_fn = set_def.vtable.insert_fn;
+
+                        // The child frame contained the element value
+                        let element_ptr = PtrMut::new(unsafe {
+                            NonNull::new_unchecked(popped_frame.data.as_mut_byte_ptr())
+                        });
+
+                        // Use insert to add element to the set
+                        unsafe {
+                            insert_fn(
+                                PtrMut::new(NonNull::new_unchecked(
+                                    parent_frame.data.as_mut_byte_ptr(),
+                                )),
+                                element_ptr,
+                            );
+                        }
+
+                        // Insert moved out of popped_frame
+                        popped_frame.tracker = Tracker::Uninit;
+                        popped_frame.dealloc();
+
+                        *current_child = false;
+                    }
+                }
+            }
             Tracker::Option { building_inner } => {
                 // We just popped the inner value frame for an Option's Some variant
                 if *building_inner {
@@ -1398,6 +1430,9 @@ impl Partial<'_> {
             Tracker::Map { .. } => {
                 unreachable!("can't steal fields from maps")
             }
+            Tracker::Set { .. } => {
+                unreachable!("can't steal fields from sets")
+            }
             Tracker::Option { .. } => {
                 unreachable!("can't steal fields from options")
             }
@@ -1981,6 +2016,147 @@ impl Partial<'_> {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+// Sets
+////////////////////////////////////////////////////////////////////////////////////////////////////
+impl Partial<'_> {
+    /// Initializes a set (HashSet, BTreeSet, etc.) if it hasn't been initialized before.
+    /// This is a prerequisite to `begin_set_item`/`set`/`end` or the shorthand `insert`.
+    ///
+    /// `begin_set` does not clear the set if it was previously initialized.
+    /// `begin_set` does not push a new frame to the stack, and thus does not
+    /// require `end` to be called afterwards.
+    pub fn begin_set(&mut self) -> Result<&mut Self, ReflectError> {
+        crate::trace!("begin_set()");
+        self.require_active()?;
+        let frame = self.frames.last_mut().unwrap();
+
+        match &frame.tracker {
+            Tracker::Uninit => {
+                // that's good, let's initialize it
+            }
+            Tracker::Init => {
+                // initialized (perhaps from a previous round?) but should be a set tracker, let's fix that:
+                frame.tracker = Tracker::Set {
+                    is_initialized: true,
+                    current_child: false,
+                };
+                return Ok(self);
+            }
+            Tracker::Set { is_initialized, .. } => {
+                if *is_initialized {
+                    // already initialized, nothing to do
+                    return Ok(self);
+                }
+            }
+            _ => {
+                return Err(ReflectError::UnexpectedTracker {
+                    message: "begin_set called but tracker isn't something set-like",
+                    current_tracker: frame.tracker.kind(),
+                });
+            }
+        };
+
+        // Check that we have a Set
+        let set_def = match &frame.shape.def {
+            Def::Set(set_def) => set_def,
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "begin_set can only be called on Set types",
+                });
+            }
+        };
+
+        let init_fn = set_def.vtable.init_in_place_with_capacity_fn;
+
+        // Initialize the set with default capacity (0)
+        unsafe {
+            init_fn(frame.data, 0);
+        }
+
+        // Update tracker to Set state
+        frame.tracker = Tracker::Set {
+            is_initialized: true,
+            current_child: false,
+        };
+
+        Ok(self)
+    }
+
+    /// Begins pushing an element to the set.
+    /// The element should be set using `set()` or similar methods, then `end()` to complete.
+    pub fn begin_set_item(&mut self) -> Result<&mut Self, ReflectError> {
+        crate::trace!("begin_set_item()");
+        self.require_active()?;
+        let frame = self.frames.last_mut().unwrap();
+
+        // Check that we have a Set that's been initialized
+        let set_def = match &frame.shape.def {
+            Def::Set(set_def) => set_def,
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "begin_set_item can only be called on Set types",
+                });
+            }
+        };
+
+        // Verify the tracker is in Set state and initialized
+        match &mut frame.tracker {
+            Tracker::Set {
+                is_initialized: true,
+                current_child,
+            } => {
+                if *current_child {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "already pushing an element, call end() first",
+                    });
+                }
+                *current_child = true;
+            }
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "must call begin_set() before begin_set_item()",
+                });
+            }
+        }
+
+        // Get the element shape
+        let element_shape = set_def.t();
+
+        // Allocate space for the new element
+        let element_layout = match element_shape.layout.sized_layout() {
+            Ok(layout) => layout,
+            Err(_) => {
+                return Err(ReflectError::Unsized {
+                    shape: element_shape,
+                    operation: "begin_set_item: calculating element layout",
+                });
+            }
+        };
+        let element_ptr: *mut u8 = unsafe { alloc::alloc::alloc(element_layout) };
+
+        let Some(element_ptr) = NonNull::new(element_ptr) else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "failed to allocate memory for set element",
+            });
+        };
+
+        // Push a new frame for the element
+        self.frames.push(Frame::new(
+            PtrUninit::new(element_ptr),
+            element_shape,
+            FrameOwnership::Owned,
+        ));
+
+        Ok(self)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 // Option / inner
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 impl Partial<'_> {
@@ -2197,6 +2373,14 @@ impl<'facet> Partial<'facet> {
         U: Facet<'facet>,
     {
         self.begin_list_item()?.set(value)?.end()
+    }
+
+    /// Shorthand for: begin_set_item(), set(), end()
+    pub fn insert<U>(&mut self, value: U) -> Result<&mut Self, ReflectError>
+    where
+        U: Facet<'facet>,
+    {
+        self.begin_set_item()?.set(value)?.end()
     }
 }
 

@@ -1433,3 +1433,110 @@ fn tuple_empty() -> Result<(), IPanic> {
     assert_eq!(*boxed, ());
     Ok(())
 }
+
+// ================== Set tests ==================
+
+#[test]
+fn set_hashset_basic() -> Result<(), IPanic> {
+    use std::collections::HashSet;
+
+    let hv = Partial::alloc::<HashSet<i32>>()?
+        .begin_set()?
+        .insert(42)?
+        .insert(84)?
+        .insert(126)?
+        .build()?;
+    let set: &HashSet<i32> = hv.as_ref();
+    assert_eq!(set.len(), 3);
+    assert!(set.contains(&42));
+    assert!(set.contains(&84));
+    assert!(set.contains(&126));
+    Ok(())
+}
+
+#[test]
+fn set_hashset_strings() -> Result<(), IPanic> {
+    use std::collections::HashSet;
+
+    let hv = Partial::alloc::<HashSet<String>>()?
+        .begin_set()?
+        .insert("foo".to_string())?
+        .insert("bar".to_string())?
+        .insert("baz".to_string())?
+        .build()?;
+    let set: &HashSet<String> = hv.as_ref();
+    assert_eq!(set.len(), 3);
+    assert!(set.contains("foo"));
+    assert!(set.contains("bar"));
+    assert!(set.contains("baz"));
+    Ok(())
+}
+
+#[test]
+fn set_hashset_empty() -> Result<(), IPanic> {
+    use std::collections::HashSet;
+
+    let hv = Partial::alloc::<HashSet<String>>()?
+        .begin_set()?
+        // Don't insert any elements
+        .build()?;
+    let set: &HashSet<String> = hv.as_ref();
+    assert_eq!(set.len(), 0);
+    Ok(())
+}
+
+#[test]
+fn set_hashset_duplicates() -> Result<(), IPanic> {
+    use std::collections::HashSet;
+
+    // Sets ignore duplicates
+    let hv = Partial::alloc::<HashSet<i32>>()?
+        .begin_set()?
+        .insert(42)?
+        .insert(42)?
+        .insert(42)?
+        .build()?;
+    let set: &HashSet<i32> = hv.as_ref();
+    assert_eq!(set.len(), 1);
+    assert!(set.contains(&42));
+    Ok(())
+}
+
+#[test]
+fn set_btreeset_basic() -> Result<(), IPanic> {
+    use std::collections::BTreeSet;
+
+    let hv = Partial::alloc::<BTreeSet<i32>>()?
+        .begin_set()?
+        .insert(3)?
+        .insert(1)?
+        .insert(2)?
+        .build()?;
+    let set: &BTreeSet<i32> = hv.as_ref();
+    assert_eq!(set.len(), 3);
+    // BTreeSet is sorted
+    let vec: Vec<_> = set.iter().copied().collect();
+    assert_eq!(vec, vec![1, 2, 3]);
+    Ok(())
+}
+
+#[test]
+fn set_using_begin_set_item() -> Result<(), IPanic> {
+    use std::collections::HashSet;
+
+    // Test using begin_set_item/end directly instead of insert shorthand
+    let hv = Partial::alloc::<HashSet<i32>>()?
+        .begin_set()?
+        .begin_set_item()?
+        .set(100)?
+        .end()?
+        .begin_set_item()?
+        .set(200)?
+        .end()?
+        .build()?;
+    let set: &HashSet<i32> = hv.as_ref();
+    assert_eq!(set.len(), 2);
+    assert!(set.contains(&100));
+    assert!(set.contains(&200));
+    Ok(())
+}
