@@ -1504,7 +1504,7 @@ fn set_hashset_duplicates() -> Result<(), IPanic> {
 
 #[test]
 fn set_btreeset_basic() -> Result<(), IPanic> {
-    use std::collections::BTreeSet;
+    use alloc::collections::BTreeSet;
 
     let hv = Partial::alloc::<BTreeSet<i32>>()?
         .begin_set()?
