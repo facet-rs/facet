@@ -182,7 +182,7 @@ bitflags! {
 ///
 /// # Safety
 ///
-/// `weak` must be a valid weak pointer (like [`std::sync::Weak`] or [`std::rc::Weak`]).
+/// `weak` must be a valid weak pointer (like [`alloc::sync::Weak`] or [`alloc::rc::Weak`]).
 ///
 /// `strong` must be allocated, and of the right layout for the corresponding pointer.
 ///
@@ -195,11 +195,11 @@ pub type UpgradeIntoFn =
 /// Initializes the pointer into the given `weak`, and returns a copy of `weak`, which has
 /// been guaranteed to be initialized.
 ///
-/// Only strong pointers can be downgraded (like [`std::sync::Arc`] or [`std::rc::Rc`]).
+/// Only strong pointers can be downgraded (like [`alloc::sync::Arc`] or [`alloc::rc::Rc`]).
 ///
 /// # Safety
 ///
-/// `strong` must be a valid strong pointer (like [`std::sync::Arc`] or [`std::rc::Rc`]).
+/// `strong` must be a valid strong pointer (like [`alloc::sync::Arc`] or [`alloc::rc::Rc`]).
 ///
 /// `weak` must be allocated, and of the right layout for the corresponding weak pointer.
 ///
@@ -209,11 +209,11 @@ pub type DowngradeIntoFn =
 
 /// Tries to obtain a reference to the inner value of the pointer.
 ///
-/// This can only be used with strong pointers (like [`std::sync::Arc`] or [`std::rc::Rc`]).
+/// This can only be used with strong pointers (like [`alloc::sync::Arc`] or [`alloc::rc::Rc`]).
 ///
 /// # Safety
 ///
-/// `this` must be a valid strong pointer (like [`std::sync::Arc`] or [`std::rc::Rc`]).
+/// `this` must be a valid strong pointer (like [`alloc::sync::Arc`] or [`alloc::rc::Rc`]).
 pub type BorrowFn = for<'ptr> unsafe fn(this: PtrConst<'ptr>) -> PtrConst<'ptr>;
 
 /// Creates a new pointer wrapping the given value.
@@ -221,7 +221,7 @@ pub type BorrowFn = for<'ptr> unsafe fn(this: PtrConst<'ptr>) -> PtrConst<'ptr>;
 /// Initializes the pointer into the given `this`, and returns a copy of `this`, which has
 /// been guaranteed to be initialized.
 ///
-/// This can only be used with strong pointers (like [`std::sync::Arc`] or [`std::rc::Rc`]).
+/// This can only be used with strong pointers (like [`alloc::sync::Arc`] or [`alloc::rc::Rc`]).
 ///
 /// # Safety
 ///
@@ -549,29 +549,29 @@ impl PointerVTableBuilder {
 /// Represents common standard library pointer kinds
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum KnownPointer {
-    /// [`Box<T>`](std::boxed::Box), heap-allocated values with single ownership
+    /// [`Box<T>`](alloc::boxed::Box), heap-allocated values with single ownership
     Box,
-    /// [`Rc<T>`](std::rc::Rc), reference-counted values with multiple ownership
+    /// [`Rc<T>`](alloc::rc::Rc), reference-counted values with multiple ownership
     Rc,
-    /// [`Weak<T>`](std::rc::Weak), a weak reference to an `Rc`-managed value
+    /// [`Weak<T>`](alloc::rc::Weak), a weak reference to an `Rc`-managed value
     RcWeak,
-    /// [`Arc<T>`](std::sync::Arc), thread-safe reference-counted values with multiple ownership
+    /// [`Arc<T>`](alloc::sync::Arc), thread-safe reference-counted values with multiple ownership
     Arc,
-    /// [`Weak<T>`](std::sync::Weak), a weak reference to an `Arc`-managed value
+    /// [`Weak<T>`](alloc::sync::Weak), a weak reference to an `Arc`-managed value
     ArcWeak,
-    /// [`Cow<'a, T>`](std::borrow::Cow), a clone-on-write smart pointer
+    /// [`Cow<'a, T>`](alloc::borrow::Cow), a clone-on-write smart pointer
     Cow,
-    /// [`Pin<P>`](std::pin::Pin), a type that pins values behind a pointer
+    /// [`Pin<P>`](core::pin::Pin), a type that pins values behind a pointer
     Pin,
-    /// [`Cell<T>`](std::cell::Cell), a mutable memory location with interior mutability
+    /// [`Cell<T>`](core::cell::Cell), a mutable memory location with interior mutability
     Cell,
-    /// [`RefCell<T>`](std::cell::RefCell), a mutable memory location with dynamic borrowing rules
+    /// [`RefCell<T>`](core::cell::RefCell), a mutable memory location with dynamic borrowing rules
     RefCell,
-    /// [`OnceCell<T>`](std::cell::OnceCell), a cell that can be written to only once
+    /// [`OnceCell<T>`](core::cell::OnceCell), a cell that can be written to only once
     OnceCell,
-    /// [`Mutex<T>`](std::sync::Mutex), a mutual exclusion primitive
+    /// `Mutex<T>`, a mutual exclusion primitive (requires std)
     Mutex,
-    /// [`RwLock<T>`](std::sync::RwLock), a reader-writer lock
+    /// `RwLock<T>`, a reader-writer lock (requires std)
     RwLock,
     /// [`NonNull<T>`](core::ptr::NonNull), a wrapper around a raw pointer that is not null
     NonNull,

@@ -1,0 +1,33 @@
+[package]
+name = "facet-solver"
+version = "0.31.7"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Constraint solver for facet - resolves type shapes from field names"
+keywords = ["reflection", "introspection", "facet", "solver", "serde"]
+categories = ["development-tools", "rust-patterns"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc"]
+
+[dependencies]
+facet-core = { path = "../facet-core", version = "0.31.7", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.31.7", default-features = false }
+
+[dev-dependencies]
+facet = { path = "../facet" }
+facet-testhelpers = { path = "../facet-testhelpers" }
+json-event-parser = "0.2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
+thiserror = "2"
+divan = "0.1"
+
+[[bench]]
+name = "solver"
+harness = false

@@ -200,6 +200,33 @@ impl<'mem, 'facet> Iterator for FieldsForSerializeIter<'mem, 'facet> {
                         range: 0..1,
                         state: FieldIterState::FlattenedEnum { field, value: peek },
                     });
+                } else if let Ok(option_peek) = peek.into_option() {
+                    // Option<T> where T is a struct or enum
+                    // If Some, flatten the inner value; if None, skip entirely
+                    if let Some(inner_peek) = option_peek.value() {
+                        if let Ok(struct_peek) = inner_peek.into_struct() {
+                            self.stack.push(FieldIter::new_struct(struct_peek))
+                        } else if let Ok(enum_peek) = inner_peek.into_enum() {
+                            field.name = enum_peek
+                                .active_variant()
+                                .expect("Failed to get active variant")
+                                .name;
+                            field.flattened = true;
+                            self.stack.push(FieldIter {
+                                range: 0..1,
+                                state: FieldIterState::FlattenedEnum {
+                                    field,
+                                    value: inner_peek,
+                                },
+                            });
+                        } else {
+                            panic!(
+                                "cannot flatten Option<{}> - inner type must be struct or enum",
+                                inner_peek.shape()
+                            )
+                        }
+                    }
+                    // If None, we just skip - don't emit any fields
                 } else {
                     // TODO: fail more gracefully
                     panic!("cannot flatten a {}", field.shape())

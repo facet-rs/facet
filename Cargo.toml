@@ -12,6 +12,9 @@ members = [
     # reflection
     "facet-reflect",
 
+    # constraint solver
+    "facet-solver",
+
     # test helpers
     "facet-testhelpers",
     "facet-testhelpers-macros",
