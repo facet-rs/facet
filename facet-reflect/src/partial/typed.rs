@@ -391,6 +391,31 @@ impl<'facet, T: ?Sized> TypedPartial<'facet, T> {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+// Sets
+////////////////////////////////////////////////////////////////////////////////////////////////////
+impl<'facet, T: ?Sized> TypedPartial<'facet, T> {
+    /// Initializes a set (HashSet, BTreeSet, etc.) if it hasn't been initialized before.
+    /// This is a prerequisite to `begin_set_item`/`set`/`end` or the shorthand `insert`.
+    ///
+    /// `begin_set` does not clear the set if it was previously initialized.
+    /// `begin_set` does not push a new frame to the stack, and thus does not
+    /// require `end` to be called afterwards.
+    #[inline]
+    pub fn begin_set(&mut self) -> Result<&mut Self, ReflectError> {
+        self.inner.begin_set()?;
+        Ok(self)
+    }
+
+    /// Begins pushing an element to the set.
+    /// The element should be set using `set()` or similar methods, then `end()` to complete.
+    #[inline]
+    pub fn begin_set_item(&mut self) -> Result<&mut Self, ReflectError> {
+        self.inner.begin_set_item()?;
+        Ok(self)
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 // Option / inner
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 impl<'facet, T: ?Sized> TypedPartial<'facet, T> {
@@ -460,6 +485,16 @@ impl<'facet, T: ?Sized> TypedPartial<'facet, T> {
         U: Facet<'facet>,
     {
         self.inner.push(value)?;
+        Ok(self)
+    }
+
+    /// Shorthand for: begin_set_item(), set(), end(), useful when inserting a scalar
+    #[inline]
+    pub fn insert<U>(&mut self, value: U) -> Result<&mut Self, ReflectError>
+    where
+        U: Facet<'facet>,
+    {
+        self.inner.insert(value)?;
         Ok(self)
     }
 }

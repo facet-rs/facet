@@ -303,6 +303,14 @@ enum Tracker {
         insert_state: MapInsertState,
     },
 
+    /// Partially initialized set (HashSet, BTreeSet, etc.)
+    Set {
+        /// The set has been initialized with capacity
+        is_initialized: bool,
+        /// If we're pushing another frame for an element
+        current_child: bool,
+    },
+
     /// Option being initialized with Some(inner_value)
     Option {
         /// Whether we're currently building the inner value
@@ -322,6 +330,7 @@ impl Tracker {
             Tracker::Enum { .. } => TrackerKind::Enum,
             Tracker::List { .. } => TrackerKind::List,
             Tracker::Map { .. } => TrackerKind::Map,
+            Tracker::Set { .. } => TrackerKind::Set,
             Tracker::Option { .. } => TrackerKind::Option,
         }
     }
@@ -499,6 +508,14 @@ impl Frame {
                     MapInsertState::Idle => {}
                 }
             }
+            Tracker::Set { is_initialized, .. } => {
+                // Drop the initialized Set
+                if *is_initialized {
+                    if let Some(drop_fn) = self.shape.vtable.drop_in_place {
+                        unsafe { drop_fn(self.data.assume_init()) };
+                    }
+                }
+            }
             Tracker::Option { building_inner } => {
                 // If we're building the inner value, it will be handled by the Option vtable
                 // No special cleanup needed here as the Option will either be properly
@@ -638,6 +655,16 @@ impl Frame {
                 insert_state,
             } => {
                 if is_initialized && matches!(insert_state, MapInsertState::Idle) {
+                    Ok(())
+                } else {
+                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                }
+            }
+            Tracker::Set {
+                is_initialized,
+                current_child,
+            } => {
+                if is_initialized && !current_child {
                     Ok(())
                 } else {
                     Err(ReflectError::UninitializedValue { shape: self.shape })

@@ -14,6 +14,7 @@ pub enum TrackerKind {
     Enum,
     List,
     Map,
+    Set,
     Option,
 }
 
