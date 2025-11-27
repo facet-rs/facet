@@ -1,6 +1,6 @@
 use facet_core::{Def, StructKind, Type, UserType};
 use facet_reflect::{HasFields, Peek, PeekListLike, PeekStruct};
-use toml_edit::{ArrayOfTables, Item, Table};
+use toml_edit::{ArrayOfTables, Table};
 
 /// Check if a Peek value represents an array of structs/tables
 pub fn is_array_of_tables(peek: &Peek) -> bool {
@@ -50,26 +50,19 @@ fn serialize_struct_as_table<'mem, 'facet>(
 
     // Serialize each field
     for (field, value) in struct_peek.fields_for_serialize() {
-        // Serialize the field value to a TOML value
-        let toml_value = serialize_value_to_toml(value)?;
-        table.insert(field.name, toml_value);
+        // Skip None values
+        if let Def::Option(_) = value.shape().def {
+            let opt = value.into_option().unwrap();
+            if let Some(inner) = opt.value() {
+                let toml_item = super::serialize_to_item(inner)?;
+                table.insert(field.name, toml_item);
+            }
+            // Skip None
+        } else {
+            let toml_item = super::serialize_to_item(value)?;
+            table.insert(field.name, toml_item);
+        }
     }
 
     Ok(table)
-}
-
-/// Helper to serialize a value to a TOML Item
-fn serialize_value_to_toml<'mem, 'facet>(
-    value: Peek<'mem, 'facet>,
-) -> Result<Item, super::TomlSerError> {
-    // Create a temporary serializer to serialize just this value
-    let mut temp_serializer = super::TomlSerializer::new();
-    facet_serialize::serialize_iterative(value, &mut temp_serializer)?;
-
-    // Get the serialized document
-    let doc = temp_serializer.into_raw_document();
-
-    // The document should contain exactly one value at the root
-    // Return it as an Item
-    Ok(doc.as_item().clone())
 }

@@ -17,13 +17,12 @@ categories = ["encoding", "parsing", "data-structures"]
 
 [features]
 default = []
-serialize = ["dep:facet-serialize"]
+serialize = []
 
 [dependencies]
 facet-core = { path = "../facet-core" }
 facet-reflect = { path = "../facet-reflect" }
 log = "0.4.27"
-facet-serialize = { version = "0.31", optional = true }
 
 [dev-dependencies]
 facet = { path = "../facet" }
