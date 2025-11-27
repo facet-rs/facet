@@ -21,7 +21,7 @@ careful tracking of what's initialized and what isn't.
 
 `facet-reflect` uses a stack of `Frame`s to track nested initialization:
 
-```rust
+```rust,ignore
 struct Frame {
     data: PtrUninit<'static>,    // Pointer to the memory being initialized
     shape: &'static Shape,        // Type information
@@ -73,7 +73,7 @@ This works perfectly when you control the initialization order.
 
 Consider this type:
 
-```rust
+```rust,ignore
 struct Outer {
     name: String,
     inner: Inner,
@@ -136,7 +136,7 @@ in place without that intermediate step.
 
 With `#[facet(flatten)]`, nested fields appear at the same level:
 
-```rust
+```rust,ignore
 struct Outer {
     name: String,
     #[facet(flatten)]
@@ -197,7 +197,7 @@ Deferred mode relaxes the "fully initialized on pop" rule. Instead:
 
 We store entire `Frame`s, not just `Tracker`s, because frames may own memory:
 
-```rust
+```rust,ignore
 enum FrameOwnership {
     Owned,           // Frame allocated this memory - can't lose it!
     Field,           // Pointer into parent's allocation
@@ -210,7 +210,7 @@ Storing only the tracker would leak that memory.
 
 ### Data Structures
 
-```rust
+```rust,ignore
 enum PartialMode {
     /// Normal mode: validate on each pop
     Strict,
@@ -293,7 +293,7 @@ materialization of these types until the very end.
 
 ## Example
 
-```rust
+```rust,ignore
 let mut partial = Partial::alloc::<Outer>()?;
 partial.begin_deferred(resolution);
 

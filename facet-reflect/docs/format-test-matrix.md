@@ -8,7 +8,7 @@ This document specifies requirements for implementing a facet format crate (like
 
 The `Facet` trait is defined in `facet-core`:
 
-```rust
+```rust,ignore
 pub unsafe trait Facet<'facet>: 'facet {
     const SHAPE: &'static Shape;
 }
@@ -23,7 +23,7 @@ Key points:
 
 Your format crate should expose deserialization functions with signatures like:
 
-```rust
+```rust,ignore
 pub fn from_str<'input, 'facet, T: Facet<'facet>>(
     input: &'input str,
 ) -> Result<T, YourError>
@@ -41,7 +41,7 @@ The `'input: 'facet` bound means the input must outlive the deserialized value. 
 
 ### `[r.api.ser]` Serialization
 
-```rust
+```rust,ignore
 pub fn to_string<'facet, T: Facet<'facet> + ?Sized>(value: &T) -> String;
 
 pub fn to_vec<'facet, T: Facet<'facet> + ?Sized>(value: &T) -> Vec<u8>;
@@ -60,7 +60,7 @@ Errors must implement `std::error::Error`.
 
 For text formats, implement `miette::Diagnostic` to provide rich error reporting with source spans:
 
-```rust
+```rust,ignore
 impl miette::Diagnostic for YourError {
     fn source_code(&self) -> Option<&dyn miette::SourceCode> { ... }
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> { ... }
@@ -187,7 +187,7 @@ Types to support:
 
 ### `[r.attrs.rename]` rename / rename_all
 
-```rust
+```rust,ignore
 #[facet(rename = "userName")]
 user_name: String,
 
@@ -199,7 +199,7 @@ These are reflected in the `Shape` at compile time. The field's `name` in the sh
 
 ### `[r.attrs.default]` default
 
-```rust
+```rust,ignore
 #[facet(default)]
 count: u32,
 
@@ -211,7 +211,7 @@ If using facet-reflect's deferred materialization (`Partial`), defaults are fill
 
 ### `[r.attrs.skip]` skip_serializing / skip_deserializing
 
-```rust
+```rust,ignore
 struct Data {
     #[facet(skip_serializing)]
     cached_value: String,
@@ -227,7 +227,7 @@ struct Data {
 
 ### `[r.attrs.skip_if]` skip_serializing_if
 
-```rust
+```rust,ignore
 #[facet(skip_serializing_if = "Option::is_none")]
 maybe: Option<String>,
 ```
@@ -236,7 +236,7 @@ The predicate has signature `fn(&T) -> bool`. Check `FieldVTable::skip_serializi
 
 ### `[r.attrs.transparent]` transparent
 
-```rust
+```rust,ignore
 #[facet(transparent)]
 struct UserId(u64);
 ```
@@ -247,7 +247,7 @@ TODO: Verify behavior across facet-json and facet-kdl.
 
 ### `[r.attrs.flatten]` flatten
 
-```rust
+```rust,ignore
 struct Server {
     name: String,
     #[facet(flatten)]
@@ -261,7 +261,7 @@ Flattened fields merge into the parent structure. See the [Flatten Solver](#flat
 
 Facet supports four enum representations, matching serde's model. Consider this enum:
 
-```rust
+```rust,ignore
 #[derive(Facet)]
 enum Message {
     Request { id: String, method: String },
@@ -284,7 +284,7 @@ Characteristics:
 
 #### Internally Tagged
 
-```rust
+```rust,ignore
 #[derive(Facet)]
 #[facet(tag = "type")]
 enum Message {
@@ -306,7 +306,7 @@ Characteristics:
 
 #### Adjacently Tagged
 
-```rust
+```rust,ignore
 #[derive(Facet)]
 #[facet(tag = "t", content = "c")]
 enum Block {
@@ -328,7 +328,7 @@ Characteristics:
 
 #### Untagged
 
-```rust
+```rust,ignore
 #[derive(Facet)]
 #[facet(untagged)]
 enum Message {
@@ -350,7 +350,7 @@ Characteristics:
 
 Example for union types:
 
-```rust
+```rust,ignore
 #[derive(Facet)]
 #[facet(untagged)]
 enum StringOrInt {
@@ -376,7 +376,7 @@ Determining representation:
 
 ### `[r.attrs.deny_unknown]` deny_unknown_fields
 
-```rust
+```rust,ignore
 #[facet(deny_unknown_fields)]
 struct Strict { ... }
 ```
@@ -385,14 +385,14 @@ Your deserializer must reject input containing unrecognized fields. Error messag
 
 ### `[r.attrs.deser_with]` deserialize_with
 
-```rust
+```rust,ignore
 #[facet(deserialize_with = "parse_hex")]
 value: u64,
 ```
 
 Function signature:
 
-```rust
+```rust,ignore
 unsafe fn parse_hex<'mem>(
     source: PtrConst<'mem>,   // points to intermediate type (e.g., &str)
     target: PtrUninit<'mem>,  // points to uninitialized field
@@ -405,7 +405,7 @@ Primarily for text formats. The deserializer:
 
 ### `[r.attrs.ser_with]` serialize_with
 
-```rust
+```rust,ignore
 #[facet(serialize_with = "to_hex")]
 value: u64,
 ```
@@ -414,7 +414,7 @@ Similar pattern — convert to intermediate type, then serialize that.
 
 ### `[r.attrs.type_tag]` type_tag
 
-```rust
+```rust,ignore
 #[facet(type_tag = "server")]
 struct Server { ... }
 ```
@@ -427,7 +427,7 @@ For self-describing hierarchical formats (KDL, XML) where elements have names. N
 
 When deserializing into a type with this shape:
 
-```rust
+```rust,ignore
 struct Spanned<T> {
     node: T,    // or `value: T`
     span: Span,
@@ -459,7 +459,7 @@ The `facet-solver` crate handles disambiguation for `#[facet(flatten)]` on enums
 
 Given:
 
-```rust
+```rust,ignore
 struct Config {
     name: String,
     #[facet(flatten)]
@@ -488,7 +488,7 @@ The solver determines `Database` is the matching variant because both `url` and 
 
 ### `[r.solver.value_range]` Disambiguation by Value Range
 
-```rust
+```rust,ignore
 enum Size {
     Small { v: u8 },   // 0–255
     Large { v: u16 },  // 0–65535
@@ -502,7 +502,7 @@ enum Size {
 
 When multiple variants parse from the same token type:
 
-```rust
+```rust,ignore
 enum Value {
     Date(chrono::NaiveDate),   // parses "2024-01-15"
     Time(chrono::NaiveTime),   // parses "10:30:00"
@@ -517,7 +517,7 @@ All are strings in JSON. The solver tries in order:
 
 ### `[r.solver.ambiguous]` Ambiguity Errors
 
-```rust
+```rust,ignore
 enum Kind {
     A { x: u8 },
     B { x: u8 },
