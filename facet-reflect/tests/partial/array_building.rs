@@ -165,3 +165,138 @@ fn test_nested_array_building() -> Result<(), IPanic> {
     );
     Ok(())
 }
+
+// =============================================================================
+// Tests migrated from src/partial/tests.rs
+// =============================================================================
+
+#[cfg(not(miri))]
+macro_rules! assert_snapshot {
+    ($($tt:tt)*) => {
+        insta::assert_snapshot!($($tt)*)
+    };
+}
+#[cfg(miri)]
+macro_rules! assert_snapshot {
+    ($($tt:tt)*) => {{}};
+}
+
+#[test]
+fn array_init() -> Result<(), IPanic> {
+    let hv = Partial::alloc::<[u32; 3]>()?
+        // Initialize in order
+        .set_nth_field(0, 42u32)?
+        .set_nth_field(1, 43u32)?
+        .set_nth_field(2, 44u32)?
+        .build()?;
+    assert_eq!(*hv, [42, 43, 44]);
+    Ok(())
+}
+
+#[test]
+fn array_init_out_of_order() -> Result<(), IPanic> {
+    let hv = Partial::alloc::<[u32; 3]>()?
+        // Initialize out of order
+        .set_nth_field(2, 44u32)?
+        .set_nth_field(0, 42u32)?
+        .set_nth_field(1, 43u32)?
+        .build()?;
+    assert_eq!(*hv, [42, 43, 44]);
+    Ok(())
+}
+
+#[test]
+fn array_partial_init() -> Result<(), IPanic> {
+    // Should fail to build
+    assert_snapshot!(
+        Partial::alloc::<[u32; 3]>()?
+            // Initialize only two elements
+            .set_nth_field(0, 42u32)?
+            .set_nth_field(2, 44u32)?
+            .build()
+            .unwrap_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn drop_array_partially_initialized() -> Result<(), IPanic> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct NoisyDrop {
+        value: u64,
+    }
+
+    impl Drop for NoisyDrop {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping NoisyDrop with value: {}", self.value);
+        }
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    {
+        let mut partial = Partial::alloc::<[NoisyDrop; 4]>()?;
+
+        // Initialize elements 0 and 2
+        partial.set_nth_field(0, NoisyDrop { value: 10 })?;
+        partial.set_nth_field(2, NoisyDrop { value: 30 })?;
+
+        // Drop without initializing elements 1 and 3
+    }
+
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        2,
+        "Should drop only the two initialized array elements"
+    );
+    Ok(())
+}
+
+#[test]
+fn array_element_set_twice() -> Result<(), IPanic> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct DropTracker {
+        id: u64,
+    }
+
+    impl Drop for DropTracker {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping DropTracker with id: {}", self.id);
+        }
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    let array = Partial::alloc::<[DropTracker; 3]>()?
+        // Set element 0
+        .set_nth_field(0, DropTracker { id: 1 })?
+        // Set element 0 again - drops old value
+        .set_nth_field(0, DropTracker { id: 2 })?
+        // Set element 1
+        .set_nth_field(1, DropTracker { id: 3 })?
+        // Set element 2
+        .set_nth_field(2, DropTracker { id: 4 })?
+        .build()?;
+
+    // Verify the final array has the expected values
+    assert_eq!(array[0].id, 2); // Re-initialized value
+    assert_eq!(array[1].id, 3);
+    assert_eq!(array[2].id, 4);
+
+    // The first value (id: 1) should have been dropped when we re-initialized
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        1,
+        "First array element should have been dropped during re-initialization"
+    );
+    Ok(())
+}

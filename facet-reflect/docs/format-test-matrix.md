@@ -5,12 +5,28 @@ How to use: for each bullet, pick or adapt one skeleton test, replace `FORMAT` w
 - Binary formats (bincode/postcard): there is no external field name to skip, so “unknown fields” translates to extra data → error; “node-name-as-key” doesn’t apply; ordering is fixed by the type definition—encode/decode round-trips are the main guardrail.
 - Streaming: currently out of scope; assume full-buffer APIs.
 
+## Prerequisites / where to start
+- Deserialization: implement `facet_deserialize::Format` (see lines ~176–194) — you mainly need `next()` and `skip()`.
+- Serialization: implement `facet_serialize::Serializer` (lines ~28–224) — about 25 methods.
+- Reference: `facet-json` is the closest to a full implementation; use its tests as examples.
+
 ## Quick start / API surface
 - Provide `from_str<T: Facet>(input: &str) -> Result<T, Error>` (or `from_slice` for binary). A reader-based API is optional; if implemented, note solver expectations (it buffers anyway today).
 - Provide `to_string` / `to_vec` / `to_writer` as appropriate; deterministic output is preferred for testability.
 - Error type: format-specific but should implement `std::error::Error`; if possible also `miette::Diagnostic`. For binary formats, spans can be byte offsets/lengths.
 - Hook points: implement your format’s `Serializer`/`Deserializer` that satisfy the `facet-reflect` visitor contracts.
 - Serialization contract: define whether `None` fields are omitted or emitted as explicit nulls; define key/attribute ordering (stable/deterministic recommended); note indentation/pretty defaults if applicable.
+
+## Attribute mapping cheat-sheet
+| Attribute | KDL                    | JSON/YAML/TOML          | XML                         | Binary (bincode/postcard)     |
+|-----------|------------------------|-------------------------|-----------------------------|-------------------------------|
+| argument  | node argument          | typically treat as prop | attribute or text content   | field in declared order       |
+| property  | `key=value`            | object key/value        | attribute                   | field in declared order       |
+| child     | child node             | nested object/array     | child element               | field in declared order       |
+| children  | many child nodes       | array of objects        | repeated child elements     | repeated field (len + elems)  |
+| node_name | node name as data      | key name as data        | element name as data        | usually not applicable        |
+
+If your format lacks a concept (e.g., “argument” in JSON), map it to the closest (property/field) and keep the semantics consistent across formats.
 
 ## Shapes, naming, and enums
 - Children, `children`, `argument`, `arguments`, `property` fields; `rename` and `rename_all` (snake ↔ kebab/Pascal); node-name-as-key map pattern; type annotations (where the format supports them) to disambiguate enums.
@@ -35,7 +51,7 @@ fn enum_value_disambiguation() {
 - `Option<T>` with `default` can be omitted; explicit `null` still works.
 - `Option<flattened>`: absent → `None`; present → `Some`, partial fields fill defaults.
 - Optional child nodes (`#[facet(child, default)]`) absent vs present.
- - Null vs absent: for Option fields, `null` and “missing” both map to `None`; for non-Option fields, `null` is an error.
+- Null vs absent (text formats): for Option fields, `null` and “missing” both map to `None`; for non-Option fields, `null` is an error.
 
 **Skeleton:**
 ```rust
@@ -204,9 +220,23 @@ struct Node {
 struct Wrapper { #[facet(child)] outcome: Result<u8, String> }
 ```
 
+15) **Skip serialize / skip deserialize**
+```rust
+#[derive(Facet, PartialEq, Debug)]
+struct Hidden {
+    #[facet(property)]
+    visible: u8,
+    #[facet(skip_serializing)]
+    transient: u8,
+    #[facet(skip_deserializing)]
+    cache: u8,
+}
+```
+
 ## Collections and maps
 - Vec/sequence round-trips; set types (HashSet/BTreeSet) including deterministic ordering for BTreeSet.
 - Maps with string keys; transparent/non-string keys via newtypes (e.g., `Utf8PathBuf`); node-name-as-key maps; ordering-insensitive assertions for HashMap/HashSet.
+- Tuple structs/variants mapping choice: for JSON/YAML/TOML prefer arrays (`[x, y]`) for positional data; ensure it round-trips. If your format uses objects (`{"0":x,"1":y}`), document and test that consistently.
 
 **Skeleton:**
 ```rust
@@ -235,6 +265,13 @@ assert_eq!(cfg.map.get("key"), Some(&"val".into()));
 **Skeleton:** parse into `Spanned<u32>`, validate range, return error with recorded span; assert rendered message highlights offending slice.
 *Binary hint:* use byte offset/length for spans; if you cannot map to line/col, still surface offsets and the field/variant name in the message.
 
+## Binary format considerations (postcard/bincode, etc.)
+- No field names to skip; unknown/extra bytes must trigger an error.
+- Ordering is fixed by the Rust type definition; node-name-as-key doesn’t apply.
+- Primary validation: encode → decode round-trip equality; assert overflow/underflow errors rather than wrapping.
+- Spans: use byte offsets/lengths; include field/variant name in diagnostics.
+- Decide endianness/varint strategy and keep it stable; document any size limits/length prefixes.
+
 ## Pointer/newtype transparency
 - Box/Rc/Arc (or format-appropriate smart pointers) as arguments/properties/children.
 - Transparent newtypes (e.g., `Utf8PathBuf`, path types) as keys and values.
@@ -250,3 +287,8 @@ assert_eq!(cfg.map.get("key"), Some(&"val".into()));
 - Serialize → parse → serialize idempotence for representative shapes: basic structs, maps, options, flatten (struct + enum), and interleaved property ordering. When ordering is undefined (maps/sets), assert presence rather than exact string.
 
 **Skeleton:** create value with options + flatten + maps → `let text = to_string(&value); let reparsed = from_str(&text); assert_eq!(reparsed, value);`.
+
+## Implementation tiers (pick your target depth)
+- **Tier 1 (MVP):** scalars, basic structs, `Option<T>`, `Vec<T>`, round-trip equality.
+- **Tier 2 (Complete):** enums (unit/newtype/struct/tuple), flatten (struct + enum), maps with string keys, `deny_unknown_fields`, tuple structs/variants, unit structs.
+- **Tier 3 (Advanced):** spans/diagnostics, custom hooks (`deserialize_with`), non-string map keys, value-based disambiguation, Option<flatten>, flatten defaults, skip serialize/deserialize, 128-bit integers, recursive types.

@@ -194,3 +194,176 @@ fn arc_slice_u8_begin_smart_ptr_good() {
         assert_eq!(&*built, &[2, 3, 4]);
     }
 }
+
+// =============================================================================
+// Tests migrated from src/partial/tests.rs
+// =============================================================================
+
+#[cfg(not(miri))]
+macro_rules! assert_snapshot {
+    ($($tt:tt)*) => {
+        insta::assert_snapshot!($($tt)*)
+    };
+}
+#[cfg(miri)]
+macro_rules! assert_snapshot {
+    ($($tt:tt)*) => {{}};
+}
+
+#[test]
+fn box_init() -> Result<(), IPanic> {
+    let hv = Partial::alloc::<Box<u32>>()?
+        // Push into the Box to build its inner value
+        .begin_smart_ptr()?
+        .set(42u32)?
+        .end()?
+        .build()?;
+    assert_eq!(**hv, 42);
+    Ok(())
+}
+
+#[test]
+fn box_partial_init() -> Result<(), IPanic> {
+    // Don't initialize the Box at all
+    assert_snapshot!(Partial::alloc::<Box<u32>>()?.build().unwrap_err());
+    Ok(())
+}
+
+#[test]
+fn box_struct() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Point {
+        x: f64,
+        y: f64,
+    }
+
+    let hv = Partial::alloc::<Box<Point>>()?
+        // Push into the Box
+        .begin_smart_ptr()?
+        // Build the Point inside the Box using set_field shorthand
+        .set_field("x", 1.0)?
+        .set_field("y", 2.0)?
+        // end from Box
+        .end()?
+        .build()?;
+    assert_eq!(**hv, Point { x: 1.0, y: 2.0 });
+    Ok(())
+}
+
+#[test]
+fn drop_box_partially_initialized() -> Result<(), IPanic> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static BOX_DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static INNER_DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct DropCounter {
+        value: u32,
+    }
+
+    impl Drop for DropCounter {
+        fn drop(&mut self) {
+            INNER_DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping DropCounter with value: {}", self.value);
+        }
+    }
+
+    BOX_DROP_COUNT.store(0, Ordering::SeqCst);
+    INNER_DROP_COUNT.store(0, Ordering::SeqCst);
+
+    {
+        let mut partial = Partial::alloc::<Box<DropCounter>>()?;
+
+        // Initialize the Box's inner value using set
+        partial.begin_smart_ptr()?;
+        partial.set(DropCounter { value: 99 })?;
+        partial.end()?;
+
+        // Drop the partial - should drop the Box which drops the inner value
+    }
+
+    assert_eq!(
+        INNER_DROP_COUNT.load(Ordering::SeqCst),
+        1,
+        "Should drop the inner value through Box's drop"
+    );
+    Ok(())
+}
+
+#[test]
+fn arc_init() -> Result<(), IPanic> {
+    let hv = Partial::alloc::<Arc<u32>>()?
+        // Push into the Arc to build its inner value
+        .begin_smart_ptr()?
+        .set(42u32)?
+        .end()?
+        .build()?;
+    assert_eq!(**hv, 42);
+    Ok(())
+}
+
+#[test]
+fn arc_partial_init() -> Result<(), IPanic> {
+    // Don't initialize the Arc at all
+    assert_snapshot!(Partial::alloc::<Arc<u32>>()?.build().unwrap_err());
+    Ok(())
+}
+
+#[test]
+fn arc_struct() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Point {
+        x: f64,
+        y: f64,
+    }
+
+    let hv = Partial::alloc::<Arc<Point>>()?
+        // Push into the Arc
+        .begin_smart_ptr()?
+        // Build the Point inside the Arc using set_field shorthand
+        .set_field("x", 3.0)?
+        .set_field("y", 4.0)?
+        // end from Arc
+        .end()?
+        .build()?;
+    assert_eq!(**hv, Point { x: 3.0, y: 4.0 });
+    Ok(())
+}
+
+#[test]
+fn drop_arc_partially_initialized() -> Result<(), IPanic> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static INNER_DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct DropCounter {
+        value: u32,
+    }
+
+    impl Drop for DropCounter {
+        fn drop(&mut self) {
+            INNER_DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping DropCounter with value: {}", self.value);
+        }
+    }
+
+    INNER_DROP_COUNT.store(0, Ordering::SeqCst);
+
+    {
+        let mut partial = Partial::alloc::<Arc<DropCounter>>()?;
+
+        // Initialize the Arc's inner value
+        partial.begin_smart_ptr()?;
+        partial.set(DropCounter { value: 123 })?;
+        partial.end()?;
+
+        // Drop the partial - should drop the Arc which drops the inner value
+    }
+
+    assert_eq!(
+        INNER_DROP_COUNT.load(Ordering::SeqCst),
+        1,
+        "Should drop the inner value through Arc's drop"
+    );
+    Ok(())
+}
