@@ -203,18 +203,22 @@ pub(crate) enum MapInsertState {
     /// Not currently inserting
     Idle,
 
-    /// Pushing key
+    /// Pushing key - memory allocated, waiting for initialization
     PushingKey {
         /// Temporary storage for the key being built
-        key_ptr: Option<PtrUninit<'static>>,
+        key_ptr: PtrUninit<'static>,
+        /// Whether the key has been fully initialized
+        key_initialized: bool,
     },
 
     /// Pushing value after key is done
     PushingValue {
-        /// Temporary storage for the key that was built
+        /// Temporary storage for the key that was built (always initialized)
         key_ptr: PtrUninit<'static>,
         /// Temporary storage for the value being built
         value_ptr: Option<PtrUninit<'static>>,
+        /// Whether the value has been fully initialized
+        value_initialized: bool,
     },
 }
 
@@ -509,27 +513,31 @@ impl Frame {
 
                 // Clean up any in-progress insertion state
                 match insert_state {
-                    MapInsertState::PushingKey { key_ptr } => {
-                        if let Some(key_ptr) = key_ptr {
+                    MapInsertState::PushingKey { key_ptr, key_initialized } => {
+                        if let Def::Map(map_def) = self.shape.def {
+                            // Drop the key if it was initialized
+                            if *key_initialized {
+                                if let Some(drop_fn) = map_def.k().vtable.drop_in_place {
+                                    unsafe { drop_fn(key_ptr.assume_init()) };
+                                }
+                            }
                             // Deallocate the key buffer
-                            if let Def::Map(map_def) = self.shape.def {
-                                if let Ok(key_shape) = map_def.k().layout.sized_layout() {
-                                    if key_shape.size() > 0 {
-                                        unsafe {
-                                            alloc::alloc::dealloc(
-                                                key_ptr.as_mut_byte_ptr(),
-                                                key_shape,
-                                            )
-                                        };
-                                    }
+                            if let Ok(key_shape) = map_def.k().layout.sized_layout() {
+                                if key_shape.size() > 0 {
+                                    unsafe {
+                                        alloc::alloc::dealloc(
+                                            key_ptr.as_mut_byte_ptr(),
+                                            key_shape,
+                                        )
+                                    };
                                 }
                             }
                         }
                     }
-                    MapInsertState::PushingValue { key_ptr, value_ptr } => {
+                    MapInsertState::PushingValue { key_ptr, value_ptr, value_initialized } => {
                         // Drop and deallocate both key and value buffers
                         if let Def::Map(map_def) = self.shape.def {
-                            // Drop and deallocate the key
+                            // Drop and deallocate the key (always initialized in PushingValue state)
                             if let Some(drop_fn) = map_def.k().vtable.drop_in_place {
                                 unsafe { drop_fn(key_ptr.assume_init()) };
                             }
@@ -541,8 +549,15 @@ impl Frame {
                                 }
                             }
 
-                            // Drop and deallocate the value if it exists
+                            // Handle the value if it exists
                             if let Some(value_ptr) = value_ptr {
+                                // Drop the value if it was initialized
+                                if *value_initialized {
+                                    if let Some(drop_fn) = map_def.v().vtable.drop_in_place {
+                                        unsafe { drop_fn(value_ptr.assume_init()) };
+                                    }
+                                }
+                                // Deallocate the value buffer
                                 if let Ok(value_shape) = map_def.v().layout.sized_layout() {
                                     if value_shape.size() > 0 {
                                         unsafe {
@@ -591,26 +606,30 @@ impl Frame {
             Tracker::Map { insert_state, .. } => {
                 // Only clean up partial insert state, don't touch the main Map
                 match insert_state {
-                    MapInsertState::PushingKey { key_ptr } => {
-                        if let Some(key_ptr) = key_ptr.take() {
-                            // Deallocate the key buffer (not initialized, just raw memory)
-                            if let Def::Map(map_def) = self.shape.def {
-                                if let Ok(key_layout) = map_def.k().layout.sized_layout() {
-                                    if key_layout.size() > 0 {
-                                        unsafe {
-                                            alloc::alloc::dealloc(
-                                                key_ptr.as_mut_byte_ptr(),
-                                                key_layout,
-                                            )
-                                        };
-                                    }
+                    MapInsertState::PushingKey { key_ptr, key_initialized } => {
+                        if let Def::Map(map_def) = self.shape.def {
+                            // Drop the key if it was initialized
+                            if *key_initialized {
+                                if let Some(drop_fn) = map_def.k().vtable.drop_in_place {
+                                    unsafe { drop_fn(key_ptr.assume_init()) };
+                                }
+                            }
+                            // Deallocate the key buffer
+                            if let Ok(key_layout) = map_def.k().layout.sized_layout() {
+                                if key_layout.size() > 0 {
+                                    unsafe {
+                                        alloc::alloc::dealloc(
+                                            key_ptr.as_mut_byte_ptr(),
+                                            key_layout,
+                                        )
+                                    };
                                 }
                             }
                         }
                     }
-                    MapInsertState::PushingValue { key_ptr, value_ptr } => {
-                        // Drop and deallocate the key (it was initialized)
+                    MapInsertState::PushingValue { key_ptr, value_ptr, value_initialized } => {
                         if let Def::Map(map_def) = self.shape.def {
+                            // Drop and deallocate the key (always initialized in PushingValue state)
                             if let Some(drop_fn) = map_def.k().vtable.drop_in_place {
                                 unsafe { drop_fn(key_ptr.assume_init()) };
                             }
@@ -622,8 +641,15 @@ impl Frame {
                                 }
                             }
 
-                            // Deallocate the value buffer if it exists (may not be initialized)
+                            // Handle the value buffer if it exists
                             if let Some(value_ptr) = value_ptr.take() {
+                                // Drop the value if it was initialized
+                                if *value_initialized {
+                                    if let Some(drop_fn) = map_def.v().vtable.drop_in_place {
+                                        unsafe { drop_fn(value_ptr.assume_init()) };
+                                    }
+                                }
+                                // Deallocate the value buffer
                                 if let Ok(value_layout) = map_def.v().layout.sized_layout() {
                                     if value_layout.size() > 0 {
                                         unsafe {

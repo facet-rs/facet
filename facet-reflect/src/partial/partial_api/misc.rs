@@ -135,9 +135,23 @@ impl<'facet> Partial<'facet> {
 
                 for remaining_path in sorted_paths {
                     if let Some(mut remaining_frame) = deferred_state.stored_frames.remove(&remaining_path) {
-                        // Since finish_deferred failed, the parent's iset was never updated.
-                        // We must deinit all non-Uninit frames because the parent won't drop them.
-                        if !matches!(remaining_frame.tracker, Tracker::Uninit) {
+                        // Check if this frame was re-entered (parent already has it marked as init).
+                        // If so, the parent will drop it - we must NOT deinit (double-free).
+                        // If not, we must deinit because the parent won't drop it.
+                        let parent_will_drop = if remaining_path.len() == 1 {
+                            // Parent is the root frame
+                            let field_name = remaining_path.first().unwrap();
+                            self.frames.first().map_or(false, |parent| {
+                                Self::is_field_marked_in_parent(parent, field_name)
+                            })
+                        } else {
+                            // Parent is a stored frame - but stored frames haven't been updated yet,
+                            // so we need to check against what was already set before deferred mode.
+                            // For now, conservatively assume parent won't drop nested frames.
+                            false
+                        };
+
+                        if !parent_will_drop && !matches!(remaining_frame.tracker, Tracker::Uninit) {
                             remaining_frame.deinit();
                         }
                     }
@@ -609,17 +623,16 @@ impl<'facet> Partial<'facet> {
                 insert_state,
             } => {
                 match insert_state {
-                    MapInsertState::PushingKey { key_ptr } => {
-                        // We just popped the key frame
-                        if let Some(key_ptr) = key_ptr {
-                            // Transition to PushingValue state
-                            *insert_state = MapInsertState::PushingValue {
-                                key_ptr: *key_ptr,
-                                value_ptr: None,
-                            };
-                        }
+                    MapInsertState::PushingKey { key_ptr, .. } => {
+                        // We just popped the key frame - mark key as initialized and transition
+                        // to PushingValue state
+                        *insert_state = MapInsertState::PushingValue {
+                            key_ptr: *key_ptr,
+                            value_ptr: None,
+                            value_initialized: false,
+                        };
                     }
-                    MapInsertState::PushingValue { key_ptr, value_ptr } => {
+                    MapInsertState::PushingValue { key_ptr, value_ptr, .. } => {
                         // We just popped the value frame, now insert the pair
                         if let (Some(value_ptr), Def::Map(map_def)) =
                             (value_ptr, parent_frame.shape.def)

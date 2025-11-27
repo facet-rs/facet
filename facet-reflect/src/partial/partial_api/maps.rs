@@ -79,36 +79,38 @@ impl Partial<'_> {
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
-        // Check that we have a Map and set up for key insertion
-        let map_def = match (&frame.shape.def, &mut frame.tracker) {
+        // Check that we have a Map in Idle state
+        let map_def = match (&frame.shape.def, &frame.tracker) {
             (
                 Def::Map(map_def),
                 Tracker::Map {
                     is_initialized: true,
-                    insert_state,
+                    insert_state: MapInsertState::Idle,
+                },
+            ) => map_def,
+            (
+                Def::Map(_),
+                Tracker::Map {
+                    insert_state: MapInsertState::PushingKey { .. },
+                    ..
                 },
             ) => {
-                match insert_state {
-                    MapInsertState::Idle => {
-                        // Start a new insert automatically
-                        *insert_state = MapInsertState::PushingKey { key_ptr: None };
-                    }
-                    MapInsertState::PushingKey { key_ptr } => {
-                        if key_ptr.is_some() {
-                            return Err(ReflectError::OperationFailed {
-                                shape: frame.shape,
-                                operation: "already pushing a key, call end() first",
-                            });
-                        }
-                    }
-                    _ => {
-                        return Err(ReflectError::OperationFailed {
-                            shape: frame.shape,
-                            operation: "must complete current operation before begin_key()",
-                        });
-                    }
-                }
-                map_def
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "already pushing a key, call end() first",
+                });
+            }
+            (
+                Def::Map(_),
+                Tracker::Map {
+                    insert_state: MapInsertState::PushingValue { .. },
+                    ..
+                },
+            ) => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "must complete current operation before begin_key()",
+                });
             }
             _ => {
                 return Err(ReflectError::OperationFailed {
@@ -140,13 +142,15 @@ impl Partial<'_> {
             });
         };
 
+        let key_ptr = PtrUninit::new(key_ptr_raw);
+
         // Store the key pointer in the insert state
         match &mut frame.tracker {
-            Tracker::Map {
-                insert_state: MapInsertState::PushingKey { key_ptr: kp },
-                ..
-            } => {
-                *kp = Some(PtrUninit::new(key_ptr_raw));
+            Tracker::Map { insert_state, .. } => {
+                *insert_state = MapInsertState::PushingKey {
+                    key_ptr,
+                    key_initialized: false,
+                };
             }
             _ => unreachable!(),
         }
@@ -167,27 +171,31 @@ impl Partial<'_> {
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
-        // Check that we have a Map in PushingValue state
-        let map_def = match (&frame.shape.def, &mut frame.tracker) {
+        // Check that we have a Map in PushingValue state with no value_ptr yet
+        let (map_def, key_ptr) = match (&frame.shape.def, &frame.tracker) {
             (
                 Def::Map(map_def),
                 Tracker::Map {
-                    insert_state: MapInsertState::PushingValue { value_ptr, .. },
+                    insert_state: MapInsertState::PushingValue { value_ptr: None, key_ptr, .. },
+                    ..
+                },
+            ) => (map_def, *key_ptr),
+            (
+                Def::Map(_),
+                Tracker::Map {
+                    insert_state: MapInsertState::PushingValue { value_ptr: Some(_), .. },
                     ..
                 },
             ) => {
-                if value_ptr.is_some() {
-                    return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
-                        operation: "already pushing a value, call pop() first",
-                    });
-                }
-                map_def
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "already pushing a value, call end() first",
+                });
             }
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,
-                    operation: "must complete key before push_value()",
+                    operation: "must complete key before begin_value()",
                 });
             }
         };
@@ -214,20 +222,23 @@ impl Partial<'_> {
             });
         };
 
+        let value_ptr = PtrUninit::new(value_ptr_raw);
+
         // Store the value pointer in the insert state
         match &mut frame.tracker {
-            Tracker::Map {
-                insert_state: MapInsertState::PushingValue { value_ptr: vp, .. },
-                ..
-            } => {
-                *vp = Some(PtrUninit::new(value_ptr_raw));
+            Tracker::Map { insert_state, .. } => {
+                *insert_state = MapInsertState::PushingValue {
+                    key_ptr,
+                    value_ptr: Some(value_ptr),
+                    value_initialized: false,
+                };
             }
             _ => unreachable!(),
         }
 
         // Push a new frame for the value
         self.frames.push(Frame::new(
-            PtrUninit::new(value_ptr_raw),
+            value_ptr,
             value_shape,
             FrameOwnership::ManagedElsewhere, // Ownership tracked in MapInsertState
         ));
