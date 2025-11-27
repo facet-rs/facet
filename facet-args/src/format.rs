@@ -253,6 +253,7 @@ impl<'input> Context<'input> {
                         let is_positional = field.attributes.iter().any(|attr| match attr {
                             // this is terrible, tbh
                             FieldAttribute::Arbitrary(attr) => attr.contains("positional"),
+                            _ => false,
                         });
                         if !is_positional {
                             continue;
@@ -299,7 +300,7 @@ impl<'input> Context<'input> {
                 if field.flags.contains(FieldFlags::DEFAULT) {
                     log::trace!("Setting #{field_index} field to default: {field:?}");
                     p.set_nth_field_to_default(field_index)?;
-                } else if field.shape.is_shape(bool::SHAPE) {
+                } else if (field.shape)().is_shape(bool::SHAPE) {
                     // bools are just set to false
                     p.set_nth_field(field_index, false)?;
                 } else {
@@ -395,6 +396,7 @@ fn find_field_index_with_short(field: &'static [Field], short: &str) -> Option<u
                     || attr_str == &full_attr2
                     || (attr_str == &just_short && f.name == short)
             }
+            _ => false,
         })
     })
 }

@@ -1,5 +1,4 @@
 use facet::Facet;
-use facet_testhelpers::test;
 
 #[test]
 fn test_eq_long_solo() {
