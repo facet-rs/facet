@@ -1084,18 +1084,71 @@ impl<'a> ProbingSolver<'a> {
 // ============================================================================
 
 /// How enum variants are represented in the serialized format.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EnumRepr {
     /// Variant fields are flattened to the same level as other fields.
+    /// Also used for `#[facet(untagged)]` enums where there's no tag at all.
     /// Used by formats like KDL, TOML where all fields appear at one level.
     /// Example: `{"name": "...", "host": "...", "port": 8080}`
-    #[default]
     Flattened,
 
     /// Variant name is a key, variant content is nested under it.
-    /// Used by JSON with externally-tagged enums.
+    /// This is the default serde representation for enums.
     /// Example: `{"name": "...", "Tcp": {"host": "...", "port": 8080}}`
     ExternallyTagged,
+
+    /// Tag field is inside the content, alongside variant fields.
+    /// Used with `#[facet(tag = "type")]`.
+    /// Example: `{"type": "Tcp", "host": "...", "port": 8080}`
+    InternallyTagged {
+        /// The name of the tag field (e.g., "type")
+        tag: &'static str,
+    },
+
+    /// Tag and content are adjacent fields at the same level.
+    /// Used with `#[facet(tag = "t", content = "c")]`.
+    /// Example: `{"t": "Tcp", "c": {"host": "...", "port": 8080}}`
+    AdjacentlyTagged {
+        /// The name of the tag field (e.g., "t")
+        tag: &'static str,
+        /// The name of the content field (e.g., "c")
+        content: &'static str,
+    },
+}
+
+impl Default for EnumRepr {
+    fn default() -> Self {
+        EnumRepr::Flattened
+    }
+}
+
+impl EnumRepr {
+    /// Detect the enum representation from a Shape's attributes.
+    ///
+    /// Returns:
+    /// - `Flattened` if `#[facet(untagged)]` or no enum-related attributes
+    /// - `InternallyTagged` if `#[facet(tag = "...")]` without content
+    /// - `AdjacentlyTagged` if both `#[facet(tag = "...", content = "...")]`
+    /// - `ExternallyTagged` is NOT auto-detected (it's the explicit choice when
+    ///   you want variant-name-as-key behavior)
+    pub fn from_shape(shape: &'static Shape) -> Self {
+        let tag = shape.get_tag_attr();
+        let content = shape.get_content_attr();
+        let untagged = shape.is_untagged();
+
+        match (tag, content, untagged) {
+            // Untagged explicitly requested
+            (_, _, true) => EnumRepr::Flattened,
+            // Both tag and content specified → adjacently tagged
+            (Some(t), Some(c), false) => EnumRepr::AdjacentlyTagged { tag: t, content: c },
+            // Only tag specified → internally tagged
+            (Some(t), None, false) => EnumRepr::InternallyTagged { tag: t },
+            // No attributes → default to flattened (for flatten solver behavior)
+            (None, None, false) => EnumRepr::Flattened,
+            // Content without tag is invalid, treat as flattened
+            (None, Some(_), false) => EnumRepr::Flattened,
+        }
+    }
 }
 
 impl Schema {
@@ -1103,8 +1156,25 @@ impl Schema {
     ///
     /// Returns an error if the type definition contains conflicts, such as
     /// duplicate field names from parent and flattened structs.
+    ///
+    /// Note: This defaults to `Flattened` representation. For auto-detection
+    /// based on `#[facet(tag = "...")]` attributes, use [`Schema::build_auto`].
     pub fn build(shape: &'static Shape) -> Result<Self, SchemaError> {
         Self::build_with_repr(shape, EnumRepr::Flattened)
+    }
+
+    /// Build a schema with auto-detected enum representation based on each enum's attributes.
+    ///
+    /// This inspects each flattened enum's shape attributes to determine its representation:
+    /// - `#[facet(untagged)]` → Flattened
+    /// - `#[facet(tag = "type")]` → InternallyTagged
+    /// - `#[facet(tag = "t", content = "c")]` → AdjacentlyTagged
+    /// - No attributes → Flattened (for flatten solver behavior)
+    ///
+    /// For externally-tagged enums (variant name as key), use [`Schema::build_externally_tagged`].
+    pub fn build_auto(shape: &'static Shape) -> Result<Self, SchemaError> {
+        let builder = SchemaBuilder::new(shape, EnumRepr::Flattened).with_auto_detect();
+        builder.into_schema()
     }
 
     /// Build a schema for externally-tagged enum representation (e.g., JSON).
@@ -1131,11 +1201,23 @@ impl Schema {
 struct SchemaBuilder {
     shape: &'static Shape,
     enum_repr: EnumRepr,
+    /// If true, detect enum representation from each enum's shape attributes.
+    /// If false, use `enum_repr` for all enums.
+    auto_detect_enum_repr: bool,
 }
 
 impl SchemaBuilder {
     fn new(shape: &'static Shape, enum_repr: EnumRepr) -> Self {
-        Self { shape, enum_repr }
+        Self {
+            shape,
+            enum_repr,
+            auto_detect_enum_repr: false,
+        }
+    }
+
+    fn with_auto_detect(mut self) -> Self {
+        self.auto_detect_enum_repr = true;
+        self
     }
 
     fn analyze(&self) -> Result<Vec<Resolution>, SchemaError> {
@@ -1552,6 +1634,15 @@ impl SchemaBuilder {
                 let mut result = Vec::new();
                 let enum_name = shape.type_identifier;
 
+                // Determine enum representation:
+                // - If auto_detect_enum_repr is enabled, detect from the enum's shape attributes
+                // - Otherwise, use the global enum_repr setting
+                let enum_repr = if self.auto_detect_enum_repr {
+                    EnumRepr::from_shape(shape)
+                } else {
+                    self.enum_repr.clone()
+                };
+
                 for base_config in configs {
                     for variant in enum_type.variants {
                         let mut forked = base_config.clone();
@@ -1559,7 +1650,7 @@ impl SchemaBuilder {
 
                         let variant_path = field_path.push_variant(field.name, variant.name);
 
-                        match self.enum_repr {
+                        match &enum_repr {
                             EnumRepr::ExternallyTagged => {
                                 // For externally tagged enums, the variant name is a key
                                 // at the current level, and its content is nested underneath.
@@ -1592,7 +1683,7 @@ impl SchemaBuilder {
                                 result.push(forked);
                             }
                             EnumRepr::Flattened => {
-                                // For flattened enums, the variant's fields appear at the
+                                // For flattened/untagged enums, the variant's fields appear at the
                                 // same level as other fields. The variant name is NOT a key;
                                 // only the variant's inner fields are keys.
 
@@ -1617,6 +1708,84 @@ impl SchemaBuilder {
                                     final_config.merge(&variant_config)?;
                                     result.push(final_config);
                                 }
+                            }
+                            EnumRepr::InternallyTagged { tag } => {
+                                // For internally tagged enums, the tag field appears at the
+                                // same level as the variant's fields.
+                                // Example: {"type": "Tcp", "host": "...", "port": 8080}
+
+                                // Add the tag field as a known key path
+                                let mut tag_key_path = key_prefix.clone();
+                                tag_key_path.push(tag);
+                                forked.add_key_path(tag_key_path);
+
+                                // Add the tag field info - the tag discriminates the variant
+                                // We use a synthetic field for the tag
+                                let tag_field_info = FieldInfo {
+                                    serialized_name: tag,
+                                    path: variant_path.clone(),
+                                    required: !is_optional_flatten,
+                                    value_shape: shape, // The enum shape
+                                    field,              // The original flatten field
+                                };
+                                forked.add_field(tag_field_info)?;
+
+                                // Get resolutions from the variant's content
+                                // Key prefix stays the same - inner keys are at the same level
+                                let mut variant_configs = self.analyze_variant_content(
+                                    variant,
+                                    &variant_path,
+                                    key_prefix,
+                                )?;
+
+                                // If the flatten field was Option<T>, mark all inner fields as optional
+                                if is_optional_flatten {
+                                    for config in &mut variant_configs {
+                                        config.mark_all_optional();
+                                    }
+                                }
+
+                                // Merge each variant config into the forked base
+                                for variant_config in variant_configs {
+                                    let mut final_config = forked.clone();
+                                    final_config.merge(&variant_config)?;
+                                    result.push(final_config);
+                                }
+                            }
+                            EnumRepr::AdjacentlyTagged { tag, content } => {
+                                // For adjacently tagged enums, both tag and content fields
+                                // appear at the same level. Content contains the variant's fields.
+                                // Example: {"t": "Tcp", "c": {"host": "...", "port": 8080}}
+
+                                // Add the tag field as a known key path
+                                let mut tag_key_path = key_prefix.clone();
+                                tag_key_path.push(tag);
+                                forked.add_key_path(tag_key_path);
+
+                                // Add the tag field info
+                                let tag_field_info = FieldInfo {
+                                    serialized_name: tag,
+                                    path: variant_path.clone(),
+                                    required: !is_optional_flatten,
+                                    value_shape: shape, // The enum shape
+                                    field,              // The original flatten field
+                                };
+                                forked.add_field(tag_field_info)?;
+
+                                // Add the content field as a known key path
+                                let mut content_key_prefix = key_prefix.clone();
+                                content_key_prefix.push(content);
+                                forked.add_key_path(content_key_prefix.clone());
+
+                                // The variant's fields are nested under the content key
+                                // Collect key paths for probing
+                                self.collect_variant_key_paths_only(
+                                    variant,
+                                    &content_key_prefix,
+                                    &mut forked,
+                                )?;
+
+                                result.push(forked);
                             }
                         }
                     }

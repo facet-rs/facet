@@ -2204,3 +2204,154 @@ fn test_nested_key_disambiguation_grpc() {
         config.describe()
     );
 }
+
+// ============================================================================
+// Enum Representation Detection Tests
+// ============================================================================
+
+use facet_solver::EnumRepr;
+
+/// Test that `EnumRepr::from_shape` correctly detects untagged enums.
+#[test]
+fn test_enum_repr_detection_untagged() {
+    #[derive(Facet)]
+    #[repr(u8)]
+    #[facet(untagged)]
+    #[allow(dead_code)]
+    enum UntaggedEnum {
+        Int(i64),
+        String(String),
+    }
+
+    let repr = EnumRepr::from_shape(UntaggedEnum::SHAPE);
+    assert_eq!(repr, EnumRepr::Flattened);
+}
+
+/// Test that `EnumRepr::from_shape` correctly detects internally-tagged enums.
+#[test]
+fn test_enum_repr_detection_internally_tagged() {
+    #[derive(Facet)]
+    #[repr(u8)]
+    #[facet(tag = "type")]
+    #[allow(dead_code)]
+    enum InternallyTaggedEnum {
+        Request { id: String },
+        Response { id: String },
+    }
+
+    let repr = EnumRepr::from_shape(InternallyTaggedEnum::SHAPE);
+    assert_eq!(repr, EnumRepr::InternallyTagged { tag: "type" });
+}
+
+/// Test that `EnumRepr::from_shape` correctly detects adjacently-tagged enums.
+#[test]
+fn test_enum_repr_detection_adjacently_tagged() {
+    #[derive(Facet)]
+    #[repr(u8)]
+    #[facet(tag = "t", content = "c")]
+    #[allow(dead_code)]
+    enum AdjacentlyTaggedEnum {
+        Para(String),
+        Code(String),
+    }
+
+    let repr = EnumRepr::from_shape(AdjacentlyTaggedEnum::SHAPE);
+    assert_eq!(
+        repr,
+        EnumRepr::AdjacentlyTagged {
+            tag: "t",
+            content: "c"
+        }
+    );
+}
+
+/// Test that `EnumRepr::from_shape` defaults to Flattened for plain enums.
+#[test]
+fn test_enum_repr_detection_default() {
+    #[derive(Facet)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum PlainEnum {
+        Active,
+        Inactive,
+    }
+
+    let repr = EnumRepr::from_shape(PlainEnum::SHAPE);
+    assert_eq!(repr, EnumRepr::Flattened);
+}
+
+/// Test that `Schema::build_auto` works with internally-tagged enums.
+#[test]
+fn test_schema_build_auto_internally_tagged() {
+    init_tracing();
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    #[facet(tag = "type")]
+    #[allow(dead_code)]
+    enum ApiMessage {
+        Request { method: String, params: String },
+        Response { result: String },
+    }
+
+    #[derive(Facet)]
+    struct ApiPayload {
+        id: String,
+        #[facet(flatten)]
+        message: ApiMessage,
+    }
+
+    let schema = Schema::build_auto(ApiPayload::SHAPE).expect("should build schema");
+    let resolutions = schema.resolutions();
+
+    // Should have 2 resolutions (one per variant)
+    assert_eq!(resolutions.len(), 2);
+
+    // Each resolution should have the "type" tag field
+    for resolution in resolutions {
+        let field_names: Vec<_> = resolution.fields().keys().copied().collect();
+        assert!(
+            field_names.contains(&"type"),
+            "Expected 'type' tag field, got: {:?}",
+            field_names
+        );
+    }
+}
+
+/// Test that `Schema::build_auto` works with adjacently-tagged enums.
+#[test]
+fn test_schema_build_auto_adjacently_tagged() {
+    init_tracing();
+
+    #[derive(Facet)]
+    #[repr(u8)]
+    #[facet(tag = "kind", content = "data")]
+    #[allow(dead_code)]
+    enum Block {
+        Paragraph { text: String },
+        Code { lang: String, source: String },
+    }
+
+    #[derive(Facet)]
+    struct Document {
+        title: String,
+        #[facet(flatten)]
+        content: Block,
+    }
+
+    let schema = Schema::build_auto(Document::SHAPE).expect("should build schema");
+    let resolutions = schema.resolutions();
+
+    // Should have 2 resolutions (one per variant)
+    assert_eq!(resolutions.len(), 2);
+
+    // Each resolution should have the "kind" tag field
+    for resolution in resolutions {
+        let field_names: Vec<_> = resolution.fields().keys().copied().collect();
+        assert!(
+            field_names.contains(&"kind"),
+            "Expected 'kind' tag field, got: {:?}",
+            field_names
+        );
+    }
+}
