@@ -14,6 +14,11 @@ mod partial;
 #[cfg(feature = "alloc")]
 pub use partial::*;
 
+#[cfg(feature = "alloc")]
+mod resolution;
+#[cfg(feature = "alloc")]
+pub use resolution::*;
+
 mod peek;
 pub use peek::*;
 

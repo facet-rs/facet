@@ -12,6 +12,12 @@ use core::fmt;
 
 use facet_core::{Def, Field, FieldFlags, Shape, StructType, Type, UserType, Variant};
 
+// Re-export resolution types from facet-reflect
+pub use facet_reflect::{
+    DuplicateFieldError, FieldInfo, FieldPath, KeyPath, MatchResult, PathSegment, Resolution,
+    VariantSelection,
+};
+
 /// Cached schema for a type that may contain flattened fields.
 ///
 /// This is computed once per Shape and can be cached forever since
@@ -22,31 +28,31 @@ pub struct Schema {
     #[allow(dead_code)]
     shape: &'static Shape,
 
-    /// All possible configurations of this type.
+    /// All possible resolutions of this type.
     /// For types with no enums in flatten paths, this has exactly 1 entry.
     /// For types with enums, this has one entry per valid combination of variants.
-    configurations: Vec<Configuration>,
+    resolutions: Vec<Resolution>,
 
     /// Inverted index: field_name → bitmask of configuration indices.
-    /// Bit i is set if `configurations[i]` contains this field.
-    /// Uses a `Vec<u64>` to support arbitrary numbers of configurations.
-    field_to_configs: BTreeMap<&'static str, ConfigSet>,
+    /// Bit i is set if `resolutions[i]` contains this field.
+    /// Uses a `Vec<u64>` to support arbitrary numbers of resolutions.
+    field_to_resolutions: BTreeMap<&'static str, ResolutionSet>,
 }
 
 /// A set of configuration indices, stored as a bitmask for O(1) intersection.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ConfigSet {
-    /// Bitmask where bit i indicates `configurations[i]` is in the set.
+pub struct ResolutionSet {
+    /// Bitmask where bit i indicates `resolutions[i]` is in the set.
     /// For most types, a single u64 suffices (up to 64 configs).
     bits: Vec<u64>,
-    /// Number of configurations in the set.
+    /// Number of resolutions in the set.
     count: usize,
 }
 
-impl ConfigSet {
+impl ResolutionSet {
     /// Create an empty config set.
-    fn empty(num_configs: usize) -> Self {
-        let num_words = num_configs.div_ceil(64);
+    fn empty(num_resolutions: usize) -> Self {
+        let num_words = num_resolutions.div_ceil(64);
         Self {
             bits: vec![0; num_words],
             count: 0,
@@ -54,17 +60,17 @@ impl ConfigSet {
     }
 
     /// Create a full config set (all configs present).
-    fn full(num_configs: usize) -> Self {
-        let num_words = num_configs.div_ceil(64);
+    fn full(num_resolutions: usize) -> Self {
+        let num_words = num_resolutions.div_ceil(64);
         let mut bits = vec![!0u64; num_words];
-        // Clear bits beyond num_configs
-        if num_configs % 64 != 0 {
-            let last_word_bits = num_configs % 64;
+        // Clear bits beyond num_resolutions
+        if num_resolutions % 64 != 0 {
+            let last_word_bits = num_resolutions % 64;
             bits[num_words - 1] = (1u64 << last_word_bits) - 1;
         }
         Self {
             bits,
-            count: num_configs,
+            count: num_resolutions,
         }
     }
 
@@ -79,7 +85,7 @@ impl ConfigSet {
     }
 
     /// Intersect with another config set in place.
-    fn intersect_with(&mut self, other: &ConfigSet) {
+    fn intersect_with(&mut self, other: &ResolutionSet) {
         self.count = 0;
         for (a, b) in self.bits.iter_mut().zip(other.bits.iter()) {
             *a &= *b;
@@ -87,7 +93,7 @@ impl ConfigSet {
         }
     }
 
-    /// Get the number of configurations in the set.
+    /// Get the number of resolutions in the set.
     fn len(&self) -> usize {
         self.count
     }
@@ -121,186 +127,6 @@ impl ConfigSet {
     }
 }
 
-/// One possible "shape" the flattened type could take.
-///
-/// Represents a specific choice of variants for all enums in the flatten tree.
-#[derive(Debug, Clone)]
-pub struct Configuration {
-    /// For each enum in the flatten path, which variant is selected.
-    /// The key is the path to the enum field, value is the variant.
-    variant_selections: Vec<VariantSelection>,
-
-    /// All fields in this configuration, keyed by serialized name.
-    fields: BTreeMap<&'static str, FieldInfo>,
-
-    /// Set of required field names (for quick matching)
-    required_field_names: BTreeSet<&'static str>,
-
-    /// All known key paths at all depths (for depth-aware probing).
-    /// Each path is a sequence of serialized key names from root.
-    /// E.g., for `{payload: {content: "hi"}}`, contains `["payload"]` and `["payload", "content"]`.
-    known_paths: BTreeSet<KeyPath>,
-}
-
-/// A path of serialized key names for probing.
-/// Unlike FieldPath which tracks the internal type structure (including variant selections),
-/// KeyPath only tracks the keys as they appear in the serialized format.
-pub type KeyPath = Vec<&'static str>;
-
-/// Records that a specific enum field has a specific variant selected.
-#[derive(Debug, Clone)]
-pub struct VariantSelection {
-    /// Path to the enum field from root
-    pub path: FieldPath,
-    /// Name of the enum type (e.g., "MessagePayload")
-    pub enum_name: &'static str,
-    /// Name of the selected variant (e.g., "Text")
-    pub variant_name: &'static str,
-}
-
-/// Information about a single field in a configuration.
-#[derive(Debug, Clone)]
-pub struct FieldInfo {
-    /// The name as it appears in the serialized format
-    pub serialized_name: &'static str,
-
-    /// Full path from root to this field
-    pub path: FieldPath,
-
-    /// Whether this field is required (not Option, no default)
-    pub required: bool,
-
-    /// The shape of this field's value
-    pub value_shape: &'static Shape,
-
-    /// The original field definition (for accessing flags, attributes, etc.)
-    pub field: &'static Field,
-}
-
-impl PartialEq for FieldInfo {
-    fn eq(&self, other: &Self) -> bool {
-        self.serialized_name == other.serialized_name
-            && self.path == other.path
-            && self.required == other.required
-            && std::ptr::eq(self.value_shape, other.value_shape)
-            && std::ptr::eq(self.field, other.field)
-    }
-}
-
-impl Eq for FieldInfo {}
-
-/// A path through the type tree to a field.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct FieldPath {
-    segments: Vec<PathSegment>,
-}
-
-impl fmt::Debug for FieldPath {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "FieldPath(")?;
-        for (i, seg) in self.segments.iter().enumerate() {
-            if i > 0 {
-                write!(f, ".")?;
-            }
-            match seg {
-                PathSegment::Field(name) => write!(f, "{name}")?,
-                PathSegment::Variant(field, variant) => write!(f, "{field}::{variant}")?,
-            }
-        }
-        write!(f, ")")
-    }
-}
-
-impl fmt::Display for FieldPath {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut first = true;
-        for seg in &self.segments {
-            match seg {
-                PathSegment::Field(name) => {
-                    if !first {
-                        write!(f, ".")?;
-                    }
-                    write!(f, "{name}")?;
-                    first = false;
-                }
-                PathSegment::Variant(_, _) => {
-                    // Skip variant segments in display path - they're internal
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-/// A segment in a field path.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum PathSegment {
-    /// A regular struct field
-    Field(&'static str),
-    /// An enum variant selection (field_name, variant_name)
-    Variant(&'static str, &'static str),
-}
-
-impl FieldPath {
-    /// Create an empty path (root level).
-    pub fn empty() -> Self {
-        Self {
-            segments: Vec::new(),
-        }
-    }
-
-    /// Get the depth of this path.
-    pub fn depth(&self) -> usize {
-        self.segments.len()
-    }
-
-    /// Push a field segment onto the path.
-    pub fn push_field(&self, name: &'static str) -> Self {
-        let mut new = self.clone();
-        new.segments.push(PathSegment::Field(name));
-        new
-    }
-
-    /// Push a variant segment onto the path.
-    pub fn push_variant(&self, field_name: &'static str, variant_name: &'static str) -> Self {
-        let mut new = self.clone();
-        new.segments
-            .push(PathSegment::Variant(field_name, variant_name));
-        new
-    }
-
-    /// Get the parent path (all segments except the last).
-    pub fn parent(&self) -> Self {
-        let mut new = self.clone();
-        new.segments.pop();
-        new
-    }
-
-    /// Get the segments of this path.
-    pub fn segments(&self) -> &[PathSegment] {
-        &self.segments
-    }
-
-    /// Get the last segment, if any.
-    pub fn last(&self) -> Option<&PathSegment> {
-        self.segments.last()
-    }
-}
-
-/// Result of matching input fields against a configuration.
-#[derive(Debug)]
-pub enum MatchResult {
-    /// All required fields present, all fields known
-    Exact,
-    /// All required fields present, some optional fields missing
-    WithOptionalMissing(Vec<&'static str>),
-    /// Does not match
-    NoMatch {
-        missing_required: Vec<&'static str>,
-        unknown: Vec<String>,
-    },
-}
-
 // ============================================================================
 // Incremental Solver
 // ============================================================================
@@ -310,7 +136,7 @@ pub enum MatchResult {
 /// Unlike batch solving where all field names are known upfront, this solver
 /// processes fields one at a time as they arrive. It minimizes deferred fields by
 /// immediately setting fields that have the same path in all remaining
-/// candidate configurations.
+/// candidate resolutions.
 ///
 /// # Example
 ///
@@ -341,24 +167,24 @@ pub enum MatchResult {
 /// let schema = Schema::build(Server::SHAPE).unwrap();
 /// let mut solver = IncrementalSolver::new(&schema);
 ///
-/// // "name" exists in all configs at the same path - set directly
+/// // "name" exists in all resolutions at the same path - set directly
 /// assert!(matches!(solver.see_key("name"), FieldDecision::SetDirectly(_)));
 ///
 /// // "host" only exists in Advanced - disambiguates!
 /// match solver.see_key("host") {
-///     FieldDecision::Disambiguated { config, current_field } => {
+///     FieldDecision::Disambiguated { resolution, current_field } => {
 ///         assert_eq!(current_field.serialized_name, "host");
-///         assert!(config.field("port").is_some()); // Advanced has port too
+///         assert!(resolution.field("port").is_some()); // Advanced has port too
 ///     }
 ///     _ => panic!("expected disambiguation"),
 /// }
 /// ```
 #[derive(Debug)]
 pub struct IncrementalSolver<'a> {
-    /// Reference to the schema for configuration lookup
+    /// Reference to the schema for resolution lookup
     schema: &'a Schema,
-    /// Bitmask of remaining candidate configuration indices
-    candidates: ConfigSet,
+    /// Bitmask of remaining candidate resolution indices
+    candidates: ResolutionSet,
     /// Keys that have been deferred (for tracking purposes)
     deferred_keys: Vec<&'a str>,
 }
@@ -377,8 +203,8 @@ pub enum FieldDecision<'a> {
     /// This field narrowed candidates to exactly one.
     /// Replay any deferred fields, then set this field.
     Disambiguated {
-        /// The winning configuration
-        config: &'a Configuration,
+        /// The winning resolution
+        resolution: &'a Resolution,
         /// Info for the field that caused disambiguation
         current_field: &'a FieldInfo,
     },
@@ -392,30 +218,30 @@ impl<'a> IncrementalSolver<'a> {
     pub fn new(schema: &'a Schema) -> Self {
         Self {
             schema,
-            candidates: ConfigSet::full(schema.configurations.len()),
+            candidates: ResolutionSet::full(schema.resolutions.len()),
             deferred_keys: Vec::new(),
         }
     }
 
-    /// Get the current candidate configurations.
-    pub fn candidates(&self) -> Vec<&'a Configuration> {
+    /// Get the current candidate resolutions.
+    pub fn candidates(&self) -> Vec<&'a Resolution> {
         self.candidates
             .iter()
-            .map(|idx| &self.schema.configurations[idx])
+            .map(|idx| &self.schema.resolutions[idx])
             .collect()
     }
 
     /// Process a field key. Returns what to do with the value.
     pub fn see_key(&mut self, key: &'a str) -> FieldDecision<'a> {
         // Use inverted index to find configs with this key - O(1) lookup!
-        let configs_with_key = match self.schema.field_to_configs.get(key) {
+        let resolutions_with_key = match self.schema.field_to_resolutions.get(key) {
             Some(set) => set,
             None => return FieldDecision::Unknown,
         };
 
         // Intersect with current candidates - O(num_words) = O(configs/64)
         let prev_count = self.candidates.len();
-        self.candidates.intersect_with(configs_with_key);
+        self.candidates.intersect_with(resolutions_with_key);
 
         if self.candidates.is_empty() {
             return FieldDecision::Unknown;
@@ -427,10 +253,10 @@ impl<'a> IncrementalSolver<'a> {
         // Check if we've disambiguated to exactly one (but only if we actually narrowed)
         if narrowed && self.candidates.len() == 1 {
             let idx = self.candidates.first().unwrap();
-            let config = &self.schema.configurations[idx];
-            let current_field = config.field(key).unwrap();
+            let resolution = &self.schema.resolutions[idx];
+            let current_field = resolution.field(key).unwrap();
             return FieldDecision::Disambiguated {
-                config,
+                resolution,
                 current_field,
             };
         }
@@ -438,7 +264,7 @@ impl<'a> IncrementalSolver<'a> {
         // Check if path is the same in all remaining candidates
         let mut paths = BTreeSet::new();
         for idx in self.candidates.iter() {
-            let config = &self.schema.configurations[idx];
+            let config = &self.schema.resolutions[idx];
             if let Some(info) = config.field(key) {
                 paths.insert(&info.path);
             }
@@ -447,7 +273,7 @@ impl<'a> IncrementalSolver<'a> {
         if paths.len() == 1 {
             // Same path in all candidates - can set directly
             let idx = self.candidates.first().unwrap();
-            FieldDecision::SetDirectly(self.schema.configurations[idx].field(key).unwrap())
+            FieldDecision::SetDirectly(self.schema.resolutions[idx].field(key).unwrap())
         } else {
             // Different paths - defer until disambiguation
             self.deferred_keys.push(key);
@@ -472,14 +298,14 @@ impl<'a> IncrementalSolver<'a> {
     /// a subset of another's (e.g., `Http { url }` vs `Git { url, branch }`).
     /// If input only contains `url`, both match the "has this field" check,
     /// but `Git` is filtered out because it's missing required `branch`.
-    pub fn finish(self, seen_keys: &BTreeSet<&str>) -> Result<&'a Configuration, SolverError> {
+    pub fn finish(self, seen_keys: &BTreeSet<&str>) -> Result<&'a Resolution, SolverError> {
         if self.candidates.is_empty() {
             return Err(SolverError::NoMatch {
                 input_fields: seen_keys.iter().map(|s| (*s).into()).collect(),
                 missing_required: Vec::new(),
                 missing_required_detailed: Vec::new(),
                 unknown_fields: Vec::new(),
-                closest_config: None,
+                closest_resolution: None,
             });
         }
 
@@ -488,7 +314,7 @@ impl<'a> IncrementalSolver<'a> {
             .candidates
             .iter()
             .filter(|idx| {
-                let config = &self.schema.configurations[*idx];
+                let config = &self.schema.resolutions[*idx];
                 config
                     .required_field_names
                     .iter()
@@ -501,7 +327,7 @@ impl<'a> IncrementalSolver<'a> {
                 // No config has all required fields satisfied.
                 // Find the "closest" match for a helpful error message.
                 let first_idx = self.candidates.first().unwrap();
-                let first_config = &self.schema.configurations[first_idx];
+                let first_config = &self.schema.resolutions[first_idx];
                 let missing: Vec<_> = first_config
                     .required_field_names
                     .iter()
@@ -518,12 +344,12 @@ impl<'a> IncrementalSolver<'a> {
                     missing_required: missing,
                     missing_required_detailed: missing_detailed,
                     unknown_fields: Vec::new(),
-                    closest_config: Some(first_config.describe()),
+                    closest_resolution: Some(first_config.describe()),
                 })
             }
             1 => {
                 let idx = satisfied[0];
-                Ok(&self.schema.configurations[idx])
+                Ok(&self.schema.resolutions[idx])
             }
             _ => {
                 // Multiple configs still match after filtering - true ambiguity
@@ -531,13 +357,13 @@ impl<'a> IncrementalSolver<'a> {
                 let disambiguating = find_disambiguating_fields(
                     &satisfied
                         .iter()
-                        .map(|i| &self.schema.configurations[*i])
+                        .map(|i| &self.schema.resolutions[*i])
                         .collect::<Vec<_>>(),
                 );
                 Err(SolverError::Ambiguous {
                     candidates: satisfied
                         .iter()
-                        .map(|idx| self.schema.configurations[*idx].describe())
+                        .map(|idx| self.schema.resolutions[*idx].describe())
                         .collect(),
                     disambiguating_fields: disambiguating,
                 })
@@ -546,9 +372,9 @@ impl<'a> IncrementalSolver<'a> {
     }
 }
 
-/// Find fields that could disambiguate between configurations.
-/// Returns fields that exist in some but not all configurations.
-fn find_disambiguating_fields(configs: &[&Configuration]) -> Vec<String> {
+/// Find fields that could disambiguate between resolutions.
+/// Returns fields that exist in some but not all resolutions.
+fn find_disambiguating_fields(configs: &[&Resolution]) -> Vec<String> {
     if configs.len() < 2 {
         return Vec::new();
     }
@@ -645,11 +471,11 @@ pub enum SolverError {
         /// Unknown fields that don't belong to any config
         unknown_fields: Vec<String>,
         /// Description of the closest matching configuration
-        closest_config: Option<String>,
+        closest_resolution: Option<String>,
     },
-    /// Multiple configurations match the input fields
+    /// Multiple resolutions match the input fields
     Ambiguous {
-        /// Descriptions of the matching configurations
+        /// Descriptions of the matching resolutions
         candidates: Vec<String>,
         /// Fields that could disambiguate (unique to specific configs)
         disambiguating_fields: Vec<String>,
@@ -664,10 +490,10 @@ impl fmt::Display for SolverError {
                 missing_required: _,
                 missing_required_detailed,
                 unknown_fields,
-                closest_config,
+                closest_resolution,
             } => {
                 write!(f, "No matching configuration for fields {input_fields:?}")?;
-                if let Some(config) = closest_config {
+                if let Some(config) = closest_resolution {
                     write!(f, " (closest match: {config})")?;
                 }
                 if !missing_required_detailed.is_empty() {
@@ -685,10 +511,7 @@ impl fmt::Display for SolverError {
                 candidates,
                 disambiguating_fields,
             } => {
-                write!(
-                    f,
-                    "Ambiguous: multiple configurations match: {candidates:?}"
-                )?;
+                write!(f, "Ambiguous: multiple resolutions match: {candidates:?}")?;
                 if !disambiguating_fields.is_empty() {
                     write!(
                         f,
@@ -754,7 +577,7 @@ pub enum KeyResult<'a> {
     },
 
     /// This key disambiguated to exactly one configuration.
-    Solved(&'a Configuration),
+    Solved(&'a Resolution),
 
     /// This key doesn't exist in any remaining candidate.
     Unknown,
@@ -767,7 +590,7 @@ pub enum SatisfyResult<'a> {
     Continue,
 
     /// Solved to exactly one configuration.
-    Solved(&'a Configuration),
+    Solved(&'a Resolution),
 
     /// No configuration can accept the value (no fields were satisfied).
     NoMatch,
@@ -830,7 +653,7 @@ pub struct Solver<'a> {
     /// Reference to the schema for configuration lookup
     schema: &'a Schema,
     /// Bitmask of remaining candidate configuration indices
-    candidates: ConfigSet,
+    candidates: ResolutionSet,
     /// Set of seen keys for required field checking
     seen_keys: BTreeSet<&'a str>,
 }
@@ -840,7 +663,7 @@ impl<'a> Solver<'a> {
     pub fn new(schema: &'a Schema) -> Self {
         Self {
             schema,
-            candidates: ConfigSet::full(schema.configurations.len()),
+            candidates: ResolutionSet::full(schema.resolutions.len()),
             seen_keys: BTreeSet::new(),
         }
     }
@@ -855,12 +678,12 @@ impl<'a> Solver<'a> {
         self.seen_keys.insert(key);
 
         // Key-based filtering
-        let configs_with_key = match self.schema.field_to_configs.get(key) {
+        let resolutions_with_key = match self.schema.field_to_resolutions.get(key) {
             Some(set) => set,
             None => return KeyResult::Unknown,
         };
 
-        self.candidates.intersect_with(configs_with_key);
+        self.candidates.intersect_with(resolutions_with_key);
 
         if self.candidates.is_empty() {
             return KeyResult::Unknown;
@@ -869,13 +692,13 @@ impl<'a> Solver<'a> {
         // Check if we've disambiguated to exactly one
         if self.candidates.len() == 1 {
             let idx = self.candidates.first().unwrap();
-            return KeyResult::Solved(&self.schema.configurations[idx]);
+            return KeyResult::Solved(&self.schema.resolutions[idx]);
         }
 
         // Collect unique fields (by shape pointer) across remaining candidates
         let mut unique_fields: Vec<&'a FieldInfo> = Vec::new();
         for idx in self.candidates.iter() {
-            let config = &self.schema.configurations[idx];
+            let config = &self.schema.resolutions[idx];
             if let Some(info) = config.field(key) {
                 // Deduplicate by shape pointer
                 if !unique_fields
@@ -963,13 +786,13 @@ impl<'a> Solver<'a> {
     /// ```
     pub fn satisfy_shapes(&mut self, satisfied_shapes: &[&'static Shape]) -> SatisfyResult<'a> {
         if satisfied_shapes.is_empty() {
-            self.candidates = ConfigSet::empty(self.schema.configurations.len());
+            self.candidates = ResolutionSet::empty(self.schema.resolutions.len());
             return SatisfyResult::NoMatch;
         }
 
-        let mut new_candidates = ConfigSet::empty(self.schema.configurations.len());
+        let mut new_candidates = ResolutionSet::empty(self.schema.resolutions.len());
         for idx in self.candidates.iter() {
-            let config = &self.schema.configurations[idx];
+            let config = &self.schema.resolutions[idx];
             // Check if any of this config's fields match the satisfied shapes
             for field in config.fields.values() {
                 if satisfied_shapes
@@ -987,7 +810,7 @@ impl<'a> Solver<'a> {
             0 => SatisfyResult::NoMatch,
             1 => {
                 let idx = self.candidates.first().unwrap();
-                SatisfyResult::Solved(&self.schema.configurations[idx])
+                SatisfyResult::Solved(&self.schema.resolutions[idx])
             }
             _ => SatisfyResult::Continue,
         }
@@ -1000,7 +823,7 @@ impl<'a> Solver<'a> {
     pub fn get_shapes_at_path(&self, path: &[&str]) -> Vec<&'static Shape> {
         let mut shapes: Vec<&'static Shape> = Vec::new();
         for idx in self.candidates.iter() {
-            let config = &self.schema.configurations[idx];
+            let config = &self.schema.resolutions[idx];
             if let Some(shape) = self.get_shape_at_path(config, path) {
                 if !shapes.iter().any(|s| core::ptr::eq(*s, shape)) {
                     shapes.push(shape);
@@ -1023,14 +846,14 @@ impl<'a> Solver<'a> {
         satisfied_shapes: &[&'static Shape],
     ) -> SatisfyResult<'a> {
         if satisfied_shapes.is_empty() {
-            self.candidates = ConfigSet::empty(self.schema.configurations.len());
+            self.candidates = ResolutionSet::empty(self.schema.resolutions.len());
             return SatisfyResult::NoMatch;
         }
 
         // Keep only candidates where the shape at this path is in the satisfied set
-        let mut new_candidates = ConfigSet::empty(self.schema.configurations.len());
+        let mut new_candidates = ResolutionSet::empty(self.schema.resolutions.len());
         for idx in self.candidates.iter() {
-            let config = &self.schema.configurations[idx];
+            let config = &self.schema.resolutions[idx];
             if let Some(shape) = self.get_shape_at_path(config, path) {
                 if satisfied_shapes.iter().any(|s| core::ptr::eq(*s, shape)) {
                     new_candidates.insert(idx);
@@ -1043,17 +866,17 @@ impl<'a> Solver<'a> {
             0 => SatisfyResult::NoMatch,
             1 => {
                 let idx = self.candidates.first().unwrap();
-                SatisfyResult::Solved(&self.schema.configurations[idx])
+                SatisfyResult::Solved(&self.schema.resolutions[idx])
             }
             _ => SatisfyResult::Continue,
         }
     }
 
-    /// Get the current candidate configurations.
-    pub fn candidates(&self) -> Vec<&'a Configuration> {
+    /// Get the current candidate resolutions.
+    pub fn candidates(&self) -> Vec<&'a Resolution> {
         self.candidates
             .iter()
-            .map(|idx| &self.schema.configurations[idx])
+            .map(|idx| &self.schema.resolutions[idx])
             .collect()
     }
 
@@ -1064,7 +887,7 @@ impl<'a> Solver<'a> {
 
     /// Hint that a specific enum variant should be selected.
     ///
-    /// This filters the candidates to only those configurations where at least one
+    /// This filters the candidates to only those resolutions where at least one
     /// variant selection has the given variant name. This is useful for explicit
     /// type disambiguation via annotations (e.g., KDL type annotations like `(Http)node`).
     ///
@@ -1108,10 +931,10 @@ impl<'a> Solver<'a> {
     /// ```
     pub fn hint_variant(&mut self, variant_name: &str) -> bool {
         // Build a set of configs that have this variant name
-        let mut matching = ConfigSet::empty(self.schema.configurations.len());
+        let mut matching = ResolutionSet::empty(self.schema.resolutions.len());
 
         for idx in self.candidates.iter() {
-            let config = &self.schema.configurations[idx];
+            let config = &self.schema.resolutions[idx];
             // Check if any variant selection matches the given name
             if config
                 .variant_selections()
@@ -1195,9 +1018,9 @@ impl<'a> Solver<'a> {
         full_path.push(key);
 
         // Filter candidates to only those that have this key path
-        let mut new_candidates = ConfigSet::empty(self.schema.configurations.len());
+        let mut new_candidates = ResolutionSet::empty(self.schema.resolutions.len());
         for idx in self.candidates.iter() {
-            let config = &self.schema.configurations[idx];
+            let config = &self.schema.resolutions[idx];
             if config.has_key_path(&full_path) {
                 new_candidates.insert(idx);
             }
@@ -1211,15 +1034,15 @@ impl<'a> Solver<'a> {
         // Check if we've disambiguated to exactly one
         if self.candidates.len() == 1 {
             let idx = self.candidates.first().unwrap();
-            return KeyResult::Solved(&self.schema.configurations[idx]);
+            return KeyResult::Solved(&self.schema.resolutions[idx]);
         }
 
         // Get the shape at this path for each remaining candidate
         // We need to traverse the type tree to find the actual field type
-        let mut unique_shapes: Vec<(&'static Shape, usize)> = Vec::new(); // (shape, config_idx)
+        let mut unique_shapes: Vec<(&'static Shape, usize)> = Vec::new(); // (shape, resolution_idx)
 
         for idx in self.candidates.iter() {
-            let config = &self.schema.configurations[idx];
+            let config = &self.schema.resolutions[idx];
             if let Some(shape) = self.get_shape_at_path(config, &full_path) {
                 // Deduplicate by shape pointer
                 if !unique_shapes.iter().any(|(s, _)| core::ptr::eq(*s, shape)) {
@@ -1242,7 +1065,7 @@ impl<'a> Solver<'a> {
                 let fields: Vec<(&'a FieldInfo, u64)> = unique_shapes
                     .iter()
                     .filter_map(|(shape, idx)| {
-                        let config = &self.schema.configurations[*idx];
+                        let config = &self.schema.resolutions[*idx];
                         // For nested paths, we need the parent field
                         // e.g., for ["payload", "value"], get the "payload" field
                         let field = if path.is_empty() {
@@ -1261,11 +1084,7 @@ impl<'a> Solver<'a> {
     }
 
     /// Get the shape at a nested path within a configuration.
-    fn get_shape_at_path(
-        &self,
-        config: &'a Configuration,
-        path: &[&str],
-    ) -> Option<&'static Shape> {
+    fn get_shape_at_path(&self, config: &'a Resolution, path: &[&str]) -> Option<&'static Shape> {
         if path.is_empty() {
             return None;
         }
@@ -1328,14 +1147,14 @@ impl<'a> Solver<'a> {
     /// In the second case, no key ever excludes a candidate. Only `finish()` can
     /// determine that `Git` is missing its required `branch` field, leaving `Http`
     /// as the sole viable configuration.
-    pub fn finish(self) -> Result<&'a Configuration, SolverError> {
+    pub fn finish(self) -> Result<&'a Resolution, SolverError> {
         if self.candidates.is_empty() {
             return Err(SolverError::NoMatch {
                 input_fields: self.seen_keys.iter().map(|s| (*s).into()).collect(),
                 missing_required: Vec::new(),
                 missing_required_detailed: Vec::new(),
                 unknown_fields: Vec::new(),
-                closest_config: None,
+                closest_resolution: None,
             });
         }
 
@@ -1344,7 +1163,7 @@ impl<'a> Solver<'a> {
             .candidates
             .iter()
             .filter(|idx| {
-                let config = &self.schema.configurations[*idx];
+                let config = &self.schema.resolutions[*idx];
                 config
                     .required_field_names
                     .iter()
@@ -1355,7 +1174,7 @@ impl<'a> Solver<'a> {
         match viable.len() {
             0 => {
                 let first_idx = self.candidates.first().unwrap();
-                let first_config = &self.schema.configurations[first_idx];
+                let first_config = &self.schema.resolutions[first_idx];
                 let missing: Vec<_> = first_config
                     .required_field_names
                     .iter()
@@ -1372,12 +1191,12 @@ impl<'a> Solver<'a> {
                     missing_required: missing,
                     missing_required_detailed: missing_detailed,
                     unknown_fields: Vec::new(),
-                    closest_config: Some(first_config.describe()),
+                    closest_resolution: Some(first_config.describe()),
                 })
             }
             _ => {
                 // Return first viable (preserves variant declaration order)
-                Ok(&self.schema.configurations[viable[0]])
+                Ok(&self.schema.resolutions[viable[0]])
             }
         }
     }
@@ -1393,7 +1212,7 @@ pub enum ProbeResult<'a> {
     /// Keep reporting keys - not yet disambiguated
     KeepGoing,
     /// Solved! Use this configuration
-    Solved(&'a Configuration),
+    Solved(&'a Resolution),
     /// No configuration matches the observed keys
     NoMatch,
 }
@@ -1453,20 +1272,20 @@ pub enum ProbeResult<'a> {
 /// ```
 #[derive(Debug)]
 pub struct ProbingSolver<'a> {
-    /// Remaining candidate configurations
-    candidates: Vec<&'a Configuration>,
+    /// Remaining candidate resolutions
+    candidates: Vec<&'a Resolution>,
 }
 
 impl<'a> ProbingSolver<'a> {
     /// Create a new probing solver from a schema.
     pub fn new(schema: &'a Schema) -> Self {
         Self {
-            candidates: schema.configurations.iter().collect(),
+            candidates: schema.resolutions.iter().collect(),
         }
     }
 
-    /// Create a new probing solver from configurations directly.
-    pub fn from_configurations(configs: &'a [Configuration]) -> Self {
+    /// Create a new probing solver from resolutions directly.
+    pub fn from_resolutions(configs: &'a [Resolution]) -> Self {
         Self {
             candidates: configs.iter().collect(),
         }
@@ -1493,8 +1312,8 @@ impl<'a> ProbingSolver<'a> {
         }
     }
 
-    /// Get the current candidate configurations.
-    pub fn candidates(&self) -> &[&'a Configuration] {
+    /// Get the current candidate resolutions.
+    pub fn candidates(&self) -> &[&'a Resolution] {
         &self.candidates
     }
 
@@ -1551,13 +1370,13 @@ impl Schema {
         builder.into_schema()
     }
 
-    /// Get the configurations for this schema.
-    pub fn configurations(&self) -> &[Configuration] {
-        &self.configurations
+    /// Get the resolutions for this schema.
+    pub fn resolutions(&self) -> &[Resolution] {
+        &self.resolutions
     }
 }
 
-impl Configuration {
+impl Resolution {
     /// Create a new empty configuration.
     fn new() -> Self {
         Self {
@@ -1614,7 +1433,7 @@ impl Configuration {
     /// Returns an error if a field with the same serialized name already exists
     /// but comes from a different source (different path). This catches duplicate
     /// field name conflicts between parent structs and flattened fields.
-    fn merge(&mut self, other: &Configuration) -> Result<(), SchemaError> {
+    fn merge(&mut self, other: &Resolution) -> Result<(), SchemaError> {
         for (name, info) in &other.fields {
             if let Some(existing) = self.fields.get(*name) {
                 if existing.path != info.path {
@@ -1685,7 +1504,7 @@ impl Configuration {
     /// Get a human-readable description of this configuration.
     ///
     /// Returns something like `MessagePayload::Text` or `Auth::Token + Transport::Tcp`
-    /// for configurations with multiple variant selections.
+    /// for resolutions with multiple variant selections.
     pub fn describe(&self) -> String {
         if self.variant_selections.is_empty() {
             String::from("(no variants)")
@@ -1741,7 +1560,7 @@ impl Configuration {
     /// }
     ///
     /// let schema = Schema::build(Config::SHAPE).unwrap();
-    /// let config = &schema.configurations()[0];
+    /// let config = &schema.resolutions()[0];
     ///
     /// // If we only saw "required_field"
     /// let mut seen = BTreeSet::new();
@@ -1809,12 +1628,12 @@ impl SchemaBuilder {
         Self { shape, enum_repr }
     }
 
-    fn analyze(&self) -> Result<Vec<Configuration>, SchemaError> {
+    fn analyze(&self) -> Result<Vec<Resolution>, SchemaError> {
         self.analyze_shape(self.shape, FieldPath::empty(), Vec::new())
     }
 
-    /// Analyze a shape and return all possible configurations.
-    /// Returns a Vec because enums create multiple configurations.
+    /// Analyze a shape and return all possible resolutions.
+    /// Returns a Vec because enums create multiple resolutions.
     ///
     /// - `current_path`: The internal field path (for FieldInfo)
     /// - `key_prefix`: The serialized key path prefix (for known_paths)
@@ -1823,7 +1642,7 @@ impl SchemaBuilder {
         shape: &'static Shape,
         current_path: FieldPath,
         key_prefix: KeyPath,
-    ) -> Result<Vec<Configuration>, SchemaError> {
+    ) -> Result<Vec<Resolution>, SchemaError> {
         match shape.ty {
             Type::User(UserType::Struct(struct_type)) => {
                 self.analyze_struct(struct_type, current_path, key_prefix)
@@ -1834,7 +1653,7 @@ impl SchemaBuilder {
             }
             _ => {
                 // For non-struct types at root level, return single empty config
-                Ok(vec![Configuration::new()])
+                Ok(vec![Resolution::new()])
             }
         }
     }
@@ -1849,19 +1668,19 @@ impl SchemaBuilder {
         enum_type: facet_core::EnumType,
         current_path: FieldPath,
         key_prefix: KeyPath,
-    ) -> Result<Vec<Configuration>, SchemaError> {
+    ) -> Result<Vec<Resolution>, SchemaError> {
         let enum_name = shape.type_identifier;
         let mut result = Vec::new();
 
         for variant in enum_type.variants {
-            let mut config = Configuration::new();
+            let mut config = Resolution::new();
 
             // Record this variant selection
             config.add_variant_selection(current_path.clone(), enum_name, variant.name);
 
             let variant_path = current_path.push_variant("", variant.name);
 
-            // Get configurations from the variant's content
+            // Get resolutions from the variant's content
             let variant_configs =
                 self.analyze_variant_content(variant, &variant_path, &key_prefix)?;
 
@@ -1876,7 +1695,7 @@ impl SchemaBuilder {
         Ok(result)
     }
 
-    /// Analyze a struct and return all possible configurations.
+    /// Analyze a struct and return all possible resolutions.
     ///
     /// - `current_path`: The internal field path (for FieldInfo)
     /// - `key_prefix`: The serialized key path prefix (for known_paths)
@@ -1885,11 +1704,11 @@ impl SchemaBuilder {
         struct_type: StructType,
         current_path: FieldPath,
         key_prefix: KeyPath,
-    ) -> Result<Vec<Configuration>, SchemaError> {
+    ) -> Result<Vec<Resolution>, SchemaError> {
         // Start with one empty configuration
-        let mut configs = vec![Configuration::new()];
+        let mut configs = vec![Resolution::new()];
 
-        // Process each field, potentially multiplying configurations
+        // Process each field, potentially multiplying resolutions
         for field in struct_type.fields {
             configs =
                 self.analyze_field_into_configs(field, &current_path, &key_prefix, configs)?;
@@ -1898,7 +1717,7 @@ impl SchemaBuilder {
         Ok(configs)
     }
 
-    /// Process a field and return updated configurations.
+    /// Process a field and return updated resolutions.
     /// If the field is a flattened enum, this may multiply the number of configs.
     ///
     /// - `parent_path`: The internal field path to the parent (for FieldInfo)
@@ -1908,8 +1727,8 @@ impl SchemaBuilder {
         field: &'static Field,
         parent_path: &FieldPath,
         key_prefix: &KeyPath,
-        mut configs: Vec<Configuration>,
-    ) -> Result<Vec<Configuration>, SchemaError> {
+        mut configs: Vec<Resolution>,
+    ) -> Result<Vec<Resolution>, SchemaError> {
         let is_flatten = field.flags.contains(FieldFlags::FLATTEN);
 
         if is_flatten {
@@ -1941,7 +1760,7 @@ impl SchemaBuilder {
 
             // If the field's value is a struct, recurse to collect nested key paths
             // (for probing, not for flattening - these are nested in serialized format)
-            // This may fork configurations if the nested struct contains flattened enums!
+            // This may fork resolutions if the nested struct contains flattened enums!
             configs =
                 self.collect_nested_key_paths_for_shape(field.shape(), &field_key_path, configs)?;
 
@@ -1949,15 +1768,15 @@ impl SchemaBuilder {
         }
     }
 
-    /// Collect nested key paths from a shape into configurations.
+    /// Collect nested key paths from a shape into resolutions.
     /// This handles the case where a non-flattened field contains a struct with flattened enums.
-    /// Returns updated configurations (may fork if flattened enums are encountered).
+    /// Returns updated resolutions (may fork if flattened enums are encountered).
     fn collect_nested_key_paths_for_shape(
         &self,
         shape: &'static Shape,
         key_prefix: &KeyPath,
-        configs: Vec<Configuration>,
-    ) -> Result<Vec<Configuration>, SchemaError> {
+        configs: Vec<Resolution>,
+    ) -> Result<Vec<Resolution>, SchemaError> {
         match shape.ty {
             Type::User(UserType::Struct(struct_type)) => {
                 self.collect_nested_key_paths_for_struct(struct_type, key_prefix, configs)
@@ -1971,8 +1790,8 @@ impl SchemaBuilder {
         &self,
         struct_type: StructType,
         key_prefix: &KeyPath,
-        mut configs: Vec<Configuration>,
-    ) -> Result<Vec<Configuration>, SchemaError> {
+        mut configs: Vec<Resolution>,
+    ) -> Result<Vec<Resolution>, SchemaError> {
         for field in struct_type.fields {
             let is_flatten = field.flags.contains(FieldFlags::FLATTEN);
             let mut field_key_path = key_prefix.clone();
@@ -2001,13 +1820,13 @@ impl SchemaBuilder {
     }
 
     /// Handle flattened fields when collecting nested key paths.
-    /// This may fork configurations for flattened enums.
+    /// This may fork resolutions for flattened enums.
     fn collect_nested_key_paths_for_flattened(
         &self,
         field: &'static Field,
         key_prefix: &KeyPath,
-        configs: Vec<Configuration>,
-    ) -> Result<Vec<Configuration>, SchemaError> {
+        configs: Vec<Resolution>,
+    ) -> Result<Vec<Resolution>, SchemaError> {
         let shape = field.shape();
 
         match shape.ty {
@@ -2016,7 +1835,7 @@ impl SchemaBuilder {
                 self.collect_nested_key_paths_for_struct(struct_type, key_prefix, configs)
             }
             Type::User(UserType::Enum(enum_type)) => {
-                // Flattened enum: fork configurations
+                // Flattened enum: fork resolutions
                 // We need to match each config to its corresponding variant
                 let mut result = Vec::new();
 
@@ -2061,8 +1880,8 @@ impl SchemaBuilder {
         &self,
         variant: &'static Variant,
         key_prefix: &KeyPath,
-        mut config: Configuration,
-    ) -> Result<Configuration, SchemaError> {
+        mut config: Resolution,
+    ) -> Result<Resolution, SchemaError> {
         // Check if this is a newtype variant (single unnamed field)
         if variant.data.fields.len() == 1 && variant.data.fields[0].name == "0" {
             let inner_field = &variant.data.fields[0];
@@ -2075,10 +1894,7 @@ impl SchemaBuilder {
                     key_prefix,
                     vec![config],
                 )?;
-                return Ok(configs
-                    .into_iter()
-                    .next()
-                    .unwrap_or_else(Configuration::new));
+                return Ok(configs.into_iter().next().unwrap_or_else(Resolution::new));
             }
         }
 
@@ -2092,10 +1908,7 @@ impl SchemaBuilder {
                     key_prefix,
                     vec![config],
                 )?;
-                config = configs
-                    .into_iter()
-                    .next()
-                    .unwrap_or_else(Configuration::new);
+                config = configs.into_iter().next().unwrap_or_else(Resolution::new);
             } else {
                 let mut field_key_path = key_prefix.clone();
                 field_key_path.push(variant_field.name);
@@ -2106,10 +1919,7 @@ impl SchemaBuilder {
                     &field_key_path,
                     vec![config],
                 )?;
-                config = configs
-                    .into_iter()
-                    .next()
-                    .unwrap_or_else(Configuration::new);
+                config = configs.into_iter().next().unwrap_or_else(Resolution::new);
             }
         }
         Ok(config)
@@ -2122,7 +1932,7 @@ impl SchemaBuilder {
         &self,
         variant: &'static Variant,
         key_prefix: &KeyPath,
-        config: &mut Configuration,
+        config: &mut Resolution,
     ) -> Result<(), SchemaError> {
         // Check if this is a newtype variant (single unnamed field)
         if variant.data.fields.len() == 1 && variant.data.fields[0].name == "0" {
@@ -2154,7 +1964,7 @@ impl SchemaBuilder {
     fn collect_struct_key_paths_only(
         struct_type: StructType,
         key_prefix: &KeyPath,
-        config: &mut Configuration,
+        config: &mut Resolution,
     ) {
         for field in struct_type.fields {
             let is_flatten = field.flags.contains(FieldFlags::FLATTEN);
@@ -2178,7 +1988,7 @@ impl SchemaBuilder {
         }
     }
 
-    /// Process a flattened field, potentially forking configurations for enums.
+    /// Process a flattened field, potentially forking resolutions for enums.
     ///
     /// For flattened fields, the inner keys bubble up to the current level,
     /// so we pass the same key_prefix (not key_prefix + field.name).
@@ -2190,8 +2000,8 @@ impl SchemaBuilder {
         field: &'static Field,
         parent_path: &FieldPath,
         key_prefix: &KeyPath,
-        configs: Vec<Configuration>,
-    ) -> Result<Vec<Configuration>, SchemaError> {
+        configs: Vec<Resolution>,
+    ) -> Result<Vec<Resolution>, SchemaError> {
         let field_path = parent_path.push_field(field.name);
         let original_shape = field.shape();
 
@@ -2203,7 +2013,7 @@ impl SchemaBuilder {
 
         match shape.ty {
             Type::User(UserType::Struct(struct_type)) => {
-                // Flatten a struct: get its configurations and merge into each of ours
+                // Flatten a struct: get its resolutions and merge into each of ours
                 // Key prefix stays the same - inner keys bubble up
                 let mut struct_configs =
                     self.analyze_struct(struct_type, field_path, key_prefix.clone())?;
@@ -2276,7 +2086,7 @@ impl SchemaBuilder {
                                 // same level as other fields. The variant name is NOT a key;
                                 // only the variant's inner fields are keys.
 
-                                // Get configurations from the variant's content
+                                // Get resolutions from the variant's content
                                 // Key prefix stays the same - inner keys bubble up
                                 let mut variant_configs = self.analyze_variant_content(
                                     variant,
@@ -2332,7 +2142,7 @@ impl SchemaBuilder {
         }
     }
 
-    /// Analyze a variant's content and return configurations.
+    /// Analyze a variant's content and return resolutions.
     ///
     /// - `variant_path`: The internal field path (for FieldInfo)
     /// - `key_prefix`: The serialized key path prefix (for known_paths)
@@ -2341,7 +2151,7 @@ impl SchemaBuilder {
         variant: &'static Variant,
         variant_path: &FieldPath,
         key_prefix: &KeyPath,
-    ) -> Result<Vec<Configuration>, SchemaError> {
+    ) -> Result<Vec<Resolution>, SchemaError> {
         // Check if this is a newtype variant (single unnamed field like `Foo(Bar)`)
         if variant.data.fields.len() == 1 && variant.data.fields[0].name == "0" {
             let inner_field = &variant.data.fields[0];
@@ -2365,7 +2175,7 @@ impl SchemaBuilder {
         }
 
         // Named fields or multiple fields - analyze as a pseudo-struct
-        let mut configs = vec![Configuration::new()];
+        let mut configs = vec![Resolution::new()];
         for variant_field in variant.data.fields {
             configs =
                 self.analyze_field_into_configs(variant_field, variant_path, key_prefix, configs)?;
@@ -2374,24 +2184,24 @@ impl SchemaBuilder {
     }
 
     fn into_schema(self) -> Result<Schema, SchemaError> {
-        let configurations = self.analyze()?;
-        let num_configs = configurations.len();
+        let resolutions = self.analyze()?;
+        let num_resolutions = resolutions.len();
 
         // Build inverted index: field_name → bitmask of config indices
-        let mut field_to_configs: BTreeMap<&'static str, ConfigSet> = BTreeMap::new();
-        for (idx, config) in configurations.iter().enumerate() {
+        let mut field_to_resolutions: BTreeMap<&'static str, ResolutionSet> = BTreeMap::new();
+        for (idx, config) in resolutions.iter().enumerate() {
             for field_name in config.fields.keys() {
-                field_to_configs
+                field_to_resolutions
                     .entry(*field_name)
-                    .or_insert_with(|| ConfigSet::empty(num_configs))
+                    .or_insert_with(|| ResolutionSet::empty(num_resolutions))
                     .insert(idx);
             }
         }
 
         Ok(Schema {
             shape: self.shape,
-            configurations,
-            field_to_configs,
+            resolutions,
+            field_to_resolutions,
         })
     }
 }

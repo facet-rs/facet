@@ -12,7 +12,7 @@ struct SimpleStruct {
 #[test]
 fn test_known_paths_simple_struct() {
     let schema = Schema::build(SimpleStruct::SHAPE).unwrap();
-    let config = &schema.configurations()[0];
+    let config = &schema.resolutions()[0];
 
     // Simple struct should have top-level paths
     assert!(config.has_key_path(&["name"]));
@@ -36,7 +36,7 @@ fn test_known_paths_nested_struct() {
     }
 
     let schema = Schema::build(Outer::SHAPE).unwrap();
-    let config = &schema.configurations()[0];
+    let config = &schema.resolutions()[0];
 
     // Top-level paths
     assert!(config.has_key_path(&["name"]));
@@ -69,7 +69,7 @@ fn test_probe_deeply_nested() {
     }
 
     let schema = Schema::build(Level1::SHAPE).unwrap();
-    let config = &schema.configurations()[0];
+    let config = &schema.resolutions()[0];
 
     // All paths should be tracked
     assert!(config.has_key_path(&["top"]));

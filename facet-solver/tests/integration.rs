@@ -17,7 +17,7 @@ use std::sync::Once;
 use facet::Facet;
 use facet_core::Shape;
 use facet_solver::{
-    Configuration, KeyResult, ProbeResult, ProbingSolver, SatisfyResult, Schema, Solver,
+    KeyResult, ProbeResult, ProbingSolver, Resolution, SatisfyResult, Schema, Solver,
 };
 use json_event_parser::{JsonEvent, ReaderJsonParser};
 use miette::{Diagnostic, NamedSource, SourceSpan};
@@ -96,15 +96,15 @@ impl<'a> JsonDeserializer<'a> {
     /// Uses the unified Solver that supports both:
     /// - Key-based disambiguation (different keys in different variants)
     /// - Type-based disambiguation (same keys but different value types)
-    fn probe_for_config<'s>(&self, schema: &'s Schema) -> Result<&'s Configuration, &'static str> {
+    fn probe_for_config<'s>(&self, schema: &'s Schema) -> Result<&'s Resolution, &'static str> {
         let _span = info_span!("probe_for_config").entered();
 
         info!(
-            configurations = schema.configurations().len(),
+            configurations = schema.resolutions().len(),
             "starting probe"
         );
 
-        for (i, config) in schema.configurations().iter().enumerate() {
+        for (i, config) in schema.resolutions().iter().enumerate() {
             debug!(
                 config_index = i,
                 fields = ?config.fields().keys().collect::<Vec<_>>(),
@@ -379,7 +379,7 @@ impl<'a> JsonDeserializer<'a> {
     }
 
     /// Deserialize into Message, using the resolved configuration
-    fn deserialize_message(&self, config: &Configuration) -> Result<Message, &'static str> {
+    fn deserialize_message(&self, config: &Resolution) -> Result<Message, &'static str> {
         let _span = info_span!("deserialize_message", config = %config.describe()).entered();
 
         let mut cursor = Cursor::new(self.data);
@@ -622,7 +622,7 @@ fn test_nested_disambiguation_database() {
     info!(json = %String::from_utf8_lossy(json), "input JSON");
 
     let schema = Schema::build(AppConfig::SHAPE).unwrap();
-    assert_eq!(schema.configurations().len(), 2);
+    assert_eq!(schema.resolutions().len(), 2);
 
     let deserializer = JsonDeserializer::new(json);
     let config = deserializer
@@ -706,16 +706,16 @@ fn test_connection_pool_schema() {
     // ConnectionPool HAS a flattened enum, so it has 2 configurations
     let schema = Schema::build(ConnectionPool::SHAPE).unwrap();
 
-    assert_eq!(schema.configurations().len(), 2);
+    assert_eq!(schema.resolutions().len(), 2);
 
     let postgres_config = schema
-        .configurations()
+        .resolutions()
         .iter()
         .find(|c| c.has_key_path(&["schema_name"]))
         .expect("should have postgres config");
 
     let mysql_config = schema
-        .configurations()
+        .resolutions()
         .iter()
         .find(|c| c.has_key_path(&["charset"]))
         .expect("should have mysql config");
@@ -815,11 +815,8 @@ fn test_truly_annoying_case() {
 
     let schema = Schema::build(AnnoyingWrapper::SHAPE).unwrap();
 
-    info!(
-        "Schema has {} configurations",
-        schema.configurations().len()
-    );
-    for (i, config) in schema.configurations().iter().enumerate() {
+    info!("Schema has {} configurations", schema.resolutions().len());
+    for (i, config) in schema.resolutions().iter().enumerate() {
         info!(
             config_index = i,
             paths = ?config.known_paths(),
@@ -829,13 +826,13 @@ fn test_truly_annoying_case() {
 
     // Verify schema tracks the nested paths
     let foo_config = schema
-        .configurations()
+        .resolutions()
         .iter()
         .find(|c| c.has_key_path(&["payload", "foo_specific"]))
         .expect("should have Foo config");
 
     let bar_config = schema
-        .configurations()
+        .resolutions()
         .iter()
         .find(|c| c.has_key_path(&["payload", "bar_specific"]))
         .expect("should have Bar config");
@@ -920,11 +917,8 @@ fn test_super_annoying_same_path_different_types() {
 
     let schema = Schema::build(SuperAnnoyingWrapper::SHAPE).unwrap();
 
-    info!(
-        "Schema has {} configurations",
-        schema.configurations().len()
-    );
-    for (i, config) in schema.configurations().iter().enumerate() {
+    info!("Schema has {} configurations", schema.resolutions().len());
+    for (i, config) in schema.resolutions().iter().enumerate() {
         info!(
             config_index = i,
             paths = ?config.known_paths(),
@@ -934,13 +928,13 @@ fn test_super_annoying_same_path_different_types() {
 
     // Verify schema tracks the nested paths with their types
     let small_config = schema
-        .configurations()
+        .resolutions()
         .iter()
         .find(|c| c.describe().contains("Small"))
         .expect("should have Small config");
 
     let large_config = schema
-        .configurations()
+        .resolutions()
         .iter()
         .find(|c| c.describe().contains("Large"))
         .expect("should have Large config");
@@ -1080,11 +1074,11 @@ impl<'a> DiagnosticDeserializer<'a> {
     fn probe_for_config<'s>(
         &self,
         schema: &'s Schema,
-    ) -> Result<&'s Configuration, Box<dyn Diagnostic + Send + Sync>> {
+    ) -> Result<&'s Resolution, Box<dyn Diagnostic + Send + Sync>> {
         let _span = info_span!("probe_for_config").entered();
 
         info!(
-            configurations = schema.configurations().len(),
+            configurations = schema.resolutions().len(),
             "starting probe"
         );
 
@@ -1215,7 +1209,7 @@ impl<'a> DiagnosticDeserializer<'a> {
                     .collect();
 
                 CandidateInfo {
-                    description: format!("Configuration: {}", c.describe()),
+                    description: format!("Resolution: {}", c.describe()),
                     help: if unique_fields.is_empty() {
                         format!("Fields: {fields:?}")
                     } else {
@@ -1277,12 +1271,9 @@ fn test_ambiguous_identical_fields() {
     info!(json = %String::from_utf8_lossy(json), "input JSON (ambiguous!)");
 
     let schema = Schema::build(IdenticalWrapper::SHAPE).unwrap();
-    info!(
-        "Schema has {} configurations",
-        schema.configurations().len()
-    );
+    info!("Schema has {} configurations", schema.resolutions().len());
 
-    for (i, config) in schema.configurations().iter().enumerate() {
+    for (i, config) in schema.resolutions().iter().enumerate() {
         info!(
             config_index = i,
             config = %config.describe(),
@@ -1342,7 +1333,7 @@ fn test_ambiguous_only_common_fields() {
 
     let schema = Schema::build(OverlapWrapper::SHAPE).unwrap();
 
-    for (i, config) in schema.configurations().iter().enumerate() {
+    for (i, config) in schema.resolutions().iter().enumerate() {
         info!(
             config_index = i,
             config = %config.describe(),
@@ -1427,10 +1418,7 @@ fn test_three_way_ambiguity() {
     info!(json = %String::from_utf8_lossy(json), "input JSON (3-way ambiguous)");
 
     let schema = Schema::build(ThreeWayWrapper::SHAPE).unwrap();
-    info!(
-        "Schema has {} configurations",
-        schema.configurations().len()
-    );
+    info!("Schema has {} configurations", schema.resolutions().len());
 
     let deserializer = DiagnosticDeserializer::new(json, "three_way.json");
     let result = deserializer.probe_for_config(&schema);

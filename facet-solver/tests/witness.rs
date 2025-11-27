@@ -64,7 +64,7 @@ fn test_integer_small_value_picks_first() {
     let schema = Schema::build(IntegerContainer::SHAPE).unwrap();
 
     assert_eq!(
-        schema.configurations().len(),
+        schema.resolutions().len(),
         2,
         "Should have 2 configurations: Small and Large"
     );

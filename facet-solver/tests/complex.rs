@@ -36,9 +36,9 @@ fn test_three_level_nesting_schema() {
     let schema = Schema::build(Level1::SHAPE).unwrap();
 
     // Single config (no enums)
-    assert_eq!(schema.configurations().len(), 1);
+    assert_eq!(schema.resolutions().len(), 1);
 
-    let config = &schema.configurations()[0];
+    let config = &schema.resolutions()[0];
 
     // Should have 4 fields at different depths
     assert_eq!(config.fields().len(), 4);
@@ -121,10 +121,10 @@ fn test_multiple_enums_schema() {
     let schema = Schema::build(ServiceConfig::SHAPE).unwrap();
 
     // 2 auth methods × 2 transports = 4 configurations
-    assert_eq!(schema.configurations().len(), 4);
+    assert_eq!(schema.resolutions().len(), 4);
 
     // Each config should have name + auth fields + transport fields
-    for config in schema.configurations() {
+    for config in schema.resolutions() {
         assert!(config.field("name").is_some());
 
         // Either password or (token + token_expiry)
@@ -166,11 +166,11 @@ fn test_multiple_enums_incremental_password_tcp() {
     }
     assert_eq!(solver.candidates().len(), 2);
 
-    // "tcp_port" narrows to 1 config (Password × Tcp)
+    // "tcp_port" narrows to 1 resolution (Password × Tcp)
     match solver.see_key("tcp_port") {
-        FieldDecision::Disambiguated { config, .. } => {
-            assert!(config.field("password").is_some());
-            assert!(config.field("tcp_port").is_some());
+        FieldDecision::Disambiguated { resolution, .. } => {
+            assert!(resolution.field("password").is_some());
+            assert!(resolution.field("tcp_port").is_some());
         }
         other => panic!("Expected Disambiguated for tcp_port, got {other:?}"),
     }
@@ -188,10 +188,10 @@ fn test_multiple_enums_incremental_token_unix() {
 
     // Add auth field
     match solver.see_key("token") {
-        FieldDecision::Disambiguated { config, .. } => {
-            assert!(config.field("token").is_some());
-            assert!(config.field("socket_path").is_some());
-            assert!(config.field("token_expiry").is_some());
+        FieldDecision::Disambiguated { resolution, .. } => {
+            assert!(resolution.field("token").is_some());
+            assert!(resolution.field("socket_path").is_some());
+            assert!(resolution.field("token_expiry").is_some());
         }
         other => panic!("Expected Disambiguated for token, got {other:?}"),
     }
@@ -255,23 +255,23 @@ fn test_nested_enum_schema() {
     // Min has 1 config
     // Full has 2 configs (Basic, Exponential retry)
     // Total: 3 configurations
-    assert_eq!(schema.configurations().len(), 3);
+    assert_eq!(schema.resolutions().len(), 3);
 
     // Find each config type
     let min_config = schema
-        .configurations()
+        .resolutions()
         .iter()
         .find(|c| c.field("max_retries").is_none())
         .expect("Should have Minimal config");
 
     let basic_config = schema
-        .configurations()
+        .resolutions()
         .iter()
         .find(|c| c.field("max_retries").is_some() && c.field("base_delay_ms").is_none())
         .expect("Should have Basic retry config");
 
     let exp_config = schema
-        .configurations()
+        .resolutions()
         .iter()
         .find(|c| c.field("base_delay_ms").is_some())
         .expect("Should have Exponential retry config");
@@ -319,12 +319,12 @@ fn test_nested_enum_incremental_exponential() {
     solver.see_key("app_name");
     solver.see_key("enabled");
 
-    // base_delay_ms only exists in Exponential config
+    // base_delay_ms only exists in Exponential resolution
     match solver.see_key("base_delay_ms") {
-        FieldDecision::Disambiguated { config, .. } => {
-            assert!(config.field("base_delay_ms").is_some());
-            assert!(config.field("max_delay_ms").is_some());
-            assert!(config.field("max_retries").is_some());
+        FieldDecision::Disambiguated { resolution, .. } => {
+            assert!(resolution.field("base_delay_ms").is_some());
+            assert!(resolution.field("max_delay_ms").is_some());
+            assert!(resolution.field("max_retries").is_some());
         }
         other => panic!("Expected Disambiguated for base_delay_ms, got {other:?}"),
     }
@@ -366,9 +366,9 @@ fn test_fully_ambiguous_enum() {
     let schema = Schema::build(AmbiguousContainer::SHAPE).unwrap();
 
     // 2 configs with same field names
-    assert_eq!(schema.configurations().len(), 2);
+    assert_eq!(schema.resolutions().len(), 2);
 
-    for config in schema.configurations() {
+    for config in schema.resolutions() {
         assert!(config.field("shared_x").is_some());
         assert!(config.field("shared_y").is_some());
     }
@@ -384,7 +384,7 @@ fn test_fully_ambiguous_incremental() {
     let decision = solver.see_key("shared_x");
 
     // Check if paths differ
-    let configs: Vec<_> = schema.configurations().iter().collect();
+    let configs: Vec<_> = schema.resolutions().iter().collect();
     let path_a = &configs[0].field("shared_x").unwrap().path;
     let path_b = &configs[1].field("shared_x").unwrap().path;
 
@@ -457,9 +457,9 @@ fn test_early_disambiguation() {
 
     // unique_early immediately disambiguates
     match solver.see_key("unique_early") {
-        FieldDecision::Disambiguated { config, .. } => {
-            assert!(config.field("unique_early").is_some());
-            assert!(config.field("unique_late").is_none());
+        FieldDecision::Disambiguated { resolution, .. } => {
+            assert!(resolution.field("unique_early").is_some());
+            assert!(resolution.field("unique_late").is_none());
         }
         other => panic!("Expected early disambiguation, got {other:?}"),
     }
@@ -476,9 +476,9 @@ fn test_late_disambiguation() {
 
     // unique_late disambiguates at the end
     match solver.see_key("unique_late") {
-        FieldDecision::Disambiguated { config, .. } => {
-            assert!(config.field("unique_late").is_some());
-            assert!(config.field("unique_early").is_none());
+        FieldDecision::Disambiguated { resolution, .. } => {
+            assert!(resolution.field("unique_late").is_some());
+            assert!(resolution.field("unique_early").is_none());
         }
         other => panic!("Expected late disambiguation, got {other:?}"),
     }
@@ -534,7 +534,7 @@ fn test_gradual_narrowing() {
     let schema = Schema::build(FourWay::SHAPE).unwrap();
 
     // 2 × 2 = 4 configurations
-    assert_eq!(schema.configurations().len(), 4);
+    assert_eq!(schema.resolutions().len(), 4);
 
     let mut solver = IncrementalSolver::new(&schema);
 
@@ -548,11 +548,11 @@ fn test_gradual_narrowing() {
 
     // s2_field narrows to 1 (P1×S2)
     match solver.see_key("s2_field") {
-        FieldDecision::Disambiguated { config, .. } => {
-            assert!(config.field("p1_field").is_some());
-            assert!(config.field("s2_field").is_some());
-            assert!(config.field("p2_field").is_none());
-            assert!(config.field("s1_field").is_none());
+        FieldDecision::Disambiguated { resolution, .. } => {
+            assert!(resolution.field("p1_field").is_some());
+            assert!(resolution.field("s2_field").is_some());
+            assert!(resolution.field("p2_field").is_none());
+            assert!(resolution.field("s1_field").is_none());
         }
         other => panic!("Expected disambiguation at s2_field, got {other:?}"),
     }
@@ -569,9 +569,9 @@ fn test_gradual_narrowing_different_order() {
 
     // Then primary field
     match solver.see_key("p2_field") {
-        FieldDecision::Disambiguated { config, .. } => {
-            assert!(config.field("p2_field").is_some());
-            assert!(config.field("s1_field").is_some());
+        FieldDecision::Disambiguated { resolution, .. } => {
+            assert!(resolution.field("p2_field").is_some());
+            assert!(resolution.field("s1_field").is_some());
         }
         other => panic!("Expected disambiguation at p2_field, got {other:?}"),
     }
@@ -621,9 +621,9 @@ fn test_flatten_struct_with_nested_struct() {
     let schema = Schema::build(Service::SHAPE).unwrap();
 
     // Should have 1 configuration (no enums)
-    assert_eq!(schema.configurations().len(), 1);
+    assert_eq!(schema.resolutions().len(), 1);
 
-    let config = &schema.configurations()[0];
+    let config = &schema.resolutions()[0];
 
     // Check all expected fields exist
     assert!(config.field("name").is_some(), "should have name");
@@ -691,21 +691,21 @@ fn test_flatten_enum_extracts_tuple_variant_fields() {
 
     // Should have 2 configurations: one for Simple, one for Tuned
     assert_eq!(
-        schema.configurations().len(),
+        schema.resolutions().len(),
         2,
         "Should have 2 configurations (Simple and Tuned)"
     );
 
     // Find the Simple config (only has 'level')
     let simple_config = schema
-        .configurations()
+        .resolutions()
         .iter()
         .find(|c| c.field("gain").is_none())
         .expect("Should have Simple config without 'gain'");
 
     // Find the Tuned config (has 'level', 'gain', 'tuning')
     let tuned_config = schema
-        .configurations()
+        .resolutions()
         .iter()
         .find(|c| c.field("gain").is_some())
         .expect("Should have Tuned config with 'gain'");
@@ -766,14 +766,14 @@ fn test_flatten_enum_disambiguates_by_field_presence() {
 
     // 'gain' only exists in Tuned - should disambiguate
     match solver.see_key("gain") {
-        FieldDecision::Disambiguated { config, .. } => {
+        FieldDecision::Disambiguated { resolution, .. } => {
             assert!(
-                config.field("gain").is_some(),
-                "Disambiguated config should have 'gain'"
+                resolution.field("gain").is_some(),
+                "Disambiguated resolution should have 'gain'"
             );
             assert!(
-                config.field("tuning").is_some(),
-                "Disambiguated config should have 'tuning' (Tuned variant)"
+                resolution.field("tuning").is_some(),
+                "Disambiguated resolution should have 'tuning' (Tuned variant)"
             );
         }
         other => panic!("Expected Disambiguated for 'gain', got {other:?}"),
@@ -793,11 +793,8 @@ fn test_schema_build_on_enum_directly() {
     let schema = Schema::build(Mode::SHAPE).unwrap();
 
     // Print debug info
-    eprintln!(
-        "Mode schema configurations: {}",
-        schema.configurations().len()
-    );
-    for (i, config) in schema.configurations().iter().enumerate() {
+    eprintln!("Mode schema configurations: {}", schema.resolutions().len());
+    for (i, config) in schema.resolutions().iter().enumerate() {
         eprintln!(
             "  Config {}: {} fields, desc: {}",
             i,
@@ -816,14 +813,14 @@ fn test_schema_build_on_enum_directly() {
     // This is Issue #2: solver doesn't extract variant fields from tuple variants
     // when building schema directly on an enum.
     assert_eq!(
-        schema.configurations().len(),
+        schema.resolutions().len(),
         2,
         "Enum should produce 2 configurations (one per variant). \
          BUG: Schema::build on enum directly doesn't handle variants correctly."
     );
 
     // Each configuration should have fields
-    for config in schema.configurations() {
+    for config in schema.resolutions() {
         assert!(
             !config.fields().is_empty(),
             "Each configuration should have fields, got: {}",
@@ -856,9 +853,9 @@ fn test_untagged_enum_schema_fields() {
 
     eprintln!(
         "UntaggedMode schema configurations: {}",
-        schema.configurations().len()
+        schema.resolutions().len()
     );
-    for (i, config) in schema.configurations().iter().enumerate() {
+    for (i, config) in schema.resolutions().iter().enumerate() {
         eprintln!(
             "  Config {}: {} fields, desc: {}",
             i,
@@ -872,20 +869,20 @@ fn test_untagged_enum_schema_fields() {
 
     // Should have 2 configurations
     assert_eq!(
-        schema.configurations().len(),
+        schema.resolutions().len(),
         2,
         "UntaggedMode should have 2 configurations"
     );
 
     // Each should have extracted fields from the tuple variant
     let simple_config = schema
-        .configurations()
+        .resolutions()
         .iter()
         .find(|c| c.describe().contains("Simple"))
         .expect("Should have Simple config");
 
     let tuned_config = schema
-        .configurations()
+        .resolutions()
         .iter()
         .find(|c| c.describe().contains("Tuned"))
         .expect("Should have Tuned config");
@@ -958,9 +955,9 @@ fn test_flatten_struct_with_nested_children() {
 
     eprintln!(
         "ParentWithFlattenAndChild configurations: {}",
-        schema.configurations().len()
+        schema.resolutions().len()
     );
-    for (i, config) in schema.configurations().iter().enumerate() {
+    for (i, config) in schema.resolutions().iter().enumerate() {
         eprintln!("  Config {}: {} fields", i, config.fields().len());
         for name in config.fields().keys() {
             eprintln!("    - {name}");
@@ -968,9 +965,9 @@ fn test_flatten_struct_with_nested_children() {
     }
 
     // Should have 1 configuration (no enums)
-    assert_eq!(schema.configurations().len(), 1);
+    assert_eq!(schema.resolutions().len(), 1);
 
-    let config = &schema.configurations()[0];
+    let config = &schema.resolutions()[0];
 
     // Check expected fields
     assert!(config.field("name").is_some(), "should have name");

@@ -127,12 +127,12 @@ fn test_incremental_enum_disambiguate() {
     // "host" only exists in Advanced - should Disambiguate
     match solver.see_key("host") {
         FieldDecision::Disambiguated {
-            config,
+            resolution,
             current_field,
         } => {
             assert_eq!(current_field.serialized_name, "host");
-            // Should be Advanced config (has host, port, timeout)
-            assert!(config.field("timeout").is_some());
+            // Should be Advanced resolution (has host, port, timeout)
+            assert!(resolution.field("timeout").is_some());
         }
         other => panic!("Expected Disambiguated for host, got {other:?}"),
     }
@@ -155,12 +155,12 @@ fn test_incremental_enum_defer_then_disambiguate() {
     // depending on how the schema is built
     // Actually, let's check the paths first
     let simple_config = schema
-        .configurations()
+        .resolutions()
         .iter()
         .find(|c| !c.fields().contains_key("host"))
         .unwrap();
     let advanced_config = schema
-        .configurations()
+        .resolutions()
         .iter()
         .find(|c| c.fields().contains_key("host"))
         .unwrap();
@@ -439,7 +439,7 @@ fn test_deny_unknown_fields_with_flatten() {
     // This test demonstrates that the solver knows ALL valid fields
     // for a flattened struct, enabling deny_unknown_fields to work correctly.
     let schema = Schema::build(OuterWithFlatten::SHAPE).unwrap();
-    let config = &schema.configurations()[0];
+    let config = &schema.resolutions()[0];
 
     // The solver knows both outer and inner fields
     assert!(config.field("outer_field").is_some());
@@ -494,7 +494,7 @@ fn test_deny_unknown_fields_with_flattened_enum() {
     let schema = Schema::build(AppWithStorage::SHAPE).unwrap();
 
     // Should have 2 configurations (Database and File)
-    assert_eq!(schema.configurations().len(), 2);
+    assert_eq!(schema.resolutions().len(), 2);
 
     let mut solver = IncrementalSolver::new(&schema);
 
@@ -504,11 +504,11 @@ fn test_deny_unknown_fields_with_flattened_enum() {
         other => panic!("Expected SetDirectly for name, got {other:?}"),
     }
 
-    // "host" is only valid in Database config
+    // "host" is only valid in Database resolution
     match solver.see_key("host") {
-        FieldDecision::Disambiguated { config, .. } => {
-            assert!(config.field("port").is_some()); // Database has port
-            assert!(config.field("path").is_none()); // Database doesn't have path
+        FieldDecision::Disambiguated { resolution, .. } => {
+            assert!(resolution.field("port").is_some()); // Database has port
+            assert!(resolution.field("path").is_none()); // Database doesn't have path
         }
         other => panic!("Expected Disambiguated for host, got {other:?}"),
     }
@@ -536,7 +536,7 @@ struct ConfigWithOptionals {
 #[test]
 fn test_missing_optional_fields() {
     let schema = Schema::build(ConfigWithOptionals::SHAPE).unwrap();
-    let config = &schema.configurations()[0];
+    let config = &schema.resolutions()[0];
 
     // Only saw the required field
     let mut seen = BTreeSet::new();
@@ -554,7 +554,7 @@ fn test_missing_optional_fields() {
 #[test]
 fn test_missing_optional_fields_partial() {
     let schema = Schema::build(ConfigWithOptionals::SHAPE).unwrap();
-    let config = &schema.configurations()[0];
+    let config = &schema.resolutions()[0];
 
     // Saw required + one optional
     let mut seen = BTreeSet::new();
@@ -571,7 +571,7 @@ fn test_missing_optional_fields_partial() {
 #[test]
 fn test_missing_optional_fields_all_provided() {
     let schema = Schema::build(ConfigWithOptionals::SHAPE).unwrap();
-    let config = &schema.configurations()[0];
+    let config = &schema.resolutions()[0];
 
     // Saw all fields
     let mut seen = BTreeSet::new();
@@ -603,7 +603,7 @@ struct OuterWithOptionals {
 #[test]
 fn test_missing_optional_fields_flattened() {
     let schema = Schema::build(OuterWithOptionals::SHAPE).unwrap();
-    let config = &schema.configurations()[0];
+    let config = &schema.resolutions()[0];
 
     // Only saw the required fields
     let mut seen = BTreeSet::new();
@@ -643,7 +643,7 @@ struct WrapperWithU128 {
 fn test_u128_in_flatten() {
     // The schema should build successfully with u128 fields
     let schema = Schema::build(WrapperWithU128::SHAPE).unwrap();
-    let config = &schema.configurations()[0];
+    let config = &schema.resolutions()[0];
 
     // All fields should be recognized
     assert!(config.field("name").is_some());
@@ -692,9 +692,9 @@ fn test_u128_in_flattened_enum() {
 
     // Both variants have "count" but with different types (u64 vs u128)
     // The solver tracks field names, not types, so both configs have "count"
-    assert_eq!(schema.configurations().len(), 2);
+    assert_eq!(schema.resolutions().len(), 2);
 
-    for config in schema.configurations() {
+    for config in schema.resolutions() {
         assert!(config.field("name").is_some());
         assert!(config.field("count").is_some());
     }
@@ -722,7 +722,7 @@ struct AppConfigWithOptionalDb {
 #[test]
 fn test_optional_flatten_struct_fields_are_optional() {
     let schema = Schema::build(AppConfigWithOptionalDb::SHAPE).unwrap();
-    let config = &schema.configurations()[0];
+    let config = &schema.resolutions()[0];
 
     // "name" should be required (it's on the outer struct)
     let name_field = config.field("name").unwrap();
@@ -836,10 +836,10 @@ fn test_optional_flatten_enum_all_omitted() {
     let schema = Schema::build(ServerWithOptionalTransport::SHAPE).unwrap();
 
     // Should have 2 configurations (Tcp and Unix variants)
-    assert_eq!(schema.configurations().len(), 2);
+    assert_eq!(schema.resolutions().len(), 2);
 
     // All enum variant fields should be optional
-    for config in schema.configurations() {
+    for config in schema.resolutions() {
         let name_field = config.field("name").unwrap();
         assert!(name_field.required, "name should be required");
 
@@ -943,7 +943,7 @@ struct OuterNoDuplicate {
 fn test_no_duplicate_field_names_ok() {
     // This should NOT panic - different field names
     let schema = Schema::build(OuterNoDuplicate::SHAPE).unwrap();
-    let config = &schema.configurations()[0];
+    let config = &schema.resolutions()[0];
     assert!(config.field("outer_name").is_some());
     assert!(config.field("inner_name").is_some());
     assert!(config.field("value").is_some());
@@ -982,7 +982,7 @@ fn test_error_includes_field_path() {
     match result {
         Err(SolverError::NoMatch {
             missing_required_detailed,
-            closest_config,
+            closest_resolution,
             ..
         }) => {
             // Should have detailed info about missing fields
@@ -999,7 +999,7 @@ fn test_error_includes_field_path() {
             }
 
             // Should have closest config info
-            assert!(closest_config.is_some());
+            assert!(closest_resolution.is_some());
         }
         other => panic!("Expected NoMatch with detailed info, got {other:?}"),
     }
