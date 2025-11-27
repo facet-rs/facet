@@ -24,7 +24,7 @@ cargo-husky = { version = "1.5.0", default-features = false, features = [
 eyre = "0.6.12"
 facet = { version = "0.31" }
 facet-pretty = { version = "0.31" }
-insta = "1.43.2"
+insta = "1.44.1"
 miette = { version = "7.6.0", default-features = false, features = ["fancy"] }
 
 [features]
