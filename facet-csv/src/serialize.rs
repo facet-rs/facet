@@ -1,6 +1,5 @@
-use facet_core::Facet;
-use facet_reflect::Peek;
-use facet_serialize::{Serializer, serialize_iterative};
+use facet_core::{Def, Facet, StructKind, Type, UserType};
+use facet_reflect::{HasFields, Peek, ScalarType};
 use std::io::{self, Write};
 
 /// Serializes a value to CSV
@@ -8,7 +7,7 @@ pub fn to_string<'facet, T: Facet<'facet>>(value: &'facet T) -> String {
     let peek = Peek::new(value);
     let mut output = Vec::new();
     let mut serializer = CsvSerializer::new(&mut output);
-    serialize_iterative(peek, &mut serializer).unwrap();
+    serialize_value(peek, &mut serializer).unwrap();
     String::from_utf8(output).unwrap()
 }
 
@@ -16,7 +15,7 @@ pub fn to_string<'facet, T: Facet<'facet>>(value: &'facet T) -> String {
 pub fn peek_to_string<'facet>(peek: Peek<'_, 'facet>) -> String {
     let mut output = Vec::new();
     let mut serializer = CsvSerializer::new(&mut output);
-    serialize_iterative(peek, &mut serializer).unwrap();
+    serialize_value(peek, &mut serializer).unwrap();
     String::from_utf8(output).unwrap()
 }
 
@@ -24,13 +23,13 @@ pub fn peek_to_string<'facet>(peek: Peek<'_, 'facet>) -> String {
 pub fn to_writer<'a, T: Facet<'a>, W: Write>(value: &'a T, writer: &mut W) -> io::Result<()> {
     let peek = Peek::new(value);
     let mut serializer = CsvSerializer::new(writer);
-    serialize_iterative(peek, &mut serializer)
+    serialize_value(peek, &mut serializer)
 }
 
 /// Serializes a Peek instance to a writer in CSV format
 pub fn peek_to_writer<'facet, W: Write>(peek: Peek<'_, 'facet>, writer: &mut W) -> io::Result<()> {
     let mut serializer = CsvSerializer::new(writer);
-    serialize_iterative(peek, &mut serializer)
+    serialize_value(peek, &mut serializer)
 }
 
 /// A struct to handle the CSV serializer logic
@@ -50,6 +49,7 @@ pub struct CsvSerializer<W> {
     /// Newline encoding
     newline: &'static [u8],
 }
+
 impl<W> CsvSerializer<W>
 where
     W: Write,
@@ -92,168 +92,200 @@ where
             Ok(())
         }
     }
+
+    fn write_empty(&mut self) -> io::Result<()> {
+        self.start_value()?;
+        self.end_value()
+    }
 }
 
-impl<W> Serializer for CsvSerializer<W>
-where
-    W: Write,
-{
-    type Error = io::Error;
-
-    fn start_object(&mut self, len: Option<usize>) -> Result<(), Self::Error> {
-        self.set_n_fields(len.expect("Must know the length of the object for CSV"));
-        Ok(())
+fn serialize_value<W: Write>(peek: Peek<'_, '_>, ser: &mut CsvSerializer<W>) -> io::Result<()> {
+    match (peek.shape().def, peek.shape().ty) {
+        (Def::Scalar, _) => {
+            let peek = peek.innermost_peek();
+            serialize_scalar(peek, ser)
+        }
+        (Def::Option(_), _) => {
+            let opt = peek.into_option().unwrap();
+            if let Some(inner) = opt.value() {
+                serialize_value(inner, ser)
+            } else {
+                ser.write_empty()
+            }
+        }
+        (Def::Pointer(_), _) => {
+            let ptr = peek.into_pointer().unwrap();
+            if let Some(inner) = ptr.borrow_inner() {
+                serialize_value(inner, ser)
+            } else {
+                ser.write_empty()
+            }
+        }
+        (_, Type::User(UserType::Struct(sd))) => {
+            match sd.kind {
+                StructKind::Unit => {
+                    // Unit structs serialize as empty
+                    ser.write_empty()
+                }
+                StructKind::Tuple | StructKind::TupleStruct | StructKind::Struct => {
+                    let ps = peek.into_struct().unwrap();
+                    let fields: Vec<_> = ps.fields_for_serialize().collect();
+                    ser.set_n_fields(fields.len());
+                    for (_, field_value) in fields {
+                        serialize_value(field_value, ser)?;
+                    }
+                    Ok(())
+                }
+            }
+        }
+        (_, Type::User(UserType::Enum(_))) => {
+            // Unit variants should not serialize to anything
+            ser.write_empty()
+        }
+        (_, Type::Pointer(_)) => {
+            // Handle string types
+            if let Some(s) = peek.as_str() {
+                ser.start_value()?;
+                write!(ser.writer, "{s}")?;
+                ser.end_value()
+            } else {
+                let innermost = peek.innermost_peek();
+                if innermost.shape() != peek.shape() {
+                    serialize_value(innermost, ser)
+                } else {
+                    ser.write_empty()
+                }
+            }
+        }
+        _ => {
+            // Unsupported types serialize as empty
+            ser.write_empty()
+        }
     }
+}
 
-    fn end_object(&mut self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn start_array(&mut self, _len: Option<usize>) -> Result<(), Self::Error> {
-        unimplemented!("Arrays are not implemented yet in CSV")
-    }
-
-    fn end_array(&mut self) -> Result<(), Self::Error> {
-        unimplemented!("Arrays are not implemented yet in CSV")
-    }
-
-    fn start_map(&mut self, _len: Option<usize>) -> Result<(), Self::Error> {
-        unimplemented!("Maps are not implemented yet in CSV")
-    }
-
-    fn end_map(&mut self) -> Result<(), Self::Error> {
-        unimplemented!("Maps are not implemented yet in CSV")
-    }
-
-    fn serialize_field_name(&mut self, _name: &str) -> Result<(), Self::Error> {
-        // field names are not serialized in CSV
-        Ok(())
-    }
-
-    fn serialize_unit_variant(
-        &mut self,
-        _variant_index: usize,
-        _variant_name: &str,
-    ) -> Result<(), Self::Error> {
-        // unit variants should not serialize to anything
-        Ok(())
-    }
-
-    fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{value}")?;
-        self.end_value()
-    }
-
-    fn serialize_u16(&mut self, value: u16) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{value}")?;
-        self.end_value()
-    }
-
-    fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{value}")?;
-        self.end_value()
-    }
-
-    fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{value}")?;
-        self.end_value()
-    }
-
-    fn serialize_u128(&mut self, value: u128) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{value}")?;
-        self.end_value()
-    }
-
-    fn serialize_usize(&mut self, value: usize) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{value}")?;
-        self.end_value()
-    }
-
-    fn serialize_i8(&mut self, value: i8) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{value}")?;
-        self.end_value()
-    }
-
-    fn serialize_i16(&mut self, value: i16) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{value}")?;
-        self.end_value()
-    }
-
-    fn serialize_i32(&mut self, value: i32) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{value}")?;
-        self.end_value()
-    }
-
-    fn serialize_i64(&mut self, value: i64) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{value}")?;
-        self.end_value()
-    }
-
-    fn serialize_i128(&mut self, value: i128) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{value}")?;
-        self.end_value()
-    }
-
-    fn serialize_isize(&mut self, value: isize) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{value}")?;
-        self.end_value()
-    }
-
-    fn serialize_f32(&mut self, value: f32) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{value}")?;
-        self.end_value()
-    }
-
-    fn serialize_f64(&mut self, value: f64) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{value}")?;
-        self.end_value()
-    }
-
-    fn serialize_bool(&mut self, value: bool) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{}", if value { "true" } else { "false" })?;
-        self.end_value()
-    }
-
-    fn serialize_char(&mut self, value: char) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{value}")?;
-        self.end_value()
-    }
-
-    fn serialize_str(&mut self, value: &str) -> Result<(), Self::Error> {
-        self.start_value()?;
-        write!(self.writer, "{value}")?;
-        self.end_value()
-    }
-
-    fn serialize_bytes(&mut self, _value: &[u8]) -> Result<(), Self::Error> {
-        panic!("CSV does not support byte arrays")
-    }
-
-    fn serialize_none(&mut self) -> Result<(), Self::Error> {
-        self.start_value()?;
-        // skip empty columns
-        self.end_value()
-    }
-
-    fn serialize_unit(&mut self) -> Result<(), Self::Error> {
-        self.start_value()?;
-        // skip empty columns
-        self.end_value()
+fn serialize_scalar<W: Write>(peek: Peek<'_, '_>, ser: &mut CsvSerializer<W>) -> io::Result<()> {
+    match peek.scalar_type() {
+        Some(ScalarType::Unit) => ser.write_empty(),
+        Some(ScalarType::Bool) => {
+            let v = *peek.get::<bool>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{}", if v { "true" } else { "false" })?;
+            ser.end_value()
+        }
+        Some(ScalarType::Char) => {
+            let c = *peek.get::<char>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{c}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::Str) => {
+            let s = peek.get::<str>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{s}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::String) => {
+            let s = peek.get::<String>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{s}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::CowStr) => {
+            let s = peek.get::<std::borrow::Cow<'_, str>>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{s}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::F32) => {
+            let v = *peek.get::<f32>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{v}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::F64) => {
+            let v = *peek.get::<f64>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{v}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::U8) => {
+            let v = *peek.get::<u8>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{v}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::U16) => {
+            let v = *peek.get::<u16>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{v}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::U32) => {
+            let v = *peek.get::<u32>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{v}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::U64) => {
+            let v = *peek.get::<u64>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{v}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::U128) => {
+            let v = *peek.get::<u128>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{v}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::USize) => {
+            let v = *peek.get::<usize>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{v}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::I8) => {
+            let v = *peek.get::<i8>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{v}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::I16) => {
+            let v = *peek.get::<i16>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{v}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::I32) => {
+            let v = *peek.get::<i32>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{v}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::I64) => {
+            let v = *peek.get::<i64>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{v}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::I128) => {
+            let v = *peek.get::<i128>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{v}")?;
+            ser.end_value()
+        }
+        Some(ScalarType::ISize) => {
+            let v = *peek.get::<isize>().unwrap();
+            ser.start_value()?;
+            write!(ser.writer, "{v}")?;
+            ser.end_value()
+        }
+        Some(_) | None => {
+            // Unknown scalar - try to display it
+            ser.start_value()?;
+            write!(ser.writer, "{peek}")?;
+            ser.end_value()
+        }
     }
 }

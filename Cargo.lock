@@ -384,6 +384,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-asn1"
+version = "0.31.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-reflect",
+ "facet-testhelpers",
+]
+
+[[package]]
 name = "facet-core"
 version = "0.31.8"
 dependencies = [
@@ -401,6 +411,28 @@ dependencies = [
  "ulid",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "facet-csv"
+version = "0.31.0"
+dependencies = [
+ "eyre",
+ "facet",
+ "facet-core",
+ "facet-reflect",
+ "facet-testhelpers",
+ "insta",
+]
+
+[[package]]
+name = "facet-diff"
+version = "0.31.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-pretty",
+ "facet-reflect",
 ]
 
 [[package]]
@@ -591,6 +623,16 @@ dependencies = [
  "facet-testhelpers",
  "form_urlencoded",
  "log",
+]
+
+[[package]]
+name = "facet-xdr"
+version = "0.31.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-reflect",
+ "facet-testhelpers",
 ]
 
 [[package]]

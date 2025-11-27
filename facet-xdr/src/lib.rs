@@ -5,8 +5,7 @@
 use std::io::Write;
 
 use facet_core::{Def, Facet, NumericType, PrimitiveType, StructKind, TextualType, Type, UserType};
-use facet_reflect::{HeapValue, Partial, Peek};
-use facet_serialize::{Serializer, serialize_iterative};
+use facet_reflect::{HasFields, HeapValue, Partial, Peek, ScalarType};
 
 /// Errors when serializing to XDR bytes
 #[derive(Debug)]
@@ -45,172 +44,279 @@ impl core::error::Error for XdrSerError {
 pub fn to_vec<'f, F: Facet<'f>>(value: &'f F) -> Result<Vec<u8>, XdrSerError> {
     let mut buffer = Vec::new();
     let peek = Peek::new(value);
-    let mut serializer = XdrSerializer {
-        writer: &mut buffer,
-    };
-    serialize_iterative(peek, &mut serializer)?;
+    serialize_value(peek, &mut buffer)?;
     Ok(buffer)
 }
 
-struct XdrSerializer<'w, W: Write> {
-    writer: &'w mut W,
+fn serialize_value<W: Write>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), XdrSerError> {
+    match (peek.shape().def, peek.shape().ty) {
+        (Def::Scalar, _) => {
+            let peek = peek.innermost_peek();
+            serialize_scalar(peek, writer)
+        }
+        (Def::List(ld), _) => {
+            // Special case for Vec<u8> - serialize as opaque
+            if ld.t().is_type::<u8>() && peek.shape().is_type::<Vec<u8>>() {
+                let bytes = peek.get::<Vec<u8>>().unwrap();
+                serialize_bytes(bytes, writer)
+            } else {
+                let list = peek.into_list_like().unwrap();
+                let items: Vec<_> = list.iter().collect();
+                serialize_array(items, writer)
+            }
+        }
+        (Def::Array(ad), _) => {
+            if ad.t().is_type::<u8>() {
+                // Fixed-size byte array
+                let bytes: Vec<u8> = peek
+                    .into_list_like()
+                    .unwrap()
+                    .iter()
+                    .map(|p| *p.get::<u8>().unwrap())
+                    .collect();
+                // For fixed-size arrays, don't write length prefix
+                writer.write_all(&bytes).map_err(XdrSerError::Io)?;
+                let pad_len = bytes.len() % 4;
+                if pad_len != 0 {
+                    let pad = vec![0u8; 4 - pad_len];
+                    writer.write_all(&pad).map_err(XdrSerError::Io)?;
+                }
+                Ok(())
+            } else {
+                let list = peek.into_list_like().unwrap();
+                let items: Vec<_> = list.iter().collect();
+                // For fixed-size arrays, don't write length prefix
+                for item in items {
+                    serialize_value(item, writer)?;
+                }
+                Ok(())
+            }
+        }
+        (Def::Slice(sd), _) => {
+            if sd.t().is_type::<u8>() {
+                let bytes = peek.get::<[u8]>().unwrap();
+                serialize_bytes(bytes, writer)
+            } else {
+                let list = peek.into_list_like().unwrap();
+                let items: Vec<_> = list.iter().collect();
+                serialize_array(items, writer)
+            }
+        }
+        (Def::Option(_), _) => {
+            let opt = peek.into_option().unwrap();
+            if let Some(inner) = opt.value() {
+                // Some - discriminant 1
+                writer
+                    .write_all(&1u32.to_be_bytes())
+                    .map_err(XdrSerError::Io)?;
+                serialize_value(inner, writer)
+            } else {
+                // None - discriminant 0
+                writer
+                    .write_all(&0u32.to_be_bytes())
+                    .map_err(XdrSerError::Io)?;
+                Ok(())
+            }
+        }
+        (Def::Pointer(_), _) => {
+            let ptr = peek.into_pointer().unwrap();
+            if let Some(inner) = ptr.borrow_inner() {
+                serialize_value(inner, writer)
+            } else {
+                Err(XdrSerError::UnsupportedType)
+            }
+        }
+        (_, Type::User(UserType::Struct(sd))) => match sd.kind {
+            StructKind::Unit => {
+                // Unit structs serialize as nothing in XDR
+                Ok(())
+            }
+            StructKind::Tuple | StructKind::TupleStruct => {
+                let ps = peek.into_struct().unwrap();
+                for (_, field_value) in ps.fields_for_serialize() {
+                    serialize_value(field_value, writer)?;
+                }
+                Ok(())
+            }
+            StructKind::Struct => {
+                let ps = peek.into_struct().unwrap();
+                for (_, field_value) in ps.fields_for_serialize() {
+                    serialize_value(field_value, writer)?;
+                }
+                Ok(())
+            }
+        },
+        (_, Type::User(UserType::Enum(et))) => {
+            let pe = peek.into_enum().unwrap();
+            let variant = pe.active_variant().expect("Failed to get active variant");
+
+            // Get discriminant - find variant index if no explicit discriminant
+            let variant_index = et
+                .variants
+                .iter()
+                .position(|v| v.name == variant.name)
+                .unwrap_or(0);
+            let discriminant = variant.discriminant.unwrap_or(variant_index as i64);
+            if discriminant < 0 || discriminant > u32::MAX as i64 {
+                return Err(XdrSerError::TooManyVariants);
+            }
+
+            // Write discriminant
+            writer
+                .write_all(&(discriminant as u32).to_be_bytes())
+                .map_err(XdrSerError::Io)?;
+
+            // Serialize variant fields
+            for (_, field_value) in pe.fields_for_serialize() {
+                serialize_value(field_value, writer)?;
+            }
+            Ok(())
+        }
+        (_, Type::Pointer(_)) => {
+            // Handle string types
+            if let Some(s) = peek.as_str() {
+                serialize_str(s, writer)
+            } else if let Some(bytes) = peek.as_bytes() {
+                serialize_bytes(bytes, writer)
+            } else {
+                let innermost = peek.innermost_peek();
+                if innermost.shape() != peek.shape() {
+                    serialize_value(innermost, writer)
+                } else {
+                    Err(XdrSerError::UnsupportedType)
+                }
+            }
+        }
+        _ => Err(XdrSerError::UnsupportedType),
+    }
 }
 
-impl<W: Write> Serializer for XdrSerializer<'_, W> {
-    type Error = XdrSerError;
-
-    fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error> {
-        self.serialize_u32(value as u32)
-    }
-
-    fn serialize_u16(&mut self, value: u16) -> Result<(), Self::Error> {
-        self.serialize_u32(value as u32)
-    }
-
-    fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error> {
-        self.writer
-            .write_all(&value.to_be_bytes())
-            .map_err(Self::Error::Io)
-    }
-
-    fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
-        self.writer
-            .write_all(&value.to_be_bytes())
-            .map_err(Self::Error::Io)
-    }
-
-    fn serialize_u128(&mut self, _value: u128) -> Result<(), Self::Error> {
-        Err(Self::Error::UnsupportedType)
-    }
-
-    fn serialize_i8(&mut self, value: i8) -> Result<(), Self::Error> {
-        self.serialize_i32(value as i32)
-    }
-
-    fn serialize_i16(&mut self, value: i16) -> Result<(), Self::Error> {
-        self.serialize_i32(value as i32)
-    }
-
-    fn serialize_i32(&mut self, value: i32) -> Result<(), Self::Error> {
-        self.writer
-            .write_all(&value.to_be_bytes())
-            .map_err(Self::Error::Io)
-    }
-
-    fn serialize_i64(&mut self, value: i64) -> Result<(), Self::Error> {
-        self.writer
-            .write_all(&value.to_be_bytes())
-            .map_err(Self::Error::Io)
-    }
-
-    fn serialize_i128(&mut self, _value: i128) -> Result<(), Self::Error> {
-        Err(Self::Error::UnsupportedType)
-    }
-
-    fn serialize_f32(&mut self, value: f32) -> Result<(), Self::Error> {
-        self.writer
-            .write_all(&value.to_be_bytes())
-            .map_err(Self::Error::Io)
-    }
-
-    fn serialize_f64(&mut self, value: f64) -> Result<(), Self::Error> {
-        self.writer
-            .write_all(&value.to_be_bytes())
-            .map_err(Self::Error::Io)
-    }
-
-    fn serialize_bool(&mut self, value: bool) -> Result<(), Self::Error> {
-        if value {
-            self.writer.write_all(&1u32.to_be_bytes())
-        } else {
-            self.writer.write_all(&0u32.to_be_bytes())
+fn serialize_scalar<W: Write>(peek: Peek<'_, '_>, writer: &mut W) -> Result<(), XdrSerError> {
+    match peek.scalar_type() {
+        Some(ScalarType::Unit) => Ok(()),
+        Some(ScalarType::Bool) => {
+            let v = *peek.get::<bool>().unwrap();
+            let val: u32 = if v { 1 } else { 0 };
+            writer
+                .write_all(&val.to_be_bytes())
+                .map_err(XdrSerError::Io)
         }
-        .map_err(Self::Error::Io)
-    }
-
-    fn serialize_char(&mut self, value: char) -> Result<(), Self::Error> {
-        self.serialize_u32(value as u32)
-    }
-
-    fn serialize_str(&mut self, value: &str) -> Result<(), Self::Error> {
-        let bytes = value.as_bytes();
-        self.serialize_bytes(bytes)
-    }
-
-    fn serialize_bytes(&mut self, value: &[u8]) -> Result<(), Self::Error> {
-        if value.len() > u32::MAX as usize {
-            return Err(Self::Error::TooManyBytes);
+        Some(ScalarType::Char) => {
+            let c = *peek.get::<char>().unwrap();
+            writer
+                .write_all(&(c as u32).to_be_bytes())
+                .map_err(XdrSerError::Io)
         }
-        let len = value.len() as u32;
-        self.writer
-            .write_all(&len.to_be_bytes())
-            .map_err(Self::Error::Io)?;
-        let pad_len = value.len() % 4;
-        self.writer.write_all(value).map_err(Self::Error::Io)?;
-        if pad_len != 0 {
-            let pad = vec![0u8; 4 - pad_len];
-            self.writer.write_all(&pad).map_err(Self::Error::Io)?;
+        Some(ScalarType::Str) => {
+            let s = peek.get::<str>().unwrap();
+            serialize_str(s, writer)
         }
-        Ok(())
-    }
-
-    fn start_some(&mut self) -> Result<(), Self::Error> {
-        self.writer
-            .write_all(&1u32.to_be_bytes())
-            .map_err(Self::Error::Io)
-    }
-
-    fn serialize_none(&mut self) -> Result<(), Self::Error> {
-        self.writer
-            .write_all(&0u32.to_be_bytes())
-            .map_err(Self::Error::Io)
-    }
-
-    fn serialize_unit(&mut self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn serialize_unit_variant(
-        &mut self,
-        _variant_index: usize,
-        _variant_name: &'static str,
-    ) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn start_object(&mut self, _len: Option<usize>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn serialize_field_name(&mut self, _name: &'static str) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn start_array(&mut self, len: Option<usize>) -> Result<(), Self::Error> {
-        if let Some(len) = len {
-            if len > u32::MAX as usize {
-                return Err(Self::Error::TooManyBytes);
-            }
-            self.writer
-                .write_all(&(len as u32).to_be_bytes())
-                .map_err(Self::Error::Io)
-        } else {
-            panic!("array length missing");
+        Some(ScalarType::String) => {
+            let s = peek.get::<String>().unwrap();
+            serialize_str(s, writer)
         }
-    }
-
-    fn start_map(&mut self, _len: Option<usize>) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn start_enum_variant(&mut self, discriminant: u64) -> Result<(), Self::Error> {
-        if discriminant > u32::MAX as u64 {
-            return Err(Self::Error::TooManyVariants);
+        Some(ScalarType::CowStr) => {
+            let s = peek.get::<std::borrow::Cow<'_, str>>().unwrap();
+            serialize_str(s, writer)
         }
-        self.writer
-            .write_all(&(discriminant as u32).to_be_bytes())
-            .map_err(Self::Error::Io)
+        Some(ScalarType::F32) => {
+            let v = *peek.get::<f32>().unwrap();
+            writer.write_all(&v.to_be_bytes()).map_err(XdrSerError::Io)
+        }
+        Some(ScalarType::F64) => {
+            let v = *peek.get::<f64>().unwrap();
+            writer.write_all(&v.to_be_bytes()).map_err(XdrSerError::Io)
+        }
+        Some(ScalarType::U8) => {
+            let v = *peek.get::<u8>().unwrap();
+            writer
+                .write_all(&(v as u32).to_be_bytes())
+                .map_err(XdrSerError::Io)
+        }
+        Some(ScalarType::U16) => {
+            let v = *peek.get::<u16>().unwrap();
+            writer
+                .write_all(&(v as u32).to_be_bytes())
+                .map_err(XdrSerError::Io)
+        }
+        Some(ScalarType::U32) => {
+            let v = *peek.get::<u32>().unwrap();
+            writer.write_all(&v.to_be_bytes()).map_err(XdrSerError::Io)
+        }
+        Some(ScalarType::U64) => {
+            let v = *peek.get::<u64>().unwrap();
+            writer.write_all(&v.to_be_bytes()).map_err(XdrSerError::Io)
+        }
+        Some(ScalarType::U128) => Err(XdrSerError::UnsupportedType),
+        Some(ScalarType::USize) => {
+            let v = *peek.get::<usize>().unwrap();
+            writer
+                .write_all(&(v as u64).to_be_bytes())
+                .map_err(XdrSerError::Io)
+        }
+        Some(ScalarType::I8) => {
+            let v = *peek.get::<i8>().unwrap();
+            writer
+                .write_all(&(v as i32).to_be_bytes())
+                .map_err(XdrSerError::Io)
+        }
+        Some(ScalarType::I16) => {
+            let v = *peek.get::<i16>().unwrap();
+            writer
+                .write_all(&(v as i32).to_be_bytes())
+                .map_err(XdrSerError::Io)
+        }
+        Some(ScalarType::I32) => {
+            let v = *peek.get::<i32>().unwrap();
+            writer.write_all(&v.to_be_bytes()).map_err(XdrSerError::Io)
+        }
+        Some(ScalarType::I64) => {
+            let v = *peek.get::<i64>().unwrap();
+            writer.write_all(&v.to_be_bytes()).map_err(XdrSerError::Io)
+        }
+        Some(ScalarType::I128) => Err(XdrSerError::UnsupportedType),
+        Some(ScalarType::ISize) => {
+            let v = *peek.get::<isize>().unwrap();
+            writer
+                .write_all(&(v as i64).to_be_bytes())
+                .map_err(XdrSerError::Io)
+        }
+        Some(_) | None => Err(XdrSerError::UnsupportedType),
     }
+}
+
+fn serialize_str<W: Write>(s: &str, writer: &mut W) -> Result<(), XdrSerError> {
+    serialize_bytes(s.as_bytes(), writer)
+}
+
+fn serialize_bytes<W: Write>(bytes: &[u8], writer: &mut W) -> Result<(), XdrSerError> {
+    if bytes.len() > u32::MAX as usize {
+        return Err(XdrSerError::TooManyBytes);
+    }
+    let len = bytes.len() as u32;
+    writer
+        .write_all(&len.to_be_bytes())
+        .map_err(XdrSerError::Io)?;
+    writer.write_all(bytes).map_err(XdrSerError::Io)?;
+    let pad_len = bytes.len() % 4;
+    if pad_len != 0 {
+        let pad = vec![0u8; 4 - pad_len];
+        writer.write_all(&pad).map_err(XdrSerError::Io)?;
+    }
+    Ok(())
+}
+
+fn serialize_array<W: Write>(items: Vec<Peek<'_, '_>>, writer: &mut W) -> Result<(), XdrSerError> {
+    if items.len() > u32::MAX as usize {
+        return Err(XdrSerError::TooManyBytes);
+    }
+    writer
+        .write_all(&(items.len() as u32).to_be_bytes())
+        .map_err(XdrSerError::Io)?;
+    for item in items {
+        serialize_value(item, writer)?;
+    }
+    Ok(())
 }
 
 /// Errors when deserializing from XDR bytes

@@ -1,36 +1,24 @@
 [package]
 name = "facet-csv"
-version = "0.28.0"
+version = "0.31.0"
 edition = "2024"
-rust-version = "1.87"
+rust-version = "1.87.0"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/facet-rs/facet-csv"
+repository = "https://github.com/facet-rs/facet"
 description = "A CSV deserializer and serializer for the facet ecosystem"
-keywords = ["json", "serialization", "deserialization", "reflection", "facet"]
+keywords = ["csv", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parser-implementations"]
 
 [features]
-std = ["facet-core/std", "alloc"] # Uses libstd and alloc
-alloc = [
-    "facet-core/alloc",
-    "facet-serialize/alloc",
-    "facet-deserialize/alloc",
-] # Enables alloc support
-rich-diagnostics = ["facet-deserialize/rich-diagnostics"]
-default = ["std", "rich-diagnostics"]
+std = ["facet-core/std", "facet-reflect/std"]
+default = ["std"]
 
 [dependencies]
-facet-core = { version = "0.28.0", default-features = false }
-facet-deserialize = { version = "0.28.0", default-features = false }
-facet-reflect = { version = "0.28.0", default-features = false }
-facet-serialize = { version = "0.28.0", default-features = false }
-log = "0.4.27"
+facet-core = { path = "../facet-core", default-features = false }
+facet-reflect = { path = "../facet-reflect", default-features = false }
 
 [dev-dependencies]
-cargo-husky = { version = "1.5.0", default-features = false, features = [
-    "user-hooks",
-] }
 eyre = "0.6.12"
-facet = { version = "0.28.0" }
-facet-testhelpers = { version = "0.28.0" }
+facet = { path = "../facet" }
+facet-testhelpers = { path = "../facet-testhelpers" }
 insta = "1.43.1"
