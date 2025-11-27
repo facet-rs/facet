@@ -68,7 +68,7 @@ impl miette::Diagnostic for YourError {
 ```
 
 Example rendered output:
-```
+```text
 × task validation failed
   ╭─[1:7]
 1 │ build timeout=0
