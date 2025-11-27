@@ -983,12 +983,15 @@ impl<'a> Solver<'a> {
 
         if self.candidates.is_empty() {
             // Build per-candidate failure info for all resolutions
-            let candidate_failures: Vec<CandidateFailure> = self
+            let mut candidate_failures: Vec<CandidateFailure> = self
                 .schema
                 .resolutions
                 .iter()
                 .map(|config| build_candidate_failure(config, &self.seen_keys))
                 .collect();
+
+            // Sort by closeness (best match first)
+            sort_candidates_by_closeness(&mut candidate_failures, &self.schema.resolutions);
 
             return Err(SolverError::NoMatch {
                 input_fields: self.seen_keys.iter().map(|s| (*s).into()).collect(),
@@ -1017,7 +1020,7 @@ impl<'a> Solver<'a> {
         match viable.len() {
             0 => {
                 // No viable candidates - build per-candidate failure info
-                let candidate_failures: Vec<CandidateFailure> = self
+                let mut candidate_failures: Vec<CandidateFailure> = self
                     .candidates
                     .iter()
                     .map(|idx| {
@@ -1026,27 +1029,43 @@ impl<'a> Solver<'a> {
                     })
                     .collect();
 
+                // Sort by closeness (best match first)
+                sort_candidates_by_closeness(&mut candidate_failures, &self.schema.resolutions);
+
                 // For backwards compatibility, also populate the "closest" fields
-                let first_idx = self.candidates.first().unwrap();
-                let first_config = &self.schema.resolutions[first_idx];
-                let missing: Vec<_> = first_config
-                    .required_field_names()
-                    .iter()
-                    .filter(|f| !self.seen_keys.contains(*f))
-                    .copied()
-                    .collect();
-                let missing_detailed: Vec<_> = missing
-                    .iter()
-                    .filter_map(|name| first_config.field(name))
-                    .map(MissingFieldInfo::from_field_info)
-                    .collect();
+                // Now use the first (closest) candidate after sorting
+                let closest_name = candidate_failures.first().map(|f| f.variant_name.clone());
+                let closest_config = closest_name.as_ref().and_then(|name| {
+                    self.schema
+                        .resolutions
+                        .iter()
+                        .find(|r| r.describe() == *name)
+                });
+
+                let (missing, missing_detailed, closest_resolution) =
+                    if let Some(config) = closest_config {
+                        let missing: Vec<_> = config
+                            .required_field_names()
+                            .iter()
+                            .filter(|f| !self.seen_keys.contains(*f))
+                            .copied()
+                            .collect();
+                        let missing_detailed: Vec<_> = missing
+                            .iter()
+                            .filter_map(|name| config.field(name))
+                            .map(MissingFieldInfo::from_field_info)
+                            .collect();
+                        (missing, missing_detailed, Some(config.describe()))
+                    } else {
+                        (Vec::new(), Vec::new(), None)
+                    };
 
                 Err(SolverError::NoMatch {
                     input_fields: self.seen_keys.iter().map(|s| (*s).into()).collect(),
                     missing_required: missing,
                     missing_required_detailed: missing_detailed,
                     unknown_fields,
-                    closest_resolution: Some(first_config.describe()),
+                    closest_resolution,
                     candidate_failures,
                     suggestions,
                 })
@@ -1094,6 +1113,54 @@ fn build_candidate_failure(config: &Resolution, seen_keys: &BTreeSet<&str>) -> C
         missing_fields,
         unknown_fields,
     }
+}
+
+/// Compute a "closeness" score for a candidate based on how many input fields
+/// could match with typo correction. Higher score = closer match.
+#[cfg(feature = "suggestions")]
+fn candidate_closeness_score(failure: &CandidateFailure, config: &Resolution) -> usize {
+    const SIMILARITY_THRESHOLD: f64 = 0.6;
+
+    let mut score = 0;
+
+    // For each unknown field in the input, check if it's similar to a known field
+    // in this candidate. If so, this candidate is likely what the user intended.
+    for unknown in &failure.unknown_fields {
+        for known in config.fields().keys() {
+            let similarity = strsim::jaro_winkler(unknown, known);
+            if similarity >= SIMILARITY_THRESHOLD {
+                score += 1;
+                break; // Count each unknown at most once
+            }
+        }
+    }
+
+    score
+}
+
+/// Compute a "closeness" score for a candidate (no-op without suggestions feature).
+#[cfg(not(feature = "suggestions"))]
+fn candidate_closeness_score(_failure: &CandidateFailure, _config: &Resolution) -> usize {
+    0
+}
+
+/// Sort candidate failures by closeness (best match first).
+fn sort_candidates_by_closeness(failures: &mut [CandidateFailure], resolutions: &[Resolution]) {
+    failures.sort_by(|a, b| {
+        let score_a = resolutions
+            .iter()
+            .find(|r| r.describe() == a.variant_name)
+            .map(|r| candidate_closeness_score(a, r))
+            .unwrap_or(0);
+        let score_b = resolutions
+            .iter()
+            .find(|r| r.describe() == b.variant_name)
+            .map(|r| candidate_closeness_score(b, r))
+            .unwrap_or(0);
+
+        // Higher score first (reverse order)
+        score_b.cmp(&score_a)
+    });
 }
 
 /// Compute "did you mean?" suggestions for unknown fields.
