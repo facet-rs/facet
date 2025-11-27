@@ -123,18 +123,37 @@ impl<'facet> Partial<'facet> {
 
             // Validate the frame is fully initialized
             if let Err(e) = frame.require_full_initialization() {
+                // Clean up the current frame that failed validation.
+                // We need to check if the parent will drop it.
+                let parent_will_drop = if path.len() == 1 {
+                    let field_name = path.first().unwrap();
+                    self.frames.first().map_or(false, |parent| {
+                        Self::is_field_marked_in_parent(parent, field_name)
+                    })
+                } else {
+                    false
+                };
+
+                let mut frame = frame; // Make mutable for deinit
+                if !parent_will_drop && !matches!(frame.tracker, Tracker::Uninit) {
+                    frame.deinit();
+                }
+
                 // Clean up remaining stored frames before returning error.
                 // When finish_deferred fails, the parent's iset was NEVER updated for any stored frame,
                 // so we must deinit all initialized frames ourselves - the parent won't drop them.
 
                 // Collect keys to remove (can't drain in no_std)
-                let remaining_paths: Vec<_> = deferred_state.stored_frames.keys().cloned().collect();
+                let remaining_paths: Vec<_> =
+                    deferred_state.stored_frames.keys().cloned().collect();
                 // Sort by depth (deepest first) for proper cleanup order
                 let mut sorted_paths = remaining_paths;
                 sorted_paths.sort_by_key(|p| core::cmp::Reverse(p.len()));
 
                 for remaining_path in sorted_paths {
-                    if let Some(mut remaining_frame) = deferred_state.stored_frames.remove(&remaining_path) {
+                    if let Some(mut remaining_frame) =
+                        deferred_state.stored_frames.remove(&remaining_path)
+                    {
                         // Check if this frame was re-entered (parent already has it marked as init).
                         // If so, the parent will drop it - we must NOT deinit (double-free).
                         // If not, we must deinit because the parent won't drop it.
@@ -151,7 +170,8 @@ impl<'facet> Partial<'facet> {
                             false
                         };
 
-                        if !parent_will_drop && !matches!(remaining_frame.tracker, Tracker::Uninit) {
+                        if !parent_will_drop && !matches!(remaining_frame.tracker, Tracker::Uninit)
+                        {
                             remaining_frame.deinit();
                         }
                     }
@@ -159,20 +179,33 @@ impl<'facet> Partial<'facet> {
                 return Err(e);
             }
 
-            // Update parent's ISet to mark this field as initialized
-            // The parent is either in stored_frames (if path.len() > 1) or on the frame stack (if path.len() == 1)
+            // Update parent's ISet to mark this field as initialized.
+            // The parent could be:
+            // 1. On the frames stack (if path.len() == 1, parent is at start_depth - 1)
+            // 2. On the frames stack (if parent was pushed but never ended)
+            // 3. In stored_frames (if parent was ended during deferred mode)
             if let Some(field_name) = path.last() {
                 let parent_path: Vec<_> = path[..path.len() - 1].to_vec();
 
                 if parent_path.is_empty() {
-                    // Parent is the root frame on the stack (index 0)
-                    if let Some(root_frame) = self.frames.get_mut(0) {
+                    // Parent is the frame that was current when deferred mode started.
+                    // It's at index (start_depth - 1) because deferred mode stores frames
+                    // relative to the position at start_depth.
+                    let parent_index = deferred_state.start_depth.saturating_sub(1);
+                    if let Some(root_frame) = self.frames.get_mut(parent_index) {
                         Self::mark_field_initialized(root_frame, field_name);
                     }
                 } else {
-                    // Parent is also a stored frame
+                    // Try stored_frames first
                     if let Some(parent_frame) = deferred_state.stored_frames.get_mut(&parent_path) {
                         Self::mark_field_initialized(parent_frame, field_name);
+                    } else {
+                        // Parent might still be on the frames stack (never ended).
+                        // The frame at index (start_depth + parent_path.len() - 1) should be the parent.
+                        let parent_frame_index = deferred_state.start_depth + parent_path.len() - 1;
+                        if let Some(parent_frame) = self.frames.get_mut(parent_frame_index) {
+                            Self::mark_field_initialized(parent_frame, field_name);
+                        }
                     }
                 }
             }
@@ -649,7 +682,9 @@ impl<'facet> Partial<'facet> {
                             value_initialized: false,
                         };
                     }
-                    MapInsertState::PushingValue { key_ptr, value_ptr, .. } => {
+                    MapInsertState::PushingValue {
+                        key_ptr, value_ptr, ..
+                    } => {
                         // We just popped the value frame, now insert the pair
                         if let (Some(value_ptr), Def::Map(map_def)) =
                             (value_ptr, parent_frame.shape.def)

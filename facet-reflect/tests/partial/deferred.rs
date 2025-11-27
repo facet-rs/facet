@@ -2224,3 +2224,115 @@ fn wip_deferred_drop_with_stored_frames() {
         // Drop with frames in stored_frames map
     }
 }
+
+// =============================================================================
+// Nested deferred mode (deferred mode started from non-root position)
+// =============================================================================
+
+/// Tests that deferred mode works correctly when started from a nested position.
+/// This simulates what facet-kdl does with flatten fields.
+#[test]
+fn deferred_started_from_nested_position() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct ConnectionSettings {
+        port: u16,
+        timeout: u32,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Server {
+        host: String,
+        connection: ConnectionSettings,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Config {
+        server: Server,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Config>()?;
+
+    // Navigate into server first (simulating what facet-kdl does)
+    partial.begin_field("server")?;
+
+    // Now start deferred mode from the nested position
+    // At this point, frames = [Config, Server], start_depth = 2
+    partial.begin_deferred(resolution)?;
+
+    // Set host (direct field of Server)
+    partial.set_field("host", String::from("localhost"))?;
+
+    // Set connection.port (nested from Server's perspective)
+    partial.begin_field("connection")?;
+    partial.set_field("port", 8080u16)?;
+    partial.end()?;
+
+    // Set connection.timeout (interleaved)
+    partial.begin_field("connection")?;
+    partial.set_field("timeout", 30u32)?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    partial.end()?; // End server
+
+    let result = *partial.build()?;
+    assert_eq!(result.server.host, "localhost");
+    assert_eq!(result.server.connection.port, 8080);
+    assert_eq!(result.server.connection.timeout, 30);
+
+    Ok(())
+}
+
+/// Tests deferred mode from deeper nesting
+#[test]
+fn deferred_started_from_deeply_nested_position() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Leaf {
+        value: i32,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Level2 {
+        leaf: Leaf,
+        other: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Level1 {
+        level2: Level2,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Root {
+        level1: Level1,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Root>()?;
+
+    // Navigate deep before starting deferred mode
+    partial.begin_field("level1")?;
+    partial.begin_field("level2")?;
+
+    // Start deferred mode at Level2 depth
+    // frames = [Root, Level1, Level2], start_depth = 3
+    partial.begin_deferred(resolution)?;
+
+    // Set fields in interleaved order
+    partial.set_field("other", String::from("test"))?;
+
+    partial.begin_field("leaf")?;
+    partial.set_field("value", 42i32)?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    partial.end()?; // End level2
+    partial.end()?; // End level1
+
+    let result = *partial.build()?;
+    assert_eq!(result.level1.level2.other, "test");
+    assert_eq!(result.level1.level2.leaf.value, 42);
+
+    Ok(())
+}

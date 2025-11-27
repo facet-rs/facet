@@ -513,7 +513,10 @@ impl Frame {
 
                 // Clean up any in-progress insertion state
                 match insert_state {
-                    MapInsertState::PushingKey { key_ptr, key_initialized } => {
+                    MapInsertState::PushingKey {
+                        key_ptr,
+                        key_initialized,
+                    } => {
                         if let Def::Map(map_def) = self.shape.def {
                             // Drop the key if it was initialized
                             if *key_initialized {
@@ -525,16 +528,17 @@ impl Frame {
                             if let Ok(key_shape) = map_def.k().layout.sized_layout() {
                                 if key_shape.size() > 0 {
                                     unsafe {
-                                        alloc::alloc::dealloc(
-                                            key_ptr.as_mut_byte_ptr(),
-                                            key_shape,
-                                        )
+                                        alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_shape)
                                     };
                                 }
                             }
                         }
                     }
-                    MapInsertState::PushingValue { key_ptr, value_ptr, value_initialized } => {
+                    MapInsertState::PushingValue {
+                        key_ptr,
+                        value_ptr,
+                        value_initialized,
+                    } => {
                         // Drop and deallocate both key and value buffers
                         if let Def::Map(map_def) = self.shape.def {
                             // Drop and deallocate the key (always initialized in PushingValue state)
@@ -606,7 +610,10 @@ impl Frame {
             Tracker::Map { insert_state, .. } => {
                 // Only clean up partial insert state, don't touch the main Map
                 match insert_state {
-                    MapInsertState::PushingKey { key_ptr, key_initialized } => {
+                    MapInsertState::PushingKey {
+                        key_ptr,
+                        key_initialized,
+                    } => {
                         if let Def::Map(map_def) = self.shape.def {
                             // Drop the key if it was initialized
                             if *key_initialized {
@@ -618,16 +625,17 @@ impl Frame {
                             if let Ok(key_layout) = map_def.k().layout.sized_layout() {
                                 if key_layout.size() > 0 {
                                     unsafe {
-                                        alloc::alloc::dealloc(
-                                            key_ptr.as_mut_byte_ptr(),
-                                            key_layout,
-                                        )
+                                        alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_layout)
                                     };
                                 }
                             }
                         }
                     }
-                    MapInsertState::PushingValue { key_ptr, value_ptr, value_initialized } => {
+                    MapInsertState::PushingValue {
+                        key_ptr,
+                        value_ptr,
+                        value_initialized,
+                    } => {
                         if let Def::Map(map_def) = self.shape.def {
                             // Drop and deallocate the key (always initialized in PushingValue state)
                             if let Some(drop_fn) = map_def.k().vtable.drop_in_place {
@@ -890,6 +898,12 @@ impl<'facet> Drop for Partial<'facet> {
             // We distinguish these by checking the parent's iset for the field.
             //
             // Process from deepest to shallowest to handle parent-child dependencies correctly.
+
+            // Save start_depth before consuming deferred
+            let start_depth = deferred.start_depth;
+            // Parent of direct children (path.len() == 1) is at start_depth - 1
+            let parent_index = start_depth.saturating_sub(1);
+
             let mut paths: Vec<_> = deferred.stored_frames.into_iter().collect();
             paths.sort_by_key(|(path, _)| core::cmp::Reverse(path.len()));
 
@@ -901,14 +915,14 @@ impl<'facet> Drop for Partial<'facet> {
                             false
                         } else if matches!(frame.tracker, Tracker::Init) {
                             // For Tracker::Init, check if parent's iset has this field marked.
-                            // Path length 1 means parent is the root frame on the stack.
-                            // We only handle the case where parent is root frame (path.len() == 1)
-                            // since that's the common case. For nested deferred, more complex logic needed.
+                            // Path length 1 means parent is the frame that was current when
+                            // deferred mode started (at index start_depth - 1).
                             if path.len() == 1 {
                                 let field_name = path.first().unwrap();
-                                let parent_has_field_marked = self.frames.first().map_or(false, |parent| {
-                                    Self::is_field_marked_in_parent(parent, field_name)
-                                });
+                                let parent_has_field_marked =
+                                    self.frames.get(parent_index).map_or(false, |parent| {
+                                        Self::is_field_marked_in_parent(parent, field_name)
+                                    });
                                 // If parent has it marked, don't deinit (parent will drop).
                                 // If parent doesn't have it, deinit (we must clean up).
                                 !parent_has_field_marked
@@ -924,7 +938,7 @@ impl<'facet> Drop for Partial<'facet> {
                             if path.len() == 1 {
                                 let field_name = path.first().unwrap();
                                 // Unmark the field from parent's iset before deiniting
-                                if let Some(parent) = self.frames.first_mut() {
+                                if let Some(parent) = self.frames.get_mut(parent_index) {
                                     Self::unmark_field_in_parent(parent, field_name);
                                 }
                             }
@@ -964,15 +978,25 @@ impl<'facet> Drop for Partial<'facet> {
                     // Check if parent will actually handle dropping this field
                     let parent_will_drop = self.frames.last().map_or(false, |parent| {
                         match &parent.tracker {
-                            Tracker::Struct { iset, current_child } => {
+                            Tracker::Struct {
+                                iset,
+                                current_child,
+                            } => {
                                 // Parent drops this field only if it's marked in iset
                                 current_child.map_or(false, |idx| iset.get(idx))
                             }
-                            Tracker::Enum { data, current_child, .. } => {
+                            Tracker::Enum {
+                                data,
+                                current_child,
+                                ..
+                            } => {
                                 // Parent drops this field only if it's marked in data
                                 current_child.map_or(false, |idx| data.get(idx))
                             }
-                            Tracker::Array { iset, current_child } => {
+                            Tracker::Array {
+                                iset,
+                                current_child,
+                            } => {
                                 // Parent drops this element only if it's marked in iset
                                 current_child.map_or(false, |idx| iset.get(idx))
                             }
@@ -991,8 +1015,7 @@ impl<'facet> Drop for Partial<'facet> {
                         frame.deinit();
                     } else {
                         // Not fully initialized - check if it's an initialized collection
-                        // with partial state (parent will drop the collection but not the
-                        // partial buffers)
+                        // with partial state (e.g., Map mid-insert, List mid-push).
                         let is_initialized_collection_with_partial_state = match &frame.tracker {
                             Tracker::Map {
                                 is_initialized: true,
@@ -1009,9 +1032,19 @@ impl<'facet> Drop for Partial<'facet> {
                             _ => false,
                         };
 
-                        if is_initialized_collection_with_partial_state {
+                        if is_initialized_collection_with_partial_state && parent_will_drop {
                             // Parent will drop the collection, just clean up partial state
                             frame.cleanup_partial_state();
+                        } else if is_initialized_collection_with_partial_state && !parent_will_drop
+                        {
+                            // Collection is initialized but parent won't drop it (not in iset).
+                            // We need to clean up partial state AND drop the collection itself.
+                            frame.cleanup_partial_state();
+                            // Now the collection is in a clean state, drop it
+                            if let Some(drop_fn) = frame.shape.vtable.drop_in_place {
+                                unsafe { drop_fn(frame.data.assume_init()) };
+                            }
+                            frame.tracker = Tracker::Uninit;
                         } else {
                             // Not an initialized collection - need full deinit
                             frame.deinit();
