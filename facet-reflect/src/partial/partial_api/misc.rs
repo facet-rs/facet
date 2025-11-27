@@ -236,6 +236,15 @@ impl<'facet> Partial<'facet> {
             });
         }
 
+        // In deferred mode, cannot pop below the start depth
+        if let Some(deferred) = &self.deferred {
+            if self.frames.len() <= deferred.start_depth {
+                return Err(ReflectError::InvariantViolation {
+                    invariant: "Partial::end() called but would pop below deferred start depth",
+                });
+            }
+        }
+
         // Require that the top frame is fully initialized before popping.
         // Skip this check in deferred mode - validation happens in finish_deferred().
         // EXCEPT for collection items (map, list, set, option) which must be fully
