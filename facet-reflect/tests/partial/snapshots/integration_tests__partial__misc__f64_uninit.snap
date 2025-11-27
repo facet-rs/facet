@@ -1,0 +1,5 @@
+---
+source: facet-reflect/tests/partial/misc.rs
+expression: "Partial::alloc::<f64>()?.build().unwrap_err()"
+---
+Value 'f64' was not initialized

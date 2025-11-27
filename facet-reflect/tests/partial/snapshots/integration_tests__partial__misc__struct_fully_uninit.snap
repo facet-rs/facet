@@ -1,0 +1,5 @@
+---
+source: facet-reflect/tests/partial/misc.rs
+expression: "Partial::alloc::<FooBar>()?.build().unwrap_err()"
+---
+Value 'FooBar' was not initialized

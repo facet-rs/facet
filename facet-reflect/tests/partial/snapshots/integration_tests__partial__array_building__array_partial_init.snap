@@ -1,0 +1,5 @@
+---
+source: facet-reflect/tests/partial/array_building.rs
+expression: "Partial::alloc::<[u32; 3]>()? .set_nth_field(0, 42u32)?\n.set_nth_field(2, 44u32)? .build().unwrap_err()"
+---
+Value '[u32; 3]' was not initialized

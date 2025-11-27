@@ -1,0 +1,5 @@
+---
+source: facet-reflect/tests/partial/pointer.rs
+expression: "Partial::alloc::<Arc<u32>>()?.build().unwrap_err()"
+---
+Value 'Arc<u32>' was not initialized

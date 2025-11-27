@@ -1,0 +1,5 @@
+---
+source: facet-reflect/tests/partial/misc.rs
+expression: err
+---
+Invariant violation: Cannot use Partial after it has been built or poisoned

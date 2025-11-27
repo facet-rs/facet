@@ -1,0 +1,5 @@
+---
+source: facet-reflect/tests/partial/misc.rs
+expression: result.unwrap_err()
+---
+Field error for shape Person: no such field

@@ -1,0 +1,5 @@
+---
+source: facet-reflect/tests/partial/misc.rs
+expression: err
+---
+Shape 'str' is unsized, can't perform operation alloc_shape

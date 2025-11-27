@@ -108,9 +108,6 @@
 
 use alloc::vec::Vec;
 
-#[cfg(test)]
-mod tests;
-
 mod iset;
 
 mod partial_api;

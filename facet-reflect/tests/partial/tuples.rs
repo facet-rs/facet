@@ -160,3 +160,51 @@ fn test_issue_691_valid_tuples() {
         "Building single-element tuple with field initialized should succeed"
     );
 }
+
+// =============================================================================
+// Tests migrated from src/partial/tests.rs
+// =============================================================================
+
+use facet_testhelpers::IPanic;
+
+#[test]
+fn tuple_basic() -> Result<(), IPanic> {
+    let boxed = Partial::alloc::<(i32, String)>()?
+        .set_nth_field(0, 42i32)?
+        .set_nth_field(1, "hello".to_string())?
+        .build()?;
+    assert_eq!(*boxed, (42, "hello".to_string()));
+    Ok(())
+}
+
+#[test]
+fn tuple_mixed_types() -> Result<(), IPanic> {
+    let boxed = Partial::alloc::<(u8, bool, f64, String)>()?
+        .set_nth_field(2, 56.124f64)?
+        .set_nth_field(0, 255u8)?
+        .set_nth_field(3, "world".to_string())?
+        .set_nth_field(1, true)?
+        .build()?;
+    assert_eq!(*boxed, (255u8, true, 56.124f64, "world".to_string()));
+    Ok(())
+}
+
+#[test]
+fn tuple_nested() -> Result<(), IPanic> {
+    let boxed = Partial::alloc::<((i32, i32), String)>()?
+        .begin_nth_field(0)?
+        .set_nth_field(0, 1i32)?
+        .set_nth_field(1, 2i32)?
+        .end()?
+        .set_nth_field(1, "nested".to_string())?
+        .build()?;
+    assert_eq!(*boxed, ((1, 2), "nested".to_string()));
+    Ok(())
+}
+
+#[test]
+fn tuple_empty() -> Result<(), IPanic> {
+    let boxed = Partial::alloc::<()>()?.set(())?.build()?;
+    assert_eq!(*boxed, ());
+    Ok(())
+}

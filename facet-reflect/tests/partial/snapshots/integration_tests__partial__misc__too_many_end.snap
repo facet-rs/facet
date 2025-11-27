@@ -1,0 +1,5 @@
+---
+source: facet-reflect/tests/partial/misc.rs
+expression: err
+---
+Invariant violation: Partial::end() called with only one frame on the stack

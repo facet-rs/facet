@@ -1,0 +1,5 @@
+---
+source: facet-reflect/tests/partial/pointer.rs
+expression: "Partial::alloc::<Box<u32>>()?.build().unwrap_err()"
+---
+Value 'Box<u32>' was not initialized

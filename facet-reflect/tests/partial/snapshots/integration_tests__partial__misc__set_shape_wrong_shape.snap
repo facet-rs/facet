@@ -1,0 +1,5 @@
+---
+source: facet-reflect/tests/partial/misc.rs
+expression: err
+---
+Wrong shape: expected u32, but got String

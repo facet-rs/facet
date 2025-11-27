@@ -1390,3 +1390,176 @@ fn field_named_on_enum() -> Result<(), IPanic> {
     assert_snapshot!(result.unwrap_err());
     Ok(())
 }
+
+#[test]
+fn enum_unit_variant() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum Status {
+        Active = 0,
+        Inactive = 1,
+        Pending = 2,
+    }
+
+    let hv = Partial::alloc::<Status>()?.select_variant(1)?.build()?;
+    assert_eq!(*hv, Status::Inactive);
+    Ok(())
+}
+
+#[test]
+fn enum_struct_variant() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum Message {
+        Text { content: String } = 0,
+        Number { value: i32 } = 1,
+        Empty = 2,
+    }
+
+    let hv = Partial::alloc::<Message>()?
+        .select_variant(0)?
+        .set_field("content", "Hello, world!".to_string())?
+        .build()?;
+    assert_eq!(
+        *hv,
+        Message::Text {
+            content: "Hello, world!".to_string()
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn enum_tuple_variant() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(i32)]
+    #[allow(dead_code)]
+    enum Value {
+        Int(i32) = 0,
+        Float(f64) = 1,
+        Pair(i32, String) = 2,
+    }
+
+    let hv = Partial::alloc::<Value>()?
+        .select_variant(2)?
+        .set_nth_field(0, 42)?
+        .set_nth_field(1, "test".to_string())?
+        .build()?;
+    assert_eq!(*hv, Value::Pair(42, "test".to_string()));
+    Ok(())
+}
+
+#[test]
+fn enum_set_field_twice() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u16)]
+    enum Data {
+        Point { x: f32, y: f32 } = 0,
+    }
+
+    let hv = Partial::alloc::<Data>()?
+        .select_variant(0)?
+        .set_field("x", 1.0f32)?
+        .set_field("x", 2.0f32)?
+        .set_field("y", 3.0f32)?
+        .build()?;
+    assert_eq!(*hv, Data::Point { x: 2.0, y: 3.0 });
+    Ok(())
+}
+
+#[test]
+fn enum_partial_initialization_error() -> Result<(), IPanic> {
+    #[derive(Facet, Debug)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum Config {
+        Settings { timeout: u32, retries: u8 } = 0,
+    }
+
+    let result = Partial::alloc::<Config>()?
+        .select_variant(0)?
+        .set_field("timeout", 5000u32)?
+        .build();
+    assert!(result.is_err());
+    Ok(())
+}
+
+#[test]
+fn enum_select_nth_variant() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum Status {
+        Active = 0,
+        Inactive = 1,
+        Pending = 2,
+    }
+
+    let hv = Partial::alloc::<Status>()?.select_nth_variant(1)?.build()?;
+    assert_eq!(*hv, Status::Inactive);
+
+    let hv2 = Partial::alloc::<Status>()?.select_nth_variant(2)?.build()?;
+    assert_eq!(*hv2, Status::Pending);
+    Ok(())
+}
+
+#[test]
+fn variant_named() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Animal {
+        Dog { name: String, age: u8 } = 0,
+        Cat { name: String, lives: u8 } = 1,
+        Bird { species: String } = 2,
+    }
+
+    let animal = Partial::alloc::<Animal>()?
+        .select_variant_named("Dog")?
+        .set_field("name", "Buddy".to_string())?
+        .set_field("age", 5u8)?
+        .build()?;
+    assert_eq!(
+        *animal,
+        Animal::Dog {
+            name: "Buddy".to_string(),
+            age: 5
+        }
+    );
+
+    let animal = Partial::alloc::<Animal>()?
+        .select_variant_named("Cat")?
+        .set_field("name", "Whiskers".to_string())?
+        .set_field("lives", 9u8)?
+        .build()?;
+    assert_eq!(
+        *animal,
+        Animal::Cat {
+            name: "Whiskers".to_string(),
+            lives: 9
+        }
+    );
+
+    let animal = Partial::alloc::<Animal>()?
+        .select_variant_named("Bird")?
+        .set_field("species", "Parrot".to_string())?
+        .build()?;
+    assert_eq!(
+        *animal,
+        Animal::Bird {
+            species: "Parrot".to_string()
+        }
+    );
+
+    let mut partial = Partial::alloc::<Animal>()?;
+    let result = partial.select_variant_named("Fish");
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("No variant found with the given name")
+    );
+    Ok(())
+}
