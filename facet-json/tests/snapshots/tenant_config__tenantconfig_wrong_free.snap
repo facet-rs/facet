@@ -1,0 +1,28 @@
+---
+source: tests/tenant-config.rs
+assertion_line: 81
+expression: result
+---
+Err(
+    JsonError {
+        kind: MissingField {
+            field: "cookie_sauce",
+            object_start: Some(
+                Span {
+                    start: 211,
+                    len: 1,
+                },
+            ),
+            object_end: Some(
+                Span {
+                    start: 598,
+                    len: 1,
+                },
+            ),
+        },
+        span: None,
+        source_code: Some(
+            "\n    [\n      {\n        \"name\": \"fasterthanli.me\",\n        \"object_storage\": {\n          \"bucket\": \"[REDACTED]\",\n          \"region\": \"[REDACTED]\",\n          \"endpoint\": \"[REDACTED]\"\n        },\n        \"secrets\": {\n          \"aws\": {\n            \"access_key_id\": \"[REDACTED]\",\n            \"secret_access_key\": \"[REDACTED]\"\n          },\n          \"patreon\": {\n            \"oauth_client_id\": \"[REDACTED]\",\n            \"oauth_client_secret\": \"[REDACTED]\"\n          },\n          \"github\": {\n            \"oauth_client_id\": \"[REDACTED]\",\n            \"oauth_client_secret\": \"[REDACTED]\"\n          }\n        }\n      }\n    ]\n    ",
+        ),
+    },
+)

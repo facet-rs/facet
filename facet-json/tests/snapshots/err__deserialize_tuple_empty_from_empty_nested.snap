@@ -1,0 +1,5 @@
+---
+source: tests/err.rs
+expression: err
+---
+unexpected token: got [, expected ']'

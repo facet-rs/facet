@@ -1,0 +1,5 @@
+---
+source: tests/nonzero.rs
+expression: result.unwrap_err().to_string()
+---
+reflection error: While trying to put u64 into a NonZero<u64>: value should be non-zero

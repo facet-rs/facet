@@ -1,0 +1,5 @@
+---
+source: tests/diagnostics.rs
+expression: display_str
+---
+unexpected character: 'x'

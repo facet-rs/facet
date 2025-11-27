@@ -1,0 +1,6 @@
+---
+source: tests/err.rs
+assertion_line: 84
+expression: err
+---
+unknown field `wrong_name`, expected one of: ["new_name"] (did you mean `new_name`?)
