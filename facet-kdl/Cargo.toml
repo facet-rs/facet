@@ -1,14 +1,9 @@
 [package]
 name = "facet-kdl"
-version = "0.29.0"
+version = "0.31.0"
 edition = "2024"
-rust-version = "1.87"
 license = "MIT or Apache-2.0"
-repository = "https://github.com/facet-rs/facet-kdl"
-authors = ["Brooks Rady <b.j.rady@gmail.com", "Amos Wenger <amos@bearcove.eu>"]
 description = "KDL serialization and deserialization for Facet types"
-keywords = ["kdl", "serialization", "deserialization", "reflection", "facet"]
-categories = ["encoding", "parsing", "data-structures"]
 
 [features]
 std = ["alloc", "facet-core/std", "facet-reflect/std"]
@@ -16,15 +11,21 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 default = ["std"]
 
 [dependencies]
-log = "0.4.28"
-facet-core = { version = "0.29", default-features = false }
-facet-reflect = { version = "0.29", default-features = false }
+log = "0.4"
+facet-core = { path = "../facet/facet-core" }
+facet-reflect = { path = "../facet/facet-reflect", features = ["miette"] }
+facet-solver = { path = "../facet/facet-solver" }
 kdl = "6.5.0"
+miette = "7"
 
 [dev-dependencies]
-cargo-husky = { version = "1.5.0", default-features = false, features = [
-    "user-hooks",
-] }
-facet = { version = "0.29" }
-facet-testhelpers = { version = "0.29" }
-indoc = "2.0.6"
+facet = { path = "../facet/facet" }
+facet-core = { path = "../facet/facet-core", features = ["camino"] }
+facet-pretty = { path = "../facet-pretty" }
+camino = "1"
+miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
+indoc = "2.0.7"
+cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
+owo-colors = "4"
+syntect = "5.3"
+boxen = "0.1"

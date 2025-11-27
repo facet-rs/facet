@@ -6,7 +6,61 @@
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-kdl.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-Provides KDL serialization and deserialization for Facet types (wip)
+# facet-kdl
+
+KDL serialization and deserialization for Facet types.
+
+## Quick start
+
+Add `facet-kdl` alongside your Facet types and derive `Facet`:
+
+```rust
+use facet::Facet;
+
+#[derive(Facet, Debug, PartialEq)]
+struct Config {
+    #[facet(child)]
+    server: Server,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct Server {
+    #[facet(argument)]
+    host: String,
+    #[facet(property)]
+    port: u16,
+}
+
+fn main() -> Result<(), facet_kdl::KdlError> {
+    let cfg: Config = facet_kdl::from_str(r#"server "localhost" port=8080"#)?;
+    assert_eq!(cfg.server.port, 8080);
+
+    let text = facet_kdl::to_string(&cfg)?;
+    assert_eq!(text, "server \"localhost\" port=8080\n");
+    Ok(())
+}
+```
+
+## Common patterns
+
+- `#[facet(child)]` for a single required child node, `#[facet(children)]` for lists/maps/sets of children.
+- `#[facet(property)]` maps node properties (key/value pairs) to fields.
+- `#[facet(arguments)]`/`#[facet(argument)]` read positional arguments on a node.
+- `#[facet(flatten)]` merges nested structs/enums; the solver uses property/child presence to choose variants.
+- `Spanned<T>` is supported: properties/arguments can be captured with `miette::SourceSpan` data.
+
+## Feature flags
+
+- `default`/`std`: enables `std` for dependencies.
+- `alloc`: `no_std` builds with `alloc` only.
+
+## Error reporting
+
+Errors use `miette` spans where possible, so diagnostics can point back to the offending KDL source.
+
+## License
+
+MIT OR Apache-2.0, at your option.
 
 ## Sponsors
 
