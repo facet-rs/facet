@@ -1,216 +1,296 @@
-use facet_core::Facet;
-use facet_reflect::Peek;
-use facet_serialize::{Serializer, serialize_iterative}; // Import the necessary items from facet-serialize
+use facet_core::{Def, Facet, StructKind, Type, UserType};
+use facet_reflect::{HasFields, Peek, ScalarType};
 use log::trace;
 use std::io::{self, Write};
 
 /// Serializes any Facet type to MessagePack bytes
 pub fn to_vec<'a, T: Facet<'a>>(value: &'a T) -> Vec<u8> {
     let mut buffer = Vec::new();
-    let peek = Peek::new(value);
-    let mut serializer = MessagePackSerializer {
-        writer: &mut buffer,
-    }; // Create the serializer
-    serialize_iterative(peek, &mut serializer).unwrap(); // Use the iterative serializer
+    to_writer(&mut buffer, value).unwrap();
     buffer
 }
 
-// Define the MessagePackSerializer struct
-struct MessagePackSerializer<'w, W: Write> {
-    writer: &'w mut W,
+/// Serializes any Facet type to MessagePack bytes, writing to the given writer
+pub fn to_writer<'a, T: Facet<'a>, W: Write>(writer: &mut W, value: &'a T) -> io::Result<()> {
+    let peek = Peek::new(value);
+    serialize_value(peek, writer)
 }
 
-// Implement the Serializer trait for MessagePackSerializer
-impl<W: Write> Serializer for MessagePackSerializer<'_, W> {
-    type Error = io::Error; // Use io::Error as the error type
+fn serialize_value<W: Write>(peek: Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
+    trace!("Serializing value, shape is {}", peek.shape());
 
-    // Implement all methods required by the Serializer trait
-    // Most implementations will simply call the existing write_* helper functions.
-
-    fn serialize_u8(&mut self, value: u8) -> Result<(), Self::Error> {
-        trace!("Serializing u8: {value}");
-        write_u8(self.writer, value)
-    }
-
-    fn serialize_u16(&mut self, value: u16) -> Result<(), Self::Error> {
-        trace!("Serializing u16: {value}");
-        write_u16(self.writer, value)
-    }
-
-    fn serialize_u32(&mut self, value: u32) -> Result<(), Self::Error> {
-        trace!("Serializing u32: {value}");
-        write_u32(self.writer, value)
-    }
-
-    fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
-        trace!("Serializing u64: {value}");
-        write_u64(self.writer, value)
-    }
-
-    // TODO: Implement serialize_u128 if needed for MessagePack, otherwise return error or panic
-    fn serialize_u128(&mut self, _value: u128) -> Result<(), Self::Error> {
-        Err(io::Error::other(
-            "u128 is not directly supported by MessagePack",
-        ))
-    }
-
-    // Map usize to u64 as MessagePack doesn't have a specific usize type
-    fn serialize_usize(&mut self, value: usize) -> Result<(), Self::Error> {
-        trace!("Serializing usize: {value}");
-        write_u64(self.writer, value as u64) // Assuming usize fits in u64
-    }
-
-    fn serialize_i8(&mut self, value: i8) -> Result<(), Self::Error> {
-        trace!("Serializing i8: {value}");
-        write_i8(self.writer, value)
-    }
-
-    fn serialize_i16(&mut self, value: i16) -> Result<(), Self::Error> {
-        trace!("Serializing i16: {value}");
-        write_i16(self.writer, value)
-    }
-
-    fn serialize_i32(&mut self, value: i32) -> Result<(), Self::Error> {
-        trace!("Serializing i32: {value}");
-        write_i32(self.writer, value)
-    }
-
-    fn serialize_i64(&mut self, value: i64) -> Result<(), Self::Error> {
-        trace!("Serializing i64: {value}");
-        write_i64(self.writer, value)
-    }
-
-    // TODO: Implement serialize_i128 if needed for MessagePack, otherwise return error or panic
-    fn serialize_i128(&mut self, _value: i128) -> Result<(), Self::Error> {
-        Err(io::Error::other(
-            "i128 is not directly supported by MessagePack",
-        ))
-    }
-
-    // Map isize to i64 as MessagePack doesn't have a specific isize type
-    fn serialize_isize(&mut self, value: isize) -> Result<(), Self::Error> {
-        trace!("Serializing isize: {value}");
-        write_i64(self.writer, value as i64) // Assuming isize fits in i64
-    }
-
-    fn serialize_f32(&mut self, value: f32) -> Result<(), Self::Error> {
-        trace!("Serializing f32: {value}");
-        write_f32(self.writer, value)
-    }
-
-    fn serialize_f64(&mut self, value: f64) -> Result<(), Self::Error> {
-        trace!("Serializing f64: {value}");
-        write_f64(self.writer, value)
-    }
-
-    fn serialize_bool(&mut self, value: bool) -> Result<(), Self::Error> {
-        trace!("Serializing bool: {value}");
-        write_bool(self.writer, value)
-    }
-
-    // Characters are often serialized as strings in MessagePack
-    fn serialize_char(&mut self, value: char) -> Result<(), Self::Error> {
-        trace!("Serializing char: {value}");
-        let mut buf = [0; 4];
-        write_str(self.writer, value.encode_utf8(&mut buf))
-    }
-
-    fn serialize_str(&mut self, value: &str) -> Result<(), Self::Error> {
-        trace!("Serializing str: {value}");
-        write_str(self.writer, value)
-    }
-
-    fn serialize_bytes(&mut self, value: &[u8]) -> Result<(), Self::Error> {
-        trace!("Serializing bytes, len: {}", value.len());
-        write_bin(self.writer, value)
-    }
-
-    fn serialize_none(&mut self) -> Result<(), Self::Error> {
-        trace!("Serializing none");
-        write_nil(self.writer)
-    }
-
-    fn serialize_unit(&mut self) -> Result<(), Self::Error> {
-        trace!("Serializing unit");
-        write_nil(self.writer) // Represent unit as nil
-    }
-
-    // Unit variants can be represented as strings or specific codes if needed.
-    // Using string representation for now.
-    fn serialize_unit_variant(
-        &mut self,
-        _variant_index: usize,
-        variant_name: &'static str,
-    ) -> Result<(), Self::Error> {
-        trace!("Serializing unit variant: {variant_name}");
-        write_str(self.writer, variant_name)
-    }
-
-    fn start_object(&mut self, len: Option<usize>) -> Result<(), Self::Error> {
-        trace!("Starting object, len: {len:?}");
-        if let Some(l) = len {
-            write_map_len(self.writer, l)
-        } else {
-            // MessagePack doesn't have an indefinite length map marker.
-            // This might require buffering or a different approach if the length is unknown.
-            // For now, assume length is always known by `facet-serialize`.
-            Err(io::Error::other("MessagePack requires map length upfront"))
+    match (peek.shape().def, peek.shape().ty) {
+        (Def::Scalar, _) => {
+            let peek = peek.innermost_peek();
+            serialize_scalar(peek, writer)
         }
-    }
-
-    fn end_object(&mut self) -> Result<(), Self::Error> {
-        trace!("Ending object");
-        // No explicit end marker needed for fixed-length maps in MessagePack
-        Ok(())
-    }
-
-    fn start_array(&mut self, len: Option<usize>) -> Result<(), Self::Error> {
-        trace!("Starting array, len: {len:?}");
-        if let Some(l) = len {
-            if l == 0 {
-                // In facet's reflection system, unit types `()` are represented as tuples with 0 elements,
-                // which results in empty arrays being serialized. For MessagePack compatibility with
-                // rmp_serde, we serialize empty arrays as nil to match how serde treats unit types.
-                // This ensures consistent behavior between facet-msgpack and rmp_serde.
-                write_nil(self.writer)
+        (Def::List(ld), _) => {
+            // Special case for Vec<u8> - serialize as binary
+            if ld.t().is_type::<u8>() && peek.shape().is_type::<Vec<u8>>() {
+                let bytes = peek.get::<Vec<u8>>().unwrap();
+                write_bin(writer, bytes)
             } else {
-                write_array_len(self.writer, l)
+                let list = peek.into_list_like().unwrap();
+                let items: Vec<_> = list.iter().collect();
+                serialize_array(items, writer)
             }
-        } else {
-            Err(io::Error::other(
-                "MessagePack requires array length upfront",
-            ))
         }
-    }
-
-    fn end_array(&mut self) -> Result<(), Self::Error> {
-        trace!("Ending array");
-        // No explicit end marker needed for fixed-length arrays in MessagePack
-        Ok(())
-    }
-
-    // Maps in facet-serialize correspond to MessagePack maps
-    fn start_map(&mut self, len: Option<usize>) -> Result<(), Self::Error> {
-        trace!("Starting map, len: {len:?}");
-        if let Some(l) = len {
-            write_map_len(self.writer, l)
-        } else {
-            Err(io::Error::other("MessagePack requires map length upfront"))
+        (Def::Array(ad), _) => {
+            if ad.t().is_type::<u8>() {
+                // Collect bytes from array
+                let bytes: Vec<u8> = peek
+                    .into_list_like()
+                    .unwrap()
+                    .iter()
+                    .map(|p| *p.get::<u8>().unwrap())
+                    .collect();
+                write_bin(writer, &bytes)
+            } else {
+                let list = peek.into_list_like().unwrap();
+                let items: Vec<_> = list.iter().collect();
+                serialize_array(items, writer)
+            }
         }
-    }
+        (Def::Slice(sd), _) => {
+            if sd.t().is_type::<u8>() {
+                let bytes = peek.get::<[u8]>().unwrap();
+                write_bin(writer, bytes)
+            } else {
+                let list = peek.into_list_like().unwrap();
+                let items: Vec<_> = list.iter().collect();
+                serialize_array(items, writer)
+            }
+        }
+        (Def::Map(_), _) => {
+            let map = peek.into_map().unwrap();
+            let entries: Vec<_> = map.iter().collect();
+            write_map_len(writer, entries.len())?;
+            for (key, value) in entries {
+                serialize_value(key, writer)?;
+                serialize_value(value, writer)?;
+            }
+            Ok(())
+        }
+        (Def::Set(_), _) => {
+            let set = peek.into_set().unwrap();
+            let items: Vec<_> = set.iter().collect();
+            serialize_array(items, writer)
+        }
+        (Def::Option(_), _) => {
+            let opt = peek.into_option().unwrap();
+            if let Some(inner) = opt.value() {
+                serialize_value(inner, writer)
+            } else {
+                write_nil(writer)
+            }
+        }
+        (Def::Pointer(_), _) => {
+            let ptr = peek.into_pointer().unwrap();
+            if let Some(inner) = ptr.borrow_inner() {
+                serialize_value(inner, writer)
+            } else {
+                Err(io::Error::other(
+                    "Smart pointer without borrow support cannot be serialized",
+                ))
+            }
+        }
+        (_, Type::User(UserType::Struct(sd))) => {
+            match sd.kind {
+                StructKind::Unit => {
+                    // Unit structs serialize as nil
+                    write_nil(writer)
+                }
+                StructKind::Tuple => {
+                    let ps = peek.into_struct().unwrap();
+                    let fields: Vec<_> = ps.fields().map(|(_, v)| v).collect();
+                    if fields.is_empty() {
+                        // Empty tuple (unit type) -> nil for rmp_serde compatibility
+                        write_nil(writer)
+                    } else {
+                        write_array_len(writer, fields.len())?;
+                        for field_value in fields {
+                            serialize_value(field_value, writer)?;
+                        }
+                        Ok(())
+                    }
+                }
+                StructKind::TupleStruct => {
+                    let ps = peek.into_struct().unwrap();
+                    let fields: Vec<_> = ps.fields_for_serialize().collect();
+                    write_array_len(writer, fields.len())?;
+                    for (_, field_value) in fields {
+                        serialize_value(field_value, writer)?;
+                    }
+                    Ok(())
+                }
+                StructKind::Struct => {
+                    let ps = peek.into_struct().unwrap();
+                    let fields: Vec<_> = ps.fields_for_serialize().collect();
+                    write_map_len(writer, fields.len())?;
+                    for (field, field_value) in fields {
+                        write_str(writer, field.name)?;
+                        serialize_value(field_value, writer)?;
+                    }
+                    Ok(())
+                }
+            }
+        }
+        (_, Type::User(UserType::Enum(_))) => {
+            let pe = peek.into_enum().unwrap();
+            let variant = pe.active_variant().expect("Failed to get active variant");
+            trace!("Serializing enum variant: {}", variant.name);
 
-    fn end_map(&mut self) -> Result<(), Self::Error> {
-        trace!("Ending map");
-        // No explicit end marker needed for fixed-length maps in MessagePack
-        Ok(())
-    }
-
-    // Field names are serialized as strings (keys) in MessagePack maps
-    fn serialize_field_name(&mut self, name: &'static str) -> Result<(), Self::Error> {
-        trace!("Serializing field name: {name}");
-        write_str(self.writer, name)
+            if variant.data.fields.is_empty() {
+                // Unit variant - just the name as a string
+                write_str(writer, variant.name)
+            } else if variant.data.kind == StructKind::Tuple && variant.data.fields.len() == 1 {
+                // Newtype variant - serialize as {"VariantName": inner_value}
+                write_map_len(writer, 1)?;
+                write_str(writer, variant.name)?;
+                let fields: Vec<_> = pe.fields_for_serialize().collect();
+                serialize_value(fields[0].1, writer)
+            } else if variant.data.kind == StructKind::Tuple
+                || variant.data.kind == StructKind::TupleStruct
+            {
+                // Tuple variant - serialize as {"VariantName": [values...]}
+                write_map_len(writer, 1)?;
+                write_str(writer, variant.name)?;
+                let fields: Vec<_> = pe.fields_for_serialize().collect();
+                write_array_len(writer, fields.len())?;
+                for (_, field_value) in fields {
+                    serialize_value(field_value, writer)?;
+                }
+                Ok(())
+            } else {
+                // Struct variant - serialize as {"VariantName": {fields...}}
+                write_map_len(writer, 1)?;
+                write_str(writer, variant.name)?;
+                let fields: Vec<_> = pe.fields_for_serialize().collect();
+                write_map_len(writer, fields.len())?;
+                for (field, field_value) in fields {
+                    write_str(writer, field.name)?;
+                    serialize_value(field_value, writer)?;
+                }
+                Ok(())
+            }
+        }
+        (_, Type::Pointer(_)) => {
+            // Handle string types
+            if let Some(s) = peek.as_str() {
+                write_str(writer, s)
+            } else if let Some(bytes) = peek.as_bytes() {
+                write_bin(writer, bytes)
+            } else {
+                let innermost = peek.innermost_peek();
+                if innermost.shape() != peek.shape() {
+                    serialize_value(innermost, writer)
+                } else {
+                    write_nil(writer)
+                }
+            }
+        }
+        _ => {
+            trace!("Unhandled type: {:?}, serializing as nil", peek.shape().ty);
+            write_nil(writer)
+        }
     }
 }
+
+fn serialize_scalar<W: Write>(peek: Peek<'_, '_>, writer: &mut W) -> io::Result<()> {
+    match peek.scalar_type() {
+        Some(ScalarType::Unit) => write_nil(writer),
+        Some(ScalarType::Bool) => {
+            let v = *peek.get::<bool>().unwrap();
+            write_bool(writer, v)
+        }
+        Some(ScalarType::Char) => {
+            let c = *peek.get::<char>().unwrap();
+            let mut buf = [0; 4];
+            write_str(writer, c.encode_utf8(&mut buf))
+        }
+        Some(ScalarType::Str) => write_str(writer, peek.get::<str>().unwrap()),
+        Some(ScalarType::String) => write_str(writer, peek.get::<String>().unwrap()),
+        Some(ScalarType::CowStr) => {
+            write_str(writer, peek.get::<std::borrow::Cow<'_, str>>().unwrap())
+        }
+        Some(ScalarType::F32) => {
+            let v = *peek.get::<f32>().unwrap();
+            write_f32(writer, v)
+        }
+        Some(ScalarType::F64) => {
+            let v = *peek.get::<f64>().unwrap();
+            write_f64(writer, v)
+        }
+        Some(ScalarType::U8) => {
+            let v = *peek.get::<u8>().unwrap();
+            write_u8(writer, v)
+        }
+        Some(ScalarType::U16) => {
+            let v = *peek.get::<u16>().unwrap();
+            write_u16(writer, v)
+        }
+        Some(ScalarType::U32) => {
+            let v = *peek.get::<u32>().unwrap();
+            write_u32(writer, v)
+        }
+        Some(ScalarType::U64) => {
+            let v = *peek.get::<u64>().unwrap();
+            write_u64(writer, v)
+        }
+        Some(ScalarType::U128) => Err(io::Error::other(
+            "u128 is not directly supported by MessagePack",
+        )),
+        Some(ScalarType::USize) => {
+            let v = *peek.get::<usize>().unwrap();
+            write_u64(writer, v as u64)
+        }
+        Some(ScalarType::I8) => {
+            let v = *peek.get::<i8>().unwrap();
+            write_i8(writer, v)
+        }
+        Some(ScalarType::I16) => {
+            let v = *peek.get::<i16>().unwrap();
+            write_i16(writer, v)
+        }
+        Some(ScalarType::I32) => {
+            let v = *peek.get::<i32>().unwrap();
+            write_i32(writer, v)
+        }
+        Some(ScalarType::I64) => {
+            let v = *peek.get::<i64>().unwrap();
+            write_i64(writer, v)
+        }
+        Some(ScalarType::I128) => Err(io::Error::other(
+            "i128 is not directly supported by MessagePack",
+        )),
+        Some(ScalarType::ISize) => {
+            let v = *peek.get::<isize>().unwrap();
+            write_i64(writer, v as i64)
+        }
+        Some(other) => Err(io::Error::other(format!(
+            "Unsupported scalar type: {other:?}"
+        ))),
+        None => Err(io::Error::other(format!(
+            "Unknown scalar shape: {}",
+            peek.shape()
+        ))),
+    }
+}
+
+fn serialize_array<W: Write>(items: Vec<Peek<'_, '_>>, writer: &mut W) -> io::Result<()> {
+    if items.is_empty() {
+        // Empty arrays serialize as nil for rmp_serde compatibility
+        write_nil(writer)
+    } else {
+        write_array_len(writer, items.len())?;
+        for item in items {
+            serialize_value(item, writer)?;
+        }
+        Ok(())
+    }
+}
+
+// --- MessagePack encoding functions ---
 
 fn write_nil<W: Write>(writer: &mut W) -> io::Result<()> {
     writer.write_all(&[0xc0])
@@ -273,10 +353,6 @@ fn write_array_len<W: Write>(writer: &mut W, len: usize) -> io::Result<()> {
         }
     }
 }
-
-// --- Existing write_* functions from the original file ---
-// (write_str, write_u8, write_u16, write_u32, write_u64, write_i8, write_i16, write_i32, write_i64, write_map_len)
-// These remain largely unchanged.
 
 fn write_str<W: Write>(writer: &mut W, s: &str) -> io::Result<()> {
     let bytes = s.as_bytes();
@@ -399,7 +475,7 @@ fn write_i8<W: Write>(writer: &mut W, n: i8) -> io::Result<()> {
         }
         0..=127 => {
             // positive fixint or uint8
-            write_u8(writer, n as u8) // Reuse u8 logic for positive values
+            write_u8(writer, n as u8)
         }
     }
 }
@@ -508,7 +584,7 @@ fn write_map_len<W: Write>(writer: &mut W, len: usize) -> io::Result<()> {
 mod tests {
     use super::*;
     use facet::Facet;
-    use serde::Serialize; // Import serde::Serialize
+    use serde::Serialize;
 
     // Helper function to serialize with rmp_serde
     fn rmp_serialize<T: Serialize>(value: &T) -> Vec<u8> {
@@ -521,7 +597,7 @@ mod tests {
         buf
     }
 
-    #[derive(Facet, Serialize, PartialEq, Debug)] // Add Serialize
+    #[derive(Facet, Serialize, PartialEq, Debug)]
     struct SimpleStruct {
         a: u32,
         b: String,
@@ -542,7 +618,7 @@ mod tests {
         assert_eq!(facet_bytes, rmp_bytes);
     }
 
-    #[derive(Facet, Serialize, PartialEq, Debug)] // Add Serialize
+    #[derive(Facet, Serialize, PartialEq, Debug)]
     struct NestedStruct {
         inner: SimpleStruct,
         d: Option<i8>,
@@ -585,7 +661,7 @@ mod tests {
         assert_eq!(facet_bytes, rmp_bytes);
     }
 
-    #[derive(Facet, Serialize, PartialEq, Debug)] // Add Serialize
+    #[derive(Facet, Serialize, PartialEq, Debug)]
     #[repr(u8)]
     #[allow(dead_code)]
     enum TestEnum {

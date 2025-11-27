@@ -1,4 +1,6 @@
-//! Errors from parsing TOML documents.
+//! Errors from serializing TOML documents.
+
+use alloc::string::String;
 
 /// Any error from serializing TOML.
 pub enum TomlSerError {
@@ -16,6 +18,31 @@ pub enum TomlSerError {
     UnsupportedByteArray,
     /// Invalid array of tables (expected structs)
     InvalidArrayOfTables,
+    /// TOML root must be a struct/table
+    RootMustBeStruct,
+    /// TOML doesn't support None/null values
+    UnsupportedNone,
+    /// TOML doesn't support unit type
+    UnsupportedUnit,
+    /// TOML doesn't support unit structs
+    UnsupportedUnitStruct,
+    /// Unsupported pointer type
+    UnsupportedPointer,
+    /// Unsupported type
+    UnsupportedType {
+        /// Name of the unsupported type
+        type_name: String,
+    },
+    /// Unsupported scalar type
+    UnsupportedScalarType {
+        /// Name of the unsupported scalar type
+        scalar_type: String,
+    },
+    /// Unknown scalar shape
+    UnknownScalarShape {
+        /// Description of the shape
+        shape: String,
+    },
 }
 
 impl core::fmt::Display for TomlSerError {
@@ -32,6 +59,33 @@ impl core::fmt::Display for TomlSerError {
             }
             Self::InvalidArrayOfTables => {
                 write!(f, "Invalid array of tables: expected array of structs")
+            }
+            Self::RootMustBeStruct => {
+                write!(f, "TOML root must be a struct/table")
+            }
+            Self::UnsupportedNone => {
+                write!(f, "TOML doesn't support None/null values")
+            }
+            Self::UnsupportedUnit => {
+                write!(f, "TOML doesn't support unit type")
+            }
+            Self::UnsupportedUnitStruct => {
+                write!(f, "TOML doesn't support unit structs")
+            }
+            Self::UnsupportedPointer => {
+                write!(f, "Unsupported pointer type in TOML serialization")
+            }
+            Self::UnsupportedType { type_name } => {
+                write!(f, "Unsupported type for TOML serialization: {type_name}")
+            }
+            Self::UnsupportedScalarType { scalar_type } => {
+                write!(
+                    f,
+                    "Unsupported scalar type for TOML serialization: {scalar_type}"
+                )
+            }
+            Self::UnknownScalarShape { shape } => {
+                write!(f, "Unknown scalar shape for TOML serialization: {shape}")
             }
         }
     }

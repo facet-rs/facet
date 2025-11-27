@@ -360,9 +360,9 @@ version = "0.31.8"
 dependencies = [
  "cargo-husky",
  "eyre",
- "facet-core 0.31.8",
+ "facet-core",
  "facet-macros",
- "facet-reflect 0.31.8",
+ "facet-reflect",
  "facet-testhelpers",
  "owo-colors",
  "static_assertions",
@@ -374,9 +374,9 @@ version = "0.31.7"
 dependencies = [
  "eyre",
  "facet",
- "facet-core 0.31.8",
+ "facet-core",
  "facet-pretty",
- "facet-reflect 0.31.8",
+ "facet-reflect",
  "heck",
  "insta",
  "log",
@@ -404,16 +404,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-core"
-version = "0.31.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ac27076d75388bffb6c5e5118078dcbb46f2090b35256c45372ff1c1910b1aaf"
-dependencies = [
- "bitflags",
- "impls",
-]
-
-[[package]]
 name = "facet-json"
 version = "0.31.0"
 dependencies = [
@@ -423,9 +413,9 @@ dependencies = [
  "cargo-husky",
  "chrono",
  "facet",
- "facet-core 0.31.8",
+ "facet-core",
  "facet-pretty",
- "facet-reflect 0.31.8",
+ "facet-reflect",
  "facet-solver",
  "facet-testhelpers",
  "insta",
@@ -453,9 +443,9 @@ dependencies = [
  "camino",
  "cargo-husky",
  "facet",
- "facet-core 0.31.8",
+ "facet-core",
  "facet-pretty",
- "facet-reflect 0.31.8",
+ "facet-reflect",
  "facet-solver",
  "indoc",
  "kdl",
@@ -469,7 +459,7 @@ dependencies = [
 name = "facet-macros"
 version = "0.31.8"
 dependencies = [
- "facet-core 0.31.8",
+ "facet-core",
  "facet-macros-emit",
 ]
 
@@ -500,9 +490,8 @@ version = "0.28.0"
 dependencies = [
  "eyre",
  "facet",
- "facet-core 0.31.8",
- "facet-reflect 0.31.8",
- "facet-serialize",
+ "facet-core",
+ "facet-reflect",
  "facet-testhelpers",
  "insta",
  "log",
@@ -516,8 +505,8 @@ version = "0.31.0"
 dependencies = [
  "camino",
  "facet",
- "facet-core 0.31.8",
- "facet-reflect 0.31.8",
+ "facet-core",
+ "facet-reflect",
  "facet-testhelpers",
  "insta",
 ]
@@ -529,7 +518,7 @@ dependencies = [
  "camino",
  "eyre",
  "facet",
- "facet-core 0.31.8",
+ "facet-core",
  "facet-testhelpers",
  "insta",
  "log",
@@ -541,34 +530,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "facet-reflect"
-version = "0.31.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6b533b9a1d809df496881bf3f609dbab510515fd93877ba13cc88c0ba4e9134"
-dependencies = [
- "bitflags",
- "facet-core 0.31.8 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "facet-serialize"
-version = "0.31.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b9e067e54f7fdec10dce0774245217ff27bdb4a511b70de7a09c0e6c0091437"
-dependencies = [
- "facet-core 0.31.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "facet-reflect 0.31.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "log",
-]
-
-[[package]]
 name = "facet-solver"
 version = "0.31.7"
 dependencies = [
  "divan",
  "facet",
- "facet-core 0.31.8",
- "facet-reflect 0.31.8",
+ "facet-core",
+ "facet-reflect",
  "facet-testhelpers",
  "json-event-parser",
  "miette",
@@ -603,9 +571,8 @@ dependencies = [
  "ariadne",
  "eyre",
  "facet",
- "facet-core 0.31.8",
- "facet-reflect 0.31.8",
- "facet-serialize",
+ "facet-core",
+ "facet-reflect",
  "facet-testhelpers",
  "log",
  "num-traits",
@@ -619,8 +586,8 @@ version = "0.30.0"
 dependencies = [
  "eyre",
  "facet",
- "facet-core 0.31.8",
- "facet-reflect 0.31.8",
+ "facet-core",
+ "facet-reflect",
  "facet-testhelpers",
  "form_urlencoded",
  "log",
@@ -635,9 +602,9 @@ dependencies = [
  "cargo-husky",
  "eyre",
  "facet",
- "facet-core 0.31.8",
+ "facet-core",
  "facet-pretty",
- "facet-reflect 0.31.8",
+ "facet-reflect",
  "facet-solver",
  "facet-testhelpers",
  "indoc",

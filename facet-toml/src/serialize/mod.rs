@@ -11,322 +11,376 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use core::ops::{Deref, DerefMut};
-use owo_colors::OwoColorize;
+use facet_core::{Def, Facet, StructKind, Type, UserType};
+use facet_reflect::{HasFields, Peek, ScalarType};
+use log::trace;
+use toml_edit::{Array, DocumentMut, InlineTable, Item, Value};
 
 pub use error::TomlSerError;
-use facet_reflect::HasFields;
-use facet_serialize::{Serialize, Serializer};
-use log::trace;
-use toml_edit::{DocumentMut, Item, Table, Value};
-
-/// Serializer for TOML values.
-pub struct TomlSerializer {
-    /// The TOML document.
-    document: DocumentMut,
-    /// Current stack of where we are in the tree.
-    key_stack: KeyStack,
-    /// What type the current item is.
-    current: KeyOrValue,
-}
-
-impl TomlSerializer {
-    /// Create a new serialzer.
-    pub fn new() -> Self {
-        Self {
-            document: DocumentMut::new(),
-            key_stack: KeyStack::new(),
-            current: KeyOrValue::Value,
-        }
-    }
-
-    /// Get the output serialized TOML document.
-    pub fn into_raw_document(self) -> DocumentMut {
-        self.document
-    }
-
-    /// Get the output serialized TOML string.
-    pub fn into_string(self) -> String {
-        self.document.to_string()
-    }
-
-    /// Write a value depending on the context.
-    fn write_value(&mut self, value: impl Into<Value>) -> Result<(), TomlSerError> {
-        let value = value.into();
-
-        match self.current {
-            // Write the value
-            KeyOrValue::Value => {
-                self.set_current_item(value);
-            }
-            // Push the value as a new item
-            KeyOrValue::Key => {
-                let map_key = value
-                    .as_str()
-                    .ok_or_else(|| TomlSerError::InvalidKeyConversion {
-                        toml_type: value.type_name(),
-                    })?
-                    .to_string();
-                self.push_key(map_key);
-                trace!("Push map key {}", self.key_stack);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Convert the item at the current key to another type.
-    fn set_current_item(&mut self, item: impl Into<Item>) {
-        let item = item.into();
-        trace!("Set item {} to {}", self.key_stack, item.type_name());
-
-        *self.item_mut() = item;
-    }
-
-    /// Get the mutable item for the current key.
-    fn item_mut(&'_ mut self) -> &'_ mut Item {
-        self.key_stack
-            .iter()
-            .fold(self.document.as_item_mut(), |item, key| {
-                item.get_mut(key.as_ref()).unwrap()
-            })
-    }
-
-    /// Create a new empty item at the key.
-    fn push_key(&mut self, key: impl Into<Cow<'static, str>>) {
-        let key = key.into();
-        // Push empty item
-        self.item_mut()
-            .as_table_mut()
-            .expect("the current item to be a table when pushing a new key")
-            .insert(&key, Item::None);
-
-        // Push the key on the stack
-        self.key_stack.push(key);
-    }
-
-    /// Pop the current key, which means the item is finished.
-    fn pop_key(&mut self) {
-        self.key_stack.pop();
-    }
-}
-
-impl Default for TomlSerializer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl Serializer for TomlSerializer {
-    type Error = TomlSerError;
-
-    fn serialize_u64(&mut self, value: u64) -> Result<(), Self::Error> {
-        let toml_number = TryInto::<i64>::try_into(value)
-            .map_err(|_| TomlSerError::InvalidNumberToI64Conversion { source_type: "u64" })?;
-        self.write_value(toml_number)
-    }
-
-    fn serialize_u128(&mut self, value: u128) -> Result<(), Self::Error> {
-        let toml_number = TryInto::<i64>::try_into(value).map_err(|_| {
-            TomlSerError::InvalidNumberToI64Conversion {
-                source_type: "u128",
-            }
-        })?;
-        self.write_value(toml_number)
-    }
-
-    fn serialize_i64(&mut self, value: i64) -> Result<(), Self::Error> {
-        self.write_value(value)
-    }
-
-    fn serialize_i128(&mut self, value: i128) -> Result<(), Self::Error> {
-        let toml_number = TryInto::<i64>::try_into(value).map_err(|_| {
-            TomlSerError::InvalidNumberToI64Conversion {
-                source_type: "i128",
-            }
-        })?;
-        self.write_value(toml_number)
-    }
-
-    fn serialize_f64(&mut self, value: f64) -> Result<(), Self::Error> {
-        self.write_value(value)
-    }
-
-    fn serialize_bool(&mut self, value: bool) -> Result<(), Self::Error> {
-        self.write_value(value)
-    }
-
-    fn serialize_char(&mut self, value: char) -> Result<(), Self::Error> {
-        self.write_value(value.to_string())
-    }
-
-    fn serialize_str(&mut self, value: &str) -> Result<(), Self::Error> {
-        self.write_value(value)
-    }
-
-    fn serialize_bytes(&mut self, _value: &[u8]) -> Result<(), Self::Error> {
-        Err(TomlSerError::UnsupportedByteArray)
-    }
-
-    fn serialize_none(&mut self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn serialize_unit(&mut self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn serialize_unit_variant(
-        &mut self,
-        _variant_index: usize,
-        _variant_name: &'static str,
-    ) -> Result<(), Self::Error> {
-        todo!()
-    }
-
-    fn start_object(&mut self, _len: Option<usize>) -> Result<(), Self::Error> {
-        let mut table = Table::new();
-        // Also show the table when it's empty
-        table.set_implicit(false);
-
-        self.set_current_item(table);
-
-        Ok(())
-    }
-
-    fn start_array(&mut self, _len: Option<usize>) -> Result<(), Self::Error> {
-        self.set_current_item(toml_edit::array());
-
-        Ok(())
-    }
-
-    fn start_map(&mut self, _len: Option<usize>) -> Result<(), Self::Error> {
-        let mut table = Table::new();
-        // Also show the table when it's empty
-        table.set_implicit(false);
-
-        self.set_current_item(table);
-
-        Ok(())
-    }
-
-    fn serialize_field_name(&mut self, name: &'static str) -> Result<(), Self::Error> {
-        self.push_key(name);
-        trace!("Push field {}", self.key_stack);
-
-        Ok(())
-    }
-
-    fn begin_map_key(&mut self) -> Result<(), Self::Error> {
-        self.current = KeyOrValue::Key;
-
-        Ok(())
-    }
-
-    fn end_map_key(&mut self) -> Result<(), Self::Error> {
-        self.current = KeyOrValue::Value;
-
-        Ok(())
-    }
-
-    fn end_map_value(&mut self) -> Result<(), Self::Error> {
-        self.pop_key();
-        trace!("Pop map item {}", self.key_stack);
-
-        Ok(())
-    }
-
-    fn end_field(&mut self) -> Result<(), Self::Error> {
-        self.pop_key();
-        trace!("Pop field {}", self.key_stack);
-
-        Ok(())
-    }
-}
-
-/// What type the current item is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum KeyOrValue {
-    /// First part of a map item.
-    Key,
-    /// A regular value, can be a field, array item, etc.
-    Value,
-}
-
-#[derive(Debug, Clone, PartialEq, Default)]
-struct KeyStack(Vec<Cow<'static, str>>);
-
-impl KeyStack {
-    fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl Deref for KeyStack {
-    type Target = Vec<Cow<'static, str>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for KeyStack {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
-
-impl core::fmt::Display for KeyStack {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let mut iter = self.iter();
-        if let Some(first) = iter.next() {
-            write!(f, "[{}", first.cyan())?;
-            for key in iter {
-                write!(f, ".{}", key.cyan())?;
-            }
-            write!(f, "]")?;
-        } else {
-            write!(f, "«{}»", "root".red())?;
-        }
-        Ok(())
-    }
-}
 
 /// Serialize any `Facet` type to a TOML string.
 #[cfg(feature = "alloc")]
-pub fn to_string<'a, T: facet_core::Facet<'a>>(value: &'a T) -> Result<String, TomlSerError> {
-    // First peek at the value to understand its structure
-    let peek = facet_reflect::Peek::new(value);
+pub fn to_string<'a, T: Facet<'a>>(value: &'a T) -> Result<String, TomlSerError> {
+    let peek = Peek::new(value);
 
     // Check if the root is a struct with fields that are arrays of tables
     if let Ok(struct_peek) = peek.into_struct() {
-        let mut serializer = TomlSerializer::new();
+        let mut doc = DocumentMut::new();
 
         // Process each field
         for (field, field_value) in struct_peek.fields_for_serialize() {
+            // Skip None values - TOML doesn't have null
+            if let Def::Option(_) = field_value.shape().def {
+                let opt = field_value.into_option().unwrap();
+                if let Some(inner) = opt.value() {
+                    // Skip unit types inside Option
+                    if is_unit_like(&inner) {
+                        continue;
+                    }
+                    // Check if this field is an array of tables
+                    if array_of_tables::is_array_of_tables(&inner) {
+                        let list = inner.into_list_like().unwrap();
+                        let aot = array_of_tables::serialize_array_of_tables(list)?;
+                        doc.insert(field.name, Item::ArrayOfTables(aot));
+                    } else {
+                        let item = serialize_to_item(inner)?;
+                        doc.insert(field.name, item);
+                    }
+                }
+                // Skip None
+                continue;
+            }
+
+            // Skip unit types - TOML doesn't support unit
+            if is_unit_like(&field_value) {
+                continue;
+            }
+
             // Check if this field is an array of tables
             if array_of_tables::is_array_of_tables(&field_value) {
                 // Handle array of tables specially
                 let list = field_value.into_list_like().unwrap();
                 let aot = array_of_tables::serialize_array_of_tables(list)?;
-                serializer
-                    .document
-                    .insert(field.name, Item::ArrayOfTables(aot));
+                doc.insert(field.name, Item::ArrayOfTables(aot));
             } else {
                 // Normal field serialization
-                serializer.push_key(field.name);
-                trace!("Push field {}", field.name);
-                facet_serialize::serialize_iterative(field_value, &mut serializer)?;
-                serializer.pop_key();
-                trace!("Pop field {}", field.name);
+                let item = serialize_to_item(field_value)?;
+                doc.insert(field.name, item);
             }
         }
 
-        Ok(serializer.into_string())
+        Ok(doc.to_string())
     } else {
-        // Not a struct at root, use normal serialization
-        let mut serializer = TomlSerializer::new();
-        value.serialize(&mut serializer)?;
-        Ok(serializer.into_string())
+        // Not a struct at root - TOML requires root to be a table
+        Err(TomlSerError::RootMustBeStruct)
+    }
+}
+
+/// Check if a Peek value represents a unit type ((), unit struct, or empty tuple)
+/// or a list/array of unit types (which also can't be represented in TOML)
+fn is_unit_like(peek: &Peek<'_, '_>) -> bool {
+    match peek.scalar_type() {
+        Some(ScalarType::Unit) => return true,
+        _ => {}
+    }
+    match (peek.shape().def, peek.shape().ty) {
+        (_, Type::User(UserType::Struct(sd))) => {
+            if sd.kind == StructKind::Unit {
+                return true;
+            }
+            // Empty tuple struct
+            if (sd.kind == StructKind::Tuple || sd.kind == StructKind::TupleStruct)
+                && sd.fields.is_empty()
+            {
+                return true;
+            }
+        }
+        // Check if it's a list/array of unit types
+        (Def::List(ld), _) => {
+            if let Type::User(UserType::Struct(sd)) = ld.t().ty {
+                if sd.kind == StructKind::Unit {
+                    return true;
+                }
+            }
+        }
+        (Def::Array(ad), _) => {
+            if let Type::User(UserType::Struct(sd)) = ad.t().ty {
+                if sd.kind == StructKind::Unit {
+                    return true;
+                }
+            }
+        }
+        _ => {}
+    }
+    false
+}
+
+/// Serialize a Peek value to a TOML Item
+pub(crate) fn serialize_to_item(peek: Peek<'_, '_>) -> Result<Item, TomlSerError> {
+    serialize_value(peek).map(Item::Value)
+}
+
+/// Serialize a Peek value to a TOML Value
+fn serialize_value(peek: Peek<'_, '_>) -> Result<Value, TomlSerError> {
+    trace!("Serializing value, shape is {}", peek.shape());
+
+    match (peek.shape().def, peek.shape().ty) {
+        (Def::Scalar, _) => {
+            let peek = peek.innermost_peek();
+            serialize_scalar(peek)
+        }
+        (Def::List(_), _) | (Def::Array(_), _) | (Def::Slice(_), _) => {
+            let list = peek.into_list_like().unwrap();
+            let mut array = Array::new();
+            for item in list.iter() {
+                array.push(serialize_value(item)?);
+            }
+            Ok(Value::Array(array))
+        }
+        (Def::Map(_), _) => {
+            let map = peek.into_map().unwrap();
+            let mut table = InlineTable::new();
+            for (key, value) in map.iter() {
+                let key_str = key
+                    .as_str()
+                    .ok_or_else(|| TomlSerError::InvalidKeyConversion {
+                        toml_type: "non-string map key",
+                    })?;
+                table.insert(key_str, serialize_value(value)?);
+            }
+            Ok(Value::InlineTable(table))
+        }
+        (Def::Set(_), _) => {
+            let set = peek.into_set().unwrap();
+            let mut array = Array::new();
+            for item in set.iter() {
+                array.push(serialize_value(item)?);
+            }
+            Ok(Value::Array(array))
+        }
+        (Def::Option(_), _) => {
+            let opt = peek.into_option().unwrap();
+            if let Some(inner) = opt.value() {
+                serialize_value(inner)
+            } else {
+                // TOML doesn't have null, so we skip None values at the field level
+                // But if we're serializing a standalone Option, we need to handle it
+                Err(TomlSerError::UnsupportedNone)
+            }
+        }
+        (Def::Pointer(_), _) => {
+            let ptr = peek.into_pointer().unwrap();
+            if let Some(inner) = ptr.borrow_inner() {
+                serialize_value(inner)
+            } else {
+                Err(TomlSerError::UnsupportedPointer)
+            }
+        }
+        (_, Type::User(UserType::Struct(sd))) => {
+            match sd.kind {
+                StructKind::Unit => {
+                    // Unit structs - TOML doesn't have a good representation
+                    Err(TomlSerError::UnsupportedUnitStruct)
+                }
+                StructKind::Tuple | StructKind::TupleStruct => {
+                    let ps = peek.into_struct().unwrap();
+                    let fields: Vec<_> = ps.fields_for_serialize().collect();
+                    match fields.len() {
+                        0 => {
+                            // Empty tuple () - TOML doesn't support unit type
+                            Err(TomlSerError::UnsupportedUnit)
+                        }
+                        1 => {
+                            // Newtype tuple struct - serialize as just the inner value
+                            serialize_value(fields[0].1)
+                        }
+                        _ => {
+                            // Multi-field tuple structs serialize as arrays
+                            let mut array = Array::new();
+                            for (_, field_value) in fields {
+                                array.push(serialize_value(field_value)?);
+                            }
+                            Ok(Value::Array(array))
+                        }
+                    }
+                }
+                StructKind::Struct => {
+                    // Regular structs serialize as inline tables
+                    let ps = peek.into_struct().unwrap();
+                    let mut table = InlineTable::new();
+                    for (field, field_value) in ps.fields_for_serialize() {
+                        // Skip None values
+                        if let Def::Option(_) = field_value.shape().def {
+                            let opt = field_value.into_option().unwrap();
+                            if let Some(inner) = opt.value() {
+                                table.insert(field.name, serialize_value(inner)?);
+                            }
+                            // Skip None
+                        } else {
+                            table.insert(field.name, serialize_value(field_value)?);
+                        }
+                    }
+                    Ok(Value::InlineTable(table))
+                }
+            }
+        }
+        (_, Type::User(UserType::Enum(_))) => {
+            let pe = peek.into_enum().unwrap();
+            let variant = pe.active_variant().expect("Failed to get active variant");
+            trace!("Serializing enum variant: {}", variant.name);
+
+            if variant.data.fields.is_empty() {
+                // Unit variant - serialize as string
+                Ok(Value::String(toml_edit::Formatted::new(
+                    variant.name.to_string(),
+                )))
+            } else {
+                // Variants with data - serialize as inline table with variant name as key
+                let mut outer = InlineTable::new();
+                let inner = if variant.data.kind == StructKind::Tuple
+                    || variant.data.kind == StructKind::TupleStruct
+                {
+                    // Tuple variant - value is array
+                    let fields: Vec<_> = pe.fields_for_serialize().collect();
+                    if fields.len() == 1 {
+                        // Newtype variant - just the inner value
+                        serialize_value(fields[0].1)?
+                    } else {
+                        let mut array = Array::new();
+                        for (_, field_value) in fields {
+                            array.push(serialize_value(field_value)?);
+                        }
+                        Value::Array(array)
+                    }
+                } else {
+                    // Struct variant - value is inline table
+                    let mut table = InlineTable::new();
+                    for (field, field_value) in pe.fields_for_serialize() {
+                        table.insert(field.name, serialize_value(field_value)?);
+                    }
+                    Value::InlineTable(table)
+                };
+                outer.insert(variant.name, inner);
+                Ok(Value::InlineTable(outer))
+            }
+        }
+        (_, Type::Pointer(_)) => {
+            // Handle string types
+            if let Some(s) = peek.as_str() {
+                Ok(Value::String(toml_edit::Formatted::new(s.to_string())))
+            } else {
+                let innermost = peek.innermost_peek();
+                if innermost.shape() != peek.shape() {
+                    serialize_value(innermost)
+                } else {
+                    Err(TomlSerError::UnsupportedPointer)
+                }
+            }
+        }
+        _ => {
+            trace!("Unhandled type: {:?}", peek.shape().ty);
+            Err(TomlSerError::UnsupportedType {
+                type_name: alloc::format!("{:?}", peek.shape().ty),
+            })
+        }
+    }
+}
+
+fn serialize_scalar(peek: Peek<'_, '_>) -> Result<Value, TomlSerError> {
+    match peek.scalar_type() {
+        Some(ScalarType::Unit) => Err(TomlSerError::UnsupportedUnit),
+        Some(ScalarType::Bool) => {
+            let v = *peek.get::<bool>().unwrap();
+            Ok(Value::Boolean(toml_edit::Formatted::new(v)))
+        }
+        Some(ScalarType::Char) => {
+            let c = *peek.get::<char>().unwrap();
+            Ok(Value::String(toml_edit::Formatted::new(c.to_string())))
+        }
+        Some(ScalarType::Str) => {
+            let s = peek.get::<str>().unwrap();
+            Ok(Value::String(toml_edit::Formatted::new(s.to_string())))
+        }
+        Some(ScalarType::String) => {
+            let s = peek.get::<String>().unwrap();
+            Ok(Value::String(toml_edit::Formatted::new(s.clone())))
+        }
+        Some(ScalarType::CowStr) => {
+            let s = peek.get::<Cow<'_, str>>().unwrap();
+            Ok(Value::String(toml_edit::Formatted::new(s.to_string())))
+        }
+        Some(ScalarType::F32) => {
+            let v = *peek.get::<f32>().unwrap();
+            Ok(Value::Float(toml_edit::Formatted::new(v as f64)))
+        }
+        Some(ScalarType::F64) => {
+            let v = *peek.get::<f64>().unwrap();
+            Ok(Value::Float(toml_edit::Formatted::new(v)))
+        }
+        Some(ScalarType::U8) => {
+            let v = *peek.get::<u8>().unwrap();
+            Ok(Value::Integer(toml_edit::Formatted::new(v as i64)))
+        }
+        Some(ScalarType::U16) => {
+            let v = *peek.get::<u16>().unwrap();
+            Ok(Value::Integer(toml_edit::Formatted::new(v as i64)))
+        }
+        Some(ScalarType::U32) => {
+            let v = *peek.get::<u32>().unwrap();
+            Ok(Value::Integer(toml_edit::Formatted::new(v as i64)))
+        }
+        Some(ScalarType::U64) => {
+            let v = *peek.get::<u64>().unwrap();
+            let i = i64::try_from(v)
+                .map_err(|_| TomlSerError::InvalidNumberToI64Conversion { source_type: "u64" })?;
+            Ok(Value::Integer(toml_edit::Formatted::new(i)))
+        }
+        Some(ScalarType::U128) => {
+            let v = *peek.get::<u128>().unwrap();
+            let i = i64::try_from(v).map_err(|_| TomlSerError::InvalidNumberToI64Conversion {
+                source_type: "u128",
+            })?;
+            Ok(Value::Integer(toml_edit::Formatted::new(i)))
+        }
+        Some(ScalarType::USize) => {
+            let v = *peek.get::<usize>().unwrap();
+            let i = i64::try_from(v).map_err(|_| TomlSerError::InvalidNumberToI64Conversion {
+                source_type: "usize",
+            })?;
+            Ok(Value::Integer(toml_edit::Formatted::new(i)))
+        }
+        Some(ScalarType::I8) => {
+            let v = *peek.get::<i8>().unwrap();
+            Ok(Value::Integer(toml_edit::Formatted::new(v as i64)))
+        }
+        Some(ScalarType::I16) => {
+            let v = *peek.get::<i16>().unwrap();
+            Ok(Value::Integer(toml_edit::Formatted::new(v as i64)))
+        }
+        Some(ScalarType::I32) => {
+            let v = *peek.get::<i32>().unwrap();
+            Ok(Value::Integer(toml_edit::Formatted::new(v as i64)))
+        }
+        Some(ScalarType::I64) => {
+            let v = *peek.get::<i64>().unwrap();
+            Ok(Value::Integer(toml_edit::Formatted::new(v)))
+        }
+        Some(ScalarType::I128) => {
+            let v = *peek.get::<i128>().unwrap();
+            let i = i64::try_from(v).map_err(|_| TomlSerError::InvalidNumberToI64Conversion {
+                source_type: "i128",
+            })?;
+            Ok(Value::Integer(toml_edit::Formatted::new(i)))
+        }
+        Some(ScalarType::ISize) => {
+            let v = *peek.get::<isize>().unwrap();
+            Ok(Value::Integer(toml_edit::Formatted::new(v as i64)))
+        }
+        Some(other) => Err(TomlSerError::UnsupportedScalarType {
+            scalar_type: alloc::format!("{other:?}"),
+        }),
+        None => Err(TomlSerError::UnknownScalarShape {
+            shape: alloc::format!("{}", peek.shape()),
+        }),
     }
 }
