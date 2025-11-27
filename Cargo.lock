@@ -377,13 +377,11 @@ dependencies = [
 name = "facet-reflect"
 version = "0.31.8"
 dependencies = [
- "bitflags",
  "camino",
  "eyre",
  "facet",
  "facet-core",
  "facet-testhelpers",
- "indexset",
  "insta",
  "log",
  "miette",
@@ -463,15 +461,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
-]
-
-[[package]]
-name = "ftree"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ae0379499242d3b9355c5069b43b9417def8c9b09903b930db1fe49318dc9e9"
-dependencies = [
- "serde",
 ]
 
 [[package]]
@@ -644,15 +633,6 @@ checksum = "0ad4bb2b565bca0645f4d68c5c9af97fba094e9791da685bf83cb5f3ce74acf2"
 dependencies = [
  "equivalent",
  "hashbrown",
-]
-
-[[package]]
-name = "indexset"
-version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff794cab64c942437d60272e215f923d466b23dfa6c999cdd0cafe5b6d170805"
-dependencies = [
- "ftree",
 ]
 
 [[package]]
@@ -1196,7 +1176,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
- "serde_derive",
 ]
 
 [[package]]
