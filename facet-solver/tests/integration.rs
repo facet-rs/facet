@@ -2312,8 +2312,7 @@ fn test_schema_build_auto_internally_tagged() {
         let field_names: Vec<_> = resolution.fields().keys().copied().collect();
         assert!(
             field_names.contains(&"type"),
-            "Expected 'type' tag field, got: {:?}",
-            field_names
+            "Expected 'type' tag field, got: {field_names:?}"
         );
     }
 }
@@ -2350,8 +2349,7 @@ fn test_schema_build_auto_adjacently_tagged() {
         let field_names: Vec<_> = resolution.fields().keys().copied().collect();
         assert!(
             field_names.contains(&"kind"),
-            "Expected 'kind' tag field, got: {:?}",
-            field_names
+            "Expected 'kind' tag field, got: {field_names:?}"
         );
     }
 }

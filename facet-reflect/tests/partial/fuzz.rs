@@ -635,3 +635,15 @@ fn wip_fuzz_deferred_finish_without_begin() {
     // Should return an error, not panic
     assert!(result.is_err());
 }
+
+/// Reproducer for fuzz artifact f28ffd5b1dc26c052afaef7f862f83396d8798c5
+/// Operations: BeginField(Name), SetString("aaaaaaaaaaaa")
+#[::core::prelude::v1::test]
+fn wip_fuzz_begin_field_set_string_drop() {
+    let mut partial = Partial::alloc::<FuzzTarget>().unwrap();
+    // BeginField(Name)
+    let _ = partial.begin_field("name");
+    // SetString("aaaaaaaaaaaa")
+    let _ = partial.set(String::from("aaaaaaaaaaaa"));
+    // Partial dropped here - must not leak or crash
+}

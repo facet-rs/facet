@@ -1084,12 +1084,13 @@ impl<'a> ProbingSolver<'a> {
 // ============================================================================
 
 /// How enum variants are represented in the serialized format.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum EnumRepr {
     /// Variant fields are flattened to the same level as other fields.
     /// Also used for `#[facet(untagged)]` enums where there's no tag at all.
     /// Used by formats like KDL, TOML where all fields appear at one level.
     /// Example: `{"name": "...", "host": "...", "port": 8080}`
+    #[default]
     Flattened,
 
     /// Variant name is a key, variant content is nested under it.
@@ -1114,12 +1115,6 @@ pub enum EnumRepr {
         /// The name of the content field (e.g., "c")
         content: &'static str,
     },
-}
-
-impl Default for EnumRepr {
-    fn default() -> Self {
-        EnumRepr::Flattened
-    }
 }
 
 impl EnumRepr {
