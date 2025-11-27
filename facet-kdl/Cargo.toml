@@ -1,0 +1,31 @@
+[package]
+name = "facet-kdl"
+version = "0.31.0"
+edition = "2024"
+license = "MIT or Apache-2.0"
+description = "KDL serialization and deserialization for Facet types"
+
+[features]
+std = ["alloc", "facet-core/std", "facet-reflect/std"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc"]
+default = ["std"]
+
+[dependencies]
+log = "0.4"
+facet-core = { path = "../facet/facet-core" }
+facet-reflect = { path = "../facet/facet-reflect", features = ["miette"] }
+facet-solver = { path = "../facet/facet-solver" }
+kdl = "6.5.0"
+miette = "7"
+
+[dev-dependencies]
+facet = { path = "../facet/facet" }
+facet-core = { path = "../facet/facet-core", features = ["camino"] }
+facet-pretty = { path = "../facet-pretty" }
+camino = "1"
+miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
+indoc = "2.0.7"
+cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
+owo-colors = "4"
+syntect = "5.3"
+boxen = "0.1"
