@@ -1,5 +1,6 @@
 //! YAML serialization using facet-reflect's Peek API.
 
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use std::io::Write;
