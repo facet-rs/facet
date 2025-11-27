@@ -326,7 +326,7 @@ impl Diagnostic for KdlDiagnostic {
 /// Returns (start, end) byte offsets
 fn find_property_span(source: &str, property_name: &str) -> Option<(usize, usize)> {
     // Look for "property_name=" pattern
-    let pattern = format!("{}=", property_name);
+    let pattern = format!("{property_name}=");
     if let Some(start) = source.find(&pattern) {
         return Some((start, start + property_name.len()));
     }
@@ -496,7 +496,7 @@ fn help_from_solver_error(err: &SolverError, include_suggestions: bool) -> Strin
                     let variant_name = candidate.split("::").last().unwrap_or(candidate);
                     help.push_str(&format!(
                         "  {}node-name {} ...\n",
-                        format!("({})", variant_name).cyan(),
+                        format!("({variant_name})").cyan(),
                         "\"arg\"".dimmed()
                     ));
                 }
@@ -647,7 +647,7 @@ fn scenario_ambiguous_enum() {
                     help_from_solver_error(solver_err, true), // include suggestions in help
                 )
             } else {
-                (format!("{}", e), format!("(non-solver error)"))
+                (format!("{e}"), "(non-solver error)".to_string())
             };
 
             let diagnostic = KdlDiagnostic::new("config.kdl", kdl, message)
@@ -688,7 +688,7 @@ fn scenario_no_match_with_failures() {
                     build_suggestion_labels(kdl, solver_err),
                 )
             } else {
-                (format!("{}", e), format!("(non-solver error)"), vec![])
+                (format!("{e}"), "(non-solver error)".to_string(), vec![])
             };
 
             let mut diagnostic = KdlDiagnostic::new("config.kdl", kdl, message);
@@ -729,7 +729,7 @@ fn scenario_typo_suggestions() {
                     build_suggestion_labels(kdl, solver_err),
                 )
             } else {
-                (format!("{}", e), format!("(non-solver error)"), vec![])
+                (format!("{e}"), "(non-solver error)".to_string(), vec![])
             };
 
             let mut diagnostic = KdlDiagnostic::new("config.kdl", kdl, message);
@@ -763,7 +763,7 @@ fn scenario_value_overflow() {
         Ok(_) => println!("\nUnexpected success!"),
         Err(e) => {
             println!("\n{}", "Error (raw):".bold().red());
-            println!("  {}", e);
+            println!("  {e}");
             println!("\n(This is a real error from facet-kdl's value-based disambiguation!)");
         }
     }
@@ -804,7 +804,7 @@ fn scenario_multiline() {
                     build_suggestion_labels(kdl, solver_err),
                 )
             } else {
-                (format!("{}", e), format!("(non-solver error)"), vec![])
+                (format!("{e}"), "(non-solver error)".to_string(), vec![])
             };
 
             let mut diagnostic = KdlDiagnostic::new("database.kdl", kdl, message);

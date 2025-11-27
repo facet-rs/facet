@@ -32,8 +32,8 @@ fn kdl_parse_error() {
     assert!(result.is_err());
 
     let err = result.unwrap_err();
-    let err_msg = format!("{}", err);
-    println!("Parse error: {}", err_msg);
+    let err_msg = format!("{err}");
+    println!("Parse error: {err_msg}");
 
     // The error should mention something about the parse failure
     assert!(!err_msg.is_empty());
@@ -105,7 +105,7 @@ fn miette_semantic_error_with_spanned() {
         Err(ValidationError {
             src: kdl_source.to_string(),
             span: config.server.port.span(),
-            message: format!("invalid port number: {}", port_value),
+            message: format!("invalid port number: {port_value}"),
         })
     } else {
         Ok(())
@@ -119,7 +119,7 @@ fn miette_semantic_error_with_spanned() {
     let handler = GraphicalReportHandler::new_themed(GraphicalTheme::unicode());
     handler.render_report(&mut output, &err).unwrap();
 
-    println!("Semantic error diagnostic:\n{}", output);
+    println!("Semantic error diagnostic:\n{output}");
 
     // The diagnostic should highlight the port=0 span
     assert!(output.contains("invalid"));
@@ -205,7 +205,7 @@ fn miette_multiple_validation_errors() {
     let handler = GraphicalReportHandler::new_themed(GraphicalTheme::unicode());
     handler.render_report(&mut output, &err).unwrap();
 
-    println!("Multiple validation errors:\n{}", output);
+    println!("Multiple validation errors:\n{output}");
 
     // Should show both issues
     assert!(output.contains("timeout"));

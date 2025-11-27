@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 use eyre::Result;
 use facet::Facet;
-use facet_yaml::YamlError;
 
 use crate::assert_serialize;
 

@@ -60,7 +60,7 @@ impl Display for YamlError {
     }
 }
 
-impl std::error::Error for YamlError {}
+impl core::error::Error for YamlError {}
 
 impl miette::Diagnostic for YamlError {
     fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {

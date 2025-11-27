@@ -86,7 +86,7 @@ fn print_type_def(type_def: &str) {
     for line in LinesWithEndings::from(type_def) {
         let ranges: Vec<(Style, &str)> = h.highlight_line(line, &ps).unwrap();
         let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
-        print!("    {}", escaped);
+        print!("    {escaped}");
     }
     println!("\x1b[0m"); // Reset terminal colors and add newline
     println!("{}", "─".repeat(60).dimmed());

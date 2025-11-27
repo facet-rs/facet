@@ -58,7 +58,7 @@ fn print_yaml(yaml: &str) {
 
     let mut h = HighlightLines::new(syntax, theme);
     for (i, line) in yaml.lines().enumerate() {
-        let line_with_newline = format!("{}\n", line);
+        let line_with_newline = format!("{line}\n");
         let ranges: Vec<(Style, &str)> = h.highlight_line(&line_with_newline, &ps).unwrap();
         let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
         print!(
@@ -86,7 +86,7 @@ fn print_type_def(type_def: &str) {
     for line in LinesWithEndings::from(type_def) {
         let ranges: Vec<(Style, &str)> = h.highlight_line(line, &ps).unwrap();
         let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
-        print!("    {}", escaped);
+        print!("    {escaped}");
     }
     println!("\x1b[0m"); // Reset terminal colors and add newline
     println!("{}", "─".repeat(60).dimmed());
@@ -262,7 +262,7 @@ name: 123"#;
     match result {
         Ok(item) => {
             println!("\n{}", "Success (with coercion):".bold().green());
-            println!("  {:?}", item);
+            println!("  {item:?}");
         }
         Err(e) => {
             println!("\n{}", "Error:".bold().red());
@@ -562,7 +562,7 @@ name: second"#;
                 "\n{}",
                 "Note: Duplicate keys may be allowed:".bold().yellow()
             );
-            println!("  {:?}", config);
+            println!("  {config:?}");
         }
         Err(e) => {
             println!("\n{}", "Error:".bold().red());
@@ -610,7 +610,7 @@ staging:
     match result {
         Ok(configs) => {
             println!("\n{}", "Success:".bold().green());
-            println!("  {:?}", configs);
+            println!("  {configs:?}");
         }
         Err(e) => {
             println!("\n{}", "Error:".bold().red());

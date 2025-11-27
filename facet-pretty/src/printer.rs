@@ -978,13 +978,6 @@ impl PrettyPrinter {
         }
     }
 
-    /// Style a comment and return it as a string
-    fn style_comment(&self, text: &str) -> String {
-        let mut result = String::new();
-        self.write_comment(&mut result, text).unwrap();
-        result
-    }
-
     /// Write styled redacted value to formatter
     fn write_redacted<W: fmt::Write>(&self, f: &mut W, text: &str) -> fmt::Result {
         if self.use_colors {

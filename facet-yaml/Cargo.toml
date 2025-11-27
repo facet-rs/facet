@@ -14,6 +14,9 @@ std = ["alloc", "facet-core/std", "facet-reflect/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 default = ["std"]
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"time\"))"] }
+
 [dependencies]
 saphyr-parser = { git = "https://github.com/facet-rs/saphyr.git", branch = "feat/clone-parser-scanner" }
 facet-core = { path = "../facet-core", default-features = false }

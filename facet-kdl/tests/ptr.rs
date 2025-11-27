@@ -1,3 +1,6 @@
+// Allow box_collection in tests since we're specifically testing Box<String> handling
+#![allow(clippy::box_collection)]
+
 use facet::Facet;
 use indoc::indoc;
 
@@ -181,7 +184,7 @@ fn option_box_combination() {
     let config: Config = facet_kdl::from_str(kdl).unwrap();
     assert_eq!(config.server.name, "main");
     assert_eq!(
-        config.server.description.as_ref().map(|b| &**b),
+        config.server.description.as_deref(),
         Some(&"Primary server".to_string())
     );
 

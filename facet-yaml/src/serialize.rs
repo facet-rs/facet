@@ -67,7 +67,7 @@ pub fn to_string<T: Facet<'static>>(value: &T) -> Result<String> {
 /// This is the streaming version of [`to_string`].
 pub fn to_writer<W: Write, T: Facet<'static>>(mut writer: W, value: &T) -> Result<()> {
     // Write document start marker
-    write!(writer, "---\n")
+    writeln!(writer, "---")
         .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
     let peek = Peek::new(value);
     let mut serializer = YamlSerializer::new(writer);
@@ -122,7 +122,7 @@ impl<W: Write> YamlSerializer<W> {
             write!(self.writer, "\"{}\"", escape_string(key))
                 .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
         } else {
-            write!(self.writer, "{}", key)
+            write!(self.writer, "{key}")
                 .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
         }
         Ok(())
@@ -337,17 +337,15 @@ impl<W: Write> YamlSerializer<W> {
             }
 
             // Check skip_serializing_if
-            if let Some(skip_fn) = field.vtable.skip_serializing_if {
+            if let Some(_skip_fn) = field.vtable.skip_serializing_if {
                 // Get the raw pointer to the field value
                 // This is tricky - for now, skip this optimization
                 // TODO: implement skip_serializing_if properly
             }
 
-            if !first || !is_root {
-                if first && !is_root {
-                    writeln!(self.writer)
-                        .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
-                }
+            if first && !is_root {
+                writeln!(self.writer)
+                    .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
             }
 
             if !first {
@@ -362,12 +360,7 @@ impl<W: Write> YamlSerializer<W> {
             write!(self.writer, ": ")
                 .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
 
-            // Check if value is complex (struct, list, map) and needs newline
-            if self.is_complex_value(&field_peek) {
-                self.serialize_value(field_peek, indent + 1, false)?;
-            } else {
-                self.serialize_value(field_peek, indent + 1, false)?;
-            }
+            self.serialize_value(field_peek, indent + 1, false)?;
 
             first = false;
         }
@@ -416,7 +409,7 @@ impl<W: Write> YamlSerializer<W> {
             // Newtype variant: VariantName: value
             write!(self.writer, " ")
                 .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
-            self.serialize_value(fields[0].1.clone(), indent + 1, false)?;
+            self.serialize_value(fields[0].1, indent + 1, false)?;
         } else if is_tuple {
             // Tuple variant: VariantName: [items]
             writeln!(self.writer)
@@ -478,11 +471,7 @@ impl<W: Write> YamlSerializer<W> {
             self.write_indent(indent)?;
             write!(self.writer, "- ")
                 .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
-            if self.is_complex_value(&item) {
-                self.serialize_value(item, indent + 1, false)?;
-            } else {
-                self.serialize_value(item, indent + 1, false)?;
-            }
+            self.serialize_value(item, indent + 1, false)?;
             writeln!(self.writer)
                 .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
         }
@@ -526,11 +515,7 @@ impl<W: Write> YamlSerializer<W> {
             write!(self.writer, ": ")
                 .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
 
-            if self.is_complex_value(&value_peek) {
-                self.serialize_value(value_peek, indent + 1, false)?;
-            } else {
-                self.serialize_value(value_peek, indent + 1, false)?;
-            }
+            self.serialize_value(value_peek, indent + 1, false)?;
 
             writeln!(self.writer)
                 .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
@@ -539,6 +524,7 @@ impl<W: Write> YamlSerializer<W> {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn is_complex_value<'mem, 'facet>(&self, peek: &Peek<'mem, 'facet>) -> bool {
         let peek = peek.innermost_peek();
 
