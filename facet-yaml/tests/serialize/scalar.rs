@@ -2,7 +2,6 @@
 
 use alloc::borrow::Cow;
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use facet_yaml::YamlSerError;
 
 use eyre::Result;
 use facet::Facet;
@@ -413,7 +412,7 @@ fn test_unit_option() -> Result<()> {
 }
 
 #[test]
-fn test_u64_out_of_range() -> Result<()> {
+fn test_u64_large() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -421,16 +420,15 @@ fn test_u64_out_of_range() -> Result<()> {
         value: u64,
     }
 
-    assert!(matches!(
-        facet_yaml::to_string(&Root { value: u64::MAX }).unwrap_err(),
-        YamlSerError::InvalidNumberToI64Conversion { .. }
-    ));
+    // New implementation handles large numbers as strings
+    let result = facet_yaml::to_string(&Root { value: u64::MAX });
+    assert!(result.is_ok());
 
     Ok(())
 }
 
 #[test]
-fn test_u128_out_of_range() -> Result<()> {
+fn test_u128_large() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -438,16 +436,15 @@ fn test_u128_out_of_range() -> Result<()> {
         value: u128,
     }
 
-    assert!(matches!(
-        facet_yaml::to_string(&Root { value: u128::MAX }).unwrap_err(),
-        YamlSerError::InvalidNumberToI64Conversion { .. }
-    ));
+    // New implementation handles large numbers
+    let result = facet_yaml::to_string(&Root { value: u128::MAX });
+    assert!(result.is_ok());
 
     Ok(())
 }
 
 #[test]
-fn test_i128_out_of_range() -> Result<()> {
+fn test_i128_large() -> Result<()> {
     facet_testhelpers::setup();
 
     #[derive(Debug, Facet, PartialEq)]
@@ -455,10 +452,9 @@ fn test_i128_out_of_range() -> Result<()> {
         value: i128,
     }
 
-    assert!(matches!(
-        facet_yaml::to_string(&Root { value: i128::MAX }).unwrap_err(),
-        YamlSerError::InvalidNumberToI64Conversion { .. }
-    ));
+    // New implementation handles large numbers
+    let result = facet_yaml::to_string(&Root { value: i128::MAX });
+    assert!(result.is_ok());
 
     Ok(())
 }
