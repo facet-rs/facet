@@ -1,0 +1,44 @@
+[package]
+name = "facet-toml"
+version = "0.30.0"
+edition = "2024"
+rust-version = "1.87.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet-toml"
+description = "TOML serialization and deserialization for Facet types"
+keywords = ["toml", "serialization", "deserialization", "reflection", "facet"]
+categories = ["encoding", "parsing", "data-structures"]
+
+[features]
+deserialize = ["alloc", "toml_edit/parse"]
+serialize = ["alloc", "dep:facet-serialize", "toml_edit/display"]
+std = [
+    "alloc",
+    "facet-core/std",
+    "facet-reflect/std",
+    "num-traits/std",
+    "facet-serialize?/std",
+]
+alloc = ["facet-core/alloc", "facet-reflect/alloc", "facet-serialize?/alloc"]
+rich-diagnostics = ["dep:ariadne", "std"]
+default = ["serialize", "deserialize", "std", "rich-diagnostics"]
+
+[dependencies]
+ariadne = { version = "=0.5.1", optional = true }
+log = "0.4.27"
+num-traits = { version = "0.2.19", default-features = false }
+toml_edit = { version = "0.22.27", default-features = false, features = [
+    "parse",
+], optional = true }
+facet-core = { version = "0.30", default-features = false }
+facet-reflect = { version = "0.30", default-features = false }
+facet-serialize = { version = "0.30", default-features = false, optional = true }
+owo-colors = "4.2.2"
+
+[dev-dependencies]
+cargo-husky = { version = "1.5.0", default-features = false, features = [
+    "user-hooks",
+] }
+eyre = "0.6.12"
+facet = { version = "0.30" }
+facet-testhelpers = { version = "0.30" }
