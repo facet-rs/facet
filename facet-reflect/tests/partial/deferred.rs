@@ -1159,3 +1159,681 @@ fn deferred_deeply_interleaved_everything() -> Result<(), IPanic> {
 
     Ok(())
 }
+
+// =============================================================================
+// Edge cases
+// =============================================================================
+
+#[test]
+fn deferred_empty_struct() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Empty {}
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Empty>()?;
+    partial.begin_deferred(resolution);
+
+    // Nothing to set
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result, Empty {});
+
+    Ok(())
+}
+
+#[test]
+fn deferred_single_field_struct() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Single {
+        value: u32,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Single>()?;
+    partial.begin_deferred(resolution);
+
+    partial.set_field("value", 42u32)?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.value, 42);
+
+    Ok(())
+}
+
+#[test]
+fn deferred_nested_empty_structs() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Empty {}
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        empty1: Empty,
+        value: u32,
+        empty2: Empty,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_deferred(resolution);
+
+    // Empty structs need explicit begin/end to mark them as initialized
+    partial.begin_field("empty1")?;
+    partial.end()?;
+    partial.set_field("value", 123u32)?;
+    partial.begin_field("empty2")?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.value, 123);
+
+    Ok(())
+}
+
+#[test]
+fn deferred_reenter_with_no_changes() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Inner {
+        x: u32,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Outer {
+        inner: Inner,
+        name: String,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Outer>()?;
+    partial.begin_deferred(resolution);
+
+    // Set everything in first visit
+    partial.begin_field("inner")?;
+    partial.set_field("x", 42u32)?;
+    partial.end()?;
+
+    partial.set_field("name", String::from("test"))?;
+
+    // Re-enter but make no changes (just looking around)
+    partial.begin_field("inner")?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.inner.x, 42);
+    assert_eq!(result.name, "test");
+
+    Ok(())
+}
+
+#[test]
+fn deferred_multiple_reentries_no_changes() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Inner {
+        a: u32,
+        b: u32,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Outer {
+        inner: Inner,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Outer>()?;
+    partial.begin_deferred(resolution);
+
+    partial.begin_field("inner")?;
+    partial.set_field("a", 1u32)?;
+    partial.set_field("b", 2u32)?;
+    partial.end()?;
+
+    // Multiple empty re-entries
+    partial.begin_field("inner")?;
+    partial.end()?;
+    partial.begin_field("inner")?;
+    partial.end()?;
+    partial.begin_field("inner")?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.inner.a, 1);
+    assert_eq!(result.inner.b, 2);
+
+    Ok(())
+}
+
+#[test]
+fn deferred_sibling_fields_interleaved() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Child {
+        value: i32,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Parent {
+        child_a: Child,
+        child_b: Child,
+        child_c: Child,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Parent>()?;
+    partial.begin_deferred(resolution);
+
+    // Interleave access to siblings
+    partial.begin_field("child_a")?;
+    partial.set_field("value", 1i32)?;
+    partial.end()?;
+
+    partial.begin_field("child_c")?;
+    partial.set_field("value", 3i32)?;
+    partial.end()?;
+
+    partial.begin_field("child_b")?;
+    partial.set_field("value", 2i32)?;
+    partial.end()?;
+
+    // Re-enter each to verify stored state
+    partial.begin_field("child_b")?;
+    partial.end()?;
+
+    partial.begin_field("child_a")?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.child_a.value, 1);
+    assert_eq!(result.child_b.value, 2);
+    assert_eq!(result.child_c.value, 3);
+
+    Ok(())
+}
+
+#[test]
+fn deferred_vec_empty_first_visit() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        items: Vec<u32>,
+        done: bool,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_deferred(resolution);
+
+    // First visit: just initialize the list, don't push anything
+    partial.begin_field("items")?;
+    partial.begin_list()?;
+    partial.end()?;
+
+    partial.set_field("done", false)?;
+
+    // Second visit: now push items
+    partial.begin_field("items")?;
+    partial.push(1u32)?;
+    partial.push(2u32)?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.items, vec![1, 2]);
+    assert!(!result.done);
+
+    Ok(())
+}
+
+#[test]
+fn deferred_map_empty_first_visit() -> Result<(), IPanic> {
+    use std::collections::HashMap;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        data: HashMap<String, i32>,
+        ready: bool,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_deferred(resolution);
+
+    // First visit: just initialize the map
+    partial.begin_field("data")?;
+    partial.begin_map()?;
+    partial.end()?;
+
+    partial.set_field("ready", true)?;
+
+    // Second visit: add entries
+    partial.begin_field("data")?;
+    partial.begin_key()?;
+    partial.set(String::from("key"))?;
+    partial.end()?;
+    partial.begin_value()?;
+    partial.set(42i32)?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.data.get("key"), Some(&42));
+    assert!(result.ready);
+
+    Ok(())
+}
+
+#[test]
+fn deferred_deeply_nested_siblings_interleaved() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Leaf {
+        val: i32,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Branch {
+        left: Leaf,
+        right: Leaf,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Tree {
+        root_left: Branch,
+        root_right: Branch,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Tree>()?;
+    partial.begin_deferred(resolution);
+
+    // Access leaves in arbitrary order
+    partial.begin_field("root_right")?;
+    partial.begin_field("left")?;
+    partial.set_field("val", 3i32)?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.begin_field("root_left")?;
+    partial.begin_field("right")?;
+    partial.set_field("val", 2i32)?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.begin_field("root_left")?;
+    partial.begin_field("left")?;
+    partial.set_field("val", 1i32)?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.begin_field("root_right")?;
+    partial.begin_field("right")?;
+    partial.set_field("val", 4i32)?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.root_left.left.val, 1);
+    assert_eq!(result.root_left.right.val, 2);
+    assert_eq!(result.root_right.left.val, 3);
+    assert_eq!(result.root_right.right.val, 4);
+
+    Ok(())
+}
+
+// =============================================================================
+// Complex interleaving: Struct-valued collections
+// =============================================================================
+
+#[test]
+fn deferred_vec_of_structs_single_visit() -> Result<(), IPanic> {
+    // NOTE: Re-entering a Vec to push more struct items is a complex scenario
+    // that requires additional tracker state management. This test verifies
+    // the simpler case of building structs in a single visit with interleaved
+    // access to other fields.
+    #[derive(Facet, Debug, PartialEq)]
+    struct Item {
+        id: u32,
+        name: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        items: Vec<Item>,
+        total: u32,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_deferred(resolution);
+
+    // Set total first (interleaved with items)
+    partial.set_field("total", 100u32)?;
+
+    // Build items in single visit
+    partial.begin_field("items")?;
+    partial.begin_list()?;
+    partial.begin_list_item()?;
+    partial.set_field("id", 1u32)?;
+    partial.set_field("name", String::from("first"))?;
+    partial.end()?;
+    partial.begin_list_item()?;
+    partial.set_field("id", 2u32)?;
+    partial.set_field("name", String::from("second"))?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.items.len(), 2);
+    assert_eq!(result.items[0].id, 1);
+    assert_eq!(result.items[0].name, "first");
+    assert_eq!(result.items[1].id, 2);
+    assert_eq!(result.items[1].name, "second");
+    assert_eq!(result.total, 100);
+
+    Ok(())
+}
+
+#[test]
+fn deferred_map_with_struct_values_single_visit() -> Result<(), IPanic> {
+    // NOTE: Re-entering a Map to add more entries after leaving is a complex
+    // scenario that requires additional tracker state management. This test
+    // verifies the simpler case of building struct values in a single visit.
+    use std::collections::HashMap;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Person {
+        age: u32,
+        city: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Directory {
+        people: HashMap<String, Person>,
+        count: u32,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Directory>()?;
+    partial.begin_deferred(resolution);
+
+    // Set count first (interleaved)
+    partial.set_field("count", 2u32)?;
+
+    // Build map in single visit
+    partial.begin_field("people")?;
+    partial.begin_map()?;
+    // First entry
+    partial.begin_key()?;
+    partial.set(String::from("alice"))?;
+    partial.end()?;
+    partial.begin_value()?;
+    partial.set_field("age", 30u32)?;
+    partial.set_field("city", String::from("NYC"))?;
+    partial.end()?;
+    // Second entry
+    partial.begin_key()?;
+    partial.set(String::from("bob"))?;
+    partial.end()?;
+    partial.begin_value()?;
+    partial.set_field("age", 25u32)?;
+    partial.set_field("city", String::from("LA"))?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.count, 2);
+    let alice = result.people.get("alice").unwrap();
+    assert_eq!(alice.age, 30);
+    assert_eq!(alice.city, "NYC");
+    let bob = result.people.get("bob").unwrap();
+    assert_eq!(bob.age, 25);
+    assert_eq!(bob.city, "LA");
+
+    Ok(())
+}
+
+// =============================================================================
+// Complex interleaving: Multiple enums
+// =============================================================================
+
+#[test]
+fn deferred_multiple_enums_interleaved() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Color {
+        Rgb { r: u8, g: u8, b: u8 },
+        Named { name: String },
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Design {
+        foreground: Color,
+        background: Color,
+        label: String,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Design>()?;
+    partial.begin_deferred(resolution);
+
+    // Set foreground variant and first field
+    partial.begin_field("foreground")?;
+    partial.select_variant_named("Rgb")?;
+    partial.set_field("r", 255u8)?;
+    partial.end()?;
+
+    partial.set_field("label", String::from("design1"))?;
+
+    // Set background (different variant)
+    partial.begin_field("background")?;
+    partial.select_variant_named("Named")?;
+    partial.set_field("name", String::from("black"))?;
+    partial.end()?;
+
+    // Complete foreground
+    partial.begin_field("foreground")?;
+    partial.set_field("g", 128u8)?;
+    partial.set_field("b", 0u8)?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.label, "design1");
+    assert_eq!(
+        result.foreground,
+        Color::Rgb {
+            r: 255,
+            g: 128,
+            b: 0
+        }
+    );
+    assert_eq!(
+        result.background,
+        Color::Named {
+            name: String::from("black")
+        }
+    );
+
+    Ok(())
+}
+
+// =============================================================================
+// Edge case: Tuple structs
+// =============================================================================
+
+#[test]
+fn deferred_tuple_struct() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Point(i32, i32, i32);
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Point>()?;
+    partial.begin_deferred(resolution);
+
+    partial.begin_nth_field(0)?;
+    partial.set(10i32)?;
+    partial.end()?;
+
+    partial.begin_nth_field(2)?;
+    partial.set(30i32)?;
+    partial.end()?;
+
+    partial.begin_nth_field(1)?;
+    partial.set(20i32)?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result, Point(10, 20, 30));
+
+    Ok(())
+}
+
+#[test]
+fn deferred_nested_tuple_struct_reentry() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Pair(i32, i32);
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        pair: Pair,
+        name: String,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_deferred(resolution);
+
+    partial.begin_field("pair")?;
+    partial.begin_nth_field(0)?;
+    partial.set(1i32)?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.set_field("name", String::from("test"))?;
+
+    partial.begin_field("pair")?;
+    partial.begin_nth_field(1)?;
+    partial.set(2i32)?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.pair, Pair(1, 2));
+    assert_eq!(result.name, "test");
+
+    Ok(())
+}
+
+// =============================================================================
+// Edge case: Reentry at different depths
+// =============================================================================
+
+#[test]
+fn deferred_reentry_at_varying_depths() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Level3 {
+        deep: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Level2 {
+        level3: Level3,
+        mid: u32,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Level1 {
+        level2: Level2,
+        top: String,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Level1>()?;
+    partial.begin_deferred(resolution);
+
+    // Go deep first
+    partial.begin_field("level2")?;
+    partial.begin_field("level3")?;
+    partial.set_field("deep", String::from("bottom"))?;
+    partial.end()?;
+    partial.end()?;
+
+    // Set top level
+    partial.set_field("top", String::from("surface"))?;
+
+    // Re-enter at depth 1 only
+    partial.begin_field("level2")?;
+    partial.set_field("mid", 42u32)?;
+    partial.end()?;
+
+    // Re-enter all the way down again
+    partial.begin_field("level2")?;
+    partial.begin_field("level3")?;
+    // Don't change anything, just re-enter
+    partial.end()?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.top, "surface");
+    assert_eq!(result.level2.mid, 42);
+    assert_eq!(result.level2.level3.deep, "bottom");
+
+    Ok(())
+}
+
+// =============================================================================
+// Stress test: Many siblings at same level
+// =============================================================================
+
+#[test]
+fn deferred_many_siblings_interleaved() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Big {
+        a: u32,
+        b: u32,
+        c: u32,
+        d: u32,
+        e: u32,
+        f: u32,
+        g: u32,
+        h: u32,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Big>()?;
+    partial.begin_deferred(resolution);
+
+    // Set in random order, interleaved with re-entries
+    partial.set_field("h", 8u32)?;
+    partial.set_field("a", 1u32)?;
+    partial.set_field("d", 4u32)?;
+    partial.set_field("c", 3u32)?;
+    partial.set_field("f", 6u32)?;
+    partial.set_field("b", 2u32)?;
+    partial.set_field("g", 7u32)?;
+    partial.set_field("e", 5u32)?;
+
+    // Overwrite some
+    partial.set_field("a", 10u32)?;
+    partial.set_field("h", 80u32)?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.a, 10);
+    assert_eq!(result.b, 2);
+    assert_eq!(result.c, 3);
+    assert_eq!(result.d, 4);
+    assert_eq!(result.e, 5);
+    assert_eq!(result.f, 6);
+    assert_eq!(result.g, 7);
+    assert_eq!(result.h, 80);
+
+    Ok(())
+}

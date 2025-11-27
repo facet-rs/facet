@@ -98,27 +98,38 @@ impl Partial<'_> {
     pub fn begin_nth_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
-        // In deferred mode, get the field name for path tracking and check for stored frames
+        // In deferred mode, get the field name for path tracking and check for stored frames.
+        // Only track the path if we're at a "navigable" level - i.e., the path length matches
+        // the expected depth (frames.len() - 1). If we're inside a collection item, the path
+        // will be shorter than expected, so we shouldn't add to it.
         let field_name = self.get_field_name_for_path(idx);
 
         // Update current_path in deferred mode
         if let Some(deferred) = &mut self.deferred {
+            // Only track path if we're at the expected navigable depth
+            // Path should have (frames.len() - 1) entries before we add this field
+            let should_track = deferred.current_path.len() == self.frames.len() - 1;
+
             if let Some(name) = field_name {
-                deferred.current_path.push(name);
+                if should_track {
+                    deferred.current_path.push(name);
 
-                // Check if we have a stored frame for this path
-                if let Some(stored_frame) = deferred.stored_frames.remove(&deferred.current_path) {
-                    trace!(
-                        "begin_nth_field: Restoring stored frame for path {:?}",
-                        deferred.current_path
-                    );
+                    // Check if we have a stored frame for this path
+                    if let Some(stored_frame) =
+                        deferred.stored_frames.remove(&deferred.current_path)
+                    {
+                        trace!(
+                            "begin_nth_field: Restoring stored frame for path {:?}",
+                            deferred.current_path
+                        );
 
-                    // Update parent's current_child tracking
-                    let frame = self.frames.last_mut().unwrap();
-                    frame.tracker.set_current_child(idx);
+                        // Update parent's current_child tracking
+                        let frame = self.frames.last_mut().unwrap();
+                        frame.tracker.set_current_child(idx);
 
-                    self.frames.push(stored_frame);
-                    return Ok(self);
+                        self.frames.push(stored_frame);
+                        return Ok(self);
+                    }
                 }
             }
         }

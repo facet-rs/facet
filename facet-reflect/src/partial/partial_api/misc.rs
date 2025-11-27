@@ -244,10 +244,12 @@ impl<'facet> Partial<'facet> {
         // in finish_deferred().
         //
         // We only store if the path depth matches the frame depth, meaning we're
-        // ending a tracked struct/enum field, not something like begin_some().
+        // ending a tracked struct/enum field, not something like begin_some()
+        // or a field inside a collection item.
         if let Some(deferred) = &mut self.deferred {
-            // Path depth should be (frames.len() - 1) for a tracked field
-            // (subtract 1 because root frame isn't in the path)
+            // Path depth should equal frames.len() for a tracked field
+            // (the path includes the field name, so after popping the frame,
+            // path.len() should equal the remaining frames.len())
             let is_tracked_field = !deferred.current_path.is_empty()
                 && deferred.current_path.len() == self.frames.len();
 
