@@ -1,0 +1,10 @@
+---
+source: facet-pretty/tests/pretty_print.rs
+expression: "printer.format(&&nums[..])"
+---
+&[u32] [
+  1,
+  2,
+  3,
+  4,
+]
