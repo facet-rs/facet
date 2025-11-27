@@ -1,6 +1,6 @@
 # Canonical cross‑format validation matrix for facet\*
 
-This file is format‑agnostic. It avoids KDL‑specific markers like `#[facet(argument)]` / `#[facet(property)]` / `#[facet(children)]`. Treat every field as an ordinary struct field unless explicitly noted (e.g., `flatten`, `default`, `skip_*`). Map “nested” to whatever your format uses (JSON object, XML child element, binary embedded struct).
+This guide is format‑agnostic. Examples use plain Rust fields plus core facet flags (`flatten`, `default`, `skip_*`). Map “nested” to your format’s construct (JSON object, XML child element, binary embedded struct).
 
 ## Prerequisites / where to start
 - Deserialization: implement `facet_deserialize::Format` (see the `next()` / `skip()` contract).
@@ -18,7 +18,7 @@ This file is format‑agnostic. It avoids KDL‑specific markers like `#[facet(a
 
 ## Quick API surface
 - `from_str` / `from_slice` -> `Result<T, Error>`.
-- `to_string` / `to_vec` / `to_writer`; deterministic output preferred.
+- `to_string` / `to_vec` / `to_writer`; deterministic output preferred (stable field ordering, stable map key ordering—e.g., sort keys for text formats, preserve declaration order for binary).
 - Errors: implement `std::error::Error`; `miette::Diagnostic` if possible. For binary, spans = byte offsets/lengths.
 
 ## Implementation tiers
@@ -27,7 +27,7 @@ This file is format‑agnostic. It avoids KDL‑specific markers like `#[facet(a
 - **Tier 3 (Advanced):** spans/diagnostics, `deserialize_with`, non‑string map keys, value‑based disambiguation, `Option<flatten>`, flatten defaults, skip serialize/deserialize, 128‑bit ints, recursive types.
 
 ## Option & defaults
-- Option without default: missing = error; explicit null = None.
+- Option without default: missing = error; explicit null = None. (Matches facet-json behaviour.)
 - Option with default: missing = None; explicit null = None; explicit value = Some.
 
 ## Flatten solver (core cases)
@@ -65,7 +65,7 @@ enum Output { Stdout, File { path: String } }
 7. Ambiguity & mixed fields:
 ```rust
 enum Kind { A { x: u8 }, B { x: u8 } }        // x only => error (ambiguous)
-enum Mode2 { Simple { level: u8 }, Tuned { level: u8, tuning: u8 } } // level+gain(no tuning) => error
+enum Mode2 { Simple { level: u8 }, Tuned { level: u8, tuning: u8 } } // level without tuning => error
 ```
 8. Value/type disambiguation:
 ```rust
@@ -101,16 +101,33 @@ struct Node { name: String, kids: Vec<Node> }
 ```rust
 struct Wrapper { outcome: Result<u8, String> }
 ```
+*Suggested representation:* tagged form `{ "Ok": <value> }` / `{ "Err": <error> }` for text formats; for binary, use enum variant index + payload.
 15. Skip serialize / skip deserialize:
 ```rust
 struct Hidden { visible: u8, #[facet(skip_serializing)] transient: u8, #[facet(skip_deserializing)] cache: u8 }
+```
+*Expectation:* skipped-on-deserialize fields must be initializable (e.g., Default); input values for them are ignored if present.
+
+16. Rename / rename_all:
+```rust
+#[facet(rename_all = "camelCase")]
+struct Config {
+    #[facet(rename = "serverHost")]
+    server_host: String,
+}
+```
+
+17. Transparent newtypes:
+```rust
+#[facet(transparent)]
+struct PathBufLike(String); // serializes/deserializes as inner String directly
 ```
 
 ## Collections & maps
 - Vec/sequence round‑trips.
 - Sets (HashSet/BTreeSet) — BTreeSet ordering deterministic.
 - Maps with string keys; non‑string keys via newtypes (e.g., path types).
-- Node‑name‑as‑key pattern: for formats that support it; otherwise map key = field name.
+- Node‑name‑as‑key: for hierarchical formats where element name carries data (e.g., KDL/XML). For flat formats (JSON/YAML/msgpack/binary), ignore this and use the normal key/field name.
 - Tuple structs/variants: prefer arrays for text formats; document choice.
 
 ## Scalars & strings
