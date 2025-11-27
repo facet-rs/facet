@@ -39,6 +39,7 @@ jiff02 = ["facet-core/jiff02"] # Enable Facet implementation for jiff 0.2 types
 fn-ptr = [
     "facet-core/fn-ptr",
 ] # Enable Facet implementation for function pointers
+miette = ["dep:miette"] # Enable Spanned<T> type for source span tracking
 
 [dependencies]
 bitflags = "2.9.1"
@@ -48,6 +49,7 @@ camino = { version = "1", optional = true }
 uuid = { version = "1.17.0", optional = true }
 ulid = { version = "1.2.1", optional = true }
 indexset = { version = "0.12.3", default-features = false }
+miette = { version = "7", optional = true }
 
 [dev-dependencies]
 facet = { path = "../facet" }

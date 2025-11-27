@@ -31,6 +31,13 @@ pub use peek::*;
 mod scalar;
 pub use scalar::*;
 
+#[cfg(feature = "miette")]
+mod spanned;
+#[cfg(feature = "miette")]
+pub use miette::SourceSpan;
+#[cfg(feature = "miette")]
+pub use spanned::{Span, Spanned, is_spanned_shape};
+
 #[cfg(feature = "log")]
 #[allow(unused_imports)]
 pub(crate) use log::{debug, trace};
