@@ -918,8 +918,16 @@ impl<'facet> Drop for Partial<'facet> {
                                 true
                             }
                         } else {
-                            // Other tracker states (Struct, Option with building_inner, etc.)
-                            // mean it was being actively built - we must deinit.
+                            // Other tracker states (Struct, List, Map, etc.) mean it was being
+                            // actively built. We need to deinit AND unmark from parent's iset
+                            // to prevent double-free when parent is dropped.
+                            if path.len() == 1 {
+                                let field_name = path.first().unwrap();
+                                // Unmark the field from parent's iset before deiniting
+                                if let Some(parent) = self.frames.first_mut() {
+                                    Self::unmark_field_in_parent(parent, field_name);
+                                }
+                            }
                             true
                         }
                     }

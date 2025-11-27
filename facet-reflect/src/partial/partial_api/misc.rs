@@ -245,6 +245,23 @@ impl<'facet> Partial<'facet> {
         }
     }
 
+    /// Unmark a field from the parent's iset/data tracker
+    /// Used when cleaning up stored frames to prevent double-free
+    pub(crate) fn unmark_field_in_parent(parent: &mut Frame, field_name: &str) {
+        // First find the field index
+        let idx = match Self::find_field_index(parent, field_name) {
+            Some(idx) => idx,
+            None => return,
+        };
+
+        // Then unmark it in the parent's tracker
+        match &mut parent.tracker {
+            Tracker::Struct { iset, .. } => iset.unset(idx),
+            Tracker::Enum { data, .. } => data.unset(idx),
+            _ => {}
+        }
+    }
+
     /// Pops the current frame off the stack, indicating we're done initializing the current field
     pub fn end(&mut self) -> Result<&mut Self, ReflectError> {
         crate::trace!("end() called");
