@@ -1,0 +1,10 @@
+---
+source: tests/err.rs
+expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
+---
+  × Could not parse CLI arguments
+   ╭────
+ 1 │ --byte 1000 
+   ·        ──┬─
+   ·          ╰── reflection error: Operation failed on shape u8: Failed to parse string value
+   ╰────

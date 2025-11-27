@@ -1,0 +1,10 @@
+---
+source: tests/err.rs
+expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
+---
+  × Could not parse CLI arguments
+   ╭────
+ 1 │ --config {server={port=8080,host=localhost},database={url=postgresql://,pool_size=10}} 
+   ·          ──────────────────────────────────────┬──────────────────────────────────────
+   ·                                                ╰── reflection error: Operation failed on shape AppConfig: Type does not support parsing from string
+   ╰────

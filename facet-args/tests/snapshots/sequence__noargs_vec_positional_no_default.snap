@@ -1,0 +1,7 @@
+---
+source: tests/sequence.rs
+expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
+---
+  × Could not parse CLI arguments
+   ╭────
+   ╰────
