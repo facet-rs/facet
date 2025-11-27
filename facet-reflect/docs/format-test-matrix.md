@@ -28,7 +28,7 @@ This guide is format‑agnostic. Examples use plain Rust fields plus core facet 
 - `[r.tier.m3]` **Tier 3 (Advanced):** spans/diagnostics, `deserialize_with`, non‑string map keys, value‑based disambiguation, `Option<flatten>`, flatten defaults, skip serialize/deserialize, 128‑bit ints, recursive types.
 
 ## Option & defaults
-- `[r.option.missing]` Option without default: missing = error; explicit null = None. (Matches facet-json behaviour.)
+- `[r.option.missing]` Option without default: missing = error; explicit null = None. (Matches facet-json; differs from serde defaulting Option to None when absent.)
 - `[r.option.default]` Option with default: missing = None; explicit null = None; explicit value = Some.
 
 ## Flatten solver (core cases)
@@ -84,32 +84,32 @@ struct Tuning { ttl: u32, strategy: Option<String> }
 struct Server { name: String, #[facet(flatten, default)] limits: Limits }
 #[derive(Default)] struct Limits { max: u32, burst: u32 }
 ```
-11. `[r.flatten.tuple]` Tuple structs / variants:
+11. `[r.types.tuple]` Tuple structs / variants:
 ```rust
 struct Point(i32, i32);
 enum Pairish { Pair(u8, u8), Unit }
 // Choose array representation for text formats; ordered fields for binary.
 ```
-12. `[r.flatten.unit-struct]` Unit structs / markers:
+12. `[r.types.unit-struct]` Unit structs / markers:
 ```rust
 struct Marker;
 ```
-13. `[r.flatten.recursive]` Recursive:
+13. `[r.types.recursive]` Recursive:
 ```rust
 struct Node { name: String, kids: Vec<Node> }
 ```
-14. `[r.flatten.result]` Result<T, E> (if supported):
+14. `[r.types.result]` Result<T, E> (if supported):
 ```rust
 struct Wrapper { outcome: Result<u8, String> }
 ```
 *Suggested representation:* tagged form `{ "Ok": <value> }` / `{ "Err": <error> }` for text formats; for binary, use enum variant index + payload.
-15. `[r.flatten.skip]` Skip serialize / skip deserialize:
+15. `[r.attrs.skip]` Skip serialize / skip deserialize:
 ```rust
 struct Hidden { visible: u8, #[facet(skip_serializing)] transient: u8, #[facet(skip_deserializing)] cache: u8 }
 ```
 *Expectation:* skipped-on-deserialize fields must be initializable (e.g., Default); input values for them are ignored if present.
 
-16. `[r.flatten.rename]` Rename / rename_all:
+16. `[r.attrs.rename]` Rename / rename_all:
 ```rust
 #[facet(rename_all = "camelCase")]
 struct Config {
@@ -118,7 +118,7 @@ struct Config {
 }
 ```
 
-17. `[r.flatten.transparent]` Transparent newtypes:
+17. `[r.attrs.transparent]` Transparent newtypes:
 ```rust
 #[facet(transparent)]
 struct PathBufLike(String); // serializes/deserializes as inner String directly
@@ -151,6 +151,9 @@ struct PathBufLike(String); // serializes/deserializes as inner String directly
 
 ## Custom hooks
 - `[r.custom.deserialize_with]` `deserialize_with` on fields (scalars and inside flatten); test success + failing parse.
+- `[r.custom.serialize_with]` `serialize_with` on fields; test round-trip and skipped/failed cases.
+- `[r.custom.skip_if]` `skip_serializing_if` predicates (e.g., `Option::is_none`) — ensure skipped when predicate true, present otherwise.
+- `[r.custom.type_tag]` `type_tag` support (if your format uses explicit type tags); document/decide representation or mark unsupported.
 
 ## Round‑trip guarantees
 - `[r.roundtrip.idempotent]` Serialize → parse → serialize idempotence for: basic structs, maps, options, flatten (struct + enum), interleaved fields. When order is undefined (maps/sets), assert presence not exact text.
