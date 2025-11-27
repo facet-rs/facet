@@ -14,34 +14,28 @@ impl<'facet> Partial<'facet> {
     /// they think it is.
     #[inline]
     pub fn frame_count(&self) -> usize {
-        self.frames.len()
+        self.frames().len()
     }
 
     /// Returns the shape of the current frame.
     #[inline]
     pub fn shape(&self) -> &'static Shape {
-        self.frames
+        self.frames()
             .last()
             .expect("Partial always has at least one frame")
             .shape
     }
 
-    /// Returns whether deferred materialization mode is enabled.
-    #[inline]
-    pub fn is_deferred(&self) -> bool {
-        self.deferred.is_some()
-    }
-
     /// Returns the current deferred resolution, if in deferred mode.
     #[inline]
     pub fn deferred_resolution(&self) -> Option<&Resolution> {
-        self.deferred.as_ref().map(|d| &d.resolution)
+        self.resolution()
     }
 
-    /// Returns the current path in deferred mode (for debugging/tracing).
+    /// Returns the current path in deferred mode as a slice (for debugging/tracing).
     #[inline]
-    pub fn current_path(&self) -> Option<&[&'static str]> {
-        self.deferred.as_ref().map(|d| d.current_path.as_slice())
+    pub fn current_path_slice(&self) -> Option<&[&'static str]> {
+        self.current_path().map(|p| p.as_slice())
     }
 
     /// Enables deferred materialization mode with the given Resolution.
@@ -66,18 +60,28 @@ impl<'facet> Partial<'facet> {
     #[inline]
     pub fn begin_deferred(&mut self, resolution: Resolution) -> Result<&mut Self, ReflectError> {
         // Cannot enable deferred mode if already in deferred mode
-        if self.deferred.is_some() {
+        if self.is_deferred() {
             return Err(ReflectError::InvariantViolation {
                 invariant: "begin_deferred() called but already in deferred mode",
             });
         }
 
-        self.deferred = Some(DeferredState {
+        // Take the stack out of Strict mode and wrap in Deferred mode
+        let FrameMode::Strict { stack } = core::mem::replace(
+            &mut self.mode,
+            FrameMode::Strict { stack: Vec::new() }, // temporary placeholder
+        ) else {
+            unreachable!("just checked we're not in deferred mode");
+        };
+
+        let start_depth = stack.len();
+        self.mode = FrameMode::Deferred {
+            stack,
             resolution,
-            start_depth: self.frames.len(),
+            start_depth,
             current_path: Vec::new(),
             stored_frames: BTreeMap::new(),
-        });
+        };
         Ok(self)
     }
 
@@ -93,15 +97,29 @@ impl<'facet> Partial<'facet> {
     /// Returns an error if any required fields are missing or if the partial is
     /// not in deferred mode.
     pub fn finish_deferred(&mut self) -> Result<&mut Self, ReflectError> {
-        let mut deferred_state = self
-            .deferred
-            .take()
-            .ok_or(ReflectError::InvariantViolation {
+        // Check if we're in deferred mode first, before extracting state
+        if !self.is_deferred() {
+            return Err(ReflectError::InvariantViolation {
                 invariant: "finish_deferred() called but deferred mode is not enabled",
-            })?;
+            });
+        }
+
+        // Extract deferred state, transitioning back to Strict mode
+        let FrameMode::Deferred {
+            stack,
+            start_depth,
+            mut stored_frames,
+            ..
+        } = core::mem::replace(&mut self.mode, FrameMode::Strict { stack: Vec::new() })
+        else {
+            unreachable!("just checked is_deferred()");
+        };
+
+        // Restore the stack to self.mode
+        self.mode = FrameMode::Strict { stack };
 
         // Sort paths by depth (deepest first) so we process children before parents
-        let mut paths: Vec<_> = deferred_state.stored_frames.keys().cloned().collect();
+        let mut paths: Vec<_> = stored_frames.keys().cloned().collect();
         paths.sort_by_key(|b| core::cmp::Reverse(b.len()));
 
         trace!(
@@ -112,7 +130,7 @@ impl<'facet> Partial<'facet> {
 
         // Process each stored frame from deepest to shallowest
         for path in paths {
-            let frame = deferred_state.stored_frames.remove(&path).unwrap();
+            let frame = stored_frames.remove(&path).unwrap();
 
             trace!(
                 "finish_deferred: Processing frame at {:?}, shape {}, tracker {:?}",
@@ -127,7 +145,7 @@ impl<'facet> Partial<'facet> {
                 // We need to check if the parent will drop it.
                 let parent_will_drop = if path.len() == 1 {
                     let field_name = path.first().unwrap();
-                    self.frames.first().map_or(false, |parent| {
+                    self.frames().first().map_or(false, |parent| {
                         Self::is_field_marked_in_parent(parent, field_name)
                     })
                 } else {
@@ -144,23 +162,20 @@ impl<'facet> Partial<'facet> {
                 // so we must deinit all initialized frames ourselves - the parent won't drop them.
 
                 // Collect keys to remove (can't drain in no_std)
-                let remaining_paths: Vec<_> =
-                    deferred_state.stored_frames.keys().cloned().collect();
+                let remaining_paths: Vec<_> = stored_frames.keys().cloned().collect();
                 // Sort by depth (deepest first) for proper cleanup order
                 let mut sorted_paths = remaining_paths;
                 sorted_paths.sort_by_key(|p| core::cmp::Reverse(p.len()));
 
                 for remaining_path in sorted_paths {
-                    if let Some(mut remaining_frame) =
-                        deferred_state.stored_frames.remove(&remaining_path)
-                    {
+                    if let Some(mut remaining_frame) = stored_frames.remove(&remaining_path) {
                         // Check if this frame was re-entered (parent already has it marked as init).
                         // If so, the parent will drop it - we must NOT deinit (double-free).
                         // If not, we must deinit because the parent won't drop it.
                         let parent_will_drop = if remaining_path.len() == 1 {
                             // Parent is the root frame
                             let field_name = remaining_path.first().unwrap();
-                            self.frames.first().map_or(false, |parent| {
+                            self.frames().first().map_or(false, |parent| {
                                 Self::is_field_marked_in_parent(parent, field_name)
                             })
                         } else {
@@ -191,19 +206,19 @@ impl<'facet> Partial<'facet> {
                     // Parent is the frame that was current when deferred mode started.
                     // It's at index (start_depth - 1) because deferred mode stores frames
                     // relative to the position at start_depth.
-                    let parent_index = deferred_state.start_depth.saturating_sub(1);
-                    if let Some(root_frame) = self.frames.get_mut(parent_index) {
+                    let parent_index = start_depth.saturating_sub(1);
+                    if let Some(root_frame) = self.frames_mut().get_mut(parent_index) {
                         Self::mark_field_initialized(root_frame, field_name);
                     }
                 } else {
                     // Try stored_frames first
-                    if let Some(parent_frame) = deferred_state.stored_frames.get_mut(&parent_path) {
+                    if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
                         Self::mark_field_initialized(parent_frame, field_name);
                     } else {
                         // Parent might still be on the frames stack (never ended).
                         // The frame at index (start_depth + parent_path.len() - 1) should be the parent.
-                        let parent_frame_index = deferred_state.start_depth + parent_path.len() - 1;
-                        if let Some(parent_frame) = self.frames.get_mut(parent_frame_index) {
+                        let parent_frame_index = start_depth + parent_path.len() - 1;
+                        if let Some(parent_frame) = self.frames_mut().get_mut(parent_frame_index) {
                             Self::mark_field_initialized(parent_frame, field_name);
                         }
                     }
@@ -216,7 +231,7 @@ impl<'facet> Partial<'facet> {
         }
 
         // Validate the root frame is fully initialized
-        if let Some(frame) = self.frames.last() {
+        if let Some(frame) = self.frames().last() {
             frame.require_full_initialization()?;
         }
 
@@ -301,36 +316,38 @@ impl<'facet> Partial<'facet> {
         self.require_active()?;
 
         // Special handling for SmartPointerSlice - convert builder to Arc
-        if self.frames.len() == 1 {
+        if self.frames().len() == 1 {
+            let frames = self.frames_mut();
             if let Tracker::SmartPointerSlice {
                 vtable,
                 building_item,
-            } = &self.frames[0].tracker
+            } = &frames[0].tracker
             {
                 if *building_item {
                     return Err(ReflectError::OperationFailed {
-                        shape: self.frames[0].shape,
+                        shape: frames[0].shape,
                         operation: "still building an item, finish it first",
                     });
                 }
 
                 // Convert the builder to Arc<[T]>
-                let builder_ptr = unsafe { self.frames[0].data.assume_init() };
+                let vtable = *vtable;
+                let builder_ptr = unsafe { frames[0].data.assume_init() };
                 let arc_ptr = unsafe { (vtable.convert_fn)(builder_ptr) };
 
                 // Update the frame to store the Arc
-                self.frames[0].data = PtrUninit::new(unsafe {
+                frames[0].data = PtrUninit::new(unsafe {
                     NonNull::new_unchecked(arc_ptr.as_byte_ptr() as *mut u8)
                 });
-                self.frames[0].tracker = Tracker::Init;
+                frames[0].tracker = Tracker::Init;
                 // The builder memory has been consumed by convert_fn, so we no longer own it
-                self.frames[0].ownership = FrameOwnership::ManagedElsewhere;
+                frames[0].ownership = FrameOwnership::ManagedElsewhere;
 
                 return Ok(self);
             }
         }
 
-        if self.frames.len() <= 1 {
+        if self.frames().len() <= 1 {
             // Never pop the last/root frame.
             return Err(ReflectError::InvariantViolation {
                 invariant: "Partial::end() called with only one frame on the stack",
@@ -338,8 +355,8 @@ impl<'facet> Partial<'facet> {
         }
 
         // In deferred mode, cannot pop below the start depth
-        if let Some(deferred) = &self.deferred {
-            if self.frames.len() <= deferred.start_depth {
+        if let Some(start_depth) = self.start_depth() {
+            if self.frames().len() <= start_depth {
                 return Err(ReflectError::InvariantViolation {
                     invariant: "Partial::end() called but would pop below deferred start depth",
                 });
@@ -350,13 +367,14 @@ impl<'facet> Partial<'facet> {
         // Skip this check in deferred mode - validation happens in finish_deferred().
         // EXCEPT for collection items (map, list, set, option) which must be fully
         // initialized before insertion/completion.
-        let requires_full_init = if self.deferred.is_none() {
+        let requires_full_init = if !self.is_deferred() {
             true
         } else {
             // In deferred mode, check if parent is a collection that requires
             // fully initialized items (map, list, set, option)
-            if self.frames.len() >= 2 {
-                let parent_frame = &self.frames[self.frames.len() - 2];
+            if self.frames().len() >= 2 {
+                let frame_len = self.frames().len();
+                let parent_frame = &self.frames()[frame_len - 2];
                 matches!(
                     parent_frame.tracker,
                     Tracker::Map { .. }
@@ -370,7 +388,7 @@ impl<'facet> Partial<'facet> {
         };
 
         if requires_full_init {
-            let frame = self.frames.last().unwrap();
+            let frame = self.frames().last().unwrap();
             trace!(
                 "end(): Checking full initialization for frame with shape {} and tracker {:?}",
                 frame.shape,
@@ -380,7 +398,7 @@ impl<'facet> Partial<'facet> {
         }
 
         // Pop the frame and save its data pointer for SmartPointer handling
-        let mut popped_frame = self.frames.pop().unwrap();
+        let mut popped_frame = self.frames_mut().pop().unwrap();
 
         // In deferred mode, store the frame for potential re-entry and skip
         // the normal parent-updating logic. The frame will be finalized later
@@ -389,29 +407,35 @@ impl<'facet> Partial<'facet> {
         // We only store if the path depth matches the frame depth, meaning we're
         // ending a tracked struct/enum field, not something like begin_some()
         // or a field inside a collection item.
-        if let Some(deferred) = &mut self.deferred {
+        if let FrameMode::Deferred {
+            stack,
+            start_depth,
+            current_path,
+            stored_frames,
+            ..
+        } = &mut self.mode
+        {
             // Path depth should match the relative frame depth for a tracked field.
             // After popping: frames.len() - start_depth + 1 should equal path.len()
             // for fields entered via begin_field (not begin_some/begin_inner).
-            let relative_depth = self.frames.len() - deferred.start_depth + 1;
-            let is_tracked_field =
-                !deferred.current_path.is_empty() && deferred.current_path.len() == relative_depth;
+            let relative_depth = stack.len() - *start_depth + 1;
+            let is_tracked_field = !current_path.is_empty() && current_path.len() == relative_depth;
 
             if is_tracked_field {
                 trace!(
                     "end(): Storing frame for deferred path {:?}, shape {}",
-                    deferred.current_path, popped_frame.shape
+                    current_path, popped_frame.shape
                 );
 
                 // Store the frame at the current path
-                let path = deferred.current_path.clone();
-                deferred.stored_frames.insert(path, popped_frame);
+                let path = current_path.clone();
+                stored_frames.insert(path, popped_frame);
 
                 // Pop from current_path
-                deferred.current_path.pop();
+                current_path.pop();
 
                 // Clear parent's current_child tracking
-                if let Some(parent_frame) = self.frames.last_mut() {
+                if let Some(parent_frame) = stack.last_mut() {
                     parent_frame.tracker.clear_current_child();
                 }
 
@@ -425,7 +449,7 @@ impl<'facet> Partial<'facet> {
                 .parent_field()
                 .and_then(|field| field.vtable.deserialize_with)
             {
-                let parent_frame = self.frames.last_mut().unwrap();
+                let parent_frame = self.frames_mut().last_mut().unwrap();
 
                 trace!(
                     "Detected custom conversion needed from {} to {}",
@@ -461,7 +485,7 @@ impl<'facet> Partial<'facet> {
         }
 
         // Update parent frame's tracking when popping from a child
-        let parent_frame = self.frames.last_mut().unwrap();
+        let parent_frame = self.frames_mut().last_mut().unwrap();
 
         trace!(
             "end(): Popped {} (tracker {:?}), Parent {} (tracker {:?})",
@@ -967,7 +991,7 @@ impl<'facet> Partial<'facet> {
         let mut path_components = Vec::new();
         // The stack of enum/struct/sequence names currently in context.
         // Start from root and build upwards.
-        for (i, frame) in self.frames.iter().enumerate() {
+        for (i, frame) in self.frames().iter().enumerate() {
             match frame.shape.ty {
                 Type::User(user_type) => match user_type {
                     UserType::Struct(struct_type) => {
@@ -1055,6 +1079,10 @@ impl<'facet> Partial<'facet> {
 
     /// Get the field for the parent frame
     pub fn parent_field(&self) -> Option<&Field> {
-        self.frames.iter().rev().nth(1).and_then(|f| f.get_field())
+        self.frames()
+            .iter()
+            .rev()
+            .nth(1)
+            .and_then(|f| f.get_field())
     }
 }

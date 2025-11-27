@@ -60,7 +60,7 @@ impl<'facet> Partial<'facet> {
     ) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
-        let fr = self.frames.last_mut().unwrap();
+        let fr = self.frames_mut().last_mut().unwrap();
         crate::trace!("set_shape({src_shape:?})");
 
         if !fr.shape.is_shape(src_shape) {
@@ -102,7 +102,7 @@ impl<'facet> Partial<'facet> {
         F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError>,
     {
         self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
+        let frame = self.frames_mut().last_mut().unwrap();
 
         frame.deinit();
         f(frame.data)?;
@@ -125,7 +125,7 @@ impl<'facet> Partial<'facet> {
     /// If the current frame's shape does not implement `Default`, then this returns an error.
     #[inline]
     pub fn set_default(&mut self) -> Result<&mut Self, ReflectError> {
-        let frame = self.frames.last().unwrap();
+        let frame = self.frames().last().unwrap();
 
         let Some(default_fn) = frame.shape.vtable.default_in_place else {
             return Err(ReflectError::OperationFailed {
@@ -171,7 +171,7 @@ impl<'facet> Partial<'facet> {
     pub fn parse_from_str(&mut self, s: &str) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
-        let frame = self.frames.last_mut().unwrap();
+        let frame = self.frames_mut().last_mut().unwrap();
 
         // Check if the type has a parse function
         let Some(parse_fn) = frame.shape.vtable.parse else {

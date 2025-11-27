@@ -6,7 +6,7 @@ use super::*;
 impl<'facet> Partial<'facet> {
     /// Get the currently selected variant for an enum
     pub fn selected_variant(&self) -> Option<Variant> {
-        let frame = self.frames.last()?;
+        let frame = self.frames().last()?;
 
         match &frame.tracker {
             Tracker::Enum { variant, .. } => Some(**variant),
@@ -16,7 +16,7 @@ impl<'facet> Partial<'facet> {
 
     /// Find a variant by name in the current enum
     pub fn find_variant(&self, variant_name: &str) -> Option<(usize, &'static Variant)> {
-        let frame = self.frames.last()?;
+        let frame = self.frames().last()?;
 
         if let Type::User(UserType::Enum(enum_def)) = frame.shape.ty {
             enum_def
@@ -47,7 +47,7 @@ impl<'facet> Partial<'facet> {
     pub fn select_nth_variant(&mut self, index: usize) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
-        let frame = self.frames.last().unwrap();
+        let frame = self.frames().last().unwrap();
         let enum_type = frame.get_enum_type()?;
 
         if index >= enum_type.variants.len() {
@@ -68,7 +68,7 @@ impl<'facet> Partial<'facet> {
     pub fn select_variant_named(&mut self, variant_name: &str) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
-        let frame = self.frames.last_mut().unwrap();
+        let frame = self.frames_mut().last_mut().unwrap();
         let enum_type = frame.get_enum_type()?;
 
         let Some(variant) = enum_type.variants.iter().find(|v| v.name == variant_name) else {
@@ -90,7 +90,7 @@ impl<'facet> Partial<'facet> {
         self.require_active()?;
 
         // Check all invariants early before making any changes
-        let frame = self.frames.last().unwrap();
+        let frame = self.frames().last().unwrap();
 
         // Check that we're dealing with an enum
         let enum_type = match frame.shape.ty {

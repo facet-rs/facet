@@ -10,7 +10,7 @@ impl Partial<'_> {
 
         // First, gather information and perform drops with proper borrow management
         let (option_def, was_initialized) = {
-            let frame = self.frames.last().unwrap();
+            let frame = self.frames().last().unwrap();
 
             // Verify we're working with an Option
             let option_def = match frame.shape.def {
@@ -29,7 +29,10 @@ impl Partial<'_> {
             // - Tracker is Option{building_inner:false} (second call to begin_some after first completed)
             let was_initialized = matches!(
                 frame.tracker,
-                Tracker::Init | Tracker::Option { building_inner: false }
+                Tracker::Init
+                    | Tracker::Option {
+                        building_inner: false
+                    }
             );
 
             (option_def, was_initialized)
@@ -37,7 +40,7 @@ impl Partial<'_> {
 
         if was_initialized {
             // Drop the existing Option value before starting a new building cycle
-            let frame = self.frames.last().unwrap();
+            let frame = self.frames().last().unwrap();
             if let Some(drop_fn) = frame.shape.vtable.drop_in_place {
                 unsafe { drop_fn(frame.data.assume_init()) };
             }
@@ -46,16 +49,23 @@ impl Partial<'_> {
             // Otherwise, if the Partial is dropped before end() completes the new Option,
             // the parent struct's deinit will try to drop this field again (double-free).
             // When end() successfully completes, it will re-mark the field in the parent's iset.
-            if self.frames.len() >= 2 {
-                let parent_idx = self.frames.len() - 2;
-                if let Some(parent_frame) = self.frames.get_mut(parent_idx) {
+            if self.frames().len() >= 2 {
+                let parent_idx = self.frames().len() - 2;
+                if let Some(parent_frame) = self.frames_mut().get_mut(parent_idx) {
                     match &mut parent_frame.tracker {
-                        Tracker::Struct { iset, current_child } => {
+                        Tracker::Struct {
+                            iset,
+                            current_child,
+                        } => {
                             if let Some(idx) = *current_child {
                                 iset.unset(idx);
                             }
                         }
-                        Tracker::Enum { data, current_child, .. } => {
+                        Tracker::Enum {
+                            data,
+                            current_child,
+                            ..
+                        } => {
                             if let Some(idx) = *current_child {
                                 data.unset(idx);
                             }
@@ -67,7 +77,7 @@ impl Partial<'_> {
         }
 
         // Set tracker to indicate we're building the inner value
-        let frame = self.frames.last_mut().unwrap();
+        let frame = self.frames_mut().last_mut().unwrap();
         frame.tracker = Tracker::Option {
             building_inner: true,
         };
@@ -99,7 +109,7 @@ impl Partial<'_> {
 
         // Create a new frame for the inner value
         let inner_frame = Frame::new(inner_data, inner_shape, FrameOwnership::Owned);
-        self.frames.push(inner_frame);
+        self.frames_mut().push(inner_frame);
 
         Ok(self)
     }
@@ -110,7 +120,7 @@ impl Partial<'_> {
 
         // Get the inner shape and check for try_from
         let (inner_shape, has_try_from, parent_shape, is_option) = {
-            let frame = self.frames.last().unwrap();
+            let frame = self.frames().last().unwrap();
             if let Some(inner_shape) = frame.shape.inner {
                 let has_try_from = frame.shape.vtable.try_from.is_some();
                 let is_option = matches!(frame.shape.def, Def::Option(_));
@@ -160,7 +170,7 @@ impl Partial<'_> {
                 trace!(
                     "begin_inner: Creating frame for inner type {inner_shape} (parent is {parent_shape})"
                 );
-                self.frames
+                self.frames_mut()
                     .push(Frame::new(inner_data, inner_shape, FrameOwnership::Owned));
 
                 Ok(self)
@@ -183,7 +193,7 @@ impl Partial<'_> {
     pub fn begin_custom_deserialization(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
-        let current_frame = self.frames.last().unwrap();
+        let current_frame = self.frames().last().unwrap();
         let target_shape = current_frame.shape;
         if let Some(field) = self.parent_field() {
             if field.vtable.deserialize_with.is_some() {
@@ -206,7 +216,7 @@ impl Partial<'_> {
                 );
                 let mut new_frame = Frame::new(source_data, source_shape, FrameOwnership::Owned);
                 new_frame.using_custom_deserialization = true;
-                self.frames.push(new_frame);
+                self.frames_mut().push(new_frame);
 
                 Ok(self)
             } else {

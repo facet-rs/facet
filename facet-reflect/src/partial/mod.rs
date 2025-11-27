@@ -140,28 +140,153 @@ enum PartialState {
     BuildFailed,
 }
 
-/// State for deferred materialization mode.
+/// Mode of operation for frame management.
 ///
-/// In deferred mode, frames are stored when popped (instead of being validated
-/// and discarded), and can be restored when re-entering the same path.
-/// Final validation and materialization happens in `finish_deferred()`.
-struct DeferredState {
-    /// The resolution from facet-solver describing the field structure
-    resolution: Resolution,
+/// In `Strict` mode, frames must be fully initialized before being popped.
+/// In `Deferred` mode, frames can be stored when popped and restored on re-entry,
+/// with final validation happening in `finish_deferred()`.
+enum FrameMode {
+    /// Strict mode: frames must be fully initialized before popping.
+    Strict {
+        /// Stack of frames for nested initialization.
+        stack: Vec<Frame>,
+    },
 
-    /// The frame depth when deferred mode was started.
-    /// Path calculations are relative to this depth.
-    start_depth: usize,
+    /// Deferred mode: frames are stored when popped, can be re-entered.
+    Deferred {
+        /// Stack of frames for nested initialization.
+        stack: Vec<Frame>,
 
-    /// Current path as we navigate (e.g., ["inner", "x"])
-    // TODO: Intern key paths to avoid repeated allocations. The Resolution
-    // already knows all possible paths, so we could use indices into that.
-    current_path: KeyPath,
+        /// The resolution from facet-solver describing the field structure.
+        resolution: Resolution,
 
-    /// Frames saved when popped, keyed by their path.
-    /// When we re-enter a path, we restore the stored frame.
-    // TODO: Consider using path indices instead of cloned KeyPaths as keys.
-    stored_frames: BTreeMap<KeyPath, Frame>,
+        /// The frame depth when deferred mode was started.
+        /// Path calculations are relative to this depth.
+        start_depth: usize,
+
+        /// Current path as we navigate (e.g., ["inner", "x"]).
+        // TODO: Intern key paths to avoid repeated allocations. The Resolution
+        // already knows all possible paths, so we could use indices into that.
+        current_path: KeyPath,
+
+        /// Frames saved when popped, keyed by their path.
+        /// When we re-enter a path, we restore the stored frame.
+        // TODO: Consider using path indices instead of cloned KeyPaths as keys.
+        stored_frames: BTreeMap<KeyPath, Frame>,
+    },
+}
+
+impl FrameMode {
+    /// Get a reference to the frame stack.
+    fn stack(&self) -> &Vec<Frame> {
+        match self {
+            FrameMode::Strict { stack } | FrameMode::Deferred { stack, .. } => stack,
+        }
+    }
+
+    /// Get a mutable reference to the frame stack.
+    fn stack_mut(&mut self) -> &mut Vec<Frame> {
+        match self {
+            FrameMode::Strict { stack } | FrameMode::Deferred { stack, .. } => stack,
+        }
+    }
+
+    /// Check if we're in deferred mode.
+    fn is_deferred(&self) -> bool {
+        matches!(self, FrameMode::Deferred { .. })
+    }
+
+    /// Get deferred state if in deferred mode.
+    fn as_deferred(
+        &self,
+    ) -> Option<(
+        &Vec<Frame>,
+        &Resolution,
+        usize,
+        &KeyPath,
+        &BTreeMap<KeyPath, Frame>,
+    )> {
+        match self {
+            FrameMode::Deferred {
+                stack,
+                resolution,
+                start_depth,
+                current_path,
+                stored_frames,
+            } => Some((stack, resolution, *start_depth, current_path, stored_frames)),
+            FrameMode::Strict { .. } => None,
+        }
+    }
+
+    /// Get mutable deferred state if in deferred mode.
+    fn as_deferred_mut(
+        &mut self,
+    ) -> Option<(
+        &mut Vec<Frame>,
+        &mut Resolution,
+        &mut usize,
+        &mut KeyPath,
+        &mut BTreeMap<KeyPath, Frame>,
+    )> {
+        match self {
+            FrameMode::Deferred {
+                stack,
+                resolution,
+                start_depth,
+                current_path,
+                stored_frames,
+            } => Some((stack, resolution, start_depth, current_path, stored_frames)),
+            FrameMode::Strict { .. } => None,
+        }
+    }
+
+    /// Get the start depth if in deferred mode.
+    fn start_depth(&self) -> Option<usize> {
+        match self {
+            FrameMode::Deferred { start_depth, .. } => Some(*start_depth),
+            FrameMode::Strict { .. } => None,
+        }
+    }
+
+    /// Get the current path if in deferred mode.
+    fn current_path(&self) -> Option<&KeyPath> {
+        match self {
+            FrameMode::Deferred { current_path, .. } => Some(current_path),
+            FrameMode::Strict { .. } => None,
+        }
+    }
+
+    /// Get mutable current path if in deferred mode.
+    fn current_path_mut(&mut self) -> Option<&mut KeyPath> {
+        match self {
+            FrameMode::Deferred { current_path, .. } => Some(current_path),
+            FrameMode::Strict { .. } => None,
+        }
+    }
+
+    /// Get stored frames if in deferred mode.
+    fn stored_frames(&self) -> Option<&BTreeMap<KeyPath, Frame>> {
+        match self {
+            FrameMode::Deferred { stored_frames, .. } => Some(stored_frames),
+            FrameMode::Strict { .. } => None,
+        }
+    }
+
+    /// Get mutable stored frames if in deferred mode.
+    fn stored_frames_mut(&mut self) -> Option<&mut BTreeMap<KeyPath, Frame>> {
+        match self {
+            FrameMode::Deferred { stored_frames, .. } => Some(stored_frames),
+            FrameMode::Strict { .. } => None,
+        }
+    }
+
+    /// Get the resolution if in deferred mode.
+    fn resolution(&self) -> Option<&Resolution> {
+        match self {
+            FrameMode::Deferred { resolution, .. } => Some(resolution),
+            FrameMode::Strict { .. } => None,
+        }
+    }
 }
 
 /// A type-erased, heap-allocated, partially-initialized value.
@@ -184,16 +309,11 @@ struct DeferredState {
 /// implementing deserializers for example, if you want to avoid monomorphization,
 /// you might want to work with [Partial] directly.
 pub struct Partial<'facet> {
-    /// stack of frames to keep track of deeply nested initialization
-    frames: Vec<Frame>,
+    /// Frame management mode (strict or deferred) and associated state.
+    mode: FrameMode,
 
     /// current state of the Partial
     state: PartialState,
-
-    /// When set, deferred materialization mode is enabled.
-    /// Frames are stored when popped and can be restored on re-entry.
-    /// Final validation happens in `finish_deferred()`.
-    deferred: Option<DeferredState>,
 
     invariant: PhantomData<fn(&'facet ()) -> &'facet ()>,
 }
@@ -880,12 +1000,76 @@ impl Frame {
     }
 }
 
+// Convenience methods on Partial for accessing FrameMode internals.
+// These help minimize changes to the rest of the codebase during the refactor.
+impl<'facet> Partial<'facet> {
+    /// Get a reference to the frame stack.
+    #[inline]
+    pub(crate) fn frames(&self) -> &Vec<Frame> {
+        self.mode.stack()
+    }
+
+    /// Get a mutable reference to the frame stack.
+    #[inline]
+    pub(crate) fn frames_mut(&mut self) -> &mut Vec<Frame> {
+        self.mode.stack_mut()
+    }
+
+    /// Check if we're in deferred mode.
+    #[inline]
+    pub fn is_deferred(&self) -> bool {
+        self.mode.is_deferred()
+    }
+
+    /// Get the start depth if in deferred mode.
+    #[inline]
+    pub(crate) fn start_depth(&self) -> Option<usize> {
+        self.mode.start_depth()
+    }
+
+    /// Get the current path if in deferred mode.
+    #[inline]
+    pub(crate) fn current_path(&self) -> Option<&KeyPath> {
+        self.mode.current_path()
+    }
+
+    /// Get mutable current path if in deferred mode.
+    #[inline]
+    pub(crate) fn current_path_mut(&mut self) -> Option<&mut KeyPath> {
+        self.mode.current_path_mut()
+    }
+
+    /// Get stored frames if in deferred mode.
+    #[inline]
+    pub(crate) fn stored_frames(&self) -> Option<&BTreeMap<KeyPath, Frame>> {
+        self.mode.stored_frames()
+    }
+
+    /// Get mutable stored frames if in deferred mode.
+    #[inline]
+    pub(crate) fn stored_frames_mut(&mut self) -> Option<&mut BTreeMap<KeyPath, Frame>> {
+        self.mode.stored_frames_mut()
+    }
+
+    /// Get the resolution if in deferred mode.
+    #[inline]
+    pub(crate) fn resolution(&self) -> Option<&Resolution> {
+        self.mode.resolution()
+    }
+}
+
 impl<'facet> Drop for Partial<'facet> {
     fn drop(&mut self) {
         trace!("🧹 Partial is being dropped");
 
         // Clean up stored frames from deferred state first
-        if let Some(deferred) = self.deferred.take() {
+        if let FrameMode::Deferred {
+            stack,
+            start_depth,
+            stored_frames,
+            ..
+        } = &mut self.mode
+        {
             // Stored frames were saved during end() in deferred mode. Since finish_deferred()
             // was never called for THIS deferred session, we may need to deinit some frames.
             //
@@ -899,12 +1083,10 @@ impl<'facet> Drop for Partial<'facet> {
             //
             // Process from deepest to shallowest to handle parent-child dependencies correctly.
 
-            // Save start_depth before consuming deferred
-            let start_depth = deferred.start_depth;
             // Parent of direct children (path.len() == 1) is at start_depth - 1
             let parent_index = start_depth.saturating_sub(1);
 
-            let mut paths: Vec<_> = deferred.stored_frames.into_iter().collect();
+            let mut paths: Vec<_> = core::mem::take(stored_frames).into_iter().collect();
             paths.sort_by_key(|(path, _)| core::cmp::Reverse(path.len()));
 
             for (path, mut frame) in paths {
@@ -920,7 +1102,7 @@ impl<'facet> Drop for Partial<'facet> {
                             if path.len() == 1 {
                                 let field_name = path.first().unwrap();
                                 let parent_has_field_marked =
-                                    self.frames.get(parent_index).map_or(false, |parent| {
+                                    stack.get(parent_index).map_or(false, |parent| {
                                         Self::is_field_marked_in_parent(parent, field_name)
                                     });
                                 // If parent has it marked, don't deinit (parent will drop).
@@ -938,7 +1120,7 @@ impl<'facet> Drop for Partial<'facet> {
                             if path.len() == 1 {
                                 let field_name = path.first().unwrap();
                                 // Unmark the field from parent's iset before deiniting
-                                if let Some(parent) = self.frames.get_mut(parent_index) {
+                                if let Some(parent) = stack.get_mut(parent_index) {
                                     Self::unmark_field_in_parent(parent, field_name);
                                 }
                             }
@@ -958,7 +1140,7 @@ impl<'facet> Drop for Partial<'facet> {
         }
 
         // We need to properly drop all initialized fields
-        while let Some(mut frame) = self.frames.pop() {
+        while let Some(mut frame) = self.mode.stack_mut().pop() {
             // For Field-owned frames that are fully initialized, the parent frame's
             // tracker (e.g., Struct's iset) will handle dropping the underlying data.
             // But we still need to clean up any partial allocation state.
@@ -976,7 +1158,7 @@ impl<'facet> Drop for Partial<'facet> {
             match &frame.ownership {
                 FrameOwnership::Field => {
                     // Check if parent will actually handle dropping this field
-                    let parent_will_drop = self.frames.last().map_or(false, |parent| {
+                    let parent_will_drop = self.mode.stack().last().map_or(false, |parent| {
                         match &parent.tracker {
                             Tracker::Struct {
                                 iset,

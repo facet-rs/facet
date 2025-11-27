@@ -10,7 +10,7 @@ impl Partial<'_> {
     /// It does _not_ push a new frame onto the stack.
     pub fn begin_map(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
+        let frame = self.frames_mut().last_mut().unwrap();
 
         // Check tracker state before initializing
         match &frame.tracker {
@@ -77,7 +77,7 @@ impl Partial<'_> {
     /// to pop the frame.
     pub fn begin_key(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
+        let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a Map in Idle state
         let map_def = match (&frame.shape.def, &frame.tracker) {
@@ -156,7 +156,7 @@ impl Partial<'_> {
         }
 
         // Push a new frame for the key
-        self.frames.push(Frame::new(
+        self.frames_mut().push(Frame::new(
             PtrUninit::new(key_ptr_raw),
             key_shape,
             FrameOwnership::ManagedElsewhere, // Ownership tracked in MapInsertState
@@ -169,21 +169,29 @@ impl Partial<'_> {
     /// Must be called after the key has been set and popped
     pub fn begin_value(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
+        let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a Map in PushingValue state with no value_ptr yet
         let (map_def, key_ptr) = match (&frame.shape.def, &frame.tracker) {
             (
                 Def::Map(map_def),
                 Tracker::Map {
-                    insert_state: MapInsertState::PushingValue { value_ptr: None, key_ptr, .. },
+                    insert_state:
+                        MapInsertState::PushingValue {
+                            value_ptr: None,
+                            key_ptr,
+                            ..
+                        },
                     ..
                 },
             ) => (map_def, *key_ptr),
             (
                 Def::Map(_),
                 Tracker::Map {
-                    insert_state: MapInsertState::PushingValue { value_ptr: Some(_), .. },
+                    insert_state:
+                        MapInsertState::PushingValue {
+                            value_ptr: Some(_), ..
+                        },
                     ..
                 },
             ) => {
@@ -237,7 +245,7 @@ impl Partial<'_> {
         }
 
         // Push a new frame for the value
-        self.frames.push(Frame::new(
+        self.frames_mut().push(Frame::new(
             value_ptr,
             value_shape,
             FrameOwnership::ManagedElsewhere, // Ownership tracked in MapInsertState

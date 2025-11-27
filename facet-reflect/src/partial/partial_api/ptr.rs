@@ -8,7 +8,7 @@ impl Partial<'_> {
     pub fn begin_smart_ptr(&mut self) -> Result<&mut Self, ReflectError> {
         crate::trace!("begin_smart_ptr()");
         self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
+        let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a SmartPointer
         match &frame.shape.def {
@@ -52,7 +52,7 @@ impl Partial<'_> {
                     };
 
                     // Push a new frame for the inner value
-                    self.frames.push(Frame::new(
+                    self.frames_mut().push(Frame::new(
                         PtrUninit::new(inner_ptr),
                         pointee_shape,
                         FrameOwnership::Owned,
@@ -80,7 +80,7 @@ impl Partial<'_> {
                             FrameOwnership::Owned,
                         );
                         frame.tracker = Tracker::Uninit;
-                        self.frames.push(frame);
+                        self.frames_mut().push(frame);
                     } else if let Type::Sequence(SequenceType::Slice(_st)) = pointee_shape.ty {
                         crate::trace!("Pointee is [{}]", _st.t);
 

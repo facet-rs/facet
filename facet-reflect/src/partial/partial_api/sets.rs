@@ -13,7 +13,7 @@ impl Partial<'_> {
     pub fn begin_set(&mut self) -> Result<&mut Self, ReflectError> {
         crate::trace!("begin_set()");
         self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
+        let frame = self.frames_mut().last_mut().unwrap();
 
         match &frame.tracker {
             Tracker::Uninit => {
@@ -73,7 +73,7 @@ impl Partial<'_> {
     pub fn begin_set_item(&mut self) -> Result<&mut Self, ReflectError> {
         crate::trace!("begin_set_item()");
         self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
+        let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a Set that's been initialized
         let set_def = match &frame.shape.def {
@@ -131,7 +131,7 @@ impl Partial<'_> {
         };
 
         // Push a new frame for the element
-        self.frames.push(Frame::new(
+        self.frames_mut().push(Frame::new(
             PtrUninit::new(element_ptr),
             element_shape,
             FrameOwnership::Owned,

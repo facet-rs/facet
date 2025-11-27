@@ -536,7 +536,10 @@ impl<'facet, T: ?Sized> TypedPartial<'facet, T> {
 impl<'facet, T> core::fmt::Debug for TypedPartial<'facet, T> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("TypedPartial")
-            .field("shape", &self.inner.frames.last().map(|frame| frame.shape))
+            .field(
+                "shape",
+                &self.inner.frames().last().map(|frame| frame.shape),
+            )
             .finish()
     }
 }

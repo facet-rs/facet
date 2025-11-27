@@ -18,7 +18,7 @@ impl<'facet> Partial<'facet> {
         variant: &'static Variant,
     ) -> Result<(), ReflectError> {
         // Check all invariants early before making any changes
-        let frame = self.frames.last().unwrap();
+        let frame = self.frames().last().unwrap();
 
         // Check enum representation early
         match enum_type.enum_repr {
@@ -50,7 +50,7 @@ impl<'facet> Partial<'facet> {
         };
 
         // All checks passed, now we can safely make changes
-        let fr = self.frames.last_mut().unwrap();
+        let fr = self.frames_mut().last_mut().unwrap();
 
         // Write the discriminant to memory
         unsafe {
@@ -112,7 +112,7 @@ impl<'facet> Partial<'facet> {
     /// Used by `begin_field` etc. to get a list of fields to look through, errors out
     /// if we're not pointing to a struct or an enum with an already-selected variant
     pub(crate) fn get_fields(&self) -> Result<&'static [Field], ReflectError> {
-        let frame = self.frames.last().unwrap();
+        let frame = self.frames().last().unwrap();
         match frame.shape.ty {
             Type::Primitive(_) => Err(ReflectError::OperationFailed {
                 shape: frame.shape,

@@ -14,7 +14,7 @@ impl Partial<'_> {
     pub fn begin_list(&mut self) -> Result<&mut Self, ReflectError> {
         crate::trace!("begin_list()");
         self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
+        let frame = self.frames_mut().last_mut().unwrap();
 
         match &frame.tracker {
             Tracker::Uninit => {
@@ -94,7 +94,7 @@ impl Partial<'_> {
     pub fn begin_list_item(&mut self) -> Result<&mut Self, ReflectError> {
         crate::trace!("begin_list_item()");
         self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
+        let frame = self.frames_mut().last_mut().unwrap();
 
         // Check if we're building a smart pointer slice
         if let Tracker::SmartPointerSlice {
@@ -163,13 +163,13 @@ impl Partial<'_> {
                 element_shape,
                 FrameOwnership::Owned,
             );
-            self.frames.push(element_frame);
+            self.frames_mut().push(element_frame);
 
             // Mark that we're building an item
             // We need to update the tracker after pushing the frame
-            let parent_idx = self.frames.len() - 2;
+            let parent_idx = self.frames().len() - 2;
             if let Tracker::SmartPointerSlice { building_item, .. } =
-                &mut self.frames[parent_idx].tracker
+                &mut self.frames_mut()[parent_idx].tracker
             {
                 crate::trace!("Marking element frame as building item");
                 *building_item = true;
@@ -234,7 +234,7 @@ impl Partial<'_> {
         };
 
         // Push a new frame for the element
-        self.frames.push(Frame::new(
+        self.frames_mut().push(Frame::new(
             PtrUninit::new(element_ptr),
             element_shape,
             FrameOwnership::Owned,

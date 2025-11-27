@@ -9,7 +9,7 @@ impl Partial<'_> {
     /// If the current frame isn't a struct or an enum (with a selected variant)
     /// then this returns `None` for sure.
     pub fn field_index(&self, field_name: &str) -> Option<usize> {
-        let frame = self.frames.last()?;
+        let frame = self.frames().last()?;
 
         match frame.shape.ty {
             Type::User(UserType::Struct(struct_def)) => {
@@ -33,7 +33,7 @@ impl Partial<'_> {
 
     /// Check if a struct field at the given index has been set
     pub fn is_field_set(&self, index: usize) -> Result<bool, ReflectError> {
-        let frame = self.frames.last().ok_or(ReflectError::NoActiveFrame)?;
+        let frame = self.frames().last().ok_or(ReflectError::NoActiveFrame)?;
 
         match &frame.tracker {
             Tracker::Uninit => Ok(false),
@@ -81,7 +81,7 @@ impl Partial<'_> {
     pub fn begin_field(&mut self, field_name: &str) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
-        let frame = self.frames.last().unwrap();
+        let frame = self.frames().last().unwrap();
         let fields = self.get_fields()?;
         let Some(idx) = fields.iter().position(|f| f.name == field_name) else {
             return Err(ReflectError::FieldError {
@@ -105,37 +105,42 @@ impl Partial<'_> {
         let field_name = self.get_field_name_for_path(idx);
 
         // Update current_path in deferred mode
-        if let Some(deferred) = &mut self.deferred {
+        if let FrameMode::Deferred {
+            stack,
+            start_depth,
+            current_path,
+            stored_frames,
+            ..
+        } = &mut self.mode
+        {
             // Only track path if we're at the expected navigable depth
             // Path should have (frames.len() - start_depth) entries before we add this field
-            let relative_depth = self.frames.len() - deferred.start_depth;
-            let should_track = deferred.current_path.len() == relative_depth;
+            let relative_depth = stack.len() - *start_depth;
+            let should_track = current_path.len() == relative_depth;
 
             if let Some(name) = field_name {
                 if should_track {
-                    deferred.current_path.push(name);
+                    current_path.push(name);
 
                     // Check if we have a stored frame for this path
-                    if let Some(stored_frame) =
-                        deferred.stored_frames.remove(&deferred.current_path)
-                    {
+                    if let Some(stored_frame) = stored_frames.remove(current_path) {
                         trace!(
                             "begin_nth_field: Restoring stored frame for path {:?}",
-                            deferred.current_path
+                            current_path
                         );
 
                         // Update parent's current_child tracking
-                        let frame = self.frames.last_mut().unwrap();
+                        let frame = stack.last_mut().unwrap();
                         frame.tracker.set_current_child(idx);
 
-                        self.frames.push(stored_frame);
+                        stack.push(stored_frame);
                         return Ok(self);
                     }
                 }
             }
         }
 
-        let frame = self.frames.last_mut().unwrap();
+        let frame = self.frames_mut().last_mut().unwrap();
 
         let next_frame = match frame.shape.ty {
             Type::User(user_type) => match user_type {
@@ -188,13 +193,13 @@ impl Partial<'_> {
             }
         };
 
-        self.frames.push(next_frame);
+        self.frames_mut().push(next_frame);
         Ok(self)
     }
 
     /// Get the field name for path tracking (used in deferred mode)
     fn get_field_name_for_path(&self, idx: usize) -> Option<&'static str> {
-        let frame = self.frames.last()?;
+        let frame = self.frames().last()?;
         match frame.shape.ty {
             Type::User(UserType::Struct(struct_type)) => {
                 struct_type.fields.get(idx).map(|f| f.name)
@@ -222,7 +227,7 @@ impl Partial<'_> {
     pub fn set_nth_field_to_default(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
-        let frame = self.frames.last().unwrap();
+        let frame = self.frames().last().unwrap();
         let fields = self.get_fields()?;
 
         if idx >= fields.len() {
@@ -315,7 +320,7 @@ impl Partial<'_> {
         }
         let field = fields[field_index];
 
-        let src_frame = src.frames.last_mut().unwrap();
+        let src_frame = src.frames_mut().last_mut().unwrap();
 
         self.begin_nth_field(field_index)?;
         unsafe {
