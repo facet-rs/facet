@@ -86,37 +86,51 @@ struct Inner {
 }
 ```
 
-In strict JSON, you open an object, set its fields, and close it. Done.
-You can't revisit. So where does interleaving come from?
+In well-formed JSON, objects are self-contained. Let's trace through parsing:
 
-### Case 1: TOML Tables
+```json
+{ "name": "test", "inner": { "x": 42, "y": "hello" }, "count": 100 }
+```
 
-TOML allows reopening tables with multiple headers:
+1. See `{` → we're deserializing `Outer`, push frame for `Outer`
+2. See `"name": "test"` → set `outer.name`
+3. See `"inner": {` → push frame for `Inner`
+4. See `"x": 42` → set `inner.x`
+5. See `"y": "hello"` → set `inner.y`
+6. See `}` → pop `Inner` frame (all fields set, validation passes!)
+7. See `"count": 100` → set `outer.count`
+8. See `}` → pop `Outer` frame (all fields set, done!)
+
+This works perfectly. `inner` is fully initialized before we pop it.
+So where does interleaving come from?
+
+### Case 1: TOML Dotted Keys
+
+TOML allows dotted keys that can interleave nested fields:
 
 ```toml
 name = "test"
-
-[inner]
-x = 42
-
+inner.x = 42
 count = 100
-
-[inner]
-y = "hello"
+inner.y = "hello"
 ```
 
-This is valid TOML! The `[inner]` table is opened twice, with `count` set
-in between. A streaming parser sees:
+This is valid TOML! All four lines are at the root level, but `inner.x` and
+`inner.y` both write to the nested `inner` struct. A streaming parser sees:
 
-1. `name = "test"`
-2. enter `inner`
-3. `x = 42`
-4. exit `inner` (to set `count`)
-5. `count = 100`
-6. enter `inner` again
-7. `y = "hello"`
+1. `name = "test"` → set `outer.name`
+2. `inner.x = 42` → push `inner` frame, set `x`... but we can't pop yet!
+3. `count = 100` → need to set `outer.count`, must leave `inner` first
+4. `inner.y = "hello"` → back to `inner`, set `y`
 
-In strict mode, step 4 fails because `inner.y` isn't set yet.
+In strict mode, step 3 requires popping the `inner` frame to get back to
+`outer`, but `inner.y` isn't set yet. We're stuck.
+
+This is why TOML parsers typically deserialize to an intermediate tree (a DOM,
+document object model) first—they can't know if a table is truly "done" or if
+more dotted keys will add to it later. Building a DOM avoids the problem, but
+it means extra allocations and no streaming. Deferred mode lets us initialize
+in place without that intermediate step.
 
 ### Case 2: Flattened Structs
 
@@ -208,7 +222,6 @@ enum PartialMode {
 
         /// Current path as we navigate (e.g., ["inner", "x"])
         current_path: KeyPath,  // Vec<&'static str>
-        // TODO: migrate to SmallVec<[&'static str; 8]> for typical depths
 
         /// Frames saved when popped, restored when re-entered
         stored_frames: BTreeMap<KeyPath, Frame>,
@@ -236,22 +249,47 @@ enum PartialMode {
 4. Initialize `Option<T>` fields to `None` if not set
 5. Report errors for any missing required fields
 
-## Limitations
+## What Can Be Re-entered?
 
-Not everything supports interleaved initialization:
+Everything. That's the whole point.
 
-| Type | Can Re-enter? | Why |
-|------|--------------|-----|
-| Struct fields | Yes | Just tracking which fields are set |
-| Enum fields | Yes | Variant + field tracking preserved |
-| Array elements | Yes | Just tracking which indices are set |
-| List items | No | Items are pushed sequentially |
-| Map entries | No | Must complete each key-value pair |
-| `Arc<[T]>`, `Box<[T]>` | No | Built from Vec, finalized on pop |
+The frames are preserved with all their state, including heap allocations
+used as scratch space:
 
-Types that can't be re-entered are "eager materialization" types - they must
-be fully built in a single visit. The `Shape::requires_eager_materialization()`
-method identifies these.
+| Type | What's Preserved |
+|------|------------------|
+| Struct | ISet tracking which fields are set |
+| Enum | Selected variant + field ISet |
+| Array | ISet tracking which indices are set |
+| List (Vec, etc.) | The Vec being built |
+| Map | The map being built + any pending key |
+| `Arc<[T]>`, `Box<[T]>` | The Vec being built (transformation deferred!) |
+
+**Example: YAML with interleaved list items**
+
+```yaml
+items:
+  - first
+other_field: 42
+items:
+  - second
+```
+
+With deferred mode, we push "first", exit to set `other_field`, then re-enter
+`items` and push "second". The Vec is preserved across the exit.
+
+### Deferred vs Eager Materialization
+
+In strict mode, some types transform on pop. For example, `Arc<[T]>` is built
+using a `Vec<T>` as scratch space, then converted to an `Arc<[T]>` when you
+call `end()`. Once that transformation happens, you can't go back.
+
+In deferred mode, we *defer* that transformation. The `Vec` stays a `Vec`.
+You can re-enter and push more items. Only when you call `finish_deferred()`
+does the actual `Vec→Arc<[T]>` transformation happen.
+
+This is why it's called deferred *materialization*—we defer the final
+materialization of these types until the very end.
 
 ## Example
 

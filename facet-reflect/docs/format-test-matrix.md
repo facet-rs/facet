@@ -19,7 +19,7 @@ This guide is format‑agnostic. Examples use plain Rust fields plus core facet 
 ## Quick API surface
 - `[r.api.from]` `from_str` / `from_slice` -> `Result<T, Error>`.
 - `[r.api.to]` `to_string` / `to_vec` / `to_writer`.
-- `[r.api.deterministic]` Output should be deterministic: stable struct field order; stable map key order (sort for text formats; preserve declaration order for binary).
+- `[r.api.deterministic]` Output should be deterministic: structs in declaration order; maps in iteration order of the map type (HashMap not ordered; BTreeMap sorted; ordered maps preserve insertion). Schema-driven formats may impose their own order—document it.
 - `[r.api.errors]` Errors: implement `std::error::Error`; `miette::Diagnostic` if possible. For binary, spans = byte offsets/lengths.
 
 ## Implementation tiers
@@ -75,7 +75,7 @@ enum Signed { Signed { n: i8 }, Unsigned { n: u8 } } // n=-5 -> Signed; n=200 ->
 ```
 
 `[r.solver.strategy]` Solver disambiguation guidance: prefer variants that fully satisfy required fields; among candidates, pick those whose value ranges/types fit; child presence can disambiguate; if multiple viable variants remain, report ambiguity instead of picking arbitrarily. Document your format’s tie-break rules (e.g., declaration order) if any.
-9. `[r.flatten.option]` Option<flatten>:
+9. `[r.flatten.option]` `Option<flatten>`:
 ```rust
 struct Server { name: String, #[facet(flatten)] tuning: Option<Tuning> }
 struct Tuning { ttl: u32, strategy: Option<String> }
@@ -126,7 +126,9 @@ struct Config {
 struct PathBufLike(String); // serializes/deserializes as inner String directly
 ```
 
-18. `[r.attrs.skip_if]` Conditional skip serialize:
+18. `[r.types.ptr]` Smart pointers serialize as inner `T`: `Box<T>`, `Rc<T>`, `Arc<T>` (and equivalents) behave transparently.
+
+19. `[r.attrs.skip_if]` Conditional skip serialize:
 ```rust
 struct Config {
     #[facet(skip_serializing_if = "Option::is_none")]
@@ -147,12 +149,12 @@ struct Config {
 - `[r.scalars.numbers]` Booleans, null, numeric boundaries; special floats policy (NaN/∞) explicit.
 
 ## Binary data & temporal types
-- `[r.bytes.text]` Bytes in text formats: choose a representation (base64, hex, or array-of-u8). Document and test both directions. Align with facet-json’s base64 default if applicable.
+- `[r.bytes.text]` Bytes in text formats: choose a representation (array-of-u8 like facet-json, or base64/hex for compactness). Document and test both directions.
 - `[r.bytes.binary]` Bytes in binary formats: raw bytes with length prefix; ensure overflow/length checks.
 - `[r.temporal.iso8601]` Temporal types in text formats: use ISO‑8601 strings (e.g., `"2024-01-15T10:30:00Z"` for instants; `"2024-01-15"` for dates; `"10:30:00"` for times).
 - `[r.temporal.msgpack]` If the format has native timestamp types (e.g., msgpack ext type), prefer them; otherwise fall back to strings.
 - `[r.temporal.binary]` Binary formats: pick a canonical encoding (e.g., i64 seconds + u32 nanos, or format-native) and keep it stable.
-- `[r.temporal.coverage]` Cover common crates: chrono (DateTime<Utc>, NaiveDate, NaiveDateTime, NaiveTime), time (OffsetDateTime, PrimitiveDateTime, Date, Time), jiff (Timestamp, Zoned, Date, Time, Span), std (SystemTime, Duration).
+- `[r.temporal.coverage]` Cover common crates: chrono (`DateTime<Utc>`, NaiveDate, NaiveDateTime, NaiveTime); time (OffsetDateTime, PrimitiveDateTime, Date, Time); jiff (Timestamp, Zoned, Date, Time; `Span` as a duration); std (SystemTime as instant, Duration as span).
 
 ## Unknown data
 - `[r.unknown.default]` Default: unknown fields skipped.
