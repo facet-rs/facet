@@ -374,6 +374,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-pretty"
+version = "0.31.0"
+dependencies = [
+ "camino",
+ "facet",
+ "facet-core",
+ "facet-reflect",
+ "facet-testhelpers",
+ "insta",
+]
+
+[[package]]
 name = "facet-reflect"
 version = "0.31.8"
 dependencies = [

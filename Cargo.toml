@@ -18,6 +18,9 @@ members = [
     # test helpers
     "facet-testhelpers",
     "facet-testhelpers-macros",
+
+    # pretty printing
+    "facet-pretty",
 ]
 resolver = "3"
 
