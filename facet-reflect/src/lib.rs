@@ -6,6 +6,9 @@
 
 extern crate alloc;
 
+#[cfg(doc)]
+pub mod format_matrix;
+
 mod error;
 pub use error::*;
 

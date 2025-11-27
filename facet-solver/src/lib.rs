@@ -316,7 +316,7 @@ impl<'a> IncrementalSolver<'a> {
             .filter(|idx| {
                 let config = &self.schema.resolutions[*idx];
                 config
-                    .required_field_names
+                    .required_field_names()
                     .iter()
                     .all(|f| seen_keys.contains(f))
             })
@@ -329,7 +329,7 @@ impl<'a> IncrementalSolver<'a> {
                 let first_idx = self.candidates.first().unwrap();
                 let first_config = &self.schema.resolutions[first_idx];
                 let missing: Vec<_> = first_config
-                    .required_field_names
+                    .required_field_names()
                     .iter()
                     .filter(|f| !seen_keys.contains(*f))
                     .copied()
@@ -382,7 +382,7 @@ fn find_disambiguating_fields(configs: &[&Resolution]) -> Vec<String> {
     // Collect all field names across all configs
     let mut all_fields: BTreeSet<&str> = BTreeSet::new();
     for config in configs {
-        for name in config.fields.keys() {
+        for name in config.fields().keys() {
             all_fields.insert(name);
         }
     }
@@ -425,29 +425,25 @@ impl MissingFieldInfo {
 #[derive(Debug, Clone)]
 pub enum SchemaError {
     /// A field name appears from multiple sources (parent struct and flattened struct)
-    DuplicateField {
-        /// The conflicting field name
-        field_name: &'static str,
-        /// Path to the first occurrence
-        first_path: FieldPath,
-        /// Path to the second occurrence
-        second_path: FieldPath,
-    },
+    DuplicateField(DuplicateFieldError),
+}
+
+impl From<DuplicateFieldError> for SchemaError {
+    fn from(err: DuplicateFieldError) -> Self {
+        SchemaError::DuplicateField(err)
+    }
 }
 
 impl fmt::Display for SchemaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SchemaError::DuplicateField {
-                field_name,
-                first_path,
-                second_path,
-            } => {
+            SchemaError::DuplicateField(err) => {
                 write!(
                     f,
-                    "Duplicate field name '{field_name}' from different sources: {first_path} vs {second_path}. \
+                    "Duplicate field name '{}' from different sources: {} vs {}. \
                      This usually means a parent struct and a flattened struct both \
-                     define a field with the same name."
+                     define a field with the same name.",
+                    err.field_name, err.first_path, err.second_path
                 )
             }
         }
@@ -794,7 +790,7 @@ impl<'a> Solver<'a> {
         for idx in self.candidates.iter() {
             let config = &self.schema.resolutions[idx];
             // Check if any of this config's fields match the satisfied shapes
-            for field in config.fields.values() {
+            for field in config.fields().values() {
                 if satisfied_shapes
                     .iter()
                     .any(|s| core::ptr::eq(*s, field.value_shape))
@@ -1165,7 +1161,7 @@ impl<'a> Solver<'a> {
             .filter(|idx| {
                 let config = &self.schema.resolutions[*idx];
                 config
-                    .required_field_names
+                    .required_field_names()
                     .iter()
                     .all(|f| self.seen_keys.contains(f))
             })
@@ -1176,7 +1172,7 @@ impl<'a> Solver<'a> {
                 let first_idx = self.candidates.first().unwrap();
                 let first_config = &self.schema.resolutions[first_idx];
                 let missing: Vec<_> = first_config
-                    .required_field_names
+                    .required_field_names()
                     .iter()
                     .filter(|f| !self.seen_keys.contains(*f))
                     .copied()
@@ -1373,248 +1369,6 @@ impl Schema {
     /// Get the resolutions for this schema.
     pub fn resolutions(&self) -> &[Resolution] {
         &self.resolutions
-    }
-}
-
-impl Resolution {
-    /// Create a new empty configuration.
-    fn new() -> Self {
-        Self {
-            variant_selections: Vec::new(),
-            fields: BTreeMap::new(),
-            required_field_names: BTreeSet::new(),
-            known_paths: BTreeSet::new(),
-        }
-    }
-
-    /// Add a key path (for depth-aware probing).
-    fn add_key_path(&mut self, path: KeyPath) {
-        self.known_paths.insert(path);
-    }
-
-    /// Add a field to this configuration.
-    ///
-    /// Returns an error if a field with the same serialized name already exists
-    /// but comes from a different source (different path). This catches duplicate
-    /// field name conflicts between parent structs and flattened fields.
-    fn add_field(&mut self, info: FieldInfo) -> Result<(), SchemaError> {
-        if let Some(existing) = self.fields.get(info.serialized_name) {
-            if existing.path != info.path {
-                return Err(SchemaError::DuplicateField {
-                    field_name: info.serialized_name,
-                    first_path: existing.path.clone(),
-                    second_path: info.path,
-                });
-            }
-        }
-        if info.required {
-            self.required_field_names.insert(info.serialized_name);
-        }
-        self.fields.insert(info.serialized_name, info);
-        Ok(())
-    }
-
-    /// Add a variant selection to this configuration.
-    fn add_variant_selection(
-        &mut self,
-        path: FieldPath,
-        enum_name: &'static str,
-        variant_name: &'static str,
-    ) {
-        self.variant_selections.push(VariantSelection {
-            path,
-            enum_name,
-            variant_name,
-        });
-    }
-
-    /// Merge another configuration into this one.
-    ///
-    /// Returns an error if a field with the same serialized name already exists
-    /// but comes from a different source (different path). This catches duplicate
-    /// field name conflicts between parent structs and flattened fields.
-    fn merge(&mut self, other: &Resolution) -> Result<(), SchemaError> {
-        for (name, info) in &other.fields {
-            if let Some(existing) = self.fields.get(*name) {
-                if existing.path != info.path {
-                    return Err(SchemaError::DuplicateField {
-                        field_name: name,
-                        first_path: existing.path.clone(),
-                        second_path: info.path.clone(),
-                    });
-                }
-            }
-            self.fields.insert(*name, info.clone());
-            if info.required {
-                self.required_field_names.insert(*name);
-            }
-        }
-        for vs in &other.variant_selections {
-            self.variant_selections.push(vs.clone());
-        }
-        for path in &other.known_paths {
-            self.known_paths.insert(path.clone());
-        }
-        Ok(())
-    }
-
-    /// Mark all fields as optional (required = false).
-    /// Used when a flattened field is wrapped in `Option<T>`.
-    fn mark_all_optional(&mut self) {
-        self.required_field_names.clear();
-        for info in self.fields.values_mut() {
-            info.required = false;
-        }
-    }
-
-    /// Check if this configuration matches the input fields.
-    pub fn matches(&self, input_fields: &BTreeSet<&str>) -> MatchResult {
-        let mut missing_required = Vec::new();
-        let mut missing_optional = Vec::new();
-
-        for (name, info) in &self.fields {
-            if !input_fields.contains(name) {
-                if info.required {
-                    missing_required.push(*name);
-                } else {
-                    missing_optional.push(*name);
-                }
-            }
-        }
-
-        // Check for unknown fields
-        let unknown: Vec<String> = input_fields
-            .iter()
-            .filter(|f| !self.fields.contains_key(*f))
-            .map(|s| (*s).into())
-            .collect();
-
-        if !missing_required.is_empty() || !unknown.is_empty() {
-            MatchResult::NoMatch {
-                missing_required,
-                unknown,
-            }
-        } else if missing_optional.is_empty() {
-            MatchResult::Exact
-        } else {
-            MatchResult::WithOptionalMissing(missing_optional)
-        }
-    }
-
-    /// Get a human-readable description of this configuration.
-    ///
-    /// Returns something like `MessagePayload::Text` or `Auth::Token + Transport::Tcp`
-    /// for resolutions with multiple variant selections.
-    pub fn describe(&self) -> String {
-        if self.variant_selections.is_empty() {
-            String::from("(no variants)")
-        } else {
-            let parts: Vec<_> = self
-                .variant_selections
-                .iter()
-                .map(|vs| alloc::format!("{}::{}", vs.enum_name, vs.variant_name))
-                .collect();
-            parts.join(" + ")
-        }
-    }
-
-    /// Get the fields in deserialization order (deepest first).
-    pub fn deserialization_order(&self) -> Vec<&FieldInfo> {
-        let mut fields: Vec<_> = self.fields.values().collect();
-        fields.sort_by(|a, b| {
-            // Deeper paths first
-            b.path
-                .depth()
-                .cmp(&a.path.depth())
-                // Then lexicographic for determinism
-                .then_with(|| a.path.cmp(&b.path))
-        });
-        fields
-    }
-
-    /// Get a field by name.
-    pub fn field(&self, name: &str) -> Option<&FieldInfo> {
-        self.fields.get(name)
-    }
-
-    /// Get all fields.
-    pub fn fields(&self) -> &BTreeMap<&'static str, FieldInfo> {
-        &self.fields
-    }
-
-    /// Get optional fields that were NOT provided in the input.
-    ///
-    /// This is useful for deserializers that need to initialize missing
-    /// optional fields to `None` or their default value.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// # use facet::Facet;
-    /// # use facet_solver::Schema;
-    /// # use std::collections::BTreeSet;
-    /// #[derive(Facet)]
-    /// struct Config {
-    ///     required_field: String,
-    ///     optional_field: Option<u32>,
-    /// }
-    ///
-    /// let schema = Schema::build(Config::SHAPE).unwrap();
-    /// let config = &schema.resolutions()[0];
-    ///
-    /// // If we only saw "required_field"
-    /// let mut seen = BTreeSet::new();
-    /// seen.insert("required_field");
-    ///
-    /// let missing: Vec<_> = config.missing_optional_fields(&seen).collect();
-    /// assert_eq!(missing.len(), 1);
-    /// assert_eq!(missing[0].serialized_name, "optional_field");
-    /// ```
-    pub fn missing_optional_fields<'a>(
-        &'a self,
-        seen_keys: &'a BTreeSet<&str>,
-    ) -> impl Iterator<Item = &'a FieldInfo> {
-        self.fields
-            .values()
-            .filter(move |info| !info.required && !seen_keys.contains(info.serialized_name))
-    }
-
-    /// Get variant selections.
-    pub fn variant_selections(&self) -> &[VariantSelection] {
-        &self.variant_selections
-    }
-
-    /// Get all child fields (fields with the CHILD flag).
-    ///
-    /// This is useful for KDL deserialization where child nodes need to be
-    /// processed separately from properties.
-    pub fn child_fields(&self) -> impl Iterator<Item = &FieldInfo> {
-        self.fields
-            .values()
-            .filter(|f| f.field.flags.contains(FieldFlags::CHILD))
-    }
-
-    /// Get all property fields (fields without the CHILD flag).
-    ///
-    /// This is useful for KDL deserialization where properties are processed
-    /// separately from child nodes.
-    pub fn property_fields(&self) -> impl Iterator<Item = &FieldInfo> {
-        self.fields
-            .values()
-            .filter(|f| !f.field.flags.contains(FieldFlags::CHILD))
-    }
-
-    /// Get all known key paths (for depth-aware probing).
-    pub fn known_paths(&self) -> &BTreeSet<KeyPath> {
-        &self.known_paths
-    }
-
-    /// Check if this configuration has a specific key path.
-    /// Compares runtime strings against static schema paths.
-    pub fn has_key_path(&self, path: &[&str]) -> bool {
-        self.known_paths.iter().any(|known| {
-            known.len() == path.len() && known.iter().zip(path.iter()).all(|(a, b)| *a == *b)
-        })
     }
 }
 
@@ -1842,11 +1596,11 @@ impl SchemaBuilder {
                 for config in configs {
                     // Find which variant this config has selected for this field
                     let selected_variant = config
-                        .variant_selections
+                        .variant_selections()
                         .iter()
                         .find(|vs| {
                             // Match by the field name in the path
-                            vs.path.segments.last() == Some(&PathSegment::Field(field.name))
+                            vs.path.segments().last() == Some(&PathSegment::Field(field.name))
                         })
                         .map(|vs| vs.variant_name);
 
@@ -2190,7 +1944,7 @@ impl SchemaBuilder {
         // Build inverted index: field_name → bitmask of config indices
         let mut field_to_resolutions: BTreeMap<&'static str, ResolutionSet> = BTreeMap::new();
         for (idx, config) in resolutions.iter().enumerate() {
-            for field_name in config.fields.keys() {
+            for field_name in config.fields().keys() {
                 field_to_resolutions
                     .entry(*field_name)
                     .or_insert_with(|| ResolutionSet::empty(num_resolutions))

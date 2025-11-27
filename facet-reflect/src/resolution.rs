@@ -386,6 +386,11 @@ impl Resolution {
         &self.fields
     }
 
+    /// Get the set of required field names.
+    pub fn required_field_names(&self) -> &BTreeSet<&'static str> {
+        &self.required_field_names
+    }
+
     /// Get optional fields that were NOT provided in the input.
     ///
     /// This is useful for deserializers that need to initialize missing

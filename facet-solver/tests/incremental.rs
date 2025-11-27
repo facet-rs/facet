@@ -902,15 +902,11 @@ fn test_duplicate_field_name_returns_error() {
     // This should return an error because both outer and inner have "name"
     let result = Schema::build(OuterWithDuplicateName::SHAPE);
     match result {
-        Err(SchemaError::DuplicateField {
-            field_name,
-            first_path,
-            second_path,
-        }) => {
-            assert_eq!(field_name, "name");
+        Err(SchemaError::DuplicateField(err)) => {
+            assert_eq!(err.field_name, "name");
             // Check that paths are included
-            let first = first_path.to_string();
-            let second = second_path.to_string();
+            let first = err.first_path.to_string();
+            let second = err.second_path.to_string();
             // One should be "name" (outer), one should contain "inner"
             assert!(
                 first == "name" || second == "name",
