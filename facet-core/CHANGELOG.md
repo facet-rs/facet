@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.8](https://github.com/facet-rs/facet/compare/facet-core-v0.31.7...facet-core-v0.31.8) - 2025-11-27
+
+### Other
+
+- Introduce facet-solver crate (for flatten, untagged)
+
 ## [0.31.6](https://github.com/facet-rs/facet/compare/facet-core-v0.31.5...facet-core-v0.31.6) - 2025-11-25
 
 ### Added

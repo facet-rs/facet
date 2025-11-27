@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.8](https://github.com/facet-rs/facet/compare/facet-reflect-v0.31.7...facet-reflect-v0.31.8) - 2025-11-27
+
+### Fixed
+
+- *(reflect)* use alloc instead of std for BTreeSet import in tests
+
+### Other
+
+- Introduce facet-solver crate (for flatten, untagged)
+- *(reflect)* add drop tracking tests for set building
+- Add set building API
+
 ## [0.31.5](https://github.com/facet-rs/facet/compare/facet-reflect-v0.31.4...facet-reflect-v0.31.5) - 2025-11-25
 
 ### Other
