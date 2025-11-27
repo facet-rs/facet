@@ -62,18 +62,9 @@ impl<'facet> Partial<'facet> {
     ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - Called when not at the root frame (must call before navigating into fields)
-    /// - Already in deferred mode
+    /// Returns an error if already in deferred mode.
     #[inline]
     pub fn begin_deferred(&mut self, resolution: Resolution) -> Result<&mut Self, ReflectError> {
-        // Deferred mode can only be enabled at the root frame
-        if self.frames.len() != 1 {
-            return Err(ReflectError::InvariantViolation {
-                invariant: "begin_deferred() can only be called at the root frame",
-            });
-        }
-
         // Cannot enable deferred mode if already in deferred mode
         if self.deferred.is_some() {
             return Err(ReflectError::InvariantViolation {
@@ -101,16 +92,16 @@ impl<'facet> Partial<'facet> {
     /// Returns an error if any required fields are missing or if the partial is
     /// not in deferred mode.
     pub fn finish_deferred(&mut self) -> Result<&mut Self, ReflectError> {
-        let mut deferred_state =
-            self.deferred
-                .take()
-                .ok_or_else(|| ReflectError::InvariantViolation {
-                    invariant: "finish_deferred() called but deferred mode is not enabled",
-                })?;
+        let mut deferred_state = self
+            .deferred
+            .take()
+            .ok_or(ReflectError::InvariantViolation {
+                invariant: "finish_deferred() called but deferred mode is not enabled",
+            })?;
 
         // Sort paths by depth (deepest first) so we process children before parents
         let mut paths: Vec<_> = deferred_state.stored_frames.keys().cloned().collect();
-        paths.sort_by(|a, b| b.len().cmp(&a.len()));
+        paths.sort_by_key(|b| core::cmp::Reverse(b.len()));
 
         trace!(
             "finish_deferred: Processing {} stored frames in order: {:?}",
