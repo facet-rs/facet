@@ -106,7 +106,7 @@
 //! - Properly handling drop semantics for partially initialized values
 //! - Supporting both owned and borrowed values through lifetime parameters
 
-use alloc::vec::Vec;
+use alloc::{collections::BTreeMap, vec::Vec};
 
 mod iset;
 
@@ -115,7 +115,7 @@ mod partial_api;
 mod typed;
 pub use typed::*;
 
-use crate::{ReflectError, Resolution, TrackerKind, trace};
+use crate::{KeyPath, ReflectError, Resolution, TrackerKind, trace};
 
 use core::{marker::PhantomData, ptr::NonNull};
 
@@ -138,6 +138,26 @@ enum PartialState {
 
     /// Building failed and Partial is poisoned
     BuildFailed,
+}
+
+/// State for deferred materialization mode.
+///
+/// In deferred mode, frames are stored when popped (instead of being validated
+/// and discarded), and can be restored when re-entering the same path.
+/// Final validation and materialization happens in `finish_deferred()`.
+struct DeferredState {
+    /// The resolution from facet-solver describing the field structure
+    resolution: Resolution,
+
+    /// Current path as we navigate (e.g., ["inner", "x"])
+    // TODO: Intern key paths to avoid repeated allocations. The Resolution
+    // already knows all possible paths, so we could use indices into that.
+    current_path: KeyPath,
+
+    /// Frames saved when popped, keyed by their path.
+    /// When we re-enter a path, we restore the stored frame.
+    // TODO: Consider using path indices instead of cloned KeyPaths as keys.
+    stored_frames: BTreeMap<KeyPath, Frame>,
 }
 
 /// A type-erased, heap-allocated, partially-initialized value.
@@ -166,17 +186,16 @@ pub struct Partial<'facet> {
     /// current state of the Partial
     state: PartialState,
 
-    /// When set, deferred validation mode is enabled with this Resolution.
-    /// `end()` will skip the "all fields initialized" check, deferring
-    /// validation until `finish_deferred()` is called, which validates
-    /// against this resolution.
-    deferred_resolution: Option<Resolution>,
+    /// When set, deferred materialization mode is enabled.
+    /// Frames are stored when popped and can be restored on re-entry.
+    /// Final validation happens in `finish_deferred()`.
+    deferred: Option<DeferredState>,
 
     invariant: PhantomData<fn(&'facet ()) -> &'facet ()>,
 }
 
 #[derive(Clone, Copy, Debug)]
-enum MapInsertState {
+pub(crate) enum MapInsertState {
     /// Not currently inserting
     Idle,
 
@@ -196,7 +215,7 @@ enum MapInsertState {
 }
 
 #[derive(Debug)]
-enum FrameOwnership {
+pub(crate) enum FrameOwnership {
     /// This frame owns the allocation and should deallocate it on drop
     Owned,
 
@@ -215,25 +234,25 @@ enum FrameOwnership {
 /// it keeps track of whether a variant was selected, which fields are initialized,
 /// etc. and is able to drop & deinitialize
 #[must_use]
-struct Frame {
+pub(crate) struct Frame {
     /// Address of the value being initialized
-    data: PtrUninit<'static>,
+    pub(crate) data: PtrUninit<'static>,
 
     /// Shape of the value being initialized
-    shape: &'static Shape,
+    pub(crate) shape: &'static Shape,
 
     /// Tracks initialized fields
-    tracker: Tracker,
+    pub(crate) tracker: Tracker,
 
     /// Whether this frame owns the allocation or is just a field pointer
-    ownership: FrameOwnership,
+    pub(crate) ownership: FrameOwnership,
 
     /// Whether this frame is for a custom deserialization pipeline
-    using_custom_deserialization: bool,
+    pub(crate) using_custom_deserialization: bool,
 }
 
 #[derive(Debug)]
-enum Tracker {
+pub(crate) enum Tracker {
     /// Wholly uninitialized
     Uninit,
 
@@ -302,6 +321,7 @@ enum Tracker {
     Map {
         /// The map has been initialized with capacity
         is_initialized: bool,
+
         /// State of the current insertion operation
         insert_state: MapInsertState,
     },
@@ -335,6 +355,30 @@ impl Tracker {
             Tracker::Map { .. } => TrackerKind::Map,
             Tracker::Set { .. } => TrackerKind::Set,
             Tracker::Option { .. } => TrackerKind::Option,
+        }
+    }
+
+    /// Set the current_child index for trackers that support it
+    fn set_current_child(&mut self, idx: usize) {
+        match self {
+            Tracker::Struct { current_child, .. }
+            | Tracker::Enum { current_child, .. }
+            | Tracker::Array { current_child, .. } => {
+                *current_child = Some(idx);
+            }
+            _ => {}
+        }
+    }
+
+    /// Clear the current_child index for trackers that support it
+    fn clear_current_child(&mut self) {
+        match self {
+            Tracker::Struct { current_child, .. }
+            | Tracker::Enum { current_child, .. }
+            | Tracker::Array { current_child, .. } => {
+                *current_child = None;
+            }
+            _ => {}
         }
     }
 }

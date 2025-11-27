@@ -97,6 +97,32 @@ impl Partial<'_> {
     /// On success, this pushes a new frame which must be ended with a call to [Partial::end]
     pub fn begin_nth_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
+
+        // In deferred mode, get the field name for path tracking and check for stored frames
+        let field_name = self.get_field_name_for_path(idx);
+
+        // Update current_path in deferred mode
+        if let Some(deferred) = &mut self.deferred {
+            if let Some(name) = field_name {
+                deferred.current_path.push(name);
+
+                // Check if we have a stored frame for this path
+                if let Some(stored_frame) = deferred.stored_frames.remove(&deferred.current_path) {
+                    trace!(
+                        "begin_nth_field: Restoring stored frame for path {:?}",
+                        deferred.current_path
+                    );
+
+                    // Update parent's current_child tracking
+                    let frame = self.frames.last_mut().unwrap();
+                    frame.tracker.set_current_child(idx);
+
+                    self.frames.push(stored_frame);
+                    return Ok(self);
+                }
+            }
+        }
+
         let frame = self.frames.last_mut().unwrap();
 
         let next_frame = match frame.shape.ty {
@@ -152,6 +178,25 @@ impl Partial<'_> {
 
         self.frames.push(next_frame);
         Ok(self)
+    }
+
+    /// Get the field name for path tracking (used in deferred mode)
+    fn get_field_name_for_path(&self, idx: usize) -> Option<&'static str> {
+        let frame = self.frames.last()?;
+        match frame.shape.ty {
+            Type::User(UserType::Struct(struct_type)) => {
+                struct_type.fields.get(idx).map(|f| f.name)
+            }
+            Type::User(UserType::Enum(_)) => {
+                if let Tracker::Enum { variant, .. } = &frame.tracker {
+                    variant.data.fields.get(idx).map(|f| f.name)
+                } else {
+                    None
+                }
+            }
+            // For arrays, we could use index as string, but for now return None
+            _ => None,
+        }
     }
 
     /// Sets the given field to its default value, preferring:

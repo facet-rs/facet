@@ -37,7 +37,7 @@ impl<'facet> Partial<'facet> {
         Ok(Self {
             frames,
             state: PartialState::Active,
-            deferred_resolution: None,
+            deferred: None,
             invariant: PhantomData,
         })
     }

@@ -227,6 +227,7 @@ fn deferred_deeply_nested_interleaved() -> Result<(), IPanic> {
 fn deferred_enum_variant_with_fields() -> Result<(), IPanic> {
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
+    #[allow(dead_code)]
     enum Message {
         Text { content: String },
         Number { value: i32 },
@@ -255,6 +256,7 @@ fn deferred_enum_variant_with_fields() -> Result<(), IPanic> {
 fn deferred_enum_missing_variant_field_should_fail() -> Result<(), IPanic> {
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
+    #[allow(dead_code)]
     enum Message {
         Text { content: String, sender: String },
     }
@@ -278,6 +280,7 @@ fn deferred_enum_missing_variant_field_should_fail() -> Result<(), IPanic> {
 fn deferred_struct_containing_enum() -> Result<(), IPanic> {
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
+    #[allow(dead_code)]
     enum Status {
         Active,
         Inactive { reason: String },
@@ -319,6 +322,7 @@ fn deferred_struct_containing_enum() -> Result<(), IPanic> {
 fn deferred_enum_unit_variant() -> Result<(), IPanic> {
     #[derive(Facet, Debug, PartialEq)]
     #[repr(u8)]
+    #[allow(dead_code)]
     enum Status {
         Active,
         Inactive,

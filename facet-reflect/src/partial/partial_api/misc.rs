@@ -26,67 +26,160 @@ impl<'facet> Partial<'facet> {
             .shape
     }
 
-    /// Returns whether deferred validation mode is enabled.
+    /// Returns whether deferred materialization mode is enabled.
     #[inline]
     pub fn is_deferred(&self) -> bool {
-        self.deferred_resolution.is_some()
+        self.deferred.is_some()
     }
 
     /// Returns the current deferred resolution, if in deferred mode.
     #[inline]
     pub fn deferred_resolution(&self) -> Option<&Resolution> {
-        self.deferred_resolution.as_ref()
+        self.deferred.as_ref().map(|d| &d.resolution)
     }
 
-    /// Enables deferred validation mode with the given Resolution.
+    /// Returns the current path in deferred mode (for debugging/tracing).
+    #[inline]
+    pub fn current_path(&self) -> Option<&[&'static str]> {
+        self.deferred.as_ref().map(|d| d.current_path.as_slice())
+    }
+
+    /// Enables deferred materialization mode with the given Resolution.
     ///
-    /// When deferred mode is enabled, `end()` will skip the "all fields initialized"
-    /// check when popping frames. This allows deserializers to populate fields in
-    /// any order without immediate validation.
+    /// When deferred mode is enabled:
+    /// - `end()` stores frames instead of validating them
+    /// - Re-entering a path restores the stored frame with its state intact
+    /// - `finish_deferred()` performs final validation and materialization
     ///
-    /// The Resolution specifies which fields exist, which are required, and their
-    /// paths. Call `finish_deferred()` after all fields are populated to perform
-    /// validation against this resolution.
+    /// This allows deserializers to handle interleaved fields (e.g., TOML dotted
+    /// keys, flattened structs) where nested fields aren't contiguous in the input.
     ///
     /// # Use Cases
     ///
-    /// - Deserializing formats where fields may arrive out of order
-    /// - Building complex nested structures where parent initialization
-    ///   depends on child values
-    /// - Integration with `facet-solver` for flatten/untagged enum handling
+    /// - TOML dotted keys: `inner.x = 1` followed by `count = 2` then `inner.y = 3`
+    /// - Flattened structs where nested fields appear at the parent level
+    /// - Any format where field order doesn't match struct nesting
     #[inline]
     pub fn begin_deferred(&mut self, resolution: Resolution) -> &mut Self {
-        self.deferred_resolution = Some(resolution);
+        self.deferred = Some(DeferredState {
+            resolution,
+            current_path: Vec::new(),
+            stored_frames: BTreeMap::new(),
+        });
         self
     }
 
-    /// Finishes deferred mode and validates that all required fields are initialized.
+    /// Finishes deferred mode: validates all stored frames and finalizes.
     ///
-    /// This method should be called after all fields have been populated in deferred
-    /// mode. It validates the root frame against the stored Resolution.
+    /// This method:
+    /// 1. Validates that all stored frames are fully initialized
+    /// 2. Processes frames from deepest to shallowest, updating parent ISets
+    /// 3. Validates the root frame
     ///
     /// # Errors
     ///
     /// Returns an error if any required fields are missing or if the partial is
     /// not in deferred mode.
     pub fn finish_deferred(&mut self) -> Result<&mut Self, ReflectError> {
-        let resolution =
-            self.deferred_resolution
+        let mut deferred_state =
+            self.deferred
                 .take()
                 .ok_or_else(|| ReflectError::InvariantViolation {
                     invariant: "finish_deferred() called but deferred mode is not enabled",
                 })?;
 
+        // Sort paths by depth (deepest first) so we process children before parents
+        let mut paths: Vec<_> = deferred_state.stored_frames.keys().cloned().collect();
+        paths.sort_by(|a, b| b.len().cmp(&a.len()));
+
+        trace!(
+            "finish_deferred: Processing {} stored frames in order: {:?}",
+            paths.len(),
+            paths
+        );
+
+        // Process each stored frame from deepest to shallowest
+        for path in paths {
+            let frame = deferred_state.stored_frames.remove(&path).unwrap();
+
+            trace!(
+                "finish_deferred: Processing frame at {:?}, shape {}, tracker {:?}",
+                path,
+                frame.shape,
+                frame.tracker.kind()
+            );
+
+            // Validate the frame is fully initialized
+            frame.require_full_initialization()?;
+
+            // Update parent's ISet to mark this field as initialized
+            // The parent is either in stored_frames (if path.len() > 1) or on the frame stack (if path.len() == 1)
+            if let Some(field_name) = path.last() {
+                let parent_path: Vec<_> = path[..path.len() - 1].to_vec();
+
+                if parent_path.is_empty() {
+                    // Parent is the root frame on the stack
+                    if let Some(root_frame) = self.frames.last_mut() {
+                        Self::mark_field_initialized(root_frame, field_name);
+                    }
+                } else {
+                    // Parent is also a stored frame
+                    if let Some(parent_frame) = deferred_state.stored_frames.get_mut(&parent_path) {
+                        Self::mark_field_initialized(parent_frame, field_name);
+                    }
+                }
+            }
+
+            // Frame is validated and parent is updated - frame is no longer needed
+            // (The actual data is already in place in memory, pointed to by parent)
+            drop(frame);
+        }
+
         // Validate the root frame is fully initialized
-        // TODO: Use the resolution for more sophisticated validation
-        // (e.g., checking specific fields by path, handling defaults)
         if let Some(frame) = self.frames.last() {
             frame.require_full_initialization()?;
         }
 
-        // Resolution is now consumed (taken), deferred mode is exited
-        drop(resolution);
         Ok(self)
+    }
+
+    /// Mark a field as initialized in a frame's tracker
+    fn mark_field_initialized(frame: &mut Frame, field_name: &str) {
+        if let Some(idx) = Self::find_field_index(frame, field_name) {
+            match &mut frame.tracker {
+                Tracker::Struct { iset, .. } => {
+                    iset.set(idx);
+                }
+                Tracker::Enum { data, .. } => {
+                    data.set(idx);
+                }
+                Tracker::Array { iset, .. } => {
+                    iset.set(idx);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Find the field index for a given field name in a frame
+    fn find_field_index(frame: &Frame, field_name: &str) -> Option<usize> {
+        match frame.shape.ty {
+            Type::User(UserType::Struct(struct_type)) => {
+                struct_type.fields.iter().position(|f| f.name == field_name)
+            }
+            Type::User(UserType::Enum(_)) => {
+                if let Tracker::Enum { variant, .. } = &frame.tracker {
+                    variant
+                        .data
+                        .fields
+                        .iter()
+                        .position(|f| f.name == field_name)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Pops the current frame off the stack, indicating we're done initializing the current field
@@ -133,7 +226,7 @@ impl<'facet> Partial<'facet> {
 
         // Require that the top frame is fully initialized before popping.
         // Skip this check in deferred mode - validation happens in finish_deferred().
-        if self.deferred_resolution.is_none() {
+        if self.deferred.is_none() {
             let frame = self.frames.last().unwrap();
             trace!(
                 "end(): Checking full initialization for frame with shape {} and tracker {:?}",
@@ -145,6 +238,40 @@ impl<'facet> Partial<'facet> {
 
         // Pop the frame and save its data pointer for SmartPointer handling
         let mut popped_frame = self.frames.pop().unwrap();
+
+        // In deferred mode, store the frame for potential re-entry and skip
+        // the normal parent-updating logic. The frame will be finalized later
+        // in finish_deferred().
+        //
+        // We only store if the path depth matches the frame depth, meaning we're
+        // ending a tracked struct/enum field, not something like begin_some().
+        if let Some(deferred) = &mut self.deferred {
+            // Path depth should be (frames.len() - 1) for a tracked field
+            // (subtract 1 because root frame isn't in the path)
+            let is_tracked_field = !deferred.current_path.is_empty()
+                && deferred.current_path.len() == self.frames.len();
+
+            if is_tracked_field {
+                trace!(
+                    "end(): Storing frame for deferred path {:?}, shape {}",
+                    deferred.current_path, popped_frame.shape
+                );
+
+                // Store the frame at the current path
+                let path = deferred.current_path.clone();
+                deferred.stored_frames.insert(path, popped_frame);
+
+                // Pop from current_path
+                deferred.current_path.pop();
+
+                // Clear parent's current_child tracking
+                if let Some(parent_frame) = self.frames.last_mut() {
+                    parent_frame.tracker.clear_current_child();
+                }
+
+                return Ok(self);
+            }
+        }
 
         // check if this needs deserialization from a different shape
         if popped_frame.using_custom_deserialization {

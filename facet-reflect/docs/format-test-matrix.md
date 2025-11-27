@@ -16,11 +16,45 @@ This guide is format‑agnostic. Examples use plain Rust fields plus core facet 
 | flatten             | merge fields inline    | merge attrs/elements| inline fields             |
 | default             | fill missing with Default| same             | same                      |
 
-## Quick API surface
-- `[r.api.from]` `from_str` / `from_slice` -> `Result<T, Error>`.
-- `[r.api.to]` `to_string` / `to_vec` / `to_writer`.
-- `[r.api.deterministic]` Output should be deterministic: structs in declaration order; maps in iteration order of the map type (HashMap not ordered; BTreeMap sorted; ordered maps preserve insertion). Schema-driven formats may impose their own order—document it.
-- `[r.api.errors]` Errors: implement `std::error::Error`; `miette::Diagnostic` if possible. For binary, spans = byte offsets/lengths.
+## [r.api] Quick API surface
+- `[r.api.text.from]` Text formats:
+```rust
+pub fn from_str<T: Facet + ?Sized>(s: &str) -> Result<T, Error>;
+```
+- `[r.api.text.to]` Text formats:
+```rust
+pub fn to_string<T: Facet + ?Sized>(value: &T) -> Result<String, Error>;
+```
+- `[r.api.bin.from]` Binary formats:
+```rust
+pub fn from_slice<T: Facet + ?Sized>(bytes: &[u8]) -> Result<T, Error>;
+```
+- `[r.api.bin.to]` Binary formats:
+```rust
+pub fn to_vec<T: Facet + ?Sized>(value: &T) -> Result<Vec<u8>, Error>;
+```
+- `[r.api.errors]` Errors implement `std::error::Error`; `miette::Diagnostic` recommended for text formats. Binary spans use byte offsets/lengths.
+
+## [r.deterministic] Deterministic output
+- Structs serialize in declaration order.
+- Maps follow iteration order of the map type (HashMap unordered, BTreeMap sorted, ordered maps preserve insertion). If the format/schema mandates an order, follow and document it.
+
+## [r.api.errors.miette] Error reporting with miette (text formats)
+- `facet-reflect` already tracks spans; surface them via `miette::Diagnostic`.
+- Example:
+```rust
+#[derive(thiserror::Error, Debug, miette::Diagnostic)]
+#[error("{msg}")]
+struct ParseErr {
+    #[source_code]
+    src: String,
+    #[label("here")]
+    span: miette::SourceSpan,
+    msg: String,
+}
+
+// When deserializing, fill span with offset/len from facet-reflect spans.
+```
 
 ## Implementation tiers
 - `[r.tier.m1]` **Tier 1 (MVP):** scalars, structs, `Option<T>`, `Vec<T>`, round-trip equality.
