@@ -129,7 +129,6 @@ impl ResolutionSet {
 
 /// Find fields that could disambiguate between resolutions.
 /// Returns fields that exist in some but not all resolutions.
-#[allow(dead_code)]
 fn find_disambiguating_fields(configs: &[&Resolution]) -> Vec<String> {
     if configs.len() < 2 {
         return Vec::new();
@@ -175,6 +174,28 @@ impl MissingFieldInfo {
             defined_in: info.value_shape.type_identifier.to_string(),
         }
     }
+}
+
+/// Information about why a specific candidate (resolution) failed to match.
+#[derive(Debug, Clone)]
+pub struct CandidateFailure {
+    /// Human-readable description of the variant (e.g., "DatabaseBackend::Postgres")
+    pub variant_name: String,
+    /// Required fields that were not provided in the input
+    pub missing_fields: Vec<MissingFieldInfo>,
+    /// Fields in the input that don't exist in this candidate
+    pub unknown_fields: Vec<String>,
+}
+
+/// Suggestion for a field that might have been misspelled.
+#[derive(Debug, Clone)]
+pub struct FieldSuggestion {
+    /// The unknown field from input
+    pub unknown: String,
+    /// The suggested correct field name
+    pub suggestion: &'static str,
+    /// Similarity score (0.0 to 1.0, higher is more similar)
+    pub similarity: f64,
 }
 
 /// Errors that can occur when building a schema.
@@ -224,6 +245,10 @@ pub enum SolverError {
         unknown_fields: Vec<String>,
         /// Description of the closest matching configuration
         closest_resolution: Option<String>,
+        /// Why each candidate failed to match (detailed per-candidate info)
+        candidate_failures: Vec<CandidateFailure>,
+        /// "Did you mean?" suggestions for unknown fields
+        suggestions: Vec<FieldSuggestion>,
     },
     /// Multiple resolutions match the input fields
     Ambiguous {
@@ -243,20 +268,57 @@ impl fmt::Display for SolverError {
                 missing_required_detailed,
                 unknown_fields,
                 closest_resolution,
+                candidate_failures,
+                suggestions,
             } => {
                 write!(f, "No matching configuration for fields {input_fields:?}")?;
-                if let Some(config) = closest_resolution {
+
+                // Show per-candidate failure reasons if available
+                if !candidate_failures.is_empty() {
+                    write!(f, "\n\nNo variant matched:")?;
+                    for failure in candidate_failures {
+                        write!(f, "\n  - {}", failure.variant_name)?;
+                        if !failure.missing_fields.is_empty() {
+                            let names: Vec<_> =
+                                failure.missing_fields.iter().map(|m| m.name).collect();
+                            if names.len() == 1 {
+                                write!(f, ": missing field '{}'", names[0])?;
+                            } else {
+                                write!(f, ": missing fields {:?}", names)?;
+                            }
+                        }
+                        if !failure.unknown_fields.is_empty() {
+                            if failure.missing_fields.is_empty() {
+                                write!(f, ":")?;
+                            } else {
+                                write!(f, ",")?;
+                            }
+                            write!(f, " unknown fields {:?}", failure.unknown_fields)?;
+                        }
+                    }
+                } else if let Some(config) = closest_resolution {
+                    // Fallback to closest match if no per-candidate info
                     write!(f, " (closest match: {config})")?;
-                }
-                if !missing_required_detailed.is_empty() {
-                    write!(f, "; missing required fields:")?;
-                    for info in missing_required_detailed {
-                        write!(f, " {} (at path: {})", info.name, info.path)?;
+                    if !missing_required_detailed.is_empty() {
+                        write!(f, "; missing required fields:")?;
+                        for info in missing_required_detailed {
+                            write!(f, " {} (at path: {})", info.name, info.path)?;
+                        }
                     }
                 }
+
+                // Show unknown fields with suggestions
                 if !unknown_fields.is_empty() {
-                    write!(f, "; unknown: {unknown_fields:?}")?;
+                    write!(f, "\n\nUnknown fields: {unknown_fields:?}")?;
                 }
+                for suggestion in suggestions {
+                    write!(
+                        f,
+                        "\n  Did you mean '{}' instead of '{}'?",
+                        suggestion.suggestion, suggestion.unknown
+                    )?;
+                }
+
                 Ok(())
             }
             SolverError::Ambiguous {
@@ -900,13 +962,42 @@ impl<'a> Solver<'a> {
     /// determine that `Git` is missing its required `branch` field, leaving `Http`
     /// as the sole viable configuration.
     pub fn finish(self) -> Result<&'a Resolution, SolverError> {
+        // Compute all known fields across all resolutions (for unknown field detection)
+        let all_known_fields: BTreeSet<&'static str> = self
+            .schema
+            .resolutions
+            .iter()
+            .flat_map(|r| r.fields().keys().copied())
+            .collect();
+
+        // Find unknown fields (fields in input that don't exist in ANY resolution)
+        let unknown_fields: Vec<String> = self
+            .seen_keys
+            .iter()
+            .filter(|k| !all_known_fields.contains(*k))
+            .map(|s| (*s).to_string())
+            .collect();
+
+        // Compute suggestions for unknown fields
+        let suggestions = compute_suggestions(&unknown_fields, &all_known_fields);
+
         if self.candidates.is_empty() {
+            // Build per-candidate failure info for all resolutions
+            let candidate_failures: Vec<CandidateFailure> = self
+                .schema
+                .resolutions
+                .iter()
+                .map(|config| build_candidate_failure(config, &self.seen_keys))
+                .collect();
+
             return Err(SolverError::NoMatch {
                 input_fields: self.seen_keys.iter().map(|s| (*s).into()).collect(),
                 missing_required: Vec::new(),
                 missing_required_detailed: Vec::new(),
-                unknown_fields: Vec::new(),
+                unknown_fields,
                 closest_resolution: None,
+                candidate_failures,
+                suggestions,
             });
         }
 
@@ -925,6 +1016,17 @@ impl<'a> Solver<'a> {
 
         match viable.len() {
             0 => {
+                // No viable candidates - build per-candidate failure info
+                let candidate_failures: Vec<CandidateFailure> = self
+                    .candidates
+                    .iter()
+                    .map(|idx| {
+                        let config = &self.schema.resolutions[idx];
+                        build_candidate_failure(config, &self.seen_keys)
+                    })
+                    .collect();
+
+                // For backwards compatibility, also populate the "closest" fields
                 let first_idx = self.candidates.first().unwrap();
                 let first_config = &self.schema.resolutions[first_idx];
                 let missing: Vec<_> = first_config
@@ -938,20 +1040,103 @@ impl<'a> Solver<'a> {
                     .filter_map(|name| first_config.field(name))
                     .map(MissingFieldInfo::from_field_info)
                     .collect();
+
                 Err(SolverError::NoMatch {
                     input_fields: self.seen_keys.iter().map(|s| (*s).into()).collect(),
                     missing_required: missing,
                     missing_required_detailed: missing_detailed,
-                    unknown_fields: Vec::new(),
+                    unknown_fields,
                     closest_resolution: Some(first_config.describe()),
+                    candidate_failures,
+                    suggestions,
                 })
             }
-            _ => {
-                // Return first viable (preserves variant declaration order)
+            1 => {
+                // Exactly one viable candidate - success!
                 Ok(&self.schema.resolutions[viable[0]])
+            }
+            _ => {
+                // Multiple viable candidates - ambiguous!
+                let configs: Vec<_> = viable
+                    .iter()
+                    .map(|&idx| &self.schema.resolutions[idx])
+                    .collect();
+                let candidates: Vec<String> = configs.iter().map(|c| c.describe()).collect();
+                let disambiguating_fields = find_disambiguating_fields(&configs);
+
+                Err(SolverError::Ambiguous {
+                    candidates,
+                    disambiguating_fields,
+                })
             }
         }
     }
+}
+
+/// Build a CandidateFailure for a resolution given the seen keys.
+fn build_candidate_failure(config: &Resolution, seen_keys: &BTreeSet<&str>) -> CandidateFailure {
+    let missing_fields: Vec<MissingFieldInfo> = config
+        .required_field_names()
+        .iter()
+        .filter(|f| !seen_keys.contains(*f))
+        .filter_map(|f| config.field(f))
+        .map(MissingFieldInfo::from_field_info)
+        .collect();
+
+    let unknown_fields: Vec<String> = seen_keys
+        .iter()
+        .filter(|k| !config.fields().contains_key(*k))
+        .map(|s| (*s).to_string())
+        .collect();
+
+    CandidateFailure {
+        variant_name: config.describe(),
+        missing_fields,
+        unknown_fields,
+    }
+}
+
+/// Compute "did you mean?" suggestions for unknown fields.
+#[cfg(feature = "suggestions")]
+fn compute_suggestions(
+    unknown_fields: &[String],
+    all_known_fields: &BTreeSet<&'static str>,
+) -> Vec<FieldSuggestion> {
+    const SIMILARITY_THRESHOLD: f64 = 0.6;
+
+    let mut suggestions = Vec::new();
+
+    for unknown in unknown_fields {
+        let mut best_match: Option<(&'static str, f64)> = None;
+
+        for known in all_known_fields {
+            let similarity = strsim::jaro_winkler(unknown, known);
+            if similarity >= SIMILARITY_THRESHOLD {
+                if best_match.map_or(true, |(_, best_sim)| similarity > best_sim) {
+                    best_match = Some((known, similarity));
+                }
+            }
+        }
+
+        if let Some((suggestion, similarity)) = best_match {
+            suggestions.push(FieldSuggestion {
+                unknown: unknown.clone(),
+                suggestion,
+                similarity,
+            });
+        }
+    }
+
+    suggestions
+}
+
+/// Compute "did you mean?" suggestions for unknown fields (no-op without strsim).
+#[cfg(not(feature = "suggestions"))]
+fn compute_suggestions(
+    _unknown_fields: &[String],
+    _all_known_fields: &BTreeSet<&'static str>,
+) -> Vec<FieldSuggestion> {
+    Vec::new()
 }
 
 // ============================================================================

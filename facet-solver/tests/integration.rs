@@ -1546,17 +1546,22 @@ fn test_int_range_small_value() {
     init_tracing();
     let _span = info_span!("test_int_range_small_value").entered();
 
-    // 42 fits in both u8 and u16 - first variant (Small) wins
+    // 42 fits in both u8 and u16 - should be ambiguous
     let json = br#"{"value": 42}"#;
     info!(json = %String::from_utf8_lossy(json), "input JSON");
 
-    let result = probe_int_json(json).expect("should resolve");
-    info!(result = %result, "resolved");
+    let result = probe_int_json(json);
+    info!(result = ?result, "result");
 
-    // Both u8 and u16 can hold 42, so first (Small) wins
+    // Both u8 and u16 can hold 42, so this is ambiguous
+    let err = result.expect_err("should be ambiguous");
     assert!(
-        result.contains("Small"),
-        "Expected Small variant (first), got: {result}"
+        err.contains("Ambiguous"),
+        "Expected Ambiguous error, got: {err}"
+    );
+    assert!(
+        err.contains("Small") && err.contains("Large"),
+        "Expected both variants in error, got: {err}"
     );
 }
 
@@ -1583,16 +1588,18 @@ fn test_int_range_boundary_255() {
     init_tracing();
     let _span = info_span!("test_int_range_boundary_255").entered();
 
-    // 255 is u8::MAX - fits in both
+    // 255 is u8::MAX - fits in both, so ambiguous
     let json = br#"{"value": 255}"#;
     info!(json = %String::from_utf8_lossy(json), "input JSON");
 
-    let result = probe_int_json(json).expect("should resolve");
-    info!(result = %result, "resolved");
+    let result = probe_int_json(json);
+    info!(result = ?result, "result");
 
+    // Both u8 and u16 can hold 255, so this is ambiguous
+    let err = result.expect_err("should be ambiguous");
     assert!(
-        result.contains("Small"),
-        "Expected Small variant (255 fits u8), got: {result}"
+        err.contains("Ambiguous"),
+        "Expected Ambiguous error, got: {err}"
     );
 }
 
@@ -1749,16 +1756,18 @@ fn test_signed_unsigned_overlap() {
     init_tracing();
     let _span = info_span!("test_signed_unsigned_overlap").entered();
 
-    // 50 fits in both i8 and u8 - first (Signed) wins
+    // 50 fits in both i8 and u8 - should be ambiguous
     let json = br#"{"num": 50}"#;
     info!(json = %String::from_utf8_lossy(json), "input JSON");
 
-    let result = probe_signed_json(json).expect("should resolve");
-    info!(result = %result, "resolved");
+    let result = probe_signed_json(json);
+    info!(result = ?result, "result");
 
+    // Both i8 and u8 can hold 50, so this is ambiguous
+    let err = result.expect_err("should be ambiguous");
     assert!(
-        result.contains("Signed"),
-        "Expected Signed variant (first), got: {result}"
+        err.contains("Ambiguous"),
+        "Expected Ambiguous error, got: {err}"
     );
 }
 
@@ -1879,16 +1888,18 @@ fn test_multitype_integer_value() {
     init_tracing();
     let _span = info_span!("test_multitype_integer_value").entered();
 
-    // JSON integer - both i64 and f64 can accept, first (Int) wins
+    // JSON integer - both i64 and f64 can accept, should be ambiguous
     let json = br#"{"data": 42}"#;
     info!(json = %String::from_utf8_lossy(json), "input JSON");
 
-    let result = probe_multitype_json(json).expect("should resolve");
-    info!(result = %result, "resolved");
+    let result = probe_multitype_json(json);
+    info!(result = ?result, "result");
 
+    // Both i64 and f64 can accept 42, so this is ambiguous
+    let err = result.expect_err("should be ambiguous");
     assert!(
-        result.contains("Int"),
-        "Expected Int variant (first to accept integer), got: {result}"
+        err.contains("Ambiguous"),
+        "Expected Ambiguous error, got: {err}"
     );
 }
 

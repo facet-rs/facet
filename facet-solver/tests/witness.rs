@@ -4,7 +4,7 @@
 //! multiple variants have the same field name but different types.
 
 use facet::Facet;
-use facet_solver::{KeyResult, SatisfyResult, Schema, Solver};
+use facet_solver::{KeyResult, SatisfyResult, Schema, Solver, SolverError};
 
 // ============================================================================
 // Test 1: Integer range disambiguation (u8 vs u16)
@@ -60,7 +60,7 @@ fn signed_value_fits_in_shape(value: i128, shape: &facet_core::Shape) -> bool {
 #[test]
 fn test_integer_small_value_picks_first() {
     // Value 32 fits in both u8 and u16
-    // Should pick Small (u8) because it's declared first
+    // Should return Ambiguous since multiple variants match
     let schema = Schema::build(IntegerContainer::SHAPE).unwrap();
 
     assert_eq!(
@@ -85,13 +85,18 @@ fn test_integer_small_value_picks_first() {
 
             match solver.satisfy(&satisfied) {
                 SatisfyResult::Continue => {
-                    // Multiple configs still viable - finish to get first
-                    let config = solver.finish().expect("should resolve");
-                    assert!(
-                        config.describe().contains("Small"),
-                        "Expected Small (first) variant, got: {}",
-                        config.describe()
-                    );
+                    // Multiple configs still viable - should return Ambiguous
+                    let err = solver.finish().expect_err("should be ambiguous");
+                    match err {
+                        SolverError::Ambiguous { candidates, .. } => {
+                            assert!(
+                                candidates.iter().any(|c| c.contains("Small"))
+                                    && candidates.iter().any(|c| c.contains("Large")),
+                                "Expected both Small and Large in candidates, got: {candidates:?}"
+                            );
+                        }
+                        other => panic!("Expected Ambiguous error, got: {other:?}"),
+                    }
                 }
                 other => panic!("Expected Continue, got: {other:?}"),
             }
@@ -137,7 +142,7 @@ fn test_integer_large_value_picks_second() {
 
 #[test]
 fn test_integer_boundary_255() {
-    // Value 255 is the max for u8 - should still satisfy both (first wins)
+    // Value 255 is the max for u8 - should still satisfy both, hence ambiguous
     let schema = Schema::build(IntegerContainer::SHAPE).unwrap();
 
     let mut solver = Solver::new(&schema);
@@ -153,12 +158,17 @@ fn test_integer_boundary_255() {
             assert_eq!(satisfied.len(), 2); // Both u8 and u16 can hold 255
 
             solver.satisfy(&satisfied);
-            let config = solver.finish().expect("should resolve");
-            assert!(
-                config.describe().contains("Small"),
-                "Expected Small variant for 255, got: {}",
-                config.describe()
-            );
+            let err = solver.finish().expect_err("should be ambiguous");
+            match err {
+                SolverError::Ambiguous { candidates, .. } => {
+                    assert!(
+                        candidates.iter().any(|c| c.contains("Small"))
+                            && candidates.iter().any(|c| c.contains("Large")),
+                        "Expected both variants in candidates, got: {candidates:?}"
+                    );
+                }
+                other => panic!("Expected Ambiguous error, got: {other:?}"),
+            }
         }
         other => panic!("Expected Ambiguous, got: {other:?}"),
     }
@@ -250,7 +260,7 @@ fn test_negative_value_picks_signed() {
 
 #[test]
 fn test_positive_value_fits_both_picks_first() {
-    // Positive value 50 fits in both i8 and u8
+    // Positive value 50 fits in both i8 and u8 - should be ambiguous
     let schema = Schema::build(SignedContainer::SHAPE).unwrap();
 
     let mut solver = Solver::new(&schema);
@@ -267,12 +277,17 @@ fn test_positive_value_fits_both_picks_first() {
             assert_eq!(satisfied.len(), 2);
 
             solver.satisfy(&satisfied);
-            let config = solver.finish().expect("should resolve");
-            assert!(
-                config.describe().contains("Signed"),
-                "Expected Signed (first) variant for 50, got: {}",
-                config.describe()
-            );
+            let err = solver.finish().expect_err("should be ambiguous");
+            match err {
+                SolverError::Ambiguous { candidates, .. } => {
+                    assert!(
+                        candidates.iter().any(|c| c.contains("Signed"))
+                            && candidates.iter().any(|c| c.contains("Unsigned")),
+                        "Expected both variants in candidates, got: {candidates:?}"
+                    );
+                }
+                other => panic!("Expected Ambiguous error, got: {other:?}"),
+            }
         }
         other => panic!("Expected Ambiguous, got: {other:?}"),
     }
@@ -443,22 +458,27 @@ fn test_string_parsing_datetime() {
     let schema = Schema::build(StringContainer::SHAPE).unwrap();
     let mut solver = Solver::new(&schema);
 
-    // All three variants have "value: String" - should be Unambiguous!
+    // All three variants have "value: String" - should be Unambiguous at key level
     // (They all have the same Shape for the field)
     match solver.see_key("value") {
         KeyResult::Unambiguous { shape } => {
             // All variants use String, so it's unambiguous at the type level
             assert_eq!(shape.type_identifier, "String");
 
-            // In this case, disambiguation happens at finish() based on
-            // which variant is first - the deserializer doesn't need to
-            // try-parse because the types are identical.
-            let config = solver.finish().expect("should resolve");
-            assert!(
-                config.describe().contains("DateTime"),
-                "Expected DateTime (first) variant, got: {}",
-                config.describe()
-            );
+            // At finish() time, all three variants are still viable since they
+            // all have "value" field. This is now correctly reported as Ambiguous.
+            let err = solver.finish().expect_err("should be ambiguous");
+            match err {
+                SolverError::Ambiguous { candidates, .. } => {
+                    assert!(
+                        candidates.iter().any(|c| c.contains("DateTime"))
+                            && candidates.iter().any(|c| c.contains("Uuid"))
+                            && candidates.iter().any(|c| c.contains("Plain")),
+                        "Expected all variants in candidates, got: {candidates:?}"
+                    );
+                }
+                other => panic!("Expected Ambiguous error, got: {other:?}"),
+            }
         }
         KeyResult::Ambiguous { .. } => {
             panic!("Expected Unambiguous since all variants have String type");
@@ -596,13 +616,18 @@ fn test_same_field_different_types_int_value() {
 
             match solver.satisfy(&satisfied) {
                 SatisfyResult::Continue => {
-                    // Still ambiguous between Int and Float - first wins
-                    let config = solver.finish().expect("should resolve");
-                    assert!(
-                        config.describe().contains("Int"),
-                        "Expected Int (first) variant, got: {}",
-                        config.describe()
-                    );
+                    // Still ambiguous between Int and Float - should return Ambiguous
+                    let err = solver.finish().expect_err("should be ambiguous");
+                    match err {
+                        SolverError::Ambiguous { candidates, .. } => {
+                            assert!(
+                                candidates.iter().any(|c| c.contains("Int"))
+                                    && candidates.iter().any(|c| c.contains("Float")),
+                                "Expected Int and Float in candidates, got: {candidates:?}"
+                            );
+                        }
+                        other => panic!("Expected Ambiguous error, got: {other:?}"),
+                    }
                 }
                 other => panic!("Expected Continue, got: {other:?}"),
             }

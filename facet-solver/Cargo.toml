@@ -10,13 +10,15 @@ keywords = ["reflection", "introspection", "facet", "solver", "serde"]
 categories = ["development-tools", "rust-patterns"]
 
 [features]
-default = ["std"]
+default = ["std", "suggestions"]
 std = ["alloc"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
+suggestions = ["strsim"]
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.31.8", default-features = false }
 facet-reflect = { path = "../facet-reflect", version = "0.31.8", default-features = false }
+strsim = { version = "0.11", optional = true }
 
 [dev-dependencies]
 facet = { path = "../facet" }
