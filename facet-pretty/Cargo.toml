@@ -1,10 +1,10 @@
 [package]
 name = "facet-pretty"
 version = "0.31.0"
-edition = "2024"
-rust-version = "1.87"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/facet-rs/facet-pretty"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Pretty-printing for types implementing the Facet trait"
 keywords = [
     "pretty-print",
@@ -20,12 +20,11 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc"] # Enables alloc support
 camino = ["alloc", "facet-core/camino"]
 
 [dependencies]
-facet-core = { version = "0.31" }
-facet-reflect = { version = "0.31" }
+facet-core = { path = "../facet-core" }
+facet-reflect = { path = "../facet-reflect" }
 
 [dev-dependencies]
 camino = "1.1.10"
-cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
-facet = { version = "0.31" }
-facet-testhelpers = { version = "0.31" }
+facet = { path = "../facet" }
+facet-testhelpers = { path = "../facet-testhelpers" }
 insta = "1.43.1"
