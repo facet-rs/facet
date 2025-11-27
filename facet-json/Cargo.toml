@@ -15,9 +15,9 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 default = ["std"]
 
 [dependencies]
-facet-core = { path = "../facet/facet-core", default-features = false }
-facet-reflect = { path = "../facet/facet-reflect", default-features = false }
-facet-solver = { path = "../facet/facet-solver" }
+facet-core = { path = "../facet-core", default-features = false }
+facet-reflect = { path = "../facet-reflect", default-features = false }
+facet-solver = { path = "../facet-solver" }
 
 miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
 strsim = "0.11"
@@ -30,7 +30,7 @@ ryu = "1"
 [dev-dependencies]
 bytes = { version = "1.10.1" }
 camino = { version = "1" }
-facet = { path = "../facet/facet", features = [
+facet = { path = "../facet", features = [
     "bytes",
     "camino",
     "time",
@@ -41,7 +41,7 @@ facet = { path = "../facet/facet", features = [
     "ordered-float",
 ] }
 facet-pretty = { path = "../facet-pretty" }
-facet-testhelpers = { path = "../facet/facet-testhelpers" }
+facet-testhelpers = { path = "../facet-testhelpers" }
 insta = "1.43.1"
 syntect = "5.3"
 time = { version = "0.3.41", features = ["macros"] }

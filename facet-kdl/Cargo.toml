@@ -12,15 +12,15 @@ default = ["std"]
 
 [dependencies]
 log = "0.4"
-facet-core = { path = "../facet/facet-core" }
-facet-reflect = { path = "../facet/facet-reflect", features = ["miette"] }
-facet-solver = { path = "../facet/facet-solver" }
+facet-core = { path = "../facet-core" }
+facet-reflect = { path = "../facet-reflect", features = ["miette"] }
+facet-solver = { path = "../facet-solver" }
 kdl = "6.5.0"
 miette = "7"
 
 [dev-dependencies]
-facet = { path = "../facet/facet" }
-facet-core = { path = "../facet/facet-core", features = ["camino"] }
+facet = { path = "../facet" }
+facet-core = { path = "../facet-core", features = ["camino"] }
 facet-pretty = { path = "../facet-pretty" }
 camino = "1"
 miette = { version = "7", features = ["fancy", "syntect-highlighter"] }

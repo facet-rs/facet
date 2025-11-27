@@ -21,6 +21,15 @@ members = [
 
     # pretty printing
     "facet-pretty",
+
+    # format crates
+    "facet-json",
+    "facet-kdl",
+    "facet-yaml",
+    "facet-toml",
+    "facet-args",
+    "facet-msgpack",
+    "facet-urlencoded",
 ]
 resolver = "3"
 

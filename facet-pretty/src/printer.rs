@@ -43,8 +43,11 @@ enum StackState {
     ProcessStructField { field_index: usize },
     ProcessSeqItem { item_index: usize, kind: SeqKind },
     ProcessBytesItem { item_index: usize },
-    ProcessMapEntry,
+    ProcessMapClose,
+    MapEntryIndent,
     Finish,
+    FinishMapKey,
+    FinishMapValue,
     OptionFinish,
 }
 
@@ -262,7 +265,7 @@ impl PrettyPrinter {
                             item.format_depth += 1;
                             stack.push_back(item);
                         }
-                        (Def::List(_), _) => {
+                        (Def::List(_), _) | (Def::Array(_), _) => {
                             self.handle_list(&mut stack, item, f)?;
                             continue;
                         }
@@ -304,18 +307,66 @@ impl PrettyPrinter {
                             }
                         }
                         (Def::Map(_), _) => {
-                            let _map = item.value.into_map().unwrap();
+                            let map = item.value.into_map().unwrap();
                             // Print the map name
                             self.write_type_name(f, &item.value)?;
                             self.write_punctuation(f, " {")?;
+
+                            // Collect entries (we need to iterate before pushing to stack)
+                            let entries: alloc::vec::Vec<_> = map.iter().collect();
+
+                            if entries.is_empty() {
+                                self.write_punctuation(f, "}")?;
+                                continue;
+                            }
+
                             writeln!(f)?;
 
-                            // Push back the item with the next state to continue processing map
-                            item.state = StackState::ProcessMapEntry;
-                            item.format_depth += 1;
-                            // When recursing into a map, always increment format_depth
-                            item.type_depth += 1; // Always increment type_depth for map operations
-                            stack.push_back(item);
+                            let new_format_depth = item.format_depth + 1;
+                            let new_type_depth = item.type_depth + 1;
+
+                            // Push close brace handler
+                            stack.push_back(StackItem {
+                                value: item.value,
+                                format_depth: new_format_depth,
+                                type_depth: new_type_depth,
+                                state: StackState::ProcessMapClose,
+                            });
+
+                            // Push entries in reverse order so first entry is processed first
+                            for (key, value) in entries.into_iter().rev() {
+                                // Push: FinishMapValue -> value Start -> FinishMapKey -> key Start -> MapEntryIndent
+                                stack.push_back(StackItem {
+                                    value,
+                                    format_depth: new_format_depth,
+                                    type_depth: new_type_depth,
+                                    state: StackState::FinishMapValue,
+                                });
+                                stack.push_back(StackItem {
+                                    value,
+                                    format_depth: new_format_depth,
+                                    type_depth: new_type_depth,
+                                    state: StackState::Start,
+                                });
+                                stack.push_back(StackItem {
+                                    value: key,
+                                    format_depth: new_format_depth,
+                                    type_depth: new_type_depth,
+                                    state: StackState::FinishMapKey,
+                                });
+                                stack.push_back(StackItem {
+                                    value: key,
+                                    format_depth: new_format_depth,
+                                    type_depth: new_type_depth,
+                                    state: StackState::Start,
+                                });
+                                stack.push_back(StackItem {
+                                    value: key,
+                                    format_depth: new_format_depth,
+                                    type_depth: new_type_depth,
+                                    state: StackState::MapEntryIndent,
+                                });
+                            }
                         }
                         (_, Type::User(UserType::Enum(_))) => {
                             // When recursing into an enum, increment format_depth
@@ -738,19 +789,7 @@ impl PrettyPrinter {
                     };
                     stack.push_back(item);
                 }
-                StackState::ProcessMapEntry => {
-                    // TODO: Implement proper map iteration when available in facet
-
-                    // Indent
-                    write!(
-                        f,
-                        "{:width$}",
-                        "",
-                        width = item.format_depth * self.indent_size
-                    )?;
-                    write!(f, "{}", self.style_comment("/* Map contents */"))?;
-                    writeln!(f)?;
-
+                StackState::ProcessMapClose => {
                     // Closing brace with proper indentation
                     write!(
                         f,
@@ -759,6 +798,24 @@ impl PrettyPrinter {
                         self.style_punctuation("}"),
                         width = (item.format_depth - 1) * self.indent_size
                     )?;
+                }
+                StackState::MapEntryIndent => {
+                    // Print indentation before map entry
+                    write!(
+                        f,
+                        "{:width$}",
+                        "",
+                        width = item.format_depth * self.indent_size
+                    )?;
+                }
+                StackState::FinishMapKey => {
+                    // Print ": " after the key
+                    self.write_punctuation(f, ": ")?;
+                }
+                StackState::FinishMapValue => {
+                    // Print comma and newline after the value
+                    self.write_punctuation(f, ",")?;
+                    writeln!(f)?;
                 }
                 StackState::Finish => {
                     // Add comma and newline for struct fields and list items

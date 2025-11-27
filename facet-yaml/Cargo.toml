@@ -16,18 +16,18 @@ default = ["std"]
 
 [dependencies]
 saphyr-parser = { git = "https://github.com/facet-rs/saphyr.git", branch = "feat/clone-parser-scanner" }
-facet-core = { path = "../facet/facet-core", default-features = false }
-facet-reflect = { path = "../facet/facet-reflect", default-features = false, features = ["miette"] }
-facet-solver = { path = "../facet/facet-solver" }
+facet-core = { path = "../facet-core", default-features = false }
+facet-reflect = { path = "../facet-reflect", default-features = false, features = ["miette"] }
+facet-solver = { path = "../facet-solver" }
 miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
 log = "0.4.27"
 
 [dev-dependencies]
-facet = { path = "../facet/facet" }
+facet = { path = "../facet" }
 eyre = "0.6.12"
 ulid = "1.2.1"
 time = { version = "0.3.41", features = ["macros", "parsing", "formatting"] }
-facet-testhelpers = { path = "../facet/facet-testhelpers" }
+facet-testhelpers = { path = "../facet-testhelpers" }
 cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
 indoc = "2"
 camino = "1"

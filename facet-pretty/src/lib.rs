@@ -9,7 +9,9 @@ extern crate alloc;
 mod color;
 mod display;
 mod printer;
+mod shape;
 
 pub use color::*;
 pub use display::*;
 pub use printer::*;
+pub use shape::*;
