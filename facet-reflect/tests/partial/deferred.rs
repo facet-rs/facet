@@ -646,3 +646,516 @@ fn deferred_overwrite_nested_field_value() -> Result<(), IPanic> {
 
     Ok(())
 }
+
+// =============================================================================
+// Re-entry tests: Lists (Vec)
+// =============================================================================
+
+#[test]
+fn deferred_reenter_vec_push_more_items() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        items: Vec<u32>,
+        other: String,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_deferred(resolution);
+
+    // Push first item (need begin_list on first visit)
+    partial.begin_field("items")?;
+    partial.begin_list()?;
+    partial.push(1u32)?;
+    partial.end()?;
+
+    // Set other field
+    partial.set_field("other", String::from("middle"))?;
+
+    // Re-enter and push more items (no begin_list needed - list is already initialized)
+    partial.begin_field("items")?;
+    partial.push(2u32)?;
+    partial.push(3u32)?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.items, vec![1, 2, 3]);
+    assert_eq!(result.other, "middle");
+
+    Ok(())
+}
+
+#[test]
+fn deferred_reenter_vec_multiple_times() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        items: Vec<String>,
+        count: u32,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_deferred(resolution);
+
+    // First visit
+    partial.begin_field("items")?;
+    partial.begin_list()?;
+    partial.push(String::from("a"))?;
+    partial.end()?;
+
+    partial.set_field("count", 1u32)?;
+
+    // Second visit
+    partial.begin_field("items")?;
+    partial.push(String::from("b"))?;
+    partial.end()?;
+
+    // Third visit
+    partial.begin_field("items")?;
+    partial.push(String::from("c"))?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.items, vec!["a", "b", "c"]);
+    assert_eq!(result.count, 1);
+
+    Ok(())
+}
+
+#[test]
+fn deferred_nested_vec_reentry() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Inner {
+        values: Vec<i32>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Outer {
+        inner: Inner,
+        name: String,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Outer>()?;
+    partial.begin_deferred(resolution);
+
+    partial.begin_field("inner")?;
+    partial.begin_field("values")?;
+    partial.begin_list()?;
+    partial.push(1i32)?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.set_field("name", String::from("test"))?;
+
+    partial.begin_field("inner")?;
+    partial.begin_field("values")?;
+    partial.push(2i32)?;
+    partial.push(3i32)?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.inner.values, vec![1, 2, 3]);
+    assert_eq!(result.name, "test");
+
+    Ok(())
+}
+
+// =============================================================================
+// Re-entry tests: Maps
+// =============================================================================
+
+#[test]
+fn deferred_reenter_hashmap() -> Result<(), IPanic> {
+    use std::collections::HashMap;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        map: HashMap<String, i32>,
+        label: String,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_deferred(resolution);
+
+    // Insert first entry
+    partial.begin_field("map")?;
+    partial.begin_map()?;
+    partial.begin_key()?;
+    partial.set(String::from("a"))?;
+    partial.end()?;
+    partial.begin_value()?;
+    partial.set(1i32)?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.set_field("label", String::from("test"))?;
+
+    // Re-enter and insert more
+    partial.begin_field("map")?;
+    partial.begin_key()?;
+    partial.set(String::from("b"))?;
+    partial.end()?;
+    partial.begin_value()?;
+    partial.set(2i32)?;
+    partial.end()?;
+    partial.begin_key()?;
+    partial.set(String::from("c"))?;
+    partial.end()?;
+    partial.begin_value()?;
+    partial.set(3i32)?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.map.get("a"), Some(&1));
+    assert_eq!(result.map.get("b"), Some(&2));
+    assert_eq!(result.map.get("c"), Some(&3));
+    assert_eq!(result.label, "test");
+
+    Ok(())
+}
+
+#[test]
+fn deferred_reenter_btreemap() -> Result<(), IPanic> {
+    use std::collections::BTreeMap;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        map: BTreeMap<String, u64>,
+        count: u32,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_deferred(resolution);
+
+    partial.begin_field("map")?;
+    partial.begin_map()?;
+    partial.begin_key()?;
+    partial.set(String::from("x"))?;
+    partial.end()?;
+    partial.begin_value()?;
+    partial.set(100u64)?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.set_field("count", 42u32)?;
+
+    partial.begin_field("map")?;
+    partial.begin_key()?;
+    partial.set(String::from("y"))?;
+    partial.end()?;
+    partial.begin_value()?;
+    partial.set(200u64)?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.map.get("x"), Some(&100));
+    assert_eq!(result.map.get("y"), Some(&200));
+    assert_eq!(result.count, 42);
+
+    Ok(())
+}
+
+// =============================================================================
+// Re-entry tests: Arrays
+// =============================================================================
+
+#[test]
+fn deferred_reenter_array() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        values: [u32; 3],
+        name: String,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_deferred(resolution);
+
+    // Set first element
+    partial.begin_field("values")?;
+    partial.begin_nth_field(0)?;
+    partial.set(10u32)?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.set_field("name", String::from("test"))?;
+
+    // Re-enter and set more elements
+    partial.begin_field("values")?;
+    partial.begin_nth_field(1)?;
+    partial.set(20u32)?;
+    partial.end()?;
+    partial.begin_nth_field(2)?;
+    partial.set(30u32)?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.values, [10, 20, 30]);
+    assert_eq!(result.name, "test");
+
+    Ok(())
+}
+
+#[test]
+fn deferred_reenter_array_overwrite_element() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        arr: [i32; 2],
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_deferred(resolution);
+
+    partial.begin_field("arr")?;
+    partial.begin_nth_field(0)?;
+    partial.set(1i32)?;
+    partial.end()?;
+    partial.begin_nth_field(1)?;
+    partial.set(2i32)?;
+    partial.end()?;
+    partial.end()?;
+
+    // Re-enter and overwrite
+    partial.begin_field("arr")?;
+    partial.begin_nth_field(0)?;
+    partial.set(100i32)?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.arr, [100, 2]);
+
+    Ok(())
+}
+
+// =============================================================================
+// Re-entry tests: Enums with fields
+// =============================================================================
+
+#[test]
+fn deferred_reenter_enum_set_more_fields() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Data {
+        Record { id: u32, name: String, value: i64 },
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        data: Data,
+        tag: String,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_deferred(resolution);
+
+    // Enter enum, select variant, set one field
+    partial.begin_field("data")?;
+    partial.select_variant_named("Record")?;
+    partial.set_field("id", 42u32)?;
+    partial.end()?;
+
+    partial.set_field("tag", String::from("important"))?;
+
+    // Re-enter and set more fields
+    partial.begin_field("data")?;
+    partial.set_field("name", String::from("test"))?;
+    partial.set_field("value", 999i64)?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(
+        result.data,
+        Data::Record {
+            id: 42,
+            name: String::from("test"),
+            value: 999
+        }
+    );
+    assert_eq!(result.tag, "important");
+
+    Ok(())
+}
+
+// =============================================================================
+// Re-entry tests: Sets
+// =============================================================================
+
+#[test]
+fn deferred_reenter_hashset() -> Result<(), IPanic> {
+    use std::collections::HashSet;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        tags: HashSet<String>,
+        count: u32,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_deferred(resolution);
+
+    partial.begin_field("tags")?;
+    partial.begin_set()?;
+    partial.insert(String::from("alpha"))?;
+    partial.end()?;
+
+    partial.set_field("count", 1u32)?;
+
+    partial.begin_field("tags")?;
+    partial.insert(String::from("beta"))?;
+    partial.insert(String::from("gamma"))?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert!(result.tags.contains("alpha"));
+    assert!(result.tags.contains("beta"));
+    assert!(result.tags.contains("gamma"));
+    assert_eq!(result.tags.len(), 3);
+    assert_eq!(result.count, 1);
+
+    Ok(())
+}
+
+#[test]
+fn deferred_reenter_btreeset() -> Result<(), IPanic> {
+    use std::collections::BTreeSet;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Container {
+        ids: BTreeSet<i32>,
+        name: String,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Container>()?;
+    partial.begin_deferred(resolution);
+
+    partial.begin_field("ids")?;
+    partial.begin_set()?;
+    partial.insert(1i32)?;
+    partial.insert(2i32)?;
+    partial.end()?;
+
+    partial.set_field("name", String::from("test"))?;
+
+    partial.begin_field("ids")?;
+    partial.insert(3i32)?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    let expected: BTreeSet<i32> = [1, 2, 3].into_iter().collect();
+    assert_eq!(result.ids, expected);
+    assert_eq!(result.name, "test");
+
+    Ok(())
+}
+
+// =============================================================================
+// Complex re-entry scenarios
+// =============================================================================
+
+#[test]
+fn deferred_deeply_interleaved_everything() -> Result<(), IPanic> {
+    use std::collections::HashMap;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Inner {
+        list: Vec<i32>,
+        map: HashMap<String, u32>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Outer {
+        inner: Inner,
+        name: String,
+        count: u64,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Outer>()?;
+    partial.begin_deferred(resolution);
+
+    // Start inner.list
+    partial.begin_field("inner")?;
+    partial.begin_field("list")?;
+    partial.begin_list()?;
+    partial.push(1i32)?;
+    partial.end()?;
+    partial.end()?;
+
+    // Set outer.name
+    partial.set_field("name", String::from("test"))?;
+
+    // Add to inner.list again
+    partial.begin_field("inner")?;
+    partial.begin_field("list")?;
+    partial.push(2i32)?;
+    partial.end()?;
+    partial.end()?;
+
+    // Set outer.count
+    partial.set_field("count", 42u64)?;
+
+    // Start inner.map
+    partial.begin_field("inner")?;
+    partial.begin_field("map")?;
+    partial.begin_map()?;
+    partial.begin_key()?;
+    partial.set(String::from("a"))?;
+    partial.end()?;
+    partial.begin_value()?;
+    partial.set(100u32)?;
+    partial.end()?;
+    partial.end()?;
+    partial.end()?;
+
+    // Add more to inner.list
+    partial.begin_field("inner")?;
+    partial.begin_field("list")?;
+    partial.push(3i32)?;
+    partial.end()?;
+    partial.end()?;
+
+    // Add more to inner.map
+    partial.begin_field("inner")?;
+    partial.begin_field("map")?;
+    partial.begin_key()?;
+    partial.set(String::from("b"))?;
+    partial.end()?;
+    partial.begin_value()?;
+    partial.set(200u32)?;
+    partial.end()?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+
+    assert_eq!(result.name, "test");
+    assert_eq!(result.count, 42);
+    assert_eq!(result.inner.list, vec![1, 2, 3]);
+    assert_eq!(result.inner.map.get("a"), Some(&100));
+    assert_eq!(result.inner.map.get("b"), Some(&200));
+
+    Ok(())
+}

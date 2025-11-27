@@ -17,23 +17,20 @@ This guide is format‑agnostic. Examples use plain Rust fields plus core facet 
 | default             | fill missing with Default| same             | same                      |
 
 ## [r.api] Quick API surface
-- `[r.api.text.from]` Text formats:
+Text formats:
 ```rust
 pub fn from_str<T: Facet + ?Sized>(s: &str) -> Result<T, Error>;
-```
-- `[r.api.text.to]` Text formats:
-```rust
 pub fn to_string<T: Facet + ?Sized>(value: &T) -> Result<String, Error>;
 ```
-- `[r.api.bin.from]` Binary formats:
+
+Binary formats:
 ```rust
 pub fn from_slice<T: Facet + ?Sized>(bytes: &[u8]) -> Result<T, Error>;
-```
-- `[r.api.bin.to]` Binary formats:
-```rust
 pub fn to_vec<T: Facet + ?Sized>(value: &T) -> Result<Vec<u8>, Error>;
+pub fn to_writer<T: Facet + ?Sized, W: std::io::Write>(value: &T, w: W) -> Result<(), Error>;
 ```
-- `[r.api.errors]` Errors implement `std::error::Error`; `miette::Diagnostic` recommended for text formats. Binary spans use byte offsets/lengths.
+
+Errors implement `std::error::Error`; `miette::Diagnostic` recommended for text formats. Binary spans use byte offsets/lengths.
 
 ## [r.deterministic] Deterministic output
 - Structs serialize in declaration order.
@@ -54,6 +51,20 @@ struct ParseErr {
 }
 
 // When deserializing, fill span with offset/len from facet-reflect spans.
+```
+
+Rendered example:
+```
+× task validation failed
+ ╭─[1:7]
+ 1 │ build timeout=0
+   ·       ────┬────
+   ·           ╰── timeout cannot be zero
+ 2 │ test timeout=999999
+   ·      ───────┬──────
+   ·             ╰── timeout too large (max 86400s)
+ 3 │ deploy
+ ╰────
 ```
 
 ## Implementation tiers
