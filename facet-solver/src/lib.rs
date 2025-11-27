@@ -159,7 +159,7 @@ pub struct VariantSelection {
 }
 
 /// Information about a single field in a configuration.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct FieldInfo {
     /// The name as it appears in the serialized format
     pub serialized_name: &'static str,
@@ -172,7 +172,22 @@ pub struct FieldInfo {
 
     /// The shape of this field's value
     pub value_shape: &'static Shape,
+
+    /// The original field definition (for accessing flags, attributes, etc.)
+    pub field: &'static Field,
 }
+
+impl PartialEq for FieldInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.serialized_name == other.serialized_name
+            && self.path == other.path
+            && self.required == other.required
+            && std::ptr::eq(self.value_shape, other.value_shape)
+            && std::ptr::eq(self.field, other.field)
+    }
+}
+
+impl Eq for FieldInfo {}
 
 /// A path through the type tree to a field.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1750,6 +1765,26 @@ impl Configuration {
         &self.variant_selections
     }
 
+    /// Get all child fields (fields with the CHILD flag).
+    ///
+    /// This is useful for KDL deserialization where child nodes need to be
+    /// processed separately from properties.
+    pub fn child_fields(&self) -> impl Iterator<Item = &FieldInfo> {
+        self.fields
+            .values()
+            .filter(|f| f.field.flags.contains(FieldFlags::CHILD))
+    }
+
+    /// Get all property fields (fields without the CHILD flag).
+    ///
+    /// This is useful for KDL deserialization where properties are processed
+    /// separately from child nodes.
+    pub fn property_fields(&self) -> impl Iterator<Item = &FieldInfo> {
+        self.fields
+            .values()
+            .filter(|f| !f.field.flags.contains(FieldFlags::CHILD))
+    }
+
     /// Get all known key paths (for depth-aware probing).
     pub fn known_paths(&self) -> &BTreeSet<KeyPath> {
         &self.known_paths
@@ -1895,6 +1930,7 @@ impl SchemaBuilder {
                 path: field_path,
                 required,
                 value_shape: field.shape(),
+                field,
             };
 
             for config in &mut configs {
@@ -2219,6 +2255,7 @@ impl SchemaBuilder {
                                     path: variant_path.clone(),
                                     required: !is_optional_flatten,
                                     value_shape: shape, // The enum shape
+                                    field,              // The original flatten field
                                 };
                                 forked.add_field(variant_field_info)?;
 
@@ -2282,6 +2319,7 @@ impl SchemaBuilder {
                     path: field_path,
                     required,
                     value_shape: shape,
+                    field,
                 };
 
                 let mut result = configs;
@@ -2309,8 +2347,17 @@ impl SchemaBuilder {
             let inner_field = &variant.data.fields[0];
             let inner_shape = inner_field.shape();
 
-            // If the inner type is a struct, flatten its fields
-            // Key prefix stays the same - inner keys bubble up
+            // If the inner type is a struct, treat the newtype wrapper as transparent.
+            //
+            // Previously we pushed a synthetic `"0"` segment onto the path. That made the
+            // solver think there was an extra field between the variant and the inner
+            // struct (e.g., `backend.backend::Local.0.cache`). KDL flattening does not
+            // expose that tuple wrapper, so the deserializer would try to open a field
+            // named `"0"` on the inner struct/enum, causing "no such field" errors when
+            // navigating paths like `backend::Local.cache`.
+            //
+            // Keep the synthetic `"0"` segment so the solver/reflect layer walks through
+            // the tuple wrapper that Rust generates for newtype variants.
             if let Type::User(UserType::Struct(inner_struct)) = inner_shape.ty {
                 let inner_path = variant_path.push_field("0");
                 return self.analyze_struct(inner_struct, inner_path, key_prefix.clone());
