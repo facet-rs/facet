@@ -73,6 +73,8 @@ enum Mode2 { Simple { level: u8 }, Tuned { level: u8, tuning: u8 } } // level wi
 enum Ints { Small { v: u8 }, Large { v: u16 } }   // v=255 -> Small; v=1000 -> Large
 enum Signed { Signed { n: i8 }, Unsigned { n: u8 } } // n=-5 -> Signed; n=200 -> Unsigned
 ```
+
+`[r.solver.strategy]` Solver disambiguation guidance: prefer variants that fully satisfy required fields; among candidates, pick those whose value ranges/types fit; child presence can disambiguate; if multiple viable variants remain, report ambiguity instead of picking arbitrarily. Document your format’s tie-break rules (e.g., declaration order) if any.
 9. `[r.flatten.option]` Option<flatten>:
 ```rust
 struct Server { name: String, #[facet(flatten)] tuning: Option<Tuning> }
@@ -124,16 +126,33 @@ struct Config {
 struct PathBufLike(String); // serializes/deserializes as inner String directly
 ```
 
+18. `[r.attrs.skip_if]` Conditional skip serialize:
+```rust
+struct Config {
+    #[facet(skip_serializing_if = "Option::is_none")]
+    maybe: Option<String>,
+}
+```
+
 ## Collections & maps
 - `[r.collections.vec]` Vec/sequence round‑trips.
 - `[r.collections.set]` Sets (HashSet/BTreeSet) — BTreeSet ordering deterministic.
 - `[r.collections.map]` Maps with string keys; non‑string keys via newtypes (e.g., path types).
 - `[r.collections.node-name-key]` Node‑name‑as‑key: hierarchical formats only (element name carries data). Flat formats: ignore; use normal key/field name.
 - `[r.collections.tuple-repr]` Tuple structs/variants: prefer arrays for text formats; document choice.
+- `[r.collections.array]` Fixed-size arrays `[T; N]`: test parsing/serialization; in binary, no length prefix; in text, represent as arrays with exact length enforced.
 
 ## Scalars & strings
 - `[r.scalars.strings]` Escaping rules; raw/multiline where supported.
 - `[r.scalars.numbers]` Booleans, null, numeric boundaries; special floats policy (NaN/∞) explicit.
+
+## Binary data & temporal types
+- `[r.bytes.text]` Bytes in text formats: choose a representation (base64, hex, or array-of-u8). Document and test both directions. Align with facet-json’s base64 default if applicable.
+- `[r.bytes.binary]` Bytes in binary formats: raw bytes with length prefix; ensure overflow/length checks.
+- `[r.temporal.iso8601]` Temporal types in text formats: use ISO‑8601 strings (e.g., `"2024-01-15T10:30:00Z"` for instants; `"2024-01-15"` for dates; `"10:30:00"` for times).
+- `[r.temporal.msgpack]` If the format has native timestamp types (e.g., msgpack ext type), prefer them; otherwise fall back to strings.
+- `[r.temporal.binary]` Binary formats: pick a canonical encoding (e.g., i64 seconds + u32 nanos, or format-native) and keep it stable.
+- `[r.temporal.coverage]` Cover common crates: chrono (DateTime<Utc>, NaiveDate, NaiveDateTime, NaiveTime), time (OffsetDateTime, PrimitiveDateTime, Date, Time), jiff (Timestamp, Zoned, Date, Time, Span), std (SystemTime, Duration).
 
 ## Unknown data
 - `[r.unknown.default]` Default: unknown fields skipped.
