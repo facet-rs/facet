@@ -129,6 +129,7 @@ impl ResolutionSet {
 
 /// Find fields that could disambiguate between resolutions.
 /// Returns fields that exist in some but not all resolutions.
+#[allow(dead_code)]
 fn find_disambiguating_fields(configs: &[&Resolution]) -> Vec<String> {
     if configs.len() < 2 {
         return Vec::new();

@@ -386,6 +386,7 @@ dependencies = [
  "indexset",
  "insta",
  "log",
+ "miette",
  "proptest",
  "tempfile",
  "ulid",

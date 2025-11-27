@@ -312,7 +312,11 @@ fn apply_single_op(partial: &mut Partial<'_>, op: &PartialOp) -> Result<(), Stri
 // =============================================================================
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(1000))]
+    #![proptest_config(ProptestConfig {
+        cases: 1000,
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
 
     /// The core property: no sequence of operations should cause a panic or UB.
     /// Operations may fail, but the Partial should always be safely droppable.
@@ -342,7 +346,11 @@ struct WithMap {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(500))]
+    #![proptest_config(ProptestConfig {
+        cases: 500,
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    })]
 
     /// Fuzz just struct field operations
     #[test]
