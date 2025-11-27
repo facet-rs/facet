@@ -58,7 +58,7 @@ fn print_json(json: &str) {
 
     let mut h = HighlightLines::new(syntax, theme);
     for (i, line) in json.lines().enumerate() {
-        let line_with_newline = format!("{}\n", line);
+        let line_with_newline = format!("{line}\n");
         let ranges: Vec<(Style, &str)> = h.highlight_line(&line_with_newline, &ps).unwrap();
         let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
         print!(

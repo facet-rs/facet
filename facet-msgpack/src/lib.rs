@@ -11,7 +11,5 @@ pub use constants::*;
 mod deserialize;
 pub use deserialize::*;
 
-#[cfg(feature = "serialize")]
 mod serialize;
-#[cfg(feature = "serialize")]
 pub use serialize::*;

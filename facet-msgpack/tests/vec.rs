@@ -11,7 +11,7 @@ fn msgpack_deserialize_empty_vec() -> Result<()> {
     ];
 
     let v: Vec<i32> = from_slice(&data)?;
-    assert_eq!(v, vec![]);
+    assert_eq!(v, Vec::<i32>::new());
 
     Ok(())
 }
@@ -55,7 +55,7 @@ fn test_nested_arrays() -> Result<()> {
     let nested: NestedArrays = from_slice(&data)?;
     assert_eq!(nested.matrix.len(), 3);
     assert_eq!(nested.matrix[0], vec![1, 2, 3]);
-    assert_eq!(nested.matrix[1], vec![]);
+    assert_eq!(nested.matrix[1], Vec::<u64>::new());
     assert_eq!(nested.matrix[2], vec![4, 5]);
 
     Ok(())

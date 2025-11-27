@@ -51,7 +51,7 @@ fn test_error_missing_value_for_argument_short_missed() {
     }
     let args: Result<Args, _> = facet_args::from_slice(&["-j", "-v"]);
     let err = args.unwrap_err();
-    eprintln!("{}", err);
+    eprintln!("{err}");
     assert_diag_snapshot!(err);
 }
 
