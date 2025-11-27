@@ -1238,6 +1238,29 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         satisfied_shapes.retain(|s| shape_tightness(s) == min_tightness);
                     }
 
+                    // For integer values, prefer integer types over float types
+                    // (e.g., i64 over f64 when both are 8 bytes)
+                    if satisfied_shapes.len() > 1 && matches!(value, KdlValue::Integer(_)) {
+                        let has_integer_type = satisfied_shapes.iter().any(|s| {
+                            matches!(
+                                s.ty,
+                                Type::Primitive(PrimitiveType::Numeric(
+                                    NumericType::Integer { .. }
+                                ))
+                            )
+                        });
+                        if has_integer_type {
+                            satisfied_shapes.retain(|s| {
+                                matches!(
+                                    s.ty,
+                                    Type::Primitive(PrimitiveType::Numeric(
+                                        NumericType::Integer { .. }
+                                    ))
+                                )
+                            });
+                        }
+                    }
+
                     log::trace!(
                         "Value {:?} satisfies tightest types: {:?}",
                         value,
