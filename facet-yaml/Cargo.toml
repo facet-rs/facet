@@ -38,9 +38,9 @@ boxen = "0.1"
 strsim = "0.11"
 
 [[example]]
-name = "showcase"
-path = "examples/showcase.rs"
+name = "yaml_showcase"
+path = "examples/yaml_showcase.rs"
 
 [[example]]
-name = "error_showcase"
-path = "examples/error_showcase.rs"
+name = "yaml_error_showcase"
+path = "examples/yaml_error_showcase.rs"

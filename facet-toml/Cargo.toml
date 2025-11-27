@@ -20,7 +20,7 @@ std = [
 ]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 rich-diagnostics = ["dep:ariadne", "std"]
-default = ["deserialize", "std", "rich-diagnostics"]
+default = ["deserialize", "serialize", "std", "rich-diagnostics"]
 
 [dependencies]
 ariadne = { version = "=0.5.1", optional = true }

@@ -454,16 +454,7 @@ impl<'input> Decoder<'input> {
                     if !seen {
                         let field = &struct_type.fields[i];
                         if field.flags.contains(facet_core::FieldFlags::DEFAULT) {
-                            wip.begin_nth_field(i)?;
-
-                            // Check for field-level default function first, then type-level default
-                            if let Some(field_default_fn) = field.vtable.default_fn {
-                                wip.set_field_default(field_default_fn)?;
-                            } else {
-                                wip.set_default()?;
-                            }
-
-                            wip.end()?;
+                            wip.set_nth_field_to_default(i)?;
                         } else {
                             // Non-default field was missing
                             return Err(DecodeError::MissingField(field.name.to_string()));
@@ -541,7 +532,7 @@ impl<'input> Decoder<'input> {
 
                                 wip.select_nth_variant(idx)?;
                                 for field_idx in 0..field_count {
-                                    wip.begin_nth_enum_field(field_idx)?;
+                                    wip.begin_nth_field(field_idx)?;
                                     self.deserialize_value(wip)?;
                                     wip.end()?;
                                 }
@@ -558,7 +549,7 @@ impl<'input> Decoder<'input> {
                                     let field_name = self.decode_string()?;
                                     match wip.field_index(&field_name) {
                                         Some(field_idx) => {
-                                            wip.begin_nth_enum_field(field_idx)?;
+                                            wip.begin_nth_field(field_idx)?;
                                             self.deserialize_value(wip)?;
                                             wip.end()?;
                                         }
