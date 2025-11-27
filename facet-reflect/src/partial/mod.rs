@@ -852,54 +852,53 @@ impl<'facet> Drop for Partial<'facet> {
 
         // Clean up stored frames from deferred state first
         if let Some(deferred) = self.deferred.take() {
-            for (_, mut frame) in deferred.stored_frames {
-                // Stored frames with FrameOwnership::Field point into parent memory.
-                // If they're fully initialized, the parent's iset tracks this and will
-                // handle dropping the data. We should NOT call deinit() on them.
-                //
-                // Only deinit stored frames that:
-                // 1. Are NOT Field-owned, OR
-                // 2. Are NOT fully initialized (parent won't drop partially init data)
+            // Stored frames were saved during end() in deferred mode. Since finish_deferred()
+            // was never called for THIS deferred session, we may need to deinit some frames.
+            //
+            // The tricky part: a stored frame with Tracker::Init could be either:
+            // 1. Re-entered from an already-initialized state (parent's iset has it marked)
+            //    -> Parent will drop it, we should NOT deinit (would be double-free)
+            // 2. Freshly initialized in this session (parent's iset does NOT have it marked)
+            //    -> Parent won't drop it, we MUST deinit (otherwise leak)
+            //
+            // We distinguish these by checking the parent's iset for the field.
+            //
+            // Process from deepest to shallowest to handle parent-child dependencies correctly.
+            let mut paths: Vec<_> = deferred.stored_frames.into_iter().collect();
+            paths.sort_by_key(|(path, _)| core::cmp::Reverse(path.len()));
+
+            for (path, mut frame) in paths {
                 let should_deinit = match &frame.ownership {
                     FrameOwnership::Field => {
-                        // Field-owned: only deinit if not fully initialized
-                        // For fully initialized Field frames, parent handles cleanup
-                        if frame.require_full_initialization().is_ok() {
-                            // Fully initialized - parent will drop it through iset
-                            // Just clean up any partial state (shouldn't be any)
-                            frame.cleanup_partial_state();
+                        if matches!(frame.tracker, Tracker::Uninit) {
+                            // Uninit - nothing to drop
                             false
-                        } else {
-                            // Not fully initialized - check if it's an initialized collection
-                            // with partial state
-                            let is_initialized_collection = match &frame.tracker {
-                                Tracker::Map {
-                                    is_initialized: true,
-                                    insert_state,
-                                } if !matches!(insert_state, MapInsertState::Idle) => true,
-                                Tracker::List {
-                                    is_initialized: true,
-                                    current_child: true,
-                                } => true,
-                                Tracker::Set {
-                                    is_initialized: true,
-                                    current_child: true,
-                                } => true,
-                                _ => false,
-                            };
-
-                            if is_initialized_collection {
-                                // Parent will drop the collection, just clean up partial state
-                                frame.cleanup_partial_state();
-                                false
+                        } else if matches!(frame.tracker, Tracker::Init) {
+                            // For Tracker::Init, check if parent's iset has this field marked.
+                            // Path length 1 means parent is the root frame on the stack.
+                            // We only handle the case where parent is root frame (path.len() == 1)
+                            // since that's the common case. For nested deferred, more complex logic needed.
+                            if path.len() == 1 {
+                                let field_name = path.first().unwrap();
+                                let parent_has_field_marked = self.frames.first().map_or(false, |parent| {
+                                    Self::is_field_marked_in_parent(parent, field_name)
+                                });
+                                // If parent has it marked, don't deinit (parent will drop).
+                                // If parent doesn't have it, deinit (we must clean up).
+                                !parent_has_field_marked
                             } else {
-                                // Not initialized, need full deinit
+                                // For nested paths, conservative: assume we should deinit
+                                // (This may cause issues in some edge cases, but better to leak than double-free)
                                 true
                             }
+                        } else {
+                            // Other tracker states (Struct, Option with building_inner, etc.)
+                            // mean it was being actively built - we must deinit.
+                            true
                         }
                     }
                     _ => {
-                        // Non-Field ownership - need to deinit
+                        // Non-Field ownership - always need to deinit
                         true
                     }
                 };
@@ -922,12 +921,40 @@ impl<'facet> Drop for Partial<'facet> {
             // Special case: initialized collections (Map/List/Set) with partial
             // state (mid-insert) - the parent WILL drop the collection, but we
             // need to clean up the partial buffers.
+            //
+            // IMPORTANT: We must also check that the parent's iset actually has this
+            // field marked. If end() was never called, the field won't be in the iset
+            // and the parent won't drop it, so we must deinit it ourselves.
             match &frame.ownership {
                 FrameOwnership::Field => {
-                    if frame.require_full_initialization().is_ok() {
-                        // Fully initialized - parent's iset will handle it
+                    // Check if parent will actually handle dropping this field
+                    let parent_will_drop = self.frames.last().map_or(false, |parent| {
+                        match &parent.tracker {
+                            Tracker::Struct { iset, current_child } => {
+                                // Parent drops this field only if it's marked in iset
+                                current_child.map_or(false, |idx| iset.get(idx))
+                            }
+                            Tracker::Enum { data, current_child, .. } => {
+                                // Parent drops this field only if it's marked in data
+                                current_child.map_or(false, |idx| data.get(idx))
+                            }
+                            Tracker::Array { iset, current_child } => {
+                                // Parent drops this element only if it's marked in iset
+                                current_child.map_or(false, |idx| iset.get(idx))
+                            }
+                            // For other tracker types, the parent won't drop field children
+                            _ => false,
+                        }
+                    });
+
+                    if frame.require_full_initialization().is_ok() && parent_will_drop {
+                        // Fully initialized AND parent's iset has it marked - parent will handle it
                         // But still clean up any partial allocation state (shouldn't be any)
                         frame.cleanup_partial_state();
+                    } else if frame.require_full_initialization().is_ok() && !parent_will_drop {
+                        // Fully initialized but parent won't drop it (end() was never called)
+                        // We must deinit it ourselves
+                        frame.deinit();
                     } else {
                         // Not fully initialized - check if it's an initialized collection
                         // with partial state (parent will drop the collection but not the

@@ -7,25 +7,70 @@ impl Partial<'_> {
     /// Begin building the Some variant of an Option
     pub fn begin_some(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
-        let frame = self.frames.last_mut().unwrap();
 
-        // Verify we're working with an Option
-        let option_def = match frame.shape.def {
-            Def::Option(def) => def,
-            _ => {
-                return Err(ReflectError::WasNotA {
-                    expected: "Option",
-                    actual: frame.shape,
-                });
-            }
+        // First, gather information and perform drops with proper borrow management
+        let (option_def, was_initialized) = {
+            let frame = self.frames.last().unwrap();
+
+            // Verify we're working with an Option
+            let option_def = match frame.shape.def {
+                Def::Option(def) => def,
+                _ => {
+                    return Err(ReflectError::WasNotA {
+                        expected: "Option",
+                        actual: frame.shape,
+                    });
+                }
+            };
+
+            // If the Option was already initialized, we need to drop the old value first.
+            // This handles cases where:
+            // - Tracker is Init (re-entering an already initialized Option field)
+            // - Tracker is Option{building_inner:false} (second call to begin_some after first completed)
+            let was_initialized = matches!(
+                frame.tracker,
+                Tracker::Init | Tracker::Option { building_inner: false }
+            );
+
+            (option_def, was_initialized)
         };
 
-        // Initialize the tracker for Option building
-        if matches!(frame.tracker, Tracker::Uninit) {
-            frame.tracker = Tracker::Option {
-                building_inner: true,
-            };
+        if was_initialized {
+            // Drop the existing Option value before starting a new building cycle
+            let frame = self.frames.last().unwrap();
+            if let Some(drop_fn) = frame.shape.vtable.drop_in_place {
+                unsafe { drop_fn(frame.data.assume_init()) };
+            }
+
+            // IMPORTANT: After dropping, we need to unmark this field in the parent's iset.
+            // Otherwise, if the Partial is dropped before end() completes the new Option,
+            // the parent struct's deinit will try to drop this field again (double-free).
+            // When end() successfully completes, it will re-mark the field in the parent's iset.
+            if self.frames.len() >= 2 {
+                let parent_idx = self.frames.len() - 2;
+                if let Some(parent_frame) = self.frames.get_mut(parent_idx) {
+                    match &mut parent_frame.tracker {
+                        Tracker::Struct { iset, current_child } => {
+                            if let Some(idx) = *current_child {
+                                iset.unset(idx);
+                            }
+                        }
+                        Tracker::Enum { data, current_child, .. } => {
+                            if let Some(idx) = *current_child {
+                                data.unset(idx);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
         }
+
+        // Set tracker to indicate we're building the inner value
+        let frame = self.frames.last_mut().unwrap();
+        frame.tracker = Tracker::Option {
+            building_inner: true,
+        };
 
         // Get the inner type shape
         let inner_shape = option_def.t;
@@ -64,22 +109,28 @@ impl Partial<'_> {
         self.require_active()?;
 
         // Get the inner shape and check for try_from
-        let (inner_shape, has_try_from, parent_shape) = {
+        let (inner_shape, has_try_from, parent_shape, is_option) = {
             let frame = self.frames.last().unwrap();
             if let Some(inner_shape) = frame.shape.inner {
                 let has_try_from = frame.shape.vtable.try_from.is_some();
-                (Some(inner_shape), has_try_from, frame.shape)
+                let is_option = matches!(frame.shape.def, Def::Option(_));
+                (Some(inner_shape), has_try_from, frame.shape, is_option)
             } else {
-                (None, false, frame.shape)
+                (None, false, frame.shape, false)
             }
         };
 
         if let Some(inner_shape) = inner_shape {
             if has_try_from {
-                // Create a conversion frame with the inner shape
+                // For Option types, use begin_some behavior to properly track building_inner
+                // This ensures end() knows how to handle the popped frame
+                if is_option {
+                    return self.begin_some();
+                }
 
-                // For conversion frames, we leave the parent tracker unchanged
-                // This allows automatic conversion detection to work properly
+                // Create a conversion frame with the inner shape
+                // For non-Option types with try_from, we leave the parent tracker unchanged
+                // and the conversion will happen in end()
 
                 // Allocate memory for the inner value (conversion source)
                 let inner_layout =

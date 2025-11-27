@@ -122,7 +122,28 @@ impl<'facet> Partial<'facet> {
             );
 
             // Validate the frame is fully initialized
-            frame.require_full_initialization()?;
+            if let Err(e) = frame.require_full_initialization() {
+                // Clean up remaining stored frames before returning error.
+                // When finish_deferred fails, the parent's iset was NEVER updated for any stored frame,
+                // so we must deinit all initialized frames ourselves - the parent won't drop them.
+
+                // Collect keys to remove (can't drain in no_std)
+                let remaining_paths: Vec<_> = deferred_state.stored_frames.keys().cloned().collect();
+                // Sort by depth (deepest first) for proper cleanup order
+                let mut sorted_paths = remaining_paths;
+                sorted_paths.sort_by_key(|p| core::cmp::Reverse(p.len()));
+
+                for remaining_path in sorted_paths {
+                    if let Some(mut remaining_frame) = deferred_state.stored_frames.remove(&remaining_path) {
+                        // Since finish_deferred failed, the parent's iset was never updated.
+                        // We must deinit all non-Uninit frames because the parent won't drop them.
+                        if !matches!(remaining_frame.tracker, Tracker::Uninit) {
+                            remaining_frame.deinit();
+                        }
+                    }
+                }
+                return Err(e);
+            }
 
             // Update parent's ISet to mark this field as initialized
             // The parent is either in stored_frames (if path.len() > 1) or on the frame stack (if path.len() == 1)
@@ -130,8 +151,8 @@ impl<'facet> Partial<'facet> {
                 let parent_path: Vec<_> = path[..path.len() - 1].to_vec();
 
                 if parent_path.is_empty() {
-                    // Parent is the root frame on the stack
-                    if let Some(root_frame) = self.frames.last_mut() {
+                    // Parent is the root frame on the stack (index 0)
+                    if let Some(root_frame) = self.frames.get_mut(0) {
                         Self::mark_field_initialized(root_frame, field_name);
                     }
                 } else {
@@ -191,6 +212,22 @@ impl<'facet> Partial<'facet> {
                 }
             }
             _ => None,
+        }
+    }
+
+    /// Check if a field is marked as initialized in the parent's iset/data tracker
+    pub(crate) fn is_field_marked_in_parent(parent: &Frame, field_name: &str) -> bool {
+        // First find the field index
+        let idx = match Self::find_field_index(parent, field_name) {
+            Some(idx) => idx,
+            None => return false,
+        };
+
+        // Then check if it's marked in the parent's tracker
+        match &parent.tracker {
+            Tracker::Struct { iset, .. } => iset.get(idx),
+            Tracker::Enum { data, .. } => data.get(idx),
+            _ => false,
         }
     }
 
@@ -705,6 +742,23 @@ impl<'facet> Partial<'facet> {
                             shape: parent_frame.shape,
                             operation: "Option frame without Option definition",
                         });
+                    }
+                } else {
+                    // building_inner is false - the Option was already initialized but
+                    // begin_some was called again. The popped frame was not used to
+                    // initialize the Option, so we need to clean it up.
+                    popped_frame.deinit();
+                    if let FrameOwnership::Owned = popped_frame.ownership {
+                        if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
+                            if layout.size() > 0 {
+                                unsafe {
+                                    ::alloc::alloc::dealloc(
+                                        popped_frame.data.as_mut_byte_ptr(),
+                                        layout,
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
             }
