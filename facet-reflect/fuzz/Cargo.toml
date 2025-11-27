@@ -1,0 +1,29 @@
+[package]
+name = "facet-reflect-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+
+[dependencies.facet]
+path = "../../facet"
+
+[dependencies.facet-reflect]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_partial"
+path = "fuzz_targets/fuzz_partial.rs"
+test = false
+doc = false
+bench = false

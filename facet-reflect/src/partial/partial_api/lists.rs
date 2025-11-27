@@ -21,7 +21,14 @@ impl Partial<'_> {
                 // that's good, let's initialize it
             }
             Tracker::Init => {
-                // initialized (perhaps from a previous round?) but should be a list tracker, let's fix that:
+                // initialized (perhaps from a previous round?) but should be a list tracker
+                // First verify this is actually a list type before changing tracker
+                if !matches!(frame.shape.def, Def::List(_)) {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "begin_list can only be called on List types",
+                    });
+                }
                 frame.tracker = Tracker::List {
                     is_initialized: true,
                     current_child: false,

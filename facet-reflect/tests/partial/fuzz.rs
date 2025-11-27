@@ -5,7 +5,7 @@
 //! but the Partial must remain in a consistent state that can be safely dropped.
 
 use facet::Facet;
-use facet_reflect::Partial;
+use facet_reflect::{Partial, Resolution};
 use proptest::prelude::*;
 use std::collections::HashMap;
 
@@ -76,9 +76,9 @@ enum PartialOp {
     // Enum operations
     SelectVariant(VariantName),
 
-    // Deferred mode (commented out for now - needs Resolution)
-    // BeginDeferred,
-    // FinishDeferred,
+    // Deferred mode
+    BeginDeferred,
+    FinishDeferred,
 
     // Terminal
     Build,
@@ -203,6 +203,9 @@ fn partial_op_strategy() -> impl Strategy<Value = PartialOp> {
         1 => Just(PartialOp::BeginInner),
         // Enum operations
         2 => variant_name_strategy().prop_map(PartialOp::SelectVariant),
+        // Deferred mode (low weight - typically called once per session)
+        1 => Just(PartialOp::BeginDeferred),
+        1 => Just(PartialOp::FinishDeferred),
         // Terminal (low weight - we want longer sequences)
         1 => Just(PartialOp::Build),
     ]
@@ -299,6 +302,16 @@ fn apply_single_op(partial: &mut Partial<'_>, op: &PartialOp) -> Result<(), Stri
             partial
                 .select_variant_named(variant.as_str())
                 .map_err(|e| e.to_string())?;
+        }
+        PartialOp::BeginDeferred => {
+            // Create a fresh resolution for deferred mode
+            let resolution = Resolution::new();
+            partial
+                .begin_deferred(resolution)
+                .map_err(|e| e.to_string())?;
+        }
+        PartialOp::FinishDeferred => {
+            partial.finish_deferred().map_err(|e| e.to_string())?;
         }
         PartialOp::Build => {
             partial.build().map_err(|e| e.to_string())?;
@@ -561,4 +574,64 @@ fn wip_fuzz_invalid_ops_sequence() {
 
     // Try to build incomplete struct
     assert!(partial.build().is_err());
+}
+
+#[::core::prelude::v1::test]
+fn wip_fuzz_deferred_drop_without_finish() {
+    // Enter deferred mode, do some work, drop without finish_deferred
+    let mut partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let resolution = Resolution::new();
+    partial.begin_deferred(resolution).unwrap();
+
+    let _ = partial.set_field("name", String::from("test"));
+    let _ = partial.begin_field("nested");
+    let _ = partial.set_field("x", 1i32);
+    let _ = partial.end();
+    // Drop without calling finish_deferred - should clean up properly
+}
+
+#[::core::prelude::v1::test]
+fn wip_fuzz_deferred_interleaved_fields() {
+    // Test the re-entry pattern that deferred mode is designed for
+    let mut partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let resolution = Resolution::new();
+    partial.begin_deferred(resolution).unwrap();
+
+    // First visit to nested
+    let _ = partial.begin_field("nested");
+    let _ = partial.set_field("x", 1i32);
+    let _ = partial.end();
+
+    // Set a top-level field
+    let _ = partial.set_field("name", String::from("test"));
+
+    // Re-enter nested
+    let _ = partial.begin_field("nested");
+    let _ = partial.set_field("y", 2i32);
+    let _ = partial.end();
+
+    // Drop without finishing - tests stored frame cleanup
+}
+
+#[::core::prelude::v1::test]
+fn wip_fuzz_deferred_double_begin() {
+    // Calling begin_deferred twice should return an error on the second call
+    let mut partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let resolution1 = Resolution::new();
+    let resolution2 = Resolution::new();
+
+    partial.begin_deferred(resolution1).unwrap();
+    assert!(partial.begin_deferred(resolution2).is_err()); // Second call should error
+
+    let _ = partial.set_field("count", 42u32);
+    // Drop
+}
+
+#[::core::prelude::v1::test]
+fn wip_fuzz_deferred_finish_without_begin() {
+    // Calling finish_deferred without begin_deferred
+    let mut partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let result = partial.finish_deferred();
+    // Should return an error, not panic
+    assert!(result.is_err());
 }

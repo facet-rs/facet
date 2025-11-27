@@ -579,6 +579,76 @@ impl Frame {
         self.tracker = Tracker::Uninit;
     }
 
+    /// Clean up any partial allocation state without dropping the main data.
+    /// Used for Field-owned frames where the parent's tracker handles the main data.
+    /// This only deallocates temporary buffers (e.g., map key/value buffers mid-insert).
+    fn cleanup_partial_state(&mut self) {
+        match &mut self.tracker {
+            Tracker::Map { insert_state, .. } => {
+                // Only clean up partial insert state, don't touch the main Map
+                match insert_state {
+                    MapInsertState::PushingKey { key_ptr } => {
+                        if let Some(key_ptr) = key_ptr.take() {
+                            // Deallocate the key buffer (not initialized, just raw memory)
+                            if let Def::Map(map_def) = self.shape.def {
+                                if let Ok(key_layout) = map_def.k().layout.sized_layout() {
+                                    if key_layout.size() > 0 {
+                                        unsafe {
+                                            alloc::alloc::dealloc(
+                                                key_ptr.as_mut_byte_ptr(),
+                                                key_layout,
+                                            )
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    MapInsertState::PushingValue { key_ptr, value_ptr } => {
+                        // Drop and deallocate the key (it was initialized)
+                        if let Def::Map(map_def) = self.shape.def {
+                            if let Some(drop_fn) = map_def.k().vtable.drop_in_place {
+                                unsafe { drop_fn(key_ptr.assume_init()) };
+                            }
+                            if let Ok(key_layout) = map_def.k().layout.sized_layout() {
+                                if key_layout.size() > 0 {
+                                    unsafe {
+                                        alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_layout)
+                                    };
+                                }
+                            }
+
+                            // Deallocate the value buffer if it exists (may not be initialized)
+                            if let Some(value_ptr) = value_ptr.take() {
+                                if let Ok(value_layout) = map_def.v().layout.sized_layout() {
+                                    if value_layout.size() > 0 {
+                                        unsafe {
+                                            alloc::alloc::dealloc(
+                                                value_ptr.as_mut_byte_ptr(),
+                                                value_layout,
+                                            )
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    MapInsertState::Idle => {}
+                }
+            }
+            Tracker::List { current_child, .. } => {
+                // If there's a current child being built, it's handled by its own frame
+                // which should be popped before this one. Nothing to clean up here.
+                *current_child = false;
+            }
+            Tracker::Set { current_child, .. } => {
+                *current_child = false;
+            }
+            // Other tracker types don't have partial allocation state to clean up
+            _ => {}
+        }
+    }
+
     /// This must be called after (fully) initializing a value.
     ///
     /// This will most often result in a transition to [Tracker::Init] although
@@ -776,17 +846,117 @@ impl<'facet> Drop for Partial<'facet> {
     fn drop(&mut self) {
         trace!("🧹 Partial is being dropped");
 
-        // Clean up stored frames from deferred state first (they don't own allocations)
+        // Clean up stored frames from deferred state first
         if let Some(deferred) = self.deferred.take() {
             for (_, mut frame) in deferred.stored_frames {
-                frame.deinit();
-                // stored_frames don't own allocations - they point into parent allocations
+                // Stored frames with FrameOwnership::Field point into parent memory.
+                // If they're fully initialized, the parent's iset tracks this and will
+                // handle dropping the data. We should NOT call deinit() on them.
+                //
+                // Only deinit stored frames that:
+                // 1. Are NOT Field-owned, OR
+                // 2. Are NOT fully initialized (parent won't drop partially init data)
+                let should_deinit = match &frame.ownership {
+                    FrameOwnership::Field => {
+                        // Field-owned: only deinit if not fully initialized
+                        // For fully initialized Field frames, parent handles cleanup
+                        if frame.require_full_initialization().is_ok() {
+                            // Fully initialized - parent will drop it through iset
+                            // Just clean up any partial state (shouldn't be any)
+                            frame.cleanup_partial_state();
+                            false
+                        } else {
+                            // Not fully initialized - check if it's an initialized collection
+                            // with partial state
+                            let is_initialized_collection = match &frame.tracker {
+                                Tracker::Map {
+                                    is_initialized: true,
+                                    insert_state,
+                                } if !matches!(insert_state, MapInsertState::Idle) => true,
+                                Tracker::List {
+                                    is_initialized: true,
+                                    current_child: true,
+                                } => true,
+                                Tracker::Set {
+                                    is_initialized: true,
+                                    current_child: true,
+                                } => true,
+                                _ => false,
+                            };
+
+                            if is_initialized_collection {
+                                // Parent will drop the collection, just clean up partial state
+                                frame.cleanup_partial_state();
+                                false
+                            } else {
+                                // Not initialized, need full deinit
+                                true
+                            }
+                        }
+                    }
+                    _ => {
+                        // Non-Field ownership - need to deinit
+                        true
+                    }
+                };
+
+                if should_deinit {
+                    frame.deinit();
+                }
             }
         }
 
         // We need to properly drop all initialized fields
         while let Some(mut frame) = self.frames.pop() {
-            frame.deinit();
+            // For Field-owned frames that are fully initialized, the parent frame's
+            // tracker (e.g., Struct's iset) will handle dropping the underlying data.
+            // But we still need to clean up any partial allocation state.
+            //
+            // For Field frames that are NOT fully initialized, we need to deinit
+            // ourselves because the parent won't drop them.
+            //
+            // Special case: initialized collections (Map/List/Set) with partial
+            // state (mid-insert) - the parent WILL drop the collection, but we
+            // need to clean up the partial buffers.
+            match &frame.ownership {
+                FrameOwnership::Field => {
+                    if frame.require_full_initialization().is_ok() {
+                        // Fully initialized - parent's iset will handle it
+                        // But still clean up any partial allocation state (shouldn't be any)
+                        frame.cleanup_partial_state();
+                    } else {
+                        // Not fully initialized - check if it's an initialized collection
+                        // with partial state (parent will drop the collection but not the
+                        // partial buffers)
+                        let is_initialized_collection_with_partial_state = match &frame.tracker {
+                            Tracker::Map {
+                                is_initialized: true,
+                                insert_state,
+                            } if !matches!(insert_state, MapInsertState::Idle) => true,
+                            Tracker::List {
+                                is_initialized: true,
+                                current_child: true,
+                            } => true,
+                            Tracker::Set {
+                                is_initialized: true,
+                                current_child: true,
+                            } => true,
+                            _ => false,
+                        };
+
+                        if is_initialized_collection_with_partial_state {
+                            // Parent will drop the collection, just clean up partial state
+                            frame.cleanup_partial_state();
+                        } else {
+                            // Not an initialized collection - need full deinit
+                            frame.deinit();
+                        }
+                    }
+                }
+                _ => {
+                    frame.deinit();
+                }
+            }
 
             // Only deallocate if this frame owns the allocation
             if let FrameOwnership::Owned = frame.ownership {

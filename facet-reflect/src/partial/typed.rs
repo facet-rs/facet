@@ -58,10 +58,14 @@ impl<'facet, T: ?Sized> TypedPartial<'facet, T> {
     /// When deferred mode is enabled, `end()` will skip the "all fields initialized"
     /// check when popping frames. This allows deserializers to populate fields in
     /// any order without immediate validation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if called when not at the root frame or if already in deferred mode.
     #[inline]
-    pub fn begin_deferred(&mut self, resolution: Resolution) -> &mut Self {
-        self.inner.begin_deferred(resolution);
-        self
+    pub fn begin_deferred(&mut self, resolution: Resolution) -> Result<&mut Self, ReflectError> {
+        self.inner.begin_deferred(resolution)?;
+        Ok(self)
     }
 
     /// Finishes deferred mode and validates that all required fields are initialized.

@@ -11,3 +11,8 @@ tarpaulin-report.html
 **/.claude/settings.local.json
 **/CLAUDE.local.md
 *.sw[op]
+
+# Fuzzing
+**/fuzz/target/
+**/fuzz/corpus/
+**/fuzz/artifacts/

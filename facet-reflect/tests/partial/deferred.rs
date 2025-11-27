@@ -16,7 +16,7 @@ fn deferred_simple_struct_all_fields() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Simple>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.set_field("a", 1u32)?;
     partial.set_field("b", String::from("hello"))?;
@@ -39,7 +39,7 @@ fn deferred_simple_struct_missing_field_should_fail() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Simple>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.set_field("a", 1u32)?;
     // Missing: b
@@ -74,7 +74,7 @@ fn deferred_nested_struct_all_fields_interleaved() -> Result<(), IPanic> {
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Outer>()?;
 
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
     assert!(partial.is_deferred());
 
     partial.set_field("name", String::from("test"))?;
@@ -118,7 +118,7 @@ fn deferred_nested_struct_missing_field_build_succeeds_currently() -> Result<(),
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Outer>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.set_field("name", String::from("test"))?;
     partial.begin_field("inner")?;
@@ -164,7 +164,7 @@ fn deferred_can_access_resolution() -> Result<(), IPanic> {
     let mut partial = Partial::alloc::<Simple>()?;
     assert!(partial.deferred_resolution().is_none());
 
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
     assert!(partial.deferred_resolution().is_some());
 
     partial.set_field("value", 123u32)?;
@@ -196,7 +196,7 @@ fn deferred_deeply_nested_interleaved() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Level1>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.set_field("top_value", 1u64)?;
     partial.begin_field("level2")?;
@@ -235,7 +235,7 @@ fn deferred_enum_variant_with_fields() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Message>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.select_variant_named("Text")?;
     partial.set_field("content", String::from("hello"))?;
@@ -263,7 +263,7 @@ fn deferred_enum_missing_variant_field_should_fail() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Message>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.select_variant_named("Text")?;
     partial.set_field("content", String::from("hello"))?;
@@ -294,7 +294,7 @@ fn deferred_struct_containing_enum() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<User>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Set name first
     partial.set_field("name", String::from("alice"))?;
@@ -330,7 +330,7 @@ fn deferred_enum_unit_variant() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Status>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.select_variant_named("Active")?;
 
@@ -364,7 +364,7 @@ fn deferred_struct_containing_enum_interleaved() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<User>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // For now, we set all enum fields in one visit (non-interleaved)
     partial.set_field("name", String::from("bob"))?;
@@ -415,7 +415,7 @@ fn deferred_struct_with_option_set_to_some() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<WithOption>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.set_field("required", String::from("hello"))?;
     partial.begin_field("optional")?;
@@ -442,7 +442,7 @@ fn deferred_struct_with_option_left_none() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<WithOption>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.set_field("required", String::from("hello"))?;
     // Don't set optional - should default to None
@@ -469,7 +469,7 @@ fn deferred_struct_with_default_field() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<WithDefault>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.set_field("name", String::from("test"))?;
     // Don't set count - should use default
@@ -511,7 +511,7 @@ fn deferred_three_level_nesting_all_interleaved() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<A>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Maximally interleaved ordering
     partial.set_field("a1", 1u64)?;
@@ -573,7 +573,7 @@ fn deferred_three_level_missing_deep_field_should_fail() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<A>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.set_field("a1", 1u64)?;
     partial.begin_field("b")?;
@@ -604,7 +604,7 @@ fn deferred_overwrite_field_value() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Simple>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.set_field("value", 1u32)?;
     partial.set_field("value", 2u32)?; // Overwrite
@@ -630,7 +630,7 @@ fn deferred_overwrite_nested_field_value() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Outer>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.begin_field("inner")?;
     partial.set_field("x", 1u32)?;
@@ -661,7 +661,7 @@ fn deferred_reenter_vec_push_more_items() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Push first item (need begin_list on first visit)
     partial.begin_field("items")?;
@@ -696,7 +696,7 @@ fn deferred_reenter_vec_multiple_times() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // First visit
     partial.begin_field("items")?;
@@ -739,7 +739,7 @@ fn deferred_nested_vec_reentry() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Outer>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.begin_field("inner")?;
     partial.begin_field("values")?;
@@ -781,7 +781,7 @@ fn deferred_reenter_hashmap() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Insert first entry
     partial.begin_field("map")?;
@@ -834,7 +834,7 @@ fn deferred_reenter_btreemap() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.begin_field("map")?;
     partial.begin_map()?;
@@ -880,7 +880,7 @@ fn deferred_reenter_array() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Set first element
     partial.begin_field("values")?;
@@ -918,7 +918,7 @@ fn deferred_reenter_array_overwrite_element() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.begin_field("arr")?;
     partial.begin_nth_field(0)?;
@@ -963,7 +963,7 @@ fn deferred_reenter_enum_set_more_fields() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Enter enum, select variant, set one field
     partial.begin_field("data")?;
@@ -1010,7 +1010,7 @@ fn deferred_reenter_hashset() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.begin_field("tags")?;
     partial.begin_set()?;
@@ -1047,7 +1047,7 @@ fn deferred_reenter_btreeset() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.begin_field("ids")?;
     partial.begin_set()?;
@@ -1093,7 +1093,7 @@ fn deferred_deeply_interleaved_everything() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Outer>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Start inner.list
     partial.begin_field("inner")?;
@@ -1171,7 +1171,7 @@ fn deferred_empty_struct() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Empty>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Nothing to set
     partial.finish_deferred()?;
@@ -1190,7 +1190,7 @@ fn deferred_single_field_struct() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Single>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.set_field("value", 42u32)?;
 
@@ -1215,7 +1215,7 @@ fn deferred_nested_empty_structs() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Empty structs need explicit begin/end to mark them as initialized
     partial.begin_field("empty1")?;
@@ -1246,7 +1246,7 @@ fn deferred_reenter_with_no_changes() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Outer>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Set everything in first visit
     partial.begin_field("inner")?;
@@ -1282,7 +1282,7 @@ fn deferred_multiple_reentries_no_changes() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Outer>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.begin_field("inner")?;
     partial.set_field("a", 1u32)?;
@@ -1321,7 +1321,7 @@ fn deferred_sibling_fields_interleaved() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Parent>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Interleave access to siblings
     partial.begin_field("child_a")?;
@@ -1362,7 +1362,7 @@ fn deferred_vec_empty_first_visit() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // First visit: just initialize the list, don't push anything
     partial.begin_field("items")?;
@@ -1397,7 +1397,7 @@ fn deferred_map_empty_first_visit() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // First visit: just initialize the map
     partial.begin_field("data")?;
@@ -1445,7 +1445,7 @@ fn deferred_deeply_nested_siblings_interleaved() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Tree>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Access leaves in arbitrary order
     partial.begin_field("root_right")?;
@@ -1506,7 +1506,7 @@ fn deferred_vec_of_structs_single_visit() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Set total first (interleaved with items)
     partial.set_field("total", 100u32)?;
@@ -1557,7 +1557,7 @@ fn deferred_map_with_struct_values_single_visit() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Directory>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Set count first (interleaved)
     partial.set_field("count", 2u32)?;
@@ -1618,7 +1618,7 @@ fn deferred_multiple_enums_interleaved() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Design>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Set foreground variant and first field
     partial.begin_field("foreground")?;
@@ -1672,7 +1672,7 @@ fn deferred_tuple_struct() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Point>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.begin_nth_field(0)?;
     partial.set(10i32)?;
@@ -1706,7 +1706,7 @@ fn deferred_nested_tuple_struct_reentry() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.begin_field("pair")?;
     partial.begin_nth_field(0)?;
@@ -1755,7 +1755,7 @@ fn deferred_reentry_at_varying_depths() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Level1>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Go deep first
     partial.begin_field("level2")?;
@@ -1808,7 +1808,7 @@ fn deferred_many_siblings_interleaved() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Big>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Set in random order, interleaved with re-entries
     partial.set_field("h", 8u32)?;
@@ -1859,7 +1859,7 @@ fn wip_deferred_drop_without_finish_simple() {
     {
         let resolution = Resolution::new();
         let mut partial = Partial::alloc::<Simple>().unwrap();
-        partial.begin_deferred(resolution);
+        partial.begin_deferred(resolution).unwrap();
 
         partial
             .set_field("value", String::from("this will be dropped"))
@@ -1890,7 +1890,7 @@ fn wip_deferred_drop_without_finish_nested() {
     {
         let resolution = Resolution::new();
         let mut partial = Partial::alloc::<Outer>().unwrap();
-        partial.begin_deferred(resolution);
+        partial.begin_deferred(resolution).unwrap();
 
         partial
             .set_field("name", String::from("outer name"))
@@ -1919,7 +1919,7 @@ fn wip_deferred_drop_without_finish_collections() {
     {
         let resolution = Resolution::new();
         let mut partial = Partial::alloc::<WithCollections>().unwrap();
-        partial.begin_deferred(resolution);
+        partial.begin_deferred(resolution).unwrap();
 
         partial.begin_field("strings").unwrap();
         partial.begin_list().unwrap();
@@ -1959,7 +1959,7 @@ fn wip_deferred_drop_mid_field() {
     {
         let resolution = Resolution::new();
         let mut partial = Partial::alloc::<Outer>().unwrap();
-        partial.begin_deferred(resolution);
+        partial.begin_deferred(resolution).unwrap();
 
         partial.begin_field("inner").unwrap();
         partial.set_field("a", 1u32).unwrap();
@@ -1979,7 +1979,7 @@ fn error_finish_deferred_twice() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Simple>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.set_field("value", 42u32)?;
 
@@ -1998,7 +1998,7 @@ fn error_finish_deferred_twice() -> Result<(), IPanic> {
     Ok(())
 }
 
-/// Calling begin_deferred() twice should... what? Let's find out.
+/// Calling begin_deferred() twice should return an error on the second call.
 #[test]
 fn error_begin_deferred_twice() -> Result<(), IPanic> {
     #[derive(Facet, Debug)]
@@ -2010,11 +2010,12 @@ fn error_begin_deferred_twice() -> Result<(), IPanic> {
     let resolution2 = Resolution::new();
     let mut partial = Partial::alloc::<Simple>()?;
 
-    partial.begin_deferred(resolution1);
+    partial.begin_deferred(resolution1)?;
     assert!(partial.is_deferred());
 
-    // Second begin_deferred - this should replace the first one
-    partial.begin_deferred(resolution2);
+    // Second begin_deferred should return an error
+    assert!(partial.begin_deferred(resolution2).is_err());
+    // But we're still in deferred mode from the first call
     assert!(partial.is_deferred());
 
     partial.set_field("value", 42u32)?;
@@ -2040,7 +2041,7 @@ fn error_enum_variant_switch() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Choice>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Select variant A and set its field
     partial.select_variant_named("OptionA")?;
@@ -2092,7 +2093,7 @@ fn error_enum_variant_switch_with_reentry() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Record>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     // Set up Active variant
     partial.begin_field("status")?;
@@ -2129,7 +2130,7 @@ fn error_build_without_finish_deferred() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Simple>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.set_field("value", 42u32)?;
 
@@ -2158,7 +2159,7 @@ fn error_operations_after_finish() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Simple>()?;
-    partial.begin_deferred(resolution);
+    partial.begin_deferred(resolution)?;
 
     partial.set_field("a", 1u32)?;
     partial.set_field("b", 2u32)?;
@@ -2204,7 +2205,7 @@ fn wip_deferred_drop_with_stored_frames() {
     {
         let resolution = Resolution::new();
         let mut partial = Partial::alloc::<L1>().unwrap();
-        partial.begin_deferred(resolution);
+        partial.begin_deferred(resolution).unwrap();
 
         // Go deep
         partial.begin_field("l2").unwrap();

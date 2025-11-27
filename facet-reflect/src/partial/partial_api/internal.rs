@@ -164,8 +164,16 @@ impl<'facet> Partial<'facet> {
         let field = &struct_type.fields[idx];
 
         if !matches!(frame.tracker, Tracker::Struct { .. }) {
+            // When transitioning from Init (fully initialized) to Struct tracker,
+            // we need to mark all fields as initialized in the iset. Otherwise,
+            // we'll lose track of which fields were initialized and may double-free.
+            let was_fully_init = matches!(frame.tracker, Tracker::Init);
+            let mut iset = ISet::new(struct_type.fields.len());
+            if was_fully_init {
+                iset.set_all();
+            }
             frame.tracker = Tracker::Struct {
-                iset: ISet::new(struct_type.fields.len()),
+                iset,
                 current_child: None,
             }
         }

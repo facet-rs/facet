@@ -59,14 +59,34 @@ impl<'facet> Partial<'facet> {
     /// - TOML dotted keys: `inner.x = 1` followed by `count = 2` then `inner.y = 3`
     /// - Flattened structs where nested fields appear at the parent level
     /// - Any format where field order doesn't match struct nesting
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - Called when not at the root frame (must call before navigating into fields)
+    /// - Already in deferred mode
     #[inline]
-    pub fn begin_deferred(&mut self, resolution: Resolution) -> &mut Self {
+    pub fn begin_deferred(&mut self, resolution: Resolution) -> Result<&mut Self, ReflectError> {
+        // Deferred mode can only be enabled at the root frame
+        if self.frames.len() != 1 {
+            return Err(ReflectError::InvariantViolation {
+                invariant: "begin_deferred() can only be called at the root frame",
+            });
+        }
+
+        // Cannot enable deferred mode if already in deferred mode
+        if self.deferred.is_some() {
+            return Err(ReflectError::InvariantViolation {
+                invariant: "begin_deferred() called but already in deferred mode",
+            });
+        }
+
         self.deferred = Some(DeferredState {
             resolution,
             current_path: Vec::new(),
             stored_frames: BTreeMap::new(),
         });
-        self
+        Ok(self)
     }
 
     /// Finishes deferred mode: validates all stored frames and finalizes.
@@ -226,7 +246,28 @@ impl<'facet> Partial<'facet> {
 
         // Require that the top frame is fully initialized before popping.
         // Skip this check in deferred mode - validation happens in finish_deferred().
-        if self.deferred.is_none() {
+        // EXCEPT for collection items (map, list, set, option) which must be fully
+        // initialized before insertion/completion.
+        let requires_full_init = if self.deferred.is_none() {
+            true
+        } else {
+            // In deferred mode, check if parent is a collection that requires
+            // fully initialized items (map, list, set, option)
+            if self.frames.len() >= 2 {
+                let parent_frame = &self.frames[self.frames.len() - 2];
+                matches!(
+                    parent_frame.tracker,
+                    Tracker::Map { .. }
+                        | Tracker::List { .. }
+                        | Tracker::Set { .. }
+                        | Tracker::Option { .. }
+                )
+            } else {
+                false
+            }
+        };
+
+        if requires_full_init {
             let frame = self.frames.last().unwrap();
             trace!(
                 "end(): Checking full initialization for frame with shape {} and tracker {:?}",
@@ -341,6 +382,31 @@ impl<'facet> Partial<'facet> {
                 "Detected implicit conversion needed from {} to {}",
                 popped_frame.shape, parent_frame.shape
             );
+
+            // The conversion requires the source frame to be fully initialized
+            // (we're about to call assume_init() and pass to try_from)
+            if let Err(e) = popped_frame.require_full_initialization() {
+                // Deallocate the memory since the frame wasn't fully initialized
+                if let FrameOwnership::Owned = popped_frame.ownership {
+                    if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
+                        if layout.size() > 0 {
+                            trace!(
+                                "Deallocating uninitialized conversion frame memory: size={}, align={}",
+                                layout.size(),
+                                layout.align()
+                            );
+                            unsafe {
+                                ::alloc::alloc::dealloc(
+                                    popped_frame.data.as_mut_byte_ptr(),
+                                    layout,
+                                );
+                            }
+                        }
+                    }
+                }
+                return Err(e);
+            }
+
             // Perform the conversion
             if let Some(try_from_fn) = parent_frame.shape.vtable.try_from {
                 let inner_ptr = unsafe { popped_frame.data.assume_init().as_const() };
@@ -728,9 +794,13 @@ impl<'facet> Partial<'facet> {
                         popped_frame.dealloc();
                     }
                     _ => {
-                        unreachable!(
-                            "we popped a frame and parent was Init or Uninit, but it wasn't a smart pointer and... there's no way this should happen normally"
-                        )
+                        // This can happen if begin_inner() was called on a type that
+                        // has shape.inner but isn't a SmartPointer (e.g., Option).
+                        // In this case, we can't complete the conversion, so return error.
+                        return Err(ReflectError::OperationFailed {
+                            shape: parent_frame.shape,
+                            operation: "end() called but parent has Uninit/Init tracker and isn't a SmartPointer",
+                        });
                     }
                 }
             }

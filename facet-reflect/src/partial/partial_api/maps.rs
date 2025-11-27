@@ -12,6 +12,39 @@ impl Partial<'_> {
         self.require_active()?;
         let frame = self.frames.last_mut().unwrap();
 
+        // Check tracker state before initializing
+        match &frame.tracker {
+            Tracker::Uninit => {
+                // Good, will initialize below
+            }
+            Tracker::Init => {
+                // Already initialized (from a previous round), just update tracker
+                if !matches!(frame.shape.def, Def::Map(_)) {
+                    return Err(ReflectError::OperationFailed {
+                        shape: frame.shape,
+                        operation: "begin_map can only be called on Map types",
+                    });
+                }
+                frame.tracker = Tracker::Map {
+                    is_initialized: true,
+                    insert_state: MapInsertState::Idle,
+                };
+                return Ok(self);
+            }
+            Tracker::Map { is_initialized, .. } => {
+                if *is_initialized {
+                    // Already initialized, nothing to do
+                    return Ok(self);
+                }
+            }
+            _ => {
+                return Err(ReflectError::UnexpectedTracker {
+                    message: "begin_map called but tracker isn't Uninit, Init, or Map",
+                    current_tracker: frame.tracker.kind(),
+                });
+            }
+        }
+
         // Check that we have a Map
         let map_def = match &frame.shape.def {
             Def::Map(map_def) => map_def,
