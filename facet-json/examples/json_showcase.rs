@@ -208,7 +208,7 @@ fn showcase<T: facet::Facet<'static>>(
     json_syntax: &syntect::parsing::SyntaxReference,
 ) {
     println!("{}", "─".repeat(70));
-    println!("  {}", title);
+    println!("  {title}");
     println!("{}\n", "─".repeat(70));
 
     println!("Rust definition:");
@@ -238,7 +238,7 @@ fn highlight_code(
     for line in LinesWithEndings::from(code) {
         let ranges: Vec<(Style, &str)> = h.highlight_line(line, ps).unwrap();
         let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
-        print!("    {}", escaped);
+        print!("    {escaped}");
     }
     println!("\x1b[0m"); // Reset terminal colors
 }
@@ -267,6 +267,7 @@ struct Company {
 
 #[derive(Facet)]
 #[repr(u8)]
+#[allow(dead_code)]
 enum Message {
     Text(String),
     Image { url: String, width: u32 },
@@ -276,6 +277,7 @@ enum Message {
 #[derive(Facet)]
 #[repr(C)]
 #[facet(tag = "type")]
+#[allow(dead_code)]
 enum ApiResponse {
     Success { data: String },
     Error { code: i32, message: String },
@@ -284,6 +286,7 @@ enum ApiResponse {
 #[derive(Facet)]
 #[repr(C)]
 #[facet(tag = "t", content = "c")]
+#[allow(dead_code)]
 enum Event {
     Click { x: i32, y: i32 },
     KeyPress(char),
@@ -293,6 +296,7 @@ enum Event {
 #[derive(Facet)]
 #[repr(u8)]
 #[facet(untagged)]
+#[allow(dead_code)]
 enum StringOrNumber {
     Str(String),
     Num(i64),

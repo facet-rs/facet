@@ -68,8 +68,7 @@ fn test_map_cow_str_keys_borrowed() {
     for key in result.keys() {
         assert!(
             matches!(key, Cow::Borrowed(_)),
-            "key {:?} should be borrowed",
-            key
+            "key {key:?} should be borrowed"
         );
     }
 }

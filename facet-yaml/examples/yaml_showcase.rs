@@ -265,7 +265,7 @@ fn showcase<T: facet::Facet<'static>>(
     yaml_syntax: &syntect::parsing::SyntaxReference,
 ) {
     println!("{}", "─".repeat(70));
-    println!("  {}", title);
+    println!("  {title}");
     println!("{}\n", "─".repeat(70));
 
     println!("Rust definition:");
@@ -295,7 +295,7 @@ fn highlight_code(
     for line in LinesWithEndings::from(code) {
         let ranges: Vec<(Style, &str)> = h.highlight_line(line, ps).unwrap();
         let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
-        print!("    {}", escaped);
+        print!("    {escaped}");
     }
     println!("\x1b[0m"); // Reset terminal colors
 }

@@ -25,10 +25,8 @@ fn find_similar_field<'a>(unknown: &str, expected: &[&'a str]) -> Option<&'a str
 
     for &candidate in expected {
         let similarity = strsim::jaro_winkler(unknown, candidate);
-        if similarity >= 0.6 {
-            if best_match.map_or(true, |(_, best_sim)| similarity > best_sim) {
-                best_match = Some((candidate, similarity));
-            }
+        if similarity >= 0.6 && best_match.is_none_or(|(_, best_sim)| similarity > best_sim) {
+            best_match = Some((candidate, similarity));
         }
     }
 
@@ -1140,6 +1138,7 @@ impl<'input> JsonDeserializer<'input> {
         let mut fields_set = alloc::vec![false; num_fields];
 
         // Track the end of the object for error reporting
+        #[allow(unused_assignments)]
         let mut object_end_span: Option<Span> = None;
 
         // Check if the struct has a default attribute (all missing fields use defaults)
@@ -1211,7 +1210,7 @@ impl<'input> JsonDeserializer<'input> {
                                 _key_span,
                             ));
                         }
-                        log::trace!("skipping unknown field: {}", key);
+                        log::trace!("skipping unknown field: {key}");
                         self.skip_value()?;
                     }
 
@@ -1508,10 +1507,7 @@ impl<'input> JsonDeserializer<'input> {
                 continue;
             }
 
-            log::trace!(
-                "setting default for flattened Option field: {}",
-                first_field
-            );
+            log::trace!("setting default for flattened Option field: {first_field}");
 
             wip.begin_field(first_field)?;
             if matches!(wip.shape().def, Def::Option(_)) {
@@ -1846,7 +1842,7 @@ impl<'input> JsonDeserializer<'input> {
             }
 
             // Deserialize into field "0", "1", "2", etc.
-            let field_name = alloc::format!("{}", idx);
+            let field_name = alloc::format!("{idx}");
             wip.begin_field(&field_name)?;
             self.deserialize_into(wip)?;
             wip.end()?;
@@ -2172,8 +2168,7 @@ impl<'input> JsonDeserializer<'input> {
                 return Err(JsonError::new(
                     JsonErrorKind::InvalidValue {
                         message: format!(
-                            "Too many elements in array, maximum {} elements",
-                            array_len
+                            "Too many elements in array, maximum {array_len} elements"
                         ),
                     },
                     close.span,

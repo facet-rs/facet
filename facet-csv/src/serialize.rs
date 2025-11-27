@@ -192,7 +192,7 @@ fn serialize_scalar<W: Write>(peek: Peek<'_, '_>, ser: &mut CsvSerializer<W>) ->
             ser.end_value()
         }
         Some(ScalarType::CowStr) => {
-            let s = peek.get::<std::borrow::Cow<'_, str>>().unwrap();
+            let s = peek.get::<alloc::borrow::Cow<'_, str>>().unwrap();
             ser.start_value()?;
             write!(ser.writer, "{s}")?;
             ser.end_value()

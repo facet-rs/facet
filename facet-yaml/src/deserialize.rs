@@ -4,7 +4,6 @@
 //! facet-json uses a tokenizer - processing events on-demand and supporting
 //! rewind via event indices for flatten deserialization.
 
-use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -14,7 +13,6 @@ use facet_core::{
     ShapeLayout, StructKind, Type, UserType,
 };
 use facet_reflect::Partial;
-use facet_solver::{PathSegment, Schema, Solver};
 use saphyr_parser::{Event, Parser, ScalarStyle, Span as SaphyrSpan, SpannedEventReceiver};
 
 use crate::error::{Span, YamlError, YamlErrorKind};
@@ -148,7 +146,7 @@ impl SpannedEventReceiver<'_> for EventCollector {
             Event::MappingEnd => OwnedEvent::MappingEnd,
             Event::Nothing => return, // Skip internal events
         };
-        log::trace!("YAML event: {:?} at offset {}", owned, offset);
+        log::trace!("YAML event: {owned:?} at offset {offset}");
         self.events.push(SpannedEvent {
             event: owned,
             span,
@@ -187,6 +185,7 @@ impl<'input> YamlDeserializer<'input> {
 
     /// Create a sub-deserializer starting from a specific event index.
     /// Used for replaying events during flatten deserialization.
+    #[allow(dead_code)]
     fn from_position(input: &'input str, events: Vec<SpannedEvent>, pos: usize) -> Self {
         Self { input, events, pos }
     }
@@ -208,11 +207,13 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Get the current position (event index) for later replay.
+    #[allow(dead_code)]
     fn position(&self) -> usize {
         self.pos
     }
 
     /// Clone events for creating sub-deserializers.
+    #[allow(dead_code)]
     fn clone_events(&self) -> Vec<SpannedEvent> {
         self.events.clone()
     }
@@ -333,7 +334,7 @@ impl<'input> YamlDeserializer<'input> {
     /// Deserialize a scalar value.
     fn deserialize_scalar<'facet>(&mut self, partial: &mut Partial<'facet>) -> Result<()> {
         let shape = partial.shape();
-        log::trace!("deserialize_scalar: shape = {}", shape);
+        log::trace!("deserialize_scalar: shape = {shape}");
 
         let event = self.next_or_eof("scalar value")?;
 
@@ -344,7 +345,7 @@ impl<'input> YamlDeserializer<'input> {
             other => {
                 return Err(YamlError::new(
                     YamlErrorKind::UnexpectedEvent {
-                        got: format!("{:?}", other),
+                        got: format!("{other:?}"),
                         expected: "scalar",
                     },
                     Span::from_saphyr_span(&event.span),
@@ -691,7 +692,7 @@ impl<'input> YamlDeserializer<'input> {
 
         // Expect SequenceStart
         let event = self.next_or_eof("sequence start")?;
-        let event_span = event.span.clone();
+        let event_span = event.span;
         let event_kind = event.event.clone();
 
         match &event_kind {
@@ -699,7 +700,7 @@ impl<'input> YamlDeserializer<'input> {
             other => {
                 return Err(YamlError::new(
                     YamlErrorKind::UnexpectedEvent {
-                        got: format!("{:?}", other),
+                        got: format!("{other:?}"),
                         expected: "sequence start",
                     },
                     Span::from_saphyr_span(&event_span),
@@ -737,7 +738,7 @@ impl<'input> YamlDeserializer<'input> {
 
         // Expect MappingStart
         let event = self.next_or_eof("mapping start")?;
-        let event_span = event.span.clone();
+        let event_span = event.span;
         let event_kind = event.event.clone();
 
         match &event_kind {
@@ -745,7 +746,7 @@ impl<'input> YamlDeserializer<'input> {
             other => {
                 return Err(YamlError::new(
                     YamlErrorKind::UnexpectedEvent {
-                        got: format!("{:?}", other),
+                        got: format!("{other:?}"),
                         expected: "mapping start",
                     },
                     Span::from_saphyr_span(&event_span),
@@ -771,7 +772,7 @@ impl<'input> YamlDeserializer<'input> {
 
             // Get the key
             let key_event = self.next_or_eof("map key")?;
-            let key_event_span = key_event.span.clone();
+            let key_event_span = key_event.span;
             let key_event_kind = key_event.event.clone();
 
             let key = match &key_event_kind {
@@ -779,7 +780,7 @@ impl<'input> YamlDeserializer<'input> {
                 other => {
                     return Err(YamlError::new(
                         YamlErrorKind::UnexpectedEvent {
-                            got: format!("{:?}", other),
+                            got: format!("{other:?}"),
                             expected: "string key",
                         },
                         Span::from_saphyr_span(&key_event_span),
@@ -823,7 +824,7 @@ impl<'input> YamlDeserializer<'input> {
 
         // Expect MappingStart
         let event = self.next_or_eof("mapping start")?;
-        let event_span = event.span.clone();
+        let event_span = event.span;
         let event_kind = event.event.clone();
 
         match &event_kind {
@@ -831,7 +832,7 @@ impl<'input> YamlDeserializer<'input> {
             other => {
                 return Err(YamlError::new(
                     YamlErrorKind::UnexpectedEvent {
-                        got: format!("{:?}", other),
+                        got: format!("{other:?}"),
                         expected: "mapping start",
                     },
                     Span::from_saphyr_span(&event_span),
@@ -862,7 +863,7 @@ impl<'input> YamlDeserializer<'input> {
 
             // Get the field name
             let key_event = self.next_or_eof("field name")?;
-            let key_event_span = key_event.span.clone();
+            let key_event_span = key_event.span;
             let key_event_kind = key_event.event.clone();
 
             let (field_name, key_span) = match &key_event_kind {
@@ -872,7 +873,7 @@ impl<'input> YamlDeserializer<'input> {
                 other => {
                     return Err(YamlError::new(
                         YamlErrorKind::UnexpectedEvent {
-                            got: format!("{:?}", other),
+                            got: format!("{other:?}"),
                             expected: "field name",
                         },
                         Span::from_saphyr_span(&key_event_span),
@@ -909,7 +910,7 @@ impl<'input> YamlDeserializer<'input> {
                         .with_source(self.input));
                     }
                     // Skip unknown field
-                    log::trace!("Skipping unknown field: {}", field_name);
+                    log::trace!("Skipping unknown field: {field_name}");
                     self.skip_value()?;
                 }
             }
@@ -925,9 +926,10 @@ impl<'input> YamlDeserializer<'input> {
             let field_has_default_fn = field.vtable.default_fn.is_some();
             let field_type_has_default = field.shape().is(Characteristic::Default);
 
-            if field_has_default_fn || field_has_default_flag {
-                partial.set_nth_field_to_default(idx)?;
-            } else if struct_has_default && field_type_has_default {
+            if field_has_default_fn
+                || field_has_default_flag
+                || (struct_has_default && field_type_has_default)
+            {
                 partial.set_nth_field_to_default(idx)?;
             }
         }
@@ -957,14 +959,14 @@ impl<'input> YamlDeserializer<'input> {
 
         // Externally tagged: variant_name: data
         let event = self.next_or_eof("enum variant")?;
-        let event_span = event.span.clone();
+        let event_span = event.span;
         let event_kind = event.event.clone();
 
         match &event_kind {
             OwnedEvent::MappingStart { .. } => {
                 // Get the variant name (first key)
                 let key_event = self.next_or_eof("variant name")?;
-                let key_event_span = key_event.span.clone();
+                let key_event_span = key_event.span;
                 let key_event_kind = key_event.event.clone();
 
                 let variant_name = match &key_event_kind {
@@ -972,7 +974,7 @@ impl<'input> YamlDeserializer<'input> {
                     other => {
                         return Err(YamlError::new(
                             YamlErrorKind::UnexpectedEvent {
-                                got: format!("{:?}", other),
+                                got: format!("{other:?}"),
                                 expected: "variant name",
                             },
                             Span::from_saphyr_span(&key_event_span),
@@ -1023,14 +1025,14 @@ impl<'input> YamlDeserializer<'input> {
 
                 // Expect MappingEnd
                 let end_event = self.next_or_eof("mapping end")?;
-                let end_event_span = end_event.span.clone();
+                let end_event_span = end_event.span;
                 let end_event_kind = end_event.event.clone();
 
                 match &end_event_kind {
                     OwnedEvent::MappingEnd => Ok(()),
                     other => Err(YamlError::new(
                         YamlErrorKind::UnexpectedEvent {
-                            got: format!("{:?}", other),
+                            got: format!("{other:?}"),
                             expected: "mapping end",
                         },
                         Span::from_saphyr_span(&end_event_span),
@@ -1040,7 +1042,7 @@ impl<'input> YamlDeserializer<'input> {
             }
             other => Err(YamlError::new(
                 YamlErrorKind::UnexpectedEvent {
-                    got: format!("{:?}", other),
+                    got: format!("{other:?}"),
                     expected: "mapping (externally tagged enum)",
                 },
                 Span::from_saphyr_span(&event_span),
@@ -1056,7 +1058,7 @@ impl<'input> YamlDeserializer<'input> {
         num_fields: usize,
     ) -> Result<()> {
         let event = self.next_or_eof("sequence start")?;
-        let event_span = event.span.clone();
+        let event_span = event.span;
         let event_kind = event.event.clone();
 
         match &event_kind {
@@ -1064,7 +1066,7 @@ impl<'input> YamlDeserializer<'input> {
             other => {
                 return Err(YamlError::new(
                     YamlErrorKind::UnexpectedEvent {
-                        got: format!("{:?}", other),
+                        got: format!("{other:?}"),
                         expected: "sequence start",
                     },
                     Span::from_saphyr_span(&event_span),
@@ -1080,14 +1082,14 @@ impl<'input> YamlDeserializer<'input> {
         }
 
         let end_event = self.next_or_eof("sequence end")?;
-        let end_event_span = end_event.span.clone();
+        let end_event_span = end_event.span;
         let end_event_kind = end_event.event.clone();
 
         match &end_event_kind {
             OwnedEvent::SequenceEnd => Ok(()),
             other => Err(YamlError::new(
                 YamlErrorKind::UnexpectedEvent {
-                    got: format!("{:?}", other),
+                    got: format!("{other:?}"),
                     expected: "sequence end",
                 },
                 Span::from_saphyr_span(&end_event_span),
@@ -1102,7 +1104,7 @@ impl<'input> YamlDeserializer<'input> {
         partial: &mut Partial<'facet>,
     ) -> Result<()> {
         let event = self.next_or_eof("mapping start")?;
-        let event_span = event.span.clone();
+        let event_span = event.span;
         let event_kind = event.event.clone();
 
         match &event_kind {
@@ -1110,7 +1112,7 @@ impl<'input> YamlDeserializer<'input> {
             other => {
                 return Err(YamlError::new(
                     YamlErrorKind::UnexpectedEvent {
-                        got: format!("{:?}", other),
+                        got: format!("{other:?}"),
                         expected: "mapping start",
                     },
                     Span::from_saphyr_span(&event_span),
@@ -1132,7 +1134,7 @@ impl<'input> YamlDeserializer<'input> {
             }
 
             let key_event = self.next_or_eof("field name")?;
-            let key_event_span = key_event.span.clone();
+            let key_event_span = key_event.span;
             let key_event_kind = key_event.event.clone();
 
             let field_name = match &key_event_kind {
@@ -1140,7 +1142,7 @@ impl<'input> YamlDeserializer<'input> {
                 other => {
                     return Err(YamlError::new(
                         YamlErrorKind::UnexpectedEvent {
-                            got: format!("{:?}", other),
+                            got: format!("{other:?}"),
                             expected: "field name",
                         },
                         Span::from_saphyr_span(&key_event_span),
@@ -1180,7 +1182,7 @@ impl<'input> YamlDeserializer<'input> {
         if is_slice_pointer {
             // This is a slice pointer like Arc<[T]> - deserialize as array
             let event = self.next_or_eof("sequence start")?;
-            let event_span = event.span.clone();
+            let event_span = event.span;
             let event_kind = event.event.clone();
 
             match &event_kind {
@@ -1188,7 +1190,7 @@ impl<'input> YamlDeserializer<'input> {
                 other => {
                     return Err(YamlError::new(
                         YamlErrorKind::UnexpectedEvent {
-                            got: format!("{:?}", other),
+                            got: format!("{other:?}"),
                             expected: "sequence start",
                         },
                         Span::from_saphyr_span(&event_span),
@@ -1237,7 +1239,7 @@ impl<'input> YamlDeserializer<'input> {
         };
 
         let event = self.next_or_eof("sequence start")?;
-        let event_span = event.span.clone();
+        let event_span = event.span;
         let event_kind = event.event.clone();
 
         match &event_kind {
@@ -1245,7 +1247,7 @@ impl<'input> YamlDeserializer<'input> {
             other => {
                 return Err(YamlError::new(
                     YamlErrorKind::UnexpectedEvent {
-                        got: format!("{:?}", other),
+                        got: format!("{other:?}"),
                         expected: "sequence start",
                     },
                     Span::from_saphyr_span(&event_span),
@@ -1261,14 +1263,14 @@ impl<'input> YamlDeserializer<'input> {
         }
 
         let end_event = self.next_or_eof("sequence end")?;
-        let end_event_span = end_event.span.clone();
+        let end_event_span = end_event.span;
         let end_event_kind = end_event.event.clone();
 
         match &end_event_kind {
             OwnedEvent::SequenceEnd => Ok(()),
             other => Err(YamlError::new(
                 YamlErrorKind::UnexpectedEvent {
-                    got: format!("{:?}", other),
+                    got: format!("{other:?}"),
                     expected: "sequence end",
                 },
                 Span::from_saphyr_span(&end_event_span),
@@ -1282,7 +1284,7 @@ impl<'input> YamlDeserializer<'input> {
         log::trace!("deserialize_set at path = {}", partial.path());
 
         let event = self.next_or_eof("sequence start")?;
-        let event_span = event.span.clone();
+        let event_span = event.span;
         let event_kind = event.event.clone();
 
         match &event_kind {
@@ -1290,7 +1292,7 @@ impl<'input> YamlDeserializer<'input> {
             other => {
                 return Err(YamlError::new(
                     YamlErrorKind::UnexpectedEvent {
-                        got: format!("{:?}", other),
+                        got: format!("{other:?}"),
                         expected: "sequence start",
                     },
                     Span::from_saphyr_span(&event_span),
@@ -1335,7 +1337,7 @@ impl<'input> YamlDeserializer<'input> {
         };
 
         let event = self.next_or_eof("sequence start")?;
-        let event_span = event.span.clone();
+        let event_span = event.span;
         let event_kind = event.event.clone();
 
         match &event_kind {
@@ -1343,7 +1345,7 @@ impl<'input> YamlDeserializer<'input> {
             other => {
                 return Err(YamlError::new(
                     YamlErrorKind::UnexpectedEvent {
-                        got: format!("{:?}", other),
+                        got: format!("{other:?}"),
                         expected: "sequence start",
                     },
                     Span::from_saphyr_span(&event_span),
@@ -1359,14 +1361,14 @@ impl<'input> YamlDeserializer<'input> {
         }
 
         let end_event = self.next_or_eof("sequence end")?;
-        let end_event_span = end_event.span.clone();
+        let end_event_span = end_event.span;
         let end_event_kind = end_event.event.clone();
 
         match &end_event_kind {
             OwnedEvent::SequenceEnd => Ok(()),
             other => Err(YamlError::new(
                 YamlErrorKind::UnexpectedEvent {
-                    got: format!("{:?}", other),
+                    got: format!("{other:?}"),
                     expected: "sequence end",
                 },
                 Span::from_saphyr_span(&end_event_span),

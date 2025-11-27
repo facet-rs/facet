@@ -75,7 +75,7 @@ fn flatten_struct_interleaved() {
 
     let config: Config = facet_kdl::from_str(kdl).unwrap();
     assert_eq!(config.server.host, "localhost");
-    assert_eq!(config.server.enabled, true);
+    assert!(config.server.enabled);
     assert_eq!(config.server.connection.port, 8080);
     assert_eq!(config.server.connection.timeout, 30);
 
@@ -86,7 +86,7 @@ fn flatten_struct_interleaved() {
 
     let config: Config = facet_kdl::from_str(kdl_interleaved).unwrap();
     assert_eq!(config.server.host, "localhost");
-    assert_eq!(config.server.enabled, true);
+    assert!(config.server.enabled);
     assert_eq!(config.server.connection.port, 8080);
     assert_eq!(config.server.connection.timeout, 30);
 }
@@ -1295,13 +1295,13 @@ fn flatten_type_disambiguation_int_float_string() {
 
     // Float value → Float variant
     let kdl_float = indoc! {r#"
-        data "test" data=3.14
+        data "test" data=2.5
     "#};
 
     let config: Config =
         facet_kdl::from_str(kdl_float).expect("should disambiguate to Float variant");
     match &config.data.payload {
-        MultiTypePayload::Float(f) => assert!((f.data - 3.14).abs() < 0.001),
+        MultiTypePayload::Float(f) => assert!((f.data - 2.5).abs() < 0.001),
         _ => panic!("expected Float variant"),
     }
 
@@ -1550,12 +1550,11 @@ fn duplicate_field_detection() {
     assert!(result.is_err(), "should error on duplicate field");
     let err = result.unwrap_err();
     let err_msg = err.to_string();
-    eprintln!("Error message: {}", err_msg);
+    eprintln!("Error message: {err_msg}");
     // The error message should mention the duplicate field
     assert!(
         err_msg.contains("port") || err_msg.contains("Duplicate"),
-        "error should mention duplicate field: {}",
-        err_msg
+        "error should mention duplicate field: {err_msg}"
     );
 }
 
@@ -1573,11 +1572,12 @@ fn deserialize_with_property() {
     struct HexValue(u64);
 
     // Conversion function: String -> HexValue
+    #[allow(clippy::ptr_arg)]
     fn hex_from_str(s: &String) -> Result<HexValue, &'static str> {
         if let Some(hex) = s.strip_prefix("0x") {
             u64::from_str_radix(hex, 16)
         } else {
-            u64::from_str_radix(s, 10)
+            s.parse()
         }
         .map(HexValue)
         .map_err(|e| match e.kind() {
@@ -1621,11 +1621,12 @@ fn deserialize_with_argument() {
     #[derive(Debug, PartialEq)]
     struct HexValue(u64);
 
+    #[allow(clippy::ptr_arg)]
     fn hex_from_str(s: &String) -> Result<HexValue, &'static str> {
         if let Some(hex) = s.strip_prefix("0x") {
             u64::from_str_radix(hex, 16)
         } else {
-            u64::from_str_radix(s, 10)
+            s.parse()
         }
         .map(HexValue)
         .map_err(|e| match e.kind() {
@@ -1664,11 +1665,12 @@ fn deserialize_with_flattened() {
     #[derive(Debug, PartialEq)]
     struct HexValue(u64);
 
+    #[allow(clippy::ptr_arg)]
     fn hex_from_str(s: &String) -> Result<HexValue, &'static str> {
         if let Some(hex) = s.strip_prefix("0x") {
             u64::from_str_radix(hex, 16)
         } else {
-            u64::from_str_radix(s, 10)
+            s.parse()
         }
         .map(HexValue)
         .map_err(|e| match e.kind() {
@@ -1835,7 +1837,7 @@ fn flatten_round_trip_simple() {
 
     // Serialize
     let kdl = facet_kdl::to_string(&original).expect("should serialize");
-    eprintln!("Serialized:\n{}", kdl);
+    eprintln!("Serialized:\n{kdl}");
 
     // Deserialize back
     let parsed: Config = facet_kdl::from_str(&kdl).expect("should deserialize");
@@ -1883,7 +1885,7 @@ fn flatten_round_trip_interleaved() {
 
     // Round-trip
     let serialized = facet_kdl::to_string(&config).expect("should serialize");
-    eprintln!("Serialized:\n{}", serialized);
+    eprintln!("Serialized:\n{serialized}");
     let reparsed: Config = facet_kdl::from_str(&serialized).expect("should deserialize");
     assert_eq!(
         reparsed, config,
@@ -1941,7 +1943,7 @@ fn flatten_round_trip_enum() {
     };
 
     let kdl = facet_kdl::to_string(&local_config).expect("should serialize Local");
-    eprintln!("Local serialized:\n{}", kdl);
+    eprintln!("Local serialized:\n{kdl}");
     let reparsed: Config = facet_kdl::from_str(&kdl).expect("should deserialize Local");
     assert_eq!(reparsed, local_config);
 
@@ -1957,7 +1959,7 @@ fn flatten_round_trip_enum() {
     };
 
     let kdl = facet_kdl::to_string(&remote_config).expect("should serialize Remote");
-    eprintln!("Remote serialized:\n{}", kdl);
+    eprintln!("Remote serialized:\n{kdl}");
     let reparsed: Config = facet_kdl::from_str(&kdl).expect("should deserialize Remote");
     assert_eq!(reparsed, remote_config);
 }
@@ -2066,7 +2068,7 @@ fn flatten_with_sibling_children() {
 
     // Round-trip test
     let serialized = facet_kdl::to_string(&config).expect("should serialize");
-    eprintln!("Sibling children serialized:\n{}", serialized);
+    eprintln!("Sibling children serialized:\n{serialized}");
     let reparsed: Config = facet_kdl::from_str(&serialized).expect("should deserialize");
     assert_eq!(reparsed, config);
 }

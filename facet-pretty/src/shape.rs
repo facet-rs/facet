@@ -192,14 +192,11 @@ fn write_type_name(shape: &Shape, output: &mut String) -> core::fmt::Result {
         Def::Pointer(_) => {
             // Handle references to slices/arrays
             if let Type::Pointer(PointerType::Reference(r)) = shape.ty {
-                match r.target.def {
-                    Def::Array(array_def) => {
-                        write!(output, "&[")?;
-                        write_type_name(array_def.t, output)?;
-                        write!(output, "; {}]", array_def.n)?;
-                        return Ok(());
-                    }
-                    _ => {}
+                if let Def::Array(array_def) = r.target.def {
+                    write!(output, "&[")?;
+                    write_type_name(array_def.t, output)?;
+                    write!(output, "; {}]", array_def.n)?;
+                    return Ok(());
                 }
             }
             write!(output, "{}", shape.type_identifier)?;
@@ -221,7 +218,7 @@ fn write_type_name(shape: &Shape, output: &mut String) -> core::fmt::Result {
             } else {
                 "HashMap"
             };
-            write!(output, "{}<", map_name)?;
+            write!(output, "{map_name}<")?;
             write_type_name(map_def.k, output)?;
             write!(output, ", ")?;
             write_type_name(map_def.v, output)?;
@@ -264,6 +261,7 @@ mod tests {
         #[derive(Facet)]
         #[repr(C)]
         #[facet(tag = "type")]
+        #[allow(dead_code)]
         enum Tagged {
             A { x: i32 },
             B { y: String },

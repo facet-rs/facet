@@ -79,9 +79,8 @@ pub fn to_string<'a, T: Facet<'a>>(value: &'a T) -> Result<String, TomlSerError>
 /// Check if a Peek value represents a unit type ((), unit struct, or empty tuple)
 /// or a list/array of unit types (which also can't be represented in TOML)
 fn is_unit_like(peek: &Peek<'_, '_>) -> bool {
-    match peek.scalar_type() {
-        Some(ScalarType::Unit) => return true,
-        _ => {}
+    if let Some(ScalarType::Unit) = peek.scalar_type() {
+        return true;
     }
     match (peek.shape().def, peek.shape().ty) {
         (_, Type::User(UserType::Struct(sd))) => {
@@ -141,11 +140,9 @@ fn serialize_value(peek: Peek<'_, '_>) -> Result<Value, TomlSerError> {
             let map = peek.into_map().unwrap();
             let mut table = InlineTable::new();
             for (key, value) in map.iter() {
-                let key_str = key
-                    .as_str()
-                    .ok_or_else(|| TomlSerError::InvalidKeyConversion {
-                        toml_type: "non-string map key",
-                    })?;
+                let key_str = key.as_str().ok_or(TomlSerError::InvalidKeyConversion {
+                    toml_type: "non-string map key",
+                })?;
                 table.insert(key_str, serialize_value(value)?);
             }
             Ok(Value::InlineTable(table))

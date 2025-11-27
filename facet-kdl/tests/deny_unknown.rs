@@ -59,12 +59,11 @@ fn deny_unknown_fields_rejects_unknown_properties() {
     assert!(result.is_err(), "should error on unknown property");
     let err = result.unwrap_err();
     let err_msg = err.to_string();
-    eprintln!("Error message: {}", err_msg);
+    eprintln!("Error message: {err_msg}");
     // Error should mention the unknown property and expected fields
     assert!(
         err_msg.contains("timeout") && err_msg.contains("unknown"),
-        "error should mention unknown property 'timeout': {}",
-        err_msg
+        "error should mention unknown property 'timeout': {err_msg}"
     );
 }
 
@@ -191,10 +190,9 @@ fn deny_unknown_fields_rejects_unknown_child_nodes() {
     assert!(result.is_err(), "should error on unknown child node");
     let err = result.unwrap_err();
     let err_msg = err.to_string();
-    eprintln!("Error message: {}", err_msg);
+    eprintln!("Error message: {err_msg}");
     assert!(
         err_msg.contains("unknown_section"),
-        "error should mention unknown child node: {}",
-        err_msg
+        "error should mention unknown child node: {err_msg}"
     );
 }

@@ -39,13 +39,13 @@ fn spanned_values() {
     // Host comes before port in the source
     assert!(host_span.offset < port_span.offset);
 
-    println!("Host span: {:?}", host_span);
-    println!("Port span: {:?}", port_span);
+    println!("Host span: {host_span:?}");
+    println!("Port span: {port_span:?}");
 
     // Test round-trip: serialize and deserialize again
     // Note: spans won't be identical after round-trip (different source positions)
     let kdl_out = facet_kdl::to_string(&config).unwrap();
-    println!("Serialized KDL:\n{}", kdl_out);
+    println!("Serialized KDL:\n{kdl_out}");
 
     // The serialized output should contain the values
     assert!(kdl_out.contains("\"localhost\""));
