@@ -185,6 +185,9 @@ pub struct CandidateFailure {
     pub missing_fields: Vec<MissingFieldInfo>,
     /// Fields in the input that don't exist in this candidate
     pub unknown_fields: Vec<String>,
+    /// Number of unknown fields that have "did you mean?" suggestions for this candidate
+    /// Higher = more likely the user intended this variant
+    pub suggestion_matches: usize,
 }
 
 /// Suggestion for a field that might have been misspelled.
@@ -991,7 +994,7 @@ impl<'a> Solver<'a> {
                 .collect();
 
             // Sort by closeness (best match first)
-            sort_candidates_by_closeness(&mut candidate_failures, &self.schema.resolutions);
+            sort_candidates_by_closeness(&mut candidate_failures);
 
             return Err(SolverError::NoMatch {
                 input_fields: self.seen_keys.iter().map(|s| (*s).into()).collect(),
@@ -1030,7 +1033,7 @@ impl<'a> Solver<'a> {
                     .collect();
 
                 // Sort by closeness (best match first)
-                sort_candidates_by_closeness(&mut candidate_failures, &self.schema.resolutions);
+                sort_candidates_by_closeness(&mut candidate_failures);
 
                 // For backwards compatibility, also populate the "closest" fields
                 // Now use the first (closest) candidate after sorting
@@ -1108,58 +1111,93 @@ fn build_candidate_failure(config: &Resolution, seen_keys: &BTreeSet<&str>) -> C
         .map(|s| (*s).to_string())
         .collect();
 
+    // Compute closeness score for ranking
+    let suggestion_matches = compute_closeness_score(&unknown_fields, &missing_fields, config);
+
     CandidateFailure {
         variant_name: config.describe(),
         missing_fields,
         unknown_fields,
+        suggestion_matches,
     }
 }
 
-/// Compute a "closeness" score for a candidate based on how many input fields
-/// could match with typo correction. Higher score = closer match.
+/// Compute a closeness score for ranking candidates.
+/// Higher score = more likely the user intended this variant.
+///
+/// The score considers:
+/// - Typo matches: unknown fields that are similar to known fields (weighted by similarity)
+/// - Field coverage: if we fixed typos, would we have all required fields?
+/// - Missing fields: fewer missing = better
+/// - Unknown fields: fewer truly unknown (no suggestion) = better
 #[cfg(feature = "suggestions")]
-fn candidate_closeness_score(failure: &CandidateFailure, config: &Resolution) -> usize {
+fn compute_closeness_score(
+    unknown_fields: &[String],
+    missing_fields: &[MissingFieldInfo],
+    config: &Resolution,
+) -> usize {
     const SIMILARITY_THRESHOLD: f64 = 0.6;
 
-    let mut score = 0;
+    // Score components (scaled to integers for easy comparison)
+    let mut typo_score: usize = 0;
+    let mut fields_that_would_match: usize = 0;
 
-    // For each unknown field in the input, check if it's similar to a known field
-    // in this candidate. If so, this candidate is likely what the user intended.
-    for unknown in &failure.unknown_fields {
+    // For each unknown field, find best matching known field
+    for unknown in unknown_fields {
+        let mut best_similarity = 0.0f64;
+        let mut best_match: Option<&str> = None;
+
         for known in config.fields().keys() {
             let similarity = strsim::jaro_winkler(unknown, known);
-            if similarity >= SIMILARITY_THRESHOLD {
-                score += 1;
-                break; // Count each unknown at most once
+            if similarity >= SIMILARITY_THRESHOLD && similarity > best_similarity {
+                best_similarity = similarity;
+                best_match = Some(known);
             }
+        }
+
+        if let Some(_matched_field) = best_match {
+            // Weight by similarity: 0.6 -> 60 points, 1.0 -> 100 points
+            typo_score += (best_similarity * 100.0) as usize;
+            fields_that_would_match += 1;
         }
     }
 
-    score
+    // Calculate how many required fields would be satisfied if typos were fixed
+    let required_count = config.required_field_names().len();
+    let currently_missing = missing_fields.len();
+    let would_be_missing = currently_missing.saturating_sub(fields_that_would_match);
+
+    // Coverage score: percentage of required fields that would be present
+    let coverage_score = if required_count > 0 {
+        ((required_count - would_be_missing) * 100) / required_count
+    } else {
+        100 // No required fields = perfect coverage
+    };
+
+    // Penalty for truly unknown fields (no typo suggestion)
+    let truly_unknown = unknown_fields.len().saturating_sub(fields_that_would_match);
+    let unknown_penalty = truly_unknown * 10;
+
+    // Combine scores: typo matches are most important, then coverage, then penalties
+    // Each typo match can give up to 100 points, so scale coverage to match
+    typo_score + coverage_score.saturating_sub(unknown_penalty)
 }
 
-/// Compute a "closeness" score for a candidate (no-op without suggestions feature).
+/// Compute closeness score (no-op without suggestions feature).
 #[cfg(not(feature = "suggestions"))]
-fn candidate_closeness_score(_failure: &CandidateFailure, _config: &Resolution) -> usize {
+fn compute_closeness_score(
+    _unknown_fields: &[String],
+    _missing_fields: &[MissingFieldInfo],
+    _config: &Resolution,
+) -> usize {
     0
 }
 
 /// Sort candidate failures by closeness (best match first).
-fn sort_candidates_by_closeness(failures: &mut [CandidateFailure], resolutions: &[Resolution]) {
+fn sort_candidates_by_closeness(failures: &mut [CandidateFailure]) {
     failures.sort_by(|a, b| {
-        let score_a = resolutions
-            .iter()
-            .find(|r| r.describe() == a.variant_name)
-            .map(|r| candidate_closeness_score(a, r))
-            .unwrap_or(0);
-        let score_b = resolutions
-            .iter()
-            .find(|r| r.describe() == b.variant_name)
-            .map(|r| candidate_closeness_score(b, r))
-            .unwrap_or(0);
-
-        // Higher score first (reverse order)
-        score_b.cmp(&score_a)
+        // Higher suggestion_matches (closeness score) first
+        b.suggestion_matches.cmp(&a.suggestion_matches)
     });
 }
 
