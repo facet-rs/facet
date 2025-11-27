@@ -1,27 +1,22 @@
 [package]
 name = "facet-xdr"
-version = "0.28.0"
+version = "0.31.0"
 edition = "2024"
-rust-version = "1.87"
+rust-version = "1.87.0"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/facet-rs/facet-xdr"
+repository = "https://github.com/facet-rs/facet"
 description = "XDR serialization and deserialization for Facet types"
 keywords = ["xdr", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
 
 [features]
-std = ["alloc", "facet-core/std", "facet-reflect/std", "facet-serialize/std"]
-alloc = ["facet-core/alloc", "facet-reflect/alloc", "facet-serialize/alloc"]
+std = ["facet-core/std", "facet-reflect/std"]
 default = ["std"]
 
 [dependencies]
-facet-core = { version = "0.28.0", default-features = false }
-facet-reflect = { version = "0.28.0", default-features = false }
-facet-serialize = { version = "0.28.0", default-features = false }
+facet-core = { path = "../facet-core", default-features = false }
+facet-reflect = { path = "../facet-reflect", default-features = false }
 
 [dev-dependencies]
-cargo-husky = { version = "1.5.0", default-features = false, features = [
-    "user-hooks",
-] }
-facet = { version = "0.28.0" }
-facet-testhelpers = { version = "0.28.0" }
+facet = { path = "../facet" }
+facet-testhelpers = { path = "../facet-testhelpers" }

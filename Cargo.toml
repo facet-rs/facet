@@ -30,6 +30,12 @@ members = [
     "facet-args",
     "facet-msgpack",
     "facet-urlencoded",
+    "facet-csv",
+    "facet-xdr",
+    "facet-asn1",
+
+    # utilities
+    "facet-diff",
 ]
 resolver = "3"
 
