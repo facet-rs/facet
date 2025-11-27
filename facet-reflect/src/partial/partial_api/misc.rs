@@ -145,9 +145,9 @@ impl<'facet> Partial<'facet> {
                 // We need to check if the parent will drop it.
                 let parent_will_drop = if path.len() == 1 {
                     let field_name = path.first().unwrap();
-                    self.frames().first().map_or(false, |parent| {
-                        Self::is_field_marked_in_parent(parent, field_name)
-                    })
+                    self.frames()
+                        .first()
+                        .is_some_and(|parent| Self::is_field_marked_in_parent(parent, field_name))
                 } else {
                     false
                 };
@@ -175,7 +175,7 @@ impl<'facet> Partial<'facet> {
                         let parent_will_drop = if remaining_path.len() == 1 {
                             // Parent is the root frame
                             let field_name = remaining_path.first().unwrap();
-                            self.frames().first().map_or(false, |parent| {
+                            self.frames().first().is_some_and(|parent| {
                                 Self::is_field_marked_in_parent(parent, field_name)
                             })
                         } else {

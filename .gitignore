@@ -10,6 +10,7 @@ tarpaulin-report.html
 .ignore.rs
 **/.claude/settings.local.json
 **/CLAUDE.local.md
+**/CLAUDE.md
 *.sw[op]
 
 # Fuzzing

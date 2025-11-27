@@ -13,7 +13,7 @@ categories = ["development-tools", "rust-patterns"]
 default = ["std", "suggestions"]
 std = ["alloc"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
-suggestions = ["strsim"]
+suggestions = ["strsim", "alloc"]
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.31.8", default-features = false }
