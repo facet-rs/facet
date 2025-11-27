@@ -776,6 +776,14 @@ impl<'facet> Drop for Partial<'facet> {
     fn drop(&mut self) {
         trace!("🧹 Partial is being dropped");
 
+        // Clean up stored frames from deferred state first (they don't own allocations)
+        if let Some(deferred) = self.deferred.take() {
+            for (_, mut frame) in deferred.stored_frames {
+                frame.deinit();
+                // stored_frames don't own allocations - they point into parent allocations
+            }
+        }
+
         // We need to properly drop all initialized fields
         while let Some(mut frame) = self.frames.pop() {
             frame.deinit();

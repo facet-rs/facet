@@ -1837,3 +1837,389 @@ fn deferred_many_siblings_interleaved() -> Result<(), IPanic> {
 
     Ok(())
 }
+
+// =============================================================================
+// Error cases and edge conditions
+// =============================================================================
+
+// NOTE: Tests prefixed with `wip_` use the standard #[test] attribute (not
+// facet_testhelpers::test) because they need to run under Miri, which doesn't
+// support the test helper setup.
+
+/// Drop a partial without calling finish_deferred() - should not leak memory
+/// Miri will catch any leaks here
+#[::core::prelude::v1::test]
+fn wip_deferred_drop_without_finish_simple() {
+    #[derive(Facet, Debug)]
+    struct Simple {
+        value: String,
+        count: u32,
+    }
+
+    {
+        let resolution = Resolution::new();
+        let mut partial = Partial::alloc::<Simple>().unwrap();
+        partial.begin_deferred(resolution);
+
+        partial
+            .set_field("value", String::from("this will be dropped"))
+            .unwrap();
+        partial.set_field("count", 42u32).unwrap();
+
+        // Don't call finish_deferred() or build()
+        // Partial is dropped here
+    }
+
+    // If Miri doesn't complain, we're good
+}
+
+/// Drop with nested struct partially initialized
+#[::core::prelude::v1::test]
+fn wip_deferred_drop_without_finish_nested() {
+    #[derive(Facet, Debug)]
+    struct Inner {
+        text: String,
+    }
+
+    #[derive(Facet, Debug)]
+    struct Outer {
+        inner: Inner,
+        name: String,
+    }
+
+    {
+        let resolution = Resolution::new();
+        let mut partial = Partial::alloc::<Outer>().unwrap();
+        partial.begin_deferred(resolution);
+
+        partial
+            .set_field("name", String::from("outer name"))
+            .unwrap();
+        partial.begin_field("inner").unwrap();
+        partial
+            .set_field("text", String::from("inner text"))
+            .unwrap();
+        partial.end().unwrap();
+
+        // Drop without finishing
+    }
+}
+
+/// Drop with collections partially filled
+#[::core::prelude::v1::test]
+fn wip_deferred_drop_without_finish_collections() {
+    use std::collections::HashMap;
+
+    #[derive(Facet, Debug)]
+    struct WithCollections {
+        strings: Vec<String>,
+        map: HashMap<String, String>,
+    }
+
+    {
+        let resolution = Resolution::new();
+        let mut partial = Partial::alloc::<WithCollections>().unwrap();
+        partial.begin_deferred(resolution);
+
+        partial.begin_field("strings").unwrap();
+        partial.begin_list().unwrap();
+        partial.push(String::from("item1")).unwrap();
+        partial.push(String::from("item2")).unwrap();
+        partial.push(String::from("item3")).unwrap();
+        partial.end().unwrap();
+
+        partial.begin_field("map").unwrap();
+        partial.begin_map().unwrap();
+        partial.begin_key().unwrap();
+        partial.set(String::from("key1")).unwrap();
+        partial.end().unwrap();
+        partial.begin_value().unwrap();
+        partial.set(String::from("value1")).unwrap();
+        partial.end().unwrap();
+        partial.end().unwrap();
+
+        // Drop without finishing - lots of allocations to clean up
+    }
+}
+
+/// Drop while in the middle of a field (frame still on stack)
+#[::core::prelude::v1::test]
+fn wip_deferred_drop_mid_field() {
+    #[derive(Facet, Debug)]
+    struct Inner {
+        a: u32,
+        b: u32,
+    }
+
+    #[derive(Facet, Debug)]
+    struct Outer {
+        inner: Inner,
+    }
+
+    {
+        let resolution = Resolution::new();
+        let mut partial = Partial::alloc::<Outer>().unwrap();
+        partial.begin_deferred(resolution);
+
+        partial.begin_field("inner").unwrap();
+        partial.set_field("a", 1u32).unwrap();
+        // Don't call end() - frame is still on the stack
+
+        // Drop with frame stack: [Outer, Inner]
+    }
+}
+
+/// Calling finish_deferred() twice should fail
+#[test]
+fn error_finish_deferred_twice() -> Result<(), IPanic> {
+    #[derive(Facet, Debug)]
+    struct Simple {
+        value: u32,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Simple>()?;
+    partial.begin_deferred(resolution);
+
+    partial.set_field("value", 42u32)?;
+
+    partial.finish_deferred()?;
+
+    // Second call should fail
+    let result = partial.finish_deferred();
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("deferred mode is not enabled")
+    );
+
+    Ok(())
+}
+
+/// Calling begin_deferred() twice should... what? Let's find out.
+#[test]
+fn error_begin_deferred_twice() -> Result<(), IPanic> {
+    #[derive(Facet, Debug)]
+    struct Simple {
+        value: u32,
+    }
+
+    let resolution1 = Resolution::new();
+    let resolution2 = Resolution::new();
+    let mut partial = Partial::alloc::<Simple>()?;
+
+    partial.begin_deferred(resolution1);
+    assert!(partial.is_deferred());
+
+    // Second begin_deferred - this should replace the first one
+    partial.begin_deferred(resolution2);
+    assert!(partial.is_deferred());
+
+    partial.set_field("value", 42u32)?;
+    partial.finish_deferred()?;
+
+    let result = *partial.build()?;
+    assert_eq!(result.value, 42);
+
+    Ok(())
+}
+
+/// Enum variant switching - selecting a different variant after setting fields
+/// This should either fail or reset the enum state
+#[test]
+fn error_enum_variant_switch() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum Choice {
+        OptionA { a_value: u32 },
+        OptionB { b_value: String },
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Choice>()?;
+    partial.begin_deferred(resolution);
+
+    // Select variant A and set its field
+    partial.select_variant_named("OptionA")?;
+    partial.set_field("a_value", 42u32)?;
+
+    // Now try to select variant B - this might fail or reset
+    let switch_result = partial.select_variant_named("OptionB");
+
+    // Document whatever behavior we get
+    if switch_result.is_ok() {
+        // If switching is allowed, the previous data should be gone
+        // and we should be able to set B's fields
+        partial.set_field("b_value", String::from("switched"))?;
+        partial.finish_deferred()?;
+        let result = *partial.build()?;
+        assert_eq!(
+            result,
+            Choice::OptionB {
+                b_value: String::from("switched")
+            }
+        );
+    } else {
+        // If switching is not allowed, we should get an error
+        // and the original variant should still be intact
+        partial.finish_deferred()?;
+        let result = *partial.build()?;
+        assert_eq!(result, Choice::OptionA { a_value: 42 });
+    }
+
+    Ok(())
+}
+
+/// Enum variant switch in deferred mode with re-entry
+#[test]
+fn error_enum_variant_switch_with_reentry() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum Status {
+        Active { code: u32 },
+        Inactive { reason: String },
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Record {
+        status: Status,
+        id: u32,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Record>()?;
+    partial.begin_deferred(resolution);
+
+    // Set up Active variant
+    partial.begin_field("status")?;
+    partial.select_variant_named("Active")?;
+    partial.set_field("code", 200u32)?;
+    partial.end()?;
+
+    partial.set_field("id", 1u32)?;
+
+    // Re-enter and try to switch variant
+    partial.begin_field("status")?;
+    let switch_result = partial.select_variant_named("Inactive");
+
+    // Whatever the behavior, don't leave things in a bad state
+    if switch_result.is_ok() {
+        partial.set_field("reason", String::from("changed mind"))?;
+    }
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let _result = *partial.build()?;
+
+    // We just want to make sure we don't crash or leak
+    Ok(())
+}
+
+/// Try to build() without finish_deferred() in deferred mode
+#[test]
+fn error_build_without_finish_deferred() -> Result<(), IPanic> {
+    #[derive(Facet, Debug)]
+    struct Simple {
+        value: u32,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Simple>()?;
+    partial.begin_deferred(resolution);
+
+    partial.set_field("value", 42u32)?;
+
+    // Try to build without finishing deferred mode
+    // This might succeed (deferred mode just affects validation timing)
+    // or it might fail - let's document the behavior
+    let build_result = partial.build();
+
+    // Either way, we shouldn't crash
+    if build_result.is_ok() {
+        let result = *build_result.unwrap();
+        assert_eq!(result.value, 42);
+    }
+
+    Ok(())
+}
+
+/// Operations after finish_deferred() but before build()
+#[test]
+fn error_operations_after_finish() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Simple {
+        a: u32,
+        b: u32,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Simple>()?;
+    partial.begin_deferred(resolution);
+
+    partial.set_field("a", 1u32)?;
+    partial.set_field("b", 2u32)?;
+
+    partial.finish_deferred()?;
+
+    // Now we're no longer in deferred mode - can we still modify?
+    let modify_result = partial.set_field("a", 100u32);
+
+    // Document the behavior
+    if modify_result.is_ok() {
+        let result = *partial.build()?;
+        assert_eq!(result.a, 100); // Modified after finish
+        assert_eq!(result.b, 2);
+    } else {
+        let result = *partial.build()?;
+        assert_eq!(result.a, 1); // Original value
+        assert_eq!(result.b, 2);
+    }
+
+    Ok(())
+}
+
+/// Deep nesting with stored frames, then drop
+#[::core::prelude::v1::test]
+fn wip_deferred_drop_with_stored_frames() {
+    #[derive(Facet, Debug)]
+    struct L3 {
+        val: String,
+    }
+
+    #[derive(Facet, Debug)]
+    struct L2 {
+        l3: L3,
+    }
+
+    #[derive(Facet, Debug)]
+    struct L1 {
+        l2: L2,
+        other: String,
+    }
+
+    {
+        let resolution = Resolution::new();
+        let mut partial = Partial::alloc::<L1>().unwrap();
+        partial.begin_deferred(resolution);
+
+        // Go deep
+        partial.begin_field("l2").unwrap();
+        partial.begin_field("l3").unwrap();
+        partial
+            .set_field("val", String::from("deep value"))
+            .unwrap();
+        partial.end().unwrap(); // Store l3 frame
+        partial.end().unwrap(); // Store l2 frame
+
+        // Set another field (l2 and l3 are now in stored_frames)
+        partial
+            .set_field("other", String::from("other value"))
+            .unwrap();
+
+        // Drop with frames in stored_frames map
+    }
+}
