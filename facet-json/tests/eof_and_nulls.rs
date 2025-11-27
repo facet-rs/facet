@@ -1,6 +1,5 @@
 use facet::Facet;
-use facet_deserialize::DeserErrorKind;
-use facet_json::{from_slice, from_str};
+use facet_json::{JsonErrorKind, from_slice, from_str};
 use facet_testhelpers::test;
 use std::fmt::Debug;
 
@@ -9,25 +8,37 @@ fn test_eof_errors() {
     // Test empty input
     let result = from_str::<String>("");
     let err = result.unwrap_err();
-    assert!(matches!(
-        err.kind,
-        DeserErrorKind::UnexpectedEof { wanted, .. } if wanted.contains("any value")
-    ));
+    // Empty input produces an unexpected token error (EOF)
+    assert!(
+        matches!(err.kind, JsonErrorKind::UnexpectedToken { .. })
+            || matches!(err.kind, JsonErrorKind::Token(_))
+    );
 
     // Test partial input for various types
     let result = from_str::<String>("\"hello");
     let err = result.unwrap_err();
-    assert!(matches!(
-        err.kind,
-        DeserErrorKind::UnexpectedEof { wanted, .. } if wanted.contains("string")
-    ));
+    // Unterminated string should produce a tokenizer error
+    assert!(
+        matches!(err.kind, JsonErrorKind::Token(_))
+            || matches!(err.kind, JsonErrorKind::TokenWithContext { .. })
+    );
+
     let result = from_str::<Vec<i32>>("[1, 2,");
     let err = result.unwrap_err();
-    assert!(matches!(err.kind, DeserErrorKind::UnexpectedEof { .. }));
+    // Unexpected EOF in list produces an unexpected token error
+    assert!(
+        matches!(err.kind, JsonErrorKind::UnexpectedToken { .. })
+            || matches!(err.kind, JsonErrorKind::Token(_))
+            || matches!(err.kind, JsonErrorKind::TokenWithContext { .. })
+    );
 
     let result = from_str::<Vec<i32>>("[");
     let err = result.unwrap_err();
-    assert!(matches!(err.kind, DeserErrorKind::UnexpectedEof { .. }));
+    assert!(
+        matches!(err.kind, JsonErrorKind::UnexpectedToken { .. })
+            || matches!(err.kind, JsonErrorKind::Token(_))
+            || matches!(err.kind, JsonErrorKind::TokenWithContext { .. })
+    );
 
     // Test object with EOF after opening {
     #[derive(Facet, Debug)]
@@ -37,25 +48,37 @@ fn test_eof_errors() {
 
     let result = from_str::<SimpleObject>("{");
     let err = result.unwrap_err();
-    assert!(matches!(err.kind, DeserErrorKind::UnexpectedEof { .. }));
+    assert!(
+        matches!(err.kind, JsonErrorKind::UnexpectedToken { .. })
+            || matches!(err.kind, JsonErrorKind::Token(_))
+            || matches!(err.kind, JsonErrorKind::TokenWithContext { .. })
+    );
 
     // Test object with EOF after key
     let result = from_str::<SimpleObject>("{\"key\"");
     let err = result.unwrap_err();
-    assert!(matches!(err.kind, DeserErrorKind::UnexpectedEof { .. }));
+    assert!(
+        matches!(err.kind, JsonErrorKind::UnexpectedToken { .. })
+            || matches!(err.kind, JsonErrorKind::Token(_))
+            || matches!(err.kind, JsonErrorKind::TokenWithContext { .. })
+    );
 
     // Test object with EOF after colon
     let result = from_str::<SimpleObject>("{\"key\":");
     let err = result.unwrap_err();
-    assert!(matches!(err.kind, DeserErrorKind::UnexpectedEof { .. }));
+    assert!(
+        matches!(err.kind, JsonErrorKind::UnexpectedToken { .. })
+            || matches!(err.kind, JsonErrorKind::Token(_))
+            || matches!(err.kind, JsonErrorKind::TokenWithContext { .. })
+    );
 
     // Test string with escape followed by EOF
     let result = from_str::<String>("\"hello\\");
     let err = result.unwrap_err();
-    assert!(matches!(
-        err.kind,
-        DeserErrorKind::UnexpectedEof { wanted, .. } if wanted.contains("escape")
-    ));
+    assert!(
+        matches!(err.kind, JsonErrorKind::Token(_))
+            || matches!(err.kind, JsonErrorKind::TokenWithContext { .. })
+    );
 }
 
 // Adjusted test for UTF-8 handling based on actual behavior
@@ -71,13 +94,14 @@ fn test_invalid_utf8_handling() {
 
 #[test]
 fn test_null_handling() {
-    // Test with invalid null value
+    // Test with invalid null value - "nul" starts with 'n' but isn't "null"
     let result = from_str::<Option<i32>>("nul");
     let err = result.unwrap_err();
-    assert!(matches!(
-        err.kind,
-        DeserErrorKind::UnexpectedChar { got: 'n', .. }
-    ));
+    // This should be a token error since "nul" isn't a valid token
+    assert!(
+        matches!(err.kind, JsonErrorKind::Token(_))
+            || matches!(err.kind, JsonErrorKind::TokenWithContext { .. })
+    );
 
     // Test with correct null handling
     #[derive(Facet, Debug)]

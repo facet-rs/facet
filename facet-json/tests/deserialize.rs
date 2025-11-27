@@ -11,11 +11,12 @@ fn test_custom_deserialization_struct() {
     #[facet(transparent)]
     struct Wrapper(String);
 
+    #[allow(clippy::ptr_arg)]
     fn u64_from_str(s: &String) -> Result<u64, &'static str> {
         if let Some(hex) = s.strip_prefix("0x") {
             u64::from_str_radix(hex, 16)
         } else {
-            u64::from_str_radix(s, 10)
+            s.parse::<u64>()
         }
         .map_err(|e| match e.kind() {
             IntErrorKind::Empty => "cannot parse integer from empty string",
@@ -27,12 +28,13 @@ fn test_custom_deserialization_struct() {
         })
     }
 
+    #[allow(clippy::ptr_arg)]
     fn opaque_type_from_str(s: &String) -> Result<OpaqueType, &'static str> {
         Ok(OpaqueType(u64_from_str(s)?))
     }
 
     fn opaque_type_from_wrapper(w: &Wrapper) -> Result<OpaqueType, &'static str> {
-        Ok(opaque_type_from_str(&w.0)?)
+        opaque_type_from_str(&w.0)
     }
 
     #[derive(Facet)]
@@ -77,11 +79,12 @@ fn test_custom_deserialization_struct() {
 fn test_custom_deserialization_enum() {
     struct OpaqueType(u64);
 
+    #[allow(clippy::ptr_arg)]
     fn u64_from_str(s: &String) -> Result<u64, &'static str> {
         if let Some(hex) = s.strip_prefix("0x") {
             u64::from_str_radix(hex, 16)
         } else {
-            u64::from_str_radix(s, 10)
+            s.parse::<u64>()
         }
         .map_err(|e| match e.kind() {
             IntErrorKind::Empty => "cannot parse integer from empty string",
@@ -93,6 +96,7 @@ fn test_custom_deserialization_enum() {
         })
     }
 
+    #[allow(clippy::ptr_arg)]
     fn opaque_type_from_str(s: &String) -> Result<OpaqueType, &'static str> {
         Ok(OpaqueType(u64_from_str(s)?))
     }
@@ -112,7 +116,7 @@ fn test_custom_deserialization_enum() {
     let opstr: MyEnum = facet_json::from_str(data).unwrap();
     match opstr {
         MyEnum::OpStrTuple(OpaqueType(v)) => assert_eq!(v, 2748),
-        _ => assert!(false),
+        _ => panic!("expected OpStrTuple variant"),
     }
 
     let data = r#"{"OpStrField": {"field": "0xabc"}}"#;
@@ -121,6 +125,6 @@ fn test_custom_deserialization_enum() {
         MyEnum::OpStrField {
             field: OpaqueType(v),
         } => assert_eq!(v, 2748),
-        _ => assert!(false),
+        _ => panic!("expected OpStrField variant"),
     }
 }

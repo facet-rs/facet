@@ -1,8 +1,6 @@
 use facet::Facet;
-use facet_deserialize::DeserErrorKind;
-use facet_json::{from_str, to_string};
+use facet_json::{JsonErrorKind, from_str, to_string};
 use facet_testhelpers::test;
-use insta::assert_snapshot;
 
 /// Basic deserialization with renamed fields
 #[test]
@@ -174,7 +172,6 @@ fn test_field_rename_with_numeric_name() {
 
 /// Serialization and deserialization of renamed enum variants (unit and tuple variants)
 #[test]
-#[ignore]
 fn test_enum_variant_rename() {
     #[derive(Debug, PartialEq, Facet)]
     #[repr(u8)]
@@ -203,7 +200,6 @@ fn test_enum_variant_rename() {
 
 /// Serialization and deserialization of renamed fields in struct enum variants
 #[test]
-#[ignore]
 fn test_enum_struct_variant_field_rename() {
     #[derive(Debug, PartialEq, Facet)]
     #[repr(u8)]
@@ -389,7 +385,6 @@ fn test_field_rename_ignore_extra_fields() {
 
 /// Renamed fields have priority over original field names during serialization
 #[test]
-#[ignore]
 fn test_field_rename_serialization_priority() {
     // When serializing, the rename attribute should always be used instead of
     // the original field name
@@ -409,7 +404,6 @@ fn test_field_rename_serialization_priority() {
 
 /// Proper errors are returned when required renamed fields are missing
 #[test]
-#[ignore]
 fn test_field_rename_missing_required_error() {
     #[derive(Debug, PartialEq, Facet)]
     struct Required {
@@ -420,15 +414,20 @@ fn test_field_rename_missing_required_error() {
     // JSON missing the required field
     let json = r#"{}"#;
 
-    // This should result in an error as the required field is missing
+    // This should result in a MissingField error with the renamed field name
     let result = facet_json::from_str::<Required>(json);
     let e = result.unwrap_err();
-    assert!(matches!(
-        e.kind,
-        DeserErrorKind::MissingField(f) if f == "original_field"
-    ));
-    #[cfg(not(miri))]
-    assert_snapshot!(e.to_string());
+    assert!(
+        matches!(
+            e.kind,
+            JsonErrorKind::MissingField {
+                field: "renamedField",
+                ..
+            }
+        ),
+        "Expected MissingField error for missing field, got: {:?}",
+        e.kind
+    );
 }
 
 /// Rename to verify it's not an accidental alias

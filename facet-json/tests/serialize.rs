@@ -23,7 +23,7 @@ fn test_custom_serialization_struct() {
     }
 
     fn opaque_type_into_wrapper(o: &OpaqueType) -> Result<Wrapper, &'static str> {
-        Ok(Wrapper(opaque_type_into_str(&o)?))
+        Ok(Wrapper(opaque_type_into_str(o)?))
     }
 
     fn opaque_type_into_nested(o: &OpaqueType) -> Result<OtherStruct, &'static str> {

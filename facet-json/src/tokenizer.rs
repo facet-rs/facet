@@ -29,7 +29,7 @@ pub enum TokenErrorKind {
 use alloc::borrow::Cow;
 use core::fmt::{self, Display, Formatter};
 
-use facet_deserialize::{Pos, Span, Spanned};
+use crate::span::{Pos, Span, Spanned};
 
 impl Display for TokenErrorKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {

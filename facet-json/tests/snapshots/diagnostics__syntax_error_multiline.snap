@@ -1,0 +1,15 @@
+---
+source: tests/diagnostics.rs
+assertion_line: 69
+expression: render_error(&err)
+---
+[31mjson::token[0m
+
+  [31m×[0m unexpected character: '?' (while parsing i32)
+   ╭─[3:12]
+ [2m2[0m │   "name": "test",
+ [2m3[0m │   "value": ???
+   · [35;1m           ┬[0m
+   ·            [35;1m╰── [35;1munexpected '?', expected i32[0m[0m
+ [2m4[0m │ }
+   ╰────

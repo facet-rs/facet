@@ -58,6 +58,7 @@ fn test_from_json_with_nested_structs() {
     assert_eq!(test_struct.inner.value, 42);
 }
 
+// Uses facet-solver for #[facet(flatten)] support
 #[test]
 fn test_reading_flat_structs() {
     #[derive(Debug, PartialEq, Eq, facet::Facet)]
@@ -65,8 +66,8 @@ fn test_reading_flat_structs() {
         name: String,
         #[facet(flatten)]
         struct_: InnerStruct,
-        // #[facet(flatten)]
-        // enum_: InnerEnum,
+        #[facet(flatten)]
+        enum_: InnerEnum,
     }
 
     #[derive(Debug, PartialEq, Eq, facet::Facet)]
@@ -85,33 +86,33 @@ fn test_reading_flat_structs() {
     let actual1: Outer = facet_json::from_str(
         r#"{"name":"test1","val":1,"Variant1":{"field1":"aaa","field2":"bbb"}}"#,
     )
-    .expect("Failed to parse JSON 1"); // Changed to expect to avoid ? causing implicit Result<()>; Unwraps were on Result in original
+    .expect("Failed to parse JSON 1");
     let expected1 = Outer {
         name: "test1".to_string(),
         struct_: InnerStruct { val: 1 },
-        // enum_: InnerEnum::Variant1 {
-        //     field1: "aaa".to_string(),
-        //     field2: "bbb".to_string(),
-        // },
+        enum_: InnerEnum::Variant1 {
+            field1: "aaa".to_string(),
+            field2: "bbb".to_string(),
+        },
     };
     assert_eq!(expected1, actual1);
 
     let actual2: Outer = facet_json::from_str(r#"{"name":"test2","val":2,"Variant2":"ccc"}"#)
-        .expect("Failed to parse JSON 2"); // Changed to expect to avoid ? causing implicit Result<()>; Unwraps were on Result in original
+        .expect("Failed to parse JSON 2");
     let expected2 = Outer {
         name: "test2".to_string(),
         struct_: InnerStruct { val: 2 },
-        // enum_: InnerEnum::Variant2("ccc".to_string()),
+        enum_: InnerEnum::Variant2("ccc".to_string()),
     };
     assert_eq!(expected2, actual2);
 
     let actual3: Outer =
         facet_json::from_str(r#"{"name":"test3","val":3,"Variant3":["ddd","eee"]}"#)
-            .expect("Failed to parse JSON 3"); // Changed to expect to avoid ? causing implicit Result<()>; Unwraps were on Result in original
+            .expect("Failed to parse JSON 3");
     let expected3 = Outer {
         name: "test3".to_string(),
         struct_: InnerStruct { val: 3 },
-        // enum_: InnerEnum::Variant3("ddd".to_string(), "eee".to_string()),
+        enum_: InnerEnum::Variant3("ddd".to_string(), "eee".to_string()),
     };
     assert_eq!(expected3, actual3);
 }

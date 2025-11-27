@@ -10,22 +10,17 @@ keywords = ["json", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parser-implementations"]
 
 [features]
-rich-diagnostics = ["facet-deserialize/rich-diagnostics"]
-default = ["rich-diagnostics"]
+std = ["alloc", "facet-core/std", "facet-reflect/std"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc"]
+default = ["std"]
 
 [dependencies]
-facet-core = { version = "0.31.7", default-features = false, features = [
-    "alloc",
-] }
-facet-reflect = { version = "0.31.7", default-features = false, features = [
-    "alloc",
-] }
+facet-core = { path = "../facet/facet-core", default-features = false }
+facet-reflect = { path = "../facet/facet-reflect", default-features = false }
+facet-solver = { path = "../facet/facet-solver" }
 
-facet-deserialize = { version = "0.31.2", default-features = false }
-facet-serialize = { version = "0.31.2", default-features = false, features = [
-    "alloc",
-] }
-
+miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
+strsim = "0.11"
 itoa = "1.0.15"
 lexical-parse-float = "1.0.5"
 lexical-parse-integer = "1.0.5"
@@ -35,7 +30,7 @@ ryu = "1"
 [dev-dependencies]
 bytes = { version = "1.10.1" }
 camino = { version = "1" }
-facet = { version = "0.31.7", features = [
+facet = { path = "../facet/facet", features = [
     "bytes",
     "camino",
     "time",
@@ -45,8 +40,10 @@ facet = { version = "0.31.7", features = [
     "jiff02",
     "ordered-float",
 ] }
-facet-testhelpers = { version = "0.31.7" }
+facet-pretty = { path = "../facet-pretty" }
+facet-testhelpers = { path = "../facet/facet-testhelpers" }
 insta = "1.43.1"
+syntect = "5.3"
 time = { version = "0.3.41", features = ["macros"] }
 chrono = { version = "0.4", default-features = false }
 ulid = { version = "1.2.1" }
@@ -56,3 +53,8 @@ ordered-float = "5.0.0"
 cargo-husky = { version = "1.5.0", default-features = false, features = [
     "user-hooks",
 ] }
+owo-colors = "4"
+boxen = "0.1"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"jiff\"))"] }

@@ -7,7 +7,7 @@ fn json_read_empty_vec() {
     let json = r#"[]"#;
 
     let v: Vec<i32> = from_str(json).unwrap();
-    assert_eq!(v, vec![]);
+    assert!(v.is_empty());
 }
 
 #[test]
@@ -98,7 +98,7 @@ fn test_nested_arrays() {
     let nested: NestedArrays = from_str(markup).unwrap();
     assert_eq!(nested.matrix.len(), 3);
     assert_eq!(nested.matrix[0], vec![1, 2, 3]);
-    assert_eq!(nested.matrix[1], vec![]);
+    assert_eq!(nested.matrix[1], Vec::<u64>::new());
     assert_eq!(nested.matrix[2], vec![4, 5]);
 }
 

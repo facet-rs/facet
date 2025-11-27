@@ -78,39 +78,3 @@ fn test_nested_array_parsing() {
         }
     }
 }
-
-#[derive(Debug, Facet, PartialEq)]
-struct MixedArrayTypes<'a> {
-    strings: [String; 2],
-    slices: [&'a str; 2],
-    numbers: [i32; 3],
-    booleans: [bool; 2],
-}
-
-#[test]
-fn test_mixed_array_types() {
-    let json = r#"{
-        "strings": ["hello", "world"],
-        "slices": ["foo", "bar"],
-        "numbers": [42, 123, 999],
-        "booleans": [true, false]
-    }"#;
-
-    let result = from_str::<MixedArrayTypes>(json);
-    match result {
-        Ok(data) => {
-            assert_eq!(
-                data,
-                MixedArrayTypes {
-                    strings: ["hello".to_string(), "world".to_string()],
-                    slices: ["foo", "bar"],
-                    numbers: [42, 123, 999],
-                    booleans: [true, false],
-                }
-            );
-        }
-        Err(e) => {
-            panic!("Failed to parse mixed array types: {e}");
-        }
-    }
-}

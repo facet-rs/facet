@@ -253,7 +253,7 @@ fn test_control_character_roundtrip() -> Result<(), Box<dyn std::error::Error>> 
     for (input_char, _) in CONTROL_CHAR_TEST_CASES {
         let input_string = input_char.to_string();
         let serialized = facet_json::to_string(&input_string);
-        let deserialized: String = facet_json::from_str(&serialized).map_err(|e| e.into_owned())?;
+        let deserialized: String = facet_json::from_str(&serialized)?;
 
         assert_eq!(
             deserialized, input_string,

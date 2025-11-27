@@ -1,25 +1,21 @@
-#![no_std]
 #![warn(missing_docs)]
-#![warn(clippy::std_instead_of_core)]
-#![warn(clippy::std_instead_of_alloc)]
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
 extern crate alloc;
 
 use alloc::vec::Vec;
-pub use facet_deserialize::{DeserError, DeserErrorKind, DeserErrorMessage};
+
+mod span;
+pub use span::{Span, Spanned};
 
 mod deserialize;
-pub use deserialize::*;
+pub use deserialize::{JsonDeserializer, JsonError, JsonErrorKind, from_slice, from_str};
 
 mod serialize;
 pub use serialize::*;
 
 mod tokenizer;
-
-/// The JSON format
-struct Json;
 
 /// `no_std` compatible Write trait used by the json serializer.
 pub trait JsonWrite {
