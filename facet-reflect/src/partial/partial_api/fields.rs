@@ -107,8 +107,9 @@ impl Partial<'_> {
         // Update current_path in deferred mode
         if let Some(deferred) = &mut self.deferred {
             // Only track path if we're at the expected navigable depth
-            // Path should have (frames.len() - 1) entries before we add this field
-            let should_track = deferred.current_path.len() == self.frames.len() - 1;
+            // Path should have (frames.len() - start_depth) entries before we add this field
+            let relative_depth = self.frames.len() - deferred.start_depth;
+            let should_track = deferred.current_path.len() == relative_depth;
 
             if let Some(name) = field_name {
                 if should_track {

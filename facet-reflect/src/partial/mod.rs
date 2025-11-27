@@ -149,6 +149,10 @@ struct DeferredState {
     /// The resolution from facet-solver describing the field structure
     resolution: Resolution,
 
+    /// The frame depth when deferred mode was started.
+    /// Path calculations are relative to this depth.
+    start_depth: usize,
+
     /// Current path as we navigate (e.g., ["inner", "x"])
     // TODO: Intern key paths to avoid repeated allocations. The Resolution
     // already knows all possible paths, so we could use indices into that.

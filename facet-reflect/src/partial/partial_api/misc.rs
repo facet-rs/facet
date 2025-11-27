@@ -74,6 +74,7 @@ impl<'facet> Partial<'facet> {
 
         self.deferred = Some(DeferredState {
             resolution,
+            start_depth: self.frames.len(),
             current_path: Vec::new(),
             stored_frames: BTreeMap::new(),
         });
@@ -279,11 +280,12 @@ impl<'facet> Partial<'facet> {
         // ending a tracked struct/enum field, not something like begin_some()
         // or a field inside a collection item.
         if let Some(deferred) = &mut self.deferred {
-            // Path depth should equal frames.len() for a tracked field
-            // (the path includes the field name, so after popping the frame,
-            // path.len() should equal the remaining frames.len())
-            let is_tracked_field = !deferred.current_path.is_empty()
-                && deferred.current_path.len() == self.frames.len();
+            // Path depth should match the relative frame depth for a tracked field.
+            // After popping: frames.len() - start_depth + 1 should equal path.len()
+            // for fields entered via begin_field (not begin_some/begin_inner).
+            let relative_depth = self.frames.len() - deferred.start_depth + 1;
+            let is_tracked_field =
+                !deferred.current_path.is_empty() && deferred.current_path.len() == relative_depth;
 
             if is_tracked_field {
                 trace!(
