@@ -787,3 +787,606 @@ fn steal_from_default() -> Result<(), IPanic> {
 
     Ok(())
 }
+
+// =============================================================================
+// Tests migrated from src/partial/tests.rs
+// =============================================================================
+
+#[cfg(not(miri))]
+macro_rules! assert_snapshot {
+    ($($tt:tt)*) => {
+        insta::assert_snapshot!($($tt)*)
+    };
+}
+#[cfg(miri)]
+macro_rules! assert_snapshot {
+    ($($tt:tt)*) => {{}};
+}
+
+#[test]
+fn f64_uninit() -> Result<(), IPanic> {
+    assert_snapshot!(Partial::alloc::<f64>()?.build().unwrap_err());
+    Ok(())
+}
+
+#[test]
+fn partial_after_build() -> Result<(), IPanic> {
+    let mut p = Partial::alloc::<f64>()?;
+    p.set(3.24_f64)?;
+    let _hv = p.build()?;
+    let err = p.build().unwrap_err();
+    assert_snapshot!(err);
+    Ok(())
+}
+
+#[test]
+fn frame_count() -> Result<(), IPanic> {
+    #[derive(Facet)]
+    struct S {
+        s: f64,
+    }
+
+    let mut p = Partial::alloc::<S>()?;
+    assert_eq!(p.frame_count(), 1);
+    p.begin_field("s")?;
+    assert_eq!(p.frame_count(), 2);
+    p.set(4.121_f64)?;
+    assert_eq!(p.frame_count(), 2);
+    p.end()?;
+    assert_eq!(p.frame_count(), 1);
+    let hv = *p.build()?;
+    assert_eq!(hv.s, 4.121_f64);
+
+    Ok(())
+}
+
+#[test]
+fn too_many_end() -> Result<(), IPanic> {
+    let mut p = Partial::alloc::<u32>()?;
+    let err = p.end().unwrap_err();
+    assert_snapshot!(err);
+
+    Ok(())
+}
+
+#[test]
+fn set_shape_wrong_shape() -> Result<(), IPanic> {
+    let s = String::from("I am a String");
+
+    let mut p = Partial::alloc::<u32>()?;
+    let err = p.set(s).unwrap_err();
+    assert_snapshot!(err);
+
+    Ok(())
+}
+
+#[test]
+fn alloc_shape_unsized() -> Result<(), IPanic> {
+    match Partial::alloc::<str>() {
+        Ok(_) => unreachable!(),
+        Err(err) => assert_snapshot!(err),
+    }
+    Ok(())
+}
+
+#[test]
+fn f64_init() -> Result<(), IPanic> {
+    let hv = Partial::alloc::<f64>()?.set::<f64>(6.241)?.build()?;
+    assert_eq!(*hv, 6.241);
+    Ok(())
+}
+
+#[test]
+fn struct_fully_uninit() -> Result<(), IPanic> {
+    #[derive(Facet, Debug)]
+    struct FooBar {
+        foo: u64,
+        bar: bool,
+    }
+
+    assert_snapshot!(Partial::alloc::<FooBar>()?.build().unwrap_err());
+    Ok(())
+}
+
+#[test]
+fn struct_partially_uninit() -> Result<(), IPanic> {
+    #[derive(Facet, Debug)]
+    struct FooBar {
+        foo: u64,
+        bar: bool,
+    }
+
+    let mut partial = Partial::alloc::<FooBar>()?;
+    assert_snapshot!(partial.set_field("foo", 42_u64)?.build().unwrap_err());
+    Ok(())
+}
+
+#[test]
+fn struct_fully_init() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct FooBar {
+        foo: u64,
+        bar: bool,
+    }
+
+    let hv = Partial::alloc::<FooBar>()?
+        .set_field("foo", 42u64)?
+        .set_field("bar", true)?
+        .build()?;
+    assert_eq!(hv.foo, 42u64);
+    assert_eq!(hv.bar, true);
+    Ok(())
+}
+
+#[test]
+fn set_should_drop_when_replacing() -> Result<(), IPanic> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug, Default)]
+    struct DropTracker {
+        uninteresting: i32,
+    }
+
+    impl Drop for DropTracker {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::AcqRel);
+        }
+    }
+
+    let mut p = Partial::alloc::<DropTracker>()?;
+    p.set(DropTracker::default())?;
+    p.set(DropTracker::default())?;
+    p.set(DropTracker::default())?;
+
+    assert_eq!(DROP_COUNT.load(Ordering::Acquire), 2);
+
+    let _p = p;
+
+    Ok(())
+}
+
+#[test]
+fn struct_field_set_twice() -> Result<(), IPanic> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct DropTracker {
+        id: u64,
+    }
+
+    impl Drop for DropTracker {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping DropTracker with id: {}", self.id);
+        }
+    }
+
+    #[derive(Facet, Debug)]
+    struct Container {
+        tracker: DropTracker,
+        value: u64,
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    let mut partial = Partial::alloc::<Container>()?;
+
+    // Set tracker field first time
+    partial.set_field("tracker", DropTracker { id: 1 })?;
+
+    assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 0, "No drops yet");
+
+    // Set tracker field second time (should drop the previous value)
+    partial.set_field("tracker", DropTracker { id: 2 })?;
+
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        1,
+        "First DropTracker should have been dropped"
+    );
+
+    // Set value field
+    partial.set_field("value", 100u64)?;
+
+    let container = partial.build()?;
+
+    assert_eq!(container.tracker.id, 2); // Should have the second value
+    assert_eq!(container.value, 100);
+
+    // Drop the container
+    drop(container);
+
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        2,
+        "Both DropTrackers should have been dropped"
+    );
+    Ok(())
+}
+
+#[test]
+fn set_default() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq, Default)]
+    struct Sample {
+        x: u32,
+        y: String,
+    }
+
+    let sample = Partial::alloc::<Sample>()?.set_default()?.build()?;
+    assert_eq!(*sample, Sample::default());
+    assert_eq!(sample.x, 0);
+    assert_eq!(sample.y, "");
+    Ok(())
+}
+
+#[test]
+fn set_default_no_default_impl() -> Result<(), IPanic> {
+    #[derive(Facet, Debug)]
+    struct NoDefault {
+        value: u32,
+    }
+
+    let result = Partial::alloc::<NoDefault>()?.set_default().map(|_| ());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("does not implement Default")
+    );
+    Ok(())
+}
+
+#[test]
+fn set_default_drops_previous() -> Result<(), IPanic> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct DropTracker {
+        id: u64,
+    }
+
+    impl Drop for DropTracker {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl Default for DropTracker {
+        fn default() -> Self {
+            Self { id: 999 }
+        }
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    let mut partial = Partial::alloc::<DropTracker>()?;
+
+    // Set initial value
+    partial.set(DropTracker { id: 1 })?;
+    assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 0);
+
+    // Set default (should drop the previous value)
+    partial.set_default()?;
+    assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 1);
+
+    let tracker = partial.build()?;
+    assert_eq!(tracker.id, 999); // Default value
+
+    drop(tracker);
+    assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+#[test]
+fn drop_partially_initialized_struct() -> Result<(), IPanic> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct NoisyDrop {
+        value: u64,
+    }
+
+    impl Drop for NoisyDrop {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping NoisyDrop with value: {}", self.value);
+        }
+    }
+
+    #[derive(Facet, Debug)]
+    struct Container {
+        first: NoisyDrop,
+        second: NoisyDrop,
+        third: bool,
+    }
+
+    // Reset counter
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    // Create a partially initialized struct and drop it
+    {
+        let mut partial = Partial::alloc::<Container>()?;
+
+        // Initialize first field
+        partial.begin_field("first")?;
+        assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 0, "No drops yet");
+
+        partial.set(NoisyDrop { value: 1 })?;
+        assert_eq!(
+            DROP_COUNT.load(Ordering::SeqCst),
+            0,
+            "After set, the value should NOT be dropped yet"
+        );
+
+        partial.end()?;
+        assert_eq!(
+            DROP_COUNT.load(Ordering::SeqCst),
+            0,
+            "Still no drops after end"
+        );
+
+        // Initialize second field
+        partial.begin_field("second")?;
+        partial.set(NoisyDrop { value: 2 })?;
+        assert_eq!(
+            DROP_COUNT.load(Ordering::SeqCst),
+            0,
+            "After second set, still should have no drops"
+        );
+
+        partial.end()?;
+
+        // Don't initialize third field - just drop the partial
+        // This should call drop on the two NoisyDrop instances we created
+    }
+
+    let final_drops = DROP_COUNT.load(Ordering::SeqCst);
+    assert_eq!(
+        final_drops, 2,
+        "Expected 2 drops total for the two initialized NoisyDrop fields, but got {}",
+        final_drops
+    );
+    Ok(())
+}
+
+#[test]
+fn drop_nested_partially_initialized() -> Result<(), IPanic> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct NoisyDrop {
+        id: u64,
+    }
+
+    impl Drop for NoisyDrop {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+            println!("Dropping NoisyDrop with id: {}", self.id);
+        }
+    }
+
+    #[derive(Facet, Debug)]
+    struct Inner {
+        a: NoisyDrop,
+        b: NoisyDrop,
+    }
+
+    #[derive(Facet, Debug)]
+    struct Outer {
+        inner: Inner,
+        extra: NoisyDrop,
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    {
+        let mut partial = Partial::alloc::<Outer>()?;
+
+        // Start initializing inner struct
+        partial.begin_field("inner")?;
+        partial.set_field("a", NoisyDrop { id: 1 })?;
+
+        // Only initialize one field of inner, leave 'b' uninitialized
+        // Don't end from inner
+
+        // Drop without finishing initialization
+    }
+
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        1,
+        "Should drop only the one initialized NoisyDrop in the nested struct"
+    );
+    Ok(())
+}
+
+#[test]
+fn drop_with_copy_types() -> Result<(), IPanic> {
+    // Test that Copy types don't cause double-drops or other issues
+    #[derive(Facet, Debug)]
+    struct MixedTypes {
+        copyable: u64,
+        droppable: String,
+        more_copy: bool,
+    }
+
+    let mut partial = Partial::alloc::<MixedTypes>()?;
+
+    partial.set_field("copyable", 42u64)?;
+
+    partial.set_field("droppable", "Hello".to_string())?;
+
+    // Drop without initializing 'more_copy'
+    drop(partial);
+
+    // If this doesn't panic or segfault, we're good
+    Ok(())
+}
+
+#[test]
+fn drop_fully_uninitialized() -> Result<(), IPanic> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct NoisyDrop {
+        value: u64,
+    }
+
+    impl Drop for NoisyDrop {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[derive(Facet, Debug)]
+    struct Container {
+        a: NoisyDrop,
+        b: NoisyDrop,
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    {
+        let _partial = Partial::alloc::<Container>()?;
+        // Drop immediately without initializing anything
+    }
+
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        0,
+        "No drops should occur for completely uninitialized struct"
+    );
+    Ok(())
+}
+
+#[test]
+fn drop_after_successful_build() -> Result<(), IPanic> {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    static DROP_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    #[derive(Facet, Debug)]
+    struct NoisyDrop {
+        value: u64,
+    }
+
+    impl Drop for NoisyDrop {
+        fn drop(&mut self) {
+            DROP_COUNT.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    DROP_COUNT.store(0, Ordering::SeqCst);
+
+    let hv = Partial::alloc::<NoisyDrop>()?
+        .set(NoisyDrop { value: 42 })?
+        .build()?;
+
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        0,
+        "No drops yet after build"
+    );
+
+    drop(hv);
+
+    assert_eq!(
+        DROP_COUNT.load(Ordering::SeqCst),
+        1,
+        "One drop after dropping HeapValue"
+    );
+    Ok(())
+}
+
+#[test]
+fn empty_struct_init() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct EmptyStruct {}
+
+    // Test that we can build an empty struct without setting any fields
+    let hv = Partial::alloc::<EmptyStruct>()?.build()?;
+    assert_eq!(*hv, EmptyStruct {});
+    Ok(())
+}
+
+#[test]
+fn field_named_on_struct() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Person {
+        name: String,
+        age: u32,
+        email: String,
+    }
+
+    let person = Partial::alloc::<Person>()?
+        // Use field names instead of indices
+        .begin_field("email")?
+        .set("john@example.com".to_string())?
+        .end()?
+        .begin_field("name")?
+        .set("John Doe".to_string())?
+        .end()?
+        .begin_field("age")?
+        .set(30u32)?
+        .end()?
+        .build()?;
+    assert_eq!(
+        *person,
+        Person {
+            name: "John Doe".to_string(),
+            age: 30,
+            email: "john@example.com".to_string(),
+        }
+    );
+
+    // Test invalid field name
+    let mut partial = Partial::alloc::<Person>()?;
+    let result = partial.begin_field("invalid_field");
+    assert_snapshot!(result.unwrap_err());
+    Ok(())
+}
+
+#[test]
+fn field_named_on_enum() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum Config {
+        Server { host: String, port: u16, tls: bool } = 0,
+        Client { url: String, timeout: u32 } = 1,
+    }
+
+    // Test field access on Server variant
+    let config = Partial::alloc::<Config>()?
+        .select_variant_named("Server")?
+        .set_field("port", 8080u16)?
+        .set_field("host", "localhost".to_string())?
+        .set_field("tls", true)?
+        .build()?;
+    assert_eq!(
+        *config,
+        Config::Server {
+            host: "localhost".to_string(),
+            port: 8080,
+            tls: true,
+        }
+    );
+
+    // Test invalid field name on enum variant
+
+    let mut partial = Partial::alloc::<Config>()?;
+    partial.select_variant_named("Client")?;
+    let result = partial.begin_field("port"); // port doesn't exist on Client
+    assert!(result.is_err());
+    assert_snapshot!(result.unwrap_err());
+    Ok(())
+}

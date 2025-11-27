@@ -7,7 +7,7 @@
 
 use divan::{Bencher, black_box};
 use facet::Facet;
-use facet_solver::{IncrementalSolver, Schema};
+use facet_solver::{Schema, Solver};
 
 fn main() {
     divan::main();
@@ -124,7 +124,7 @@ fn schema_build(bencher: Bencher, configs: u32) {
     }
 }
 
-// Incremental solver benchmarks
+// Solver benchmarks
 
 #[divan::bench(args = [16, 64, 256, 1024])]
 fn incremental_solver(bencher: Bencher, configs: u32) {
@@ -132,7 +132,7 @@ fn incremental_solver(bencher: Bencher, configs: u32) {
         16 => {
             let schema = Schema::build(TwoEnums::SHAPE).unwrap();
             bencher.bench(|| {
-                let mut solver = IncrementalSolver::new(black_box(&schema));
+                let mut solver = Solver::new(black_box(&schema));
                 solver.see_key(black_box("field_a1"));
                 solver.see_key(black_box("field_a2"));
             });
@@ -140,7 +140,7 @@ fn incremental_solver(bencher: Bencher, configs: u32) {
         64 => {
             let schema = Schema::build(ThreeEnums::SHAPE).unwrap();
             bencher.bench(|| {
-                let mut solver = IncrementalSolver::new(black_box(&schema));
+                let mut solver = Solver::new(black_box(&schema));
                 solver.see_key(black_box("field_a1"));
                 solver.see_key(black_box("field_a2"));
                 solver.see_key(black_box("field_a3"));
@@ -149,7 +149,7 @@ fn incremental_solver(bencher: Bencher, configs: u32) {
         256 => {
             let schema = Schema::build(FourEnums::SHAPE).unwrap();
             bencher.bench(|| {
-                let mut solver = IncrementalSolver::new(black_box(&schema));
+                let mut solver = Solver::new(black_box(&schema));
                 solver.see_key(black_box("field_a1"));
                 solver.see_key(black_box("field_a2"));
                 solver.see_key(black_box("field_a3"));
@@ -159,7 +159,7 @@ fn incremental_solver(bencher: Bencher, configs: u32) {
         1024 => {
             let schema = Schema::build(FiveEnums::SHAPE).unwrap();
             bencher.bench(|| {
-                let mut solver = IncrementalSolver::new(black_box(&schema));
+                let mut solver = Solver::new(black_box(&schema));
                 solver.see_key(black_box("field_a1"));
                 solver.see_key(black_box("field_a2"));
                 solver.see_key(black_box("field_a3"));

@@ -46,7 +46,7 @@ then uses an inverted index to quickly find which configuration(s) match the
 fields you've seen.
 
 ```rust
-use facet_solver::{FieldDecision, IncrementalSolver, Schema};
+use facet_solver::{KeyResult, Schema, Solver};
 # use facet::Facet;
 # #[derive(Facet)]
 # struct TextMessage { content: String }
@@ -62,16 +62,16 @@ use facet_solver::{FieldDecision, IncrementalSolver, Schema};
 let schema = Schema::build(Message::SHAPE).unwrap();
 
 // Create a solver for this deserialization
-let mut solver = IncrementalSolver::new(&schema);
+let mut solver = Solver::new(&schema);
 
 // As you see fields, report them:
 match solver.see_key("id") {
-    FieldDecision::SetDirectly(_) => { /* both configs have "id" */ }
+    KeyResult::Unambiguous { .. } => { /* both configs have "id" */ }
     _ => {}
 }
 
 match solver.see_key("content") {
-    FieldDecision::Disambiguated { config, .. } => {
+    KeyResult::Solved(config) => {
         // Only Text has "content" - we now know the variant!
         assert!(config.has_key_path(&["content"]));
     }
@@ -244,4 +244,3 @@ directly**. No buffering, no loss of fidelity.
 | [serde#1560](https://github.com/serde-rs/serde/issues/1560) | Empty variant ambiguity with "first match wins" | Explicit configuration enumeration, no guessing |
 | [serde_json#721](https://github.com/serde-rs/json/issues/721) | `arbitrary_precision` + `flatten` loses precision | No buffering through `serde_json::Value` |
 | [serde_json#1155](https://github.com/serde-rs/json/issues/1155) | `u128` in flattened struct fails | Direct deserialization, no `Value` intermediary |
-

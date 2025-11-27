@@ -1,6 +1,6 @@
 use alloc::{boxed::Box, string::String};
 
-use crate::{Partial, Peek, ReflectError, trace};
+use crate::{Partial, Peek, ReflectError, Resolution, trace};
 use core::marker::PhantomData;
 use facet_core::{Facet, PtrConst, PtrUninit, Shape, Variant};
 
@@ -39,6 +39,36 @@ impl<'facet, T: ?Sized> TypedPartial<'facet, T> {
     #[inline]
     pub fn shape(&self) -> &'static Shape {
         self.inner.shape()
+    }
+
+    /// Returns whether deferred validation mode is enabled.
+    #[inline]
+    pub fn is_deferred(&self) -> bool {
+        self.inner.is_deferred()
+    }
+
+    /// Returns the current deferred resolution, if in deferred mode.
+    #[inline]
+    pub fn deferred_resolution(&self) -> Option<&Resolution> {
+        self.inner.deferred_resolution()
+    }
+
+    /// Enables deferred validation mode with the given Resolution.
+    ///
+    /// When deferred mode is enabled, `end()` will skip the "all fields initialized"
+    /// check when popping frames. This allows deserializers to populate fields in
+    /// any order without immediate validation.
+    #[inline]
+    pub fn begin_deferred(&mut self, resolution: Resolution) -> &mut Self {
+        self.inner.begin_deferred(resolution);
+        self
+    }
+
+    /// Finishes deferred mode and validates that all required fields are initialized.
+    #[inline]
+    pub fn finish_deferred(&mut self) -> Result<&mut Self, ReflectError> {
+        self.inner.finish_deferred()?;
+        Ok(self)
     }
 
     /// Pops the current frame off the stack, indicating we're done initializing the current field

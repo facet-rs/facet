@@ -44,7 +44,37 @@ impl Log for SimpleLogger {
 }
 
 /// Set up a simple logger.
+///
+/// # Panics
+///
+/// Panics if not running under `cargo-nextest`. This crate requires nextest
+/// for proper test isolation and logger setup.
 pub fn setup() {
+    // Check if we're running under cargo-nextest
+    if std::env::var("NEXTEST").as_deref() != Ok("1") {
+        panic!(
+            "\n\
+            ╔══════════════════════════════════════════════════════════════════════════════╗\n\
+            ║                                                                              ║\n\
+            ║  This test suite requires cargo-nextest to run.                              ║\n\
+            ║                                                                              ║\n\
+            ║  cargo-nextest provides:                                                     ║\n\
+            ║    • Process-per-test isolation (required for our logger setup)              ║\n\
+            ║    • Faster parallel test execution                                          ║\n\
+            ║    • Better test output and reporting                                        ║\n\
+            ║                                                                              ║\n\
+            ║  Install it with:                                                            ║\n\
+            ║    cargo install cargo-nextest                                               ║\n\
+            ║                                                                              ║\n\
+            ║  Then run tests with:                                                        ║\n\
+            ║    cargo nextest run                                                         ║\n\
+            ║                                                                              ║\n\
+            ║  For more information, visit: https://nexte.st                               ║\n\
+            ║                                                                              ║\n\
+            ╚══════════════════════════════════════════════════════════════════════════════╝\n"
+        );
+    }
+
     let logger = Box::new(SimpleLogger);
     log::set_boxed_logger(logger).unwrap();
     log::set_max_level(LevelFilter::Trace);

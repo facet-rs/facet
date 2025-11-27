@@ -1657,3 +1657,193 @@ fn set_partial_initialization_drop() -> Result<(), IPanic> {
     );
     Ok(())
 }
+
+// =============================================================================
+// Deferred validation tests
+// =============================================================================
+
+#[test]
+fn deferred_nested_struct_all_fields_interleaved() -> Result<(), IPanic> {
+    use crate::Resolution;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Inner {
+        x: u32,
+        y: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Outer {
+        name: String,
+        inner: Inner,
+        count: u64,
+    }
+
+    // Create an empty resolution for the test
+    let resolution = Resolution::new();
+
+    let mut partial = Partial::alloc::<Outer>()?;
+
+    // Enter deferred mode
+    partial.begin_deferred(resolution);
+    assert!(partial.is_deferred());
+
+    // Set fields in interleaved order: top-level, nested, top-level, nested
+    partial.set_field("name", String::from("test"))?;
+
+    partial.begin_field("inner")?;
+    partial.set_field("x", 42u32)?;
+    partial.end()?; // This should NOT fail in deferred mode even though `y` is missing
+
+    partial.set_field("count", 100u64)?;
+
+    // Now finish the inner struct
+    partial.begin_field("inner")?;
+    partial.set_field("y", String::from("hello"))?;
+    partial.end()?;
+
+    // Finish deferred mode - should validate everything is initialized
+    partial.finish_deferred()?;
+    assert!(!partial.is_deferred());
+
+    let outer = partial.build()?;
+    assert_eq!(outer.name, "test");
+    assert_eq!(outer.inner.x, 42);
+    assert_eq!(outer.inner.y, "hello");
+    assert_eq!(outer.count, 100);
+
+    Ok(())
+}
+
+#[test]
+fn deferred_nested_struct_missing_field_fails() -> Result<(), IPanic> {
+    use crate::Resolution;
+
+    #[derive(Facet, Debug)]
+    struct Inner {
+        x: u32,
+        y: String,
+    }
+
+    #[derive(Facet, Debug)]
+    struct Outer {
+        name: String,
+        inner: Inner,
+    }
+
+    let resolution = Resolution::new();
+
+    let mut partial = Partial::alloc::<Outer>()?;
+    partial.begin_deferred(resolution);
+
+    // Only set some fields, leave inner.y missing
+    partial.set_field("name", String::from("test"))?;
+
+    partial.begin_field("inner")?;
+    partial.set_field("x", 42u32)?;
+    partial.end()?; // OK in deferred mode
+
+    // finish_deferred should fail because inner.y is missing
+    let result = partial.finish_deferred();
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.to_string().contains("inner") || err.to_string().contains("uninitialized"));
+
+    Ok(())
+}
+
+#[test]
+fn deferred_without_begin_fails() -> Result<(), IPanic> {
+    #[derive(Facet, Debug)]
+    struct Simple {
+        value: u32,
+    }
+
+    let mut partial = Partial::alloc::<Simple>()?;
+
+    // Try to finish_deferred without begin_deferred
+    let result = partial.finish_deferred();
+    assert!(result.is_err());
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("deferred mode is not enabled")
+    );
+
+    Ok(())
+}
+
+#[test]
+fn deferred_can_access_resolution() -> Result<(), IPanic> {
+    use crate::Resolution;
+
+    #[derive(Facet, Debug)]
+    struct Simple {
+        value: u32,
+    }
+
+    let resolution = Resolution::new();
+
+    let mut partial = Partial::alloc::<Simple>()?;
+    assert!(partial.deferred_resolution().is_none());
+
+    partial.begin_deferred(resolution);
+    assert!(partial.deferred_resolution().is_some());
+
+    partial.set_field("value", 123u32)?;
+    partial.finish_deferred()?;
+
+    assert!(partial.deferred_resolution().is_none());
+
+    Ok(())
+}
+
+#[test]
+fn deferred_deeply_nested_interleaved() -> Result<(), IPanic> {
+    use crate::Resolution;
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Level3 {
+        deep_value: i32,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Level2 {
+        mid_value: String,
+        level3: Level3,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Level1 {
+        top_value: u64,
+        level2: Level2,
+    }
+
+    let resolution = Resolution::new();
+
+    let mut partial = Partial::alloc::<Level1>()?;
+    partial.begin_deferred(resolution);
+
+    // Set fields in a crazy interleaved order
+    partial.set_field("top_value", 1u64)?;
+
+    partial.begin_field("level2")?;
+    partial.begin_field("level3")?;
+    partial.set_field("deep_value", 42i32)?;
+    partial.end()?; // end level3
+    partial.end()?; // end level2 - missing mid_value but OK in deferred
+
+    partial.begin_field("level2")?;
+    partial.set_field("mid_value", String::from("middle"))?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+
+    let result = partial.build()?;
+    assert_eq!(result.top_value, 1);
+    assert_eq!(result.level2.mid_value, "middle");
+    assert_eq!(result.level2.level3.deep_value, 42);
+
+    Ok(())
+}

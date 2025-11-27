@@ -167,3 +167,35 @@ fn explore_option_shape() {
         println!("Inner shape: {inner_shape:?}");
     }
 }
+
+// =============================================================================
+// Tests migrated from src/partial/tests.rs
+// =============================================================================
+
+use facet_testhelpers::IPanic;
+
+#[cfg(not(miri))]
+macro_rules! assert_snapshot {
+    ($($tt:tt)*) => {
+        insta::assert_snapshot!($($tt)*)
+    };
+}
+#[cfg(miri)]
+macro_rules! assert_snapshot {
+    ($($tt:tt)*) => {{}};
+}
+
+#[test]
+fn option_uninit() -> Result<(), IPanic> {
+    assert_snapshot!(Partial::alloc::<Option<f64>>()?.build().unwrap_err());
+    Ok(())
+}
+
+#[test]
+fn option_init() -> Result<(), IPanic> {
+    let hv = Partial::alloc::<Option<f64>>()?
+        .set::<Option<f64>>(Some(6.241))?
+        .build()?;
+    assert_eq!(*hv, Some(6.241));
+    Ok(())
+}
