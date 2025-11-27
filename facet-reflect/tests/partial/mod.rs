@@ -4,6 +4,7 @@ mod array_building;
 mod deferred;
 mod deserialize;
 mod empty_tuples;
+mod fuzz;
 mod invariant;
 mod list_leak;
 mod map;
