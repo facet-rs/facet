@@ -287,7 +287,7 @@ impl fmt::Display for SolverError {
                             if names.len() == 1 {
                                 write!(f, ": missing field '{}'", names[0])?;
                             } else {
-                                write!(f, ": missing fields {:?}", names)?;
+                                write!(f, ": missing fields {names:?}")?;
                             }
                         }
                         if !failure.unknown_fields.is_empty() {
@@ -964,6 +964,7 @@ impl<'a> Solver<'a> {
     /// In the second case, no key ever excludes a candidate. Only `finish()` can
     /// determine that `Git` is missing its required `branch` field, leaving `Http`
     /// as the sole viable configuration.
+    #[allow(clippy::result_large_err)] // SolverError intentionally contains detailed diagnostic info
     pub fn finish(self) -> Result<&'a Resolution, SolverError> {
         // Compute all known fields across all resolutions (for unknown field detection)
         let all_known_fields: BTreeSet<&'static str> = self
@@ -1216,10 +1217,10 @@ fn compute_suggestions(
 
         for known in all_known_fields {
             let similarity = strsim::jaro_winkler(unknown, known);
-            if similarity >= SIMILARITY_THRESHOLD {
-                if best_match.map_or(true, |(_, best_sim)| similarity > best_sim) {
-                    best_match = Some((known, similarity));
-                }
+            if similarity >= SIMILARITY_THRESHOLD
+                && best_match.is_none_or(|(_, best_sim)| similarity > best_sim)
+            {
+                best_match = Some((known, similarity));
             }
         }
 
