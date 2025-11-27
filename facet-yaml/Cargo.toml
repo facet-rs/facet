@@ -1,0 +1,46 @@
+[package]
+name = "facet-yaml"
+version = "0.31.0"
+edition = "2024"
+rust-version = "1.87"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet-yaml"
+description = "YAML serialization and deserialization for Facet types"
+keywords = ["yaml", "serialization", "deserialization", "reflection", "facet"]
+categories = ["encoding", "parsing", "data-structures"]
+
+[features]
+std = ["alloc", "facet-core/std", "facet-reflect/std"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc"]
+default = ["std"]
+
+[dependencies]
+saphyr-parser = { git = "https://github.com/facet-rs/saphyr.git", branch = "feat/clone-parser-scanner" }
+facet-core = { path = "../facet/facet-core", default-features = false }
+facet-reflect = { path = "../facet/facet-reflect", default-features = false, features = ["miette"] }
+facet-solver = { path = "../facet/facet-solver" }
+miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
+log = "0.4.27"
+
+[dev-dependencies]
+facet = { path = "../facet/facet" }
+eyre = "0.6.12"
+ulid = "1.2.1"
+time = { version = "0.3.41", features = ["macros", "parsing", "formatting"] }
+facet-testhelpers = { path = "../facet/facet-testhelpers" }
+cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
+indoc = "2"
+camino = "1"
+facet-pretty = { path = "../facet-pretty" }
+syntect = "5.3"
+owo-colors = "4"
+boxen = "0.1"
+strsim = "0.11"
+
+[[example]]
+name = "showcase"
+path = "examples/showcase.rs"
+
+[[example]]
+name = "error_showcase"
+path = "examples/error_showcase.rs"

@@ -1,0 +1,604 @@
+//! YAML serialization using facet-reflect's Peek API.
+
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
+use std::io::Write;
+
+use facet_core::{Facet, Field, FieldAttribute, FieldFlags};
+use facet_reflect::{HasFields, Peek};
+
+use crate::error::{YamlError, YamlErrorKind};
+
+/// Get the serialized name of a field (respecting rename attributes).
+fn get_serialized_field_name(field: &Field) -> &'static str {
+    // Look for rename attribute
+    for attr in field.attributes {
+        if let FieldAttribute::Arbitrary(s) = attr {
+            // Format is "rename = \"value\""
+            if let Some(rest) = s.strip_prefix("rename = \"") {
+                if let Some(name) = rest.strip_suffix('"') {
+                    return name;
+                }
+            }
+        }
+    }
+    // Default to the field name
+    field.name
+}
+
+type Result<T> = core::result::Result<T, YamlError>;
+
+/// Serialize a value to a YAML string.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_yaml::to_string;
+///
+/// #[derive(Facet)]
+/// struct Config {
+///     name: String,
+///     port: u16,
+/// }
+///
+/// let config = Config {
+///     name: "myapp".to_string(),
+///     port: 8080,
+/// };
+///
+/// let yaml = to_string(&config).unwrap();
+/// assert!(yaml.contains("name: myapp"));
+/// assert!(yaml.contains("port: 8080"));
+/// ```
+pub fn to_string<T: Facet<'static>>(value: &T) -> Result<String> {
+    let mut output = Vec::new();
+    to_writer(&mut output, value)?;
+    let mut s = String::from_utf8(output).expect("YAML output should be valid UTF-8");
+    // Remove trailing newline for consistency
+    if s.ends_with('\n') {
+        s.pop();
+    }
+    Ok(s)
+}
+
+/// Serialize a value to a writer as YAML.
+///
+/// This is the streaming version of [`to_string`].
+pub fn to_writer<W: Write, T: Facet<'static>>(mut writer: W, value: &T) -> Result<()> {
+    // Write document start marker
+    write!(writer, "---\n")
+        .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+    let peek = Peek::new(value);
+    let mut serializer = YamlSerializer::new(writer);
+    serializer.serialize_value(peek, 0, true)
+}
+
+struct YamlSerializer<W> {
+    writer: W,
+}
+
+impl<W: Write> YamlSerializer<W> {
+    fn new(writer: W) -> Self {
+        Self { writer }
+    }
+
+    fn write_indent(&mut self, level: usize) -> Result<()> {
+        for _ in 0..level {
+            write!(self.writer, "  ")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+        }
+        Ok(())
+    }
+
+    fn write_key(&mut self, key: &str) -> Result<()> {
+        // Check if key needs quoting (contains special characters or is empty)
+        let needs_quotes = key.is_empty()
+            || key.contains(':')
+            || key.contains('#')
+            || key.contains('\n')
+            || key.contains('\r')
+            || key.contains('"')
+            || key.contains('\'')
+            || key.starts_with(' ')
+            || key.ends_with(' ')
+            || key.starts_with('-')
+            || key.starts_with('?')
+            || key.starts_with('*')
+            || key.starts_with('&')
+            || key.starts_with('!')
+            || key.starts_with('|')
+            || key.starts_with('>')
+            || key.starts_with('%')
+            || key.starts_with('@')
+            || key.starts_with('`')
+            || key.starts_with('[')
+            || key.starts_with('{')
+            || looks_like_bool(key)
+            || looks_like_null(key)
+            || looks_like_number(key);
+
+        if needs_quotes {
+            write!(self.writer, "\"{}\"", escape_string(key))
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+        } else {
+            write!(self.writer, "{}", key)
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+        }
+        Ok(())
+    }
+
+    fn serialize_value<'mem, 'facet>(
+        &mut self,
+        peek: Peek<'mem, 'facet>,
+        indent: usize,
+        is_root: bool,
+    ) -> Result<()> {
+        // Handle Option first
+        if let Ok(opt_peek) = peek.into_option() {
+            if opt_peek.is_none() {
+                write!(self.writer, "null")
+                    .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+                if is_root {
+                    writeln!(self.writer)
+                        .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+                }
+                return Ok(());
+            }
+            if let Some(inner) = opt_peek.value() {
+                return self.serialize_value(inner, indent, is_root);
+            }
+            return Ok(());
+        }
+
+        // Unwrap transparent wrappers
+        let peek = peek.innermost_peek();
+
+        // Try struct
+        if let Ok(struct_peek) = peek.into_struct() {
+            return self.serialize_struct(struct_peek, indent, is_root);
+        }
+
+        // Try enum
+        if let Ok(enum_peek) = peek.into_enum() {
+            return self.serialize_enum(enum_peek, indent, is_root);
+        }
+
+        // Try list
+        if let Ok(list_peek) = peek.into_list() {
+            return self.serialize_list(list_peek, indent, is_root);
+        }
+
+        // Try map
+        if let Ok(map_peek) = peek.into_map() {
+            return self.serialize_map(map_peek, indent, is_root);
+        }
+
+        // Scalar value
+        self.serialize_scalar(peek)?;
+        if is_root {
+            writeln!(self.writer)
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+        }
+        Ok(())
+    }
+
+    fn serialize_scalar<'mem, 'facet>(&mut self, peek: Peek<'mem, 'facet>) -> Result<()> {
+        // Try string first
+        if let Some(s) = peek.as_str() {
+            self.write_string(s)?;
+            return Ok(());
+        }
+
+        // Try various numeric and boolean types
+        if let Ok(v) = peek.get::<bool>() {
+            write!(self.writer, "{}", if *v { "true" } else { "false" })
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            return Ok(());
+        }
+
+        // Signed integers
+        if let Ok(v) = peek.get::<i8>() {
+            write!(self.writer, "{v}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            return Ok(());
+        }
+        if let Ok(v) = peek.get::<i16>() {
+            write!(self.writer, "{v}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            return Ok(());
+        }
+        if let Ok(v) = peek.get::<i32>() {
+            write!(self.writer, "{v}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            return Ok(());
+        }
+        if let Ok(v) = peek.get::<i64>() {
+            write!(self.writer, "{v}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            return Ok(());
+        }
+        if let Ok(v) = peek.get::<i128>() {
+            write!(self.writer, "{v}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            return Ok(());
+        }
+        if let Ok(v) = peek.get::<isize>() {
+            write!(self.writer, "{v}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            return Ok(());
+        }
+
+        // Unsigned integers
+        if let Ok(v) = peek.get::<u8>() {
+            write!(self.writer, "{v}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            return Ok(());
+        }
+        if let Ok(v) = peek.get::<u16>() {
+            write!(self.writer, "{v}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            return Ok(());
+        }
+        if let Ok(v) = peek.get::<u32>() {
+            write!(self.writer, "{v}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            return Ok(());
+        }
+        if let Ok(v) = peek.get::<u64>() {
+            write!(self.writer, "{v}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            return Ok(());
+        }
+        if let Ok(v) = peek.get::<u128>() {
+            write!(self.writer, "{v}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            return Ok(());
+        }
+        if let Ok(v) = peek.get::<usize>() {
+            write!(self.writer, "{v}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            return Ok(());
+        }
+
+        // Floats
+        if let Ok(v) = peek.get::<f32>() {
+            write!(self.writer, "{v}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            return Ok(());
+        }
+        if let Ok(v) = peek.get::<f64>() {
+            write!(self.writer, "{v}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            return Ok(());
+        }
+
+        // Char
+        if let Ok(v) = peek.get::<char>() {
+            self.write_string(&v.to_string())?;
+            return Ok(());
+        }
+
+        // Fallback: try to get string representation
+        write!(self.writer, "null")
+            .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+        Ok(())
+    }
+
+    fn write_string(&mut self, s: &str) -> Result<()> {
+        // Check if we need to quote the string
+        let needs_quotes = s.is_empty()
+            || s.contains(':')
+            || s.contains('#')
+            || s.contains('\n')
+            || s.contains('\r')
+            || s.contains('"')
+            || s.contains('\'')
+            || s.starts_with(' ')
+            || s.ends_with(' ')
+            || s.starts_with('-')
+            || s.starts_with('?')
+            || s.starts_with('*')
+            || s.starts_with('&')
+            || s.starts_with('!')
+            || s.starts_with('|')
+            || s.starts_with('>')
+            || s.starts_with('%')
+            || s.starts_with('@')
+            || s.starts_with('`')
+            || s.starts_with('[')
+            || s.starts_with('{')
+            || looks_like_bool(s)
+            || looks_like_null(s)
+            || looks_like_number(s);
+
+        if needs_quotes {
+            write!(self.writer, "\"{}\"", escape_string(s))
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+        } else {
+            write!(self.writer, "{s}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+        }
+        Ok(())
+    }
+
+    fn serialize_struct<'mem, 'facet>(
+        &mut self,
+        struct_peek: facet_reflect::PeekStruct<'mem, 'facet>,
+        indent: usize,
+        is_root: bool,
+    ) -> Result<()> {
+        let mut first = true;
+
+        for (field, field_peek) in struct_peek.fields() {
+            // Skip fields with skip_serializing
+            if field.flags.contains(FieldFlags::SKIP_SERIALIZING) {
+                continue;
+            }
+
+            // Check skip_serializing_if
+            if let Some(skip_fn) = field.vtable.skip_serializing_if {
+                // Get the raw pointer to the field value
+                // This is tricky - for now, skip this optimization
+                // TODO: implement skip_serializing_if properly
+            }
+
+            if !first || !is_root {
+                if first && !is_root {
+                    writeln!(self.writer)
+                        .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+                }
+            }
+
+            if !first {
+                writeln!(self.writer)
+                    .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            }
+
+            self.write_indent(indent)?;
+            // Use serialized name (respecting rename attribute)
+            let serialized_name = get_serialized_field_name(&field);
+            self.write_key(serialized_name)?;
+            write!(self.writer, ": ")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+
+            // Check if value is complex (struct, list, map) and needs newline
+            if self.is_complex_value(&field_peek) {
+                self.serialize_value(field_peek, indent + 1, false)?;
+            } else {
+                self.serialize_value(field_peek, indent + 1, false)?;
+            }
+
+            first = false;
+        }
+
+        if is_root && !first {
+            writeln!(self.writer)
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+        }
+
+        Ok(())
+    }
+
+    fn serialize_enum<'mem, 'facet>(
+        &mut self,
+        enum_peek: facet_reflect::PeekEnum<'mem, 'facet>,
+        indent: usize,
+        is_root: bool,
+    ) -> Result<()> {
+        let variant_name = enum_peek.variant_name_active().map_err(|e| {
+            YamlError::without_span(YamlErrorKind::InvalidValue {
+                message: format!("failed to get variant name: {e}"),
+            })
+        })?;
+
+        // Check if it's a unit variant
+        let fields: Vec<_> = enum_peek.fields().collect();
+        if fields.is_empty() {
+            // Unit variant: just the name
+            self.write_string(variant_name)?;
+            if is_root {
+                writeln!(self.writer)
+                    .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            }
+            return Ok(());
+        }
+
+        // Check variant kind
+        let is_newtype = fields.len() == 1 && fields[0].0.name == "0";
+        let is_tuple = fields.iter().all(|(f, _)| f.name.parse::<usize>().is_ok());
+
+        // Externally tagged format
+        write!(self.writer, "{variant_name}:")
+            .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+
+        if is_newtype {
+            // Newtype variant: VariantName: value
+            write!(self.writer, " ")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            self.serialize_value(fields[0].1.clone(), indent + 1, false)?;
+        } else if is_tuple {
+            // Tuple variant: VariantName: [items]
+            writeln!(self.writer)
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            for (_, field_peek) in fields {
+                self.write_indent(indent + 1)?;
+                write!(self.writer, "- ")
+                    .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+                self.serialize_value(field_peek, indent + 2, false)?;
+                writeln!(self.writer)
+                    .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            }
+        } else {
+            // Struct variant: VariantName: {fields}
+            writeln!(self.writer)
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            for (field, field_peek) in fields {
+                self.write_indent(indent + 1)?;
+                write!(self.writer, "{}: ", field.name)
+                    .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+                self.serialize_value(field_peek, indent + 2, false)?;
+                writeln!(self.writer)
+                    .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            }
+        }
+
+        if is_root && (is_newtype || !is_tuple) {
+            // Already handled newline
+        }
+
+        Ok(())
+    }
+
+    fn serialize_list<'mem, 'facet>(
+        &mut self,
+        list_peek: facet_reflect::PeekList<'mem, 'facet>,
+        indent: usize,
+        is_root: bool,
+    ) -> Result<()> {
+        let items: Vec<_> = list_peek.iter().collect();
+
+        if items.is_empty() {
+            write!(self.writer, "[]")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            if is_root {
+                writeln!(self.writer)
+                    .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            }
+            return Ok(());
+        }
+
+        // Block style list
+        if !is_root {
+            writeln!(self.writer)
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+        }
+
+        for item in items {
+            self.write_indent(indent)?;
+            write!(self.writer, "- ")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            if self.is_complex_value(&item) {
+                self.serialize_value(item, indent + 1, false)?;
+            } else {
+                self.serialize_value(item, indent + 1, false)?;
+            }
+            writeln!(self.writer)
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+        }
+
+        Ok(())
+    }
+
+    fn serialize_map<'mem, 'facet>(
+        &mut self,
+        map_peek: facet_reflect::PeekMap<'mem, 'facet>,
+        indent: usize,
+        is_root: bool,
+    ) -> Result<()> {
+        let entries: Vec<_> = map_peek.iter().collect();
+
+        if entries.is_empty() {
+            write!(self.writer, "{{}}")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            if is_root {
+                writeln!(self.writer)
+                    .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+            }
+            return Ok(());
+        }
+
+        if !is_root {
+            writeln!(self.writer)
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+        }
+
+        for (key_peek, value_peek) in entries {
+            self.write_indent(indent)?;
+
+            // Serialize key (must be scalar-ish)
+            if let Some(s) = key_peek.as_str() {
+                self.write_string(s)?;
+            } else {
+                self.serialize_scalar(key_peek)?;
+            }
+
+            write!(self.writer, ": ")
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+
+            if self.is_complex_value(&value_peek) {
+                self.serialize_value(value_peek, indent + 1, false)?;
+            } else {
+                self.serialize_value(value_peek, indent + 1, false)?;
+            }
+
+            writeln!(self.writer)
+                .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
+        }
+
+        Ok(())
+    }
+
+    fn is_complex_value<'mem, 'facet>(&self, peek: &Peek<'mem, 'facet>) -> bool {
+        let peek = peek.innermost_peek();
+
+        // Check if it's a struct, list, or map
+        if peek.into_struct().is_ok() {
+            return true;
+        }
+        if peek.into_list().is_ok() {
+            if let Ok(list) = peek.into_list() {
+                // Only complex if non-empty
+                return list.iter().next().is_some();
+            }
+        }
+        if peek.into_map().is_ok() {
+            if let Ok(map) = peek.into_map() {
+                return map.iter().next().is_some();
+            }
+        }
+        false
+    }
+}
+
+/// Check if string looks like a boolean
+fn looks_like_bool(s: &str) -> bool {
+    matches!(
+        s.to_lowercase().as_str(),
+        "true" | "false" | "yes" | "no" | "on" | "off" | "y" | "n"
+    )
+}
+
+/// Check if string looks like null
+fn looks_like_null(s: &str) -> bool {
+    matches!(s.to_lowercase().as_str(), "null" | "~" | "nil" | "none")
+}
+
+/// Check if string looks like a number
+fn looks_like_number(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let s = s.trim();
+    // Check for integer or float
+    s.parse::<i64>().is_ok() || s.parse::<f64>().is_ok()
+}
+
+/// Escape special characters in a YAML string
+fn escape_string(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            c if c.is_control() => {
+                result.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => result.push(c),
+        }
+    }
+    result
+}
