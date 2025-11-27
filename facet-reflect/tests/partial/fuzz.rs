@@ -3,6 +3,11 @@
 //! The goal: no matter what sequence of operations we throw at Partial,
 //! it should never cause memory unsafety. Operations may fail with errors,
 //! but the Partial must remain in a consistent state that can be safely dropped.
+//!
+//! These tests are gated behind the `fuzz-tests` feature because they're very slow.
+//! Run with: `cargo nextest run -p facet-reflect --features fuzz-tests`
+
+#![cfg(feature = "fuzz-tests")]
 
 use facet::Facet;
 use facet_reflect::{Partial, Resolution};
