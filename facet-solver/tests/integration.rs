@@ -2265,7 +2265,8 @@ fn test_enum_repr_detection_adjacently_tagged() {
     );
 }
 
-/// Test that `EnumRepr::from_shape` defaults to Flattened for plain enums.
+/// Test that `EnumRepr::from_shape` defaults to ExternallyTagged for plain enums.
+/// This is the correct default for flattened enums - the variant name becomes a key.
 #[test]
 fn test_enum_repr_detection_default() {
     #[derive(Facet)]
@@ -2277,7 +2278,7 @@ fn test_enum_repr_detection_default() {
     }
 
     let repr = EnumRepr::from_shape(PlainEnum::SHAPE);
-    assert_eq!(repr, EnumRepr::Flattened);
+    assert_eq!(repr, EnumRepr::ExternallyTagged);
 }
 
 /// Test that `Schema::build_auto` works with internally-tagged enums.

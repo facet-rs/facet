@@ -1121,11 +1121,10 @@ impl EnumRepr {
     /// Detect the enum representation from a Shape's attributes.
     ///
     /// Returns:
-    /// - `Flattened` if `#[facet(untagged)]` or no enum-related attributes
+    /// - `Flattened` if `#[facet(untagged)]`
     /// - `InternallyTagged` if `#[facet(tag = "...")]` without content
     /// - `AdjacentlyTagged` if both `#[facet(tag = "...", content = "...")]`
-    /// - `ExternallyTagged` is NOT auto-detected (it's the explicit choice when
-    ///   you want variant-name-as-key behavior)
+    /// - `ExternallyTagged` if no attributes (the default enum representation)
     pub fn from_shape(shape: &'static Shape) -> Self {
         let tag = shape.get_tag_attr();
         let content = shape.get_content_attr();
@@ -1138,10 +1137,10 @@ impl EnumRepr {
             (Some(t), Some(c), false) => EnumRepr::AdjacentlyTagged { tag: t, content: c },
             // Only tag specified → internally tagged
             (Some(t), None, false) => EnumRepr::InternallyTagged { tag: t },
-            // No attributes → default to flattened (for flatten solver behavior)
-            (None, None, false) => EnumRepr::Flattened,
-            // Content without tag is invalid, treat as flattened
-            (None, Some(_), false) => EnumRepr::Flattened,
+            // No attributes → default to externally tagged (variant name as key)
+            (None, None, false) => EnumRepr::ExternallyTagged,
+            // Content without tag is invalid, treat as externally tagged
+            (None, Some(_), false) => EnumRepr::ExternallyTagged,
         }
     }
 }
