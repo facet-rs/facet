@@ -118,7 +118,7 @@ mod partial_api;
 mod typed;
 pub use typed::*;
 
-use crate::{ReflectError, TrackerKind, trace};
+use crate::{ReflectError, Resolution, TrackerKind, trace};
 
 use core::{marker::PhantomData, ptr::NonNull};
 
@@ -168,6 +168,12 @@ pub struct Partial<'facet> {
 
     /// current state of the Partial
     state: PartialState,
+
+    /// When set, deferred validation mode is enabled with this Resolution.
+    /// `end()` will skip the "all fields initialized" check, deferring
+    /// validation until `finish_deferred()` is called, which validates
+    /// against this resolution.
+    deferred_resolution: Option<Resolution>,
 
     invariant: PhantomData<fn(&'facet ()) -> &'facet ()>,
 }

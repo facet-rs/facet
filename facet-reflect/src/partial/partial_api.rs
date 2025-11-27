@@ -10,7 +10,7 @@ use alloc::{
 use core::{marker::PhantomData, mem::ManuallyDrop, ptr::NonNull};
 
 use crate::{
-    Guard, HeapValue, Partial, Peek, ReflectError, TypedPartial,
+    Guard, HeapValue, Partial, Peek, ReflectError, Resolution, TypedPartial,
     partial::{Frame, FrameOwnership, MapInsertState, PartialState, Tracker, iset::ISet},
     trace,
 };
@@ -56,6 +56,7 @@ impl<'facet> Partial<'facet> {
         Ok(Self {
             frames,
             state: PartialState::Active,
+            deferred_resolution: None,
             invariant: PhantomData,
         })
     }
@@ -85,6 +86,69 @@ impl<'facet> Partial<'facet> {
             .last()
             .expect("Partial always has at least one frame")
             .shape
+    }
+
+    /// Returns whether deferred validation mode is enabled.
+    #[inline]
+    pub fn is_deferred(&self) -> bool {
+        self.deferred_resolution.is_some()
+    }
+
+    /// Returns the current deferred resolution, if in deferred mode.
+    #[inline]
+    pub fn deferred_resolution(&self) -> Option<&Resolution> {
+        self.deferred_resolution.as_ref()
+    }
+
+    /// Enables deferred validation mode with the given Resolution.
+    ///
+    /// When deferred mode is enabled, `end()` will skip the "all fields initialized"
+    /// check when popping frames. This allows deserializers to populate fields in
+    /// any order without immediate validation.
+    ///
+    /// The Resolution specifies which fields exist, which are required, and their
+    /// paths. Call `finish_deferred()` after all fields are populated to perform
+    /// validation against this resolution.
+    ///
+    /// # Use Cases
+    ///
+    /// - Deserializing formats where fields may arrive out of order
+    /// - Building complex nested structures where parent initialization
+    ///   depends on child values
+    /// - Integration with `facet-solver` for flatten/untagged enum handling
+    #[inline]
+    pub fn begin_deferred(&mut self, resolution: Resolution) -> &mut Self {
+        self.deferred_resolution = Some(resolution);
+        self
+    }
+
+    /// Finishes deferred mode and validates that all required fields are initialized.
+    ///
+    /// This method should be called after all fields have been populated in deferred
+    /// mode. It validates the root frame against the stored Resolution.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any required fields are missing or if the partial is
+    /// not in deferred mode.
+    pub fn finish_deferred(&mut self) -> Result<&mut Self, ReflectError> {
+        let resolution =
+            self.deferred_resolution
+                .take()
+                .ok_or_else(|| ReflectError::InvariantViolation {
+                    invariant: "finish_deferred() called but deferred mode is not enabled",
+                })?;
+
+        // Validate the root frame is fully initialized
+        // TODO: Use the resolution for more sophisticated validation
+        // (e.g., checking specific fields by path, handling defaults)
+        if let Some(frame) = self.frames.last() {
+            frame.require_full_initialization()?;
+        }
+
+        // Resolution is now consumed (taken), deferred mode is exited
+        drop(resolution);
+        Ok(self)
     }
 
     /// Pops the current frame off the stack, indicating we're done initializing the current field
@@ -130,7 +194,8 @@ impl<'facet> Partial<'facet> {
         }
 
         // Require that the top frame is fully initialized before popping.
-        {
+        // Skip this check in deferred mode - validation happens in finish_deferred().
+        if self.deferred_resolution.is_none() {
             let frame = self.frames.last().unwrap();
             trace!(
                 "end(): Checking full initialization for frame with shape {} and tracker {:?}",

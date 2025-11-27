@@ -370,6 +370,28 @@ impl Shape {
             "Shape mismatch: expected {other}, found {self}",
         );
     }
+
+    /// Returns true if this shape requires eager materialization.
+    ///
+    /// Shapes that require eager materialization cannot have their construction
+    /// deferred because they need all their data available at once. Examples include:
+    ///
+    /// - `Arc<[T]>`, `Box<[T]>`, `Rc<[T]>` - slice-based smart pointers that need
+    ///   all elements to compute the final allocation
+    ///
+    /// This is used by deferred validation mode in `Partial` to determine which
+    /// shapes must be fully materialized before proceeding.
+    #[inline]
+    pub fn requires_eager_materialization(&self) -> bool {
+        // Check if this is a pointer type with slice_builder_vtable
+        // (indicates Arc<[T]>, Box<[T]>, Rc<[T]>, etc.)
+        if let Ok(ptr_def) = self.def.into_pointer() {
+            if ptr_def.vtable.slice_builder_vtable.is_some() {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 // Helper struct to format the name for display
