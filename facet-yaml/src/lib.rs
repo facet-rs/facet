@@ -30,8 +30,10 @@ extern crate alloc;
 
 mod deserialize;
 mod error;
+#[cfg(feature = "std")]
 mod serialize;
 
 pub use deserialize::from_str;
 pub use error::{YamlError, YamlErrorKind};
+#[cfg(feature = "std")]
 pub use serialize::{to_string, to_writer};

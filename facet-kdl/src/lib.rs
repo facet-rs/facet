@@ -293,11 +293,11 @@ enum FieldMatchResult {
 enum ChildrenContainerState {
     /// Not currently in a children container
     None,
-    /// In a list container (Vec<T>)
+    /// In a list container (`Vec<T>`)
     List,
-    /// In a map container (HashMap<K, V> or BTreeMap<K, V>)
+    /// In a map container (`HashMap<K, V>` or `BTreeMap<K, V>`)
     Map,
-    /// In a set container (HashSet<T> or BTreeSet<T>)
+    /// In a set container (`HashSet<T>` or `BTreeSet<T>`)
     Set,
 }
 
@@ -2113,9 +2113,9 @@ impl<'input, 'facet> KdlDeserializer<'input> {
     /// Open path segments from current state to target (excluding the final field).
     ///
     /// If `enter_new_options` is false, this will return `Ok(Some(field_name))` if it would need to
-    /// enter a new Option<T> field that isn't already open, where field_name is the name of the
+    /// enter a new `Option<T>` field that isn't already open, where field_name is the name of the
     /// Option field that was encountered. This is used when initializing missing optional fields -
-    /// we don't want to enter a new Option<T> just to set defaults, as that would turn None into
+    /// we don't want to enter a new `Option<T>` just to set defaults, as that would turn None into
     /// Some(default).
     ///
     /// Returns `Ok(None)` if the path was fully opened.

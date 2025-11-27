@@ -35,7 +35,7 @@ pub enum Diff<'mem, 'facet> {
         /// The name of the variant, this is [`None`] if the values are structs
         variant: Option<&'static str>,
 
-        /// cf. [Value]
+        /// cf. [`Value`]
         value: Value<'mem, 'facet>,
     },
 
