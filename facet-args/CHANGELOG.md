@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.7](https://github.com/facet-rs/facet-args/compare/v0.30.0...v0.31.7) - 2025-11-27
+
+### Other
+
+- Update various deps
+- Upgrade to facet 0.31
+
 ## [0.30.0](https://github.com/facet-rs/facet-args/compare/v0.29.0...v0.30.0) - 2025-10-18
 
 ### Other
