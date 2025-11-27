@@ -196,50 +196,6 @@ impl FrameMode {
         matches!(self, FrameMode::Deferred { .. })
     }
 
-    /// Get deferred state if in deferred mode.
-    fn as_deferred(
-        &self,
-    ) -> Option<(
-        &Vec<Frame>,
-        &Resolution,
-        usize,
-        &KeyPath,
-        &BTreeMap<KeyPath, Frame>,
-    )> {
-        match self {
-            FrameMode::Deferred {
-                stack,
-                resolution,
-                start_depth,
-                current_path,
-                stored_frames,
-            } => Some((stack, resolution, *start_depth, current_path, stored_frames)),
-            FrameMode::Strict { .. } => None,
-        }
-    }
-
-    /// Get mutable deferred state if in deferred mode.
-    fn as_deferred_mut(
-        &mut self,
-    ) -> Option<(
-        &mut Vec<Frame>,
-        &mut Resolution,
-        &mut usize,
-        &mut KeyPath,
-        &mut BTreeMap<KeyPath, Frame>,
-    )> {
-        match self {
-            FrameMode::Deferred {
-                stack,
-                resolution,
-                start_depth,
-                current_path,
-                stored_frames,
-            } => Some((stack, resolution, start_depth, current_path, stored_frames)),
-            FrameMode::Strict { .. } => None,
-        }
-    }
-
     /// Get the start depth if in deferred mode.
     fn start_depth(&self) -> Option<usize> {
         match self {
@@ -252,30 +208,6 @@ impl FrameMode {
     fn current_path(&self) -> Option<&KeyPath> {
         match self {
             FrameMode::Deferred { current_path, .. } => Some(current_path),
-            FrameMode::Strict { .. } => None,
-        }
-    }
-
-    /// Get mutable current path if in deferred mode.
-    fn current_path_mut(&mut self) -> Option<&mut KeyPath> {
-        match self {
-            FrameMode::Deferred { current_path, .. } => Some(current_path),
-            FrameMode::Strict { .. } => None,
-        }
-    }
-
-    /// Get stored frames if in deferred mode.
-    fn stored_frames(&self) -> Option<&BTreeMap<KeyPath, Frame>> {
-        match self {
-            FrameMode::Deferred { stored_frames, .. } => Some(stored_frames),
-            FrameMode::Strict { .. } => None,
-        }
-    }
-
-    /// Get mutable stored frames if in deferred mode.
-    fn stored_frames_mut(&mut self) -> Option<&mut BTreeMap<KeyPath, Frame>> {
-        match self {
-            FrameMode::Deferred { stored_frames, .. } => Some(stored_frames),
             FrameMode::Strict { .. } => None,
         }
     }
@@ -1033,24 +965,6 @@ impl<'facet> Partial<'facet> {
         self.mode.current_path()
     }
 
-    /// Get mutable current path if in deferred mode.
-    #[inline]
-    pub(crate) fn current_path_mut(&mut self) -> Option<&mut KeyPath> {
-        self.mode.current_path_mut()
-    }
-
-    /// Get stored frames if in deferred mode.
-    #[inline]
-    pub(crate) fn stored_frames(&self) -> Option<&BTreeMap<KeyPath, Frame>> {
-        self.mode.stored_frames()
-    }
-
-    /// Get mutable stored frames if in deferred mode.
-    #[inline]
-    pub(crate) fn stored_frames_mut(&mut self) -> Option<&mut BTreeMap<KeyPath, Frame>> {
-        self.mode.stored_frames_mut()
-    }
-
     /// Get the resolution if in deferred mode.
     #[inline]
     pub(crate) fn resolution(&self) -> Option<&Resolution> {
@@ -1102,7 +1016,7 @@ impl<'facet> Drop for Partial<'facet> {
                             if path.len() == 1 {
                                 let field_name = path.first().unwrap();
                                 let parent_has_field_marked =
-                                    stack.get(parent_index).map_or(false, |parent| {
+                                    stack.get(parent_index).is_some_and(|parent| {
                                         Self::is_field_marked_in_parent(parent, field_name)
                                     });
                                 // If parent has it marked, don't deinit (parent will drop).
@@ -1158,14 +1072,14 @@ impl<'facet> Drop for Partial<'facet> {
             match &frame.ownership {
                 FrameOwnership::Field => {
                     // Check if parent will actually handle dropping this field
-                    let parent_will_drop = self.mode.stack().last().map_or(false, |parent| {
+                    let parent_will_drop = self.mode.stack().last().is_some_and(|parent| {
                         match &parent.tracker {
                             Tracker::Struct {
                                 iset,
                                 current_child,
                             } => {
                                 // Parent drops this field only if it's marked in iset
-                                current_child.map_or(false, |idx| iset.get(idx))
+                                current_child.is_some_and(|idx| iset.get(idx))
                             }
                             Tracker::Enum {
                                 data,
@@ -1173,14 +1087,14 @@ impl<'facet> Drop for Partial<'facet> {
                                 ..
                             } => {
                                 // Parent drops this field only if it's marked in data
-                                current_child.map_or(false, |idx| data.get(idx))
+                                current_child.is_some_and(|idx| data.get(idx))
                             }
                             Tracker::Array {
                                 iset,
                                 current_child,
                             } => {
                                 // Parent drops this element only if it's marked in iset
-                                current_child.map_or(false, |idx| iset.get(idx))
+                                current_child.is_some_and(|idx| iset.get(idx))
                             }
                             // For other tracker types, the parent won't drop field children
                             _ => false,

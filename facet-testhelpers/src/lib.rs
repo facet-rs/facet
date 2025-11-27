@@ -50,8 +50,11 @@ impl Log for SimpleLogger {
 /// Panics if not running under `cargo-nextest`. This crate requires nextest
 /// for proper test isolation and logger setup.
 pub fn setup() {
-    // Check if we're running under cargo-nextest
-    if std::env::var("NEXTEST").as_deref() != Ok("1") {
+    // Check if we're running under cargo-nextest or miri
+    // (miri runs via `cargo miri nextest run` but doesn't set NEXTEST=1)
+    let is_nextest = std::env::var("NEXTEST").as_deref() == Ok("1");
+    let is_miri = cfg!(miri);
+    if !is_nextest && !is_miri {
         panic!(
             "\n\
             ╔══════════════════════════════════════════════════════════════════════════════╗\n\

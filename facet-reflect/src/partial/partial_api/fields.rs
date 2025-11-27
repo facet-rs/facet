@@ -124,10 +124,7 @@ impl Partial<'_> {
 
                     // Check if we have a stored frame for this path
                     if let Some(stored_frame) = stored_frames.remove(current_path) {
-                        trace!(
-                            "begin_nth_field: Restoring stored frame for path {:?}",
-                            current_path
-                        );
+                        trace!("begin_nth_field: Restoring stored frame for path {current_path:?}");
 
                         // Update parent's current_child tracking
                         let frame = stack.last_mut().unwrap();

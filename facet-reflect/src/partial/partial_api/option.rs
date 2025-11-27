@@ -55,20 +55,16 @@ impl Partial<'_> {
                     match &mut parent_frame.tracker {
                         Tracker::Struct {
                             iset,
-                            current_child,
+                            current_child: Some(idx),
                         } => {
-                            if let Some(idx) = *current_child {
-                                iset.unset(idx);
-                            }
+                            iset.unset(*idx);
                         }
                         Tracker::Enum {
                             data,
-                            current_child,
+                            current_child: Some(idx),
                             ..
                         } => {
-                            if let Some(idx) = *current_child {
-                                data.unset(idx);
-                            }
+                            data.unset(*idx);
                         }
                         _ => {}
                     }
