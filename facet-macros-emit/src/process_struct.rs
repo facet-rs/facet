@@ -144,7 +144,10 @@ pub(crate) fn gen_field_from_pfield(
             PFacetAttr::Transparent
             | PFacetAttr::Invariants { .. }
             | PFacetAttr::DenyUnknownFields
-            | PFacetAttr::TypeTag { .. } => {}
+            | PFacetAttr::TypeTag { .. }
+            | PFacetAttr::Untagged
+            | PFacetAttr::Tag { .. }
+            | PFacetAttr::Content { .. } => {}
         }
     }
 
@@ -315,7 +318,10 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 | PFacetAttr::SerializeWith { .. }
                 | PFacetAttr::Flatten
                 | PFacetAttr::Child
-                | PFacetAttr::TypeTag { .. } => {}
+                | PFacetAttr::TypeTag { .. }
+                | PFacetAttr::Untagged
+                | PFacetAttr::Tag { .. }
+                | PFacetAttr::Content { .. } => {}
             }
         }
         if items.is_empty() {

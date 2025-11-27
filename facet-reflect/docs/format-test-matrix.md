@@ -257,17 +257,122 @@ struct Server {
 
 Flattened fields merge into the parent structure. See the [Flatten Solver](#flatten-solver) section.
 
-### `[r.attrs.untagged]` untagged (planned)
+### `[r.attrs.enum_repr]` Enum Representations
 
-Not yet implemented. Will allow:
+Facet supports four enum representations, matching serde's model. Consider this enum:
 
 ```rust
-#[facet(untagged)]
-enum StringOrInt {
-    String(String),
-    Int(i64),
+#[derive(Facet)]
+enum Message {
+    Request { id: String, method: String },
+    Response { id: String, result: Value },
 }
 ```
+
+#### Externally Tagged (default)
+
+The default representation. The variant name wraps the content:
+
+```json
+{"Request": {"id": "...", "method": "..."}}
+```
+
+Characteristics:
+- Works across all text and binary formats
+- Variant is known before parsing content
+- Handles all variant types: unit, newtype, tuple, struct
+
+#### Internally Tagged
+
+```rust
+#[derive(Facet)]
+#[facet(tag = "type")]
+enum Message {
+    Request { id: String, method: String },
+    Response { id: String, result: Value },
+}
+```
+
+The tag is inside the content, alongside other fields:
+
+```json
+{"type": "Request", "id": "...", "method": "..."}
+```
+
+Characteristics:
+- Common in Java libraries and REST APIs
+- Works for struct variants, newtype variants containing structs/maps, and unit variants
+- Does **not** work for tuple variants (compile-time error)
+
+#### Adjacently Tagged
+
+```rust
+#[derive(Facet)]
+#[facet(tag = "t", content = "c")]
+enum Block {
+    Para(Vec<Inline>),
+    Str(String),
+}
+```
+
+Tag and content are sibling fields:
+
+```json
+{"t": "Para", "c": [{...}, {...}]}
+{"t": "Str", "c": "the string"}
+```
+
+Characteristics:
+- Common in Haskell ecosystem
+- Handles all variant types
+
+#### Untagged
+
+```rust
+#[derive(Facet)]
+#[facet(untagged)]
+enum Message {
+    Request { id: String, method: String },
+    Response { id: String, result: Value },
+}
+```
+
+No tag — the deserializer tries each variant in order:
+
+```json
+{"id": "...", "method": "..."}
+```
+
+Characteristics:
+- Useful for "string or int" union types
+- Deserializer tries variants in declaration order, first success wins
+- Handles all variant types
+
+Example for union types:
+
+```rust
+#[derive(Facet)]
+#[facet(untagged)]
+enum StringOrInt {
+    Int(i64),
+    String(String),
+}
+```
+
+Can deserialize from either `42` or `"hello"`.
+
+#### Helper Methods
+
+Format crates can use these `Shape` methods:
+- `shape.is_untagged()` — returns `true` if `#[facet(untagged)]`
+- `shape.get_tag_attr()` — returns `Some("type")` for `#[facet(tag = "type")]`
+- `shape.get_content_attr()` — returns `Some("c")` for `#[facet(content = "c")]`
+
+Determining representation:
+- `is_untagged()` → untagged
+- `get_tag_attr().is_some() && get_content_attr().is_some()` → adjacently tagged
+- `get_tag_attr().is_some()` → internally tagged
+- otherwise → externally tagged (default)
 
 ### `[r.attrs.deny_unknown]` deny_unknown_fields
 

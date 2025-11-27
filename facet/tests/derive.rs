@@ -641,3 +641,75 @@ fn test_transparent_newtype() {
         panic!("Expected Struct innards");
     }
 }
+
+// ============================================================================
+// Enum representation attribute tests
+// ============================================================================
+
+#[test]
+fn enum_untagged() {
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    #[facet(untagged)]
+    #[allow(dead_code)]
+    enum StringOrInt {
+        Int(i64),
+        String(String),
+    }
+
+    let shape = StringOrInt::SHAPE;
+    assert!(shape.is_untagged());
+    assert!(shape.get_tag_attr().is_none());
+    assert!(shape.get_content_attr().is_none());
+}
+
+#[test]
+fn enum_internally_tagged() {
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    #[facet(tag = "type")]
+    #[allow(dead_code)]
+    enum Message {
+        Request { id: String },
+        Response { id: String },
+    }
+
+    let shape = Message::SHAPE;
+    assert!(!shape.is_untagged());
+    assert_eq!(shape.get_tag_attr(), Some("type"));
+    assert!(shape.get_content_attr().is_none());
+}
+
+#[test]
+fn enum_adjacently_tagged() {
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    #[facet(tag = "t", content = "c")]
+    #[allow(dead_code)]
+    enum Block {
+        Para(String),
+        Code(String),
+    }
+
+    let shape = Block::SHAPE;
+    assert!(!shape.is_untagged());
+    assert_eq!(shape.get_tag_attr(), Some("t"));
+    assert_eq!(shape.get_content_attr(), Some("c"));
+}
+
+#[test]
+fn enum_externally_tagged_default() {
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum Status {
+        Active,
+        Inactive,
+    }
+
+    let shape = Status::SHAPE;
+    // Default is externally tagged - no attributes
+    assert!(!shape.is_untagged());
+    assert!(shape.get_tag_attr().is_none());
+    assert!(shape.get_content_attr().is_none());
+}

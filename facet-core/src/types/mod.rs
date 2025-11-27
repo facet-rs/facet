@@ -137,6 +137,15 @@ pub enum ShapeAttribute {
     RenameAll(&'static str),
     /// Custom field attribute containing arbitrary text
     Arbitrary(&'static str),
+    /// Indicates that this enum should be serialized/deserialized without a tag
+    /// (untagged enum representation)
+    Untagged,
+    /// Specifies the tag field name for internally or adjacently tagged enums
+    /// e.g., `#[facet(tag = "type")]`
+    Tag(&'static str),
+    /// Specifies the content field name for adjacently tagged enums
+    /// e.g., `#[facet(content = "data")]` (used together with `tag`)
+    Content(&'static str),
 }
 
 impl Shape {
@@ -186,6 +195,36 @@ impl Shape {
         self.attributes.iter().find_map(|attr| {
             if let ShapeAttribute::RenameAll(rule) = attr {
                 Some(*rule)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// See [`ShapeAttribute::Untagged`]
+    #[inline]
+    pub fn is_untagged(&self) -> bool {
+        self.attributes.contains(&ShapeAttribute::Untagged)
+    }
+
+    /// See [`ShapeAttribute::Tag`]
+    #[inline]
+    pub fn get_tag_attr(&self) -> Option<&str> {
+        self.attributes.iter().find_map(|attr| {
+            if let ShapeAttribute::Tag(name) = attr {
+                Some(*name)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// See [`ShapeAttribute::Content`]
+    #[inline]
+    pub fn get_content_attr(&self) -> Option<&str> {
+        self.attributes.iter().find_map(|attr| {
+            if let ShapeAttribute::Content(name) = attr {
+                Some(*name)
             } else {
                 None
             }

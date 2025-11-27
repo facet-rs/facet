@@ -62,6 +62,12 @@ keyword! {
     pub KDeserializeWith = "deserialize_with";
     /// The "serialize_with" keyword.
     pub KSerializeWith = "serialize_with";
+    /// The "untagged" keyword.
+    pub KUntagged = "untagged";
+    /// The "tag" keyword.
+    pub KTag = "tag";
+    /// The "content" keyword.
+    pub KContent = "content";
 }
 
 operator! {
@@ -173,8 +179,34 @@ unsynn! {
         DeserializeWith(DeserializeWithInner),
         /// A function to define how to serializize the target
         SerializeWith(SerializeWithInner),
+        /// An untagged attribute for enums (variants are not tagged with their name)
+        Untagged(KUntagged),
+        /// A tag attribute for internally/adjacently tagged enums (#[facet(tag = "type")])
+        Tag(TagInner),
+        /// A content attribute for adjacently tagged enums (#[facet(content = "data")])
+        Content(ContentInner),
         /// Any other attribute represented as a sequence of token trees.
         Arbitrary(VerbatimUntil<Comma>),
+    }
+
+    /// Inner value for #[facet(tag = ...)]
+    pub struct TagInner {
+        /// The "tag" keyword.
+        pub _kw_tag: KTag,
+        /// The equals sign '='.
+        pub _eq: Eq,
+        /// The value assigned, as a literal string.
+        pub value: LiteralString,
+    }
+
+    /// Inner value for #[facet(content = ...)]
+    pub struct ContentInner {
+        /// The "content" keyword.
+        pub _kw_content: KContent,
+        /// The equals sign '='.
+        pub _eq: Eq,
+        /// The value assigned, as a literal string.
+        pub value: LiteralString,
     }
 
     /// Inner value for #[facet(flatten)]

@@ -55,6 +55,15 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     // Maybe panic or warn here? For now, ignoring.
                     panic!("Invariants are not supported on enums")
                 }
+                PFacetAttr::Untagged => {
+                    attribute_tokens.push(quote! { ::facet::ShapeAttribute::Untagged });
+                }
+                PFacetAttr::Tag { name } => {
+                    attribute_tokens.push(quote! { ::facet::ShapeAttribute::Tag(#name) });
+                }
+                PFacetAttr::Content { name } => {
+                    attribute_tokens.push(quote! { ::facet::ShapeAttribute::Content(#name) });
+                }
                 // Opaque, Transparent, SkipSerializing/If, Default/Equals are not relevant/valid for enum containers.
                 _ => {}
             }

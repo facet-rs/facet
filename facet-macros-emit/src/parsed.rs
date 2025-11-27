@@ -96,6 +96,19 @@ pub enum PFacetAttr {
     /// Valid in field, enum variant, or container
     /// `#[facet(serialize_with = func)]` — support serialization of the field using the specified function. takes the form `fn(&input_type) -> output_shape. where input_type can be any type, including opaque types.
     SerializeWith { expr: TokenStream },
+
+    /// Valid in container (enums only)
+    /// `#[facet(untagged)]` — for enums, variants are serialized without a tag
+    Untagged,
+
+    /// Valid in container (enums only)
+    /// `#[facet(tag = "type")]` — internally tagged enum (tag is inside the content)
+    /// or adjacently tagged when combined with `content`
+    Tag { name: String },
+
+    /// Valid in container (enums only)
+    /// `#[facet(content = "data")]` — used with `tag` for adjacently tagged enums
+    Content { name: String },
 }
 
 impl PFacetAttr {
@@ -162,6 +175,19 @@ impl PFacetAttr {
                 FacetInner::SerializeWith(serialize_with) => {
                     dest.push(PFacetAttr::SerializeWith {
                         expr: serialize_with.expr.to_token_stream(),
+                    });
+                }
+                FacetInner::Untagged(_) => {
+                    dest.push(PFacetAttr::Untagged);
+                }
+                FacetInner::Tag(tag) => {
+                    dest.push(PFacetAttr::Tag {
+                        name: tag.value.as_str().to_string(),
+                    });
+                }
+                FacetInner::Content(content) => {
+                    dest.push(PFacetAttr::Content {
+                        name: content.value.as_str().to_string(),
                     });
                 }
             }
