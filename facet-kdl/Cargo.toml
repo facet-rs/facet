@@ -29,4 +29,5 @@ indoc = "2.0.7"
 cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
 owo-colors = "4"
 syntect = "5.3"
+flate2 = "1.1.5"
 boxen = "0.1"

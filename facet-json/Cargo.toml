@@ -44,6 +44,7 @@ facet-pretty = { path = "../facet-pretty" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = "1.43.1"
 syntect = "5.3"
+flate2 = "1.1.5"
 time = { version = "0.3.41", features = ["macros"] }
 chrono = { version = "0.4", default-features = false }
 ulid = { version = "1.2.1" }
