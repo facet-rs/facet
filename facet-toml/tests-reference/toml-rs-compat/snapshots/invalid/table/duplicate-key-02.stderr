@@ -1,0 +1,5 @@
+TOML parse error at line 4, column 8
+  |
+4 | [fruit.type]
+  |        ^^^^
+duplicate key

@@ -1,0 +1,5 @@
+TOML parse error at line 1, column 1
+  |
+1 | ! = 123
+  | ^
+invalid unquoted key, expected letters, numbers, `-`, `_`

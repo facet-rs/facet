@@ -1,0 +1,5 @@
+TOML parse error at line 2, column 42
+  |
+2 | no-ending-quote = "One time, at band camp
+  |                                          ^
+invalid basic string, expected `"`

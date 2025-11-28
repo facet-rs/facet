@@ -1,0 +1,5 @@
+TOML parse error at line 2, column 5
+  |
+2 | [xyz = 5
+  |     ^
+unclosed table, expected `]`

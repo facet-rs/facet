@@ -1,0 +1,5 @@
+TOML parse error at line 1, column 22
+  |
+1 | no-comma-3 = [ 1 #,]
+  |                      ^
+unclosed array, expected `]`

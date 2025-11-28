@@ -2336,3 +2336,228 @@ fn deferred_started_from_deeply_nested_position() -> Result<(), IPanic> {
 
     Ok(())
 }
+
+// =============================================================================
+// Auto-defaulting tests: finish_deferred should fill in defaults for unset fields
+// =============================================================================
+
+#[test]
+fn deferred_option_field_auto_defaults_to_none() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct WithOption {
+        required: String,
+        optional: Option<u32>,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<WithOption>()?;
+    partial.begin_deferred(resolution)?;
+
+    partial.set_field("required", String::from("hello"))?;
+    // Don't set optional - it should auto-default to None
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.required, "hello");
+    assert_eq!(result.optional, None);
+
+    Ok(())
+}
+
+#[test]
+fn deferred_multiple_option_fields_auto_default() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct ManyOptions {
+        name: String,
+        opt1: Option<i32>,
+        opt2: Option<String>,
+        opt3: Option<bool>,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<ManyOptions>()?;
+    partial.begin_deferred(resolution)?;
+
+    partial.set_field("name", String::from("test"))?;
+    // Set only one optional field
+    partial.begin_field("opt2")?;
+    partial.begin_some()?;
+    partial.set(String::from("has value"))?;
+    partial.end()?;
+    partial.end()?;
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.name, "test");
+    assert_eq!(result.opt1, None);
+    assert_eq!(result.opt2, Some(String::from("has value")));
+    assert_eq!(result.opt3, None);
+
+    Ok(())
+}
+
+#[test]
+fn deferred_field_with_default_attr_auto_applies() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct WithDefault {
+        name: String,
+        #[facet(default = 100u32)]
+        count: u32,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<WithDefault>()?;
+    partial.begin_deferred(resolution)?;
+
+    partial.set_field("name", String::from("test"))?;
+    // Don't set count - should use default value of 100
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.name, "test");
+    assert_eq!(result.count, 100);
+
+    Ok(())
+}
+
+#[test]
+fn deferred_field_with_default_impl_auto_applies() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct WithDefault {
+        name: String,
+        #[facet(default)]
+        items: Vec<i32>,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<WithDefault>()?;
+    partial.begin_deferred(resolution)?;
+
+    partial.set_field("name", String::from("test"))?;
+    // Don't set items - should use Default::default() (empty Vec)
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.name, "test");
+    assert_eq!(result.items, Vec::<i32>::new());
+
+    Ok(())
+}
+
+#[test]
+fn deferred_enum_variant_option_field_auto_defaults() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum Root {
+        A(Option<String>),
+        B { b1: Option<i32>, b2: Option<bool> },
+    }
+
+    // Test variant B with only one field set
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Root>()?;
+    partial.begin_deferred(resolution)?;
+
+    partial.select_variant_named("B")?;
+    partial.begin_field("b1")?;
+    partial.begin_some()?;
+    partial.set(42i32)?;
+    partial.end()?;
+    partial.end()?;
+    // Don't set b2 - should default to None
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(
+        result,
+        Root::B {
+            b1: Some(42),
+            b2: None
+        }
+    );
+
+    Ok(())
+}
+
+#[test]
+fn deferred_enum_tuple_variant_option_defaults() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    #[allow(dead_code)]
+    enum Root {
+        A(Option<String>),
+        B { b1: Option<i32>, b2: Option<bool> },
+    }
+
+    // Test variant A with no field set (table header case like [A] in TOML)
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Root>()?;
+    partial.begin_deferred(resolution)?;
+
+    partial.select_variant_named("A")?;
+    // Don't set field 0 - should default to None
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result, Root::A(None));
+
+    Ok(())
+}
+
+#[test]
+fn deferred_nested_struct_option_fields_auto_default() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Inner {
+        required: String,
+        optional: Option<u32>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Outer {
+        inner: Inner,
+        opt: Option<String>,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<Outer>()?;
+    partial.begin_deferred(resolution)?;
+
+    partial.begin_field("inner")?;
+    partial.set_field("required", String::from("hello"))?;
+    // Don't set inner.optional
+    partial.end()?;
+    // Don't set outer.opt
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.inner.required, "hello");
+    assert_eq!(result.inner.optional, None);
+    assert_eq!(result.opt, None);
+
+    Ok(())
+}
+
+#[test]
+fn deferred_all_fields_are_optional() -> Result<(), IPanic> {
+    #[derive(Facet, Debug, PartialEq)]
+    struct AllOptional {
+        a: Option<i32>,
+        b: Option<String>,
+        c: Option<bool>,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial = Partial::alloc::<AllOptional>()?;
+    partial.begin_deferred(resolution)?;
+
+    // Set nothing at all - all should default to None
+
+    partial.finish_deferred()?;
+    let result = *partial.build()?;
+    assert_eq!(result.a, None);
+    assert_eq!(result.b, None);
+    assert_eq!(result.c, None);
+
+    Ok(())
+}

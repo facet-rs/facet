@@ -1,0 +1,5 @@
+TOML parse error at line 5, column 4
+  |
+5 | [a.b]
+  |    ^
+duplicate key

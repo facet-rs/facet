@@ -1,0 +1,5 @@
+TOML parse error at line 1, column 9
+  |
+1 | a = 0.0E
+  |         ^
+invalid exponent, expected digits

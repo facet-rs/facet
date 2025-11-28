@@ -1,0 +1,5 @@
+TOML parse error at line 9, column 10
+  |
+9 |   [fruit.variety]
+  |          ^^^^^^^
+duplicate key
