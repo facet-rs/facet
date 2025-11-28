@@ -48,12 +48,12 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                                     ::facet::Token::Punct {
                                         ch: '=',
                                         joint: false,
-                                        span: ::facet::Span::DUMMY,
+                                        span: ::facet::TokenSpan::DUMMY,
                                     },
                                     ::facet::Token::Literal {
                                         kind: ::facet::LiteralKind::String,
                                         text: "\"FirstVariant\"",
-                                        span: ::facet::Span::DUMMY,
+                                        span: ::facet::TokenSpan::DUMMY,
                                     },
                                 ],
                                 get: __ext_get,
@@ -73,12 +73,12 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                                     ::facet::Token::Punct {
                                         ch: '=',
                                         joint: false,
-                                        span: ::facet::Span::DUMMY,
+                                        span: ::facet::TokenSpan::DUMMY,
                                     },
                                     ::facet::Token::Literal {
                                         kind: ::facet::LiteralKind::Integer,
                                         text: "10",
-                                        span: ::facet::Span::DUMMY,
+                                        span: ::facet::TokenSpan::DUMMY,
                                     },
                                 ],
                                 get: __ext_get,
@@ -133,12 +133,12 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                                     ::facet::Token::Punct {
                                         ch: '=',
                                         joint: false,
-                                        span: ::facet::Span::DUMMY,
+                                        span: ::facet::TokenSpan::DUMMY,
                                     },
                                     ::facet::Token::Literal {
                                         kind: ::facet::LiteralKind::String,
                                         text: "\"Use VariantD instead\"",
-                                        span: ::facet::Span::DUMMY,
+                                        span: ::facet::TokenSpan::DUMMY,
                                     },
                                 ],
                                 get: __ext_get,
@@ -205,12 +205,12 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                                 ::facet::Token::Punct {
                                     ch: '=',
                                     joint: false,
-                                    span: ::facet::Span::DUMMY,
+                                    span: ::facet::TokenSpan::DUMMY,
                                 },
                                 ::facet::Token::Literal {
                                     kind: ::facet::LiteralKind::String,
                                     text: "\"MyCoolEnum\"",
-                                    span: ::facet::Span::DUMMY,
+                                    span: ::facet::TokenSpan::DUMMY,
                                 },
                             ],
                             get: __ext_get,

@@ -50,12 +50,12 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                                             ::facet::Token::Punct {
                                                 ch: '=',
                                                 joint: false,
-                                                span: ::facet::Span::DUMMY,
+                                                span: ::facet::TokenSpan::DUMMY,
                                             },
                                             ::facet::Token::Literal {
                                                 kind: ::facet::LiteralKind::Integer,
                                                 text: "3",
-                                                span: ::facet::Span::DUMMY,
+                                                span: ::facet::TokenSpan::DUMMY,
                                             },
                                         ],
                                         get: __ext_get,
@@ -87,12 +87,12 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                                             ::facet::Token::Punct {
                                                 ch: '=',
                                                 joint: false,
-                                                span: ::facet::Span::DUMMY,
+                                                span: ::facet::TokenSpan::DUMMY,
                                             },
                                             ::facet::Token::Literal {
                                                 kind: ::facet::LiteralKind::String,
                                                 text: "\"Use 'new_value' instead\"",
-                                                span: ::facet::Span::DUMMY,
+                                                span: ::facet::TokenSpan::DUMMY,
                                             },
                                         ],
                                         get: __ext_get,
@@ -111,6 +111,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                 },
             ]
         };
-        :: facet :: Shape :: builder_for_sized :: < Self > () . vtable ({ let mut vtable = :: facet :: value_vtable ! (Self , | f , _opts | :: core :: fmt :: Write :: write_str (f , "StructWithAttributes")) ; vtable }) . type_identifier ("StructWithAttributes") . ty (:: facet :: Type :: User (:: facet :: UserType :: Struct (:: facet :: StructType :: builder () . repr (:: facet :: Repr :: default ()) . kind (:: facet :: StructKind :: Struct) . fields (fields) . build ()))) . attributes (& [:: facet :: ShapeAttribute :: DenyUnknownFields , :: facet :: ShapeAttribute :: Extension ({ fn __ext_get () -> & 'static (dyn :: core :: any :: Any + :: core :: marker :: Send + :: core :: marker :: Sync) { static __UNIT : () = () ; & __UNIT } :: facet :: ExtensionAttr { ns : "myns" , key : "name" , args : & [:: facet :: Token :: Punct { ch : '=' , joint : false , span : :: facet :: Span :: DUMMY , } , :: facet :: Token :: Literal { kind : :: facet :: LiteralKind :: String , text : "\"MyCoolStruct\"" , span : :: facet :: Span :: DUMMY , }] , get : __ext_get , } }) , :: facet :: ShapeAttribute :: Extension ({ fn __ext_get () -> & 'static (dyn :: core :: any :: Any + :: core :: marker :: Send + :: core :: marker :: Sync) { static __UNIT : () = () ; & __UNIT } :: facet :: ExtensionAttr { ns : "myns" , key : "version" , args : & [:: facet :: Token :: Punct { ch : '=' , joint : false , span : :: facet :: Span :: DUMMY , } , :: facet :: Token :: Literal { kind : :: facet :: LiteralKind :: Integer , text : "2" , span : :: facet :: Span :: DUMMY , }] , get : __ext_get , } })]) . type_tag ("rs.facet.StructWithAttributes") . build ()
+        :: facet :: Shape :: builder_for_sized :: < Self > () . vtable ({ let mut vtable = :: facet :: value_vtable ! (Self , | f , _opts | :: core :: fmt :: Write :: write_str (f , "StructWithAttributes")) ; vtable }) . type_identifier ("StructWithAttributes") . ty (:: facet :: Type :: User (:: facet :: UserType :: Struct (:: facet :: StructType :: builder () . repr (:: facet :: Repr :: default ()) . kind (:: facet :: StructKind :: Struct) . fields (fields) . build ()))) . attributes (& [:: facet :: ShapeAttribute :: DenyUnknownFields , :: facet :: ShapeAttribute :: Extension ({ fn __ext_get () -> & 'static (dyn :: core :: any :: Any + :: core :: marker :: Send + :: core :: marker :: Sync) { static __UNIT : () = () ; & __UNIT } :: facet :: ExtensionAttr { ns : "myns" , key : "name" , args : & [:: facet :: Token :: Punct { ch : '=' , joint : false , span : :: facet :: TokenSpan :: DUMMY , } , :: facet :: Token :: Literal { kind : :: facet :: LiteralKind :: String , text : "\"MyCoolStruct\"" , span : :: facet :: TokenSpan :: DUMMY , }] , get : __ext_get , } }) , :: facet :: ShapeAttribute :: Extension ({ fn __ext_get () -> & 'static (dyn :: core :: any :: Any + :: core :: marker :: Send + :: core :: marker :: Sync) { static __UNIT : () = () ; & __UNIT } :: facet :: ExtensionAttr { ns : "myns" , key : "version" , args : & [:: facet :: Token :: Punct { ch : '=' , joint : false , span : :: facet :: TokenSpan :: DUMMY , } , :: facet :: Token :: Literal { kind : :: facet :: LiteralKind :: Integer , text : "2" , span : :: facet :: TokenSpan :: DUMMY , }] , get : __ext_get , } })]) . type_tag ("rs.facet.StructWithAttributes") . build ()
     };
 }
