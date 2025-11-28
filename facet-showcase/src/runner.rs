@@ -1,6 +1,6 @@
 //! Showcase runner - the main API for creating showcases.
 
-use crate::highlighter::{Highlighter, Language, ansi_to_html, html_escape};
+use crate::highlighter::{Highlighter, Language, ansi_to_html};
 use crate::output::OutputMode;
 use miette::{Diagnostic, GraphicalReportHandler, GraphicalTheme};
 use owo_colors::OwoColorize;
@@ -64,7 +64,7 @@ impl ShowcaseRunner {
                 println!("+++");
                 println!("title = \"{}\"", self.title);
                 if let Some(ref slug) = self.slug {
-                    println!("slug = \"{}\"", slug);
+                    println!("slug = \"{slug}\"");
                 }
                 println!("+++");
                 println!();
@@ -241,6 +241,34 @@ impl<'a> Scenario<'a> {
         self
     }
 
+    /// Display serialized output with syntax highlighting.
+    pub fn serialized_output(mut self, lang: Language, code: &str) -> Self {
+        self.ensure_header();
+
+        match self.runner.mode {
+            OutputMode::Terminal => {
+                println!();
+                println!("{}", format!("{} Output:", lang.name()).bold().magenta());
+                println!("{}", "─".repeat(60).dimmed());
+                print!(
+                    "{}",
+                    self.runner
+                        .highlighter
+                        .highlight_to_terminal_with_line_numbers(code, lang)
+                );
+                println!("{}", "─".repeat(60).dimmed());
+            }
+            OutputMode::Markdown => {
+                println!("<div class=\"serialized-output\">");
+                println!("<h4>{} Output</h4>", lang.name());
+                // highlight_to_html returns a complete <pre> element with inline styles
+                println!("{}", self.runner.highlighter.highlight_to_html(code, lang));
+                println!("</div>");
+            }
+        }
+        self
+    }
+
     /// Display the target type definition using facet-pretty.
     pub fn target_type<T: facet::Facet<'static>>(mut self) -> Self {
         self.ensure_header();
@@ -392,10 +420,10 @@ impl<'a> Scenario<'a> {
 /// Convert inline markdown (backticks) to HTML.
 fn markdown_inline_to_html(text: &str) -> String {
     let mut result = String::new();
-    let mut chars = text.chars().peekable();
+    let chars = text.chars();
     let mut in_code = false;
 
-    while let Some(c) = chars.next() {
+    for c in chars {
         if c == '`' {
             if in_code {
                 result.push_str("</code>");

@@ -14,6 +14,8 @@ Note: `msgp` = `facet-msgpack` (shortened for column width)
 
 ## Overview
 
+Note: S = Serialization, D = Deserialization
+
 | Crate | Direction | Format Type | Parser | Showcase | Error Showcase |
 |-------|-----------|-------------|--------|----------|----------------|
 | [facet-json](https://docs.rs/facet-json) | SD | Text | Event-based (custom) | ✅ | ✅ |
