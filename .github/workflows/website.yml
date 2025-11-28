@@ -7,6 +7,10 @@ on:
     paths:
       - 'docs/**'
       - '.github/workflows/website.yml'
+      - 'facet-showcase/**'
+      - 'facet-json/examples/*showcase*.rs'
+      - 'facet-yaml/examples/*showcase*.rs'
+      - 'facet-kdl/examples/*showcase*.rs'
   workflow_dispatch:
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
@@ -37,24 +41,16 @@ jobs:
         with:
           version: 9
 
-      - name: Build highlight.js bundle
-        working-directory: docs/meta
-        run: |
-          pnpm install
-          pnpm run build
-          # Copy built assets to docs static directory
-          mkdir -p ../static/hljs
-          cp dist/facet-hljs.iife.js ../static/hljs/
-          cp dist/style.css ../static/hljs/
+      - name: Setup Rust toolchain (nightly for cargo -Zscript)
+        uses: dtolnay/rust-toolchain@nightly
 
       - name: Install Zola
         uses: taiki-e/install-action@v2
         with:
           tool: zola@0.19.2
 
-      - name: Build site
-        run: zola build
-        working-directory: docs
+      - name: Build website
+        run: ./docs/build-website.rs
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

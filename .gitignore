@@ -13,6 +13,8 @@ tarpaulin-report.html
 **/CLAUDE.md
 *.sw[op]
 
+**/node_modules/
+
 # Fuzzing
 **/fuzz/target/
 **/fuzz/corpus/

@@ -38,6 +38,7 @@ cargo-husky = { version = "1.5.0", default-features = false, features = ["user-h
 indoc = "2"
 camino = "1"
 facet-pretty = { path = "../facet-pretty" }
+facet-showcase = { path = "../facet-showcase" }
 syntect = "5.3"
 flate2 = "1.1.5"
 owo-colors = "4"

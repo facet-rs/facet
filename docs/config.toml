@@ -11,7 +11,7 @@ description = "Runtime reflection for Rust"
 # Whether to automatically compile all Sass files in the `sass` directory
 compile_sass = true
 
-# Whether to build a search index
+# Whether to build a search index (using Pagefind instead)
 build_search_index = false
 
 # The default language
@@ -27,8 +27,8 @@ minify_html = false
 # Whether to do syntax highlighting
 highlight_code = true
 highlight_theme = "css"
-# Enable smart punctuation
-smart_punctuation = true
+# Disable smart punctuation (breaks code in <pre> tags)
+smart_punctuation = false
 
 [extra]
 # Custom variables accessible in templates

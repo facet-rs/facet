@@ -36,6 +36,9 @@ members = [
 
     # utilities
     "facet-diff",
+
+    # showcase infrastructure
+    "facet-showcase",
 ]
 resolver = "3"
 

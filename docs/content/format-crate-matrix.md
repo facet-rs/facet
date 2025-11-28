@@ -1,6 +1,8 @@
-# Format Crate Feature Matrix
++++
+title = "Format crates comparison"
++++
 
-This document tracks feature parity across all facet format crates. Use it to identify gaps and prioritize work.
+This document tracks feature parity across all facet format crates.
 
 Legend:
 - ✅ = Fully supported with tests
@@ -8,26 +10,27 @@ Legend:
 - 🚫 = Not supported
 - ➖ = Not applicable to this format
 
+Note: `msgp` = `facet-msgpack` (shortened for column width)
+
 ## Overview
 
 | Crate | Direction | Format Type | Parser | Showcase | Error Showcase |
 |-------|-----------|-------------|--------|----------|----------------|
-| facet-json | ser + deser | Text | Event-based | ✅ | ✅ |
-| facet-kdl | ser + deser | Text (node-based) | DOM (kdl-rs) | ✅ | ✅ |
-| facet-yaml | ser + deser | Text | Event-based (saphyr) | ✅ | ✅ |
-| facet-toml | ser + deser | Text | DOM (toml_edit) | 🚫 | 🚫 |
-| facet-msgpack | ser + deser | Binary | Event-based | 🚫 | 🚫 |
-| facet-asn1 | ser only | Binary | ➖ | 🚫 | 🚫 |
-| facet-xdr | ser only | Binary | ➖ | 🚫 | 🚫 |
-| | | | | | |
-| facet-args | deser only | CLI | Custom | 🚫 | 🚫 |
-| facet-urlencoded | deser only | Text | Custom | 🚫 | 🚫 |
-| facet-csv | ser only | Text | ➖ | 🚫 | 🚫 |
+| [facet-json](https://docs.rs/facet-json) | SD | Text | Event-based (custom) | ✅ | ✅ |
+| [facet-kdl](https://docs.rs/facet-kdl) | SD | Text (node-based) | DOM ([kdl-rs](https://docs.rs/kdl)) | ✅ | ✅ |
+| [facet-yaml](https://docs.rs/facet-yaml) | SD | Text | Event-based ([saphyr](https://docs.rs/saphyr)) | ✅ | ✅ |
+| [facet-toml](https://docs.rs/facet-toml) | SD | Text | DOM ([toml_edit](https://docs.rs/toml_edit)) | 🚫 | 🚫 |
+| [facet-msgpack](https://docs.rs/facet-msgpack) | SD | Binary | Event-based (custom) | 🚫 | 🚫 |
+| [facet-asn1](https://docs.rs/facet-asn1) | S | Binary | (Custom) | 🚫 | 🚫 |
+| [facet-xdr](https://docs.rs/facet-xdr) | S | Binary | (Custom) | 🚫 | 🚫 |
+| [facet-args](https://docs.rs/facet-args) | D | CLI | (Custom) | 🚫 | 🚫 |
+| [facet-urlencoded](https://docs.rs/facet-urlencoded) | D | Text | (Custom) | 🚫 | 🚫 |
+| [facet-csv](https://docs.rs/facet-csv) | S | Text | (Custom) | 🚫 | 🚫 |
 
 ## API Surface
 
-| Feature | json | kdl | yaml | toml | msgpack | asn1 | xdr | args | urlenc | csv |
-|---------|------|-----|------|------|---------|------|-----|------|--------|-----|
+| Feature | json | kdl | yaml | toml | msgp | asn1 | xdr | args | urlenc | csv |
+|---------|------|-----|------|------|------|------|-----|------|--------|-----|
 | `from_str` | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ➖ | ✅ | ✅ | ➖ |
 | `from_slice` | ➖ | ➖ | ➖ | ➖ | ✅ | ➖ | ➖ | ✅ | ➖ | ➖ |
 | `to_string` | ✅ | ✅ | ✅ | ✅ | ➖ | 🚫 | 🚫 | ➖ | ➖ | ✅ |
@@ -38,8 +41,8 @@ Legend:
 
 ## Scalar Types
 
-| Type | json | kdl | yaml | toml | msgpack | asn1 | xdr | args | urlenc | csv |
-|------|------|-----|------|------|---------|------|-----|------|--------|-----|
+| Type | json | kdl | yaml | toml | msgp | asn1 | xdr | args | urlenc | csv |
+|------|------|-----|------|------|------|------|-----|------|--------|-----|
 | `bool` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `u8..u64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `i8..i64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -50,57 +53,80 @@ Legend:
 
 ## String Types
 
-| Type | json | kdl | yaml | toml | msgpack | asn1 | xdr | args | urlenc | csv |
-|------|------|-----|------|------|---------|------|-----|------|--------|-----|
-| `String` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+All formats support `String`, `&str` (with best-effort borrowing), and `Cow<str>`.
 
-### Zero-Copy / Borrowing
+## Lists, Sets, and Maps
 
-These types attempt to borrow from the input when possible (e.g., unescaped strings), falling back to allocation when necessary.
-
-| Type | json | kdl | yaml | toml | msgpack | asn1 | xdr | args | urlenc | csv |
-|------|------|-----|------|------|---------|------|-----|------|--------|-----|
-| `&str` (best-effort borrow) | ✅ | ✅ | ✅ | 🟡 | 🚫 | ➖ | ➖ | ✅ | ✅ | 🚫 |
-| `Cow<str>` (borrow or own) | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
+| Type | json | kdl | yaml | toml | msgp | asn1 | xdr | args | urlenc | csv |
+|------|------|-----|------|------|------|------|-----|------|--------|-----|
+| `Vec<T>` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 |
+| `[T; N]` (arrays) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🟡 |
+| `HashSet<T>` | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
+| `BTreeSet<T>` | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
+| `HashMap<K, V>` | ✅ | 🟡 | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
+| `BTreeMap<K, V>` | ✅ | 🟡 | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
+| Non-string map keys | ✅ | 🚫 | ✅ | 🚫 | ✅ | 🚫 | 🚫 | ➖ | ➖ | ➖ |
 
 ## Compound Types
 
-| Type | json | kdl | yaml | toml | msgpack | asn1 | xdr | args | urlenc | csv |
-|------|------|-----|------|------|---------|------|-----|------|--------|-----|
+| Type | json | kdl | yaml | toml | msgp | asn1 | xdr | args | urlenc | csv |
+|------|------|-----|------|------|------|------|-----|------|--------|-----|
 | `Option<T>` | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | ✅ | ✅ | 🟡 |
 | `Result<T, E>` | ✅ | 🟡 | 🟡 | 🟡 | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
-| `Vec<T>` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 |
-| `[T; N]` (arrays) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🟡 |
-| `HashMap<K, V>` | ✅ | 🟡 | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
-| `BTreeMap<K, V>` | ✅ | 🟡 | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
-| `HashSet<T>` | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
-| `BTreeSet<T>` | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
-| Non-string map keys | ✅ | 🚫 | ✅ | 🚫 | ✅ | 🚫 | 🚫 | ➖ | ➖ | ➖ |
 
 ## Smart Pointers
 
-| Type | json | kdl | yaml | toml | msgpack | asn1 | xdr | args | urlenc | csv |
-|------|------|-----|------|------|---------|------|-----|------|--------|-----|
+| Type | json | kdl | yaml | toml | msgp | asn1 | xdr | args | urlenc | csv |
+|------|------|-----|------|------|------|------|-----|------|--------|-----|
 | `Box<T>` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 |
 | `Rc<T>` | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
 | `Arc<T>` | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
+| `Arc<str>` | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
+| `Arc<[T]>` | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
+
+## External Types
+
+| Type | json | kdl | yaml | toml | msgp | asn1 | xdr | args | urlenc | csv |
+|------|------|-----|------|------|------|------|-----|------|--------|-----|
+| [`chrono`](https://docs.rs/chrono) | ✅ | 🟡 | ✅ | 🚫 | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
+| [`time`](https://docs.rs/time) | ✅ | 🟡 | ✅ | 🚫 | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
+| [`jiff`](https://docs.rs/jiff) | ✅ | 🟡 | 🟡 | 🚫 | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
+| [`uuid`](https://docs.rs/uuid) | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
+| [`ulid`](https://docs.rs/ulid) | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
+| [`camino`](https://docs.rs/camino) | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
+| [`ordered-float`](https://docs.rs/ordered-float) | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
+| [`bytes`](https://docs.rs/bytes) | ✅ | 🟡 | 🟡 | 🟡 | ✅ | ✅ | ✅ | 🚫 | 🚫 | 🚫 |
 
 ## Struct Types
 
-| Type | json | kdl | yaml | toml | msgpack | asn1 | xdr | args | urlenc | csv |
-|------|------|-----|------|------|---------|------|-----|------|--------|-----|
+| Type | json | kdl | yaml | toml | msgp | asn1 | xdr | args | urlenc | csv |
+|------|------|-----|------|------|------|------|-----|------|--------|-----|
 | Named structs | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Tuple structs | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | ✅ |
 | Unit structs | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 |
 
 ## Enum Representations
 
-| Representation | json | kdl | yaml | toml | msgpack | asn1 | xdr | args | urlenc | csv |
-|----------------|------|-----|------|------|---------|------|-----|------|--------|-----|
+### Tagging Strategies
+
+| Representation | json | kdl | yaml | toml | msgp | asn1 | xdr | args | urlenc | csv |
+|----------------|------|-----|------|------|------|------|-----|------|--------|-----|
 | Externally tagged (default) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ➖ |
 | Internally tagged (`tag=`) | ✅ | 🟡 | ✅ | 🚫 | 🟡 | 🚫 | 🚫 | ➖ | ➖ | ➖ |
 | Adjacently tagged (`tag+content`) | ✅ | 🟡 | ✅ | 🚫 | 🟡 | 🚫 | 🚫 | ➖ | ➖ | ➖ |
 | Untagged | ✅ | 🟡 | ✅ | 🚫 | 🟡 | 🚫 | 🚫 | ➖ | ➖ | ➖ |
+
+**Examples (JSON):**
+```json
+// Externally tagged: { "Variant": "value" }
+// Internally tagged: { "type": "Variant", "data": "value" }  
+// Adjacently tagged: { "tag": "Variant", "content": "value" }
+```
+
+### Variant Types
+
+| Type | json | kdl | yaml | toml | msgp | asn1 | xdr | args | urlenc | csv |
+|------|------|-----|------|------|------|------|-----|------|--------|-----|
 | Unit variants | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ➖ |
 | Newtype variants | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ➖ |
 | Tuple variants | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ➖ |
@@ -108,8 +134,8 @@ These types attempt to borrow from the input when possible (e.g., unescaped stri
 
 ## Attributes
 
-| Attribute | json | kdl | yaml | toml | msgpack | asn1 | xdr | args | urlenc | csv |
-|-----------|------|-----|------|------|---------|------|-----|------|--------|-----|
+| Attribute | json | kdl | yaml | toml | msgp | asn1 | xdr | args | urlenc | csv |
+|-----------|------|-----|------|------|------|------|-----|------|--------|-----|
 | `rename` | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | ✅ | ✅ | 🟡 |
 | `rename_all` | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | ✅ | 🟡 | 🟡 |
 | `default` | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | ✅ | ✅ | 🟡 |
@@ -123,87 +149,26 @@ These types attempt to borrow from the input when possible (e.g., unescaped stri
 | `serialize_with` | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | ➖ | ➖ | 🟡 |
 | `type_tag` (KDL-specific) | ➖ | ✅ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ | ➖ |
 
-## Format-Specific Attributes
+## Diagnostics
 
-### KDL
-
-| Attribute | Support |
-|-----------|---------|
-| `child` | ✅ |
-| `children` | ✅ |
-| `argument` | ✅ |
-| `property` | ✅ |
-
-### Args
-
-| Attribute | Support |
-|-----------|---------|
-| `positional` | ✅ |
-| `named` | ✅ |
-| `short` | ✅ |
+| Feature | json | kdl | yaml | toml | msgp | asn1 | xdr | args | urlenc | csv |
+|---------|------|-----|------|------|------|------|-----|------|--------|-----|
+| `Spanned<T>` wrapper | ✅ | ✅ | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | 🚫 |
+| Solver integration | ✅ | ✅ | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
+| "Did you mean?" suggestions | ✅ | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
 
 ## Advanced Features
 
-| Feature | json | kdl | yaml | toml | msgpack | asn1 | xdr | args | urlenc | csv |
-|---------|------|-----|------|------|---------|------|-----|------|--------|-----|
-| `Spanned<T>` wrapper | ✅ | ✅ | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | ✅ | 🚫 | 🚫 |
-| Solver integration | ✅ | ✅ | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
+| Feature | json | kdl | yaml | toml | msgp | asn1 | xdr | args | urlenc | csv |
+|---------|------|-----|------|------|------|------|-----|------|--------|-----|
 | Nested flatten | ✅ | ✅ | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
 | Multiple flattened enums | ✅ | ✅ | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
 | Value-based disambiguation | ✅ | ✅ | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
-| "Did you mean?" suggestions | ✅ | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
-
-## External Type Support
-
-| Crate | json | kdl | yaml | toml | msgpack | asn1 | xdr | args | urlenc | csv |
-|-------|------|-----|------|------|---------|------|-----|------|--------|-----|
-| `chrono` | ✅ | 🟡 | ✅ | 🚫 | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
-| `time` | ✅ | 🟡 | ✅ | 🚫 | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
-| `jiff` | ✅ | 🟡 | 🟡 | 🚫 | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
-| `uuid` | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
-| `ulid` | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
-| `camino` | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
-| `ordered-float` | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
-| `bytes` | ✅ | 🟡 | 🟡 | 🟡 | ✅ | ✅ | ✅ | 🚫 | 🚫 | 🚫 |
 
 ## no_std Support
 
-| Feature | json | kdl | yaml | toml | msgpack | asn1 | xdr | args | urlenc | csv |
-|---------|------|-----|------|------|---------|------|-----|------|--------|-----|
+| Feature | json | kdl | yaml | toml | msgp | asn1 | xdr | args | urlenc | csv |
+|---------|------|-----|------|------|------|------|-----|------|--------|-----|
 | `no_std` + `alloc` | ✅ | ✅ | ✅ (deser) | ✅ | 🟡 | ✅ | ✅ | 🟡 | 🟡 | 🟡 |
 | Serialization | ✅ | ✅ | 🚫 (needs std) | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | ✅ |
 | Deserialization | ✅ | ✅ | ✅ | ✅ | ✅ | ➖ | ➖ | 🟡 | 🟡 | ➖ |
-
-## Test Coverage Summary
-
-| Crate | Test Files | Key Test Areas |
-|-------|------------|----------------|
-| facet-json | 35+ | enums, flatten, spans, chrono, uuid, bytes, skip, deny_unknown |
-| facet-kdl | 12+ | flatten (extensive), enums, type_annotations, spanned, diagnostics, solver |
-| facet-yaml | 15+ | datetime, maps, lists, transparent, enums (all repr) |
-| facet-toml | 20+ | enums, vec_of_tables, options, scalars, maps |
-| facet-msgpack | 12+ | primitives, enums, structs, tuples, deny_unknown |
-| facet-asn1 | 1 | ASN.1 encoding |
-| facet-xdr | 1 | XDR encoding |
-| facet-args | 4 | simple, sequence, errors, subspans |
-| facet-urlencoded | 1 | nested bracket notation |
-| facet-csv | 1 | basic struct serialization |
-
-## Notes
-
-### Solver Integration
-
-The `facet-solver` crate handles flattened enum disambiguation. Currently integrated with:
-- facet-json (full)
-- facet-kdl (full, including nested child disambiguation)
-- facet-yaml (partial)
-
-Other crates would benefit from solver integration for flatten support.
-
-### Binary Formats
-
-Binary formats (msgpack, asn1, xdr) have fundamentally different constraints:
-- No meaningful source spans
-- Field ordering matters
-- No "unknown fields" concept (extra bytes = error)
-- Tag representations may not apply

@@ -17,6 +17,8 @@ It can serve a lot of use cases typically handled by proc macros, like:
   * Code generation (via build scripts)
   * Diffing values
 
+> **Note:** This documentation is being restructured. If it feels a bit scattered, that's because it is! We're working on it.
+
 ## Crash course
 
 You derive it like `Serialize` or `Deserialize` except there's only one macro:
@@ -59,10 +61,6 @@ However, vtables are low-level and unsafe, and you would normally invoke stuff t
 These two abstractions are used by serializers and deserializers respectively,
 and are fully safe, despite dealing with partially-initialized values under the hood.
 
-{% bearsays() %}
-For example, [facet-json](https://docs.rs/facet-json) has `#[deny(unsafe_code)]` — all "format crates" do.
-{% end %}
-
 ## What can you build with it?
 
 The `Facet` trait lends itself to a surprisingly large number of use cases.
@@ -89,10 +87,6 @@ access to display implementations, but not just, something more like
 
 You can use [facet-json](https://docs.rs/facet-json), [facet-toml](https://docs.rs/facet-toml) and others to serialize and deserialize data.
 
-{% bearsays() %}
-Those two are the most maintained — but there are others, and [help is wanted](https://github.com/facet-rs/facet/issues)
-{% end %}
-
 Those are bound to be slower than [serde](https://serde.rs), which generates optimized code. So why bother?
 
 Well, serde generates a _lot_ of code. And it depends on heavy packages like [syn](https://docs.rs/syn).
@@ -117,10 +111,6 @@ With `facet`, serialization and deserialization is implemented:
 You can have `mycrate-types` crates, with every struct deriving `Facet`, with no worries. No need
 to put it behind a feature flag even, the main `facet` crate is relatively light, thanks to its use
 of the lightweight [unsynn](https://docs.rs/unsynn) instead of `syn`.
-
-{% bearsays() %}
-But don't trust us, make your own measurements!
-{% end %}
 
 `facet` has a lot more information about your types than `serde` does, which
 means it's able to generate better errors, and decide things about deserialization
