@@ -17,6 +17,9 @@ pub use derive::*;
 
 mod unescaping;
 
+mod extension;
+pub use extension::*;
+
 #[cfg(feature = "function")]
 pub mod function;
 

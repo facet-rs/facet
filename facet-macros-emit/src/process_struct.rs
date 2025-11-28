@@ -97,8 +97,21 @@ pub(crate) fn gen_field_from_pfield(
             PFacetAttr::Opaque => {
                 shape_of = quote! { shape_of_opaque };
             }
+            PFacetAttr::Extension { ns, key, args } => {
+                let ext_attr = emit_extension_attr(ns, key, args);
+                attribute_list.push(quote! { ::facet::FieldAttribute::Extension(#ext_attr) });
+            }
             PFacetAttr::Arbitrary { content } => {
                 attribute_list.push(quote! { ::facet::FieldAttribute::Arbitrary(#content) });
+            }
+            PFacetAttr::Skip => {
+                // Skip both serialization and deserialization
+                if flags_empty {
+                    flags_empty = false;
+                    flags = quote! { ::facet::FieldFlags::SKIP_SERIALIZING.union(::facet::FieldFlags::SKIP_DESERIALIZING) };
+                } else {
+                    flags = quote! { #flags.union(::facet::FieldFlags::SKIP_SERIALIZING).union(::facet::FieldFlags::SKIP_DESERIALIZING) };
+                }
             }
             PFacetAttr::SkipSerializing => {
                 if flags_empty {
@@ -106,6 +119,14 @@ pub(crate) fn gen_field_from_pfield(
                     flags = quote! { ::facet::FieldFlags::SKIP_SERIALIZING };
                 } else {
                     flags = quote! { #flags.union(::facet::FieldFlags::SKIP_SERIALIZING) };
+                }
+            }
+            PFacetAttr::SkipDeserializing => {
+                if flags_empty {
+                    flags_empty = false;
+                    flags = quote! { ::facet::FieldFlags::SKIP_DESERIALIZING };
+                } else {
+                    flags = quote! { #flags.union(::facet::FieldFlags::SKIP_DESERIALIZING) };
                 }
             }
             PFacetAttr::SkipSerializingIf { expr } => {
@@ -305,6 +326,10 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     items.push(quote! { ::facet::ShapeAttribute::Transparent });
                 }
                 PFacetAttr::RenameAll { .. } => {}
+                PFacetAttr::Extension { ns, key, args } => {
+                    let ext_attr = emit_extension_attr(ns, key, args);
+                    items.push(quote! { ::facet::ShapeAttribute::Extension(#ext_attr) });
+                }
                 PFacetAttr::Arbitrary { content } => {
                     items.push(quote! { ::facet::ShapeAttribute::Arbitrary(#content) });
                 }
@@ -312,7 +337,9 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 PFacetAttr::Sensitive
                 | PFacetAttr::Opaque
                 | PFacetAttr::Invariants { .. }
+                | PFacetAttr::Skip
                 | PFacetAttr::SkipSerializing
+                | PFacetAttr::SkipDeserializing
                 | PFacetAttr::SkipSerializingIf { .. }
                 | PFacetAttr::DeserializeWith { .. }
                 | PFacetAttr::SerializeWith { .. }

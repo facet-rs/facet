@@ -3,7 +3,9 @@ use crate::{
     error::{ArgsError, ArgsErrorKind, ArgsErrorWithInput},
     span::Span,
 };
-use facet_core::{Def, Facet, Field, FieldAttribute, FieldFlags, Shape, Type, UserType};
+use facet_core::{
+    Def, Facet, Field, FieldAttribute, FieldFlags, LiteralKind, Shape, Token, Type, UserType,
+};
 use facet_reflect::{HeapValue, Partial};
 use heck::ToSnakeCase;
 
@@ -83,7 +85,7 @@ impl<'input> Context<'input> {
         &mut self,
         p: &mut Partial<'static>,
         field_index: usize,
-        value: Option<Token<'input>>,
+        value: Option<SplitToken<'input>>,
     ) -> Result<(), ArgsErrorKind> {
         let fields = self.fields(p)?;
         let field = fields[field_index];
@@ -250,11 +252,10 @@ impl<'input> Context<'input> {
                     let mut chosen_field_index: Option<usize> = None;
 
                     for (field_index, field) in fields.iter().enumerate() {
-                        let is_positional = field.attributes.iter().any(|attr| match attr {
-                            // this is terrible, tbh
-                            FieldAttribute::Arbitrary(attr) => attr.contains("positional"),
-                            _ => false,
-                        });
+                        let is_positional = field.has_extension_attr("args", "positional")
+                            || field.attributes.iter().any(|attr| {
+                                matches!(attr, FieldAttribute::Arbitrary("positional"))
+                            });
                         if !is_positional {
                             continue;
                         }
@@ -315,7 +316,7 @@ impl<'input> Context<'input> {
 
 /// Result of `split`
 #[derive(Debug, PartialEq)]
-struct Token<'input> {
+struct SplitToken<'input> {
     s: &'input str,
     span: Span,
 }
@@ -323,7 +324,7 @@ struct Token<'input> {
 /// Split on `=`, e.g. `a=b` returns (`a`, `b`).
 /// Span-aware. If `=` is not contained in the input string,
 /// returns None
-fn split<'input>(input: &'input str, span: Span) -> Option<Vec<Token<'input>>> {
+fn split<'input>(input: &'input str, span: Span) -> Option<Vec<SplitToken<'input>>> {
     let equals_index = input.find('=')?;
 
     let l = &input[0..equals_index];
@@ -333,8 +334,8 @@ fn split<'input>(input: &'input str, span: Span) -> Option<Vec<Token<'input>>> {
     let r_span = Span::new(equals_index + 1, r.len());
 
     Some(vec![
-        Token { s: l, span: l_span },
-        Token { s: r, span: r_span },
+        SplitToken { s: l, span: l_span },
+        SplitToken { s: r, span: r_span },
     ])
 }
 
@@ -344,11 +345,11 @@ fn test_split() {
     assert_eq!(
         split("foo=bar", Span::new(0, 7)),
         Some(vec![
-            Token {
+            SplitToken {
                 s: "foo",
                 span: Span::new(0, 3)
             },
-            Token {
+            SplitToken {
                 s: "bar",
                 span: Span::new(4, 3)
             },
@@ -357,11 +358,11 @@ fn test_split() {
     assert_eq!(
         split("foo=", Span::new(0, 4)),
         Some(vec![
-            Token {
+            SplitToken {
                 s: "foo",
                 span: Span::new(0, 3)
             },
-            Token {
+            SplitToken {
                 s: "",
                 span: Span::new(4, 0)
             },
@@ -370,11 +371,11 @@ fn test_split() {
     assert_eq!(
         split("=bar", Span::new(0, 4)),
         Some(vec![
-            Token {
+            SplitToken {
                 s: "",
                 span: Span::new(0, 0)
             },
-            Token {
+            SplitToken {
                 s: "bar",
                 span: Span::new(1, 3)
             },
@@ -384,12 +385,24 @@ fn test_split() {
 
 /// Given an array of fields, find the field with the given `short = 'a'`
 /// annotation.
-fn find_field_index_with_short(field: &'static [Field], short: &str) -> Option<usize> {
+fn find_field_index_with_short(fields: &'static [Field], short: &str) -> Option<usize> {
     let just_short = "short";
     let full_attr1 = format!("short = '{short}'");
     let full_attr2 = format!("short = \"{short}\"");
 
-    field.iter().position(|f| {
+    fields.iter().position(|f| {
+        // First try the new extension attribute syntax: #[facet(args::short = "j")]
+        if let Some(ext) = f.get_extension_attr("args", "short") {
+            if ext.args.is_empty() {
+                // No explicit short specified, use field name
+                return f.name == short;
+            } else {
+                // Parse the args to extract the short character
+                return extract_short_from_args(ext.args).as_deref() == Some(short);
+            }
+        }
+
+        // Fall back to the old Arbitrary attribute syntax: #[facet(short)] or #[facet(short = "j")]
         f.attributes.iter().any(|attr| match attr {
             FieldAttribute::Arbitrary(attr_str) => {
                 attr_str == &full_attr1
@@ -399,4 +412,32 @@ fn find_field_index_with_short(field: &'static [Field], short: &str) -> Option<u
             _ => false,
         })
     })
+}
+
+/// Extract the short character from extension attribute args.
+/// Expected formats: `= "j"` or `= 'j'`
+fn extract_short_from_args(args: &'static [Token]) -> Option<String> {
+    // Skip the '=' punctuation and look for a literal
+    for tt in args.iter() {
+        if let Token::Literal { text, kind, .. } = tt {
+            // Strip quotes based on the literal kind
+            match kind {
+                LiteralKind::String => {
+                    // Strip surrounding quotes: "j" -> j
+                    let inner = text.trim_start_matches('"').trim_end_matches('"');
+                    return Some(inner.to_string());
+                }
+                LiteralKind::Char => {
+                    // Strip surrounding quotes: 'j' -> j
+                    let inner = text.trim_start_matches('\'').trim_end_matches('\'');
+                    return Some(inner.to_string());
+                }
+                _ => {
+                    // For other literal types, return as-is
+                    return Some(text.to_string());
+                }
+            }
+        }
+    }
+    None
 }

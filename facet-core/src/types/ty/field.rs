@@ -106,16 +106,44 @@ impl Field {
     pub fn is_sensitive(&'static self) -> bool {
         self.flags.contains(FieldFlags::SENSITIVE)
     }
+
+    /// Checks whether the `Field` has an extension attribute with the given namespace and key.
+    #[inline]
+    pub fn has_extension_attr(&self, ns: &str, key: &str) -> bool {
+        self.attributes.iter().any(|attr| {
+            if let FieldAttribute::Extension(ext) = attr {
+                ext.ns == ns && ext.key == key
+            } else {
+                false
+            }
+        })
+    }
+
+    /// Gets an extension attribute by namespace and key.
+    #[inline]
+    pub fn get_extension_attr(&self, ns: &str, key: &str) -> Option<&super::ExtensionAttr> {
+        self.attributes.iter().find_map(|attr| {
+            if let FieldAttribute::Extension(ext) = attr {
+                if ext.ns == ns && ext.key == key {
+                    return Some(ext);
+                }
+            }
+            None
+        })
+    }
 }
 
 /// An attribute that can be set on a field
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Debug, PartialEq)]
 #[repr(C)]
 pub enum FieldAttribute {
     /// Provides the shape to use for custom deserialization
     DeserializeFrom(&'static Shape),
     /// Provides the shape to use for custom serialization
     SerializeInto(&'static Shape),
+    /// An extension attribute from a third-party crate
+    /// e.g., `#[facet(orm::column(name = "user_id"))]`
+    Extension(super::ExtensionAttr),
     /// Custom field attribute containing arbitrary text
     Arbitrary(&'static str),
 }
@@ -298,16 +326,19 @@ bitflags! {
         /// Flag indicating this field should be skipped during serialization
         const SKIP_SERIALIZING = 1 << 1;
 
+        /// Flag indicating this field should be skipped during deserialization
+        const SKIP_DESERIALIZING = 1 << 2;
+
         /// Flag indicating that this field should be flattened: if it's a struct, all its
         /// fields should be apparent on the parent structure, etc.
-        const FLATTEN = 1 << 2;
+        const FLATTEN = 1 << 3;
 
         /// For KDL/XML formats, indicates that this field is a child, not an attribute
-        const CHILD = 1 << 3;
+        const CHILD = 1 << 4;
 
         /// When deserializing, if this field is missing, use its default value. If
         /// `FieldVTable::default_fn` is set, use that.
-        const DEFAULT = 1 << 4;
+        const DEFAULT = 1 << 5;
     }
 }
 

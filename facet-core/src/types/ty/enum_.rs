@@ -95,12 +95,29 @@ impl Variant {
         VariantBuilder::new()
     }
 
-    /// Checks whether the `Variant` has an attribute of form `VariantAttribute::Arbitrary` with the
-    /// given content.
+    /// Checks whether the `Variant` has an extension attribute with the given namespace and key.
     #[inline]
-    pub fn has_arbitrary_attr(&self, content: &'static str) -> bool {
-        self.attributes
-            .contains(&VariantAttribute::Arbitrary(content))
+    pub fn has_extension_attr(&self, ns: &str, key: &str) -> bool {
+        self.attributes.iter().any(|attr| {
+            if let VariantAttribute::Extension(ext) = attr {
+                ext.ns == ns && ext.key == key
+            } else {
+                false
+            }
+        })
+    }
+
+    /// Gets an extension attribute by namespace and key.
+    #[inline]
+    pub fn get_extension_attr(&self, ns: &str, key: &str) -> Option<&super::ExtensionAttr> {
+        self.attributes.iter().find_map(|attr| {
+            if let VariantAttribute::Extension(ext) = attr {
+                if ext.ns == ns && ext.key == key {
+                    return Some(ext);
+                }
+            }
+            None
+        })
     }
 }
 
@@ -169,10 +186,13 @@ impl VariantBuilder {
 }
 
 /// An attribute that can be set on an enum variant
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Debug, PartialEq)]
 #[repr(C)]
 pub enum VariantAttribute {
-    /// Custom field attribute containing arbitrary text
+    /// An extension attribute from a third-party crate
+    /// e.g., `#[facet(serde::rename = "other_name")]`
+    Extension(super::ExtensionAttr),
+    /// Custom attribute containing arbitrary text
     Arbitrary(&'static str),
 }
 

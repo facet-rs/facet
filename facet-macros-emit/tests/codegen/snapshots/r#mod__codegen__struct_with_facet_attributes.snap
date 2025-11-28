@@ -17,14 +17,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                         .name("internal_data")
                         .shape(|| ::facet::shape_of(&|s: &StructWithAttributes| &s.internal_data))
                         .offset(::core::mem::offset_of!(StructWithAttributes, internal_data))
-                        .attributes(
-                            &const {
-                                [
-                                    ::facet::FieldAttribute::Arbitrary("skip"),
-                                    ::facet::FieldAttribute::Arbitrary("version = 3"),
-                                ]
-                            },
+                        .flags(
+                            ::facet::FieldFlags::SKIP_SERIALIZING
+                                .union(::facet::FieldFlags::SKIP_DESERIALIZING),
                         )
+                        .attributes(&const { [::facet::FieldAttribute::Arbitrary("version = 3")] })
                         .build()
                 },
                 {

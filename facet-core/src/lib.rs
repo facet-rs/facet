@@ -93,3 +93,7 @@ pub unsafe trait Facet<'facet>: 'facet {
 }
 
 mod shape_util;
+
+/// Re-export paste for use in macros
+#[doc(hidden)]
+pub use paste;
