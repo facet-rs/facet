@@ -29,7 +29,7 @@ pub enum TokenErrorKind {
 use alloc::borrow::Cow;
 use core::fmt::{self, Display, Formatter};
 
-use crate::span::{Pos, Span, Spanned};
+use facet_reflect::{Span, Spanned};
 
 impl Display for TokenErrorKind {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -109,7 +109,7 @@ impl Display for Token<'_> {
 /// Simple JSON tokenizer producing spanned tokens from byte input.
 pub struct Tokenizer<'input> {
     input: &'input [u8],
-    pos: Pos,
+    pos: usize,
 }
 
 impl<'input> Tokenizer<'input> {
@@ -128,7 +128,7 @@ impl<'input> Tokenizer<'input> {
                 // EOF at this position
                 let span = Span::new(self.pos, 0);
                 return Ok(Spanned {
-                    node: Token::Eof,
+                    value: Token::Eof,
                     span,
                 });
             }
@@ -137,42 +137,42 @@ impl<'input> Tokenizer<'input> {
             b'{' => {
                 self.pos += 1;
                 Spanned {
-                    node: Token::LBrace,
+                    value: Token::LBrace,
                     span: Span::new(start, 1),
                 }
             }
             b'}' => {
                 self.pos += 1;
                 Spanned {
-                    node: Token::RBrace,
+                    value: Token::RBrace,
                     span: Span::new(start, 1),
                 }
             }
             b'[' => {
                 self.pos += 1;
                 Spanned {
-                    node: Token::LBracket,
+                    value: Token::LBracket,
                     span: Span::new(start, 1),
                 }
             }
             b']' => {
                 self.pos += 1;
                 Spanned {
-                    node: Token::RBracket,
+                    value: Token::RBracket,
                     span: Span::new(start, 1),
                 }
             }
             b':' => {
                 self.pos += 1;
                 Spanned {
-                    node: Token::Colon,
+                    value: Token::Colon,
                     span: Span::new(start, 1),
                 }
             }
             b',' => {
                 self.pos += 1;
                 Spanned {
-                    node: Token::Comma,
+                    value: Token::Comma,
                     span: Span::new(start, 1),
                 }
             }
@@ -202,7 +202,7 @@ impl<'input> Tokenizer<'input> {
     }
 
     #[inline(never)]
-    fn parse_string(&mut self, start: Pos) -> TokenizeResult<'input> {
+    fn parse_string(&mut self, start: usize) -> TokenizeResult<'input> {
         const STEP_SIZE: usize = Window::BITS as usize / 8;
         type Window = u128;
         type Chunk = [u8; STEP_SIZE];
@@ -261,7 +261,7 @@ impl<'input> Tokenizer<'input> {
                 buf_end,
             } => match str::from_utf8(&input[buf_start..buf_end]) {
                 Ok(st) => Ok(Spanned {
-                    node: Token::String(Cow::Borrowed(st)),
+                    value: Token::String(Cow::Borrowed(st)),
                     span: Span::new(start, self.pos - start),
                 }),
                 Err(e) => Err(TokenError {
@@ -273,7 +273,7 @@ impl<'input> Tokenizer<'input> {
                 let len = buf.len();
                 match String::from_utf8(buf) {
                     Ok(st) => Ok(Spanned {
-                        node: Token::String(Cow::Owned(st)),
+                        value: Token::String(Cow::Owned(st)),
                         span: Span::new(start, self.pos - start),
                     }),
                     Err(e) => Err(TokenError {
@@ -461,7 +461,7 @@ impl<'input> Tokenizer<'input> {
     }
 
     #[inline(never)]
-    fn parse_number(&mut self, start: Pos) -> TokenizeResult<'input> {
+    fn parse_number(&mut self, start: usize) -> TokenizeResult<'input> {
         let input_len = self.input.len();
         let mut end = self.pos;
         // true if starts with `-`
@@ -553,11 +553,11 @@ impl<'input> Tokenizer<'input> {
         };
 
         self.pos = end;
-        Ok(Spanned { node: token, span })
+        Ok(Spanned { value: token, span })
     }
 
     #[inline(never)]
-    fn parse_literal<F>(&mut self, start: Pos, pat: &[u8], ctor: F) -> TokenizeResult<'input>
+    fn parse_literal<F>(&mut self, start: usize, pat: &[u8], ctor: F) -> TokenizeResult<'input>
     where
         F: FnOnce() -> Token<'static>,
     {
@@ -565,7 +565,10 @@ impl<'input> Tokenizer<'input> {
         if end <= self.input.len() && &self.input[start..end] == pat {
             self.pos = end;
             let span = Span::new(start, pat.len());
-            Ok(Spanned { node: ctor(), span })
+            Ok(Spanned {
+                value: ctor(),
+                span,
+            })
         } else {
             // Determine how much of the pattern matched before mismatch
             let actual_len = self.input.len().saturating_sub(start).min(pat.len());
@@ -625,91 +628,91 @@ mod tests {
         assert_eq!(
             tokenizer.next_token(),
             Ok(Spanned {
-                node: Token::LBrace,
+                value: Token::LBrace,
                 span: Span::new(0, 1)
             })
         );
         assert_eq!(
             tokenizer.next_token(),
             Ok(Spanned {
-                node: Token::String(Cow::Borrowed("foo")),
+                value: Token::String(Cow::Borrowed("foo")),
                 span: Span::new(1, 5)
             })
         );
         assert_eq!(
             tokenizer.next_token(),
             Ok(Spanned {
-                node: Token::Colon,
+                value: Token::Colon,
                 span: Span::new(6, 1)
             })
         );
         assert_eq!(
             tokenizer.next_token(),
             Ok(Spanned {
-                node: Token::String(Cow::Borrowed("abc")),
+                value: Token::String(Cow::Borrowed("abc")),
                 span: Span::new(7, 5)
             })
         );
         assert_eq!(
             tokenizer.next_token(),
             Ok(Spanned {
-                node: Token::Comma,
+                value: Token::Comma,
                 span: Span::new(12, 1)
             })
         );
         assert_eq!(
             tokenizer.next_token(),
             Ok(Spanned {
-                node: Token::String(Cow::Borrowed("bar")),
+                value: Token::String(Cow::Borrowed("bar")),
                 span: Span::new(13, 5)
             })
         );
         assert_eq!(
             tokenizer.next_token(),
             Ok(Spanned {
-                node: Token::Colon,
+                value: Token::Colon,
                 span: Span::new(18, 1)
             })
         );
         assert_eq!(
             tokenizer.next_token(),
             Ok(Spanned {
-                node: Token::U64(42),
+                value: Token::U64(42),
                 span: Span::new(19, 2)
             })
         );
         assert_eq!(
             tokenizer.next_token(),
             Ok(Spanned {
-                node: Token::Comma,
+                value: Token::Comma,
                 span: Span::new(21, 1)
             })
         );
         assert_eq!(
             tokenizer.next_token(),
             Ok(Spanned {
-                node: Token::String(Cow::Borrowed("baz")),
+                value: Token::String(Cow::Borrowed("baz")),
                 span: Span::new(22, 5)
             })
         );
         assert_eq!(
             tokenizer.next_token(),
             Ok(Spanned {
-                node: Token::Colon,
+                value: Token::Colon,
                 span: Span::new(27, 1)
             })
         );
         assert_eq!(
             tokenizer.next_token(),
             Ok(Spanned {
-                node: Token::True,
+                value: Token::True,
                 span: Span::new(28, 4)
             })
         );
         assert_eq!(
             tokenizer.next_token(),
             Ok(Spanned {
-                node: Token::RBrace,
+                value: Token::RBrace,
                 span: Span::new(32, 1)
             })
         );

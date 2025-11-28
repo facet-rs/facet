@@ -15,7 +15,8 @@ use facet_core::{
 use facet_reflect::Partial;
 use saphyr_parser::{Event, Parser, ScalarStyle, Span as SaphyrSpan, SpannedEventReceiver};
 
-use crate::error::{Span, YamlError, YamlErrorKind};
+use crate::error::{SpanExt, YamlError, YamlErrorKind};
+use facet_reflect::{Span, is_spanned_shape};
 
 type Result<T> = core::result::Result<T, YamlError>;
 
@@ -281,6 +282,11 @@ impl<'input> YamlDeserializer<'input> {
             partial.path()
         );
 
+        // Check for Spanned<T> wrapper first
+        if is_spanned_shape(shape) {
+            return self.deserialize_spanned(partial);
+        }
+
         // Check Def first for Option (which is also a Type::User::Enum)
         if matches!(&shape.def, Def::Option(_)) {
             return self.deserialize_option(partial);
@@ -329,6 +335,31 @@ impl<'input> YamlDeserializer<'input> {
             "unsupported def: {:?}",
             shape.def
         ))))
+    }
+
+    /// Deserialize into a `Spanned<T>` wrapper.
+    fn deserialize_spanned<'facet>(&mut self, partial: &mut Partial<'facet>) -> Result<()> {
+        log::trace!("deserialize_spanned");
+
+        // Peek to get the span of the value we're about to parse
+        let value_span = self
+            .peek()
+            .map(|e| Span::from_saphyr_span(&e.span))
+            .unwrap_or(Span::new(self.input.len(), 0));
+
+        // Deserialize the inner value into the `value` field
+        partial.begin_field("value")?;
+        self.deserialize_value(partial)?;
+        partial.end()?;
+
+        // Set the span field
+        partial.begin_field("span")?;
+        // Span struct has offset and len fields
+        partial.set_field("offset", value_span.offset)?;
+        partial.set_field("len", value_span.len)?;
+        partial.end()?;
+
+        Ok(())
     }
 
     /// Deserialize a scalar value.

@@ -12,7 +12,7 @@ use alloc::{
 };
 pub use error::{TomlDeError, TomlDeErrorKind};
 use facet_core::{Characteristic, Def, Facet, FieldFlags, StructKind, Type, UserType};
-use facet_reflect::{Partial, ReflectError, ScalarType};
+use facet_reflect::{Partial, ReflectError, ScalarType, Span, is_spanned_shape};
 use log::trace;
 use owo_colors::OwoColorize;
 use toml_edit::{ImDocument, Item, TomlError};
@@ -84,6 +84,11 @@ fn deserialize_item<'input, 'facet>(
     wip: &mut Partial<'facet>,
     item: &Item,
 ) -> Result<(), TomlDeError<'input>> {
+    // Check for Spanned<T> wrapper first
+    if is_spanned_shape(wip.shape()) {
+        return deserialize_as_spanned(toml, wip, item);
+    }
+
     // Check for Option before anything else, since it's a special case
     // Option is an enum in Rust, but we handle it specially
     if let Def::Option(_) = wip.shape().def {
@@ -662,6 +667,40 @@ fn deserialize_as_scalar<'input, 'a>(
     }
 
     trace!("Finished deserializing {}", "scalar".blue());
+
+    Ok(())
+}
+
+fn deserialize_as_spanned<'input, 'facet>(
+    toml: &'input str,
+    wip: &mut Partial<'facet>,
+    item: &Item,
+) -> Result<(), TomlDeError<'input>> {
+    trace!(
+        "Deserializing {} as {}",
+        item.type_name().cyan(),
+        "spanned".blue()
+    );
+
+    // Get the span from the item - toml_edit uses Range<usize>
+    let span = item
+        .span()
+        .map(|r| Span::new(r.start, r.end.saturating_sub(r.start)))
+        .unwrap_or(Span::new(0, 0));
+
+    // Deserialize the inner value into the `value` field
+    reflect!(wip, toml, item.span(), begin_field("value"));
+    deserialize_item(toml, wip, item)?;
+    reflect!(wip, toml, item.span(), end());
+
+    // Set the span field
+    reflect!(wip, toml, item.span(), begin_field("span"));
+    // Span struct has offset and len fields
+    reflect!(wip, toml, item.span(), set_field("offset", span.offset));
+    reflect!(wip, toml, item.span(), set_field("len", span.len));
+    reflect!(wip, toml, item.span(), end());
+
+    trace!("Finished deserializing {}", "spanned".blue());
 
     Ok(())
 }

@@ -37,3 +37,6 @@ pub use deserialize::from_str;
 pub use error::{YamlError, YamlErrorKind};
 #[cfg(feature = "std")]
 pub use serialize::{to_string, to_writer};
+
+// Re-export span types from facet-reflect
+pub use facet_reflect::{Span, Spanned};

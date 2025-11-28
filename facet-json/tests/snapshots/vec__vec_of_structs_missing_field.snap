@@ -1,6 +1,5 @@
 ---
-source: tests/vec.rs
-assertion_line: 159
+source: facet-json/tests/vec.rs
 expression: result
 ---
 Err(
@@ -9,13 +8,13 @@ Err(
             field: "bar",
             object_start: Some(
                 Span {
-                    start: 61,
+                    offset: 61,
                     len: 1,
                 },
             ),
             object_end: Some(
                 Span {
-                    start: 85,
+                    offset: 85,
                     len: 1,
                 },
             ),
