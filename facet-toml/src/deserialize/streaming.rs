@@ -21,9 +21,9 @@ use facet_reflect::{Partial, ReflectError, Resolution, ScalarType, VariantSelect
 use facet_solver::{KeyResult, Schema, Solver};
 use log::trace;
 use toml_parser::{
-    ErrorSink, Raw, Source, Span as TomlSpan,
-    decoder::{Encoding, ScalarKind},
-    parser::{EventKind, EventReceiver, parse_document},
+    ErrorSink, Raw, Source,
+    decoder::ScalarKind,
+    parser::{Event, EventKind, RecursionGuard, parse_document},
 };
 
 use super::TomlDeError;
@@ -211,151 +211,48 @@ fn find_field_location<'a>(
     None
 }
 
-/// A TOML event with its span, suitable for buffering and replay.
-#[derive(Debug, Clone)]
-pub struct SpannedEvent {
-    /// The event kind
-    pub kind: EventKind,
-    /// The span in the source (byte range)
-    pub span: Range<usize>,
-    /// For keys and scalars: optional encoding info
-    pub encoding: Option<Encoding>,
-}
-
-impl SpannedEvent {
-    /// Get the raw content of this event from the source
-    pub fn content<'a>(&self, source: &'a str) -> &'a str {
-        &source[self.span.clone()]
-    }
-}
-
-/// Collector that gathers events into a Vec for later processing.
+/// Iterator over collected events for replay.
 ///
-/// This implements `EventReceiver` and stores all events for replay.
-/// Used during flatten disambiguation when we need to buffer events
-/// before knowing which variant to deserialize into.
-pub struct EventCollector {
-    events: Vec<SpannedEvent>,
-}
-
-impl EventCollector {
-    /// Create a new event collector
-    pub fn new() -> Self {
-        Self { events: Vec::new() }
-    }
-
-    /// Take the collected events
-    pub fn into_events(self) -> Vec<SpannedEvent> {
-        self.events
-    }
-
-    fn push(&mut self, kind: EventKind, span: TomlSpan, encoding: Option<Encoding>) {
-        self.events.push(SpannedEvent {
-            kind,
-            span: span.start()..span.end(),
-            encoding,
-        });
-    }
-}
-
-impl Default for EventCollector {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl EventReceiver for EventCollector {
-    fn std_table_open(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
-        self.push(EventKind::StdTableOpen, span, None);
-    }
-
-    fn std_table_close(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
-        self.push(EventKind::StdTableClose, span, None);
-    }
-
-    fn array_table_open(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
-        self.push(EventKind::ArrayTableOpen, span, None);
-    }
-
-    fn array_table_close(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
-        self.push(EventKind::ArrayTableClose, span, None);
-    }
-
-    fn inline_table_open(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) -> bool {
-        self.push(EventKind::InlineTableOpen, span, None);
-        true // Allow entries
-    }
-
-    fn inline_table_close(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
-        self.push(EventKind::InlineTableClose, span, None);
-    }
-
-    fn array_open(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) -> bool {
-        self.push(EventKind::ArrayOpen, span, None);
-        true // Allow entries
-    }
-
-    fn array_close(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
-        self.push(EventKind::ArrayClose, span, None);
-    }
-
-    fn simple_key(
-        &mut self,
-        span: TomlSpan,
-        encoding: Option<Encoding>,
-        _sink: &mut dyn ErrorSink,
-    ) {
-        self.push(EventKind::SimpleKey, span, encoding);
-    }
-
-    fn key_sep(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
-        self.push(EventKind::KeySep, span, None);
-    }
-
-    fn key_val_sep(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
-        self.push(EventKind::KeyValSep, span, None);
-    }
-
-    fn scalar(&mut self, span: TomlSpan, encoding: Option<Encoding>, _sink: &mut dyn ErrorSink) {
-        self.push(EventKind::Scalar, span, encoding);
-    }
-
-    fn value_sep(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
-        self.push(EventKind::ValueSep, span, None);
-    }
-
-    fn whitespace(&mut self, _span: TomlSpan, _sink: &mut dyn ErrorSink) {
-        // Skip whitespace events - we don't need them for deserialization
-    }
-
-    fn comment(&mut self, _span: TomlSpan, _sink: &mut dyn ErrorSink) {
-        // Skip comment events - we don't need them for deserialization
-    }
-
-    fn newline(&mut self, _span: TomlSpan, _sink: &mut dyn ErrorSink) {
-        // Skip newline events - we don't need them for deserialization
-    }
-
-    fn error(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
-        self.push(EventKind::Error, span, None);
-    }
-}
-
-/// Iterator over collected events for replay
+/// This iterator automatically skips whitespace, comment, and newline events
+/// since they are not needed for deserialization.
 pub struct EventIter<'a> {
-    events: &'a [SpannedEvent],
+    events: &'a [Event],
     pos: usize,
 }
 
 impl<'a> EventIter<'a> {
     /// Create a new event iterator
-    pub fn new(events: &'a [SpannedEvent]) -> Self {
+    pub fn new(events: &'a [Event]) -> Self {
         Self { events, pos: 0 }
     }
 
-    /// Peek at the next event without consuming it
-    pub fn peek(&self) -> Option<&'a SpannedEvent> {
-        self.events.get(self.pos)
+    /// Check if an event should be skipped (whitespace, comment, newline)
+    #[inline]
+    fn should_skip(event: &Event) -> bool {
+        matches!(
+            event.kind(),
+            EventKind::Whitespace | EventKind::Comment | EventKind::Newline
+        )
+    }
+
+    /// Advance to the next non-skipped position
+    fn advance_to_next_valid(&mut self) {
+        while self.pos < self.events.len() && Self::should_skip(&self.events[self.pos]) {
+            self.pos += 1;
+        }
+    }
+
+    /// Peek at the next event without consuming it (skips whitespace/comments/newlines)
+    pub fn peek(&self) -> Option<&'a Event> {
+        let mut pos = self.pos;
+        while pos < self.events.len() {
+            let event = &self.events[pos];
+            if !Self::should_skip(event) {
+                return Some(event);
+            }
+            pos += 1;
+        }
+        None
     }
 
     /// Get the current position (for rewinding)
@@ -370,10 +267,14 @@ impl<'a> EventIter<'a> {
 }
 
 impl<'a> Iterator for EventIter<'a> {
-    type Item = &'a SpannedEvent;
+    type Item = &'a Event;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let event = self.events.get(self.pos)?;
+        self.advance_to_next_valid();
+        if self.pos >= self.events.len() {
+            return None;
+        }
+        let event = &self.events[self.pos];
         self.pos += 1;
         Some(event)
     }
@@ -382,6 +283,12 @@ impl<'a> Iterator for EventIter<'a> {
 // ============================================================================
 // Streaming Deserializer
 // ============================================================================
+
+/// Default maximum recursion depth for inline tables and arrays.
+///
+/// This limits how deeply nested inline constructs like `{ a = { b = { c = 1 } } }`
+/// can be. Standard table headers `[a.b.c]` are not affected by this limit.
+pub const DEFAULT_MAX_RECURSION_DEPTH: u32 = 128;
 
 /// Deserialize TOML using the streaming event-based parser.
 ///
@@ -393,14 +300,27 @@ impl<'a> Iterator for EventIter<'a> {
 pub fn from_str<'input, 'facet, T: Facet<'facet>>(
     toml: &'input str,
 ) -> Result<T, TomlDeError<'input>> {
+    from_str_with_options(toml, DEFAULT_MAX_RECURSION_DEPTH)
+}
+
+/// Deserialize TOML with configurable options.
+///
+/// # Arguments
+/// * `toml` - The TOML source string
+/// * `max_recursion_depth` - Maximum nesting depth for inline tables/arrays
+pub fn from_str_with_options<'input, 'facet, T: Facet<'facet>>(
+    toml: &'input str,
+    max_recursion_depth: u32,
+) -> Result<T, TomlDeError<'input>> {
     trace!("Parsing TOML (streaming)");
 
-    // Parse TOML into events
+    // Parse TOML into events using Vec<Event> directly with RecursionGuard
     let source = Source::new(toml);
     let tokens: Vec<_> = source.lex().collect();
-    let mut collector = EventCollector::new();
+    let mut events: Vec<Event> = Vec::new();
+    let mut guarded = RecursionGuard::new(&mut events, max_recursion_depth);
     let mut error_collector = ParseErrorCollector::new();
-    parse_document(&tokens, &mut collector, &mut error_collector);
+    parse_document(&tokens, &mut guarded, &mut error_collector);
 
     // Check for parse errors
     if let Some(error_msg) = error_collector.take_error() {
@@ -411,8 +331,6 @@ pub fn from_str<'input, 'facet, T: Facet<'facet>>(
             "$".to_string(),
         ));
     }
-
-    let events = collector.into_events();
 
     // Allocate the type
     let mut partial = Partial::alloc::<T>().map_err(|e| {
@@ -572,24 +490,22 @@ pub fn from_str<'input, 'facet, T: Facet<'facet>>(
 /// This scans the events and extracts:
 /// - Keys from top-level key-value pairs (e.g., `key = value`)
 /// - First segments of table headers (e.g., `[foo]` -> "foo")
-fn collect_top_level_keys<'input>(
-    source: &'input str,
-    events: &[SpannedEvent],
-) -> Vec<&'input str> {
+fn collect_top_level_keys<'input>(source: &'input str, events: &[Event]) -> Vec<&'input str> {
     let mut keys = Vec::new();
     let mut iter = EventIter::new(events);
     let mut depth: usize = 0; // Track nesting level (0 = top-level)
 
     while let Some(event) = iter.next() {
-        match event.kind {
+        match event.kind() {
             // Table headers reset depth and provide a key
             EventKind::StdTableOpen | EventKind::ArrayTableOpen => {
                 depth = 0;
                 // The next SimpleKey is part of the table path
                 // For [foo.bar], the first key "foo" is a top-level key
                 if let Some(next) = iter.peek() {
-                    if next.kind == EventKind::SimpleKey {
-                        let key_str = &source[next.span.clone()];
+                    if next.kind() == EventKind::SimpleKey {
+                        let span = next.span();
+                        let key_str = &source[span.start()..span.end()];
                         // Decode if it's a quoted string
                         let key = decode_simple_key(source, next);
                         if !keys.contains(&key) {
@@ -616,7 +532,7 @@ fn collect_top_level_keys<'input>(
                 let decoded_first = decode_simple_key(source, event);
 
                 for next in iter.by_ref() {
-                    match next.kind {
+                    match next.kind() {
                         EventKind::KeySep => {
                             // Dot separator - continue to next key segment
                         }
@@ -653,8 +569,9 @@ fn collect_top_level_keys<'input>(
 }
 
 /// Decode a simple key from an event, handling quoted strings
-fn decode_simple_key<'input>(source: &'input str, event: &SpannedEvent) -> &'input str {
-    let raw_str = &source[event.span.clone()];
+fn decode_simple_key<'input>(source: &'input str, event: &Event) -> &'input str {
+    let span = event.span();
+    let raw_str = &source[span.start()..span.end()];
     // If it starts with a quote, it's a quoted string - for now just strip quotes
     // A more complete implementation would use toml_parser's decoder
     if raw_str.starts_with('"') || raw_str.starts_with('\'') {
@@ -669,7 +586,7 @@ fn decode_simple_key<'input>(source: &'input str, event: &SpannedEvent) -> &'inp
 struct StreamingDeserializer<'input, 'events, 'res> {
     /// The TOML source string
     source: &'input str,
-    /// Event iterator
+    /// Event iterator (automatically filters whitespace/comments/newlines)
     iter: EventIter<'events>,
     /// Current key path being built (for dotted keys like foo.bar.baz)
     current_keys: Vec<&'input str>,
@@ -694,7 +611,7 @@ struct OpenFlatten {
 impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     fn new(
         source: &'input str,
-        events: &'events [SpannedEvent],
+        events: &'events [Event],
         root_shape: &'static Shape,
         resolution: &'res Resolution,
     ) -> Self {
@@ -919,21 +836,31 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
 
     /// Get the span for error reporting
     fn current_span(&self) -> Option<Range<usize>> {
-        self.iter.peek().map(|e| e.span.clone())
+        self.iter.peek().map(|e| {
+            let span = e.span();
+            span.start()..span.end()
+        })
     }
 
-    /// Create a Raw slice for decoding
-    fn raw_at(&self, span: &Range<usize>, encoding: Option<Encoding>) -> Raw<'input> {
+    /// Create a Raw slice for decoding from an event
+    fn raw_from_event(&self, event: &Event) -> Raw<'input> {
+        let span = event.span();
         Raw::new_unchecked(
-            &self.source[span.clone()],
-            encoding,
-            TomlSpan::new_unchecked(span.start, span.end),
+            &self.source[span.start()..span.end()],
+            event.encoding(),
+            span,
         )
     }
 
+    /// Get a span as `Range<usize>` from an event
+    fn span_range(event: &Event) -> Range<usize> {
+        let span = event.span();
+        span.start()..span.end()
+    }
+
     /// Decode a key from an event
-    fn decode_key(&self, event: &SpannedEvent) -> String {
-        let raw = self.raw_at(&event.span, event.encoding);
+    fn decode_key(&self, event: &Event) -> String {
+        let raw = self.raw_from_event(event);
         let mut output: Cow<'input, str> = Cow::Borrowed("");
         raw.decode_key(&mut output, &mut ());
         output.into_owned()
@@ -948,7 +875,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
 
         // Process all events
         while let Some(event) = self.iter.peek() {
-            match event.kind {
+            match event.kind() {
                 // Standard table header: [foo.bar]
                 EventKind::StdTableOpen => {
                     self.iter.next(); // consume
@@ -973,7 +900,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericTomlError("Parse error".to_string()),
-                        Some(event.span.clone()),
+                        Some(Self::span_range(event)),
                         partial.path(),
                     ));
                 }
@@ -1010,7 +937,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         // Collect the dotted key path
         let mut path: Vec<String> = Vec::new();
         while let Some(event) = self.iter.peek() {
-            match event.kind {
+            match event.kind() {
                 EventKind::SimpleKey => {
                     let key = self.decode_key(event);
                     path.push(key);
@@ -1201,7 +1128,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         // Collect the dotted key path
         self.current_keys.clear();
         while let Some(event) = self.iter.peek() {
-            match event.kind {
+            match event.kind() {
                 EventKind::SimpleKey => {
                     let event = self.iter.next().unwrap();
                     let key = self.decode_key(event);
@@ -1470,7 +1397,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
 
         // Handle Spanned<T> - deserialize the inner value and set the span
         if is_spanned_shape(partial.shape()) {
-            return self.deserialize_spanned(partial, event.span.clone());
+            return self.deserialize_spanned(partial, Self::span_range(event));
         }
 
         // Handle Option<T> - unwrap into Some and deserialize the inner value
@@ -1478,7 +1405,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             partial
                 .begin_some()
                 .map(|_| ())
-                .map_err(|e| self.reflect_err_at(e, event.span.clone(), partial))?;
+                .map_err(|e| self.reflect_err_at(e, Self::span_range(event), partial))?;
             // Recursively deserialize the inner value
             self.deserialize_value(partial)?;
             self.end_frame(partial)?;
@@ -1490,7 +1417,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         if let Type::User(UserType::Struct(StructType { kind, fields, .. })) = partial.shape().ty {
             if matches!(kind, StructKind::TupleStruct)
                 && fields.len() == 1
-                && matches!(event.kind, EventKind::Scalar)
+                && matches!(event.kind(), EventKind::Scalar)
             {
                 // Unwrap into the single field and deserialize recursively
                 // (the inner type might also be a tuple struct, e.g. NestedUnit(Unit(i32)))
@@ -1537,12 +1464,12 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         // Check if target type is a list - lists can't be deserialized from scalars
         let is_list_target = matches!(partial.shape().def, Def::List(_));
 
-        match event.kind {
+        match event.kind() {
             EventKind::Scalar => {
                 // Maps require table-like structure, not a scalar
                 if is_map_target {
                     // Decode the scalar to determine its type for the error message
-                    let raw = self.raw_at(&event.span, event.encoding);
+                    let raw = self.raw_from_event(event);
                     let mut decoded: Cow<'input, str> = Cow::Borrowed("");
                     let scalar_kind = raw.decode_scalar(&mut decoded, &mut ());
                     return Err(TomlDeError::new(
@@ -1557,14 +1484,14 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                                 toml_parser::decoder::ScalarKind::DateTime => "datetime",
                             },
                         },
-                        Some(event.span.clone()),
+                        Some(Self::span_range(event)),
                         partial.path(),
                     ));
                 }
                 // Lists require array structure, not a scalar
                 if is_list_target {
                     // Decode the scalar to determine its type for the error message
-                    let raw = self.raw_at(&event.span, event.encoding);
+                    let raw = self.raw_from_event(event);
                     let mut decoded: Cow<'input, str> = Cow::Borrowed("");
                     let scalar_kind = raw.decode_scalar(&mut decoded, &mut ());
                     return Err(TomlDeError::new(
@@ -1579,7 +1506,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                                 toml_parser::decoder::ScalarKind::DateTime => "datetime",
                             },
                         },
-                        Some(event.span.clone()),
+                        Some(Self::span_range(event)),
                         partial.path(),
                     ));
                 }
@@ -1595,7 +1522,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                             expected: self.expected_type_name(partial.shape()),
                             got: "array",
                         },
-                        Some(event.span.clone()),
+                        Some(Self::span_range(event)),
                         partial.path(),
                     ));
                 }
@@ -1611,7 +1538,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                             expected: self.expected_type_name(partial.shape()),
                             got: "inline table",
                         },
-                        Some(event.span.clone()),
+                        Some(Self::span_range(event)),
                         partial.path(),
                     ));
                 }
@@ -1623,9 +1550,9 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     self.source,
                     TomlDeErrorKind::GenericTomlError(format!(
                         "Expected value, got {:?}",
-                        event.kind
+                        event.kind()
                     )),
-                    Some(event.span.clone()),
+                    Some(Self::span_range(event)),
                     partial.path(),
                 ));
             }
@@ -1664,16 +1591,17 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     fn deserialize_scalar<'facet>(
         &mut self,
         partial: &mut Partial<'facet>,
-        event: &SpannedEvent,
+        event: &Event,
     ) -> Result<(), TomlDeError<'input>> {
-        let raw = self.raw_at(&event.span, event.encoding);
+        let raw = self.raw_from_event(event);
+        let event_span = Self::span_range(event);
         let mut decoded: Cow<'input, str> = Cow::Borrowed("");
         let kind = raw.decode_scalar(&mut decoded, &mut ());
 
         trace!(
             "Scalar: kind={:?}, raw='{}', decoded='{}'",
             kind,
-            event.content(self.source),
+            &self.source[event_span.clone()],
             decoded
         );
 
@@ -1697,7 +1625,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                             rust_type: partial.shape(),
                             reason: None,
                         },
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 }
@@ -1712,7 +1640,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericReflect(e),
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 }
@@ -1725,7 +1653,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::ParseSingleValueAsMultipleFieldStruct,
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 }
@@ -1734,7 +1662,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             return Err(TomlDeError::new(
                 self.source,
                 TomlDeErrorKind::UnrecognizedScalar(partial.shape()),
-                Some(event.span.clone()),
+                Some(event_span.clone()),
                 partial.path(),
             ));
         };
@@ -1746,7 +1674,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericReflect(e),
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 }
@@ -1758,7 +1686,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericReflect(e),
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 }
@@ -1770,7 +1698,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericReflect(e),
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 }
@@ -1778,7 +1706,13 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
 
             // Integers
             (ScalarKind::Integer(radix), scalar_type) => {
-                self.deserialize_integer(partial, &decoded, radix.value(), scalar_type, event)?;
+                self.deserialize_integer(
+                    partial,
+                    &decoded,
+                    radix.value(),
+                    scalar_type,
+                    event_span.clone(),
+                )?;
             }
 
             // Floats
@@ -1787,7 +1721,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericTomlError(format!("Invalid f32: {decoded}")),
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 };
@@ -1795,7 +1729,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericReflect(e),
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 }
@@ -1805,7 +1739,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericTomlError(format!("Invalid f64: {decoded}")),
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 };
@@ -1813,7 +1747,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericReflect(e),
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 }
@@ -1828,7 +1762,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                         rust_type: partial.shape(),
                         reason: None,
                     },
-                    Some(event.span.clone()),
+                    Some(event_span.clone()),
                     partial.path(),
                 ));
             }
@@ -1842,7 +1776,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                         return Err(TomlDeError::new(
                             self.source,
                             TomlDeErrorKind::GenericReflect(e),
-                            Some(event.span.clone()),
+                            Some(event_span.clone()),
                             partial.path(),
                         ));
                     }
@@ -1854,7 +1788,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                             expected: "char",
                             got: "string",
                         },
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 }
@@ -1871,7 +1805,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                             rust_type: partial.shape(),
                             reason: None,
                         },
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 }
@@ -1919,7 +1853,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 return Err(TomlDeError::new(
                     self.source,
                     TomlDeErrorKind::ExpectedType { expected, got },
-                    Some(event.span.clone()),
+                    Some(event_span.clone()),
                     partial.path(),
                 ));
             }
@@ -1935,7 +1869,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         decoded: &str,
         radix: u32,
         scalar_type: ScalarType,
-        event: &SpannedEvent,
+        event_span: Range<usize>,
     ) -> Result<(), TomlDeError<'input>> {
         // Remove underscores from the number (TOML allows them as separators)
         let clean: String = decoded.chars().filter(|&c| c != '_').collect();
@@ -1950,7 +1884,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                             stringify!($ty),
                             decoded
                         )),
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 };
@@ -1958,7 +1892,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericReflect(e),
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 }
@@ -1984,7 +1918,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericTomlError(format!("Invalid f32: {decoded}")),
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 };
@@ -1992,7 +1926,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericReflect(e),
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 }
@@ -2002,7 +1936,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericTomlError(format!("Invalid f64: {decoded}")),
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 };
@@ -2010,7 +1944,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericReflect(e),
-                        Some(event.span.clone()),
+                        Some(event_span.clone()),
                         partial.path(),
                     ));
                 }
@@ -2029,7 +1963,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                         expected,
                         got: "integer",
                     },
-                    Some(event.span.clone()),
+                    Some(event_span.clone()),
                     partial.path(),
                 ));
             }
@@ -2070,7 +2004,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         loop {
             let Some(event) = self.iter.peek() else { break };
 
-            match event.kind {
+            match event.kind() {
                 EventKind::ArrayClose => {
                     self.iter.next();
                     break;
@@ -2127,7 +2061,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         loop {
             let Some(event) = self.iter.peek() else { break };
 
-            match event.kind {
+            match event.kind() {
                 EventKind::ArrayClose => {
                     self.iter.next();
                     break;
@@ -2196,7 +2130,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         loop {
             let Some(event) = self.iter.peek() else { break };
 
-            match event.kind {
+            match event.kind() {
                 EventKind::InlineTableClose => {
                     self.iter.next();
                     break;
@@ -2211,7 +2145,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
 
                     // Skip KeyValSep (=)
                     if let Some(e) = self.iter.peek() {
-                        if e.kind == EventKind::KeyValSep {
+                        if e.kind() == EventKind::KeyValSep {
                             self.iter.next();
                         }
                     }
@@ -2314,25 +2248,23 @@ mod tests {
     use toml_parser::{Source, parser::parse_document};
 
     #[test]
-    fn test_event_collector_basic() {
+    fn test_event_vec_basic() {
         let input = r#"
 name = "test"
 value = 42
 "#;
         let source = Source::new(input);
         let tokens: Vec<_> = source.lex().collect();
-        let mut collector = EventCollector::new();
+        let mut events: Vec<Event> = Vec::new();
 
-        parse_document(&tokens, &mut collector, &mut ());
+        parse_document(&tokens, &mut events, &mut ());
 
-        let events = collector.into_events();
-
-        // Should have events for keys and scalars (excluding whitespace/newlines)
+        // Should have events for keys and scalars (includes whitespace/newlines now)
         let structural_events: Vec<_> = events
             .iter()
             .filter(|e| {
                 matches!(
-                    e.kind,
+                    e.kind(),
                     EventKind::SimpleKey | EventKind::KeyValSep | EventKind::Scalar
                 )
             })
@@ -2344,7 +2276,7 @@ value = 42
     }
 
     #[test]
-    fn test_event_collector_nested_keys() {
+    fn test_event_vec_nested_keys() {
         let input = r#"
 foo.bar.x = 1
 foo.baz = 2
@@ -2352,16 +2284,14 @@ foo.bar.y = 3
 "#;
         let source = Source::new(input);
         let tokens: Vec<_> = source.lex().collect();
-        let mut collector = EventCollector::new();
+        let mut events: Vec<Event> = Vec::new();
 
-        parse_document(&tokens, &mut collector, &mut ());
-
-        let events = collector.into_events();
+        parse_document(&tokens, &mut events, &mut ());
 
         // Count key separators (dots) - should reflect the dotted paths
         let key_seps: Vec<_> = events
             .iter()
-            .filter(|e| matches!(e.kind, EventKind::KeySep))
+            .filter(|e| matches!(e.kind(), EventKind::KeySep))
             .collect();
 
         // foo.bar.x has 2 dots, foo.baz has 1 dot, foo.bar.y has 2 dots = 5 total
@@ -2373,60 +2303,54 @@ foo.bar.y = 3
         let input = r#"name = "hello""#;
         let source = Source::new(input);
         let tokens: Vec<_> = source.lex().collect();
-        let mut collector = EventCollector::new();
+        let mut events: Vec<Event> = Vec::new();
 
-        parse_document(&tokens, &mut collector, &mut ());
-
-        let events = collector.into_events();
+        parse_document(&tokens, &mut events, &mut ());
 
         // Find the key event
         let key_event = events
             .iter()
-            .find(|e| e.kind == EventKind::SimpleKey)
+            .find(|e| e.kind() == EventKind::SimpleKey)
             .unwrap();
-        assert_eq!(key_event.content(input), "name");
+        let span = key_event.span();
+        assert_eq!(&input[span.start()..span.end()], "name");
 
         // Find the scalar event
-        let scalar_event = events.iter().find(|e| e.kind == EventKind::Scalar).unwrap();
-        assert_eq!(scalar_event.content(input), "\"hello\"");
+        let scalar_event = events
+            .iter()
+            .find(|e| e.kind() == EventKind::Scalar)
+            .unwrap();
+        let span = scalar_event.span();
+        assert_eq!(&input[span.start()..span.end()], "\"hello\"");
     }
 
     #[test]
     fn test_event_iter_peek_and_rewind() {
+        use toml_parser::Span as TomlSpan;
+
+        // Create events using Event::new_unchecked
         let events = vec![
-            SpannedEvent {
-                kind: EventKind::SimpleKey,
-                span: 0..4,
-                encoding: None,
-            },
-            SpannedEvent {
-                kind: EventKind::KeyValSep,
-                span: 5..6,
-                encoding: None,
-            },
-            SpannedEvent {
-                kind: EventKind::Scalar,
-                span: 7..13,
-                encoding: None,
-            },
+            Event::new_unchecked(EventKind::SimpleKey, None, TomlSpan::new_unchecked(0, 4)),
+            Event::new_unchecked(EventKind::KeyValSep, None, TomlSpan::new_unchecked(5, 6)),
+            Event::new_unchecked(EventKind::Scalar, None, TomlSpan::new_unchecked(7, 13)),
         ];
 
         let mut iter = EventIter::new(&events);
 
         // Peek doesn't advance
-        assert_eq!(iter.peek().unwrap().kind, EventKind::SimpleKey);
-        assert_eq!(iter.peek().unwrap().kind, EventKind::SimpleKey);
+        assert_eq!(iter.peek().unwrap().kind(), EventKind::SimpleKey);
+        assert_eq!(iter.peek().unwrap().kind(), EventKind::SimpleKey);
 
         // Save position
         let pos = iter.position();
 
         // Consume
-        assert_eq!(iter.next().unwrap().kind, EventKind::SimpleKey);
-        assert_eq!(iter.next().unwrap().kind, EventKind::KeyValSep);
+        assert_eq!(iter.next().unwrap().kind(), EventKind::SimpleKey);
+        assert_eq!(iter.next().unwrap().kind(), EventKind::KeyValSep);
 
         // Rewind
         iter.rewind(pos);
-        assert_eq!(iter.next().unwrap().kind, EventKind::SimpleKey);
+        assert_eq!(iter.next().unwrap().kind(), EventKind::SimpleKey);
     }
 
     // Integration tests for the streaming deserializer
@@ -2768,9 +2692,8 @@ foo.bar = 1
 "#;
         let source = Source::new(input);
         let tokens: Vec<_> = source.lex().collect();
-        let mut collector = EventCollector::new();
-        parse_document(&tokens, &mut collector, &mut ());
-        let events = collector.into_events();
+        let mut events: Vec<Event> = Vec::new();
+        parse_document(&tokens, &mut events, &mut ());
 
         let keys = collect_top_level_keys(input, &events);
         assert!(keys.contains(&"name"));
@@ -2788,9 +2711,8 @@ host = "localhost"
 "#;
         let source = Source::new(input);
         let tokens: Vec<_> = source.lex().collect();
-        let mut collector = EventCollector::new();
-        parse_document(&tokens, &mut collector, &mut ());
-        let events = collector.into_events();
+        let mut events: Vec<Event> = Vec::new();
+        parse_document(&tokens, &mut events, &mut ());
 
         let keys = collect_top_level_keys(input, &events);
         assert!(keys.contains(&"name"));
