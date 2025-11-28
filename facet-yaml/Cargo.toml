@@ -9,6 +9,9 @@ description = "YAML serialization and deserialization for Facet types"
 keywords = ["yaml", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
+
 [features]
 std = ["alloc", "facet-core/std", "facet-reflect/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]

@@ -9,6 +9,9 @@ description = "TOML serialization and deserialization for Facet types"
 keywords = ["toml", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
+
 [features]
 deserialize = ["alloc", "toml_edit/parse"]
 serialize = ["alloc", "dep:toml_edit", "toml_edit/display"]

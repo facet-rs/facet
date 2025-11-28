@@ -9,6 +9,9 @@ description = "Core types and traits for the facet ecosystem"
 keywords = ["reflection", "core"]
 categories = ["development-tools"]
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
+
 [features]
 default = ["std"]
 # Enable standard library support

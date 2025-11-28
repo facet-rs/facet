@@ -9,6 +9,9 @@ description = "URL encoded form serialization and deserialization for Facet type
 keywords = ["urlencoded", "form", "serialization", "deserialization", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
+
 [dependencies]
 facet-core = { path = "../facet-core" }
 facet-reflect = { path = "../facet-reflect" }

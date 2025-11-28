@@ -9,6 +9,9 @@ description = "Allows peeking (reading from) and poking (writing to) types that 
 keywords = ["reflection", "introspection", "facet", "peek", "poke"]
 categories = ["development-tools", "rust-patterns"]
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
+
 [features]
 default = ["std"]
 std = ["alloc"] # Enable the standard library features

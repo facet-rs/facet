@@ -11,6 +11,7 @@ categories = ["development-tools"]
 
 [package.metadata.docs.rs]
 features = ["std", "reflect", "camino", "ordered-float"]
+rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
 
 [features]
 default = ["std"]

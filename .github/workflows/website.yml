@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'website/**'
+      - 'docs/**'
       - '.github/workflows/website.yml'
   workflow_dispatch:
 
@@ -27,6 +27,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Build highlight.js bundle
+        working-directory: docs/meta
+        run: |
+          pnpm install
+          pnpm run build
+          # Copy built assets to docs static directory
+          mkdir -p ../static/hljs
+          cp dist/facet-hljs.iife.js ../static/hljs/
+          cp dist/style.css ../static/hljs/
+
       - name: Install Zola
         uses: taiki-e/install-action@v2
         with:
@@ -34,7 +54,7 @@ jobs:
 
       - name: Build site
         run: zola build
-        working-directory: website
+        working-directory: docs
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
@@ -42,7 +62,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: website/public
+          path: docs/public
 
   deploy:
     environment:
