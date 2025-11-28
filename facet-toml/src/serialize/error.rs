@@ -4,6 +4,8 @@ use alloc::string::String;
 
 /// Any error from serializing TOML.
 pub enum TomlSerError {
+    /// Formatting error while writing TOML output.
+    Fmt(core::fmt::Error),
     /// Could not convert number to i64 representation.
     InvalidNumberToI64Conversion {
         /// Type of the number that's trying to be converted.
@@ -45,9 +47,16 @@ pub enum TomlSerError {
     },
 }
 
+impl From<core::fmt::Error> for TomlSerError {
+    fn from(err: core::fmt::Error) -> Self {
+        Self::Fmt(err)
+    }
+}
+
 impl core::fmt::Display for TomlSerError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::Fmt(err) => write!(f, "Formatting error: {err}"),
             Self::InvalidNumberToI64Conversion { source_type } => {
                 write!(f, "Error converting {source_type} to i64, out of range")
             }
