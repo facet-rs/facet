@@ -183,6 +183,13 @@ impl Value {
         (tagged & !(ALIGNMENT - 1)) as *mut u8
     }
 
+    /// Get the actual heap pointer with mutable provenance (strips the tag bits).
+    /// Safety: Must only be called on non-inline values.
+    pub(crate) unsafe fn heap_ptr_mut(&mut self) -> *mut u8 {
+        // Use map_addr to preserve provenance from the mutable reference
+        self.ptr.as_ptr().map_addr(|a| a & !(ALIGNMENT - 1))
+    }
+
     /// Update the heap pointer while preserving the tag.
     /// Safety: New pointer must be non-null and aligned to ALIGNMENT.
     pub(crate) unsafe fn set_ptr(&mut self, ptr: *mut u8) {

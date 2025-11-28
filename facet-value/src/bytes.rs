@@ -271,6 +271,14 @@ impl From<VBytes> for Value {
     }
 }
 
+impl VBytes {
+    /// Converts this VBytes into a Value, consuming self.
+    #[inline]
+    pub fn into_value(self) -> Value {
+        self.0
+    }
+}
+
 #[cfg(feature = "alloc")]
 impl From<&[u8]> for Value {
     fn from(data: &[u8]) -> Self {

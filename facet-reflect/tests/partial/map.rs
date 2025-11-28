@@ -154,7 +154,7 @@ fn list_wrong_begin_list() -> Result<(), IPanic> {
         hv.begin_list()
             .unwrap_err()
             .to_string()
-            .contains("begin_list can only be called on List types")
+            .contains("begin_list can only be called on List or DynamicValue types")
     );
     Ok(())
 }

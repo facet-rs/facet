@@ -144,55 +144,17 @@ impl<'facet> Partial<'facet> {
 
             // Validate the frame is fully initialized
             if let Err(e) = frame.require_full_initialization() {
-                // Clean up the current frame that failed validation.
-                // We need to check if the parent will drop it.
-                let parent_will_drop = if path.len() == 1 {
-                    let field_name = path.first().unwrap();
-                    self.frames()
-                        .first()
-                        .is_some_and(|parent| Self::is_field_marked_in_parent(parent, field_name))
-                } else {
-                    false
-                };
-
-                let mut frame = frame; // Make mutable for deinit
-                if !parent_will_drop && !matches!(frame.tracker, Tracker::Uninit) {
-                    frame.deinit();
-                }
+                // With the ownership transfer model:
+                // - Parent's iset was cleared when we entered this field
+                // - Parent won't drop it, so we must deinit it ourselves
+                frame.deinit();
 
                 // Clean up remaining stored frames before returning error.
-                // When finish_deferred fails, the parent's iset was NEVER updated for any stored frame,
-                // so we must deinit all initialized frames ourselves - the parent won't drop them.
-
-                // Collect keys to remove (can't drain in no_std)
-                let remaining_paths: Vec<_> = stored_frames.keys().cloned().collect();
-                // Sort by depth (deepest first) for proper cleanup order
-                let mut sorted_paths = remaining_paths;
-                sorted_paths.sort_by_key(|p| core::cmp::Reverse(p.len()));
-
-                for remaining_path in sorted_paths {
-                    if let Some(mut remaining_frame) = stored_frames.remove(&remaining_path) {
-                        // Check if this frame was re-entered (parent already has it marked as init).
-                        // If so, the parent will drop it - we must NOT deinit (double-free).
-                        // If not, we must deinit because the parent won't drop it.
-                        let parent_will_drop = if remaining_path.len() == 1 {
-                            // Parent is the root frame
-                            let field_name = remaining_path.first().unwrap();
-                            self.frames().first().is_some_and(|parent| {
-                                Self::is_field_marked_in_parent(parent, field_name)
-                            })
-                        } else {
-                            // Parent is a stored frame - but stored frames haven't been updated yet,
-                            // so we need to check against what was already set before deferred mode.
-                            // For now, conservatively assume parent won't drop nested frames.
-                            false
-                        };
-
-                        if !parent_will_drop && !matches!(remaining_frame.tracker, Tracker::Uninit)
-                        {
-                            remaining_frame.deinit();
-                        }
-                    }
+                // All stored frames have their parent's iset cleared, so we must deinit them.
+                // Note: we must call deinit() even for partially initialized frames, since
+                // deinit() properly handles partial initialization via the tracker's iset.
+                for (_, mut remaining_frame) in stored_frames {
+                    remaining_frame.deinit();
                 }
                 return Err(e);
             }
@@ -281,42 +243,16 @@ impl<'facet> Partial<'facet> {
         }
     }
 
-    /// Check if a field is marked as initialized in the parent's iset/data tracker
-    pub(crate) fn is_field_marked_in_parent(parent: &Frame, field_name: &str) -> bool {
-        // First find the field index
-        let idx = match Self::find_field_index(parent, field_name) {
-            Some(idx) => idx,
-            None => return false,
-        };
-
-        // Then check if it's marked in the parent's tracker
-        match &parent.tracker {
-            Tracker::Struct { iset, .. } => iset.get(idx),
-            Tracker::Enum { data, .. } => data.get(idx),
-            _ => false,
-        }
-    }
-
-    /// Unmark a field from the parent's iset/data tracker
-    /// Used when cleaning up stored frames to prevent double-free
-    pub(crate) fn unmark_field_in_parent(parent: &mut Frame, field_name: &str) {
-        // First find the field index
-        let idx = match Self::find_field_index(parent, field_name) {
-            Some(idx) => idx,
-            None => return,
-        };
-
-        // Then unmark it in the parent's tracker
-        match &mut parent.tracker {
-            Tracker::Struct { iset, .. } => iset.unset(idx),
-            Tracker::Enum { data, .. } => data.unset(idx),
-            _ => {}
-        }
-    }
-
     /// Pops the current frame off the stack, indicating we're done initializing the current field
     pub fn end(&mut self) -> Result<&mut Self, ReflectError> {
-        crate::trace!("end() called");
+        if let Some(_frame) = self.frames().last() {
+            crate::trace!(
+                "end() called: shape={}, tracker={:?}, is_init={}",
+                _frame.shape,
+                _frame.tracker.kind(),
+                _frame.is_init
+            );
+        }
         self.require_active()?;
 
         // Special handling for SmartPointerSlice - convert builder to Arc
@@ -343,7 +279,8 @@ impl<'facet> Partial<'facet> {
                 frames[0].data = PtrUninit::new(unsafe {
                     NonNull::new_unchecked(arc_ptr.as_byte_ptr() as *mut u8)
                 });
-                frames[0].tracker = Tracker::Init;
+                frames[0].tracker = Tracker::Scalar;
+                frames[0].is_init = true;
                 // The builder memory has been consumed by convert_fn, so we no longer own it
                 frames[0].ownership = FrameOwnership::ManagedElsewhere;
 
@@ -385,6 +322,9 @@ impl<'facet> Partial<'facet> {
                         | Tracker::List { .. }
                         | Tracker::Set { .. }
                         | Tracker::Option { .. }
+                        | Tracker::DynamicValue {
+                            state: DynamicValueState::Array { .. }
+                        }
                 )
             } else {
                 false
@@ -393,12 +333,18 @@ impl<'facet> Partial<'facet> {
 
         if requires_full_init {
             let frame = self.frames().last().unwrap();
-            trace!(
-                "end(): Checking full initialization for frame with shape {} and tracker {:?}",
+            crate::trace!(
+                "end(): Checking full init for {}, tracker={:?}, is_init={}",
                 frame.shape,
-                frame.tracker.kind()
+                frame.tracker.kind(),
+                frame.is_init
             );
-            frame.require_full_initialization()?
+            let result = frame.require_full_initialization();
+            crate::trace!(
+                "end(): require_full_initialization result: {:?}",
+                result.is_ok()
+            );
+            result?
         }
 
         // Pop the frame and save its data pointer for SmartPointer handling
@@ -491,7 +437,7 @@ impl<'facet> Partial<'facet> {
         // Update parent frame's tracking when popping from a child
         let parent_frame = self.frames_mut().last_mut().unwrap();
 
-        trace!(
+        crate::trace!(
             "end(): Popped {} (tracker {:?}), Parent {} (tracker {:?})",
             popped_frame.shape,
             popped_frame.tracker.kind(),
@@ -503,7 +449,10 @@ impl<'facet> Partial<'facet> {
         // 1. The parent frame has an inner type that matches the popped frame's shape
         // 2. The parent frame has try_from
         // 3. The parent frame is not yet initialized
-        let needs_conversion = matches!(parent_frame.tracker, Tracker::Uninit)
+        // 4. The parent frame's tracker is Scalar (not Option, SmartPointer, etc.)
+        //    This ensures we only do conversion when begin_inner was used, not begin_some
+        let needs_conversion = !parent_frame.is_init
+            && matches!(parent_frame.tracker, Tracker::Scalar)
             && parent_frame.shape.inner.is_some()
             && parent_frame.shape.inner.unwrap() == popped_frame.shape
             && parent_frame.shape.vtable.try_from.is_some();
@@ -576,7 +525,7 @@ impl<'facet> Partial<'facet> {
                 }
 
                 trace!("Conversion succeeded, marking parent as initialized");
-                parent_frame.tracker = Tracker::Init;
+                parent_frame.is_init = true;
 
                 // Deallocate the inner value's memory since try_from consumed it
                 if let FrameOwnership::Owned = popped_frame.ownership {
@@ -601,29 +550,51 @@ impl<'facet> Partial<'facet> {
             }
         }
 
+        // For Field-owned frames, reclaim responsibility in parent's tracker
+        if let FrameOwnership::Field { field_idx } = popped_frame.ownership {
+            match &mut parent_frame.tracker {
+                Tracker::Struct {
+                    iset,
+                    current_child,
+                } => {
+                    iset.set(field_idx); // Parent reclaims responsibility
+                    *current_child = None;
+                }
+                Tracker::Array {
+                    iset,
+                    current_child,
+                } => {
+                    iset.set(field_idx); // Parent reclaims responsibility
+                    *current_child = None;
+                }
+                Tracker::Enum {
+                    data,
+                    current_child,
+                    ..
+                } => {
+                    data.set(field_idx); // Parent reclaims responsibility
+                    *current_child = None;
+                }
+                _ => {}
+            }
+            return Ok(self);
+        }
+
         match &mut parent_frame.tracker {
-            Tracker::Struct {
-                iset,
-                current_child,
-            } => {
-                if let Some(idx) = *current_child {
-                    iset.set(idx);
-                    *current_child = None;
-                }
-            }
-            Tracker::Array {
-                iset,
-                current_child,
-            } => {
-                if let Some(idx) = *current_child {
-                    iset.set(idx);
-                    *current_child = None;
-                }
-            }
-            Tracker::SmartPointer { is_initialized } => {
+            Tracker::SmartPointer => {
                 // We just popped the inner value frame, so now we need to create the smart pointer
                 if let Def::Pointer(smart_ptr_def) = parent_frame.shape.def {
+                    // The inner value must be fully initialized before we can create the smart pointer
+                    if let Err(e) = popped_frame.require_full_initialization() {
+                        // Inner value wasn't initialized, deallocate and return error
+                        popped_frame.deinit();
+                        popped_frame.dealloc();
+                        return Err(e);
+                    }
+
                     let Some(new_into_fn) = smart_ptr_def.vtable.new_into_fn else {
+                        popped_frame.deinit();
+                        popped_frame.dealloc();
                         return Err(ReflectError::OperationFailed {
                             shape: parent_frame.shape,
                             operation: "SmartPointer missing new_into_fn",
@@ -641,28 +612,16 @@ impl<'facet> Partial<'facet> {
                     }
 
                     // We just moved out of it
-                    popped_frame.tracker = Tracker::Uninit;
+                    popped_frame.tracker = Tracker::Scalar;
+                    popped_frame.is_init = false;
 
                     // Deallocate the inner value's memory since new_into_fn moved it
                     popped_frame.dealloc();
 
-                    *is_initialized = true;
+                    parent_frame.is_init = true;
                 }
             }
-            Tracker::Enum {
-                data,
-                current_child,
-                ..
-            } => {
-                if let Some(idx) = *current_child {
-                    data.set(idx);
-                    *current_child = None;
-                }
-            }
-            Tracker::List {
-                is_initialized: true,
-                current_child,
-            } => {
+            Tracker::List { current_child } if parent_frame.is_init => {
                 if *current_child {
                     // We just popped an element frame, now push it to the list
                     if let Def::List(list_def) = parent_frame.shape.def {
@@ -689,17 +648,15 @@ impl<'facet> Partial<'facet> {
                         }
 
                         // Push moved out of popped_frame
-                        popped_frame.tracker = Tracker::Uninit;
+                        popped_frame.tracker = Tracker::Scalar;
+                        popped_frame.is_init = false;
                         popped_frame.dealloc();
 
                         *current_child = false;
                     }
                 }
             }
-            Tracker::Map {
-                is_initialized: true,
-                insert_state,
-            } => {
+            Tracker::Map { insert_state } if parent_frame.is_init => {
                 match insert_state {
                     MapInsertState::PushingKey { key_ptr, .. } => {
                         // We just popped the key frame - mark key as initialized and transition
@@ -767,10 +724,7 @@ impl<'facet> Partial<'facet> {
                     }
                 }
             }
-            Tracker::Set {
-                is_initialized: true,
-                current_child,
-            } => {
+            Tracker::Set { current_child } if parent_frame.is_init => {
                 if *current_child {
                     // We just popped an element frame, now insert it into the set
                     if let Def::Set(set_def) = parent_frame.shape.def {
@@ -792,7 +746,8 @@ impl<'facet> Partial<'facet> {
                         }
 
                         // Insert moved out of popped_frame
-                        popped_frame.tracker = Tracker::Uninit;
+                        popped_frame.tracker = Tracker::Scalar;
+                        popped_frame.is_init = false;
                         popped_frame.dealloc();
 
                         *current_child = false;
@@ -800,6 +755,10 @@ impl<'facet> Partial<'facet> {
                 }
             }
             Tracker::Option { building_inner } => {
+                crate::trace!(
+                    "end(): matched Tracker::Option, building_inner={}",
+                    *building_inner
+                );
                 // We just popped the inner value frame for an Option's Some variant
                 if *building_inner {
                     if let Def::Option(option_def) = parent_frame.shape.def {
@@ -830,6 +789,10 @@ impl<'facet> Partial<'facet> {
 
                         // Mark that we're no longer building the inner value
                         *building_inner = false;
+                        crate::trace!("end(): set building_inner to false");
+                        // Mark the Option as initialized
+                        parent_frame.is_init = true;
+                        crate::trace!("end(): set parent_frame.is_init to true");
                     } else {
                         return Err(ReflectError::OperationFailed {
                             shape: parent_frame.shape,
@@ -855,7 +818,7 @@ impl<'facet> Partial<'facet> {
                     }
                 }
             }
-            Tracker::Uninit | Tracker::Init => {
+            Tracker::Scalar => {
                 // the main case here is: the popped frame was a `String` and the
                 // parent frame is an `Arc<str>`, `Box<str>` etc.
                 match &parent_frame.shape.def {
@@ -937,9 +900,10 @@ impl<'facet> Partial<'facet> {
                             }
                         }
 
-                        parent_frame.tracker = Tracker::Init;
+                        parent_frame.is_init = true;
 
-                        popped_frame.tracker = Tracker::Uninit;
+                        popped_frame.tracker = Tracker::Scalar;
+                        popped_frame.is_init = false;
                         popped_frame.dealloc();
                     }
                     _ => {
@@ -970,7 +934,8 @@ impl<'facet> Partial<'facet> {
                         (vtable.push_fn)(parent_ptr, element_ptr);
                     }
 
-                    popped_frame.tracker = Tracker::Uninit;
+                    popped_frame.tracker = Tracker::Scalar;
+                    popped_frame.is_init = false;
                     popped_frame.dealloc();
 
                     if let Tracker::SmartPointerSlice {
@@ -978,6 +943,30 @@ impl<'facet> Partial<'facet> {
                     } = &mut parent_frame.tracker
                     {
                         *bi = false;
+                    }
+                }
+            }
+            Tracker::DynamicValue {
+                state: DynamicValueState::Array { building_element },
+            } => {
+                if *building_element {
+                    // We just popped an element frame, now push it to the dynamic array
+                    if let Def::DynamicValue(dyn_def) = parent_frame.shape.def {
+                        // Get mutable pointers - both array and element need PtrMut
+                        let array_ptr = unsafe { parent_frame.data.assume_init() };
+                        let element_ptr = unsafe { popped_frame.data.assume_init() };
+
+                        // Use push_array_element to add element to the array
+                        unsafe {
+                            (dyn_def.vtable.push_array_element)(array_ptr, element_ptr);
+                        }
+
+                        // Push moved out of popped_frame
+                        popped_frame.tracker = Tracker::Scalar;
+                        popped_frame.is_init = false;
+                        popped_frame.dealloc();
+
+                        *building_element = false;
                     }
                 }
             }

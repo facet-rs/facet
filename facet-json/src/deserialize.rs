@@ -569,7 +569,11 @@ impl<'input> JsonDeserializer<'input> {
     /// Main deserialization entry point - deserialize into a Partial.
     pub fn deserialize_into(&mut self, wip: &mut Partial<'input>) -> Result<()> {
         let shape = wip.shape();
-        log::trace!("deserialize_into: shape={}", shape.type_identifier);
+        log::trace!(
+            "deserialize_into: shape={}, def={:?}",
+            shape.type_identifier,
+            std::mem::discriminant(&shape.def)
+        );
 
         // Check for Spanned<T> wrapper first
         if is_spanned_shape(shape) {
@@ -578,7 +582,9 @@ impl<'input> JsonDeserializer<'input> {
 
         // Check Def first for Option (which is also a Type::User::Enum)
         // Must come before the inner check since Option also has .inner() set
-        if matches!(&shape.def, Def::Option(_)) {
+        let is_option = matches!(&shape.def, Def::Option(_));
+        log::trace!("deserialize_into: is_option={is_option}");
+        if is_option {
             return self.deserialize_option(wip);
         }
 
@@ -628,6 +634,7 @@ impl<'input> JsonDeserializer<'input> {
             Def::Map(_) => self.deserialize_map(wip),
             Def::Array(_) => self.deserialize_array(wip),
             Def::Set(_) => self.deserialize_set(wip),
+            Def::DynamicValue(_) => self.deserialize_dynamic_value(wip),
             other => Err(JsonError::without_span(JsonErrorKind::InvalidValue {
                 message: format!("unsupported shape def: {other:?}"),
             })),
@@ -704,6 +711,114 @@ impl<'input> JsonDeserializer<'input> {
                     JsonErrorKind::UnexpectedToken {
                         got: format!("{}", token.value),
                         expected: "scalar value",
+                    },
+                    token.span,
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Deserialize any JSON value into a DynamicValue type.
+    ///
+    /// This handles all JSON value types: null, bool, number, string, array, and object.
+    fn deserialize_dynamic_value(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+        let token = self.peek()?;
+        log::trace!("deserialize_dynamic_value: token={:?}", token.value);
+
+        match token.value {
+            Token::Null => {
+                self.next()?; // consume the token
+                wip.set_default()?;
+            }
+            Token::True => {
+                self.next()?;
+                wip.set(true)?;
+            }
+            Token::False => {
+                self.next()?;
+                wip.set(false)?;
+            }
+            Token::I64(n) => {
+                self.next()?;
+                wip.set(n)?;
+            }
+            Token::U64(n) => {
+                self.next()?;
+                // Store as i64 if it fits, otherwise as u64
+                if n <= i64::MAX as u64 {
+                    wip.set(n as i64)?;
+                } else {
+                    wip.set(n)?;
+                }
+            }
+            Token::F64(n) => {
+                self.next()?;
+                wip.set(n)?;
+            }
+            Token::I128(n) => {
+                self.next()?;
+                // Try to fit in i64
+                if let Ok(n) = i64::try_from(n) {
+                    wip.set(n)?;
+                } else {
+                    return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                        message: format!("i128 value {n} doesn't fit in dynamic value"),
+                    }));
+                }
+            }
+            Token::U128(n) => {
+                self.next()?;
+                // Try to fit in i64 or u64
+                if let Ok(n) = i64::try_from(n) {
+                    wip.set(n)?;
+                } else if let Ok(n) = u64::try_from(n) {
+                    wip.set(n)?;
+                } else {
+                    return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                        message: format!("u128 value {n} doesn't fit in dynamic value"),
+                    }));
+                }
+            }
+            Token::String(ref _s) => {
+                // Consume token and get owned string
+                let token = self.next()?;
+                if let Token::String(s) = token.value {
+                    wip.set(s.into_owned())?;
+                }
+            }
+            Token::LBracket => {
+                self.next()?; // consume '['
+                wip.begin_list()?;
+
+                loop {
+                    let token = self.peek()?;
+                    if matches!(token.value, Token::RBracket) {
+                        self.next()?;
+                        break;
+                    }
+
+                    wip.begin_list_item()?;
+                    self.deserialize_dynamic_value(wip)?;
+                    wip.end()?;
+
+                    let next = self.peek()?;
+                    if matches!(next.value, Token::Comma) {
+                        self.next()?;
+                    }
+                }
+            }
+            Token::LBrace => {
+                // TODO: implement object support for DynamicValue
+                return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                    message: "DynamicValue object deserialization not yet implemented".into(),
+                }));
+            }
+            _ => {
+                return Err(JsonError::new(
+                    JsonErrorKind::UnexpectedToken {
+                        got: format!("{}", token.value),
+                        expected: "any JSON value",
                     },
                     token.span,
                 ));
@@ -1995,9 +2110,13 @@ impl<'input> JsonDeserializer<'input> {
             self.next()?;
             wip.set_default()?; // None
         } else {
+            log::trace!("deserialize_option: calling begin_some");
             wip.begin_some()?;
+            log::trace!("deserialize_option: begin_some succeeded, calling deserialize_into");
             self.deserialize_into(wip)?;
+            log::trace!("deserialize_option: deserialize_into succeeded, calling end");
             wip.end()?;
+            log::trace!("deserialize_option: end succeeded");
         }
         Ok(())
     }

@@ -164,10 +164,10 @@ impl<'facet> Partial<'facet> {
         let field = &struct_type.fields[idx];
 
         if !matches!(frame.tracker, Tracker::Struct { .. }) {
-            // When transitioning from Init (fully initialized) to Struct tracker,
+            // When transitioning from Scalar (fully initialized) to Struct tracker,
             // we need to mark all fields as initialized in the iset. Otherwise,
             // we'll lose track of which fields were initialized and may double-free.
-            let was_fully_init = matches!(frame.tracker, Tracker::Init);
+            let was_fully_init = frame.is_init && matches!(frame.tracker, Tracker::Scalar);
             let mut iset = ISet::new(struct_type.fields.len());
             if was_fully_init {
                 iset.set_all();
@@ -184,7 +184,9 @@ impl<'facet> Partial<'facet> {
                 current_child,
             } => {
                 *current_child = Some(idx);
-                iset.get(idx)
+                let was_init = iset.get(idx);
+                iset.unset(idx); // Parent relinquishes responsibility
+                was_init
             }
             _ => unreachable!(),
         };
@@ -193,7 +195,11 @@ impl<'facet> Partial<'facet> {
         let field_ptr = unsafe { frame.data.field_uninit_at(field.offset) };
         let field_shape = field.shape();
 
-        let mut next_frame = Frame::new(field_ptr, field_shape, FrameOwnership::Field);
+        let mut next_frame = Frame::new(
+            field_ptr,
+            field_shape,
+            FrameOwnership::Field { field_idx: idx },
+        );
         if was_field_init {
             unsafe {
                 // the struct field tracker said so!
@@ -226,8 +232,8 @@ impl<'facet> Partial<'facet> {
 
         // Ensure frame is in Array state
         match &frame.tracker {
-            Tracker::Uninit => {
-                // this is fine
+            Tracker::Scalar if !frame.is_init => {
+                // this is fine, transition to Array tracker
                 frame.tracker = Tracker::Array {
                     iset: ISet::default(),
                     current_child: None,
@@ -239,7 +245,7 @@ impl<'facet> Partial<'facet> {
             _other => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,
-                    operation: "unexpected tracker state: expected Uninit or Array",
+                    operation: "unexpected tracker state: expected uninitialized Scalar or Array",
                 });
             }
         }
@@ -251,6 +257,7 @@ impl<'facet> Partial<'facet> {
             } => {
                 *current_child = Some(idx);
                 let was_field_init = iset.get(idx);
+                iset.unset(idx); // Parent relinquishes responsibility
 
                 // Calculate the offset for this array element
                 let Ok(element_layout) = array_type.t.layout.sized_layout() else {
@@ -262,7 +269,11 @@ impl<'facet> Partial<'facet> {
                 let offset = element_layout.size() * idx;
                 let element_data = unsafe { frame.data.field_uninit_at(offset) };
 
-                let mut next_frame = Frame::new(element_data, array_type.t, FrameOwnership::Field);
+                let mut next_frame = Frame::new(
+                    element_data,
+                    array_type.t,
+                    FrameOwnership::Field { field_idx: idx },
+                );
                 if was_field_init {
                     // safety: `iset` said it was initialized already
                     unsafe {
@@ -298,7 +309,9 @@ impl<'facet> Partial<'facet> {
                 ..
             } => {
                 *current_child = Some(idx);
-                data.get(idx)
+                let was_init = data.get(idx);
+                data.unset(idx); // Parent relinquishes responsibility
+                was_init
             }
             _ => {
                 return Err(ReflectError::OperationFailed {
@@ -313,7 +326,11 @@ impl<'facet> Partial<'facet> {
         let field_ptr = unsafe { frame.data.field_uninit_at(field.offset) };
         let field_shape = field.shape();
 
-        let mut next_frame = Frame::new(field_ptr, field_shape, FrameOwnership::Field);
+        let mut next_frame = Frame::new(
+            field_ptr,
+            field_shape,
+            FrameOwnership::Field { field_idx: idx },
+        );
         if was_field_init {
             // SAFETY: `ISet` told us the field was initialized
             unsafe {
@@ -334,5 +351,41 @@ impl<'facet> Partial<'facet> {
                 invariant: "Cannot use Partial after it has been built or poisoned",
             })
         }
+    }
+
+    /// Prepares the current frame for re-initialization by dropping any existing
+    /// value and unmarking it in the parent's iset.
+    ///
+    /// This should be called at the start of `begin_*` methods that support
+    /// re-initialization (e.g., `begin_some`, `begin_inner`, `begin_smart_ptr`).
+    ///
+    /// Returns `true` if cleanup was performed (frame was previously initialized),
+    /// `false` if the frame was not initialized.
+    pub(crate) fn prepare_for_reinitialization(&mut self) -> bool {
+        let frame = self.frames().last().unwrap();
+        if !frame.is_init {
+            return false;
+        }
+
+        // Clean up any partial state (e.g., map key/value buffers mid-insert)
+        // before dropping the main value
+        let frame = self.frames_mut().last_mut().unwrap();
+        frame.cleanup_partial_state();
+        let frame = self.frames().last().unwrap();
+
+        // Drop the existing value
+        if let Some(drop_fn) = frame.shape.vtable.drop_in_place {
+            unsafe { drop_fn(frame.data.assume_init()) };
+        }
+
+        // Note: With the ownership transfer model, parent's iset was already cleared
+        // when we entered this field, so no need to unmark here.
+
+        // Reset the frame's state
+        let frame = self.frames_mut().last_mut().unwrap();
+        frame.is_init = false;
+        frame.tracker = Tracker::Scalar;
+
+        true
     }
 }

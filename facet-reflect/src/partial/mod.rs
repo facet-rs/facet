@@ -280,8 +280,11 @@ pub(crate) enum FrameOwnership {
     /// This frame owns the allocation and should deallocate it on drop
     Owned,
 
-    /// This frame is a field pointer into a parent allocation
-    Field,
+    /// This frame points to a field/element within a parent's allocation.
+    /// The parent's `iset\[field_idx\]` was CLEARED when this frame was created.
+    /// On drop: deinit if initialized, but do NOT deallocate.
+    /// On successful end(): parent's `iset\[field_idx\]` will be SET.
+    Field { field_idx: usize },
 
     /// This frame's allocation is managed elsewhere (e.g., in MapInsertState)
     ManagedElsewhere,
@@ -302,7 +305,10 @@ pub(crate) struct Frame {
     /// Shape of the value being initialized
     pub(crate) shape: &'static Shape,
 
-    /// Tracks initialized fields
+    /// Whether this frame's data is fully initialized
+    pub(crate) is_init: bool,
+
+    /// Tracks building mode and partial initialization state
     pub(crate) tracker: Tracker,
 
     /// Whether this frame owns the allocation or is just a field pointer
@@ -314,17 +320,14 @@ pub(crate) struct Frame {
 
 #[derive(Debug)]
 pub(crate) enum Tracker {
-    /// Wholly uninitialized
-    Uninit,
-
-    /// Wholly initialized
-    Init,
+    /// Simple scalar value - no partial initialization tracking needed.
+    /// Whether it's initialized is tracked by `Frame::is_init`.
+    Scalar,
 
     /// Partially initialized array
     Array {
         /// Track which array elements are initialized (up to 63 elements)
         iset: ISet,
-
         /// If we're pushing another frame, this is set to the array index
         current_child: Option<usize>,
     },
@@ -334,17 +337,13 @@ pub(crate) enum Tracker {
         /// fields need to be individually tracked — we only
         /// support up to 63 fields.
         iset: ISet,
-
-        /// if we're pushing another frame, this is set to the
-        /// index of the struct field
+        /// if we're pushing another frame, this is set to the index of the struct field
         current_child: Option<usize>,
     },
 
-    /// Smart pointer being initialized
-    SmartPointer {
-        /// Whether the inner value has been initialized
-        is_initialized: bool,
-    },
+    /// Smart pointer being initialized.
+    /// Whether it's initialized is tracked by `Frame::is_init`.
+    SmartPointer,
 
     /// We're initializing an `Arc<[T]>`, `Box<[T]>`, `Rc<[T]>`, etc.
     ///
@@ -362,35 +361,29 @@ pub(crate) enum Tracker {
     Enum {
         /// Variant chosen for the enum
         variant: &'static Variant,
-
         /// tracks enum fields (for the given variant)
         data: ISet,
-
         /// If we're pushing another frame, this is set to the field index
         current_child: Option<usize>,
     },
 
     /// Partially initialized list (Vec, etc.)
+    /// Whether it's initialized is tracked by `Frame::is_init`.
     List {
-        /// The list has been initialized with capacity
-        is_initialized: bool,
         /// If we're pushing another frame for an element
         current_child: bool,
     },
 
     /// Partially initialized map (HashMap, BTreeMap, etc.)
+    /// Whether it's initialized is tracked by `Frame::is_init`.
     Map {
-        /// The map has been initialized with capacity
-        is_initialized: bool,
-
         /// State of the current insertion operation
         insert_state: MapInsertState,
     },
 
     /// Partially initialized set (HashSet, BTreeSet, etc.)
+    /// Whether it's initialized is tracked by `Frame::is_init`.
     Set {
-        /// The set has been initialized with capacity
-        is_initialized: bool,
         /// If we're pushing another frame for an element
         current_child: bool,
     },
@@ -400,22 +393,57 @@ pub(crate) enum Tracker {
         /// Whether we're currently building the inner value
         building_inner: bool,
     },
+
+    /// Dynamic value (e.g., facet_value::Value) being initialized
+    DynamicValue {
+        /// What kind of dynamic value we're building
+        state: DynamicValueState,
+    },
+}
+
+/// State for building a dynamic value
+#[derive(Debug)]
+#[allow(dead_code)] // Some variants are for future use (object support)
+pub(crate) enum DynamicValueState {
+    /// Not yet initialized - will be set to scalar, array, or object
+    Uninit,
+    /// Initialized as a scalar (null, bool, number, string, bytes)
+    Scalar,
+    /// Initialized as an array, currently building an element
+    Array { building_element: bool },
+    /// Initialized as an object
+    Object {
+        insert_state: DynamicObjectInsertState,
+    },
+}
+
+/// State for inserting into a dynamic object
+#[derive(Debug)]
+#[allow(dead_code)] // For future use (object support)
+pub(crate) enum DynamicObjectInsertState {
+    /// Idle - ready for a new key-value pair
+    Idle,
+    /// Currently building the value for a key
+    BuildingValue {
+        /// The key for the current entry
+        key: alloc::string::String,
+    },
 }
 
 impl Tracker {
     fn kind(&self) -> TrackerKind {
         match self {
-            Tracker::Uninit => TrackerKind::Uninit,
-            Tracker::Init => TrackerKind::Init,
+            Tracker::Scalar => TrackerKind::Scalar,
             Tracker::Array { .. } => TrackerKind::Array,
             Tracker::Struct { .. } => TrackerKind::Struct,
-            Tracker::SmartPointer { .. } => TrackerKind::SmartPointer,
+            Tracker::SmartPointer => TrackerKind::SmartPointer,
             Tracker::SmartPointerSlice { .. } => TrackerKind::SmartPointerSlice,
             Tracker::Enum { .. } => TrackerKind::Enum,
             Tracker::List { .. } => TrackerKind::List,
             Tracker::Map { .. } => TrackerKind::Map,
             Tracker::Set { .. } => TrackerKind::Set,
             Tracker::Option { .. } => TrackerKind::Option,
+            Tracker::DynamicValue { .. } => TrackerKind::DynamicValue,
         }
     }
 
@@ -446,19 +474,18 @@ impl Tracker {
 
 impl Frame {
     fn new(data: PtrUninit<'static>, shape: &'static Shape, ownership: FrameOwnership) -> Self {
-        // For empty structs (structs with 0 fields), start as Init since there's nothing to initialize
+        // For empty structs (structs with 0 fields), start as initialized since there's nothing to initialize
         // This includes empty tuples () which are zero-sized types with no fields to initialize
-        let tracker = match shape.ty {
-            Type::User(UserType::Struct(struct_type)) if struct_type.fields.is_empty() => {
-                Tracker::Init
-            }
-            _ => Tracker::Uninit,
-        };
+        let is_init = matches!(
+            shape.ty,
+            Type::User(UserType::Struct(struct_type)) if struct_type.fields.is_empty()
+        );
 
         Self {
             data,
             shape,
-            tracker,
+            is_init,
+            tracker: Tracker::Scalar,
             ownership,
             using_custom_deserialization: false,
         }
@@ -467,16 +494,15 @@ impl Frame {
     /// Deinitialize any initialized field: calls `drop_in_place` but does not free any
     /// memory even if the frame owns that memory.
     ///
-    /// After this call, the [Tracker] should be back to [Tracker::Uninit]
+    /// After this call, `is_init` will be false and `tracker` will be [Tracker::Scalar].
     fn deinit(&mut self) {
         match &self.tracker {
-            Tracker::Uninit => {
-                // Nothing was initialized, nothing to drop
-            }
-            Tracker::Init => {
-                // Fully initialized, drop it
-                if let Some(drop_fn) = self.shape.vtable.drop_in_place {
-                    unsafe { drop_fn(self.data.assume_init()) };
+            Tracker::Scalar => {
+                // Simple scalar - drop if initialized
+                if self.is_init {
+                    if let Some(drop_fn) = self.shape.vtable.drop_in_place {
+                        unsafe { drop_fn(self.data.assume_init()) };
+                    }
                 }
             }
             Tracker::Array { iset, .. } => {
@@ -528,9 +554,9 @@ impl Frame {
                     }
                 }
             }
-            Tracker::SmartPointer { is_initialized } => {
+            Tracker::SmartPointer => {
                 // Drop the initialized Box
-                if *is_initialized {
+                if self.is_init {
                     if let Some(drop_fn) = self.shape.vtable.drop_in_place {
                         unsafe { drop_fn(self.data.assume_init()) };
                     }
@@ -545,20 +571,17 @@ impl Frame {
                     (vtable.free_fn)(builder_ptr);
                 }
             }
-            Tracker::List { is_initialized, .. } => {
+            Tracker::List { .. } => {
                 // Drop the initialized List
-                if *is_initialized {
+                if self.is_init {
                     if let Some(drop_fn) = self.shape.vtable.drop_in_place {
                         unsafe { drop_fn(self.data.assume_init()) };
                     }
                 }
             }
-            Tracker::Map {
-                is_initialized,
-                insert_state,
-            } => {
+            Tracker::Map { insert_state } => {
                 // Drop the initialized Map
-                if *is_initialized {
+                if self.is_init {
                     if let Some(drop_fn) = self.shape.vtable.drop_in_place {
                         unsafe { drop_fn(self.data.assume_init()) };
                     }
@@ -631,9 +654,9 @@ impl Frame {
                     MapInsertState::Idle => {}
                 }
             }
-            Tracker::Set { is_initialized, .. } => {
+            Tracker::Set { .. } => {
                 // Drop the initialized Set
-                if *is_initialized {
+                if self.is_init {
                     if let Some(drop_fn) = self.shape.vtable.drop_in_place {
                         unsafe { drop_fn(self.data.assume_init()) };
                     }
@@ -650,17 +673,31 @@ impl Frame {
                     }
                 }
             }
+            Tracker::DynamicValue { .. } => {
+                // Drop if initialized
+                if self.is_init {
+                    if let Some(drop_fn) = self.shape.vtable.drop_in_place {
+                        unsafe { drop_fn(self.data.assume_init()) };
+                    }
+                }
+            }
         }
 
-        self.tracker = Tracker::Uninit;
+        self.is_init = false;
+        self.tracker = Tracker::Scalar;
     }
 
     /// Clean up any partial allocation state without dropping the main data.
     /// Used for Field-owned frames where the parent's tracker handles the main data.
     /// This only deallocates temporary buffers (e.g., map key/value buffers mid-insert).
     fn cleanup_partial_state(&mut self) {
+        crate::trace!("cleanup_partial_state called for {:?}", self.tracker.kind());
         match &mut self.tracker {
-            Tracker::Map { insert_state, .. } => {
+            Tracker::Map { insert_state } => {
+                crate::trace!(
+                    "cleanup_partial_state: Map with insert_state={:?}",
+                    core::mem::discriminant(insert_state)
+                );
                 // Only clean up partial insert state, don't touch the main Map
                 match insert_state {
                     MapInsertState::PushingKey {
@@ -689,7 +726,13 @@ impl Frame {
                         value_ptr,
                         value_initialized,
                     } => {
+                        crate::trace!(
+                            "cleanup_partial_state: PushingValue, key_ptr={:?}, value_ptr={:?}",
+                            key_ptr,
+                            value_ptr.is_some()
+                        );
                         if let Def::Map(map_def) = self.shape.def {
+                            crate::trace!("cleanup_partial_state: dropping key");
                             // Drop and deallocate the key (always initialized in PushingValue state)
                             if let Some(drop_fn) = map_def.k().vtable.drop_in_place {
                                 unsafe { drop_fn(key_ptr.assume_init()) };
@@ -742,21 +785,21 @@ impl Frame {
 
     /// This must be called after (fully) initializing a value.
     ///
-    /// This will most often result in a transition to [Tracker::Init] although
-    /// composite types (structs, enums, etc.) might be handled differently
+    /// This sets `is_init` to `true` to indicate the value is initialized.
+    /// Composite types (structs, enums, etc.) might be handled differently.
     ///
     /// # Safety
     ///
     /// This should only be called when `self.data` has been actually initialized.
     unsafe fn mark_as_init(&mut self) {
-        self.tracker = Tracker::Init;
+        self.is_init = true;
     }
 
     /// Deallocate the memory associated with this frame, if it owns it.
     ///
     /// The memory has to be deinitialized first, see [Frame::deinit]
     fn dealloc(self) {
-        if !matches!(self.tracker, Tracker::Uninit) {
+        if self.is_init {
             unreachable!("a frame has to be deinitialized before being deallocated")
         }
 
@@ -781,14 +824,14 @@ impl Frame {
     ///
     /// Returns Ok(()) if successful, or an error if defaulting fails.
     fn fill_defaults(&mut self) {
-        // First, check if we need to upgrade from Uninit to Struct tracker
+        // First, check if we need to upgrade from Scalar to Struct tracker
         // This happens when no fields were visited at all in deferred mode
-        if matches!(self.tracker, Tracker::Uninit) {
+        if !self.is_init && matches!(self.tracker, Tracker::Scalar) {
             if let Type::User(UserType::Struct(struct_type)) = self.shape.ty {
                 // If no fields were visited and the container has a default, use it
                 if let Some(default_fn) = self.shape.vtable.default_in_place {
                     unsafe { default_fn(self.data) };
-                    self.tracker = Tracker::Init;
+                    self.is_init = true;
                     return;
                 }
                 // Otherwise initialize the struct tracker with empty iset
@@ -807,7 +850,8 @@ impl Frame {
                     if no_fields_set {
                         if let Some(default_fn) = self.shape.vtable.default_in_place {
                             unsafe { default_fn(self.data) };
-                            self.tracker = Tracker::Init;
+                            self.tracker = Tracker::Scalar;
+                            self.is_init = true;
                             return;
                         }
                     }
@@ -900,8 +944,13 @@ impl Frame {
     /// Returns an error if the value is not fully initialized
     fn require_full_initialization(&self) -> Result<(), ReflectError> {
         match self.tracker {
-            Tracker::Uninit => Err(ReflectError::UninitializedValue { shape: self.shape }),
-            Tracker::Init => Ok(()),
+            Tracker::Scalar => {
+                if self.is_init {
+                    Ok(())
+                } else {
+                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                }
+            }
             Tracker::Array { iset, .. } => {
                 match self.shape.ty {
                     Type::Sequence(facet_core::SequenceType::Array(array_def)) => {
@@ -963,8 +1012,8 @@ impl Frame {
                     }
                 }
             }
-            Tracker::SmartPointer { is_initialized } => {
-                if is_initialized {
+            Tracker::SmartPointer => {
+                if self.is_init {
                     Ok(())
                 } else {
                     Err(ReflectError::UninitializedValue { shape: self.shape })
@@ -977,28 +1026,22 @@ impl Frame {
                     Ok(())
                 }
             }
-            Tracker::List { is_initialized, .. } => {
-                if is_initialized {
+            Tracker::List { current_child } => {
+                if self.is_init && !current_child {
                     Ok(())
                 } else {
                     Err(ReflectError::UninitializedValue { shape: self.shape })
                 }
             }
-            Tracker::Map {
-                is_initialized,
-                insert_state,
-            } => {
-                if is_initialized && matches!(insert_state, MapInsertState::Idle) {
+            Tracker::Map { insert_state } => {
+                if self.is_init && matches!(insert_state, MapInsertState::Idle) {
                     Ok(())
                 } else {
                     Err(ReflectError::UninitializedValue { shape: self.shape })
                 }
             }
-            Tracker::Set {
-                is_initialized,
-                current_child,
-            } => {
-                if is_initialized && !current_child {
+            Tracker::Set { current_child } => {
+                if self.is_init && !current_child {
                     Ok(())
                 } else {
                     Err(ReflectError::UninitializedValue { shape: self.shape })
@@ -1006,6 +1049,13 @@ impl Frame {
             }
             Tracker::Option { building_inner } => {
                 if building_inner {
+                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                } else {
+                    Ok(())
+                }
+            }
+            Tracker::DynamicValue { ref state } => {
+                if matches!(state, DynamicValueState::Uninit) {
                     Err(ReflectError::UninitializedValue { shape: self.shape })
                 } else {
                     Ok(())
@@ -1103,189 +1153,33 @@ impl<'facet> Drop for Partial<'facet> {
     fn drop(&mut self) {
         trace!("🧹 Partial is being dropped");
 
-        // Clean up stored frames from deferred state first
-        if let FrameMode::Deferred {
-            stack,
-            start_depth,
-            stored_frames,
-            ..
-        } = &mut self.mode
-        {
-            // Stored frames were saved during end() in deferred mode. Since finish_deferred()
-            // was never called for THIS deferred session, we may need to deinit some frames.
-            //
-            // The tricky part: a stored frame with Tracker::Init could be either:
-            // 1. Re-entered from an already-initialized state (parent's iset has it marked)
-            //    -> Parent will drop it, we should NOT deinit (would be double-free)
-            // 2. Freshly initialized in this session (parent's iset does NOT have it marked)
-            //    -> Parent won't drop it, we MUST deinit (otherwise leak)
-            //
-            // We distinguish these by checking the parent's iset for the field.
-            //
-            // Process from deepest to shallowest to handle parent-child dependencies correctly.
+        // With the ownership transfer model:
+        // - When we enter a field, parent's iset[idx] is cleared
+        // - Parent won't try to drop fields with iset[idx] = false
+        // - No double-free possible by construction
 
-            // Parent of direct children (path.len() == 1) is at start_depth - 1
-            let parent_index = start_depth.saturating_sub(1);
-
-            let mut paths: Vec<_> = core::mem::take(stored_frames).into_iter().collect();
-            paths.sort_by_key(|(path, _)| core::cmp::Reverse(path.len()));
-
-            for (path, mut frame) in paths {
-                let should_deinit = match &frame.ownership {
-                    FrameOwnership::Field => {
-                        if matches!(frame.tracker, Tracker::Uninit) {
-                            // Uninit - nothing to drop
-                            false
-                        } else if matches!(frame.tracker, Tracker::Init) {
-                            // For Tracker::Init, check if parent's iset has this field marked.
-                            // Path length 1 means parent is the frame that was current when
-                            // deferred mode started (at index start_depth - 1).
-                            if path.len() == 1 {
-                                let field_name = path.first().unwrap();
-                                let parent_has_field_marked =
-                                    stack.get(parent_index).is_some_and(|parent| {
-                                        Self::is_field_marked_in_parent(parent, field_name)
-                                    });
-                                // If parent has it marked, don't deinit (parent will drop).
-                                // If parent doesn't have it, deinit (we must clean up).
-                                !parent_has_field_marked
-                            } else {
-                                // For nested paths, conservative: assume we should deinit
-                                // (This may cause issues in some edge cases, but better to leak than double-free)
-                                true
-                            }
-                        } else {
-                            // Other tracker states (Struct, List, Map, etc.) mean it was being
-                            // actively built. We need to deinit AND unmark from parent's iset
-                            // to prevent double-free when parent is dropped.
-                            if path.len() == 1 {
-                                let field_name = path.first().unwrap();
-                                // Unmark the field from parent's iset before deiniting
-                                if let Some(parent) = stack.get_mut(parent_index) {
-                                    Self::unmark_field_in_parent(parent, field_name);
-                                }
-                            }
-                            true
-                        }
-                    }
-                    _ => {
-                        // Non-Field ownership - always need to deinit
-                        true
-                    }
-                };
-
-                if should_deinit {
-                    frame.deinit();
-                }
+        // 1. Clean up stored frames from deferred state
+        if let FrameMode::Deferred { stored_frames, .. } = &mut self.mode {
+            // Stored frames have ownership of their data (parent's iset was cleared).
+            for (_, mut frame) in core::mem::take(stored_frames) {
+                // Always call deinit - it internally handles each tracker type:
+                // - Scalar: checks is_init
+                // - Struct/Array/Enum: uses iset to drop individual fields/elements
+                frame.deinit();
+                // Don't deallocate - Field ownership means parent owns the memory
             }
         }
 
-        // We need to properly drop all initialized fields
+        // 2. Pop and deinit stack frames
         while let Some(mut frame) = self.mode.stack_mut().pop() {
-            // For Field-owned frames that are fully initialized, the parent frame's
-            // tracker (e.g., Struct's iset) will handle dropping the underlying data.
-            // But we still need to clean up any partial allocation state.
-            //
-            // For Field frames that are NOT fully initialized, we need to deinit
-            // ourselves because the parent won't drop them.
-            //
-            // Special case: initialized collections (Map/List/Set) with partial
-            // state (mid-insert) - the parent WILL drop the collection, but we
-            // need to clean up the partial buffers.
-            //
-            // IMPORTANT: We must also check that the parent's iset actually has this
-            // field marked. If end() was never called, the field won't be in the iset
-            // and the parent won't drop it, so we must deinit it ourselves.
-            match &frame.ownership {
-                FrameOwnership::Field => {
-                    // Check if parent will actually handle dropping this field
-                    let parent_will_drop = self.mode.stack().last().is_some_and(|parent| {
-                        match &parent.tracker {
-                            Tracker::Struct {
-                                iset,
-                                current_child,
-                            } => {
-                                // Parent drops this field only if it's marked in iset
-                                current_child.is_some_and(|idx| iset.get(idx))
-                            }
-                            Tracker::Enum {
-                                data,
-                                current_child,
-                                ..
-                            } => {
-                                // Parent drops this field only if it's marked in data
-                                current_child.is_some_and(|idx| data.get(idx))
-                            }
-                            Tracker::Array {
-                                iset,
-                                current_child,
-                            } => {
-                                // Parent drops this element only if it's marked in iset
-                                current_child.is_some_and(|idx| iset.get(idx))
-                            }
-                            // For other tracker types, the parent won't drop field children
-                            _ => false,
-                        }
-                    });
-
-                    if frame.require_full_initialization().is_ok() && parent_will_drop {
-                        // Fully initialized AND parent's iset has it marked - parent will handle it
-                        // But still clean up any partial allocation state (shouldn't be any)
-                        frame.cleanup_partial_state();
-                    } else if frame.require_full_initialization().is_ok() && !parent_will_drop {
-                        // Fully initialized but parent won't drop it (end() was never called)
-                        // We must deinit it ourselves
-                        frame.deinit();
-                    } else {
-                        // Not fully initialized - check if it's an initialized collection
-                        // with partial state (e.g., Map mid-insert, List mid-push).
-                        let is_initialized_collection_with_partial_state = match &frame.tracker {
-                            Tracker::Map {
-                                is_initialized: true,
-                                insert_state,
-                            } if !matches!(insert_state, MapInsertState::Idle) => true,
-                            Tracker::List {
-                                is_initialized: true,
-                                current_child: true,
-                            } => true,
-                            Tracker::Set {
-                                is_initialized: true,
-                                current_child: true,
-                            } => true,
-                            _ => false,
-                        };
-
-                        if is_initialized_collection_with_partial_state && parent_will_drop {
-                            // Parent will drop the collection, just clean up partial state
-                            frame.cleanup_partial_state();
-                        } else if is_initialized_collection_with_partial_state && !parent_will_drop
-                        {
-                            // Collection is initialized but parent won't drop it (not in iset).
-                            // We need to clean up partial state AND drop the collection itself.
-                            frame.cleanup_partial_state();
-                            // Now the collection is in a clean state, drop it
-                            if let Some(drop_fn) = frame.shape.vtable.drop_in_place {
-                                unsafe { drop_fn(frame.data.assume_init()) };
-                            }
-                            frame.tracker = Tracker::Uninit;
-                        } else {
-                            // Not an initialized collection - need full deinit
-                            frame.deinit();
-                        }
-                    }
-                }
-                _ => {
-                    frame.deinit();
-                }
-            }
+            // Always call deinit - it internally handles each tracker type correctly.
+            // Parent's iset was cleared when we entered this field,
+            // so parent won't try to drop it.
+            frame.deinit();
 
             // Only deallocate if this frame owns the allocation
             if let FrameOwnership::Owned = frame.ownership {
-                if let Ok(layout) = frame.shape.layout.sized_layout() {
-                    if layout.size() > 0 {
-                        unsafe { alloc::alloc::dealloc(frame.data.as_mut_byte_ptr(), layout) };
-                    }
-                }
+                frame.dealloc();
             }
         }
     }

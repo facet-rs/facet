@@ -30,6 +30,9 @@ pub use function::*;
 mod ndarray;
 pub use ndarray::*;
 
+mod dynamic_value;
+pub use dynamic_value::*;
+
 /// The semantic definition of a shape: is it more like a scalar, a map, a list?
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -83,6 +86,11 @@ pub enum Def {
 
     /// Pointer types like `Arc<T>`, `Rc<T>`, etc.
     Pointer(PointerDef),
+
+    /// Dynamic value that can hold any type at runtime.
+    ///
+    /// e.g. `facet_value::Value`, `serde_json::Value`
+    DynamicValue(DynamicValueDef),
 }
 
 impl core::fmt::Debug for Def {
@@ -106,6 +114,7 @@ impl core::fmt::Debug for Def {
                     write!(f, "SmartPointer<opaque>")
                 }
             }
+            Def::DynamicValue(_) => write!(f, "DynamicValue"),
         }
     }
 }
@@ -174,6 +183,14 @@ impl Def {
     pub fn into_pointer(self) -> Result<PointerDef, Self> {
         match self {
             Self::Pointer(def) => Ok(def),
+            _ => Err(self),
+        }
+    }
+
+    /// Returns the `DynamicValueDef` wrapped in an `Ok` if this is a [`Def::DynamicValue`].
+    pub fn into_dynamic_value(self) -> Result<DynamicValueDef, Self> {
+        match self {
+            Self::DynamicValue(def) => Ok(def),
             _ => Err(self),
         }
     }

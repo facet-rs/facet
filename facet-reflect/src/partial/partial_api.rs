@@ -13,7 +13,8 @@ use core::{marker::PhantomData, mem::ManuallyDrop, ptr::NonNull};
 use crate::{
     Guard, HeapValue, Partial, Peek, ReflectError, Resolution, TypedPartial,
     partial::{
-        Frame, FrameMode, FrameOwnership, MapInsertState, PartialState, Tracker, iset::ISet,
+        DynamicValueState, Frame, FrameMode, FrameOwnership, MapInsertState, PartialState, Tracker,
+        iset::ISet,
     },
     trace,
 };

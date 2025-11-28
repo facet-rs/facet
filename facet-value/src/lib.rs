@@ -42,3 +42,8 @@ pub use array::*;
 
 mod object;
 pub use object::*;
+
+#[cfg(feature = "alloc")]
+mod facet_impl;
+#[cfg(feature = "alloc")]
+pub use facet_impl::VALUE_SHAPE;

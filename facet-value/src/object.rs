@@ -91,7 +91,7 @@ impl VObject {
     }
 
     fn header_mut(&mut self) -> &mut ObjectHeader {
-        unsafe { &mut *(self.0.heap_ptr() as *mut ObjectHeader) }
+        unsafe { &mut *(self.0.heap_ptr_mut() as *mut ObjectHeader) }
     }
 
     fn items_ptr(&self) -> *const KeyValuePair {
@@ -99,7 +99,8 @@ impl VObject {
     }
 
     fn items_ptr_mut(&mut self) -> *mut KeyValuePair {
-        unsafe { (self.header_mut() as *mut ObjectHeader).add(1).cast() }
+        // Use heap_ptr_mut directly to preserve mutable provenance
+        unsafe { (self.0.heap_ptr_mut() as *mut ObjectHeader).add(1).cast() }
     }
 
     fn items(&self) -> &[KeyValuePair] {
@@ -534,6 +535,14 @@ impl AsMut<Value> for VObject {
 impl From<VObject> for Value {
     fn from(obj: VObject) -> Self {
         obj.0
+    }
+}
+
+impl VObject {
+    /// Converts this VObject into a Value, consuming self.
+    #[inline]
+    pub fn into_value(self) -> Value {
+        self.0
     }
 }
 

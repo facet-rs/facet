@@ -73,7 +73,7 @@ impl VNumber {
 
     #[allow(dead_code)]
     fn header_mut(&mut self) -> &mut NumberHeader {
-        unsafe { &mut *(self.0.heap_ptr() as *mut NumberHeader) }
+        unsafe { &mut *(self.0.heap_ptr_mut() as *mut NumberHeader) }
     }
 
     /// Creates a number from an i64.
@@ -432,6 +432,14 @@ impl AsMut<Value> for VNumber {
 impl From<VNumber> for Value {
     fn from(n: VNumber) -> Self {
         n.0
+    }
+}
+
+impl VNumber {
+    /// Converts this VNumber into a Value, consuming self.
+    #[inline]
+    pub fn into_value(self) -> Value {
+        self.0
     }
 }
 

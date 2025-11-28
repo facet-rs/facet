@@ -33,6 +33,7 @@ ryu = "1"
 [dev-dependencies]
 bytes = { version = "1.10.1" }
 camino = { version = "1" }
+facet-value = { path = "../facet-value" }
 facet = { path = "../facet", features = [
     "bytes",
     "camino",

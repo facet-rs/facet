@@ -16,19 +16,18 @@ impl Partial<'_> {
         let frame = self.frames_mut().last_mut().unwrap();
 
         match &frame.tracker {
-            Tracker::Uninit => {
+            Tracker::Scalar if !frame.is_init => {
                 // that's good, let's initialize it
             }
-            Tracker::Init => {
-                // initialized (perhaps from a previous round?) but should be a set tracker, let's fix that:
+            Tracker::Scalar => {
+                // is_init is true - initialized (perhaps from a previous round?) but should be a set tracker, let's fix that:
                 frame.tracker = Tracker::Set {
-                    is_initialized: true,
                     current_child: false,
                 };
                 return Ok(self);
             }
-            Tracker::Set { is_initialized, .. } => {
-                if *is_initialized {
+            Tracker::Set { .. } => {
+                if frame.is_init {
                     // already initialized, nothing to do
                     return Ok(self);
                 }
@@ -59,11 +58,11 @@ impl Partial<'_> {
             init_fn(frame.data, 0);
         }
 
-        // Update tracker to Set state
+        // Update tracker to Set state and mark as initialized
         frame.tracker = Tracker::Set {
-            is_initialized: true,
             current_child: false,
         };
+        frame.is_init = true;
 
         Ok(self)
     }
@@ -88,10 +87,7 @@ impl Partial<'_> {
 
         // Verify the tracker is in Set state and initialized
         match &mut frame.tracker {
-            Tracker::Set {
-                is_initialized: true,
-                current_child,
-            } => {
+            Tracker::Set { current_child } if frame.is_init => {
                 if *current_child {
                     return Err(ReflectError::OperationFailed {
                         shape: frame.shape,

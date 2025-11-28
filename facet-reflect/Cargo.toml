@@ -56,6 +56,7 @@ miette = { version = "7", optional = true }
 [dev-dependencies]
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
+facet-value = { path = "../facet-value" }
 insta = "1.43.1"
 log = "0.4.27"
 tempfile = "3.20.0"
