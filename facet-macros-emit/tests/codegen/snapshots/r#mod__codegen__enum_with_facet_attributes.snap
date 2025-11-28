@@ -39,13 +39,20 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                             struct name {
                                 _private: (),
                             }
+                            #[allow(non_camel_case_types)]
+                            fn name(_args: &[::facet::Token]) -> ::facet::AnyStaticRef {
+                                static __UNIT: () = ();
+                                &__UNIT
+                            }
                             {
                                 #[allow(unused_imports)]
                                 use myns::attrs::*;
                                 __check_attr::<name>();
                             }
                             fn __ext_get() -> ::facet::AnyStaticRef {
-                                myns::attrs::name(&[
+                                #[allow(unused_imports)]
+                                use myns::attrs::*;
+                                name(&[
                                     ::facet::Token::Punct {
                                         ch: '=',
                                         joint: false,
@@ -69,13 +76,20 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                             struct discriminant {
                                 _private: (),
                             }
+                            #[allow(non_camel_case_types)]
+                            fn discriminant(_args: &[::facet::Token]) -> ::facet::AnyStaticRef {
+                                static __UNIT: () = ();
+                                &__UNIT
+                            }
                             {
                                 #[allow(unused_imports)]
                                 use myns::attrs::*;
                                 __check_attr::<discriminant>();
                             }
                             fn __ext_get() -> ::facet::AnyStaticRef {
-                                myns::attrs::discriminant(&[
+                                #[allow(unused_imports)]
+                                use myns::attrs::*;
+                                discriminant(&[
                                     ::facet::Token::Punct {
                                         ch: '=',
                                         joint: false,
@@ -134,13 +148,20 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                             struct deprecated {
                                 _private: (),
                             }
+                            #[allow(non_camel_case_types)]
+                            fn deprecated(_args: &[::facet::Token]) -> ::facet::AnyStaticRef {
+                                static __UNIT: () = ();
+                                &__UNIT
+                            }
                             {
                                 #[allow(unused_imports)]
                                 use myns::attrs::*;
                                 __check_attr::<deprecated>();
                             }
                             fn __ext_get() -> ::facet::AnyStaticRef {
-                                myns::attrs::deprecated(&[
+                                #[allow(unused_imports)]
+                                use myns::attrs::*;
+                                deprecated(&[
                                     ::facet::Token::Punct {
                                         ch: '=',
                                         joint: false,
@@ -211,13 +232,20 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                         struct name {
                             _private: (),
                         }
+                        #[allow(non_camel_case_types)]
+                        fn name(_args: &[::facet::Token]) -> ::facet::AnyStaticRef {
+                            static __UNIT: () = ();
+                            &__UNIT
+                        }
                         {
                             #[allow(unused_imports)]
                             use myns::attrs::*;
                             __check_attr::<name>();
                         }
                         fn __ext_get() -> ::facet::AnyStaticRef {
-                            myns::attrs::name(&[
+                            #[allow(unused_imports)]
+                            use myns::attrs::*;
+                            name(&[
                                 ::facet::Token::Punct {
                                     ch: '=',
                                     joint: false,

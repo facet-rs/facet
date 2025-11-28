@@ -173,6 +173,10 @@ facet-kdl = {{ path = {:?} }}
         );
     }
 
+    // Always show compiler output for inspection
+    println!("\nCompiler error output:");
+    println!("{stderr}");
+
     println!("  ✓ Test '{}' passed", test.name);
 }
 
@@ -217,41 +221,29 @@ fn test_valid_kdl_property_compiles() {
 }
 
 // =============================================================================
-// Tests for invalid KDL attributes (currently compile but shouldn't)
-// These tests document the CURRENT behavior. Once we implement better
-// diagnostics, these tests should be updated to expect compilation failure.
+// Tests for invalid KDL attributes (should fail to compile with helpful errors)
 // =============================================================================
 
 #[test]
 #[cfg(not(miri))]
-fn test_invalid_kdl_attr_currently_compiles() {
-    // CURRENT BEHAVIOR: This compiles successfully even though 'nonexistent'
-    // is not a valid KDL attribute. The typo is only caught at runtime.
-    //
-    // DESIRED BEHAVIOR (after diagnostics improvement):
-    // This should fail to compile with a helpful error message like:
-    // "error[E0277]: `nonexistent` is not a recognized KDL attribute"
+fn test_invalid_kdl_attr_fails_to_compile() {
     let test = CompilationTest {
-        name: "invalid_kdl_attr_currently_compiles",
+        name: "invalid_kdl_nonexistent",
         source: include_str!("compile_tests/invalid_kdl_nonexistent.rs"),
-        expected_errors: &[],
-        should_compile: true, // TODO: Change to false after implementing diagnostics
+        expected_errors: &["is not a recognized KDL attribute", "valid attributes are:"],
+        should_compile: false,
     };
     run_compilation_test(&test);
 }
 
 #[test]
 #[cfg(not(miri))]
-fn test_typo_kdl_chld_currently_compiles() {
-    // CURRENT BEHAVIOR: 'chld' (typo for 'child') compiles successfully.
-    //
-    // DESIRED BEHAVIOR:
-    // Compilation should fail with suggestion: "did you mean `child`?"
+fn test_typo_kdl_chld_fails_to_compile() {
     let test = CompilationTest {
         name: "typo_kdl_chld",
         source: include_str!("compile_tests/typo_kdl_chld.rs"),
-        expected_errors: &[],
-        should_compile: true, // TODO: Change to false after implementing diagnostics
+        expected_errors: &["is not a recognized KDL attribute", "valid attributes are:"],
+        should_compile: false,
     };
     run_compilation_test(&test);
 }

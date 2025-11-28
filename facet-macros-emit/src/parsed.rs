@@ -71,10 +71,10 @@ pub enum PFacetAttr {
     /// Valid in field, enum variant, container
     /// An extension attribute from a third-party crate, e.g., `#[facet(orm::primary_key)]`
     Extension {
-        /// The namespace (e.g., "orm")
-        ns: String,
-        /// The key (e.g., "primary_key")
-        key: String,
+        /// The namespace identifier (e.g., "orm") - keeps original span for diagnostics
+        ns: Ident,
+        /// The key identifier (e.g., "primary_key") - keeps original span for diagnostics
+        key: Ident,
         /// The arguments as a TokenStream (for code generation)
         args: TokenStream,
     },
@@ -176,8 +176,8 @@ impl PFacetAttr {
                         None => TokenStream::new(),
                     };
                     dest.push(PFacetAttr::Extension {
-                        ns: ext.ns.to_string(),
-                        key: ext.key.to_string(),
+                        ns: ext.ns.clone(),
+                        key: ext.key.clone(),
                         args,
                     });
                 }

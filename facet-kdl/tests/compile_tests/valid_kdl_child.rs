@@ -1,4 +1,5 @@
 use facet::Facet;
+use facet_kdl as kdl;
 
 #[derive(Facet)]
 struct Parent {
@@ -11,6 +12,4 @@ struct Child {
     name: String,
 }
 
-fn main() {
-    // This should compile successfully
-}
+fn main() {}
