@@ -3,24 +3,543 @@
 //! This module provides functionality to format a `Shape` as Rust source code,
 //! showing the type definition with its attributes.
 
+use alloc::collections::BTreeMap;
 use alloc::collections::BTreeSet;
 use alloc::string::String;
+use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt::Write;
 
 use facet_core::{
     Def, EnumRepr, EnumType, PointerType, Shape, StructKind, StructType, Type, UserType,
 };
+use owo_colors::OwoColorize;
 
-/// Format a Shape as Rust-like source code, recursively expanding nested types
+/// Tokyo Night color scheme for syntax highlighting
+pub mod colors {
+    use owo_colors::Style;
+
+    /// Keywords: struct, enum, pub, etc. (purple)
+    pub fn keyword() -> Style {
+        Style::new().fg_rgb::<187, 154, 247>()
+    }
+
+    /// Type names and identifiers (light blue)
+    pub fn type_name() -> Style {
+        Style::new().fg_rgb::<192, 202, 245>()
+    }
+
+    /// Field names (cyan)
+    pub fn field_name() -> Style {
+        Style::new().fg_rgb::<125, 207, 255>()
+    }
+
+    /// Primitive types: u8, i32, bool, String, etc. (teal)
+    pub fn primitive() -> Style {
+        Style::new().fg_rgb::<115, 218, 202>()
+    }
+
+    /// Punctuation: {, }, (, ), :, etc. (gray-blue)
+    pub fn punctuation() -> Style {
+        Style::new().fg_rgb::<154, 165, 206>()
+    }
+
+    /// Attribute markers: #[...] (light cyan)
+    pub fn attribute() -> Style {
+        Style::new().fg_rgb::<137, 221, 255>()
+    }
+
+    /// Attribute content: derive, facet, repr (blue)
+    pub fn attribute_content() -> Style {
+        Style::new().fg_rgb::<122, 162, 247>()
+    }
+
+    /// String literals (green)
+    pub fn string() -> Style {
+        Style::new().fg_rgb::<158, 206, 106>()
+    }
+
+    /// Container types: Vec, Option, HashMap (orange)
+    pub fn container() -> Style {
+        Style::new().fg_rgb::<255, 158, 100>()
+    }
+}
+
+/// A segment in a path through a type structure
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PathSegment {
+    /// A field name in a struct
+    Field(&'static str),
+    /// A variant name in an enum
+    Variant(&'static str),
+}
+
+/// A path to a location within a type structure
+pub type Path = Vec<PathSegment>;
+
+/// A byte span in formatted output (start, end)
+pub type Span = (usize, usize);
+
+/// Spans for a field or variant, tracking both key (name) and value (type) positions
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FieldSpan {
+    /// Span of the field/variant name (e.g., "max_retries" in "max_retries: u8")
+    pub key: Span,
+    /// Span of the type annotation (e.g., "u8" in "max_retries: u8")
+    pub value: Span,
+}
+
+/// Result of formatting a shape with span tracking
+#[derive(Debug)]
+pub struct FormattedShape {
+    /// The formatted text (plain text, no ANSI colors)
+    pub text: String,
+    /// Map from paths to their field spans (key + value) in `text`
+    pub spans: BTreeMap<Path, FieldSpan>,
+}
+
+/// Strip ANSI escape codes from a string
+pub fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Skip escape sequence
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                // Skip until we hit a letter (the terminator)
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if next.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Format a Shape as Rust-like source code (plain text, no colors)
 pub fn format_shape(shape: &Shape) -> String {
+    strip_ansi(&format_shape_colored(shape))
+}
+
+/// Format a Shape with span tracking for each field/variant
+/// Note: spans are computed on the plain text (no ANSI codes)
+pub fn format_shape_with_spans(shape: &Shape) -> FormattedShape {
+    let mut ctx = SpanTrackingContext::new();
+    format_shape_into_with_spans(shape, &mut ctx).expect("Formatting failed");
+    FormattedShape {
+        text: ctx.output,
+        spans: ctx.spans,
+    }
+}
+
+/// Format a Shape as Rust-like source code with ANSI colors (Tokyo Night theme)
+pub fn format_shape_colored(shape: &Shape) -> String {
     let mut output = String::new();
-    format_shape_into(shape, &mut output).expect("Formatting failed");
+    format_shape_colored_into(shape, &mut output).expect("Formatting failed");
     output
 }
 
-/// Format a Shape into an existing String, recursively expanding nested types
-pub fn format_shape_into(shape: &Shape, output: &mut String) -> core::fmt::Result {
+/// Format a Shape with ANSI colors into an existing String
+pub fn format_shape_colored_into(shape: &Shape, output: &mut String) -> core::fmt::Result {
+    let mut printed: BTreeSet<&'static str> = BTreeSet::new();
+    let mut queue: Vec<&Shape> = Vec::new();
+    queue.push(shape);
+
+    while let Some(current) = queue.pop() {
+        if !printed.insert(current.type_identifier) {
+            continue;
+        }
+
+        if printed.len() > 1 {
+            writeln!(output)?;
+            writeln!(output)?;
+        }
+
+        match current.def {
+            Def::Map(_) | Def::List(_) | Def::Option(_) | Def::Array(_) => {
+                printed.remove(current.type_identifier);
+                continue;
+            }
+            _ => {}
+        }
+
+        match &current.ty {
+            Type::User(user_type) => match user_type {
+                UserType::Struct(struct_type) => {
+                    format_struct_colored(current, struct_type, output)?;
+                    collect_nested_types(struct_type, &mut queue);
+                }
+                UserType::Enum(enum_type) => {
+                    format_enum_colored(current, enum_type, output)?;
+                    for variant in enum_type.variants {
+                        collect_nested_types(&variant.data, &mut queue);
+                    }
+                }
+                UserType::Union(_) | UserType::Opaque => {
+                    printed.remove(current.type_identifier);
+                }
+            },
+            _ => {
+                printed.remove(current.type_identifier);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn format_struct_colored(
+    shape: &Shape,
+    struct_type: &StructType,
+    output: &mut String,
+) -> core::fmt::Result {
+    // #[derive(Facet)]
+    write!(output, "{}", "#[".style(colors::attribute()))?;
+    write!(output, "{}", "derive".style(colors::attribute_content()))?;
+    write!(output, "{}", "(".style(colors::attribute()))?;
+    write!(output, "{}", "Facet".style(colors::attribute_content()))?;
+    writeln!(output, "{}", ")]".style(colors::attribute()))?;
+
+    // Write facet attributes if any
+    write_facet_attrs_colored(shape, output)?;
+
+    match struct_type.kind {
+        StructKind::Struct => {
+            write!(output, "{} ", "struct".style(colors::keyword()))?;
+            write!(
+                output,
+                "{}",
+                shape.type_identifier.style(colors::type_name())
+            )?;
+            writeln!(output, " {}", "{".style(colors::punctuation()))?;
+
+            for field in struct_type.fields {
+                write!(output, "    {}", field.name.style(colors::field_name()))?;
+                write!(output, "{} ", ":".style(colors::punctuation()))?;
+                write_type_name_colored(field.shape(), output)?;
+                writeln!(output, "{}", ",".style(colors::punctuation()))?;
+            }
+            write!(output, "{}", "}".style(colors::punctuation()))?;
+        }
+        StructKind::Tuple | StructKind::TupleStruct => {
+            write!(output, "{} ", "struct".style(colors::keyword()))?;
+            write!(
+                output,
+                "{}",
+                shape.type_identifier.style(colors::type_name())
+            )?;
+            write!(output, "{}", "(".style(colors::punctuation()))?;
+            for (i, field) in struct_type.fields.iter().enumerate() {
+                if i > 0 {
+                    write!(output, "{} ", ",".style(colors::punctuation()))?;
+                }
+                write_type_name_colored(field.shape(), output)?;
+            }
+            write!(
+                output,
+                "{}{}",
+                ")".style(colors::punctuation()),
+                ";".style(colors::punctuation())
+            )?;
+        }
+        StructKind::Unit => {
+            write!(output, "{} ", "struct".style(colors::keyword()))?;
+            write!(
+                output,
+                "{}",
+                shape.type_identifier.style(colors::type_name())
+            )?;
+            write!(output, "{}", ";".style(colors::punctuation()))?;
+        }
+    }
+    Ok(())
+}
+
+fn format_enum_colored(
+    shape: &Shape,
+    enum_type: &EnumType,
+    output: &mut String,
+) -> core::fmt::Result {
+    // #[derive(Facet)]
+    write!(output, "{}", "#[".style(colors::attribute()))?;
+    write!(output, "{}", "derive".style(colors::attribute_content()))?;
+    write!(output, "{}", "(".style(colors::attribute()))?;
+    write!(output, "{}", "Facet".style(colors::attribute_content()))?;
+    writeln!(output, "{}", ")]".style(colors::attribute()))?;
+
+    // Write repr for the discriminant type
+    let repr_str = match enum_type.enum_repr {
+        EnumRepr::RustNPO => None,
+        EnumRepr::U8 => Some("u8"),
+        EnumRepr::U16 => Some("u16"),
+        EnumRepr::U32 => Some("u32"),
+        EnumRepr::U64 => Some("u64"),
+        EnumRepr::USize => Some("usize"),
+        EnumRepr::I8 => Some("i8"),
+        EnumRepr::I16 => Some("i16"),
+        EnumRepr::I32 => Some("i32"),
+        EnumRepr::I64 => Some("i64"),
+        EnumRepr::ISize => Some("isize"),
+    };
+
+    if let Some(repr) = repr_str {
+        write!(output, "{}", "#[".style(colors::attribute()))?;
+        write!(output, "{}", "repr".style(colors::attribute_content()))?;
+        write!(output, "{}", "(".style(colors::attribute()))?;
+        write!(output, "{}", repr.style(colors::primitive()))?;
+        writeln!(output, "{}", ")]".style(colors::attribute()))?;
+    }
+
+    // Write facet attributes if any
+    write_facet_attrs_colored(shape, output)?;
+
+    // enum Name {
+    write!(output, "{} ", "enum".style(colors::keyword()))?;
+    write!(
+        output,
+        "{}",
+        shape.type_identifier.style(colors::type_name())
+    )?;
+    writeln!(output, " {}", "{".style(colors::punctuation()))?;
+
+    for variant in enum_type.variants {
+        match variant.data.kind {
+            StructKind::Unit => {
+                write!(output, "    {}", variant.name.style(colors::type_name()))?;
+                writeln!(output, "{}", ",".style(colors::punctuation()))?;
+            }
+            StructKind::Tuple | StructKind::TupleStruct => {
+                write!(output, "    {}", variant.name.style(colors::type_name()))?;
+                write!(output, "{}", "(".style(colors::punctuation()))?;
+                for (i, field) in variant.data.fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(output, "{} ", ",".style(colors::punctuation()))?;
+                    }
+                    write_type_name_colored(field.shape(), output)?;
+                }
+                write!(output, "{}", ")".style(colors::punctuation()))?;
+                writeln!(output, "{}", ",".style(colors::punctuation()))?;
+            }
+            StructKind::Struct => {
+                write!(output, "    {}", variant.name.style(colors::type_name()))?;
+                writeln!(output, " {}", "{".style(colors::punctuation()))?;
+                for field in variant.data.fields {
+                    write!(output, "        {}", field.name.style(colors::field_name()))?;
+                    write!(output, "{} ", ":".style(colors::punctuation()))?;
+                    write_type_name_colored(field.shape(), output)?;
+                    writeln!(output, "{}", ",".style(colors::punctuation()))?;
+                }
+                write!(output, "    {}", "}".style(colors::punctuation()))?;
+                writeln!(output, "{}", ",".style(colors::punctuation()))?;
+            }
+        }
+    }
+
+    write!(output, "{}", "}".style(colors::punctuation()))?;
+    Ok(())
+}
+
+fn write_facet_attrs_colored(shape: &Shape, output: &mut String) -> core::fmt::Result {
+    let mut attrs: Vec<String> = Vec::new();
+
+    if let Some(tag) = shape.get_tag_attr() {
+        if let Some(content) = shape.get_content_attr() {
+            attrs.push(alloc::format!(
+                "{}{}{}{}{}{}{}{}{}",
+                "tag".style(colors::attribute_content()),
+                " = ".style(colors::punctuation()),
+                "\"".style(colors::string()),
+                tag.style(colors::string()),
+                "\"".style(colors::string()),
+                ", ".style(colors::punctuation()),
+                "content".style(colors::attribute_content()),
+                " = ".style(colors::punctuation()),
+                format!("\"{content}\"").style(colors::string()),
+            ));
+        } else {
+            attrs.push(alloc::format!(
+                "{}{}{}",
+                "tag".style(colors::attribute_content()),
+                " = ".style(colors::punctuation()),
+                format!("\"{tag}\"").style(colors::string()),
+            ));
+        }
+    }
+
+    if shape.is_untagged() {
+        attrs.push(alloc::format!(
+            "{}",
+            "untagged".style(colors::attribute_content())
+        ));
+    }
+
+    if shape.has_deny_unknown_fields_attr() {
+        attrs.push(alloc::format!(
+            "{}",
+            "deny_unknown_fields".style(colors::attribute_content())
+        ));
+    }
+
+    if !attrs.is_empty() {
+        write!(output, "{}", "#[".style(colors::attribute()))?;
+        write!(output, "{}", "facet".style(colors::attribute_content()))?;
+        write!(output, "{}", "(".style(colors::attribute()))?;
+        write!(
+            output,
+            "{}",
+            attrs.join(&format!("{}", ", ".style(colors::punctuation())))
+        )?;
+        writeln!(output, "{}", ")]".style(colors::attribute()))?;
+    }
+
+    Ok(())
+}
+
+fn write_type_name_colored(shape: &Shape, output: &mut String) -> core::fmt::Result {
+    match shape.def {
+        Def::Scalar => {
+            // Check if it's a primitive type
+            let id = shape.type_identifier;
+            if is_primitive_type(id) {
+                write!(output, "{}", id.style(colors::primitive()))?;
+            } else {
+                write!(output, "{}", id.style(colors::type_name()))?;
+            }
+        }
+        Def::Pointer(_) => {
+            if let Type::Pointer(PointerType::Reference(r)) = shape.ty {
+                if let Def::Array(array_def) = r.target.def {
+                    write!(output, "{}", "&[".style(colors::punctuation()))?;
+                    write_type_name_colored(array_def.t, output)?;
+                    write!(
+                        output,
+                        "{}{}{}",
+                        "; ".style(colors::punctuation()),
+                        array_def.n.style(colors::primitive()),
+                        "]".style(colors::punctuation())
+                    )?;
+                    return Ok(());
+                }
+            }
+            write!(
+                output,
+                "{}",
+                shape.type_identifier.style(colors::type_name())
+            )?;
+        }
+        Def::List(list_def) => {
+            write!(output, "{}", "Vec".style(colors::container()))?;
+            write!(output, "{}", "<".style(colors::punctuation()))?;
+            write_type_name_colored(list_def.t, output)?;
+            write!(output, "{}", ">".style(colors::punctuation()))?;
+        }
+        Def::Array(array_def) => {
+            write!(output, "{}", "[".style(colors::punctuation()))?;
+            write_type_name_colored(array_def.t, output)?;
+            write!(
+                output,
+                "{}{}{}",
+                "; ".style(colors::punctuation()),
+                array_def.n.style(colors::primitive()),
+                "]".style(colors::punctuation())
+            )?;
+        }
+        Def::Map(map_def) => {
+            let map_name = if shape.type_identifier.contains("BTreeMap") {
+                "BTreeMap"
+            } else {
+                "HashMap"
+            };
+            write!(output, "{}", map_name.style(colors::container()))?;
+            write!(output, "{}", "<".style(colors::punctuation()))?;
+            write_type_name_colored(map_def.k, output)?;
+            write!(output, "{} ", ",".style(colors::punctuation()))?;
+            write_type_name_colored(map_def.v, output)?;
+            write!(output, "{}", ">".style(colors::punctuation()))?;
+        }
+        Def::Option(option_def) => {
+            write!(output, "{}", "Option".style(colors::container()))?;
+            write!(output, "{}", "<".style(colors::punctuation()))?;
+            write_type_name_colored(option_def.t, output)?;
+            write!(output, "{}", ">".style(colors::punctuation()))?;
+        }
+        _ => {
+            let id = shape.type_identifier;
+            if is_primitive_type(id) {
+                write!(output, "{}", id.style(colors::primitive()))?;
+            } else {
+                write!(output, "{}", id.style(colors::type_name()))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Check if a type identifier is a primitive type
+fn is_primitive_type(id: &str) -> bool {
+    matches!(
+        id,
+        "u8" | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "f32"
+            | "f64"
+            | "bool"
+            | "char"
+            | "str"
+            | "&str"
+            | "String"
+    )
+}
+
+/// Context for tracking spans during formatting
+struct SpanTrackingContext {
+    output: String,
+    spans: BTreeMap<Path, FieldSpan>,
+    /// Current path prefix (for nested types)
+    current_type: Option<&'static str>,
+}
+
+impl SpanTrackingContext {
+    fn new() -> Self {
+        Self {
+            output: String::new(),
+            spans: BTreeMap::new(),
+            current_type: None,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.output.len()
+    }
+
+    fn record_field_span(&mut self, path: Path, key_span: Span, value_span: Span) {
+        self.spans.insert(
+            path,
+            FieldSpan {
+                key: key_span,
+                value: value_span,
+            },
+        );
+    }
+}
+
+/// Format a Shape with span tracking
+fn format_shape_into_with_spans(shape: &Shape, ctx: &mut SpanTrackingContext) -> core::fmt::Result {
     // Track which types we've already printed to avoid duplicates
     let mut printed: BTreeSet<&'static str> = BTreeSet::new();
     // Queue of types to print
@@ -37,8 +556,8 @@ pub fn format_shape_into(shape: &Shape, output: &mut String) -> core::fmt::Resul
 
         // Add separator between type definitions
         if printed.len() > 1 {
-            writeln!(output)?;
-            writeln!(output)?;
+            writeln!(ctx.output)?;
+            writeln!(ctx.output)?;
         }
 
         // First check def for container types (Map, List, Option, Array)
@@ -56,12 +575,16 @@ pub fn format_shape_into(shape: &Shape, output: &mut String) -> core::fmt::Resul
         match &current.ty {
             Type::User(user_type) => match user_type {
                 UserType::Struct(struct_type) => {
-                    format_struct(current, struct_type, output)?;
+                    ctx.current_type = Some(current.type_identifier);
+                    format_struct_with_spans(current, struct_type, ctx)?;
+                    ctx.current_type = None;
                     // Queue nested types from fields
                     collect_nested_types(struct_type, &mut queue);
                 }
                 UserType::Enum(enum_type) => {
-                    format_enum(current, enum_type, output)?;
+                    ctx.current_type = Some(current.type_identifier);
+                    format_enum_with_spans(current, enum_type, ctx)?;
+                    ctx.current_type = None;
                     // Queue nested types from variants
                     for variant in enum_type.variants {
                         collect_nested_types(&variant.data, &mut queue);
@@ -79,6 +602,216 @@ pub fn format_shape_into(shape: &Shape, output: &mut String) -> core::fmt::Resul
             }
         }
     }
+    Ok(())
+}
+
+fn format_struct_with_spans(
+    shape: &Shape,
+    struct_type: &StructType,
+    ctx: &mut SpanTrackingContext,
+) -> core::fmt::Result {
+    // Track start of the whole type definition
+    let type_start = ctx.len();
+
+    // Write #[derive(Facet)]
+    writeln!(ctx.output, "#[derive(Facet)]")?;
+
+    // Write facet attributes if any
+    write_facet_attrs(shape, &mut ctx.output)?;
+
+    // Write struct definition
+    match struct_type.kind {
+        StructKind::Struct => {
+            writeln!(ctx.output, "struct {} {{", shape.type_identifier)?;
+            for field in struct_type.fields {
+                write!(ctx.output, "    ")?;
+                // Track the span of the field name (key)
+                let key_start = ctx.len();
+                write!(ctx.output, "{}", field.name)?;
+                let key_end = ctx.len();
+                write!(ctx.output, ": ")?;
+                // Track the span of the type annotation (value)
+                let value_start = ctx.len();
+                write_type_name(field.shape(), &mut ctx.output)?;
+                let value_end = ctx.len();
+                ctx.record_field_span(
+                    vec![PathSegment::Field(field.name)],
+                    (key_start, key_end),
+                    (value_start, value_end),
+                );
+                writeln!(ctx.output, ",")?;
+            }
+            write!(ctx.output, "}}")?;
+        }
+        StructKind::Tuple | StructKind::TupleStruct => {
+            write!(ctx.output, "struct {}(", shape.type_identifier)?;
+            for (i, field) in struct_type.fields.iter().enumerate() {
+                if i > 0 {
+                    write!(ctx.output, ", ")?;
+                }
+                // For tuple structs, key and value span are the same (just the type)
+                let type_start = ctx.len();
+                write_type_name(field.shape(), &mut ctx.output)?;
+                let type_end = ctx.len();
+                // Use field name if available, otherwise use index as string
+                let field_name = if !field.name.is_empty() {
+                    field.name
+                } else {
+                    // Tuple fields don't have names, skip span tracking
+                    continue;
+                };
+                ctx.record_field_span(
+                    vec![PathSegment::Field(field_name)],
+                    (type_start, type_end), // key is the type itself for tuples
+                    (type_start, type_end),
+                );
+            }
+            write!(ctx.output, ");")?;
+        }
+        StructKind::Unit => {
+            write!(ctx.output, "struct {};", shape.type_identifier)?;
+        }
+    }
+
+    // Record span for the root (empty path) covering the whole type
+    let type_end = ctx.len();
+    ctx.record_field_span(vec![], (type_start, type_end), (type_start, type_end));
+
+    Ok(())
+}
+
+fn format_enum_with_spans(
+    shape: &Shape,
+    enum_type: &EnumType,
+    ctx: &mut SpanTrackingContext,
+) -> core::fmt::Result {
+    // Track start of the whole type definition
+    let type_start = ctx.len();
+
+    // Write #[derive(Facet)]
+    writeln!(ctx.output, "#[derive(Facet)]")?;
+
+    // Write repr for the discriminant type
+    let repr_str = match enum_type.enum_repr {
+        EnumRepr::RustNPO => None,
+        EnumRepr::U8 => Some("u8"),
+        EnumRepr::U16 => Some("u16"),
+        EnumRepr::U32 => Some("u32"),
+        EnumRepr::U64 => Some("u64"),
+        EnumRepr::USize => Some("usize"),
+        EnumRepr::I8 => Some("i8"),
+        EnumRepr::I16 => Some("i16"),
+        EnumRepr::I32 => Some("i32"),
+        EnumRepr::I64 => Some("i64"),
+        EnumRepr::ISize => Some("isize"),
+    };
+
+    if let Some(repr) = repr_str {
+        writeln!(ctx.output, "#[repr({repr})]")?;
+    }
+
+    // Write facet attributes if any
+    write_facet_attrs(shape, &mut ctx.output)?;
+
+    // Write enum definition
+    writeln!(ctx.output, "enum {} {{", shape.type_identifier)?;
+
+    for variant in enum_type.variants {
+        match variant.data.kind {
+            StructKind::Unit => {
+                write!(ctx.output, "    ")?;
+                // For unit variants, key and value are the same (just the variant name)
+                let name_start = ctx.len();
+                write!(ctx.output, "{}", variant.name)?;
+                let name_end = ctx.len();
+                ctx.record_field_span(
+                    vec![PathSegment::Variant(variant.name)],
+                    (name_start, name_end),
+                    (name_start, name_end),
+                );
+                writeln!(ctx.output, ",")?;
+            }
+            StructKind::Tuple | StructKind::TupleStruct => {
+                write!(ctx.output, "    ")?;
+                let variant_name_start = ctx.len();
+                write!(ctx.output, "{}", variant.name)?;
+                let variant_name_end = ctx.len();
+                write!(ctx.output, "(")?;
+                let tuple_start = ctx.len();
+                for (i, field) in variant.data.fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(ctx.output, ", ")?;
+                    }
+                    let type_start = ctx.len();
+                    write_type_name(field.shape(), &mut ctx.output)?;
+                    let type_end = ctx.len();
+                    // Track span for variant field
+                    if !field.name.is_empty() {
+                        ctx.record_field_span(
+                            vec![
+                                PathSegment::Variant(variant.name),
+                                PathSegment::Field(field.name),
+                            ],
+                            (type_start, type_end),
+                            (type_start, type_end),
+                        );
+                    }
+                }
+                write!(ctx.output, ")")?;
+                let tuple_end = ctx.len();
+                // Record variant span: key is the name, value is the tuple contents
+                ctx.record_field_span(
+                    vec![PathSegment::Variant(variant.name)],
+                    (variant_name_start, variant_name_end),
+                    (tuple_start, tuple_end),
+                );
+                writeln!(ctx.output, ",")?;
+            }
+            StructKind::Struct => {
+                write!(ctx.output, "    ")?;
+                let variant_name_start = ctx.len();
+                write!(ctx.output, "{}", variant.name)?;
+                let variant_name_end = ctx.len();
+                writeln!(ctx.output, " {{")?;
+                let struct_start = ctx.len();
+                for field in variant.data.fields {
+                    write!(ctx.output, "        ")?;
+                    let key_start = ctx.len();
+                    write!(ctx.output, "{}", field.name)?;
+                    let key_end = ctx.len();
+                    write!(ctx.output, ": ")?;
+                    let value_start = ctx.len();
+                    write_type_name(field.shape(), &mut ctx.output)?;
+                    let value_end = ctx.len();
+                    ctx.record_field_span(
+                        vec![
+                            PathSegment::Variant(variant.name),
+                            PathSegment::Field(field.name),
+                        ],
+                        (key_start, key_end),
+                        (value_start, value_end),
+                    );
+                    writeln!(ctx.output, ",")?;
+                }
+                write!(ctx.output, "    }}")?;
+                let struct_end = ctx.len();
+                // Record variant span: key is the name, value is the struct body
+                ctx.record_field_span(
+                    vec![PathSegment::Variant(variant.name)],
+                    (variant_name_start, variant_name_end),
+                    (struct_start, struct_end),
+                );
+                writeln!(ctx.output, ",")?;
+            }
+        }
+    }
+
+    write!(ctx.output, "}}")?;
+
+    // Record span for the root (empty path) covering the whole type
+    let type_end = ctx.len();
+    ctx.record_field_span(vec![], (type_start, type_end), (type_start, type_end));
+
     Ok(())
 }
 
@@ -108,126 +841,22 @@ fn collect_from_shape<'a>(shape: &'a Shape, queue: &mut Vec<&'a Shape>) {
     }
 }
 
-fn format_struct(
-    shape: &Shape,
-    struct_type: &StructType,
-    output: &mut String,
-) -> core::fmt::Result {
-    // Write #[derive(Facet)]
-    writeln!(output, "#[derive(Facet)]")?;
-
-    // Write facet attributes if any
-    write_facet_attrs(shape, output)?;
-
-    // Write struct definition
-    match struct_type.kind {
-        StructKind::Struct => {
-            writeln!(output, "struct {} {{", shape.type_identifier)?;
-            for field in struct_type.fields {
-                write!(output, "    {}: ", field.name)?;
-                write_type_name(field.shape(), output)?;
-                writeln!(output, ",")?;
-            }
-            write!(output, "}}")?;
-        }
-        StructKind::Tuple | StructKind::TupleStruct => {
-            write!(output, "struct {}(", shape.type_identifier)?;
-            for (i, field) in struct_type.fields.iter().enumerate() {
-                if i > 0 {
-                    write!(output, ", ")?;
-                }
-                write_type_name(field.shape(), output)?;
-            }
-            write!(output, ");")?;
-        }
-        StructKind::Unit => {
-            write!(output, "struct {};", shape.type_identifier)?;
-        }
-    }
-    Ok(())
-}
-
-fn format_enum(shape: &Shape, enum_type: &EnumType, output: &mut String) -> core::fmt::Result {
-    // Write #[derive(Facet)]
-    writeln!(output, "#[derive(Facet)]")?;
-
-    // Write repr for the discriminant type
-    let repr_str = match enum_type.enum_repr {
-        EnumRepr::RustNPO => None, // Don't show repr for nullable pointer optimization
-        EnumRepr::U8 => Some("u8"),
-        EnumRepr::U16 => Some("u16"),
-        EnumRepr::U32 => Some("u32"),
-        EnumRepr::U64 => Some("u64"),
-        EnumRepr::USize => Some("usize"),
-        EnumRepr::I8 => Some("i8"),
-        EnumRepr::I16 => Some("i16"),
-        EnumRepr::I32 => Some("i32"),
-        EnumRepr::I64 => Some("i64"),
-        EnumRepr::ISize => Some("isize"),
-    };
-
-    if let Some(repr) = repr_str {
-        writeln!(output, "#[repr({repr})]")?;
-    }
-
-    // Write facet attributes if any
-    write_facet_attrs(shape, output)?;
-
-    // Write enum definition
-    writeln!(output, "enum {} {{", shape.type_identifier)?;
-
-    for variant in enum_type.variants {
-        // variant.data is a StructType containing the variant's fields
-        match variant.data.kind {
-            StructKind::Unit => {
-                writeln!(output, "    {},", variant.name)?;
-            }
-            StructKind::Tuple | StructKind::TupleStruct => {
-                write!(output, "    {}(", variant.name)?;
-                for (i, field) in variant.data.fields.iter().enumerate() {
-                    if i > 0 {
-                        write!(output, ", ")?;
-                    }
-                    write_type_name(field.shape(), output)?;
-                }
-                writeln!(output, "),")?;
-            }
-            StructKind::Struct => {
-                writeln!(output, "    {} {{", variant.name)?;
-                for field in variant.data.fields {
-                    write!(output, "        {}: ", field.name)?;
-                    write_type_name(field.shape(), output)?;
-                    writeln!(output, ",")?;
-                }
-                writeln!(output, "    }},")?;
-            }
-        }
-    }
-
-    write!(output, "}}")?;
-    Ok(())
-}
-
+// Plain text helpers for span tracking (ANSI codes would break byte offsets)
 fn write_facet_attrs(shape: &Shape, output: &mut String) -> core::fmt::Result {
     let mut attrs: Vec<String> = Vec::new();
 
-    // Check for tag attribute (internally tagged enum)
     if let Some(tag) = shape.get_tag_attr() {
         if let Some(content) = shape.get_content_attr() {
-            // Adjacently tagged
             attrs.push(alloc::format!("tag = \"{tag}\", content = \"{content}\""));
         } else {
-            // Internally tagged
             attrs.push(alloc::format!("tag = \"{tag}\""));
         }
     }
 
-    // Check for untagged
     if shape.is_untagged() {
         attrs.push("untagged".into());
     }
 
-    // Check for deny_unknown_fields
     if shape.has_deny_unknown_fields_attr() {
         attrs.push("deny_unknown_fields".into());
     }
@@ -240,13 +869,11 @@ fn write_facet_attrs(shape: &Shape, output: &mut String) -> core::fmt::Result {
 }
 
 fn write_type_name(shape: &Shape, output: &mut String) -> core::fmt::Result {
-    // Handle common wrapper types
     match shape.def {
         Def::Scalar => {
             write!(output, "{}", shape.type_identifier)?;
         }
         Def::Pointer(_) => {
-            // Handle references to slices/arrays
             if let Type::Pointer(PointerType::Reference(r)) = shape.ty {
                 if let Def::Array(array_def) = r.target.def {
                     write!(output, "&[")?;
@@ -268,7 +895,6 @@ fn write_type_name(shape: &Shape, output: &mut String) -> core::fmt::Result {
             write!(output, "; {}]", array_def.n)?;
         }
         Def::Map(map_def) => {
-            // Use the type_identifier which might be HashMap, BTreeMap, etc.
             let map_name = if shape.type_identifier.contains("BTreeMap") {
                 "BTreeMap"
             } else {
@@ -286,7 +912,6 @@ fn write_type_name(shape: &Shape, output: &mut String) -> core::fmt::Result {
             write!(output, ">")?;
         }
         _ => {
-            // Fallback to type_identifier
             write!(output, "{}", shape.type_identifier)?;
         }
     }
@@ -388,5 +1013,84 @@ mod tests {
             output.contains("struct Item"),
             "Missing Item definition: {output}"
         );
+    }
+
+    #[test]
+    fn test_format_shape_with_spans() {
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Config {
+            name: String,
+            max_retries: u8,
+            enabled: bool,
+        }
+
+        let result = format_shape_with_spans(Config::SHAPE);
+
+        // Check that spans were recorded for each field
+        let name_path = vec![PathSegment::Field("name")];
+        let retries_path = vec![PathSegment::Field("max_retries")];
+        let enabled_path = vec![PathSegment::Field("enabled")];
+
+        assert!(
+            result.spans.contains_key(&name_path),
+            "Missing span for 'name' field. Spans: {:?}",
+            result.spans
+        );
+        assert!(
+            result.spans.contains_key(&retries_path),
+            "Missing span for 'max_retries' field. Spans: {:?}",
+            result.spans
+        );
+        assert!(
+            result.spans.contains_key(&enabled_path),
+            "Missing span for 'enabled' field. Spans: {:?}",
+            result.spans
+        );
+
+        // Verify the span for max_retries points to "u8"
+        let field_span = &result.spans[&retries_path];
+        let spanned_text = &result.text[field_span.value.0..field_span.value.1];
+        assert_eq!(spanned_text, "u8", "Expected 'u8', got '{spanned_text}'");
+    }
+
+    #[test]
+    fn test_format_enum_with_spans() {
+        #[derive(Facet)]
+        #[repr(u8)]
+        #[allow(dead_code)]
+        enum Status {
+            Active,
+            Pending,
+            Error { code: i32, message: String },
+        }
+
+        let result = format_shape_with_spans(Status::SHAPE);
+
+        // Check variant spans
+        let active_path = vec![PathSegment::Variant("Active")];
+        let error_path = vec![PathSegment::Variant("Error")];
+        let error_code_path = vec![PathSegment::Variant("Error"), PathSegment::Field("code")];
+
+        assert!(
+            result.spans.contains_key(&active_path),
+            "Missing span for 'Active' variant. Spans: {:?}",
+            result.spans
+        );
+        assert!(
+            result.spans.contains_key(&error_path),
+            "Missing span for 'Error' variant. Spans: {:?}",
+            result.spans
+        );
+        assert!(
+            result.spans.contains_key(&error_code_path),
+            "Missing span for 'Error.code' field. Spans: {:?}",
+            result.spans
+        );
+
+        // Verify the span for code points to "i32"
+        let field_span = &result.spans[&error_code_path];
+        let spanned_text = &result.text[field_span.value.0..field_span.value.1];
+        assert_eq!(spanned_text, "i32", "Expected 'i32', got '{spanned_text}'");
     }
 }

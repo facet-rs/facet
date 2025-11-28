@@ -19,6 +19,8 @@ pub struct ShowcaseRunner {
     primary_language: Language,
     /// Count of scenarios run
     scenario_count: usize,
+    /// Whether we're currently inside a section (affects heading levels)
+    in_section: bool,
 }
 
 impl ShowcaseRunner {
@@ -31,6 +33,7 @@ impl ShowcaseRunner {
             highlighter: Highlighter::new(),
             primary_language: Language::Json,
             scenario_count: 0,
+            in_section: false,
         }
     }
 
@@ -77,6 +80,29 @@ impl ShowcaseRunner {
     pub fn scenario(&mut self, name: impl Into<String>) -> Scenario<'_> {
         self.scenario_count += 1;
         Scenario::new(self, name.into())
+    }
+
+    /// Start a new section (h2 heading).
+    ///
+    /// When sections are used, scenarios within them become h3 headings.
+    /// This creates a nice hierarchy in the table of contents.
+    pub fn section(&mut self, name: &str) {
+        self.in_section = true;
+
+        match self.mode {
+            OutputMode::Terminal => {
+                println!();
+                println!();
+                println!("{}", "━".repeat(78).bold().yellow());
+                println!("  {}", name.bold().yellow());
+                println!("{}", "━".repeat(78).bold().yellow());
+            }
+            OutputMode::Markdown => {
+                println!();
+                println!("## {name}");
+                println!();
+            }
+        }
     }
 
     /// Finish the showcase and print footer.
@@ -199,8 +225,10 @@ impl<'a> Scenario<'a> {
             }
             OutputMode::Markdown => {
                 // Emit heading as Markdown so Zola can build a table of contents
+                // Use h3 if we're inside a section, h2 otherwise
+                let heading = if self.runner.in_section { "###" } else { "##" };
                 println!();
-                println!("## {}", self.name);
+                println!("{} {}", heading, self.name);
                 println!();
                 println!("<section class=\"scenario\">");
                 if let Some(ref desc) = self.description {
@@ -235,6 +263,31 @@ impl<'a> Scenario<'a> {
                 println!("<h4>{} Input</h4>", lang.name());
                 // highlight_to_html returns a complete <pre> element with inline styles
                 println!("{}", self.runner.highlighter.highlight_to_html(code, lang));
+                println!("</div>");
+            }
+        }
+        self
+    }
+
+    /// Display a Facet value as input using facet-pretty.
+    pub fn input_value<'b, T: facet::Facet<'b>>(mut self, value: &'b T) -> Self {
+        self.ensure_header();
+
+        use facet_pretty::FacetPretty;
+
+        match self.runner.mode {
+            OutputMode::Terminal => {
+                println!();
+                println!("{}", "Value Input:".bold().green());
+                println!("{}", "─".repeat(60).dimmed());
+                println!("  {}", value.pretty());
+                println!("{}", "─".repeat(60).dimmed());
+            }
+            OutputMode::Markdown => {
+                let pretty_output = format!("{}", value.pretty());
+                println!("<div class=\"input\">");
+                println!("<h4>Value Input</h4>");
+                println!("<pre><code>{}</code></pre>", ansi_to_html(&pretty_output));
                 println!("</div>");
             }
         }

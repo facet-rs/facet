@@ -605,8 +605,11 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-reflect",
+ "facet-showcase",
  "facet-testhelpers",
  "insta",
+ "miette",
+ "owo-colors",
 ]
 
 [[package]]
@@ -710,11 +713,18 @@ dependencies = [
 name = "facet-value"
 version = "0.1.0"
 dependencies = [
+ "facet",
  "facet-assert",
  "facet-core",
  "facet-diff",
  "facet-pretty",
  "facet-reflect",
+ "facet-showcase",
+ "facet-testhelpers",
+ "miette",
+ "once_cell",
+ "owo-colors",
+ "syntect",
 ]
 
 [[package]]

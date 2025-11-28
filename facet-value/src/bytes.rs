@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn test_empty() {
         let b = VBytes::empty();
-        assert_eq!(b.as_slice(), &[]);
+        assert_eq!(b.as_slice(), &[] as &[u8]);
         assert_eq!(b.len(), 0);
         assert!(b.is_empty());
     }

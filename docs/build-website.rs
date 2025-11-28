@@ -25,6 +25,8 @@ struct Showcase {
     output_name: String,
     /// Display name for nav (e.g., "KDL")
     display_name: String,
+    /// Required features for the example
+    required_features: Vec<String>,
 }
 
 fn main() {
@@ -76,15 +78,20 @@ fn main() {
                 let showcases_dir = showcases_dir.clone();
                 let showcase = showcase.clone();
                 thread::spawn(move || -> Result<String, String> {
+                    let mut args = vec![
+                        "run".to_string(),
+                        "--example".to_string(),
+                        showcase.example.clone(),
+                        "-p".to_string(),
+                        showcase.package.clone(),
+                    ];
+                    if !showcase.required_features.is_empty() {
+                        args.push("--features".to_string());
+                        args.push(showcase.required_features.join(","));
+                    }
                     let output = Command::new("cargo")
                         .current_dir(&repo_root)
-                        .args([
-                            "run",
-                            "--example",
-                            &showcase.example,
-                            "-p",
-                            &showcase.package,
-                        ])
+                        .args(&args)
                         .env("FACET_SHOWCASE_OUTPUT", "markdown")
                         .stderr(Stdio::null())
                         .output()
@@ -206,6 +213,7 @@ fn discover_showcases(repo_root: &PathBuf) -> Result<Vec<Showcase>, Box<dyn std:
                     example: target.name.clone(),
                     output_name,
                     display_name,
+                    required_features: target.required_features.clone(),
                 });
             }
         }
@@ -235,9 +243,10 @@ fn showcase_names(example: &str) -> (String, String) {
         "yaml" => ("yaml", "YAML"),
         "assert" => ("assert", "Assert"),
         other => {
-            // Default: use base name and title case it
+            // Default: convert underscores to hyphens for URL, title case for display
+            let output = other.replace('_', "-");
             let display = title_case(other);
-            return (other.to_string(), display);
+            return (output, display);
         }
     };
 
