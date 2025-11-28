@@ -49,6 +49,9 @@ jobs:
         with:
           tool: zola@0.19.2
 
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
       - name: Build website
         run: ./docs/build-website.rs
 
