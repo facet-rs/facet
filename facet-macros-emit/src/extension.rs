@@ -50,8 +50,8 @@ fn emit_token_trees(tokens: &TokenStream) -> TokenStream {
 /// Emits code to construct a single `facet::Token`.
 fn emit_token_tree(tt: &facet_macros_parse::TokenTree) -> TokenStream {
     // We use DUMMY span for now since proc_macro2 spans aren't easily convertible
-    // to our static Span type at macro time
-    let span = quote! { ::facet::Span::DUMMY };
+    // to our static TokenSpan type at macro time
+    let span = quote! { ::facet::TokenSpan::DUMMY };
 
     match tt {
         TokenTree::Ident(ident) => {
