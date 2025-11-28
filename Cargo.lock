@@ -544,10 +544,12 @@ dependencies = [
  "facet-reflect",
  "facet-showcase",
  "facet-solver",
+ "facet-testhelpers",
  "indoc",
  "kdl",
  "log",
  "miette",
+ "tempfile",
 ]
 
 [[package]]
