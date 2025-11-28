@@ -135,6 +135,7 @@ impl PrettyPrinter {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn format_peek_internal_(
         &self,
         value: Peek<'_, '_>,
@@ -145,17 +146,10 @@ impl PrettyPrinter {
         short: bool,
     ) -> fmt::Result {
         let mut value = value;
-        loop {
-            match value.into_pointer() {
-                Ok(ptr) => {
-                    if let Some(pointee) = ptr.borrow_inner() {
-                        value = pointee;
-                    } else {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
+        while let Ok(ptr) = value.into_pointer()
+            && let Some(pointee) = ptr.borrow_inner()
+        {
+            value = pointee;
         }
         let shape = value.shape();
 
@@ -180,19 +174,15 @@ impl PrettyPrinter {
                 let mut hashes = 0usize;
 
                 let mut rest = value;
-                loop {
-                    match rest.find('"') {
-                        Some(idx) => {
-                            rest = &rest[idx + 1..];
-                            let before = rest.len();
-                            rest = rest.trim_start_matches('#');
-                            let after = rest.len();
-                            let count = before - after;
-                            hashes = Ord::max(hashes, 1 + count);
-                        }
-                        None => break,
-                    }
+                while let Some(idx) = rest.find('"') {
+                    rest = &rest[idx + 1..];
+                    let before = rest.len();
+                    rest = rest.trim_start_matches('#');
+                    let after = rest.len();
+                    let count = before - after;
+                    hashes = Ord::max(hashes, 1 + count);
                 }
+
                 let pad = "";
                 let width = hashes.saturating_sub(1);
                 if hashes > 0 {
@@ -200,9 +190,9 @@ impl PrettyPrinter {
                 }
                 write!(f, "\"")?;
                 if self.use_colors {
-                    write!(f, "\x1b[33m{}\x1b[0m", value)?; // yellow
+                    write!(f, "\x1b[33m{value}\x1b[0m")?; // yellow
                 } else {
-                    write!(f, "{}", value)?;
+                    write!(f, "{value}")?;
                 }
                 write!(f, "\"")?;
                 if hashes > 0 {
@@ -250,7 +240,7 @@ impl PrettyPrinter {
                 self.write_type_name(f, &value)?;
 
                 self.write_punctuation(f, " { ")?;
-                self.write_comment(f, &format!("/* contents of untagged union */"))?;
+                self.write_comment(f, "/* contents of untagged union */")?;
                 self.write_punctuation(f, " }")?;
             }
 
@@ -423,7 +413,7 @@ impl PrettyPrinter {
                                 write!(f, "\x1b[38;2;{};{};{}m", color.r, color.g, color.b)?;
                             }
                             // Display the byte in hex format
-                            write!(f, "{:02x}", byte)?;
+                            write!(f, "{byte:02x}")?;
                         }
                         if self.use_colors {
                             write!(f, "\x1b[0m")?
@@ -548,12 +538,13 @@ impl PrettyPrinter {
                 self.write_punctuation(f, "]")?;
             }
 
-            _ => write!(f, "unsupported peek variant: {:?}", value)?,
+            _ => write!(f, "unsupported peek variant: {value:?}")?,
         }
 
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn format_tuple_fields<'mem, 'facet>(
         &self,
         peek_field: &dyn Fn(usize) -> Peek<'mem, 'facet>,
@@ -616,6 +607,7 @@ impl PrettyPrinter {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn format_struct_fields<'mem, 'facet>(
         &self,
         peek_field: &dyn Fn(usize) -> Peek<'mem, 'facet>,
