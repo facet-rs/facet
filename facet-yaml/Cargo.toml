@@ -48,7 +48,3 @@ strsim = "0.11"
 [[example]]
 name = "yaml_showcase"
 path = "examples/yaml_showcase.rs"
-
-[[example]]
-name = "yaml_error_showcase"
-path = "examples/yaml_error_showcase.rs"
