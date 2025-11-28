@@ -69,17 +69,31 @@ pub enum PFacetAttr {
     Default,
 
     /// Valid in field, enum variant, container
-    /// An arbitrary/unknown string, like,
-    /// `#[facet(bleh)]`
-    Arbitrary { content: String },
+    /// An extension attribute from a third-party crate, e.g., `#[facet(orm::primary_key)]`
+    Extension {
+        /// The namespace (e.g., "orm")
+        ns: String,
+        /// The key (e.g., "primary_key")
+        key: String,
+        /// The arguments as a TokenStream (for code generation)
+        args: TokenStream,
+    },
 
     /// Valid in container
     /// `#[facet(rename_all = "rule")]` — rename all fields following a rule
     RenameAll { rule: RenameRule },
 
     /// Valid in field, enum variant, or container
+    /// `#[facet(skip)]` — skip both serializing and deserializing this field.
+    Skip,
+
+    /// Valid in field, enum variant, or container
     /// `#[facet(skip_serializing)]` — skip serializing this field. Like serde.
     SkipSerializing,
+
+    /// Valid in field, enum variant, or container
+    /// `#[facet(skip_deserializing)]` — skip deserializing this field (use default value).
+    SkipDeserializing,
 
     /// Valid in field, enum variant, or container
     /// `#[facet(skip_serializing_if = "func")]` — skip serializing if the function returns true.
@@ -109,6 +123,11 @@ pub enum PFacetAttr {
     /// Valid in container (enums only)
     /// `#[facet(content = "data")]` — used with `tag` for adjacently tagged enums
     Content { name: String },
+
+    /// Valid in field, enum variant, container
+    /// An arbitrary/unknown string, like,
+    /// `#[facet(bleh)]`
+    Arbitrary { content: String },
 }
 
 impl PFacetAttr {
@@ -149,13 +168,27 @@ impl PFacetAttr {
                         panic!("Unknown #[facet(rename_all = ...)] rule: {rule_str}");
                     }
                 }
-                FacetInner::Arbitrary(tt) => {
-                    dest.push(PFacetAttr::Arbitrary {
-                        content: tt.tokens_to_string(),
+                FacetInner::Extension(ext) => {
+                    use facet_macros_parse::ToTokens;
+                    let args = ext
+                        .args
+                        .as_ref()
+                        .map(|a| a.content.to_token_stream())
+                        .unwrap_or_default();
+                    dest.push(PFacetAttr::Extension {
+                        ns: ext.ns.to_string(),
+                        key: ext.key.to_string(),
+                        args,
                     });
+                }
+                FacetInner::Skip(_) => {
+                    dest.push(PFacetAttr::Skip);
                 }
                 FacetInner::SkipSerializing(_) => {
                     dest.push(PFacetAttr::SkipSerializing);
+                }
+                FacetInner::SkipDeserializing(_) => {
+                    dest.push(PFacetAttr::SkipDeserializing);
                 }
                 FacetInner::SkipSerializingIf(skip_if) => {
                     dest.push(PFacetAttr::SkipSerializingIf {
@@ -188,6 +221,11 @@ impl PFacetAttr {
                 FacetInner::Content(content) => {
                     dest.push(PFacetAttr::Content {
                         name: content.value.as_str().to_string(),
+                    });
+                }
+                FacetInner::Arbitrary(tt) => {
+                    dest.push(PFacetAttr::Arbitrary {
+                        content: tt.tokens_to_string(),
                     });
                 }
             }

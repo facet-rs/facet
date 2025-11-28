@@ -229,3 +229,63 @@ macro_rules! shape_builder {
         }
     };
 }
+
+/// Declares a single extension attribute builder for use with `#[facet(namespace::attr)]` syntax.
+///
+/// This macro generates a builder function that facet's derive macro will call
+/// when processing extension attributes.
+///
+/// # Example
+///
+/// ```ignore
+/// pub mod kdl {
+///     use facet_core::facet_ext_attr;
+///
+///     facet_ext_attr!(property);
+///     facet_ext_attr!(argument);
+///     facet_ext_attr!(children);
+/// }
+/// ```
+///
+/// This generates:
+/// ```ignore
+/// pub mod kdl {
+///     pub fn __facet_build_property(
+///         _args: &'static [::facet_core::Token]
+///     ) -> ::std::boxed::Box<dyn ::core::any::Any + ::core::marker::Send + ::core::marker::Sync> {
+///         ::std::boxed::Box::new(())
+///     }
+///     // ... same for other attributes
+/// }
+/// ```
+///
+/// Users can then write:
+/// ```ignore
+/// use my_crate::kdl;
+///
+/// #[derive(Facet)]
+/// struct MyNode {
+///     #[facet(kdl::property)]
+///     name: String,
+/// }
+/// ```
+///
+/// And check for the attribute at runtime:
+/// ```ignore
+/// if field.has_extension_attr("kdl", "property") {
+///     // handle property field
+/// }
+/// ```
+#[macro_export]
+macro_rules! facet_ext_attr {
+    ($attr:ident) => {
+        $crate::paste::paste! {
+            #[doc(hidden)]
+            pub fn [<__facet_build_ $attr>](
+                _args: &'static [$crate::Token]
+            ) -> ::std::boxed::Box<dyn ::core::any::Any + ::core::marker::Send + ::core::marker::Sync> {
+                ::std::boxed::Box::new(())
+            }
+        }
+    };
+}

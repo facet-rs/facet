@@ -648,9 +648,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         // value (use #null in KDL for None). Use #[facet(default)] to make a field optional.
         for (idx, field) in fields_for_matching.iter().enumerate() {
             if !partial.is_field_set(idx)? {
-                let has_skip = field
-                    .attributes
-                    .contains(&FieldAttribute::Arbitrary("skip"));
+                let has_skip = field.flags.contains(FieldFlags::SKIP_DESERIALIZING);
                 if field.flags.contains(FieldFlags::DEFAULT) || has_skip {
                     log::trace!("Setting default for unset field: {}", field.name);
                     partial.set_nth_field_to_default(idx)?;
@@ -1557,9 +1555,8 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                             // Set defaults for unset fields
                             for (idx, field) in struct_def.fields.iter().enumerate() {
                                 if !partial.is_field_set(idx)? {
-                                    let has_skip = field
-                                        .attributes
-                                        .contains(&FieldAttribute::Arbitrary("skip"));
+                                    let has_skip =
+                                        field.flags.contains(FieldFlags::SKIP_DESERIALIZING);
                                     if field.flags.contains(FieldFlags::DEFAULT) || has_skip {
                                         partial.set_nth_field_to_default(idx)?;
                                     }
@@ -1622,9 +1619,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
                         for (idx, field) in struct_def.fields.iter().enumerate() {
                             if !partial.is_field_set(idx)? {
-                                let has_skip = field
-                                    .attributes
-                                    .contains(&FieldAttribute::Arbitrary("skip"));
+                                let has_skip = field.flags.contains(FieldFlags::SKIP_DESERIALIZING);
                                 if field.flags.contains(FieldFlags::DEFAULT) || has_skip {
                                     partial.set_nth_field_to_default(idx)?;
                                 }
@@ -1678,9 +1673,8 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
                             for (idx, field) in struct_def.fields.iter().enumerate() {
                                 if !partial.is_field_set(idx)? {
-                                    let has_skip = field
-                                        .attributes
-                                        .contains(&FieldAttribute::Arbitrary("skip"));
+                                    let has_skip =
+                                        field.flags.contains(FieldFlags::SKIP_DESERIALIZING);
                                     if field.flags.contains(FieldFlags::DEFAULT) || has_skip {
                                         partial.set_nth_field_to_default(idx)?;
                                     }
@@ -1905,9 +1899,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         // Set defaults for unset fields
         for (idx, field) in fields.iter().enumerate() {
             if !partial.is_field_set(idx)? {
-                let has_skip = field
-                    .attributes
-                    .contains(&FieldAttribute::Arbitrary("skip"));
+                let has_skip = field.flags.contains(FieldFlags::SKIP_DESERIALIZING);
                 if field.flags.contains(FieldFlags::DEFAULT) || has_skip {
                     log::trace!("Setting default for unset field: {}", field.name);
                     partial.set_nth_field_to_default(idx)?;

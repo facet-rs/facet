@@ -52,8 +52,12 @@ keyword! {
     pub KFlatten = "flatten";
     /// The "child" keyword
     pub KChild = "child";
+    /// The "skip" keyword (skip both serialization and deserialization).
+    pub KSkip = "skip";
     /// The "skip_serializing" keyword.
     pub KSkipSerializing = "skip_serializing";
+    /// The "skip_deserializing" keyword.
+    pub KSkipDeserializing = "skip_deserializing";
     /// The "skip_serializing_if" keyword.
     pub KSkipSerializingIf = "skip_serializing_if";
     /// The "type_tag" keyword.
@@ -169,8 +173,12 @@ unsynn! {
         Flatten(FlattenInner),
         /// A child attribute that marks a field as a child node
         Child(ChildInner),
+        /// A skip attribute that specifies whether a field should be skipped during both serialization and deserialization.
+        Skip(KSkip),
         /// A skip_serializing attribute that specifies whether a field should be skipped during serialization.
         SkipSerializing(SkipSerializingInner),
+        /// A skip_deserializing attribute that specifies whether a field should be skipped during deserialization.
+        SkipDeserializing(KSkipDeserializing),
         /// A skip_serializing_if attribute that specifies a condition for skipping serialization.
         SkipSerializingIf(SkipSerializingIfInner),
         /// A type_tag attribute that specifies the identifying tag for self describing formats
@@ -185,8 +193,23 @@ unsynn! {
         Tag(TagInner),
         /// A content attribute for adjacently tagged enums (#[facet(content = "data")])
         Content(ContentInner),
+        /// An extension attribute from a third-party crate, e.g., #[facet(orm::primary_key(auto_increment))]
+        Extension(ExtensionInner),
         /// Any other attribute represented as a sequence of token trees.
+        /// This is a catch-all for attributes like `#[facet(argument)]` or `#[facet(property)]`
         Arbitrary(VerbatimUntil<Comma>),
+    }
+
+    /// Inner value for extension attributes like #[facet(orm::primary_key(args...))]
+    pub struct ExtensionInner {
+        /// The namespace (e.g., "orm")
+        pub ns: Ident,
+        /// The path separator ::
+        pub _sep: PathSep,
+        /// The key (e.g., "primary_key")
+        pub key: Ident,
+        /// Optional arguments in parentheses
+        pub args: Option<ParenthesisGroupContaining<Vec<TokenTree>>>,
     }
 
     /// Inner value for #[facet(tag = ...)]

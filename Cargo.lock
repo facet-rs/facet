@@ -468,6 +468,7 @@ dependencies = [
  "jiff",
  "num-complex",
  "ordered-float",
+ "paste",
  "ruint",
  "time",
  "ulid",

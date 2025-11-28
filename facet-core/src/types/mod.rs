@@ -17,6 +17,9 @@ pub use def::*;
 mod ty;
 pub use ty::*;
 
+mod token;
+pub use token::*;
+
 use crate::{ConstTypeId, Facet};
 
 /// Schema for reflection of a type
@@ -120,6 +123,47 @@ impl core::fmt::Display for UnsizedError {
 
 impl core::error::Error for UnsizedError {}
 
+/// An extension attribute for third-party crates to attach metadata.
+///
+/// Extension attributes use namespaced syntax like `#[facet(orm::primary_key)]`
+/// to avoid conflicts with official Facet attributes.
+#[derive(Debug)]
+pub struct ExtensionAttr {
+    /// The namespace (e.g., "orm" in `#[facet(orm::primary_key)]`)
+    pub ns: &'static str,
+    /// The key (e.g., "primary_key" in `#[facet(orm::primary_key)]`)
+    pub key: &'static str,
+    /// The raw token arguments (e.g., the tokens inside the parens in `#[facet(orm::index(name = "foo"))]`)
+    pub args: &'static [Token],
+    /// Function to get the typed, parsed data from the extension crate's builder
+    pub get: fn() -> &'static (dyn core::any::Any + Send + Sync),
+}
+
+impl ExtensionAttr {
+    /// Get the typed data, downcasting from `dyn Any`.
+    ///
+    /// Returns `None` if the type doesn't match.
+    pub fn get_as<T: core::any::Any>(&self) -> Option<&'static T> {
+        (self.get)().downcast_ref()
+    }
+
+    /// Parse the arguments into a structured form with positional and named arguments.
+    ///
+    /// This is a convenience method that parses `#[facet(ns::key(arg1, arg2, name = value))]`
+    /// into a `ParsedArgs` struct.
+    #[cfg(feature = "alloc")]
+    pub fn parse_args(&self) -> Result<ParsedArgs, TokenParseError> {
+        ParsedArgs::parse(self.args)
+    }
+}
+
+impl PartialEq for ExtensionAttr {
+    fn eq(&self, other: &Self) -> bool {
+        // Compare by namespace and key only (args don't impl PartialEq, and we don't need to compare them)
+        self.ns == other.ns && self.key == other.key
+    }
+}
+
 /// An attribute that can be applied to a shape
 #[derive(Debug, PartialEq)]
 pub enum ShapeAttribute {
@@ -135,8 +179,6 @@ pub enum ShapeAttribute {
     Transparent,
     /// Specifies a case conversion rule for all fields or variants
     RenameAll(&'static str),
-    /// Custom field attribute containing arbitrary text
-    Arbitrary(&'static str),
     /// Indicates that this enum should be serialized/deserialized without a tag
     /// (untagged enum representation)
     Untagged,
@@ -146,6 +188,11 @@ pub enum ShapeAttribute {
     /// Specifies the content field name for adjacently tagged enums
     /// e.g., `#[facet(content = "data")]` (used together with `tag`)
     Content(&'static str),
+    /// An extension attribute from a third-party crate
+    /// e.g., `#[facet(orm::primary_key)]`
+    Extension(ExtensionAttr),
+    /// Custom attribute containing arbitrary text
+    Arbitrary(&'static str),
 }
 
 impl Shape {

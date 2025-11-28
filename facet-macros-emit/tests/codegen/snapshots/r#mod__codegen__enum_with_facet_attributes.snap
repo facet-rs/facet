@@ -53,7 +53,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     };
                     ::facet::Variant::builder()
                         .name("InternalVariant")
-                        .attributes(&[::facet::VariantAttribute::Arbitrary("skip")])
                         .discriminant(1i64 as i64)
                         .data(
                             ::facet::StructType::builder()

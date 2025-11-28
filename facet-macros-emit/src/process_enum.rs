@@ -42,6 +42,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 PFacetAttr::DenyUnknownFields => {
                     attribute_tokens.push(quote! { ::facet::ShapeAttribute::DenyUnknownFields });
                 }
+                PFacetAttr::Extension { ns, key, args } => {
+                    let ext_attr = emit_extension_attr(ns, key, args);
+                    attribute_tokens.push(quote! { ::facet::ShapeAttribute::Extension(#ext_attr) });
+                }
                 PFacetAttr::Arbitrary { content } => {
                     attribute_tokens.push(quote! { ::facet::ShapeAttribute::Arbitrary(#content) });
                 }
@@ -198,10 +202,19 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     } else {
                         let mut attrs_list = Vec::new();
                         for attr in &pv.attrs.facet {
-                            if let PFacetAttr::Arbitrary { content } = attr {
-                                attrs_list.push(
-                                    quote! { ::facet::VariantAttribute::Arbitrary(#content) },
-                                );
+                            match attr {
+                                PFacetAttr::Extension { ns, key, args } => {
+                                    let ext_attr = emit_extension_attr(ns, key, args);
+                                    attrs_list.push(
+                                        quote! { ::facet::VariantAttribute::Extension(#ext_attr) },
+                                    );
+                                }
+                                PFacetAttr::Arbitrary { content } => {
+                                    attrs_list.push(
+                                        quote! { ::facet::VariantAttribute::Arbitrary(#content) },
+                                    );
+                                }
+                                _ => {}
                             }
                         }
                         if attrs_list.is_empty() {
@@ -414,10 +427,19 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     } else {
                         let mut attrs_list = Vec::new();
                         for attr in &pv.attrs.facet {
-                            if let PFacetAttr::Arbitrary { content } = attr {
-                                attrs_list.push(
-                                    quote! { ::facet::VariantAttribute::Arbitrary(#content) },
-                                );
+                            match attr {
+                                PFacetAttr::Extension { ns, key, args } => {
+                                    let ext_attr = emit_extension_attr(ns, key, args);
+                                    attrs_list.push(
+                                        quote! { ::facet::VariantAttribute::Extension(#ext_attr) },
+                                    );
+                                }
+                                PFacetAttr::Arbitrary { content } => {
+                                    attrs_list.push(
+                                        quote! { ::facet::VariantAttribute::Arbitrary(#content) },
+                                    );
+                                }
+                                _ => {}
                             }
                         }
                         if attrs_list.is_empty() {
