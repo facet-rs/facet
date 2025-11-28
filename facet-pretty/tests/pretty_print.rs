@@ -3,6 +3,7 @@ use facet::Facet;
 use facet_pretty::{FacetPretty, PrettyPrinter};
 use facet_testhelpers::test;
 use insta::assert_snapshot;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Facet)]
 struct Person {
@@ -167,7 +168,7 @@ fn test_vec_u8() {
 fn test_byte_slice() {
     let printer = PrettyPrinter::new().with_colors(false);
     let bytes = [1, 2, 3, 4];
-    assert_snapshot!(printer.format(&&bytes[..]));
+    assert_snapshot!(printer.format(&bytes[..]));
 }
 
 #[test]
@@ -181,5 +182,12 @@ fn test_vec_u32() {
 fn test_u32_slice() {
     let printer = PrettyPrinter::new().with_colors(false);
     let nums = [1u32, 2u32, 3u32, 4u32];
-    assert_snapshot!(printer.format(&&nums[..]));
+    assert_snapshot!(printer.format(&nums[..]));
+}
+
+#[test]
+fn test_map() {
+    let printer = PrettyPrinter::new().with_colors(false);
+    let map = BTreeMap::from([("abc", 1), ("def", 2)]);
+    assert_snapshot!(printer.format(&map));
 }

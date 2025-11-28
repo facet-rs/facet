@@ -69,7 +69,7 @@ impl PrettyPrinter {
     }
 
     /// Format a value to a string
-    pub fn format<'a, T: Facet<'a>>(&self, value: &T) -> String {
+    pub fn format<'a, T: ?Sized + Facet<'a>>(&self, value: &T) -> String {
         let value = Peek::new(value);
 
         let mut output = String::new();
@@ -80,7 +80,7 @@ impl PrettyPrinter {
     }
 
     /// Format a value to a formatter
-    pub fn format_to<'a, T: Facet<'a>>(
+    pub fn format_to<'a, T: ?Sized + Facet<'a>>(
         &self,
         value: &T,
         f: &mut fmt::Formatter<'_>,
