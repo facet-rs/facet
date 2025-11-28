@@ -2330,15 +2330,15 @@ fn kdl_value_fits_shape(value: &KdlValue, shape: &'static Shape) -> bool {
 /// # use facet_kdl::from_str;
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Config {
-///     #[facet(child)]
+///     #[facet(kdl::child)]
 ///     server: Server,
 /// }
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Server {
-///     #[facet(argument)]
+///     #[facet(kdl::argument)]
 ///     host: String,
-///     #[facet(property)]
+///     #[facet(kdl::property)]
 ///     port: u16,
 /// }
 ///

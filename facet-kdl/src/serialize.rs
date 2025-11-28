@@ -12,7 +12,7 @@ pub(crate) type Result<T> = std::result::Result<T, KdlError>;
 /// Serialize a value of type `T` to a KDL string.
 ///
 /// The type `T` must be a struct where all fields are marked with either
-/// `#[facet(child)]` or `#[facet(children)]` (the "document" pattern).
+/// `#[facet(kdl::child)]` or `#[facet(kdl::children)]` (the "document" pattern).
 ///
 /// # Example
 /// ```
@@ -20,15 +20,15 @@ pub(crate) type Result<T> = std::result::Result<T, KdlError>;
 /// # use facet_kdl::to_string;
 /// #[derive(Facet)]
 /// struct Config {
-///     #[facet(child)]
+///     #[facet(kdl::child)]
 ///     server: Server,
 /// }
 ///
 /// #[derive(Facet)]
 /// struct Server {
-///     #[facet(argument)]
+///     #[facet(kdl::argument)]
 ///     host: String,
-///     #[facet(property)]
+///     #[facet(kdl::property)]
 ///     port: u16,
 /// }
 ///
@@ -55,7 +55,7 @@ pub fn to_string<T: Facet<'static>>(value: &T) -> Result<String> {
 /// output in memory first.
 ///
 /// The type `T` must be a struct where all fields are marked with either
-/// `#[facet(child)]` or `#[facet(children)]` (the "document" pattern).
+/// `#[facet(kdl::child)]` or `#[facet(kdl::children)]` (the "document" pattern).
 ///
 /// # Example
 ///
@@ -66,15 +66,15 @@ pub fn to_string<T: Facet<'static>>(value: &T) -> Result<String> {
 /// # use std::fs::File;
 /// #[derive(Facet)]
 /// struct Config {
-///     #[facet(child)]
+///     #[facet(kdl::child)]
 ///     server: Server,
 /// }
 ///
 /// #[derive(Facet)]
 /// struct Server {
-///     #[facet(argument)]
+///     #[facet(kdl::argument)]
 ///     host: String,
-///     #[facet(property)]
+///     #[facet(kdl::property)]
 ///     port: u16,
 /// }
 ///
@@ -95,15 +95,15 @@ pub fn to_string<T: Facet<'static>>(value: &T) -> Result<String> {
 /// # use facet_kdl::to_writer;
 /// #[derive(Facet)]
 /// struct Config {
-///     #[facet(child)]
+///     #[facet(kdl::child)]
 ///     server: Server,
 /// }
 ///
 /// #[derive(Facet)]
 /// struct Server {
-///     #[facet(argument)]
+///     #[facet(kdl::argument)]
 ///     host: String,
-///     #[facet(property)]
+///     #[facet(kdl::property)]
 ///     port: u16,
 /// }
 ///
