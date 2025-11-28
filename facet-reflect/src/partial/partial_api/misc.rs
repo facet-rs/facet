@@ -1085,4 +1085,9 @@ impl<'facet> Partial<'facet> {
             .nth(1)
             .and_then(|f| f.get_field())
     }
+
+    /// Gets the field for the current frame
+    pub fn current_field(&self) -> Option<&Field> {
+        self.frames().last().and_then(|f| f.get_field())
+    }
 }

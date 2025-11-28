@@ -94,7 +94,7 @@ fn write_colon<W: crate::JsonWrite>(writer: &mut W, indent: Option<&str>) {
 }
 
 fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
-    mut peek: Peek<'mem, 'facet>,
+    peek: Peek<'mem, 'facet>,
     maybe_field: Option<Field>,
     writer: &mut W,
     indent: Option<&str>,
@@ -122,9 +122,10 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
     {
         let old_shape = peek.shape();
         let ps = peek.into_struct().unwrap();
-        peek = ps.field(0).unwrap();
-        let new_shape = peek.shape();
+        let (field, inner_peek) = ps.fields().next().unwrap();
+        let new_shape = inner_peek.shape();
         trace!("{old_shape} is transparent, let's serialize the inner {new_shape} instead");
+        return serialize_value(inner_peek, Some(field), writer, indent, depth);
     }
 
     trace!(

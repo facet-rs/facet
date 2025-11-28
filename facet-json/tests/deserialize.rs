@@ -128,3 +128,29 @@ fn test_custom_deserialization_enum() {
         _ => panic!("expected OpStrField variant"),
     }
 }
+
+#[test]
+fn test_custom_deserialize_transparent_struct() {
+    #[derive(Clone)]
+    struct MyUrl(String);
+
+    fn custom_deserializer(s: &String) -> Result<MyUrl, &'static str> {
+        Ok(MyUrl(s.to_owned()))
+    }
+
+    #[derive(Facet)]
+    #[facet(transparent)]
+    struct UrlWrapper(
+        #[facet(
+            opaque,
+            deserialize_with = custom_deserializer,
+        )]
+        MyUrl,
+    );
+
+    let data = r#""http://thing""#;
+
+    let test: UrlWrapper = facet_json::from_str(data).unwrap();
+
+    assert_eq!(&test.0.0, "http://thing");
+}

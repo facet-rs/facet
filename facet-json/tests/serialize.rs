@@ -99,3 +99,29 @@ fn test_custom_serialization_enum() {
     let ser = facet_json::to_string(&data);
     assert_eq!(ser, expected);
 }
+
+#[test]
+fn test_custom_serialize_transparent_struct() {
+    #[derive(Clone)]
+    struct MyUrl(String);
+
+    fn custom_serializer(u: &MyUrl) -> Result<String, &'static str> {
+        Ok(u.0.clone())
+    }
+
+    #[derive(Facet)]
+    #[facet(transparent)]
+    struct UrlWrapper(
+        #[facet(
+            opaque,
+            serialize_with = custom_serializer,
+        )]
+        MyUrl,
+    );
+
+    let data = r#""http://thing""#;
+
+    let test = facet_json::to_string(&UrlWrapper(MyUrl("http://thing".to_owned())));
+
+    assert_eq!(data, test);
+}

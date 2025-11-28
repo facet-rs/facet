@@ -399,66 +399,70 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     // Add try_from_inner implementation for transparent types
     let try_from_inner_code = if ps.container.attrs.is_transparent() {
         if let Some(inner_field) = &inner_field {
-            // Transparent struct with one field
-            let inner_field_type = &inner_field.ty;
-            let bgp_without_bounds = ps.container.bgp.display_without_bounds();
+            if !inner_field.attrs.is_opaque() {
+                // Transparent struct with one field
+                let inner_field_type = &inner_field.ty;
+                let bgp_without_bounds = ps.container.bgp.display_without_bounds();
 
-            quote! {
-                // Define the try_from function for the value vtable
-                unsafe fn try_from<'src, 'dst>(
-                    src_ptr: ::facet::PtrConst<'src>,
-                    src_shape: &'static ::facet::Shape,
-                    dst: ::facet::PtrUninit<'dst>
-                ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {
-                    // Try the inner type's try_from function if it exists
-                    let inner_result = match <#inner_field_type as ::facet::Facet>::SHAPE.vtable.try_from {
-                        Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
-                        None => Err(::facet::TryFromError::UnsupportedSourceShape {
-                            src_shape,
-                            expected: const { &[ &<#inner_field_type as ::facet::Facet>::SHAPE ] },
-                        })
-                    };
+                quote! {
+                    // Define the try_from function for the value vtable
+                    unsafe fn try_from<'src, 'dst>(
+                        src_ptr: ::facet::PtrConst<'src>,
+                        src_shape: &'static ::facet::Shape,
+                        dst: ::facet::PtrUninit<'dst>
+                    ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {
+                        // Try the inner type's try_from function if it exists
+                        let inner_result = match <#inner_field_type as ::facet::Facet>::SHAPE.vtable.try_from {
+                            Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
+                            None => Err(::facet::TryFromError::UnsupportedSourceShape {
+                                src_shape,
+                                expected: const { &[ &<#inner_field_type as ::facet::Facet>::SHAPE ] },
+                            })
+                        };
 
-                    match inner_result {
-                        Ok(result) => Ok(result),
-                        Err(_) => {
-                            // If inner_try failed, check if source shape is exactly the inner shape
-                            if src_shape != <#inner_field_type as ::facet::Facet>::SHAPE {
-                                return Err(::facet::TryFromError::UnsupportedSourceShape {
-                                    src_shape,
-                                    expected: const { &[ &<#inner_field_type as ::facet::Facet>::SHAPE ] },
-                                });
+                        match inner_result {
+                            Ok(result) => Ok(result),
+                            Err(_) => {
+                                // If inner_try failed, check if source shape is exactly the inner shape
+                                if src_shape != <#inner_field_type as ::facet::Facet>::SHAPE {
+                                    return Err(::facet::TryFromError::UnsupportedSourceShape {
+                                        src_shape,
+                                        expected: const { &[ &<#inner_field_type as ::facet::Facet>::SHAPE ] },
+                                    });
+                                }
+                                // Read the inner value and construct the wrapper.
+                                let inner: #inner_field_type = unsafe { src_ptr.read() };
+                                Ok(unsafe { dst.put(inner) }) // Construct wrapper
                             }
-                            // Read the inner value and construct the wrapper.
-                            let inner: #inner_field_type = unsafe { src_ptr.read() };
-                            Ok(unsafe { dst.put(inner) }) // Construct wrapper
                         }
                     }
-                }
 
-                // Define the try_into_inner function for the value vtable
-                unsafe fn try_into_inner<'src, 'dst>(
-                    src_ptr: ::facet::PtrMut<'src>,
-                    dst: ::facet::PtrUninit<'dst>
-                ) -> Result<::facet::PtrMut<'dst>, ::facet::TryIntoInnerError> {
-                    let wrapper = unsafe { src_ptr.get::<#struct_name_ident #bgp_without_bounds>() };
-                    Ok(unsafe { dst.put(wrapper.0.clone()) }) // Assume tuple struct field 0
-                }
+                    // Define the try_into_inner function for the value vtable
+                    unsafe fn try_into_inner<'src, 'dst>(
+                        src_ptr: ::facet::PtrMut<'src>,
+                        dst: ::facet::PtrUninit<'dst>
+                    ) -> Result<::facet::PtrMut<'dst>, ::facet::TryIntoInnerError> {
+                        let wrapper = unsafe { src_ptr.get::<#struct_name_ident #bgp_without_bounds>() };
+                        Ok(unsafe { dst.put(wrapper.0.clone()) }) // Assume tuple struct field 0
+                    }
 
-                // Define the try_borrow_inner function for the value vtable
-                unsafe fn try_borrow_inner<'src>(
-                    src_ptr: ::facet::PtrConst<'src>
-                ) -> Result<::facet::PtrConst<'src>, ::facet::TryBorrowInnerError> {
-                    let wrapper = unsafe { src_ptr.get::<#struct_name_ident #bgp_without_bounds>() };
-                    // Return a pointer to the inner field (field 0 for tuple struct)
-                    Ok(::facet::PtrConst::new(::core::ptr::NonNull::from(&wrapper.0)))
-                }
+                    // Define the try_borrow_inner function for the value vtable
+                    unsafe fn try_borrow_inner<'src>(
+                        src_ptr: ::facet::PtrConst<'src>
+                    ) -> Result<::facet::PtrConst<'src>, ::facet::TryBorrowInnerError> {
+                        let wrapper = unsafe { src_ptr.get::<#struct_name_ident #bgp_without_bounds>() };
+                        // Return a pointer to the inner field (field 0 for tuple struct)
+                        Ok(::facet::PtrConst::new(::core::ptr::NonNull::from(&wrapper.0)))
+                    }
 
-                {
-                    vtable.try_from = Some(try_from);
-                    vtable.try_into_inner = Some(try_into_inner);
-                    vtable.try_borrow_inner = Some(try_borrow_inner);
+                    {
+                        vtable.try_from = Some(try_from);
+                        vtable.try_into_inner = Some(try_into_inner);
+                        vtable.try_borrow_inner = Some(try_borrow_inner);
+                    }
                 }
+            } else {
+                quote! {} // No try_from can be done for opaque
             }
         } else {
             // Transparent ZST struct (like struct Unit;)
@@ -495,7 +499,11 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let inner_setter = if ps.container.attrs.is_transparent() {
         let inner_shape_val = if let Some(inner_field) = &inner_field {
             let ty = &inner_field.ty;
-            quote! { <#ty as ::facet::Facet>::SHAPE }
+            if inner_field.attrs.is_opaque() {
+                quote! { <::facet::Opaque<#ty> as ::facet::Facet>::SHAPE }
+            } else {
+                quote! { <#ty as ::facet::Facet>::SHAPE }
+            }
         } else {
             // Transparent ZST case
             quote! { <() as ::facet::Facet>::SHAPE }

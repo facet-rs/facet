@@ -592,7 +592,18 @@ impl<'input> JsonDeserializer<'input> {
         // These should deserialize as their inner type
         if shape.inner.is_some() {
             wip.begin_inner()?;
-            self.deserialize_into(wip)?;
+            // Check if field has custom deserialization
+            if wip
+                .parent_field()
+                .and_then(|field| field.vtable.deserialize_with)
+                .is_some()
+            {
+                wip.begin_custom_deserialization()?;
+                self.deserialize_into(wip)?;
+                wip.end()?;
+            } else {
+                self.deserialize_into(wip)?;
+            }
             wip.end()?;
             return Ok(());
         }
