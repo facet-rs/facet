@@ -3,9 +3,14 @@
 //! These types represent the raw tokens from `#[facet(ns::key(args))]` attributes
 //! in a `Sync + Send + 'static` form that can be stored in static data.
 
-/// Source location information for error reporting.
+/// Source location information for tokens (file:line:column).
+///
+/// This is used for extension attribute tokens and tracks the location
+/// from proc-macro `file!()`, `line!()`, `column!()` intrinsics.
+/// Not to be confused with `facet_reflect::Span` which tracks byte offset/len
+/// for deserialization error reporting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Span {
+pub struct TokenSpan {
     /// The source file path (from `file!()`)
     pub file: &'static str,
     /// Line number (1-indexed, from `line!()`)
@@ -14,21 +19,21 @@ pub struct Span {
     pub column: u32,
 }
 
-impl Span {
+impl TokenSpan {
     /// Create a new span with the given location.
     pub const fn new(file: &'static str, line: u32, column: u32) -> Self {
         Self { file, line, column }
     }
 
     /// A dummy span for when location information is not available.
-    pub const DUMMY: Span = Span {
+    pub const DUMMY: TokenSpan = TokenSpan {
         file: "<unknown>",
         line: 0,
         column: 0,
     };
 }
 
-impl core::fmt::Display for Span {
+impl core::fmt::Display for TokenSpan {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "{}:{}:{}", self.file, self.line, self.column)
     }
@@ -75,7 +80,7 @@ pub enum Token {
         /// The identifier text
         name: &'static str,
         /// Source location
-        span: Span,
+        span: TokenSpan,
     },
     /// A literal value: `"string"`, `42`, `3.14`, `'c'`
     Literal {
@@ -84,7 +89,7 @@ pub enum Token {
         /// The raw text of the literal (including quotes for strings)
         text: &'static str,
         /// Source location
-        span: Span,
+        span: TokenSpan,
     },
     /// A punctuation character: `=`, `,`, `:`, etc.
     Punct {
@@ -93,7 +98,7 @@ pub enum Token {
         /// Whether this is joined to the next punct (e.g., `::` or `->`)
         joint: bool,
         /// Source location
-        span: Span,
+        span: TokenSpan,
     },
     /// A group of tokens with delimiters: `(...)`, `{...}`, `[...]`
     Group {
@@ -102,13 +107,13 @@ pub enum Token {
         /// The tokens inside the group
         tokens: &'static [Token],
         /// Source location (of the opening delimiter)
-        span: Span,
+        span: TokenSpan,
     },
 }
 
 impl Token {
     /// Get the span of this token.
-    pub const fn span(&self) -> Span {
+    pub const fn span(&self) -> TokenSpan {
         match self {
             Token::Ident { span, .. } => *span,
             Token::Literal { span, .. } => *span,
@@ -151,7 +156,7 @@ mod parsed_args {
     use alloc::string::String;
     use alloc::vec::Vec;
 
-    use super::{LiteralKind, Span, Token};
+    use super::{LiteralKind, Token, TokenSpan};
 
     /// A parsed value from extension attribute arguments.
     ///
@@ -346,7 +351,7 @@ mod parsed_args {
                     named.insert(String::from(name), value);
                 } else {
                     if seen_named {
-                        let span = iter.peek().map(|t| t.span()).unwrap_or(Span::DUMMY);
+                        let span = iter.peek().map(|t| t.span()).unwrap_or(TokenSpan::DUMMY);
                         return Err(TokenParseError::PositionalAfterNamed { span });
                     }
                     // Parse positional argument
@@ -380,12 +385,12 @@ mod parsed_args {
         /// A positional argument appeared after a named argument
         PositionalAfterNamed {
             /// The span of the positional argument
-            span: Span,
+            span: TokenSpan,
         },
         /// Unexpected token
         UnexpectedToken {
             /// The span of the unexpected token
-            span: Span,
+            span: TokenSpan,
             /// A description of what was expected
             message: String,
         },
@@ -457,7 +462,7 @@ mod parsed_args {
     fn parse_literal(
         kind: LiteralKind,
         text: &str,
-        span: Span,
+        span: TokenSpan,
     ) -> Result<TokenValue, TokenParseError> {
         match kind {
             LiteralKind::String => {
