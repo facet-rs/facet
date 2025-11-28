@@ -92,9 +92,7 @@ dependencies = [
 name = "facet-reflect"
 version = "0.31.8"
 dependencies = [
- "bitflags",
  "facet-core",
- "indexset",
 ]
 
 [[package]]
@@ -104,7 +102,15 @@ dependencies = [
  "arbitrary",
  "facet",
  "facet-reflect",
+ "facet-value",
  "libfuzzer-sys",
+]
+
+[[package]]
+name = "facet-value"
+version = "0.1.0"
+dependencies = [
+ "facet-core",
 ]
 
 [[package]]
@@ -112,15 +118,6 @@ name = "find-msvc-tools"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a3076410a55c90011c298b04d0cfa770b00fa04e1e3c97d3f6c9de105a03844"
-
-[[package]]
-name = "ftree"
-version = "1.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ae0379499242d3b9355c5069b43b9417def8c9b09903b930db1fe49318dc9e9"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "getrandom"
@@ -139,15 +136,6 @@ name = "impls"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a46645bbd70538861a90d0f26c31537cdf1e44aae99a794fb75a664b70951bc"
-
-[[package]]
-name = "indexset"
-version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ff794cab64c942437d60272e215f923d466b23dfa6c999cdd0cafe5b6d170805"
-dependencies = [
- "ftree",
-]
 
 [[package]]
 name = "jobserver"
@@ -210,36 +198,6 @@ name = "rustc-hash"
 version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "357703d41365b4b27c590e3ed91eabb1b663f07c4c084095e60cbed4362dff0d"
-
-[[package]]
-name = "serde"
-version = "1.0.228"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
-dependencies = [
- "serde_core",
- "serde_derive",
-]
-
-[[package]]
-name = "serde_core"
-version = "1.0.228"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41d385c7d4ca58e59fc732af25c3983b67ac852c1a25000afe1175de458b67ad"
-dependencies = [
- "serde_derive",
-]
-
-[[package]]
-name = "serde_derive"
-version = "1.0.228"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d540f220d3187173da220f885ab66608367b6574e925011a9353e4badda91d79"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
 
 [[package]]
 name = "shlex"

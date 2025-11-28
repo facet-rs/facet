@@ -12,8 +12,9 @@ categories = ["encoding", "data-structures"]
 [features]
 default = ["std"]
 std = ["alloc"]
-alloc = []
+alloc = ["facet-core/alloc"]
 
 [dependencies]
+facet-core = { path = "../facet-core", version = "0.31.8", default-features = false }
 
 [dev-dependencies]

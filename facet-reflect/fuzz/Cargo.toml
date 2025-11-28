@@ -17,6 +17,9 @@ path = "../../facet"
 [dependencies.facet-reflect]
 path = ".."
 
+[dependencies.facet-value]
+path = "../../facet-value"
+
 # Prevent this from interfering with workspaces
 [workspace]
 members = ["."]

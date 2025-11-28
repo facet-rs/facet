@@ -5,8 +5,7 @@ use facet_core::{Characteristic, EnumType, FieldError, Shape, TryFromError};
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 #[non_exhaustive]
 pub enum TrackerKind {
-    Uninit,
-    Init,
+    Scalar,
     Array,
     Struct,
     SmartPointer,
@@ -16,6 +15,7 @@ pub enum TrackerKind {
     Map,
     Set,
     Option,
+    DynamicValue,
 }
 
 /// Errors that can occur when reflecting on types.

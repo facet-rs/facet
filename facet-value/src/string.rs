@@ -289,6 +289,14 @@ impl From<VString> for Value {
     }
 }
 
+impl VString {
+    /// Converts this VString into a Value, consuming self.
+    #[inline]
+    pub fn into_value(self) -> Value {
+        self.0
+    }
+}
+
 #[cfg(feature = "alloc")]
 impl From<&str> for Value {
     fn from(s: &str) -> Self {

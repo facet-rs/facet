@@ -80,7 +80,7 @@ impl VArray {
     }
 
     fn header_mut(&mut self) -> &mut ArrayHeader {
-        unsafe { &mut *(self.0.heap_ptr() as *mut ArrayHeader) }
+        unsafe { &mut *(self.0.heap_ptr_mut() as *mut ArrayHeader) }
     }
 
     fn items_ptr(&self) -> *const Value {
@@ -88,7 +88,8 @@ impl VArray {
     }
 
     fn items_ptr_mut(&mut self) -> *mut Value {
-        unsafe { (self.header_mut() as *mut ArrayHeader).add(1).cast() }
+        // Use heap_ptr_mut directly to preserve mutable provenance
+        unsafe { (self.0.heap_ptr_mut() as *mut ArrayHeader).add(1).cast() }
     }
 
     /// Creates a new empty array.
@@ -496,6 +497,14 @@ impl AsMut<Value> for VArray {
 impl From<VArray> for Value {
     fn from(arr: VArray) -> Self {
         arr.0
+    }
+}
+
+impl VArray {
+    /// Converts this VArray into a Value, consuming self.
+    #[inline]
+    pub fn into_value(self) -> Value {
+        self.0
     }
 }
 

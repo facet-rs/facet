@@ -14,11 +14,11 @@ impl Partial<'_> {
 
         // Check tracker state before initializing
         match &frame.tracker {
-            Tracker::Uninit => {
+            Tracker::Scalar if !frame.is_init => {
                 // Good, will initialize below
             }
-            Tracker::Init => {
-                // Already initialized (from a previous round), just update tracker
+            Tracker::Scalar => {
+                // is_init is true - already initialized (from a previous round), just update tracker
                 if !matches!(frame.shape.def, Def::Map(_)) {
                     return Err(ReflectError::OperationFailed {
                         shape: frame.shape,
@@ -26,20 +26,19 @@ impl Partial<'_> {
                     });
                 }
                 frame.tracker = Tracker::Map {
-                    is_initialized: true,
                     insert_state: MapInsertState::Idle,
                 };
                 return Ok(self);
             }
-            Tracker::Map { is_initialized, .. } => {
-                if *is_initialized {
+            Tracker::Map { .. } => {
+                if frame.is_init {
                     // Already initialized, nothing to do
                     return Ok(self);
                 }
             }
             _ => {
                 return Err(ReflectError::UnexpectedTracker {
-                    message: "begin_map called but tracker isn't Uninit, Init, or Map",
+                    message: "begin_map called but tracker isn't Scalar or Map",
                     current_tracker: frame.tracker.kind(),
                 });
             }
@@ -63,11 +62,11 @@ impl Partial<'_> {
             init_fn(frame.data, 0);
         }
 
-        // Update tracker to Map state
+        // Update tracker to Map state and mark as initialized
         frame.tracker = Tracker::Map {
-            is_initialized: true,
             insert_state: MapInsertState::Idle,
         };
+        frame.is_init = true;
 
         Ok(self)
     }
@@ -84,15 +83,13 @@ impl Partial<'_> {
             (
                 Def::Map(map_def),
                 Tracker::Map {
-                    is_initialized: true,
                     insert_state: MapInsertState::Idle,
                 },
-            ) => map_def,
+            ) if frame.is_init => map_def,
             (
                 Def::Map(_),
                 Tracker::Map {
                     insert_state: MapInsertState::PushingKey { .. },
-                    ..
                 },
             ) => {
                 return Err(ReflectError::OperationFailed {
@@ -104,7 +101,6 @@ impl Partial<'_> {
                 Def::Map(_),
                 Tracker::Map {
                     insert_state: MapInsertState::PushingValue { .. },
-                    ..
                 },
             ) => {
                 return Err(ReflectError::OperationFailed {

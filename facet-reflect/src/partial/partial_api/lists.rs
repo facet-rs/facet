@@ -17,11 +17,11 @@ impl Partial<'_> {
         let frame = self.frames_mut().last_mut().unwrap();
 
         match &frame.tracker {
-            Tracker::Uninit => {
+            Tracker::Scalar if !frame.is_init => {
                 // that's good, let's initialize it
             }
-            Tracker::Init => {
-                // initialized (perhaps from a previous round?) but should be a list tracker
+            Tracker::Scalar => {
+                // is_init is true - initialized (perhaps from a previous round?) but should be a list tracker
                 // First verify this is actually a list type before changing tracker
                 if !matches!(frame.shape.def, Def::List(_)) {
                     return Err(ReflectError::OperationFailed {
@@ -30,16 +30,23 @@ impl Partial<'_> {
                     });
                 }
                 frame.tracker = Tracker::List {
-                    is_initialized: true,
                     current_child: false,
                 };
                 return Ok(self);
             }
-            Tracker::List { is_initialized, .. } => {
-                if *is_initialized {
+            Tracker::List { .. } => {
+                if frame.is_init {
                     // already initialized, nothing to do
                     return Ok(self);
                 }
+            }
+            Tracker::DynamicValue { state } => {
+                // Already initialized as a dynamic array
+                if matches!(state, DynamicValueState::Array { .. }) {
+                    return Ok(self);
+                }
+                // Otherwise (Scalar or other state), we need to deinit before reinitializing
+                frame.deinit();
             }
             Tracker::SmartPointerSlice { .. } => {
                 // begin_list is kinda superfluous when we're in a SmartPointerSlice state
@@ -53,38 +60,52 @@ impl Partial<'_> {
             }
         };
 
-        // Check that we have a List
-        let list_def = match &frame.shape.def {
-            Def::List(list_def) => list_def,
+        // Check that we have a List or DynamicValue
+        match &frame.shape.def {
+            Def::List(list_def) => {
+                // Check that we have init_in_place_with_capacity function
+                let init_fn = match list_def.vtable.init_in_place_with_capacity {
+                    Some(f) => f,
+                    None => {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "list type does not support initialization with capacity",
+                        });
+                    }
+                };
+
+                // Initialize the list with default capacity (0)
+                unsafe {
+                    init_fn(frame.data, 0);
+                }
+
+                // Update tracker to List state and mark as initialized
+                frame.tracker = Tracker::List {
+                    current_child: false,
+                };
+                frame.is_init = true;
+            }
+            Def::DynamicValue(dyn_def) => {
+                // Initialize as a dynamic array
+                unsafe {
+                    (dyn_def.vtable.begin_array)(frame.data);
+                }
+
+                // Update tracker to DynamicValue array state and mark as initialized
+                frame.tracker = Tracker::DynamicValue {
+                    state: DynamicValueState::Array {
+                        building_element: false,
+                    },
+                };
+                frame.is_init = true;
+            }
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,
-                    operation: "begin_list can only be called on List types",
+                    operation: "begin_list can only be called on List or DynamicValue types",
                 });
             }
-        };
-
-        // Check that we have init_in_place_with_capacity function
-        let init_fn = match list_def.vtable.init_in_place_with_capacity {
-            Some(f) => f,
-            None => {
-                return Err(ReflectError::OperationFailed {
-                    shape: frame.shape,
-                    operation: "list type does not support initialization with capacity",
-                });
-            }
-        };
-
-        // Initialize the list with default capacity (0)
-        unsafe {
-            init_fn(frame.data, 0);
         }
-
-        // Update tracker to List state
-        frame.tracker = Tracker::List {
-            is_initialized: true,
-            current_child: false,
-        };
 
         Ok(self)
     }
@@ -178,23 +199,72 @@ impl Partial<'_> {
             return Ok(self);
         }
 
+        // Check if we're building a DynamicValue array
+        if let Tracker::DynamicValue {
+            state: DynamicValueState::Array { building_element },
+        } = &frame.tracker
+        {
+            if *building_element {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "already building an element, call end() first",
+                });
+            }
+
+            // For DynamicValue arrays, the element shape is the same DynamicValue shape
+            // (Value arrays contain Value elements)
+            let element_shape = frame.shape;
+            let element_layout = match element_shape.layout.sized_layout() {
+                Ok(layout) => layout,
+                Err(_) => {
+                    return Err(ReflectError::Unsized {
+                        shape: element_shape,
+                        operation: "begin_list_item: calculating element layout",
+                    });
+                }
+            };
+
+            let element_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(element_layout) };
+            let Some(element_ptr) = NonNull::new(element_ptr) else {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "failed to allocate memory for list element",
+                });
+            };
+
+            // Push a new frame for the element
+            self.frames_mut().push(Frame::new(
+                PtrUninit::new(element_ptr),
+                element_shape,
+                FrameOwnership::Owned,
+            ));
+
+            // Mark that we're building an element
+            let parent_idx = self.frames().len() - 2;
+            if let Tracker::DynamicValue {
+                state: DynamicValueState::Array { building_element },
+            } = &mut self.frames_mut()[parent_idx].tracker
+            {
+                *building_element = true;
+            }
+
+            return Ok(self);
+        }
+
         // Check that we have a List that's been initialized
         let list_def = match &frame.shape.def {
             Def::List(list_def) => list_def,
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,
-                    operation: "push can only be called on List types",
+                    operation: "push can only be called on List or DynamicValue types",
                 });
             }
         };
 
         // Verify the tracker is in List state and initialized
         match &mut frame.tracker {
-            Tracker::List {
-                is_initialized: true,
-                current_child,
-            } => {
+            Tracker::List { current_child } if frame.is_init => {
                 if *current_child {
                     return Err(ReflectError::OperationFailed {
                         shape: frame.shape,

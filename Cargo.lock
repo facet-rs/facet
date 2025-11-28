@@ -514,6 +514,7 @@ dependencies = [
  "facet-showcase",
  "facet-solver",
  "facet-testhelpers",
+ "facet-value",
  "flate2",
  "insta",
  "itoa",
@@ -615,6 +616,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-testhelpers",
+ "facet-value",
  "insta",
  "log",
  "miette",
@@ -705,6 +707,9 @@ dependencies = [
 [[package]]
 name = "facet-value"
 version = "0.1.0"
+dependencies = [
+ "facet-core",
+]
 
 [[package]]
 name = "facet-xdr"

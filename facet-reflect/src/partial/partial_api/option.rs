@@ -8,12 +8,10 @@ impl Partial<'_> {
     pub fn begin_some(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
-        // First, gather information and perform drops with proper borrow management
-        let (option_def, was_initialized) = {
+        // Verify we're working with an Option and get the def
+        let option_def = {
             let frame = self.frames().last().unwrap();
-
-            // Verify we're working with an Option
-            let option_def = match frame.shape.def {
+            match frame.shape.def {
                 Def::Option(def) => def,
                 _ => {
                     return Err(ReflectError::WasNotA {
@@ -21,55 +19,25 @@ impl Partial<'_> {
                         actual: frame.shape,
                     });
                 }
-            };
-
-            // If the Option was already initialized, we need to drop the old value first.
-            // This handles cases where:
-            // - Tracker is Init (re-entering an already initialized Option field)
-            // - Tracker is Option{building_inner:false} (second call to begin_some after first completed)
-            let was_initialized = matches!(
-                frame.tracker,
-                Tracker::Init
-                    | Tracker::Option {
-                        building_inner: false
-                    }
-            );
-
-            (option_def, was_initialized)
+            }
         };
 
-        if was_initialized {
-            // Drop the existing Option value before starting a new building cycle
+        // Check if we need to handle re-initialization.
+        // For Options, also check if tracker is Option{building_inner:false} which means
+        // a previous begin_some/end cycle completed.
+        let needs_reinit = {
             let frame = self.frames().last().unwrap();
-            if let Some(drop_fn) = frame.shape.vtable.drop_in_place {
-                unsafe { drop_fn(frame.data.assume_init()) };
-            }
-
-            // IMPORTANT: After dropping, we need to unmark this field in the parent's iset.
-            // Otherwise, if the Partial is dropped before end() completes the new Option,
-            // the parent struct's deinit will try to drop this field again (double-free).
-            // When end() successfully completes, it will re-mark the field in the parent's iset.
-            if self.frames().len() >= 2 {
-                let parent_idx = self.frames().len() - 2;
-                if let Some(parent_frame) = self.frames_mut().get_mut(parent_idx) {
-                    match &mut parent_frame.tracker {
-                        Tracker::Struct {
-                            iset,
-                            current_child: Some(idx),
-                        } => {
-                            iset.unset(*idx);
-                        }
-                        Tracker::Enum {
-                            data,
-                            current_child: Some(idx),
-                            ..
-                        } => {
-                            data.unset(*idx);
-                        }
-                        _ => {}
+            frame.is_init
+                || matches!(
+                    frame.tracker,
+                    Tracker::Option {
+                        building_inner: false
                     }
-                }
-            }
+                )
+        };
+
+        if needs_reinit {
+            self.prepare_for_reinitialization();
         }
 
         // Set tracker to indicate we're building the inner value
@@ -125,6 +93,9 @@ impl Partial<'_> {
                 (None, false, frame.shape, false)
             }
         };
+
+        // Handle re-initialization if needed
+        self.prepare_for_reinitialization();
 
         if let Some(inner_shape) = inner_shape {
             if has_try_from {

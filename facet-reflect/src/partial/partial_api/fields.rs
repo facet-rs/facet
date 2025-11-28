@@ -36,8 +36,7 @@ impl Partial<'_> {
         let frame = self.frames().last().ok_or(ReflectError::NoActiveFrame)?;
 
         match &frame.tracker {
-            Tracker::Uninit => Ok(false),
-            Tracker::Init => Ok(true),
+            Tracker::Scalar => Ok(frame.is_init),
             Tracker::Struct { iset, .. } => Ok(iset.get(index)),
             Tracker::Enum { data, variant, .. } => {
                 // Check if the field is already marked as set
@@ -333,10 +332,12 @@ impl Partial<'_> {
 
         // now mark field as uninitialized in `src`
         match &mut src_frame.tracker {
-            Tracker::Uninit => {
-                unreachable!("we just stole a field from src, it couldn't have been fully uninit")
-            }
-            Tracker::Init => {
+            Tracker::Scalar => {
+                if !src_frame.is_init {
+                    unreachable!(
+                        "we just stole a field from src, it couldn't have been fully uninit"
+                    )
+                }
                 // all struct fields were init so we don't even have a struct tracker,
                 // let's make one!
                 let mut iset = ISet::new(fields.len());
@@ -345,13 +346,14 @@ impl Partial<'_> {
                 src_frame.tracker = Tracker::Struct {
                     iset,
                     current_child: None,
-                }
+                };
+                src_frame.is_init = false; // no longer fully initialized
             }
             Tracker::Array { .. } => unreachable!("can't steal fields from arrays"),
             Tracker::Struct { iset, .. } => {
                 iset.unset(field_index);
             }
-            Tracker::SmartPointer { .. } => {
+            Tracker::SmartPointer => {
                 unreachable!("can't steal fields from smart pointers")
             }
             Tracker::SmartPointerSlice { .. } => {
@@ -371,6 +373,9 @@ impl Partial<'_> {
             }
             Tracker::Option { .. } => {
                 unreachable!("can't steal fields from options")
+            }
+            Tracker::DynamicValue { .. } => {
+                unreachable!("can't steal fields from dynamic values")
             }
         }
 

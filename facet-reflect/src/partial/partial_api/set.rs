@@ -1,4 +1,5 @@
 use super::*;
+use facet_core::{Def, NumericType, PrimitiveType, Type};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // `Set` and set helpers
@@ -63,6 +64,11 @@ impl<'facet> Partial<'facet> {
         let fr = self.frames_mut().last_mut().unwrap();
         crate::trace!("set_shape({src_shape:?})");
 
+        // Check if target is a DynamicValue - if so, convert the source value
+        if let Def::DynamicValue(dyn_def) = &fr.shape.def {
+            return unsafe { self.set_into_dynamic_value(src_value, src_shape, dyn_def) };
+        }
+
         if !fr.shape.is_shape(src_shape) {
             return Err(ReflectError::WrongShape {
                 expected: fr.shape,
@@ -85,6 +91,143 @@ impl<'facet> Partial<'facet> {
             fr.mark_as_init();
         }
 
+        Ok(self)
+    }
+
+    /// Sets a value into a DynamicValue target by converting the source value.
+    ///
+    /// # Safety
+    ///
+    /// Same safety requirements as `set_shape`.
+    unsafe fn set_into_dynamic_value(
+        &mut self,
+        src_value: PtrConst<'_>,
+        src_shape: &'static Shape,
+        dyn_def: &facet_core::DynamicValueDef,
+    ) -> Result<&mut Self, ReflectError> {
+        let fr = self.frames_mut().last_mut().unwrap();
+        let vtable = dyn_def.vtable;
+
+        fr.deinit();
+
+        // If source shape is also the same DynamicValue shape, just copy it
+        if fr.shape.is_shape(src_shape) {
+            unsafe {
+                fr.data.copy_from(src_value, fr.shape).unwrap();
+                fr.mark_as_init();
+            }
+            return Ok(self);
+        }
+
+        // Get the size in bits for numeric conversions
+        let size_bits = src_shape
+            .layout
+            .sized_layout()
+            .map(|l| l.size() * 8)
+            .unwrap_or(0);
+
+        // Convert based on source shape's type
+        match &src_shape.ty {
+            Type::Primitive(PrimitiveType::Boolean) => {
+                let val = unsafe { *(src_value.as_byte_ptr() as *const bool) };
+                unsafe { (vtable.set_bool)(fr.data, val) };
+            }
+            Type::Primitive(PrimitiveType::Numeric(NumericType::Float)) => {
+                if size_bits == 64 {
+                    let val = unsafe { *(src_value.as_byte_ptr() as *const f64) };
+                    let success = unsafe { (vtable.set_f64)(fr.data, val) };
+                    if !success {
+                        return Err(ReflectError::OperationFailed {
+                            shape: src_shape,
+                            operation: "f64 value (NaN/Infinity) not representable in dynamic value",
+                        });
+                    }
+                } else if size_bits == 32 {
+                    let val = unsafe { *(src_value.as_byte_ptr() as *const f32) } as f64;
+                    let success = unsafe { (vtable.set_f64)(fr.data, val) };
+                    if !success {
+                        return Err(ReflectError::OperationFailed {
+                            shape: src_shape,
+                            operation: "f32 value (NaN/Infinity) not representable in dynamic value",
+                        });
+                    }
+                } else {
+                    return Err(ReflectError::OperationFailed {
+                        shape: src_shape,
+                        operation: "unsupported float size for dynamic value",
+                    });
+                }
+            }
+            Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: true })) => {
+                let val: i64 = match size_bits {
+                    8 => (unsafe { *(src_value.as_byte_ptr() as *const i8) }) as i64,
+                    16 => (unsafe { *(src_value.as_byte_ptr() as *const i16) }) as i64,
+                    32 => (unsafe { *(src_value.as_byte_ptr() as *const i32) }) as i64,
+                    64 => unsafe { *(src_value.as_byte_ptr() as *const i64) },
+                    _ => {
+                        return Err(ReflectError::OperationFailed {
+                            shape: src_shape,
+                            operation: "unsupported signed integer size for dynamic value",
+                        });
+                    }
+                };
+                unsafe { (vtable.set_i64)(fr.data, val) };
+            }
+            Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: false })) => {
+                let val: u64 = match size_bits {
+                    8 => (unsafe { *src_value.as_byte_ptr() }) as u64,
+                    16 => (unsafe { *(src_value.as_byte_ptr() as *const u16) }) as u64,
+                    32 => (unsafe { *(src_value.as_byte_ptr() as *const u32) }) as u64,
+                    64 => unsafe { *(src_value.as_byte_ptr() as *const u64) },
+                    _ => {
+                        return Err(ReflectError::OperationFailed {
+                            shape: src_shape,
+                            operation: "unsupported unsigned integer size for dynamic value",
+                        });
+                    }
+                };
+                unsafe { (vtable.set_u64)(fr.data, val) };
+            }
+            Type::Primitive(PrimitiveType::Textual(_)) => {
+                // char or str - for char, convert to string
+                if src_shape.type_identifier == "char" {
+                    let c = unsafe { *(src_value.as_byte_ptr() as *const char) };
+                    let mut buf = [0u8; 4];
+                    let s = c.encode_utf8(&mut buf);
+                    unsafe { (vtable.set_str)(fr.data, s) };
+                } else {
+                    // &str
+                    let s: &str = unsafe { *(src_value.as_byte_ptr() as *const &str) };
+                    unsafe { (vtable.set_str)(fr.data, s) };
+                }
+            }
+            _ => {
+                // Handle String type (not a primitive but common)
+                if src_shape.type_identifier == "String" {
+                    let s: &::alloc::string::String =
+                        unsafe { &*(src_value.as_byte_ptr() as *const ::alloc::string::String) };
+                    unsafe { (vtable.set_str)(fr.data, s.as_str()) };
+                    // Drop the source String since we cloned its content
+                    if let Some(drop_fn) = src_shape.vtable.drop_in_place {
+                        unsafe {
+                            drop_fn(PtrMut::new(NonNull::new_unchecked(
+                                src_value.as_byte_ptr() as *mut u8
+                            )));
+                        }
+                    }
+                } else {
+                    return Err(ReflectError::OperationFailed {
+                        shape: src_shape,
+                        operation: "cannot convert this type to dynamic value",
+                    });
+                }
+            }
+        }
+
+        fr.tracker = Tracker::DynamicValue {
+            state: DynamicValueState::Scalar,
+        };
+        unsafe { fr.mark_as_init() };
         Ok(self)
     }
 
@@ -125,6 +268,7 @@ impl<'facet> Partial<'facet> {
     /// If the current frame's shape does not implement `Default`, then this returns an error.
     #[inline]
     pub fn set_default(&mut self) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
         let frame = self.frames().last().unwrap();
 
         let Some(default_fn) = frame.shape.vtable.default_in_place else {
