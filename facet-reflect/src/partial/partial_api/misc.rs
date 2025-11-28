@@ -130,7 +130,7 @@ impl<'facet> Partial<'facet> {
 
         // Process each stored frame from deepest to shallowest
         for path in paths {
-            let frame = stored_frames.remove(&path).unwrap();
+            let mut frame = stored_frames.remove(&path).unwrap();
 
             trace!(
                 "finish_deferred: Processing frame at {:?}, shape {}, tracker {:?}",
@@ -138,6 +138,9 @@ impl<'facet> Partial<'facet> {
                 frame.shape,
                 frame.tracker.kind()
             );
+
+            // Fill in defaults for unset fields that have defaults
+            frame.fill_defaults();
 
             // Validate the frame is fully initialized
             if let Err(e) = frame.require_full_initialization() {
@@ -230,8 +233,9 @@ impl<'facet> Partial<'facet> {
             drop(frame);
         }
 
-        // Validate the root frame is fully initialized
-        if let Some(frame) = self.frames().last() {
+        // Fill defaults and validate the root frame is fully initialized
+        if let Some(frame) = self.frames_mut().last_mut() {
+            frame.fill_defaults();
             frame.require_full_initialization()?;
         }
 

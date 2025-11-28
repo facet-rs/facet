@@ -616,11 +616,13 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-reflect",
+ "facet-solver",
  "facet-testhelpers",
  "log",
  "num-traits",
  "owo-colors",
  "toml_edit",
+ "toml_parser",
 ]
 
 [[package]]
@@ -1851,6 +1853,14 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_write",
+]
+
+[[package]]
+name = "toml_parser"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0cbe268d35bdb4bb5a56a2de88d0ad0eb70af5384a99d648cd4b3d04039800e"
+dependencies = [
  "winnow 0.7.14",
 ]
 
@@ -2326,9 +2336,6 @@ name = "winnow"
 version = "0.7.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a5364e9d77fcdeeaa6062ced926ee3381faa2ee02d3eb83a5c27a8825540829"
-dependencies = [
- "memchr",
-]
 
 [[package]]
 name = "wit-bindgen"

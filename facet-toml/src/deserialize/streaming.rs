@@ -1,0 +1,2729 @@
+//! Streaming TOML deserializer using toml_parser's push-based events.
+//!
+//! This module implements the architecture described in [`crate::design`]:
+//! - Always uses deferred materialization (TOML keys can come in any order)
+//! - Buffers events during flatten disambiguation
+//! - Uses facet-solver for variant resolution
+
+use alloc::{
+    borrow::Cow,
+    boxed::Box,
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
+use core::ops::Range;
+use facet_core::{
+    Def, Facet, FieldError, FieldFlags, Shape, StructKind, StructType, Type, UserType,
+};
+use facet_reflect::{Partial, ReflectError, Resolution, ScalarType, VariantSelection};
+use facet_solver::{KeyResult, Schema, Solver};
+use log::trace;
+use toml_parser::{
+    ErrorSink, Raw, Source, Span as TomlSpan,
+    decoder::{Encoding, ScalarKind},
+    parser::{EventKind, EventReceiver, parse_document},
+};
+
+use super::TomlDeError;
+use super::TomlDeErrorKind;
+
+// ============================================================================
+// Error collection for parsing
+// ============================================================================
+
+/// Collects parse errors from the TOML parser
+struct ParseErrorCollector {
+    error: Option<String>,
+}
+
+impl ParseErrorCollector {
+    fn new() -> Self {
+        Self { error: None }
+    }
+
+    fn take_error(&mut self) -> Option<String> {
+        self.error.take()
+    }
+}
+
+impl ErrorSink for ParseErrorCollector {
+    fn report_error(&mut self, error: toml_parser::ParseError) {
+        if self.error.is_none() {
+            self.error = Some(error.description().to_string());
+        }
+    }
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Check if a shape represents `Spanned<T>`.
+///
+/// Returns `true` if the shape is a struct with exactly two fields:
+/// - `value` (the inner value)
+/// - `span` (for storing source location)
+fn is_spanned_shape(shape: &Shape) -> bool {
+    if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
+        if struct_def.fields.len() == 2 {
+            let has_value = struct_def.fields.iter().any(|f| f.name == "value");
+            let has_span = struct_def.fields.iter().any(|f| f.name == "span");
+            return has_value && has_span;
+        }
+    }
+    false
+}
+
+// ============================================================================
+// Field lookup for flattened structs/enums
+// ============================================================================
+
+/// Result of finding where a field belongs
+#[derive(Debug)]
+enum FieldLocation<'a> {
+    /// Field is directly on the current struct
+    Direct { field_name: &'static str },
+    /// Field is inside a flattened struct
+    FlattenedStruct {
+        /// The flattened field name on the parent struct
+        flatten_field_name: &'static str,
+        /// The property field name inside the flattened struct
+        inner_field_name: &'static str,
+    },
+    /// Field is inside a flattened enum variant
+    FlattenedEnum {
+        /// The flattened field name on the parent struct
+        flatten_field_name: &'static str,
+        /// The variant to select
+        variant: &'a VariantSelection,
+        /// The property field name inside the variant
+        inner_field_name: &'static str,
+    },
+}
+
+/// Find where a field with the given name belongs.
+///
+/// This searches:
+/// 1. Direct fields on the struct
+/// 2. Fields inside flattened structs
+/// 3. Fields inside flattened enum variants (using resolution to know which variant)
+fn find_field_location<'a>(
+    shape: &'static Shape,
+    field_name: &str,
+    resolution: &'a Resolution,
+) -> Option<FieldLocation<'a>> {
+    let fields = match shape.ty {
+        Type::User(UserType::Struct(StructType { fields, .. })) => fields,
+        _ => return None,
+    };
+
+    // First check direct fields
+    for field in fields {
+        if field.name == field_name {
+            return Some(FieldLocation::Direct {
+                field_name: field.name,
+            });
+        }
+    }
+
+    // Then check flattened fields
+    for field in fields {
+        if !field.flags.contains(FieldFlags::FLATTEN) {
+            continue;
+        }
+
+        let field_shape = field.shape();
+
+        match field_shape.ty {
+            // Flattened struct - search inside it
+            Type::User(UserType::Struct(StructType {
+                fields: inner_fields,
+                ..
+            })) => {
+                for inner_field in inner_fields {
+                    if inner_field.name == field_name {
+                        return Some(FieldLocation::FlattenedStruct {
+                            flatten_field_name: field.name,
+                            inner_field_name: inner_field.name,
+                        });
+                    }
+                }
+            }
+            // Flattened enum - need to find which variant contains this field
+            Type::User(UserType::Enum(enum_type)) => {
+                // Find the variant selection for this flattened field
+                let variant_selection = resolution.variant_selections().iter().find(|vs| {
+                    // Match based on the field name in the path
+                    vs.path
+                        .segments()
+                        .first()
+                        .is_some_and(|seg| matches!(seg, facet_reflect::PathSegment::Field(name) if *name == field.name))
+                });
+
+                if let Some(vs) = variant_selection {
+                    // Find the variant by name
+                    if let Some(variant) = enum_type
+                        .variants
+                        .iter()
+                        .find(|v| v.name == vs.variant_name)
+                    {
+                        // Check if the variant has this field
+                        // Handle both named fields and newtype variants
+                        if variant.data.fields.len() == 1 && variant.data.fields[0].name == "0" {
+                            // Newtype variant - look inside the inner type
+                            let inner_shape = variant.data.fields[0].shape();
+                            if let Type::User(UserType::Struct(StructType {
+                                fields: inner_fields,
+                                ..
+                            })) = inner_shape.ty
+                            {
+                                for inner_field in inner_fields {
+                                    if inner_field.name == field_name {
+                                        return Some(FieldLocation::FlattenedEnum {
+                                            flatten_field_name: field.name,
+                                            variant: vs,
+                                            inner_field_name: inner_field.name,
+                                        });
+                                    }
+                                }
+                            }
+                        } else {
+                            // Named fields on the variant
+                            for variant_field in variant.data.fields {
+                                if variant_field.name == field_name {
+                                    return Some(FieldLocation::FlattenedEnum {
+                                        flatten_field_name: field.name,
+                                        variant: vs,
+                                        inner_field_name: variant_field.name,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+/// A TOML event with its span, suitable for buffering and replay.
+#[derive(Debug, Clone)]
+pub struct SpannedEvent {
+    /// The event kind
+    pub kind: EventKind,
+    /// The span in the source (byte range)
+    pub span: Range<usize>,
+    /// For keys and scalars: optional encoding info
+    pub encoding: Option<Encoding>,
+}
+
+impl SpannedEvent {
+    /// Get the raw content of this event from the source
+    pub fn content<'a>(&self, source: &'a str) -> &'a str {
+        &source[self.span.clone()]
+    }
+}
+
+/// Collector that gathers events into a Vec for later processing.
+///
+/// This implements `EventReceiver` and stores all events for replay.
+/// Used during flatten disambiguation when we need to buffer events
+/// before knowing which variant to deserialize into.
+pub struct EventCollector {
+    events: Vec<SpannedEvent>,
+}
+
+impl EventCollector {
+    /// Create a new event collector
+    pub fn new() -> Self {
+        Self { events: Vec::new() }
+    }
+
+    /// Take the collected events
+    pub fn into_events(self) -> Vec<SpannedEvent> {
+        self.events
+    }
+
+    fn push(&mut self, kind: EventKind, span: TomlSpan, encoding: Option<Encoding>) {
+        self.events.push(SpannedEvent {
+            kind,
+            span: span.start()..span.end(),
+            encoding,
+        });
+    }
+}
+
+impl Default for EventCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl EventReceiver for EventCollector {
+    fn std_table_open(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
+        self.push(EventKind::StdTableOpen, span, None);
+    }
+
+    fn std_table_close(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
+        self.push(EventKind::StdTableClose, span, None);
+    }
+
+    fn array_table_open(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
+        self.push(EventKind::ArrayTableOpen, span, None);
+    }
+
+    fn array_table_close(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
+        self.push(EventKind::ArrayTableClose, span, None);
+    }
+
+    fn inline_table_open(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) -> bool {
+        self.push(EventKind::InlineTableOpen, span, None);
+        true // Allow entries
+    }
+
+    fn inline_table_close(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
+        self.push(EventKind::InlineTableClose, span, None);
+    }
+
+    fn array_open(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) -> bool {
+        self.push(EventKind::ArrayOpen, span, None);
+        true // Allow entries
+    }
+
+    fn array_close(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
+        self.push(EventKind::ArrayClose, span, None);
+    }
+
+    fn simple_key(
+        &mut self,
+        span: TomlSpan,
+        encoding: Option<Encoding>,
+        _sink: &mut dyn ErrorSink,
+    ) {
+        self.push(EventKind::SimpleKey, span, encoding);
+    }
+
+    fn key_sep(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
+        self.push(EventKind::KeySep, span, None);
+    }
+
+    fn key_val_sep(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
+        self.push(EventKind::KeyValSep, span, None);
+    }
+
+    fn scalar(&mut self, span: TomlSpan, encoding: Option<Encoding>, _sink: &mut dyn ErrorSink) {
+        self.push(EventKind::Scalar, span, encoding);
+    }
+
+    fn value_sep(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
+        self.push(EventKind::ValueSep, span, None);
+    }
+
+    fn whitespace(&mut self, _span: TomlSpan, _sink: &mut dyn ErrorSink) {
+        // Skip whitespace events - we don't need them for deserialization
+    }
+
+    fn comment(&mut self, _span: TomlSpan, _sink: &mut dyn ErrorSink) {
+        // Skip comment events - we don't need them for deserialization
+    }
+
+    fn newline(&mut self, _span: TomlSpan, _sink: &mut dyn ErrorSink) {
+        // Skip newline events - we don't need them for deserialization
+    }
+
+    fn error(&mut self, span: TomlSpan, _sink: &mut dyn ErrorSink) {
+        self.push(EventKind::Error, span, None);
+    }
+}
+
+/// Iterator over collected events for replay
+pub struct EventIter<'a> {
+    events: &'a [SpannedEvent],
+    pos: usize,
+}
+
+impl<'a> EventIter<'a> {
+    /// Create a new event iterator
+    pub fn new(events: &'a [SpannedEvent]) -> Self {
+        Self { events, pos: 0 }
+    }
+
+    /// Peek at the next event without consuming it
+    pub fn peek(&self) -> Option<&'a SpannedEvent> {
+        self.events.get(self.pos)
+    }
+
+    /// Get the current position (for rewinding)
+    pub fn position(&self) -> usize {
+        self.pos
+    }
+
+    /// Rewind to a previous position
+    pub fn rewind(&mut self, pos: usize) {
+        self.pos = pos;
+    }
+}
+
+impl<'a> Iterator for EventIter<'a> {
+    type Item = &'a SpannedEvent;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let event = self.events.get(self.pos)?;
+        self.pos += 1;
+        Some(event)
+    }
+}
+
+// ============================================================================
+// Streaming Deserializer
+// ============================================================================
+
+/// Deserialize TOML using the streaming event-based parser.
+///
+/// This is the new implementation that:
+/// - Uses toml_parser's push-based event stream
+/// - Always uses deferred materialization (TOML keys can come in any order)
+/// - Handles interleaved dotted keys correctly
+/// - Uses facet-solver for flatten disambiguation
+pub fn from_str<'input, 'facet, T: Facet<'facet>>(
+    toml: &'input str,
+) -> Result<T, TomlDeError<'input>> {
+    trace!("Parsing TOML (streaming)");
+
+    // Parse TOML into events
+    let source = Source::new(toml);
+    let tokens: Vec<_> = source.lex().collect();
+    let mut collector = EventCollector::new();
+    let mut error_collector = ParseErrorCollector::new();
+    parse_document(&tokens, &mut collector, &mut error_collector);
+
+    // Check for parse errors
+    if let Some(error_msg) = error_collector.take_error() {
+        return Err(TomlDeError::new(
+            toml,
+            TomlDeErrorKind::GenericTomlError(error_msg),
+            None,
+            "$".to_string(),
+        ));
+    }
+
+    let events = collector.into_events();
+
+    // Allocate the type
+    let mut partial = Partial::alloc::<T>().map_err(|e| {
+        TomlDeError::new(
+            toml,
+            TomlDeErrorKind::GenericReflect(e),
+            None,
+            "$".to_string(),
+        )
+    })?;
+
+    // Build schema for flatten disambiguation
+    // Use flattened representation: the solver disambiguates by looking at the variant's
+    // inner fields. For example, if Backend::Local has a "cache" field and Backend::Remote
+    // has a "url" field, seeing "cache" in the TOML resolves to Local variant.
+    let schema = Schema::build(partial.shape()).map_err(|e| {
+        TomlDeError::new(
+            toml,
+            TomlDeErrorKind::GenericTomlError(format!("Schema build error: {e}")),
+            None,
+            "$".to_string(),
+        )
+    })?;
+
+    trace!(
+        "Built schema with {} resolutions",
+        schema.resolutions().len()
+    );
+
+    // Determine the resolution to use for deferred mode
+    let resolution = if schema.resolutions().len() == 1 {
+        // Only one resolution - use it directly
+        trace!("Single resolution, using directly");
+        schema.resolutions()[0].clone()
+    } else {
+        // Multiple resolutions - use solver to disambiguate
+        trace!(
+            "Multiple resolutions ({}), using solver",
+            schema.resolutions().len()
+        );
+
+        // Pre-scan events to collect top-level keys for the solver
+        let mut solver = Solver::new(&schema);
+        let mut resolved: Option<Resolution> = None;
+
+        // Scan top-level keys from events
+        let keys = collect_top_level_keys(toml, &events);
+        trace!("Top-level keys: {keys:?}");
+
+        for key in &keys {
+            let result = solver.see_key(key);
+            trace!("Solver result for '{key}': {result:?}");
+
+            match result {
+                KeyResult::Solved(res) => {
+                    trace!("Solved to resolution: {}", res.describe());
+                    resolved = Some(res.clone());
+                    break;
+                }
+                KeyResult::Unambiguous { .. } | KeyResult::Ambiguous { .. } => {
+                    // Continue processing keys
+                }
+                KeyResult::Unknown => {
+                    // For externally-tagged enums at the root level, the key might be
+                    // the variant name. Check if any resolution describes a variant
+                    // matching this key (e.g., key "A" matches resolution "Root::A").
+                    for res in schema.resolutions() {
+                        let desc = res.describe();
+                        // Check if desc ends with "::key" (variant name match)
+                        if desc.ends_with(&format!("::{key}")) {
+                            trace!("Key '{key}' matches variant in resolution: {desc}");
+                            resolved = Some(res.clone());
+                            break;
+                        }
+                    }
+                    if resolved.is_some() {
+                        break;
+                    }
+                    // Otherwise, unknown key - continue (might be an error later)
+                }
+            }
+        }
+
+        // If not solved by keys, try finish()
+        if resolved.is_none() {
+            match solver.finish() {
+                Ok(res) => {
+                    trace!("Solver finished with resolution: {}", res.describe());
+                    resolved = Some(res.clone());
+                }
+                Err(e) => {
+                    return Err(TomlDeError::new(
+                        toml,
+                        TomlDeErrorKind::GenericTomlError(format!("Solver error: {e}")),
+                        None,
+                        "$".to_string(),
+                    ));
+                }
+            }
+        }
+
+        resolved.unwrap_or_default()
+    };
+
+    // Store shape before moving the resolution
+    let root_shape = partial.shape();
+
+    // Always use deferred mode for TOML (keys can come in any order)
+    if let Err(e) = partial.begin_deferred(resolution.clone()) {
+        return Err(TomlDeError::new(
+            toml,
+            TomlDeErrorKind::GenericReflect(e),
+            None,
+            partial.path(),
+        ));
+    }
+
+    trace!("Starting streaming deserialization");
+
+    // Create deserializer and process events
+    let mut deser = StreamingDeserializer::new(toml, &events, root_shape, &resolution);
+    deser.deserialize_document(partial.inner_mut())?;
+
+    // Finish deferred mode - this fills defaults for unset fields and validates
+    if let Err(e) = partial.finish_deferred() {
+        trace!("finish_deferred error: {e:?}");
+        // Convert UninitializedField errors to ExpectedFieldWithName
+        let kind = match &e {
+            ReflectError::UninitializedField { field_name, .. } => {
+                TomlDeErrorKind::ExpectedFieldWithName(field_name)
+            }
+            _ => TomlDeErrorKind::GenericReflect(e),
+        };
+        return Err(TomlDeError::new(toml, kind, None, partial.path()));
+    }
+
+    // Build the result
+    let result = partial.build().map_err(|e| {
+        // Convert UninitializedField errors to ExpectedFieldWithName
+        trace!("Build error: {e:?}");
+        let kind = match &e {
+            ReflectError::UninitializedField { field_name, .. } => {
+                TomlDeErrorKind::ExpectedFieldWithName(field_name)
+            }
+            _ => TomlDeErrorKind::GenericReflect(e),
+        };
+        TomlDeError::new(toml, kind, None, "$".to_string())
+    })?;
+
+    trace!("Finished streaming deserialization");
+
+    Ok(*result)
+}
+
+/// Collect top-level keys from TOML events for solver disambiguation.
+///
+/// This scans the events and extracts:
+/// - Keys from top-level key-value pairs (e.g., `key = value`)
+/// - First segments of table headers (e.g., `[foo]` -> "foo")
+fn collect_top_level_keys<'input>(
+    source: &'input str,
+    events: &[SpannedEvent],
+) -> Vec<&'input str> {
+    let mut keys = Vec::new();
+    let mut iter = EventIter::new(events);
+    let mut depth: usize = 0; // Track nesting level (0 = top-level)
+
+    while let Some(event) = iter.next() {
+        match event.kind {
+            // Table headers reset depth and provide a key
+            EventKind::StdTableOpen | EventKind::ArrayTableOpen => {
+                depth = 0;
+                // The next SimpleKey is part of the table path
+                // For [foo.bar], the first key "foo" is a top-level key
+                if let Some(next) = iter.peek() {
+                    if next.kind == EventKind::SimpleKey {
+                        let key_str = &source[next.span.clone()];
+                        // Decode if it's a quoted string
+                        let key = decode_simple_key(source, next);
+                        if !keys.contains(&key) {
+                            keys.push(key);
+                        }
+                        _ = key_str;
+                    }
+                }
+            }
+            EventKind::StdTableClose | EventKind::ArrayTableClose => {
+                // After table header, keys are within that table (depth = 1 for path length 1)
+                // This is simplified - actual depth depends on table path length
+                depth = 1;
+            }
+            // Key-value pairs at depth 0 have top-level keys
+            EventKind::SimpleKey if depth == 0 => {
+                // Check if this is a key-value pair (followed by = or .) vs table header
+                // Table header keys are handled above
+                // Here we handle dotted keys like foo.bar = x
+                let saved_pos = iter.position();
+
+                // Look ahead to determine context
+                let mut is_kv_key = false;
+                let decoded_first = decode_simple_key(source, event);
+
+                for next in iter.by_ref() {
+                    match next.kind {
+                        EventKind::KeySep => {
+                            // Dot separator - continue to next key segment
+                        }
+                        EventKind::SimpleKey => {
+                            // Another key segment
+                        }
+                        EventKind::KeyValSep => {
+                            // = found - this is a key-value pair
+                            is_kv_key = true;
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
+
+                iter.rewind(saved_pos);
+
+                if is_kv_key && !keys.contains(&decoded_first) {
+                    keys.push(decoded_first);
+                }
+            }
+            // Track nesting
+            EventKind::InlineTableOpen | EventKind::ArrayOpen => {
+                depth += 1;
+            }
+            EventKind::InlineTableClose | EventKind::ArrayClose => {
+                depth = depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+
+    keys
+}
+
+/// Decode a simple key from an event, handling quoted strings
+fn decode_simple_key<'input>(source: &'input str, event: &SpannedEvent) -> &'input str {
+    let raw_str = &source[event.span.clone()];
+    // If it starts with a quote, it's a quoted string - for now just strip quotes
+    // A more complete implementation would use toml_parser's decoder
+    if raw_str.starts_with('"') || raw_str.starts_with('\'') {
+        // Strip quotes
+        &raw_str[1..raw_str.len() - 1]
+    } else {
+        raw_str
+    }
+}
+
+/// Streaming deserializer state
+struct StreamingDeserializer<'input, 'events, 'res> {
+    /// The TOML source string
+    source: &'input str,
+    /// Event iterator
+    iter: EventIter<'events>,
+    /// Current key path being built (for dotted keys like foo.bar.baz)
+    current_keys: Vec<&'input str>,
+    /// Number of nested frames we've opened (for cleanup)
+    open_frames: usize,
+    /// The root shape (for finding flattened fields)
+    root_shape: &'static Shape,
+    /// The resolution (for variant selections)
+    resolution: &'res Resolution,
+    /// Currently open flattened field (and variant if applicable)
+    open_flatten: Option<OpenFlatten>,
+}
+
+/// Tracks which flattened field is currently open
+struct OpenFlatten {
+    /// The flattened field name
+    field_name: &'static str,
+    /// The selected variant name (if the flattened type is an enum)
+    variant_name: Option<&'static str>,
+}
+
+impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
+    fn new(
+        source: &'input str,
+        events: &'events [SpannedEvent],
+        root_shape: &'static Shape,
+        resolution: &'res Resolution,
+    ) -> Self {
+        Self {
+            source,
+            iter: EventIter::new(events),
+            current_keys: Vec::new(),
+            open_frames: 0,
+            root_shape,
+            resolution,
+            open_flatten: None,
+        }
+    }
+
+    // ========================================================================
+    // Error helpers - reduce duplication
+    // ========================================================================
+
+    /// Convert a ReflectError to the appropriate TomlDeErrorKind
+    fn reflect_error_to_kind(e: ReflectError, _partial: &Partial<'_>) -> TomlDeErrorKind {
+        match e {
+            // For NoSuchField errors, check if the struct has a single field
+            // and return ExpectedFieldWithName if so
+            ReflectError::FieldError {
+                shape,
+                field_error: FieldError::NoSuchField,
+            } => {
+                // Check if this is a struct with a single field
+                if let Type::User(UserType::Struct(st)) = shape.ty {
+                    if st.fields.len() == 1 {
+                        return TomlDeErrorKind::ExpectedFieldWithName(st.fields[0].name);
+                    }
+                }
+                TomlDeErrorKind::GenericReflect(ReflectError::FieldError {
+                    shape,
+                    field_error: FieldError::NoSuchField,
+                })
+            }
+            // When trying to navigate into a primitive as if it were a table
+            ReflectError::OperationFailed { operation, .. }
+                if operation.contains("cannot select a field from") =>
+            {
+                TomlDeErrorKind::ExpectedType {
+                    expected: "value",
+                    got: "table",
+                }
+            }
+            // All other errors are passed through
+            other => TomlDeErrorKind::GenericReflect(other),
+        }
+    }
+
+    /// Create an error from a ReflectError
+    fn reflect_err<'facet>(
+        &self,
+        e: ReflectError,
+        partial: &Partial<'facet>,
+    ) -> TomlDeError<'input> {
+        TomlDeError::new(
+            self.source,
+            Self::reflect_error_to_kind(e, partial),
+            self.current_span(),
+            partial.path(),
+        )
+    }
+
+    /// Create an error from a ReflectError with a specific span
+    fn reflect_err_at<'facet>(
+        &self,
+        e: ReflectError,
+        span: Range<usize>,
+        partial: &Partial<'facet>,
+    ) -> TomlDeError<'input> {
+        TomlDeError::new(
+            self.source,
+            Self::reflect_error_to_kind(e, partial),
+            Some(span),
+            partial.path(),
+        )
+    }
+
+    // ========================================================================
+    // Partial helpers - reduce duplication
+    // ========================================================================
+
+    /// Check if the partial is at an enum that needs a variant to be selected
+    fn needs_variant_selection(partial: &Partial<'_>) -> bool {
+        matches!(partial.shape().ty, Type::User(UserType::Enum(_)))
+            && partial.selected_variant().is_none()
+    }
+
+    /// Call partial.end() and convert any error
+    fn end_frame<'facet>(&self, partial: &mut Partial<'facet>) -> Result<(), TomlDeError<'input>> {
+        partial
+            .end()
+            .map(|_| ())
+            .map_err(|e| self.reflect_err(e, partial))
+    }
+
+    /// Call partial.begin_field() and convert any error
+    fn begin_field<'facet>(
+        &self,
+        partial: &mut Partial<'facet>,
+        key: &str,
+    ) -> Result<(), TomlDeError<'input>> {
+        partial
+            .begin_field(key)
+            .map(|_| ())
+            .map_err(|e| self.reflect_err(e, partial))
+    }
+
+    /// Call partial.select_variant_named() and convert any error
+    fn select_variant<'facet>(
+        &self,
+        partial: &mut Partial<'facet>,
+        variant_name: &str,
+    ) -> Result<(), TomlDeError<'input>> {
+        partial
+            .select_variant_named(variant_name)
+            .map(|_| ())
+            .map_err(|e| self.reflect_err(e, partial))
+    }
+
+    /// Call partial.begin_list_item() and convert any error
+    fn begin_list_item<'facet>(
+        &self,
+        partial: &mut Partial<'facet>,
+    ) -> Result<(), TomlDeError<'input>> {
+        partial
+            .begin_list_item()
+            .map(|_| ())
+            .map_err(|e| self.reflect_err(e, partial))
+    }
+
+    // ========================================================================
+    // Map helpers
+    // ========================================================================
+
+    /// Call partial.begin_map() and convert any error
+    fn begin_map<'facet>(&self, partial: &mut Partial<'facet>) -> Result<(), TomlDeError<'input>> {
+        partial
+            .begin_map()
+            .map(|_| ())
+            .map_err(|e| self.reflect_err(e, partial))
+    }
+
+    /// Call partial.begin_key() and convert any error
+    fn begin_key<'facet>(&self, partial: &mut Partial<'facet>) -> Result<(), TomlDeError<'input>> {
+        partial
+            .begin_key()
+            .map(|_| ())
+            .map_err(|e| self.reflect_err(e, partial))
+    }
+
+    /// Call partial.begin_value() and convert any error
+    fn begin_value<'facet>(
+        &self,
+        partial: &mut Partial<'facet>,
+    ) -> Result<(), TomlDeError<'input>> {
+        partial
+            .begin_value()
+            .map(|_| ())
+            .map_err(|e| self.reflect_err(e, partial))
+    }
+
+    // ========================================================================
+    // Spanned helpers
+    // ========================================================================
+
+    /// Deserialize into a `Spanned<T>` wrapper.
+    /// This records the source span while deserializing the inner value.
+    fn deserialize_spanned<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+        value_span: Range<usize>,
+    ) -> Result<(), TomlDeError<'input>> {
+        trace!("deserialize_spanned: span={value_span:?}");
+
+        // Deserialize the inner value into the `value` field
+        self.begin_field(partial, "value")?;
+        self.deserialize_value(partial)?;
+        self.end_frame(partial)?;
+
+        // Set the span field with offset and len
+        self.begin_field(partial, "span")?;
+        if let Err(e) = partial.set_field("offset", value_span.start) {
+            return Err(self.reflect_err(e, partial));
+        }
+        if let Err(e) = partial.set_field("len", value_span.len()) {
+            return Err(self.reflect_err(e, partial));
+        }
+        self.end_frame(partial)?;
+
+        Ok(())
+    }
+
+    // ========================================================================
+    // Frame management with tracking
+    // ========================================================================
+
+    /// Push a field frame and track it
+    fn push_field<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+        key: &str,
+    ) -> Result<(), TomlDeError<'input>> {
+        self.begin_field(partial, key)?;
+        self.open_frames += 1;
+        Ok(())
+    }
+
+    /// Pop a tracked frame
+    fn pop_frame<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+    ) -> Result<(), TomlDeError<'input>> {
+        debug_assert!(self.open_frames > 0, "pop_frame called with no open frames");
+        self.end_frame(partial)?;
+        self.open_frames -= 1;
+        Ok(())
+    }
+
+    /// Get the span for error reporting
+    fn current_span(&self) -> Option<Range<usize>> {
+        self.iter.peek().map(|e| e.span.clone())
+    }
+
+    /// Create a Raw slice for decoding
+    fn raw_at(&self, span: &Range<usize>, encoding: Option<Encoding>) -> Raw<'input> {
+        Raw::new_unchecked(
+            &self.source[span.clone()],
+            encoding,
+            TomlSpan::new_unchecked(span.start, span.end),
+        )
+    }
+
+    /// Decode a key from an event
+    fn decode_key(&self, event: &SpannedEvent) -> String {
+        let raw = self.raw_at(&event.span, event.encoding);
+        let mut output: Cow<'input, str> = Cow::Borrowed("");
+        raw.decode_key(&mut output, &mut ());
+        output.into_owned()
+    }
+
+    /// Deserialize the entire document
+    fn deserialize_document<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+    ) -> Result<(), TomlDeError<'input>> {
+        trace!("deserialize_document");
+
+        // Process all events
+        while let Some(event) = self.iter.peek() {
+            match event.kind {
+                // Standard table header: [foo.bar]
+                EventKind::StdTableOpen => {
+                    self.iter.next(); // consume
+                    self.process_table_header(partial, false)?;
+                }
+                // Array table header: [[foo.bar]]
+                EventKind::ArrayTableOpen => {
+                    self.iter.next(); // consume
+                    self.process_table_header(partial, true)?;
+                }
+                // Key in a key-value pair
+                EventKind::SimpleKey => {
+                    self.process_key_value(partial)?;
+                }
+                // Skip structural tokens at document level
+                EventKind::StdTableClose | EventKind::ArrayTableClose => {
+                    self.iter.next();
+                }
+                // Error events
+                EventKind::Error => {
+                    let event = self.iter.next().unwrap();
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericTomlError("Parse error".to_string()),
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+                _ => {
+                    // Skip other events at document level
+                    self.iter.next();
+                }
+            }
+        }
+
+        // Close any open flattened field
+        self.close_open_flatten(partial)?;
+
+        // Close any remaining open frames
+        self.close_all_frames(partial)?;
+
+        Ok(())
+    }
+
+    /// Process a table header like [foo.bar] or [[foo.bar]]
+    fn process_table_header<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+        is_array_table: bool,
+    ) -> Result<(), TomlDeError<'input>> {
+        trace!("process_table_header (array={is_array_table})");
+
+        // Close any open flattened field first
+        self.close_open_flatten(partial)?;
+
+        // Close any previously open frames
+        self.close_all_frames(partial)?;
+
+        // Collect the dotted key path
+        let mut path: Vec<String> = Vec::new();
+        while let Some(event) = self.iter.peek() {
+            match event.kind {
+                EventKind::SimpleKey => {
+                    let key = self.decode_key(event);
+                    path.push(key);
+                    self.iter.next();
+                }
+                EventKind::KeySep => {
+                    self.iter.next(); // skip the dot
+                }
+                EventKind::StdTableClose | EventKind::ArrayTableClose => {
+                    self.iter.next();
+                    break;
+                }
+                _ => break,
+            }
+        }
+
+        trace!("Table path: {path:?}");
+
+        // Navigate into the path
+        for (i, key) in path.iter().enumerate() {
+            let is_last = i == path.len() - 1;
+
+            if is_last && is_array_table {
+                // For [[array]] tables, we need to begin a list item
+                self.begin_field_or_list_item(partial, key, true, is_last)?;
+            } else {
+                self.begin_field_or_list_item(partial, key, false, is_last)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Navigate into a key, handling Option unwrapping and enum variant selection.
+    /// For dotted paths like value.sub where value is `Option<T>`, this unwraps into Some.
+    /// For table paths like [foo.VariantName.bar], this properly selects the variant.
+    /// Returns true if a frame was pushed, false if only variant selection occurred.
+    fn navigate_into_key<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+        key: &str,
+    ) -> Result<bool, TomlDeError<'input>> {
+        // Check for Option<T> - if we're navigating into it, unwrap into Some first
+        // Option has Def::Option but may also be Type::User(UserType::Enum) due to NPO,
+        // so we must check Def::Option BEFORE checking for enum variant selection
+        if matches!(partial.shape().def, Def::Option(_)) {
+            trace!("Unwrapping Option into Some, then navigating to: {key}");
+            partial
+                .begin_some()
+                .map(|_| ())
+                .map_err(|e| self.reflect_err(e, partial))?;
+            self.open_frames += 1;
+            // Now we're inside the Some variant, continue to navigate to the key
+            return self.navigate_into_key(partial, key);
+        }
+
+        if Self::needs_variant_selection(partial) {
+            trace!("Selecting enum variant: {key}");
+            self.select_variant(partial, key)?;
+            Ok(false) // No frame pushed
+        } else {
+            trace!("Begin field: {key}");
+            self.push_field(partial, key)?;
+            Ok(true) // Frame pushed
+        }
+    }
+
+    /// Begin a field, handling potential list items for array tables.
+    /// Used for table header navigation like `[foo.bar]` or `[[items]]`.
+    fn begin_field_or_list_item<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+        key: &str,
+        is_array_item: bool,
+        is_last_in_path: bool,
+    ) -> Result<(), TomlDeError<'input>> {
+        trace!(
+            "begin_field_or_list_item: {key} (array_item={is_array_item}, is_last={is_last_in_path})"
+        );
+
+        // Check if we're at a map - need special handling
+        if let Def::Map(map_def) = &partial.shape().def {
+            // For maps, the key is a map entry key, not a struct field
+            let value_shape = map_def.v();
+
+            // Check if the value type can act as a table (have key-value pairs)
+            // Scalars and undefined types (like newtype structs) can't be tables
+            let value_is_scalar_like = matches!(value_shape.def, Def::Scalar | Def::Undefined);
+
+            // For table headers [map.key], the value must support being a table
+            // If the value is scalar-like, we can't have a table header pointing into it
+            if value_is_scalar_like {
+                return Err(TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::ExpectedType {
+                        expected: "value",
+                        got: "table",
+                    },
+                    self.current_span(),
+                    partial.path(),
+                ));
+            }
+
+            // Initialize the map
+            self.begin_map(partial)?;
+
+            // Start a map entry
+            self.begin_key(partial)?;
+            if let Err(e) = partial.set(key.to_string()) {
+                return Err(self.reflect_err(e, partial));
+            }
+            self.end_frame(partial)?;
+
+            // Begin the value
+            self.begin_value(partial)?;
+            self.open_frames += 1; // Track that we opened a value frame
+
+            // Handle array item within map value
+            if is_array_item {
+                partial
+                    .begin_list()
+                    .map(|_| ())
+                    .map_err(|e| self.reflect_err(e, partial))?;
+                self.begin_list_item(partial)?;
+                self.open_frames += 1;
+            }
+
+            return Ok(());
+        }
+
+        self.navigate_into_key(partial, key)?;
+
+        // After navigating into the field, check if it's a scalar type
+        // Table headers can't point to scalar types (but structs and other compound types are OK)
+        if is_last_in_path && !is_array_item {
+            // Only check for Def::Scalar, not Def::Undefined which could be newtype structs
+            let target_is_scalar = matches!(partial.shape().def, Def::Scalar);
+            if target_is_scalar {
+                return Err(TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::ExpectedType {
+                        expected: "value",
+                        got: "table",
+                    },
+                    self.current_span(),
+                    partial.path(),
+                ));
+            }
+        }
+
+        if is_array_item {
+            // For array tables [[items]], we need to begin the list first
+            // begin_list() is idempotent - returns Ok if already initialized
+            partial
+                .begin_list()
+                .map(|_| ())
+                .map_err(|e| self.reflect_err(e, partial))?;
+            trace!("Ensured list is initialized");
+
+            // Now add the list item
+            self.begin_list_item(partial)?;
+            self.open_frames += 1;
+        } else if matches!(partial.shape().def, Def::Map(_)) {
+            // For maps, initialize the map so subsequent key-value pairs are treated as entries
+            trace!("Initializing map");
+            self.begin_map(partial)?;
+        }
+
+        Ok(())
+    }
+
+    /// Close all tracked open frames
+    fn close_all_frames<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+    ) -> Result<(), TomlDeError<'input>> {
+        while self.open_frames > 0 {
+            self.pop_frame(partial)?;
+        }
+        Ok(())
+    }
+
+    /// Process a key-value pair like `foo.bar = value`
+    fn process_key_value<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+    ) -> Result<(), TomlDeError<'input>> {
+        // Collect the dotted key path
+        self.current_keys.clear();
+        while let Some(event) = self.iter.peek() {
+            match event.kind {
+                EventKind::SimpleKey => {
+                    let event = self.iter.next().unwrap();
+                    let key = self.decode_key(event);
+                    // Store the key - we need to handle lifetimes carefully
+                    // For now, leak the string (we'll fix this later)
+                    self.current_keys.push(Box::leak(key.into_boxed_str()));
+                }
+                EventKind::KeySep => {
+                    self.iter.next(); // skip the dot
+                }
+                EventKind::KeyValSep => {
+                    self.iter.next(); // skip the =
+                    break;
+                }
+                _ => break,
+            }
+        }
+
+        trace!("Key path: {:?}", self.current_keys);
+
+        let keys_len = self.current_keys.len();
+        if keys_len == 0 {
+            return Ok(());
+        }
+
+        // For the first key, check if it's a flattened field at the document root
+        let first_key = self.current_keys[0];
+
+        // Check if this key belongs to a flattened field
+        if let Some(location) = find_field_location(self.root_shape, first_key, self.resolution) {
+            match location {
+                FieldLocation::Direct { field_name } => {
+                    // Simple case: navigate directly
+                    trace!("Direct field: {field_name}");
+                    self.navigate_and_deserialize_direct(partial, &self.current_keys.clone())?;
+                }
+                FieldLocation::FlattenedStruct {
+                    flatten_field_name,
+                    inner_field_name,
+                } => {
+                    trace!("Flattened struct field: {flatten_field_name}.{inner_field_name}");
+                    self.navigate_flattened_struct(partial, flatten_field_name, inner_field_name)?;
+                }
+                FieldLocation::FlattenedEnum {
+                    flatten_field_name,
+                    variant,
+                    inner_field_name,
+                } => {
+                    trace!(
+                        "Flattened enum field: {}.{}.{}",
+                        flatten_field_name, variant.variant_name, inner_field_name
+                    );
+                    self.navigate_flattened_enum(
+                        partial,
+                        flatten_field_name,
+                        variant.variant_name,
+                        inner_field_name,
+                    )?;
+                }
+            }
+        } else {
+            // Fallback: try direct navigation (may fail for unknown fields)
+            self.navigate_and_deserialize_direct(partial, &self.current_keys.clone())?;
+        }
+
+        Ok(())
+    }
+
+    /// Navigate directly to a field path and deserialize.
+    ///
+    /// For a path like ["foo", "bar", "baz"] = value:
+    /// 1. Navigate into "foo" and "bar" (intermediate keys)
+    /// 2. Navigate into "baz" (final key)
+    /// 3. Deserialize the value
+    /// 4. Close "baz"
+    /// 5. Close "bar" and "foo"
+    ///
+    /// Special case for maps: if during navigation we land on a map,
+    /// the remaining keys are treated as map entries.
+    ///
+    /// Important: This manages frames locally and doesn't affect self.open_frames
+    /// because all frames opened here are also closed here.
+    fn navigate_and_deserialize_direct<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+        keys: &[&str],
+    ) -> Result<(), TomlDeError<'input>> {
+        if keys.is_empty() {
+            return Ok(());
+        }
+
+        // Track frames we open locally (so we can close them)
+        let mut local_frames: Vec<bool> = Vec::with_capacity(keys.len());
+
+        // Navigate into keys, watching for maps
+        for (i, key) in keys.iter().enumerate() {
+            // Check if we're at a map - if so, treat remaining keys as map entries
+            if matches!(partial.shape().def, Def::Map(_)) {
+                // Ensure map is initialized
+                self.begin_map(partial)?;
+
+                // The current key is the map key, remaining keys (if any) would be
+                // nested paths into the value - for TOML, we typically just have one key
+                // for simple maps like HashMap<String, i32>
+                let map_key = *key;
+                let remaining_keys = &keys[i + 1..];
+
+                // Insert map entry: begin_key, set key, end, begin_value, deserialize, end
+                self.begin_key(partial)?;
+                if let Err(e) = partial.set(map_key.to_string()) {
+                    return Err(self.reflect_err(e, partial));
+                }
+                self.end_frame(partial)?;
+
+                self.begin_value(partial)?;
+                if remaining_keys.is_empty() {
+                    // No more keys, deserialize the value directly
+                    self.deserialize_value(partial)?;
+                } else {
+                    // More keys - navigate into the value (recursively)
+                    self.navigate_and_deserialize_direct(partial, remaining_keys)?;
+                }
+                self.end_frame(partial)?;
+
+                // Close all frames we opened during navigation
+                for pushed in local_frames.into_iter().rev() {
+                    if pushed {
+                        self.pop_frame(partial)?;
+                    }
+                }
+                return Ok(());
+            }
+
+            let pushed = self.navigate_into_key(partial, key)?;
+            local_frames.push(pushed);
+        }
+
+        // Deserialize the value at the final location
+        self.deserialize_value(partial)?;
+
+        // Close all frames we opened, in reverse order
+        for pushed in local_frames.into_iter().rev() {
+            if pushed {
+                self.pop_frame(partial)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Navigate to a field inside a flattened struct and deserialize
+    fn navigate_flattened_struct<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+        flatten_field_name: &'static str,
+        inner_field_name: &'static str,
+    ) -> Result<(), TomlDeError<'input>> {
+        // Check if we need to open/switch flattened field
+        let need_open = match &self.open_flatten {
+            None => true,
+            Some(open) => open.field_name != flatten_field_name,
+        };
+
+        if need_open {
+            // Close current flattened field if open
+            if self.open_flatten.is_some() {
+                self.end_frame(partial)?;
+            }
+
+            // Open the new flattened field
+            self.begin_field(partial, flatten_field_name)?;
+
+            self.open_flatten = Some(OpenFlatten {
+                field_name: flatten_field_name,
+                variant_name: None,
+            });
+        }
+
+        // Navigate to the inner field, deserialize, then close
+        self.begin_field(partial, inner_field_name)?;
+        self.deserialize_value(partial)?;
+        self.end_frame(partial)?;
+
+        Ok(())
+    }
+
+    /// Navigate to a field inside a flattened enum variant and deserialize
+    fn navigate_flattened_enum<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+        flatten_field_name: &'static str,
+        variant_name: &'static str,
+        inner_field_name: &'static str,
+    ) -> Result<(), TomlDeError<'input>> {
+        // Check if we need to open/switch flattened field or variant
+        let need_open = match &self.open_flatten {
+            None => true,
+            Some(open) => {
+                open.field_name != flatten_field_name || open.variant_name != Some(variant_name)
+            }
+        };
+
+        if need_open {
+            // Close current flattened field if open (including inner variant)
+            if let Some(open) = &self.open_flatten {
+                if open.variant_name.is_some() {
+                    // Close the variant's inner type (the "0" field for newtype)
+                    self.end_frame(partial)?;
+                }
+                // Close the flattened field
+                self.end_frame(partial)?;
+            }
+
+            // Open the flattened field
+            self.begin_field(partial, flatten_field_name)?;
+
+            // Select the variant
+            self.select_variant(partial, variant_name)?;
+
+            // Open the variant's inner type (field "0" for newtype variants)
+            self.begin_field(partial, "0")?;
+
+            self.open_flatten = Some(OpenFlatten {
+                field_name: flatten_field_name,
+                variant_name: Some(variant_name),
+            });
+        }
+
+        // Navigate to the inner field, deserialize, then close
+        self.begin_field(partial, inner_field_name)?;
+        self.deserialize_value(partial)?;
+        self.end_frame(partial)?;
+
+        Ok(())
+    }
+
+    /// Close any open flattened field
+    fn close_open_flatten<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+    ) -> Result<(), TomlDeError<'input>> {
+        if let Some(open) = self.open_flatten.take() {
+            if open.variant_name.is_some() {
+                // Close the variant's inner type
+                self.end_frame(partial)?;
+            }
+            // Close the flattened field
+            self.end_frame(partial)?;
+        }
+        Ok(())
+    }
+
+    /// Deserialize a value (scalar, array, or inline table)
+    fn deserialize_value<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+    ) -> Result<(), TomlDeError<'input>> {
+        let Some(event) = self.iter.peek() else {
+            return Err(TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericTomlError("Unexpected end of input".to_string()),
+                None,
+                partial.path(),
+            ));
+        };
+
+        // Handle Spanned<T> - deserialize the inner value and set the span
+        if is_spanned_shape(partial.shape()) {
+            return self.deserialize_spanned(partial, event.span.clone());
+        }
+
+        // Handle Option<T> - unwrap into Some and deserialize the inner value
+        if matches!(partial.shape().def, Def::Option(_)) {
+            partial
+                .begin_some()
+                .map(|_| ())
+                .map_err(|e| self.reflect_err_at(e, event.span.clone(), partial))?;
+            // Recursively deserialize the inner value
+            self.deserialize_value(partial)?;
+            self.end_frame(partial)?;
+            return Ok(());
+        }
+
+        // Handle tuple structs (newtype wrappers) - unwrap into field "0"
+        // Check if we have a TupleStruct with a single field and a scalar value
+        if let Type::User(UserType::Struct(StructType { kind, fields, .. })) = partial.shape().ty {
+            if matches!(kind, StructKind::TupleStruct)
+                && fields.len() == 1
+                && matches!(event.kind, EventKind::Scalar)
+            {
+                // Unwrap into the single field and deserialize recursively
+                // (the inner type might also be a tuple struct, e.g. NestedUnit(Unit(i32)))
+                trace!("Unwrapping tuple struct into field 0");
+                self.begin_field(partial, "0")?;
+                self.deserialize_value(partial)?;
+                self.end_frame(partial)?;
+                return Ok(());
+            }
+        }
+
+        // Handle enum variants with data after variant selection
+        // After select_variant_named, we're still at the enum level but have a selected variant
+        if let Some(variant) = partial.selected_variant() {
+            // Check if this is a tuple variant (fields named with digits like "0", "1", etc.)
+            let is_tuple_variant = variant
+                .data
+                .fields
+                .first()
+                .map(|f| f.name.starts_with(|c: char| c.is_ascii_digit()))
+                .unwrap_or(false);
+
+            if is_tuple_variant && variant.data.fields.len() == 1 {
+                // Single-element tuple variant - enter field "0" and deserialize the value
+                trace!(
+                    "Entering tuple variant field 0 for variant: {}",
+                    variant.name
+                );
+                self.begin_field(partial, "0")?;
+                self.deserialize_value(partial)?;
+                self.end_frame(partial)?;
+                return Ok(());
+            }
+            // For struct variants or multi-element tuple variants, continue to normal handling
+            // (they would be deserialized via inline table or table handlers)
+        }
+
+        // Check if the target type is a scalar - if so, we need special handling
+        let is_scalar_target = matches!(partial.shape().def, Def::Scalar);
+
+        // Check if target type is a map - maps can't be deserialized from scalars
+        let is_map_target = matches!(partial.shape().def, Def::Map(_));
+
+        // Check if target type is a list - lists can't be deserialized from scalars
+        let is_list_target = matches!(partial.shape().def, Def::List(_));
+
+        match event.kind {
+            EventKind::Scalar => {
+                // Maps require table-like structure, not a scalar
+                if is_map_target {
+                    // Decode the scalar to determine its type for the error message
+                    let raw = self.raw_at(&event.span, event.encoding);
+                    let mut decoded: Cow<'input, str> = Cow::Borrowed("");
+                    let scalar_kind = raw.decode_scalar(&mut decoded, &mut ());
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::ExpectedType {
+                            expected: "table like structure",
+                            got: match scalar_kind {
+                                toml_parser::decoder::ScalarKind::Boolean(_) => "boolean",
+                                toml_parser::decoder::ScalarKind::Integer(_) => "integer",
+                                toml_parser::decoder::ScalarKind::Float => "float",
+                                toml_parser::decoder::ScalarKind::String => "string",
+                                toml_parser::decoder::ScalarKind::DateTime => "datetime",
+                            },
+                        },
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+                // Lists require array structure, not a scalar
+                if is_list_target {
+                    // Decode the scalar to determine its type for the error message
+                    let raw = self.raw_at(&event.span, event.encoding);
+                    let mut decoded: Cow<'input, str> = Cow::Borrowed("");
+                    let scalar_kind = raw.decode_scalar(&mut decoded, &mut ());
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::ExpectedType {
+                            expected: "array",
+                            got: match scalar_kind {
+                                toml_parser::decoder::ScalarKind::Boolean(_) => "boolean",
+                                toml_parser::decoder::ScalarKind::Integer(_) => "integer",
+                                toml_parser::decoder::ScalarKind::Float => "float",
+                                toml_parser::decoder::ScalarKind::String => "string",
+                                toml_parser::decoder::ScalarKind::DateTime => "datetime",
+                            },
+                        },
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+                let event = self.iter.next().unwrap();
+                self.deserialize_scalar(partial, event)?;
+            }
+            EventKind::ArrayOpen => {
+                // If expecting a scalar but got an array, return type error
+                if is_scalar_target {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::ExpectedType {
+                            expected: self.expected_type_name(partial.shape()),
+                            got: "array",
+                        },
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+                self.iter.next(); // consume [
+                self.deserialize_array(partial)?;
+            }
+            EventKind::InlineTableOpen => {
+                // If expecting a scalar but got an inline table, return type error
+                if is_scalar_target {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::ExpectedType {
+                            expected: self.expected_type_name(partial.shape()),
+                            got: "inline table",
+                        },
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+                self.iter.next(); // consume {
+                self.deserialize_inline_table(partial)?;
+            }
+            _ => {
+                return Err(TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::GenericTomlError(format!(
+                        "Expected value, got {:?}",
+                        event.kind
+                    )),
+                    Some(event.span.clone()),
+                    partial.path(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get the expected type name for error messages
+    fn expected_type_name(&self, shape: &'static Shape) -> &'static str {
+        if let Some(scalar_type) = ScalarType::try_from_shape(shape) {
+            match scalar_type {
+                ScalarType::Bool => "boolean",
+                ScalarType::String | ScalarType::CowStr | ScalarType::Char => "string",
+                ScalarType::F32 | ScalarType::F64 => "number",
+                ScalarType::I8
+                | ScalarType::I16
+                | ScalarType::I32
+                | ScalarType::I64
+                | ScalarType::I128
+                | ScalarType::ISize
+                | ScalarType::U8
+                | ScalarType::U16
+                | ScalarType::U32
+                | ScalarType::U64
+                | ScalarType::U128
+                | ScalarType::USize => "number",
+                _ => "value",
+            }
+        } else {
+            "value"
+        }
+    }
+
+    /// Deserialize a scalar value
+    fn deserialize_scalar<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+        event: &SpannedEvent,
+    ) -> Result<(), TomlDeError<'input>> {
+        let raw = self.raw_at(&event.span, event.encoding);
+        let mut decoded: Cow<'input, str> = Cow::Borrowed("");
+        let kind = raw.decode_scalar(&mut decoded, &mut ());
+
+        trace!(
+            "Scalar: kind={:?}, raw='{}', decoded='{}'",
+            kind,
+            event.content(self.source),
+            decoded
+        );
+
+        // Match the scalar type to what the Partial expects
+        let Some(scalar_type) = ScalarType::try_from_shape(partial.shape()) else {
+            // Try from_str for other types (like enums, UUIDs, etc)
+            if partial.shape().is_from_str() {
+                if let Err(_e) = partial.parse_from_str(&decoded) {
+                    // Determine the TOML type name based on kind
+                    let toml_type_name = match kind {
+                        ScalarKind::Boolean(_) => "boolean",
+                        ScalarKind::String => "string",
+                        ScalarKind::Integer(_) => "integer",
+                        ScalarKind::Float => "float",
+                        ScalarKind::DateTime => "datetime",
+                    };
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::FailedTypeConversion {
+                            toml_type_name,
+                            rust_type: partial.shape(),
+                            reason: None,
+                        },
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+                return Ok(());
+            }
+
+            // For enums with a string value, try to select the variant by name
+            if let (ScalarKind::String, Type::User(UserType::Enum(_))) = (kind, &partial.shape().ty)
+            {
+                // Select the variant by name from the string value
+                if let Err(e) = partial.select_variant_named(&decoded) {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericReflect(e),
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+                return Ok(());
+            }
+
+            // Check if this is a struct with multiple fields
+            if let Type::User(UserType::Struct(st)) = &partial.shape().ty {
+                if st.fields.len() > 1 {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::ParseSingleValueAsMultipleFieldStruct,
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+            }
+
+            return Err(TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::UnrecognizedScalar(partial.shape()),
+                Some(event.span.clone()),
+                partial.path(),
+            ));
+        };
+
+        match (kind, scalar_type) {
+            // Strings
+            (ScalarKind::String, ScalarType::String) => {
+                if let Err(e) = partial.set(decoded.into_owned()) {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericReflect(e),
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+            }
+            (ScalarKind::String, ScalarType::CowStr) => {
+                // Create an owned Cow<'static, str>
+                let cow: Cow<'static, str> = Cow::Owned(decoded.into_owned());
+                if let Err(e) = partial.set(cow) {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericReflect(e),
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+            }
+
+            // Booleans
+            (ScalarKind::Boolean(b), ScalarType::Bool) => {
+                if let Err(e) = partial.set(b) {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericReflect(e),
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+            }
+
+            // Integers
+            (ScalarKind::Integer(radix), scalar_type) => {
+                self.deserialize_integer(partial, &decoded, radix.value(), scalar_type, event)?;
+            }
+
+            // Floats
+            (ScalarKind::Float, ScalarType::F32) => {
+                let Ok(v) = decoded.parse::<f32>() else {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericTomlError(format!("Invalid f32: {decoded}")),
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                };
+                if let Err(e) = partial.set(v) {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericReflect(e),
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+            }
+            (ScalarKind::Float, ScalarType::F64) => {
+                let Ok(v) = decoded.parse::<f64>() else {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericTomlError(format!("Invalid f64: {decoded}")),
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                };
+                if let Err(e) = partial.set(v) {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericReflect(e),
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+            }
+
+            // Float to integer type conversion attempt - this is a failed conversion, not a type mismatch
+            (ScalarKind::Float, _) => {
+                return Err(TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::FailedTypeConversion {
+                        toml_type_name: "float",
+                        rust_type: partial.shape(),
+                        reason: None,
+                    },
+                    Some(event.span.clone()),
+                    partial.path(),
+                ));
+            }
+
+            // Char from single-character string
+            (ScalarKind::String, ScalarType::Char) => {
+                let mut chars = decoded.chars();
+                if let (Some(c), None) = (chars.next(), chars.next()) {
+                    // Exactly one character
+                    if let Err(e) = partial.set(c) {
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::GenericReflect(e),
+                            Some(event.span.clone()),
+                            partial.path(),
+                        ));
+                    }
+                } else {
+                    // Zero or more than one character - type mismatch
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::ExpectedType {
+                            expected: "char",
+                            got: "string",
+                        },
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+            }
+
+            // For string scalars with non-string target types that implement FromStr
+            // (e.g., parsing "127.0.0.1" into IpAddr)
+            (ScalarKind::String, _) if partial.shape().is_from_str() => {
+                if let Err(_e) = partial.parse_from_str(&decoded) {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::FailedTypeConversion {
+                            toml_type_name: "string",
+                            rust_type: partial.shape(),
+                            reason: None,
+                        },
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+            }
+
+            _ => {
+                // Determine expected type based on scalar_type
+                let expected = match scalar_type {
+                    ScalarType::Bool => "boolean",
+                    ScalarType::String
+                    | ScalarType::CowStr
+                    | ScalarType::Char
+                    | ScalarType::Str => "string",
+                    ScalarType::F32
+                    | ScalarType::F64
+                    | ScalarType::I8
+                    | ScalarType::I16
+                    | ScalarType::I32
+                    | ScalarType::I64
+                    | ScalarType::I128
+                    | ScalarType::ISize
+                    | ScalarType::U8
+                    | ScalarType::U16
+                    | ScalarType::U32
+                    | ScalarType::U64
+                    | ScalarType::U128
+                    | ScalarType::USize => "number",
+                    // These types expect strings
+                    ScalarType::IpAddr
+                    | ScalarType::Ipv4Addr
+                    | ScalarType::Ipv6Addr
+                    | ScalarType::SocketAddr => "string",
+                    _ => "unknown",
+                };
+
+                // Determine the actual TOML type
+                let got = match kind {
+                    ScalarKind::Boolean(_) => "boolean",
+                    ScalarKind::String => "string",
+                    ScalarKind::Integer(_) => "integer",
+                    ScalarKind::Float => "float",
+                    ScalarKind::DateTime => "datetime",
+                };
+
+                return Err(TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::ExpectedType { expected, got },
+                    Some(event.span.clone()),
+                    partial.path(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Deserialize an integer with the given radix
+    fn deserialize_integer<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+        decoded: &str,
+        radix: u32,
+        scalar_type: ScalarType,
+        event: &SpannedEvent,
+    ) -> Result<(), TomlDeError<'input>> {
+        // Remove underscores from the number (TOML allows them as separators)
+        let clean: String = decoded.chars().filter(|&c| c != '_').collect();
+
+        macro_rules! parse_int {
+            ($ty:ty) => {{
+                let Ok(v) = <$ty>::from_str_radix(&clean, radix) else {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericTomlError(format!(
+                            "Invalid {}: {}",
+                            stringify!($ty),
+                            decoded
+                        )),
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                };
+                if let Err(e) = partial.set(v) {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericReflect(e),
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+            }};
+        }
+
+        match scalar_type {
+            ScalarType::I8 => parse_int!(i8),
+            ScalarType::I16 => parse_int!(i16),
+            ScalarType::I32 => parse_int!(i32),
+            ScalarType::I64 => parse_int!(i64),
+            ScalarType::I128 => parse_int!(i128),
+            ScalarType::ISize => parse_int!(isize),
+            ScalarType::U8 => parse_int!(u8),
+            ScalarType::U16 => parse_int!(u16),
+            ScalarType::U32 => parse_int!(u32),
+            ScalarType::U64 => parse_int!(u64),
+            ScalarType::U128 => parse_int!(u128),
+            ScalarType::USize => parse_int!(usize),
+            // Also handle floats if the scalar was integer-like
+            ScalarType::F32 => {
+                let Ok(v) = clean.parse::<f32>() else {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericTomlError(format!("Invalid f32: {decoded}")),
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                };
+                if let Err(e) = partial.set(v) {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericReflect(e),
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+            }
+            ScalarType::F64 => {
+                let Ok(v) = clean.parse::<f64>() else {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericTomlError(format!("Invalid f64: {decoded}")),
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                };
+                if let Err(e) = partial.set(v) {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericReflect(e),
+                        Some(event.span.clone()),
+                        partial.path(),
+                    ));
+                }
+            }
+            _ => {
+                // Determine the expected type based on scalar_type
+                let expected = match scalar_type {
+                    ScalarType::Bool => "boolean",
+                    ScalarType::String | ScalarType::CowStr | ScalarType::Char => "string",
+                    ScalarType::F32 | ScalarType::F64 => "number",
+                    _ => "unknown",
+                };
+                return Err(TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::ExpectedType {
+                        expected,
+                        got: "integer",
+                    },
+                    Some(event.span.clone()),
+                    partial.path(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Deserialize an inline array
+    fn deserialize_array<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+    ) -> Result<(), TomlDeError<'input>> {
+        trace!("deserialize_array");
+
+        if let Err(e) = partial.begin_list() {
+            return Err(TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericReflect(e),
+                self.current_span(),
+                partial.path(),
+            ));
+        }
+
+        loop {
+            let Some(event) = self.iter.peek() else { break };
+
+            match event.kind {
+                EventKind::ArrayClose => {
+                    self.iter.next();
+                    break;
+                }
+                EventKind::ValueSep => {
+                    self.iter.next(); // skip comma
+                }
+                _ => {
+                    // Start a new list item
+                    if let Err(e) = partial.begin_list_item() {
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::GenericReflect(e),
+                            self.current_span(),
+                            partial.path(),
+                        ));
+                    }
+
+                    self.deserialize_value(partial)?;
+
+                    if let Err(e) = partial.end() {
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::GenericReflect(e),
+                            self.current_span(),
+                            partial.path(),
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Deserialize an inline table
+    fn deserialize_inline_table<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+    ) -> Result<(), TomlDeError<'input>> {
+        trace!("deserialize_inline_table");
+
+        // Check if this inline table represents an enum variant like { VariantName = value }
+        let is_enum = Self::needs_variant_selection(partial);
+
+        // Check if this is a map - needs different handling
+        let is_map = matches!(partial.shape().def, Def::Map(_));
+
+        // For maps, initialize the map before processing entries
+        if is_map {
+            self.begin_map(partial)?;
+        }
+
+        // Track which struct fields we've seen (for applying defaults later)
+        let struct_fields = if let Type::User(UserType::Struct(st)) = partial.shape().ty {
+            if !is_enum && !is_map {
+                Some((st.fields, vec![false; st.fields.len()]))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let mut fields_set = struct_fields;
+
+        loop {
+            let Some(event) = self.iter.peek() else { break };
+
+            match event.kind {
+                EventKind::InlineTableClose => {
+                    self.iter.next();
+                    break;
+                }
+                EventKind::ValueSep => {
+                    self.iter.next(); // skip comma
+                }
+                EventKind::SimpleKey => {
+                    // Process key-value pair within inline table
+                    let key_event = self.iter.next().unwrap();
+                    let key = self.decode_key(key_event);
+
+                    // Skip KeyValSep (=)
+                    if let Some(e) = self.iter.peek() {
+                        if e.kind == EventKind::KeyValSep {
+                            self.iter.next();
+                        }
+                    }
+
+                    if is_map {
+                        // For maps: { key = value, ... }
+                        // Each key-value is a map entry
+                        self.begin_key(partial)?;
+                        if let Err(e) = partial.set(key.to_string()) {
+                            return Err(self.reflect_err(e, partial));
+                        }
+                        self.end_frame(partial)?;
+
+                        self.begin_value(partial)?;
+                        self.deserialize_value(partial)?;
+                        self.end_frame(partial)?;
+                    } else if is_enum {
+                        // For enums: { VariantName = value }
+                        // The key is the variant name, value is the payload
+                        self.select_variant(partial, &key)?;
+
+                        // Get variant info to determine how to handle the value
+                        let variant = partial.selected_variant().ok_or_else(|| {
+                            TomlDeError::new(
+                                self.source,
+                                TomlDeErrorKind::GenericTomlError(
+                                    "Failed to get selected variant".to_string(),
+                                ),
+                                self.current_span(),
+                                partial.path(),
+                            )
+                        })?;
+
+                        // Handle based on variant kind
+                        let num_fields = variant.data.fields.len();
+                        if num_fields == 0 {
+                            // Unit variant - skip the value (should be null or similar)
+                            self.deserialize_value(partial)?;
+                        } else if num_fields == 1 {
+                            // Tuple variant with one field - deserialize directly into field "0"
+                            self.begin_field(partial, "0")?;
+                            self.deserialize_value(partial)?;
+                            self.end_frame(partial)?;
+                        } else {
+                            // Multi-field tuple or struct variant - the value should be an array or table
+                            // For simplicity, assume it's a single value for field "0"
+                            self.begin_field(partial, "0")?;
+                            self.deserialize_value(partial)?;
+                            self.end_frame(partial)?;
+                        }
+                    } else {
+                        // Regular struct field - track which field we're setting
+                        if let Some((fields, ref mut set)) = fields_set {
+                            if let Some(idx) = fields.iter().position(|f| f.name == key) {
+                                set[idx] = true;
+                            }
+                        }
+                        self.begin_field(partial, &key)?;
+                        self.deserialize_value(partial)?;
+                        self.end_frame(partial)?;
+                    }
+                }
+                _ => {
+                    // Skip unexpected events
+                    self.iter.next();
+                }
+            }
+        }
+
+        // Apply defaults for missing struct fields
+        if let Some((fields, set)) = fields_set {
+            for (idx, field) in fields.iter().enumerate() {
+                if set[idx] {
+                    continue; // Field was already set
+                }
+
+                // Check if field has a default available
+                let has_default_fn = field.vtable.default_fn.is_some();
+                let has_default_flag = field.flags.contains(FieldFlags::DEFAULT);
+                let shape_has_default = field.shape().vtable.default_in_place.is_some();
+
+                if has_default_fn || has_default_flag || shape_has_default {
+                    // Apply default for this field
+                    if let Err(e) = partial.set_nth_field_to_default(idx) {
+                        return Err(self.reflect_err(e, partial));
+                    }
+                }
+                // Note: if no default is available and field is required, the build
+                // will fail later with "field not initialized" error
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use toml_parser::{Source, parser::parse_document};
+
+    #[test]
+    fn test_event_collector_basic() {
+        let input = r#"
+name = "test"
+value = 42
+"#;
+        let source = Source::new(input);
+        let tokens: Vec<_> = source.lex().collect();
+        let mut collector = EventCollector::new();
+
+        parse_document(&tokens, &mut collector, &mut ());
+
+        let events = collector.into_events();
+
+        // Should have events for keys and scalars (excluding whitespace/newlines)
+        let structural_events: Vec<_> = events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.kind,
+                    EventKind::SimpleKey | EventKind::KeyValSep | EventKind::Scalar
+                )
+            })
+            .collect();
+
+        // name = "test" and value = 42
+        // Each key-value pair: SimpleKey, KeyValSep, Scalar
+        assert_eq!(structural_events.len(), 6);
+    }
+
+    #[test]
+    fn test_event_collector_nested_keys() {
+        let input = r#"
+foo.bar.x = 1
+foo.baz = 2
+foo.bar.y = 3
+"#;
+        let source = Source::new(input);
+        let tokens: Vec<_> = source.lex().collect();
+        let mut collector = EventCollector::new();
+
+        parse_document(&tokens, &mut collector, &mut ());
+
+        let events = collector.into_events();
+
+        // Count key separators (dots) - should reflect the dotted paths
+        let key_seps: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::KeySep))
+            .collect();
+
+        // foo.bar.x has 2 dots, foo.baz has 1 dot, foo.bar.y has 2 dots = 5 total
+        assert_eq!(key_seps.len(), 5);
+    }
+
+    #[test]
+    fn test_event_content_extraction() {
+        let input = r#"name = "hello""#;
+        let source = Source::new(input);
+        let tokens: Vec<_> = source.lex().collect();
+        let mut collector = EventCollector::new();
+
+        parse_document(&tokens, &mut collector, &mut ());
+
+        let events = collector.into_events();
+
+        // Find the key event
+        let key_event = events
+            .iter()
+            .find(|e| e.kind == EventKind::SimpleKey)
+            .unwrap();
+        assert_eq!(key_event.content(input), "name");
+
+        // Find the scalar event
+        let scalar_event = events.iter().find(|e| e.kind == EventKind::Scalar).unwrap();
+        assert_eq!(scalar_event.content(input), "\"hello\"");
+    }
+
+    #[test]
+    fn test_event_iter_peek_and_rewind() {
+        let events = vec![
+            SpannedEvent {
+                kind: EventKind::SimpleKey,
+                span: 0..4,
+                encoding: None,
+            },
+            SpannedEvent {
+                kind: EventKind::KeyValSep,
+                span: 5..6,
+                encoding: None,
+            },
+            SpannedEvent {
+                kind: EventKind::Scalar,
+                span: 7..13,
+                encoding: None,
+            },
+        ];
+
+        let mut iter = EventIter::new(&events);
+
+        // Peek doesn't advance
+        assert_eq!(iter.peek().unwrap().kind, EventKind::SimpleKey);
+        assert_eq!(iter.peek().unwrap().kind, EventKind::SimpleKey);
+
+        // Save position
+        let pos = iter.position();
+
+        // Consume
+        assert_eq!(iter.next().unwrap().kind, EventKind::SimpleKey);
+        assert_eq!(iter.next().unwrap().kind, EventKind::KeyValSep);
+
+        // Rewind
+        iter.rewind(pos);
+        assert_eq!(iter.next().unwrap().kind, EventKind::SimpleKey);
+    }
+
+    // Integration tests for the streaming deserializer
+    #[test]
+    fn test_streaming_simple_struct() {
+        use facet::Facet;
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct Simple {
+            name: String,
+            value: i32,
+        }
+
+        let toml = r#"
+name = "hello"
+value = 42
+"#;
+        let result: Simple = from_str(toml).unwrap();
+        assert_eq!(result.name, "hello");
+        assert_eq!(result.value, 42);
+    }
+
+    #[test]
+    fn test_streaming_nested_struct() {
+        use facet::Facet;
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct Inner {
+            x: i32,
+            y: i32,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct Outer {
+            inner: Inner,
+            name: String,
+        }
+
+        let toml = r#"
+name = "test"
+[inner]
+x = 10
+y = 20
+"#;
+        let result: Outer = from_str(toml).unwrap();
+        assert_eq!(result.name, "test");
+        assert_eq!(result.inner.x, 10);
+        assert_eq!(result.inner.y, 20);
+    }
+
+    #[test]
+    fn test_streaming_dotted_keys() {
+        use facet::Facet;
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct Bar {
+            x: i32,
+            y: i32,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct Foo {
+            bar: Bar,
+            baz: i32,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct Root {
+            foo: Foo,
+        }
+
+        // Interleaved dotted keys - the key challenge for TOML
+        let toml = r#"
+foo.bar.x = 1
+foo.baz = 2
+foo.bar.y = 3
+"#;
+        let result: Root = from_str(toml).unwrap();
+        assert_eq!(result.foo.bar.x, 1);
+        assert_eq!(result.foo.baz, 2);
+        assert_eq!(result.foo.bar.y, 3);
+    }
+
+    #[test]
+    fn test_streaming_inline_array() {
+        use facet::Facet;
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct WithArray {
+            values: Vec<i32>,
+        }
+
+        let toml = r#"values = [1, 2, 3, 4, 5]"#;
+        let result: WithArray = from_str(toml).unwrap();
+        assert_eq!(result.values, vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn test_streaming_inline_table() {
+        use facet::Facet;
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct Point {
+            x: i32,
+            y: i32,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct WithPoint {
+            point: Point,
+        }
+
+        let toml = r#"point = { x = 10, y = 20 }"#;
+        let result: WithPoint = from_str(toml).unwrap();
+        assert_eq!(result.point.x, 10);
+        assert_eq!(result.point.y, 20);
+    }
+
+    #[test]
+    fn test_streaming_booleans() {
+        use facet::Facet;
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct Flags {
+            enabled: bool,
+            debug: bool,
+        }
+
+        let toml = r#"
+enabled = true
+debug = false
+"#;
+        let result: Flags = from_str(toml).unwrap();
+        assert!(result.enabled);
+        assert!(!result.debug);
+    }
+
+    #[test]
+    fn test_streaming_floats() {
+        use facet::Facet;
+
+        #[derive(Facet, Debug)]
+        struct Floats {
+            a: f32,
+            b: f64,
+        }
+
+        let toml = r#"
+a = 3.125
+b = 2.5
+"#;
+        let result: Floats = from_str(toml).unwrap();
+        assert!((result.a - 3.125).abs() < 0.001);
+        assert!((result.b - 2.5).abs() < 0.000001);
+    }
+
+    // ========================================================================
+    // Flatten with enum tests
+    // ========================================================================
+
+    #[test]
+    fn test_flatten_enum_simple() {
+        use facet::Facet;
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct LocalBackend {
+            cache: bool,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct RemoteBackend {
+            url: String,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[repr(u8)]
+        enum Backend {
+            Local(LocalBackend),
+            Remote(RemoteBackend),
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct Config {
+            name: String,
+            #[facet(flatten)]
+            backend: Backend,
+        }
+
+        // Test Local variant - distinguished by "cache" key
+        let toml_local = r#"
+name = "local-config"
+cache = true
+"#;
+        let result: Config = from_str(toml_local).unwrap();
+        assert_eq!(result.name, "local-config");
+        assert_eq!(result.backend, Backend::Local(LocalBackend { cache: true }));
+
+        // Test Remote variant - distinguished by "url" key
+        let toml_remote = r#"
+name = "remote-config"
+url = "http://example.com"
+"#;
+        let result: Config = from_str(toml_remote).unwrap();
+        assert_eq!(result.name, "remote-config");
+        assert_eq!(
+            result.backend,
+            Backend::Remote(RemoteBackend {
+                url: "http://example.com".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn test_flatten_enum_multiple_fields() {
+        use facet::Facet;
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct TextPayload {
+            content: String,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct BinaryPayload {
+            data: String,
+            encoding: String,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[repr(u8)]
+        enum MessagePayload {
+            Text(TextPayload),
+            Binary(BinaryPayload),
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct Message {
+            id: String,
+            #[facet(flatten)]
+            payload: MessagePayload,
+        }
+
+        // Test Text variant
+        let toml_text = r#"
+id = "msg-001"
+content = "Hello, world!"
+"#;
+        let result: Message = from_str(toml_text).unwrap();
+        assert_eq!(result.id, "msg-001");
+        assert_eq!(
+            result.payload,
+            MessagePayload::Text(TextPayload {
+                content: "Hello, world!".to_string()
+            })
+        );
+
+        // Test Binary variant
+        let toml_binary = r#"
+id = "msg-002"
+data = "SGVsbG8="
+encoding = "base64"
+"#;
+        let result: Message = from_str(toml_binary).unwrap();
+        assert_eq!(result.id, "msg-002");
+        assert_eq!(
+            result.payload,
+            MessagePayload::Binary(BinaryPayload {
+                data: "SGVsbG8=".to_string(),
+                encoding: "base64".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn test_flatten_enum_with_table_header() {
+        use facet::Facet;
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct DatabaseConfig {
+            host: String,
+            port: i32,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct FileConfig {
+            path: String,
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        #[repr(u8)]
+        enum StorageKind {
+            Database(DatabaseConfig),
+            File(FileConfig),
+        }
+
+        #[derive(Facet, Debug, PartialEq)]
+        struct Storage {
+            name: String,
+            #[facet(flatten)]
+            kind: StorageKind,
+        }
+
+        // Using table header style
+        let toml_db = r#"
+name = "primary"
+host = "localhost"
+port = 5432
+"#;
+        let result: Storage = from_str(toml_db).unwrap();
+        assert_eq!(result.name, "primary");
+        assert_eq!(
+            result.kind,
+            StorageKind::Database(DatabaseConfig {
+                host: "localhost".to_string(),
+                port: 5432
+            })
+        );
+
+        let toml_file = r#"
+name = "backup"
+path = "/var/data/backup.db"
+"#;
+        let result: Storage = from_str(toml_file).unwrap();
+        assert_eq!(result.name, "backup");
+        assert_eq!(
+            result.kind,
+            StorageKind::File(FileConfig {
+                path: "/var/data/backup.db".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn test_collect_top_level_keys() {
+        // Test key collection for solver
+        let input = r#"
+name = "test"
+cache = true
+foo.bar = 1
+"#;
+        let source = Source::new(input);
+        let tokens: Vec<_> = source.lex().collect();
+        let mut collector = EventCollector::new();
+        parse_document(&tokens, &mut collector, &mut ());
+        let events = collector.into_events();
+
+        let keys = collect_top_level_keys(input, &events);
+        assert!(keys.contains(&"name"));
+        assert!(keys.contains(&"cache"));
+        assert!(keys.contains(&"foo")); // First segment of dotted key
+    }
+
+    #[test]
+    fn test_collect_top_level_keys_with_table() {
+        let input = r#"
+name = "test"
+
+[database]
+host = "localhost"
+"#;
+        let source = Source::new(input);
+        let tokens: Vec<_> = source.lex().collect();
+        let mut collector = EventCollector::new();
+        parse_document(&tokens, &mut collector, &mut ());
+        let events = collector.into_events();
+
+        let keys = collect_top_level_keys(input, &events);
+        assert!(keys.contains(&"name"));
+        assert!(keys.contains(&"database"));
+    }
+}

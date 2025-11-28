@@ -13,15 +13,16 @@ categories = ["encoding", "parsing", "data-structures"]
 rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
 
 [features]
-deserialize = ["alloc", "toml_edit/parse"]
+deserialize = ["alloc"]
 serialize = ["alloc", "dep:toml_edit", "toml_edit/display"]
 std = [
     "alloc",
     "facet-core/std",
     "facet-reflect/std",
+    "facet-solver/std",
     "num-traits/std",
 ]
-alloc = ["facet-core/alloc", "facet-reflect/alloc"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc", "facet-solver/alloc"]
 rich-diagnostics = ["dep:ariadne", "std"]
 default = ["deserialize", "serialize", "std", "rich-diagnostics"]
 
@@ -29,11 +30,11 @@ default = ["deserialize", "serialize", "std", "rich-diagnostics"]
 ariadne = { version = "=0.5.1", optional = true }
 log = "0.4.27"
 num-traits = { version = "0.2.19", default-features = false }
-toml_edit = { version = "0.22.27", default-features = false, features = [
-    "parse",
-], optional = true }
+toml_edit = { version = "0.22.27", default-features = false, optional = true }
+toml_parser = { version = "1.0.4", default-features = false, features = ["alloc"] }
 facet-core = { path = "../facet-core", default-features = false }
 facet-reflect = { path = "../facet-reflect", default-features = false }
+facet-solver = { path = "../facet-solver", default-features = false }
 owo-colors = "4.2.2"
 
 [dev-dependencies]
