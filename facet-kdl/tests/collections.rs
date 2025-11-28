@@ -12,15 +12,15 @@ use indoc::indoc;
 fn option_without_default_requires_value() {
     #[derive(Facet, Debug)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: Option<u16>, // No #[facet(default)] - requires explicit value!
     }
 
@@ -57,15 +57,15 @@ fn option_without_default_requires_value() {
 fn option_with_default_can_be_omitted() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         #[facet(default)]
         port: Option<u16>, // With #[facet(default)] - can be omitted
     }
@@ -101,7 +101,7 @@ fn hashmap_with_node_name_key() {
 
     #[derive(Facet, Debug)]
     struct Config {
-        #[facet(children)]
+        #[facet(kdl::children)]
         settings: HashMap<String, String>,
     }
 
@@ -127,7 +127,7 @@ fn btreemap_with_node_name_key() {
 
     #[derive(Facet, Debug)]
     struct Config {
-        #[facet(children)]
+        #[facet(kdl::children)]
         settings: BTreeMap<String, i32>,
     }
 
@@ -154,13 +154,13 @@ fn hashset_children() {
 
     #[derive(Facet, Debug)]
     struct Config {
-        #[facet(children)]
+        #[facet(kdl::children)]
         tags: HashSet<Tag>,
     }
 
     #[derive(Facet, Debug, PartialEq, Eq, Hash)]
     struct Tag {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
     }
 
@@ -186,13 +186,13 @@ fn btreeset_children() {
 
     #[derive(Facet, Debug, PartialEq, Eq, PartialOrd, Ord)]
     struct Priority {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         level: u32,
     }
 
     #[derive(Facet, Debug)]
     struct Config {
-        #[facet(children)]
+        #[facet(kdl::children)]
         priorities: BTreeSet<Priority>,
     }
 

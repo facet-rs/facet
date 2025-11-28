@@ -1,6 +1,6 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(name = \"MyCoolEnum\", repr = \"u16\", type_tag = \"rs.facet.MyCoolEnum\")]\n        #[repr(u16)] // Ensure repr matches if specified in facet attribute\n        enum EnumWithAttributes {\n            #[facet(name = \"FirstVariant\", discriminant = 10)]\n            VariantA,\n\n            #[facet(skip)]\n            InternalVariant(i32),\n\n            #[facet(deprecated = \"Use VariantD instead\")]\n            VariantC {\n                #[facet(sensitive)]\n                secret: String\n            },\n\n            VariantD {\n                 #[facet(default = forty_two())]\n                 value: i32\n            },\n        }\n        \"#)"
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(type_tag = \"rs.facet.EnumWithAttributes\", myns::name = \"MyCoolEnum\")]\n        #[repr(u16)]\n        enum EnumWithAttributes {\n            #[facet(myns::name = \"FirstVariant\", myns::discriminant = 10)]\n            VariantA,\n\n            #[facet(skip)]\n            InternalVariant(i32),\n\n            #[facet(myns::deprecated = \"Use VariantD instead\")]\n            VariantC {\n                #[facet(sensitive)]\n                secret: String\n            },\n\n            VariantD {\n                 #[facet(default = forty_two())]\n                 value: i32\n            },\n        }\n        \"#)"
 ---
 static ENUM_WITH_ATTRIBUTES_SHAPE: &'static ::facet::Shape =
     <EnumWithAttributes as ::facet::Facet>::SHAPE;
@@ -34,8 +34,56 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                 ::facet::Variant::builder()
                     .name("VariantA")
                     .attributes(&[
-                        ::facet::VariantAttribute::Arbitrary("name = \"FirstVariant\""),
-                        ::facet::VariantAttribute::Arbitrary("discriminant = 10"),
+                        ::facet::VariantAttribute::Extension({
+                            fn __ext_get() -> &'static (dyn ::core::any::Any
+                                             + ::core::marker::Send
+                                             + ::core::marker::Sync) {
+                                static __UNIT: () = ();
+                                &__UNIT
+                            }
+                            ::facet::ExtensionAttr {
+                                ns: "myns",
+                                key: "name",
+                                args: &[
+                                    ::facet::Token::Punct {
+                                        ch: '=',
+                                        joint: false,
+                                        span: ::facet::Span::DUMMY,
+                                    },
+                                    ::facet::Token::Literal {
+                                        kind: ::facet::LiteralKind::String,
+                                        text: "\"FirstVariant\"",
+                                        span: ::facet::Span::DUMMY,
+                                    },
+                                ],
+                                get: __ext_get,
+                            }
+                        }),
+                        ::facet::VariantAttribute::Extension({
+                            fn __ext_get() -> &'static (dyn ::core::any::Any
+                                             + ::core::marker::Send
+                                             + ::core::marker::Sync) {
+                                static __UNIT: () = ();
+                                &__UNIT
+                            }
+                            ::facet::ExtensionAttr {
+                                ns: "myns",
+                                key: "discriminant",
+                                args: &[
+                                    ::facet::Token::Punct {
+                                        ch: '=',
+                                        joint: false,
+                                        span: ::facet::Span::DUMMY,
+                                    },
+                                    ::facet::Token::Literal {
+                                        kind: ::facet::LiteralKind::Integer,
+                                        text: "10",
+                                        span: ::facet::Span::DUMMY,
+                                    },
+                                ],
+                                get: __ext_get,
+                            }
+                        }),
                     ])
                     .discriminant(0i64 as i64)
                     .data(
@@ -71,9 +119,31 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     };
                     ::facet::Variant::builder()
                         .name("VariantC")
-                        .attributes(&[::facet::VariantAttribute::Arbitrary(
-                            "deprecated = \"Use VariantD instead\"",
-                        )])
+                        .attributes(&[::facet::VariantAttribute::Extension({
+                            fn __ext_get() -> &'static (dyn ::core::any::Any
+                                             + ::core::marker::Send
+                                             + ::core::marker::Sync) {
+                                static __UNIT: () = ();
+                                &__UNIT
+                            }
+                            ::facet::ExtensionAttr {
+                                ns: "myns",
+                                key: "deprecated",
+                                args: &[
+                                    ::facet::Token::Punct {
+                                        ch: '=',
+                                        joint: false,
+                                        span: ::facet::Span::DUMMY,
+                                    },
+                                    ::facet::Token::Literal {
+                                        kind: ::facet::LiteralKind::String,
+                                        text: "\"Use VariantD instead\"",
+                                        span: ::facet::Span::DUMMY,
+                                    },
+                                ],
+                                get: __ext_get,
+                            }
+                        })])
                         .discriminant(2i64 as i64)
                         .data(
                             ::facet::StructType::builder()
@@ -121,13 +191,34 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
             )))
             .attributes(
                 &const {
-                    [
-                        ::facet::ShapeAttribute::Arbitrary("name = \"MyCoolEnum\""),
-                        ::facet::ShapeAttribute::Arbitrary("repr = \"u16\""),
-                    ]
+                    [::facet::ShapeAttribute::Extension({
+                        fn __ext_get() -> &'static (dyn ::core::any::Any
+                                         + ::core::marker::Send
+                                         + ::core::marker::Sync) {
+                            static __UNIT: () = ();
+                            &__UNIT
+                        }
+                        ::facet::ExtensionAttr {
+                            ns: "myns",
+                            key: "name",
+                            args: &[
+                                ::facet::Token::Punct {
+                                    ch: '=',
+                                    joint: false,
+                                    span: ::facet::Span::DUMMY,
+                                },
+                                ::facet::Token::Literal {
+                                    kind: ::facet::LiteralKind::String,
+                                    text: "\"MyCoolEnum\"",
+                                    span: ::facet::Span::DUMMY,
+                                },
+                            ],
+                            get: __ext_get,
+                        }
+                    })]
                 },
             )
-            .type_tag("rs.facet.MyCoolEnum")
+            .type_tag("rs.facet.EnumWithAttributes")
             .build()
     };
 }

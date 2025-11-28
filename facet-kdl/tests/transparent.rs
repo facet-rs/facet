@@ -11,13 +11,13 @@ fn transparent_utf8_path_buf() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         file: FileConfig,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct FileConfig {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         path: Utf8PathBuf,
     }
 
@@ -35,17 +35,17 @@ fn transparent_utf8_path_buf_property() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         config_path: Utf8PathBuf,
-        #[facet(property)]
+        #[facet(kdl::property)]
         log_path: Utf8PathBuf,
     }
 
@@ -65,15 +65,15 @@ fn transparent_option_utf8_path_buf() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
-        #[facet(property, default)]
+        #[facet(kdl::property, default)]
         config_path: Option<Utf8PathBuf>,
     }
 
@@ -111,13 +111,13 @@ fn map_with_transparent_key_utf8_path_buf() {
 
     #[derive(Facet, Debug)]
     struct Config {
-        #[facet(children)]
+        #[facet(kdl::children)]
         files: HashMap<Utf8PathBuf, FileConfig>,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct FileConfig {
-        #[facet(property)]
+        #[facet(kdl::property)]
         enabled: bool,
     }
 
@@ -152,7 +152,7 @@ fn btreemap_with_transparent_key_utf8_path_buf() {
 
     #[derive(Facet, Debug)]
     struct Config {
-        #[facet(children)]
+        #[facet(kdl::children)]
         paths: BTreeMap<Utf8PathBuf, u32>,
     }
 

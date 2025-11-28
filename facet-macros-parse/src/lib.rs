@@ -195,12 +195,10 @@ unsynn! {
         Content(ContentInner),
         /// An extension attribute from a third-party crate, e.g., #[facet(orm::primary_key(auto_increment))]
         Extension(ExtensionInner),
-        /// Any other attribute represented as a sequence of token trees.
-        /// This is a catch-all for attributes like `#[facet(argument)]` or `#[facet(property)]`
-        Arbitrary(VerbatimUntil<Comma>),
     }
 
-    /// Inner value for extension attributes like #[facet(orm::primary_key(args...))]
+    /// Inner value for extension attributes like #[facet(orm::primary_key(auto_increment))]
+    /// or #[facet(args::short = 'v')]
     pub struct ExtensionInner {
         /// The namespace (e.g., "orm")
         pub ns: Ident,
@@ -208,8 +206,24 @@ unsynn! {
         pub _sep: PathSep,
         /// The key (e.g., "primary_key")
         pub key: Ident,
-        /// Optional arguments in parentheses
-        pub args: Option<ParenthesisGroupContaining<Vec<TokenTree>>>,
+        /// Optional arguments - either in parentheses like `(args)` or with equals like `= value`
+        pub args: Option<ExtensionArgs>,
+    }
+
+    /// Arguments for extension attributes - either parenthesized `(args)` or with equals `= value`
+    pub enum ExtensionArgs {
+        /// Parenthesized arguments like `(auto_increment)`
+        Parens(ParenthesisGroupContaining<Vec<TokenTree>>),
+        /// Equals-style arguments like `= 'v'`
+        Equals(ExtensionEqualsArgs),
+    }
+
+    /// Equals-style arguments for extensions like `= 'v'` or `= "value"`
+    pub struct ExtensionEqualsArgs {
+        /// The equals sign
+        pub _eq: Eq,
+        /// The value (tokens until comma or end)
+        pub value: VerbatimUntil<Comma>,
     }
 
     /// Inner value for #[facet(tag = ...)]

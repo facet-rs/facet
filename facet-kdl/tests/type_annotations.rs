@@ -11,13 +11,13 @@ use indoc::indoc;
 fn type_annotation_disambiguates_enum() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         source: Source,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Source {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         kind: SourceKind,
@@ -34,15 +34,15 @@ fn type_annotation_disambiguates_enum() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct HttpSource {
-        #[facet(property)]
+        #[facet(kdl::property)]
         url: String,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct GitSource {
-        #[facet(property)]
+        #[facet(kdl::property)]
         url: String,
-        #[facet(property, default)]
+        #[facet(kdl::property, default)]
         branch: Option<String>,
     }
 
@@ -93,13 +93,13 @@ fn type_annotation_disambiguates_enum() {
 fn type_annotation_unit_variant() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         log: LogConfig,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct LogConfig {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         output: LogOutput,
@@ -115,7 +115,7 @@ fn type_annotation_unit_variant() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct FileOutput {
-        #[facet(property)]
+        #[facet(kdl::property)]
         path: String,
     }
 
@@ -149,13 +149,13 @@ fn type_annotation_unit_variant() {
 fn type_annotation_kebab_case() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         source: Source,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Source {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         kind: SourceKind,
@@ -171,15 +171,15 @@ fn type_annotation_kebab_case() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct HttpSourceData {
-        #[facet(property)]
+        #[facet(kdl::property)]
         url: String,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct GitSourceData {
-        #[facet(property)]
+        #[facet(kdl::property)]
         url: String,
-        #[facet(property, default)]
+        #[facet(kdl::property, default)]
         branch: Option<String>,
     }
 

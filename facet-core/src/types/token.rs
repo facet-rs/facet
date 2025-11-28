@@ -397,10 +397,10 @@ mod parsed_args {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
             match self {
                 TokenParseError::PositionalAfterNamed { span } => {
-                    write!(f, "positional argument after named argument at {}", span)
+                    write!(f, "positional argument after named argument at {span}")
                 }
                 TokenParseError::UnexpectedToken { span, message } => {
-                    write!(f, "unexpected token at {}: {}", span, message)
+                    write!(f, "unexpected token at {span}: {message}")
                 }
                 TokenParseError::UnexpectedEnd => {
                     write!(f, "unexpected end of tokens")
@@ -410,7 +410,7 @@ mod parsed_args {
     }
 
     #[cfg(feature = "std")]
-    impl std::error::Error for TokenParseError {}
+    impl core::error::Error for TokenParseError {}
 
     /// Parse a single value from the token iterator.
     fn parse_value<'a, I>(iter: &mut core::iter::Peekable<I>) -> Result<TokenValue, TokenParseError>
@@ -447,7 +447,7 @@ mod parsed_args {
             }
             Some(other) => Err(TokenParseError::UnexpectedToken {
                 span: other.span(),
-                message: alloc::format!("expected value, got {:?}", other),
+                message: alloc::format!("expected value, got {other:?}"),
             }),
             None => Err(TokenParseError::UnexpectedEnd),
         }
@@ -475,7 +475,7 @@ mod parsed_args {
                 } else {
                     Err(TokenParseError::UnexpectedToken {
                         span,
-                        message: alloc::format!("invalid integer: {}", text),
+                        message: alloc::format!("invalid integer: {text}"),
                     })
                 }
             }
@@ -485,7 +485,7 @@ mod parsed_args {
                 } else {
                     Err(TokenParseError::UnexpectedToken {
                         span,
-                        message: alloc::format!("invalid float: {}", text),
+                        message: alloc::format!("invalid float: {text}"),
                     })
                 }
             }

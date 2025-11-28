@@ -123,11 +123,6 @@ pub enum PFacetAttr {
     /// Valid in container (enums only)
     /// `#[facet(content = "data")]` — used with `tag` for adjacently tagged enums
     Content { name: String },
-
-    /// Valid in field, enum variant, container
-    /// An arbitrary/unknown string, like,
-    /// `#[facet(bleh)]`
-    Arbitrary { content: String },
 }
 
 impl PFacetAttr {
@@ -169,12 +164,17 @@ impl PFacetAttr {
                     }
                 }
                 FacetInner::Extension(ext) => {
-                    use facet_macros_parse::ToTokens;
-                    let args = ext
-                        .args
-                        .as_ref()
-                        .map(|a| a.content.to_token_stream())
-                        .unwrap_or_default();
+                    use facet_macros_parse::{ExtensionArgs, ToTokens};
+                    let args = match &ext.args {
+                        Some(ExtensionArgs::Parens(p)) => p.content.to_token_stream(),
+                        Some(ExtensionArgs::Equals(e)) => {
+                            // Convert `= value` to a token stream including the equals sign
+                            let eq = e._eq.to_token_stream();
+                            let val = e.value.to_token_stream();
+                            quote::quote! { #eq #val }
+                        }
+                        None => TokenStream::new(),
+                    };
                     dest.push(PFacetAttr::Extension {
                         ns: ext.ns.to_string(),
                         key: ext.key.to_string(),
@@ -221,11 +221,6 @@ impl PFacetAttr {
                 FacetInner::Content(content) => {
                     dest.push(PFacetAttr::Content {
                         name: content.value.as_str().to_string(),
-                    });
-                }
-                FacetInner::Arbitrary(tt) => {
-                    dest.push(PFacetAttr::Arbitrary {
-                        content: tt.tokens_to_string(),
                     });
                 }
             }

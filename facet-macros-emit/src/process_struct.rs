@@ -100,9 +100,16 @@ pub(crate) fn gen_field_from_pfield(
             PFacetAttr::Extension { ns, key, args } => {
                 let ext_attr = emit_extension_attr(ns, key, args);
                 attribute_list.push(quote! { ::facet::FieldAttribute::Extension(#ext_attr) });
-            }
-            PFacetAttr::Arbitrary { content } => {
-                attribute_list.push(quote! { ::facet::FieldAttribute::Arbitrary(#content) });
+
+                // Set CHILD flag for kdl::child extension attribute
+                if ns == "kdl" && key == "child" {
+                    if flags_empty {
+                        flags_empty = false;
+                        flags = quote! { ::facet::FieldFlags::CHILD };
+                    } else {
+                        flags = quote! { #flags.union(::facet::FieldFlags::CHILD) };
+                    }
+                }
             }
             PFacetAttr::Skip => {
                 // Skip both serialization and deserialization
@@ -329,9 +336,6 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 PFacetAttr::Extension { ns, key, args } => {
                     let ext_attr = emit_extension_attr(ns, key, args);
                     items.push(quote! { ::facet::ShapeAttribute::Extension(#ext_attr) });
-                }
-                PFacetAttr::Arbitrary { content } => {
-                    items.push(quote! { ::facet::ShapeAttribute::Arbitrary(#content) });
                 }
                 // Others not applicable at container level or handled elsewhere
                 PFacetAttr::Sensitive

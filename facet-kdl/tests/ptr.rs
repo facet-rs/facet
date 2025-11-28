@@ -14,13 +14,13 @@ fn box_scalar_value() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         setting: Setting,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Setting {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         value: Box<u32>,
     }
 
@@ -38,13 +38,13 @@ fn box_string_value() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         message: Message,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Message {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         text: Box<String>,
     }
 
@@ -62,15 +62,15 @@ fn box_struct_child() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Box<Server>,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: u16,
     }
 
@@ -89,13 +89,13 @@ fn arc_scalar_value() {
 
     #[derive(Facet, Debug)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         setting: Setting,
     }
 
     #[derive(Facet, Debug)]
     struct Setting {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         value: Arc<u64>,
     }
 
@@ -113,15 +113,15 @@ fn arc_struct_child() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         database: Arc<Database>,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Database {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         max_connections: u32,
     }
 
@@ -140,13 +140,13 @@ fn rc_scalar_value() {
 
     #[derive(Facet, Debug)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         setting: Setting,
     }
 
     #[derive(Facet, Debug)]
     struct Setting {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         value: Rc<i32>,
     }
 
@@ -164,15 +164,15 @@ fn option_box_combination() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
-        #[facet(property, default)]
+        #[facet(kdl::property, default)]
         description: Option<Box<String>>,
     }
 
@@ -204,13 +204,13 @@ fn box_in_children_list() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(children)]
+        #[facet(kdl::children)]
         items: Vec<Item>,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Item {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         value: Box<String>,
     }
 

@@ -628,16 +628,17 @@ fn opaque_arc() {
 #[test]
 fn struct_with_facet_attributes() {
     // Test various facet attributes together
+    // Uses namespaced extension attributes (myns::...) for custom metadata
     insta::assert_snapshot!(expand(
         r#"
         #[derive(Facet)]
-        #[facet(name = "MyCoolStruct", deny_unknown_fields, version = 2, type_tag = "rs.facet.MyCoolStruct")]
+        #[facet(deny_unknown_fields, type_tag = "rs.facet.StructWithAttributes", myns::name = "MyCoolStruct", myns::version = 2)]
         struct StructWithAttributes {
-            #[facet(name = "identifier", default = generate_id, sensitive)]
+            #[facet(rename = "identifier", default = generate_id, sensitive)]
             id: String,
-            #[facet(skip, version = 3)]
+            #[facet(skip, myns::version = 3)]
             internal_data: Vec<u8>,
-            #[facet(deprecated = "Use 'new_value' instead")]
+            #[facet(myns::deprecated = "Use 'new_value' instead")]
             old_value: i32,
             new_value: i32,
         }
@@ -648,19 +649,20 @@ fn struct_with_facet_attributes() {
 #[test]
 fn enum_with_facet_attributes() {
     // Test various facet attributes on enums and variants
+    // Uses namespaced extension attributes (myns::...) for custom metadata
     insta::assert_snapshot!(expand(
         r#"
         #[derive(Facet)]
-        #[facet(name = "MyCoolEnum", repr = "u16", type_tag = "rs.facet.MyCoolEnum")]
-        #[repr(u16)] // Ensure repr matches if specified in facet attribute
+        #[facet(type_tag = "rs.facet.EnumWithAttributes", myns::name = "MyCoolEnum")]
+        #[repr(u16)]
         enum EnumWithAttributes {
-            #[facet(name = "FirstVariant", discriminant = 10)]
+            #[facet(myns::name = "FirstVariant", myns::discriminant = 10)]
             VariantA,
 
             #[facet(skip)]
             InternalVariant(i32),
 
-            #[facet(deprecated = "Use VariantD instead")]
+            #[facet(myns::deprecated = "Use VariantD instead")]
             VariantC {
                 #[facet(sensitive)]
                 secret: String

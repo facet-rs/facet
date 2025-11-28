@@ -1,6 +1,6 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
-expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(name = \"MyCoolStruct\", deny_unknown_fields, version = 2, type_tag = \"rs.facet.MyCoolStruct\")]\n        struct StructWithAttributes {\n            #[facet(name = \"identifier\", default = generate_id, sensitive)]\n            id: String,\n            #[facet(skip, version = 3)]\n            internal_data: Vec<u8>,\n            #[facet(deprecated = \"Use 'new_value' instead\")]\n            old_value: i32,\n            new_value: i32,\n        }\n        \"#)"
+expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(deny_unknown_fields, type_tag = \"rs.facet.StructWithAttributes\", myns::name = \"MyCoolStruct\", myns::version = 2)]\n        struct StructWithAttributes {\n            #[facet(rename = \"identifier\", default = generate_id, sensitive)]\n            id: String,\n            #[facet(skip, myns::version = 3)]\n            internal_data: Vec<u8>,\n            #[facet(myns::deprecated = \"Use 'new_value' instead\")]\n            old_value: i32,\n            new_value: i32,\n        }\n        \"#)"
 ---
 static STRUCT_WITH_ATTRIBUTES_SHAPE: &'static ::facet::Shape =
     <StructWithAttributes as ::facet::Facet>::SHAPE;
@@ -10,7 +10,19 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
         let fields: &'static [::facet::Field] = &const {
             [
                 {
-                    :: facet :: Field :: builder () . name ("id") . shape (|| :: facet :: shape_of (& | s : & StructWithAttributes | & s . id)) . offset (:: core :: mem :: offset_of ! (StructWithAttributes , id)) . flags (:: facet :: FieldFlags :: DEFAULT . union (:: facet :: FieldFlags :: SENSITIVE)) . attributes (& const { [:: facet :: FieldAttribute :: Arbitrary ("name = \"identifier\"")] }) . vtable (& const { :: facet :: FieldVTable :: builder () . default_fn (| ptr | { unsafe { ptr . put :: < String > (generate_id) } }) . build () }) . build ()
+                    ::facet::Field::builder()
+                        .name("identifier")
+                        .shape(|| ::facet::shape_of(&|s: &StructWithAttributes| &s.id))
+                        .offset(::core::mem::offset_of!(StructWithAttributes, id))
+                        .flags(::facet::FieldFlags::DEFAULT.union(::facet::FieldFlags::SENSITIVE))
+                        .vtable(
+                            &const {
+                                ::facet::FieldVTable::builder()
+                                    .default_fn(|ptr| unsafe { ptr.put::<String>(generate_id) })
+                                    .build()
+                            },
+                        )
+                        .build()
                 },
                 {
                     ::facet::Field::builder()
@@ -21,7 +33,36 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                             ::facet::FieldFlags::SKIP_SERIALIZING
                                 .union(::facet::FieldFlags::SKIP_DESERIALIZING),
                         )
-                        .attributes(&const { [::facet::FieldAttribute::Arbitrary("version = 3")] })
+                        .attributes(
+                            &const {
+                                [::facet::FieldAttribute::Extension({
+                                    fn __ext_get() -> &'static (dyn ::core::any::Any
+                                                     + ::core::marker::Send
+                                                     + ::core::marker::Sync)
+                                    {
+                                        static __UNIT: () = ();
+                                        &__UNIT
+                                    }
+                                    ::facet::ExtensionAttr {
+                                        ns: "myns",
+                                        key: "version",
+                                        args: &[
+                                            ::facet::Token::Punct {
+                                                ch: '=',
+                                                joint: false,
+                                                span: ::facet::Span::DUMMY,
+                                            },
+                                            ::facet::Token::Literal {
+                                                kind: ::facet::LiteralKind::Integer,
+                                                text: "3",
+                                                span: ::facet::Span::DUMMY,
+                                            },
+                                        ],
+                                        get: __ext_get,
+                                    }
+                                })]
+                            },
+                        )
                         .build()
                 },
                 {
@@ -31,9 +72,32 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                         .offset(::core::mem::offset_of!(StructWithAttributes, old_value))
                         .attributes(
                             &const {
-                                [::facet::FieldAttribute::Arbitrary(
-                                    "deprecated = \"Use 'new_value' instead\"",
-                                )]
+                                [::facet::FieldAttribute::Extension({
+                                    fn __ext_get() -> &'static (dyn ::core::any::Any
+                                                     + ::core::marker::Send
+                                                     + ::core::marker::Sync)
+                                    {
+                                        static __UNIT: () = ();
+                                        &__UNIT
+                                    }
+                                    ::facet::ExtensionAttr {
+                                        ns: "myns",
+                                        key: "deprecated",
+                                        args: &[
+                                            ::facet::Token::Punct {
+                                                ch: '=',
+                                                joint: false,
+                                                span: ::facet::Span::DUMMY,
+                                            },
+                                            ::facet::Token::Literal {
+                                                kind: ::facet::LiteralKind::String,
+                                                text: "\"Use 'new_value' instead\"",
+                                                span: ::facet::Span::DUMMY,
+                                            },
+                                        ],
+                                        get: __ext_get,
+                                    }
+                                })]
                             },
                         )
                         .build()
@@ -47,29 +111,6 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                 },
             ]
         };
-        ::facet::Shape::builder_for_sized::<Self>()
-            .vtable({
-                let mut vtable =
-                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
-                        f,
-                        "StructWithAttributes"
-                    ));
-                vtable
-            })
-            .type_identifier("StructWithAttributes")
-            .ty(::facet::Type::User(::facet::UserType::Struct(
-                ::facet::StructType::builder()
-                    .repr(::facet::Repr::default())
-                    .kind(::facet::StructKind::Struct)
-                    .fields(fields)
-                    .build(),
-            )))
-            .attributes(&[
-                ::facet::ShapeAttribute::Arbitrary("name = \"MyCoolStruct\""),
-                ::facet::ShapeAttribute::DenyUnknownFields,
-                ::facet::ShapeAttribute::Arbitrary("version = 2"),
-            ])
-            .type_tag("rs.facet.MyCoolStruct")
-            .build()
+        :: facet :: Shape :: builder_for_sized :: < Self > () . vtable ({ let mut vtable = :: facet :: value_vtable ! (Self , | f , _opts | :: core :: fmt :: Write :: write_str (f , "StructWithAttributes")) ; vtable }) . type_identifier ("StructWithAttributes") . ty (:: facet :: Type :: User (:: facet :: UserType :: Struct (:: facet :: StructType :: builder () . repr (:: facet :: Repr :: default ()) . kind (:: facet :: StructKind :: Struct) . fields (fields) . build ()))) . attributes (& [:: facet :: ShapeAttribute :: DenyUnknownFields , :: facet :: ShapeAttribute :: Extension ({ fn __ext_get () -> & 'static (dyn :: core :: any :: Any + :: core :: marker :: Send + :: core :: marker :: Sync) { static __UNIT : () = () ; & __UNIT } :: facet :: ExtensionAttr { ns : "myns" , key : "name" , args : & [:: facet :: Token :: Punct { ch : '=' , joint : false , span : :: facet :: Span :: DUMMY , } , :: facet :: Token :: Literal { kind : :: facet :: LiteralKind :: String , text : "\"MyCoolStruct\"" , span : :: facet :: Span :: DUMMY , }] , get : __ext_get , } }) , :: facet :: ShapeAttribute :: Extension ({ fn __ext_get () -> & 'static (dyn :: core :: any :: Any + :: core :: marker :: Send + :: core :: marker :: Sync) { static __UNIT : () = () ; & __UNIT } :: facet :: ExtensionAttr { ns : "myns" , key : "version" , args : & [:: facet :: Token :: Punct { ch : '=' , joint : false , span : :: facet :: Span :: DUMMY , } , :: facet :: Token :: Literal { kind : :: facet :: LiteralKind :: Integer , text : "2" , span : :: facet :: Span :: DUMMY , }] , get : __ext_get , } })]) . type_tag ("rs.facet.StructWithAttributes") . build ()
     };
 }

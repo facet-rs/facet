@@ -14,13 +14,13 @@ use facet::Facet;
 
 #[derive(Facet)]
 struct Args {
-    #[facet(positional)]
+    #[facet(args::positional)]
     path: String,
 
-    #[facet(named, short = 'v')]
+    #[facet(args::named, short = 'v')]
     verbose: bool,
 
-    #[facet(named, short = 'j')]
+    #[facet(args::named, short = 'j')]
     concurrency: usize,
 }
 

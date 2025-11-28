@@ -46,9 +46,6 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     let ext_attr = emit_extension_attr(ns, key, args);
                     attribute_tokens.push(quote! { ::facet::ShapeAttribute::Extension(#ext_attr) });
                 }
-                PFacetAttr::Arbitrary { content } => {
-                    attribute_tokens.push(quote! { ::facet::ShapeAttribute::Arbitrary(#content) });
-                }
                 PFacetAttr::RenameAll { rule } => {
                     // RenameAll is handled by PName logic, but add it as ShapeAttribute too
                     let rule_str = rule.apply(""); // Hack to get str - improve RenameRule display
@@ -207,11 +204,6 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                                     let ext_attr = emit_extension_attr(ns, key, args);
                                     attrs_list.push(
                                         quote! { ::facet::VariantAttribute::Extension(#ext_attr) },
-                                    );
-                                }
-                                PFacetAttr::Arbitrary { content } => {
-                                    attrs_list.push(
-                                        quote! { ::facet::VariantAttribute::Arbitrary(#content) },
                                     );
                                 }
                                 _ => {}
@@ -432,11 +424,6 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                                     let ext_attr = emit_extension_attr(ns, key, args);
                                     attrs_list.push(
                                         quote! { ::facet::VariantAttribute::Extension(#ext_attr) },
-                                    );
-                                }
-                                PFacetAttr::Arbitrary { content } => {
-                                    attrs_list.push(
-                                        quote! { ::facet::VariantAttribute::Arbitrary(#content) },
                                     );
                                 }
                                 _ => {}

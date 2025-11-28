@@ -6,13 +6,13 @@ use indoc::indoc;
 fn flatten_struct() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
         #[facet(flatten)]
         connection: ConnectionSettings,
@@ -20,9 +20,9 @@ fn flatten_struct() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct ConnectionSettings {
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: u16,
-        #[facet(property)]
+        #[facet(kdl::property)]
         timeout: u32,
     }
 
@@ -46,15 +46,15 @@ fn flatten_struct() {
 fn flatten_struct_interleaved() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         enabled: bool,
         #[facet(flatten)]
         connection: ConnectionSettings,
@@ -62,9 +62,9 @@ fn flatten_struct_interleaved() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct ConnectionSettings {
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: u16,
-        #[facet(property)]
+        #[facet(kdl::property)]
         timeout: u32,
     }
 
@@ -97,13 +97,13 @@ fn flatten_struct_interleaved() {
 fn flatten_enum_simple() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         storage: Storage,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Storage {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         backend: StorageBackend,
@@ -119,17 +119,17 @@ fn flatten_enum_simple() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct FileStorage {
-        #[facet(property)]
+        #[facet(kdl::property)]
         path: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         readonly: bool,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct DatabaseStorage {
-        #[facet(property)]
+        #[facet(kdl::property)]
         host: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: u16,
     }
 
@@ -170,13 +170,13 @@ fn flatten_enum_simple() {
 fn flatten_nested() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         settings: ServerSettings,
@@ -184,7 +184,7 @@ fn flatten_nested() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct ServerSettings {
-        #[facet(property)]
+        #[facet(kdl::property)]
         enabled: bool,
         #[facet(flatten)]
         backend: Backend,
@@ -200,17 +200,17 @@ fn flatten_nested() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct HttpBackend {
-        #[facet(property)]
+        #[facet(kdl::property)]
         url: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         timeout: u32,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct GrpcBackend {
-        #[facet(property)]
+        #[facet(kdl::property)]
         address: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         tls: bool,
     }
 
@@ -252,13 +252,13 @@ fn flatten_nested() {
 fn flatten_multiple_enums() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         connection: Connection,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Connection {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         auth: Auth,
@@ -276,15 +276,15 @@ fn flatten_multiple_enums() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct TokenAuth {
-        #[facet(property)]
+        #[facet(kdl::property)]
         token: String,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct BasicAuth {
-        #[facet(property)]
+        #[facet(kdl::property)]
         username: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         password: String,
     }
 
@@ -298,15 +298,15 @@ fn flatten_multiple_enums() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct TcpTransport {
-        #[facet(property)]
+        #[facet(kdl::property)]
         host: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: u16,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct UnixTransport {
-        #[facet(property)]
+        #[facet(kdl::property)]
         socket_path: String,
     }
 
@@ -347,13 +347,13 @@ fn flatten_multiple_enums() {
 fn flatten_enum_overlapping_fields() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         source: Source,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Source {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         kind: SourceKind,
@@ -370,15 +370,15 @@ fn flatten_enum_overlapping_fields() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct HttpSource {
-        #[facet(property)]
+        #[facet(kdl::property)]
         url: String,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct GitSource {
-        #[facet(property)]
+        #[facet(kdl::property)]
         url: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         branch: String,
     }
 
@@ -419,13 +419,13 @@ fn flatten_enum_overlapping_fields() {
 fn flatten_enum_unit_variant() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         log: LogConfig,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct LogConfig {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         output: LogOutput,
@@ -442,7 +442,7 @@ fn flatten_enum_unit_variant() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct FileOutput {
-        #[facet(property)]
+        #[facet(kdl::property)]
         path: String,
     }
 
@@ -479,40 +479,40 @@ fn flatten_enum_unit_variant() {
 fn flatten_struct_child_boundaries() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         service: Service,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Service {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         details: Details,
-        #[facet(child)]
+        #[facet(kdl::child)]
         owner: Owner,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Details {
-        #[facet(property)]
+        #[facet(kdl::property)]
         secure: bool,
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: u16,
-        #[facet(child)]
+        #[facet(kdl::child)]
         #[facet(default)]
         tls: Option<Tls>,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Tls {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         cert: String,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Owner {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         team: String,
     }
 
@@ -549,7 +549,7 @@ fn flatten_struct_child_boundaries() {
 fn flatten_enum_child_presence_disambiguation() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         mode: Mode,
     }
 
@@ -563,23 +563,23 @@ fn flatten_enum_child_presence_disambiguation() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Simple {
-        #[facet(property)]
+        #[facet(kdl::property)]
         level: u8,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Tuned {
-        #[facet(property)]
+        #[facet(kdl::property)]
         level: u8,
-        #[facet(child)]
+        #[facet(kdl::child)]
         tuning: Tuning,
-        #[facet(property)]
+        #[facet(kdl::property)]
         gain: u8,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Tuning {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         knob: u8,
     }
 
@@ -615,7 +615,7 @@ fn flatten_enum_child_presence_disambiguation() {
 fn flatten_enum_mixed_fields_should_error() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         mode: Mode,
     }
 
@@ -629,23 +629,23 @@ fn flatten_enum_mixed_fields_should_error() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Simple {
-        #[facet(property)]
+        #[facet(kdl::property)]
         level: u8,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Tuned {
-        #[facet(property)]
+        #[facet(kdl::property)]
         level: u8,
-        #[facet(child)]
+        #[facet(kdl::child)]
         tuning: Tuning,
-        #[facet(property)]
+        #[facet(kdl::property)]
         gain: u8,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Tuning {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         knob: u8,
     }
 
@@ -667,13 +667,13 @@ fn flatten_enum_mixed_fields_should_error() {
 fn flatten_with_optional_fields() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         cache: CacheConfig,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct CacheConfig {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         settings: CacheSettings,
@@ -681,9 +681,9 @@ fn flatten_with_optional_fields() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct CacheSettings {
-        #[facet(property)]
+        #[facet(kdl::property)]
         ttl: u32,
-        #[facet(property)]
+        #[facet(kdl::property)]
         max_size: Option<u64>,
     }
 
@@ -717,13 +717,13 @@ fn flatten_with_optional_fields() {
 fn flatten_enum_identical_fields_ambiguous_error() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         resource: Resource,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Resource {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         kind: ResourceKind,
@@ -740,7 +740,7 @@ fn flatten_enum_identical_fields_ambiguous_error() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct CommonFields {
-        #[facet(property)]
+        #[facet(kdl::property)]
         value: String,
     }
 
@@ -771,13 +771,13 @@ fn flatten_enum_identical_fields_ambiguous_error() {
 fn flatten_type_disambiguation_u8_u16_large_value() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         data: DataContainer,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct DataContainer {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         payload: IntPayload,
@@ -793,13 +793,13 @@ fn flatten_type_disambiguation_u8_u16_large_value() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct SmallInt {
-        #[facet(property)]
+        #[facet(kdl::property)]
         value: u8,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct LargeInt {
-        #[facet(property)]
+        #[facet(kdl::property)]
         value: u16,
     }
 
@@ -826,13 +826,13 @@ fn flatten_type_disambiguation_u8_u16_large_value() {
 fn flatten_type_disambiguation_u8_u16_small_value() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         data: DataContainer,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct DataContainer {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         payload: IntPayload,
@@ -848,13 +848,13 @@ fn flatten_type_disambiguation_u8_u16_small_value() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct SmallInt {
-        #[facet(property)]
+        #[facet(kdl::property)]
         value: u8,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct LargeInt {
-        #[facet(property)]
+        #[facet(kdl::property)]
         value: u16,
     }
 
@@ -881,13 +881,13 @@ fn flatten_type_disambiguation_u8_u16_small_value() {
 fn flatten_type_disambiguation_u8_u16_boundary_255() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         data: DataContainer,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct DataContainer {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         payload: IntPayload,
@@ -903,13 +903,13 @@ fn flatten_type_disambiguation_u8_u16_boundary_255() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct SmallInt {
-        #[facet(property)]
+        #[facet(kdl::property)]
         value: u8,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct LargeInt {
-        #[facet(property)]
+        #[facet(kdl::property)]
         value: u16,
     }
 
@@ -935,13 +935,13 @@ fn flatten_type_disambiguation_u8_u16_boundary_255() {
 fn flatten_type_disambiguation_u8_u16_boundary_256() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         data: DataContainer,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct DataContainer {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         payload: IntPayload,
@@ -957,13 +957,13 @@ fn flatten_type_disambiguation_u8_u16_boundary_256() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct SmallInt {
-        #[facet(property)]
+        #[facet(kdl::property)]
         value: u8,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct LargeInt {
-        #[facet(property)]
+        #[facet(kdl::property)]
         value: u16,
     }
 
@@ -989,13 +989,13 @@ fn flatten_type_disambiguation_u8_u16_boundary_256() {
 fn flatten_type_disambiguation_i8_u8_negative() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         data: DataContainer,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct DataContainer {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         payload: SignedPayload,
@@ -1011,13 +1011,13 @@ fn flatten_type_disambiguation_i8_u8_negative() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct SignedInt {
-        #[facet(property)]
+        #[facet(kdl::property)]
         num: i8,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct UnsignedInt {
-        #[facet(property)]
+        #[facet(kdl::property)]
         num: u8,
     }
 
@@ -1043,13 +1043,13 @@ fn flatten_type_disambiguation_i8_u8_negative() {
 fn flatten_type_disambiguation_i8_u8_large_positive() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         data: DataContainer,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct DataContainer {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         payload: SignedPayload,
@@ -1065,13 +1065,13 @@ fn flatten_type_disambiguation_i8_u8_large_positive() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct SignedInt {
-        #[facet(property)]
+        #[facet(kdl::property)]
         num: i8,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct UnsignedInt {
-        #[facet(property)]
+        #[facet(kdl::property)]
         num: u8,
     }
 
@@ -1100,13 +1100,13 @@ fn flatten_type_disambiguation_i8_u8_large_positive() {
 fn flatten_super_annoying_same_path_different_types() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         container: Container,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Container {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         inner: SuperAnnoyingEnum,
@@ -1122,25 +1122,25 @@ fn flatten_super_annoying_same_path_different_types() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct SmallPayloadWrapper {
-        #[facet(child)]
+        #[facet(kdl::child)]
         payload: SmallPayload,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct SmallPayload {
-        #[facet(property)]
+        #[facet(kdl::property)]
         value: u8,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct LargePayloadWrapper {
-        #[facet(child)]
+        #[facet(kdl::child)]
         payload: LargePayload,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct LargePayload {
-        #[facet(property)]
+        #[facet(kdl::property)]
         value: u16,
     }
 
@@ -1174,13 +1174,13 @@ fn flatten_super_annoying_same_path_different_types() {
 fn flatten_super_annoying_same_path_small_value() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         container: Container,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Container {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         inner: SuperAnnoyingEnum,
@@ -1196,25 +1196,25 @@ fn flatten_super_annoying_same_path_small_value() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct SmallPayloadWrapper {
-        #[facet(child)]
+        #[facet(kdl::child)]
         payload: SmallPayload,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct SmallPayload {
-        #[facet(property)]
+        #[facet(kdl::property)]
         value: u8,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct LargePayloadWrapper {
-        #[facet(child)]
+        #[facet(kdl::child)]
         payload: LargePayload,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct LargePayload {
-        #[facet(property)]
+        #[facet(kdl::property)]
         value: u16,
     }
 
@@ -1243,13 +1243,13 @@ fn flatten_super_annoying_same_path_small_value() {
 fn flatten_type_disambiguation_int_float_string() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         data: DataContainer,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct DataContainer {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         payload: MultiTypePayload,
@@ -1266,19 +1266,19 @@ fn flatten_type_disambiguation_int_float_string() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct IntData {
-        #[facet(property)]
+        #[facet(kdl::property)]
         data: i64,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct FloatData {
-        #[facet(property)]
+        #[facet(kdl::property)]
         data: f64,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct TextData {
-        #[facet(property)]
+        #[facet(kdl::property)]
         data: String,
     }
 
@@ -1324,13 +1324,13 @@ fn flatten_type_disambiguation_int_float_string() {
 fn option_flattened_struct_absent() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
         #[facet(flatten)]
         advanced: Option<AdvancedSettings>,
@@ -1338,9 +1338,9 @@ fn option_flattened_struct_absent() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct AdvancedSettings {
-        #[facet(property)]
+        #[facet(kdl::property)]
         buffer_size: u32,
-        #[facet(property)]
+        #[facet(kdl::property)]
         max_connections: u32,
     }
 
@@ -1360,13 +1360,13 @@ fn option_flattened_struct_absent() {
 fn option_flattened_struct_present() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
         #[facet(flatten)]
         advanced: Option<AdvancedSettings>,
@@ -1374,9 +1374,9 @@ fn option_flattened_struct_present() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct AdvancedSettings {
-        #[facet(property)]
+        #[facet(kdl::property)]
         buffer_size: u32,
-        #[facet(property)]
+        #[facet(kdl::property)]
         max_connections: u32,
     }
 
@@ -1407,13 +1407,13 @@ fn option_flattened_struct_present() {
 fn option_flattened_struct_partial_fills_defaults() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
         #[facet(flatten)]
         advanced: Option<AdvancedSettings>,
@@ -1421,9 +1421,9 @@ fn option_flattened_struct_partial_fills_defaults() {
 
     #[derive(Facet, Debug, PartialEq, Default)]
     struct AdvancedSettings {
-        #[facet(property, default)]
+        #[facet(kdl::property, default)]
         buffer_size: u32,
-        #[facet(property, default)]
+        #[facet(kdl::property, default)]
         max_connections: u32,
     }
 
@@ -1449,13 +1449,13 @@ fn option_flattened_struct_partial_fills_defaults() {
 fn option_flattened_struct_with_inner_options() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         cache: CacheConfig,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct CacheConfig {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         tuning: Option<CacheTuning>,
@@ -1463,9 +1463,9 @@ fn option_flattened_struct_with_inner_options() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct CacheTuning {
-        #[facet(property)]
+        #[facet(kdl::property)]
         ttl: u32,
-        #[facet(property)]
+        #[facet(kdl::property)]
         eviction_policy: Option<String>,
     }
 
@@ -1517,16 +1517,16 @@ fn option_flattened_struct_with_inner_options() {
 fn duplicate_field_detection() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
         // This defines a 'port' property on Server
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: u16,
         // This flattened struct ALSO defines a 'port' property
         #[facet(flatten)]
@@ -1535,9 +1535,9 @@ fn duplicate_field_detection() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct ConnectionSettings {
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: u16, // Duplicate! Same name as Server.port
-        #[facet(property)]
+        #[facet(kdl::property)]
         timeout: u32,
     }
 
@@ -1592,15 +1592,15 @@ fn deserialize_with_property() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         item: Item,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Item {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
-        #[facet(property, opaque, deserialize_with = hex_from_str)]
+        #[facet(kdl::property, opaque, deserialize_with = hex_from_str)]
         value: HexValue,
     }
 
@@ -1638,13 +1638,13 @@ fn deserialize_with_argument() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         item: Item,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Item {
-        #[facet(argument, opaque, deserialize_with = hex_from_str)]
+        #[facet(kdl::argument, opaque, deserialize_with = hex_from_str)]
         code: HexValue,
     }
 
@@ -1682,13 +1682,13 @@ fn deserialize_with_flattened() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         item: Item,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Item {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         settings: Settings,
@@ -1696,9 +1696,9 @@ fn deserialize_with_flattened() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Settings {
-        #[facet(property, opaque, deserialize_with = hex_from_str)]
+        #[facet(kdl::property, opaque, deserialize_with = hex_from_str)]
         code: HexValue,
-        #[facet(property, default)]
+        #[facet(kdl::property, default)]
         extra: Option<String>,
     }
 
@@ -1723,13 +1723,13 @@ fn deserialize_with_flattened() {
 fn flatten_with_default_absent() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten, default)]
         settings: ConnectionSettings,
@@ -1737,9 +1737,9 @@ fn flatten_with_default_absent() {
 
     #[derive(Facet, Debug, PartialEq, Default)]
     struct ConnectionSettings {
-        #[facet(property, default)]
+        #[facet(kdl::property, default)]
         port: u16,
-        #[facet(property, default)]
+        #[facet(kdl::property, default)]
         timeout: u32,
     }
 
@@ -1759,13 +1759,13 @@ fn flatten_with_default_absent() {
 fn flatten_with_default_present() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten, default)]
         settings: ConnectionSettings,
@@ -1773,9 +1773,9 @@ fn flatten_with_default_present() {
 
     #[derive(Facet, Debug, PartialEq, Default)]
     struct ConnectionSettings {
-        #[facet(property, default)]
+        #[facet(kdl::property, default)]
         port: u16,
-        #[facet(property, default)]
+        #[facet(kdl::property, default)]
         timeout: u32,
     }
 
@@ -1805,13 +1805,13 @@ fn flatten_with_default_present() {
 fn flatten_round_trip_simple() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         connection: ConnectionSettings,
@@ -1819,9 +1819,9 @@ fn flatten_round_trip_simple() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct ConnectionSettings {
-        #[facet(property)]
+        #[facet(kdl::property)]
         host: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: u16,
     }
 
@@ -1850,15 +1850,15 @@ fn flatten_round_trip_simple() {
 fn flatten_round_trip_interleaved() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         enabled: bool,
         #[facet(flatten)]
         connection: ConnectionSettings,
@@ -1866,9 +1866,9 @@ fn flatten_round_trip_interleaved() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct ConnectionSettings {
-        #[facet(property)]
+        #[facet(kdl::property)]
         host: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: u16,
     }
 
@@ -1898,13 +1898,13 @@ fn flatten_round_trip_interleaved() {
 fn flatten_round_trip_enum() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         source: Source,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Source {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         kind: SourceKind,
@@ -1920,15 +1920,15 @@ fn flatten_round_trip_enum() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct LocalSource {
-        #[facet(property)]
+        #[facet(kdl::property)]
         path: String,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct RemoteSource {
-        #[facet(property)]
+        #[facet(kdl::property)]
         url: String,
-        #[facet(property, default)]
+        #[facet(kdl::property, default)]
         timeout: Option<u32>,
     }
 
@@ -1974,23 +1974,23 @@ fn flatten_round_trip_enum() {
 fn option_child_without_flatten() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         host: String,
-        #[facet(child, default)]
+        #[facet(kdl::child, default)]
         logging: Option<Logging>,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Logging {
-        #[facet(property)]
+        #[facet(kdl::property)]
         level: String,
     }
 
@@ -2018,33 +2018,33 @@ fn option_child_without_flatten() {
 fn flatten_with_sibling_children() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         // Properties from flattened struct
         #[facet(flatten)]
         connection: ConnectionSettings,
         // Child on the parent, not inside the flattened struct
-        #[facet(child, default)]
+        #[facet(kdl::child, default)]
         logging: Option<Logging>,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct ConnectionSettings {
-        #[facet(property)]
+        #[facet(kdl::property)]
         host: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: u16,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Logging {
-        #[facet(property)]
+        #[facet(kdl::property)]
         level: String,
     }
 
@@ -2079,13 +2079,13 @@ fn flatten_with_sibling_children() {
 fn flatten_enum_child_disambiguation() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         storage: Storage,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Storage {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         backend: StorageBackend,
@@ -2102,31 +2102,31 @@ fn flatten_enum_child_disambiguation() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct LocalBackend {
-        #[facet(property)]
+        #[facet(kdl::property)]
         path: String,
-        #[facet(child, default)]
+        #[facet(kdl::child, default)]
         cache: Option<CacheConfig>,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct S3Backend {
-        #[facet(property)]
+        #[facet(kdl::property)]
         bucket: String,
-        #[facet(child)]
+        #[facet(kdl::child)]
         credentials: Credentials,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct CacheConfig {
-        #[facet(property)]
+        #[facet(kdl::property)]
         size_mb: u32,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Credentials {
-        #[facet(property)]
+        #[facet(kdl::property)]
         key_id: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         secret: String,
     }
 

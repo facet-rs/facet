@@ -191,8 +191,6 @@ pub enum ShapeAttribute {
     /// An extension attribute from a third-party crate
     /// e.g., `#[facet(orm::primary_key)]`
     Extension(ExtensionAttr),
-    /// Custom attribute containing arbitrary text
-    Arbitrary(&'static str),
 }
 
 impl Shape {

@@ -8,34 +8,34 @@ fn struct_rename_all_kebab_case() {
     #[derive(Facet, PartialEq, Debug)]
     #[facet(rename_all = "kebab-case")]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         database_url: DatabaseUrl,
-        #[facet(child)]
+        #[facet(kdl::child)]
         #[facet(default)]
         max_connections: Option<MaxConnections>,
-        #[facet(child)]
+        #[facet(kdl::child)]
         #[facet(default)]
         retry_policy: Option<RetryPolicy>,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct DatabaseUrl {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         value: String,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct MaxConnections {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         value: u32,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     #[facet(rename_all = "kebab-case")]
     struct RetryPolicy {
-        #[facet(property)]
+        #[facet(kdl::property)]
         max_retries: u32,
-        #[facet(property)]
+        #[facet(kdl::property)]
         backoff_ms: u32,
     }
 

@@ -9,15 +9,15 @@ use facet::Facet;
 fn serialize_basic_struct() {
     #[derive(Facet, PartialEq, Debug)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: u16,
     }
 
@@ -43,13 +43,13 @@ fn serialize_basic_struct() {
 fn serialize_multiple_arguments() {
     #[derive(Facet, PartialEq, Debug)]
     struct Doc {
-        #[facet(child)]
+        #[facet(kdl::child)]
         matrix: Matrix,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Matrix {
-        #[facet(arguments)]
+        #[facet(kdl::arguments)]
         values: Vec<u8>,
     }
 
@@ -74,17 +74,17 @@ fn serialize_multiple_arguments() {
 fn serialize_optional_fields() {
     #[derive(Facet, PartialEq, Debug)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: Option<u16>,
-        #[facet(property)]
+        #[facet(kdl::property)]
         timeout: Option<u32>,
     }
 
@@ -107,15 +107,15 @@ fn serialize_optional_fields() {
 fn serialize_enum_children() {
     #[derive(Facet, PartialEq, Debug)]
     struct Pipeline {
-        #[facet(children)]
+        #[facet(kdl::children)]
         steps: Vec<Step>,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Step {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
-        #[facet(child)]
+        #[facet(kdl::child)]
         action: Action,
     }
 
@@ -123,11 +123,11 @@ fn serialize_enum_children() {
     #[repr(u8)]
     enum Action {
         Print {
-            #[facet(property)]
+            #[facet(kdl::property)]
             message: String,
         },
         Write {
-            #[facet(property)]
+            #[facet(kdl::property)]
             path: String,
         },
     }
@@ -168,22 +168,22 @@ fn serialize_kebab_case() {
     #[derive(Facet, PartialEq, Debug)]
     #[facet(rename_all = "kebab-case")]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         database_url: DatabaseUrl,
-        #[facet(child)]
+        #[facet(kdl::child)]
         #[facet(default)]
         max_connections: Option<MaxConnections>,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct DatabaseUrl {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         value: String,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct MaxConnections {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         value: u32,
     }
 
@@ -208,21 +208,21 @@ fn serialize_kebab_case() {
 fn serialize_node_name_children() {
     #[derive(Facet, PartialEq, Debug)]
     struct Document {
-        #[facet(child)]
+        #[facet(kdl::child)]
         settings: Settings,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Settings {
-        #[facet(children)]
+        #[facet(kdl::children)]
         entries: Vec<Setting>,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Setting {
-        #[facet(node_name)]
+        #[facet(kdl::node_name)]
         key: String,
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         value: String,
     }
 
@@ -257,15 +257,15 @@ fn serialize_node_name_children() {
 fn serialize_booleans() {
     #[derive(Facet, PartialEq, Debug)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         feature: Feature,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Feature {
-        #[facet(property)]
+        #[facet(kdl::property)]
         enabled: bool,
-        #[facet(property)]
+        #[facet(kdl::property)]
         optional: bool,
     }
 
@@ -290,21 +290,21 @@ fn serialize_booleans() {
 fn serialize_nested_children() {
     #[derive(Facet, PartialEq, Debug)]
     struct Root {
-        #[facet(child)]
+        #[facet(kdl::child)]
         level1: Level1,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Level1 {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
-        #[facet(child)]
+        #[facet(kdl::child)]
         level2: Level2,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Level2 {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         value: i32,
     }
 
@@ -331,13 +331,13 @@ fn serialize_nested_children() {
 fn serialize_string_escaping() {
     #[derive(Facet, PartialEq, Debug)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         message: Message,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Message {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         text: String,
     }
 

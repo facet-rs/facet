@@ -13,7 +13,7 @@ fn basic_node() {
     // QUESTION: I don't know when this would be particularly good practice, but it could be nice if `facet` shipped
     // some sort of macro that allowed libraries to rename the Facet trait / attributes.unwrap() This might make it clearer
     // what's going on if you're ever mixing several `Facet` libraries that all use different arbitrary attributes.unwrap() I
-    // just think that `#[kdl(child)]` would be a lot clearer than `#[facet(child)]` if, say, you also wanted to
+    // just think that `#[kdl(child)]` would be a lot clearer than `#[facet(kdl::child)]` if, say, you also wanted to
     // deserialize from something like XML.unwrap() Or command-line arguments.unwrap() Those would also need attributes, e.g.
     // `#[facet(text)]` or `#[facet(positional)]`, and I think things would be a lot clearer as `#[xml(text)]` and
     // `#[args(positional)]`. If, however, it's far too evil or hard to implment something like that, then arbitrary
@@ -23,13 +23,13 @@ fn basic_node() {
     // relying on arbitrary attributes should interact...
     #[derive(Facet)]
     struct Basic {
-        #[facet(child)]
+        #[facet(kdl::child)]
         title: Title,
     }
 
     #[derive(Facet)]
     struct Title {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         title: String,
     }
 
@@ -46,72 +46,72 @@ fn basic_node() {
 fn canon_example() {
     #[derive(Facet, PartialEq, Debug)]
     struct Root {
-        #[facet(child)]
+        #[facet(kdl::child)]
         package: Package,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Package {
-        #[facet(child)]
+        #[facet(kdl::child)]
         name: Name,
-        #[facet(child)]
+        #[facet(kdl::child)]
         version: Version,
-        #[facet(child)]
+        #[facet(kdl::child)]
         dependencies: Dependencies,
-        #[facet(child)]
+        #[facet(kdl::child)]
         scripts: Scripts,
-        #[facet(child)]
+        #[facet(kdl::child)]
         #[facet(rename = "the-matrix")]
         the_matrix: TheMatrix,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Name {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Version {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         version: String,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Dependencies {
-        #[facet(children)]
+        #[facet(kdl::children)]
         dependencies: Vec<Dependency>,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Scripts {
-        #[facet(children)]
+        #[facet(kdl::children)]
         scripts: Vec<Script>,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct TheMatrix {
-        #[facet(arguments)]
+        #[facet(kdl::arguments)]
         data: Vec<u8>,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Dependency {
-        #[facet(node_name)]
+        #[facet(kdl::node_name)]
         name: String,
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         version: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         optional: Option<bool>,
-        #[facet(property)]
+        #[facet(kdl::property)]
         alias: Option<String>,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Script {
-        #[facet(node_name)]
+        #[facet(kdl::node_name)]
         name: String,
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         body: String,
     }
 
@@ -203,21 +203,21 @@ fn canon_example() {
 fn key_value_map_with_node_name() {
     #[derive(Facet, PartialEq, Debug)]
     struct Document {
-        #[facet(child)]
+        #[facet(kdl::child)]
         settings: Settings,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Settings {
-        #[facet(children)]
+        #[facet(kdl::children)]
         entries: Vec<Setting>,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Setting {
-        #[facet(node_name)]
+        #[facet(kdl::node_name)]
         key: String,
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         value: String,
     }
 
@@ -247,22 +247,22 @@ fn raw_string_expression() {
     #[derive(Facet, PartialEq, Debug)]
     #[facet(rename_all = "kebab-case")]
     struct Rule {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
-        #[facet(child)]
+        #[facet(kdl::child)]
         #[facet(default)]
         condition: Option<Condition>,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Condition {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         expr: String,
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct RuleSet {
-        #[facet(children)]
+        #[facet(kdl::children)]
         rules: Vec<Rule>,
     }
 
@@ -297,15 +297,15 @@ fn raw_string_expression() {
 fn skip_field() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: u16,
         #[facet(skip)]
         internal_id: u64, // Should be skipped and get default value
