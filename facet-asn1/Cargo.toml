@@ -2,7 +2,7 @@
 name = "facet-asn1"
 version = "0.31.0"
 edition = "2024"
-rust-version = "1.87.0"
+rust-version = "1.88.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet"
 description = "ASN.1 serialization and deserialization for Facet types"

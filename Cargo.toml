@@ -46,6 +46,6 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.87.0"
+rust-version = "1.88.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet"

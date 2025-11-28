@@ -82,7 +82,7 @@
 //! name = "facet"
 //! version = "0.31.0"
 //! edition = "2024"
-//! rust-version = "1.87"
+//! rust-version = "1.88.0"
 //!
 //! [features]
 //! default = ["std"]
