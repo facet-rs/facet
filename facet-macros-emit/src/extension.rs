@@ -1,7 +1,7 @@
 //! Code generation for extension attributes.
 
-use facet_macros_parse::{TokenStream, TokenTree};
-use quote::{format_ident, quote};
+use facet_macros_parse::{Ident, TokenStream, TokenTree};
+use quote::quote;
 
 /// Emits the code for an `ExtensionAttr`.
 ///
@@ -24,38 +24,42 @@ use quote::{format_ident, quote};
 ///     ::facet::ExtensionAttr { ns: "kdl", key: "child", get: __ext_get }
 /// }
 /// ```
-pub fn emit_extension_attr(ns: &str, key: &str, args: &TokenStream) -> TokenStream {
+pub fn emit_extension_attr(ns_ident: &Ident, key_ident: &Ident, args: &TokenStream) -> TokenStream {
     // Convert the args TokenStream into a static slice of facet::Token
     let args_tokens = emit_token_trees(args);
 
-    // Create identifiers for the namespace and key
-    let ns_ident = format_ident!("{}", ns);
-    let key_ident = format_ident!("{}", key);
+    // Get string representations for the ExtensionAttr struct fields
+    let ns = ns_ident.to_string();
+    let key = key_ident.to_string();
 
     quote! {
         {
-            // Fallback struct - if the attribute doesn't exist in the namespace,
-            // this won't be shadowed and the trait bound check will fail with
-            // a nice error message from #[diagnostic::on_unimplemented]
+            // OUTER SCOPE: Fallback struct - if attr doesn't exist in namespace,
+            // this won't be shadowed and the trait check fails with on_unimplemented
             #[allow(non_camel_case_types)]
             struct #key_ident { _private: () }
 
+            // OUTER SCOPE: Fallback function - no-op, shadowed by real fn if valid
+            #[allow(non_camel_case_types)]
+            fn #key_ident(_args: &[::facet::Token]) -> ::facet::AnyStaticRef {
+                static __UNIT: () = ();
+                &__UNIT
+            }
+
             {
-                // Glob import from the attrs module - this shadows the fallback
-                // if a valid attribute with this name exists
+                // INNER SCOPE: Glob import shadows the outer fallbacks if valid
                 #[allow(unused_imports)]
                 use #ns_ident::attrs::*;
 
-                // This triggers the trait bound check - if the attribute doesn't
-                // exist, ValidAttr<key> won't implement IsValidAttr and we get
-                // the nice on_unimplemented error
+                // Trait check - uses shadowed type (real) or fallback
                 __check_attr::<#key_ident>();
             }
 
-            // Getter that calls the attribute function with the tokens
-            // Note: Extension functions handle their own caching via Box::leak
+            // Getter - MUST use inner scope with shadowing for function call too
             fn __ext_get() -> ::facet::AnyStaticRef {
-                #ns_ident::attrs::#key_ident(&[#args_tokens])
+                #[allow(unused_imports)]
+                use #ns_ident::attrs::*;
+                #key_ident(&[#args_tokens])
             }
 
             ::facet::ExtensionAttr {

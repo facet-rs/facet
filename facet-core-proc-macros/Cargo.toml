@@ -1,0 +1,18 @@
+[package]
+name = "facet-core-proc-macros"
+version = "0.31.8"
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Proc macros for facet-core"
+keywords = ["reflection", "introspection", "derive"]
+categories = ["development-tools"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+unsynn = "0.3.0"

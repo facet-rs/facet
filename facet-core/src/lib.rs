@@ -97,3 +97,6 @@ mod shape_util;
 /// Re-export paste for use in macros
 #[doc(hidden)]
 pub use paste;
+
+/// Re-export the proc macro for defining extension attributes
+pub use facet_core_proc_macros::define_extension_attrs;

@@ -1,4 +1,5 @@
 use facet::Facet;
+use facet_kdl as kdl;
 
 #[derive(Facet)]
 struct Config {
@@ -8,6 +9,4 @@ struct Config {
     port: u16,
 }
 
-fn main() {
-    // This should compile successfully
-}
+fn main() {}
