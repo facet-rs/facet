@@ -1,4 +1,5 @@
 use facet::Facet;
+use facet_kdl as kdl;
 use indoc::indoc;
 
 /// Test that #[facet(flatten)] inlines nested struct fields.

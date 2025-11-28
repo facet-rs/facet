@@ -2327,6 +2327,7 @@ fn kdl_value_fits_shape(value: &KdlValue, shape: &'static Shape) -> bool {
 /// # Example
 /// ```
 /// # use facet::Facet;
+/// # use facet_kdl as kdl;
 /// # use facet_kdl::from_str;
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Config {

@@ -1,4 +1,5 @@
 use facet::Facet;
+use facet_kdl as kdl;
 use facet_kdl::{Span, Spanned};
 use indoc::indoc;
 

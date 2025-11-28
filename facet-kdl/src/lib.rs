@@ -17,3 +17,22 @@ pub use deserialize::from_str;
 
 // Re-export serialization
 pub use serialize::{to_string, to_writer};
+
+// Define KDL extension attributes for use with #[facet(kdl::attr)] syntax.
+//
+// After importing `use facet_kdl as kdl;`, users can write:
+//   #[facet(kdl::child)]
+//   #[facet(kdl::children)]
+//   #[facet(kdl::property)]
+//   #[facet(kdl::argument)]
+//   #[facet(kdl::arguments)]
+//   #[facet(kdl::node_name)]
+facet_core::define_extension_attrs! {
+    "KDL";
+    child,
+    children,
+    property,
+    argument,
+    arguments,
+    node_name,
+}

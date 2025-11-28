@@ -1,4 +1,5 @@
 use facet::Facet;
+use facet_kdl as kdl;
 use indoc::indoc;
 
 /// Test rename_all = "kebab-case" on structs for field-to-node matching.

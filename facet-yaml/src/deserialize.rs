@@ -9,8 +9,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use facet_core::{
-    Characteristic, Def, Facet, Field, FieldFlags, LiteralKind, NumericType, PrimitiveType,
-    ShapeLayout, StructKind, Token, Type, UserType,
+    Characteristic, Def, Facet, Field, FieldFlags, NumericType, PrimitiveType, ShapeLayout,
+    StructKind, Type, UserType,
 };
 use facet_reflect::Partial;
 use saphyr_parser::{Event, Parser, ScalarStyle, Span as SaphyrSpan, SpannedEventReceiver};
@@ -1478,24 +1478,12 @@ fn is_yaml_null(value: &str) -> bool {
 fn get_serialized_name(field: &Field) -> &'static str {
     // Look for rename attribute using extension syntax: #[facet(serde::rename = "value")]
     if let Some(ext) = field.get_extension_attr("serde", "rename") {
-        if let Some(name) = extract_string_from_args(ext.args) {
-            return name;
+        if let Some(opt_name) = ext.get_as::<Option<&'static str>>() {
+            if let Some(name) = opt_name {
+                return name;
+            }
         }
     }
     // Default to the field name
     field.name
-}
-
-/// Extract a string literal from extension attribute args.
-/// Expected format: `= "value"`
-fn extract_string_from_args(args: &'static [Token]) -> Option<&'static str> {
-    for tt in args.iter() {
-        if let Token::Literal { text, kind, .. } = tt {
-            if *kind == LiteralKind::String {
-                // Strip surrounding quotes: "value" -> value
-                return Some(text.trim_start_matches('"').trim_end_matches('"'));
-            }
-        }
-    }
-    None
 }

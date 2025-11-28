@@ -1,35 +1,66 @@
 //! Code generation for extension attributes.
 
 use facet_macros_parse::{TokenStream, TokenTree};
-use quote::quote;
+use quote::{format_ident, quote};
 
 /// Emits the code for an `ExtensionAttr`.
 ///
-/// This generates an inline `ExtensionAttr` struct literal with:
-/// - `ns`: the namespace string
-/// - `key`: the key string
-/// - `args`: a static slice of `facet::Token`
-/// - `get`: a function pointer that returns a no-op unit value (for marker attributes)
+/// This generates code that:
+/// 1. Validates the attribute exists using the shadowing trick with `#[diagnostic::on_unimplemented]`
+/// 2. Calls the attribute function from the extension crate with the tokens
+/// 3. Returns an `ExtensionAttr` struct
 ///
-/// For simple marker attributes like `#[facet(kdl::child)]`, this is sufficient.
-/// The attribute can be detected via `has_extension_attr("kdl", "child")` and
-/// any arguments are available in the `args` field.
+/// For `#[facet(kdl::child)]`, this generates:
+/// ```ignore
+/// {
+///     struct child { _private: () }  // Fallback with user's span
+///     {
+///         use kdl::attrs::*;  // Shadows fallback if valid
+///         __check_attr::<child>();  // Triggers on_unimplemented if invalid
+///     }
+///     fn __ext_get() -> ::facet::AnyStaticRef {
+///         kdl::attrs::child(&[])
+///     }
+///     ::facet::ExtensionAttr { ns: "kdl", key: "child", get: __ext_get }
+/// }
+/// ```
 pub fn emit_extension_attr(ns: &str, key: &str, args: &TokenStream) -> TokenStream {
     // Convert the args TokenStream into a static slice of facet::Token
     let args_tokens = emit_token_trees(args);
 
+    // Create identifiers for the namespace and key
+    let ns_ident = format_ident!("{}", ns);
+    let key_ident = format_ident!("{}", key);
+
     quote! {
         {
-            // No-op getter for marker attributes - returns a reference to ()
-            fn __ext_get() -> &'static (dyn ::core::any::Any + ::core::marker::Send + ::core::marker::Sync) {
-                static __UNIT: () = ();
-                &__UNIT
+            // Fallback struct - if the attribute doesn't exist in the namespace,
+            // this won't be shadowed and the trait bound check will fail with
+            // a nice error message from #[diagnostic::on_unimplemented]
+            #[allow(non_camel_case_types)]
+            struct #key_ident { _private: () }
+
+            {
+                // Glob import from the attrs module - this shadows the fallback
+                // if a valid attribute with this name exists
+                #[allow(unused_imports)]
+                use #ns_ident::attrs::*;
+
+                // This triggers the trait bound check - if the attribute doesn't
+                // exist, ValidAttr<key> won't implement IsValidAttr and we get
+                // the nice on_unimplemented error
+                __check_attr::<#key_ident>();
+            }
+
+            // Getter that calls the attribute function with the tokens
+            // Note: Extension functions handle their own caching via Box::leak
+            fn __ext_get() -> ::facet::AnyStaticRef {
+                #ns_ident::attrs::#key_ident(&[#args_tokens])
             }
 
             ::facet::ExtensionAttr {
                 ns: #ns,
                 key: #key,
-                args: &[#args_tokens],
                 get: __ext_get,
             }
         }

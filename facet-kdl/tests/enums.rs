@@ -1,4 +1,5 @@
 use facet::Facet;
+use facet_kdl as kdl;
 use indoc::indoc;
 
 /// Test that enum children can be deserialized using node name as variant discriminant.

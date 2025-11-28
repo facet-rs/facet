@@ -36,17 +36,17 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                         .attributes(
                             &const {
                                 [::facet::FieldAttribute::Extension({
-                                    fn __ext_get() -> &'static (dyn ::core::any::Any
-                                                     + ::core::marker::Send
-                                                     + ::core::marker::Sync)
-                                    {
-                                        static __UNIT: () = ();
-                                        &__UNIT
+                                    #[allow(non_camel_case_types)]
+                                    struct version {
+                                        _private: (),
                                     }
-                                    ::facet::ExtensionAttr {
-                                        ns: "myns",
-                                        key: "version",
-                                        args: &[
+                                    {
+                                        #[allow(unused_imports)]
+                                        use myns::attrs::*;
+                                        __check_attr::<version>();
+                                    }
+                                    fn __ext_get() -> ::facet::AnyStaticRef {
+                                        myns::attrs::version(&[
                                             ::facet::Token::Punct {
                                                 ch: '=',
                                                 joint: false,
@@ -57,7 +57,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                                                 text: "3",
                                                 span: ::facet::TokenSpan::DUMMY,
                                             },
-                                        ],
+                                        ])
+                                    }
+                                    ::facet::ExtensionAttr {
+                                        ns: "myns",
+                                        key: "version",
                                         get: __ext_get,
                                     }
                                 })]
@@ -73,17 +77,17 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                         .attributes(
                             &const {
                                 [::facet::FieldAttribute::Extension({
-                                    fn __ext_get() -> &'static (dyn ::core::any::Any
-                                                     + ::core::marker::Send
-                                                     + ::core::marker::Sync)
-                                    {
-                                        static __UNIT: () = ();
-                                        &__UNIT
+                                    #[allow(non_camel_case_types)]
+                                    struct deprecated {
+                                        _private: (),
                                     }
-                                    ::facet::ExtensionAttr {
-                                        ns: "myns",
-                                        key: "deprecated",
-                                        args: &[
+                                    {
+                                        #[allow(unused_imports)]
+                                        use myns::attrs::*;
+                                        __check_attr::<deprecated>();
+                                    }
+                                    fn __ext_get() -> ::facet::AnyStaticRef {
+                                        myns::attrs::deprecated(&[
                                             ::facet::Token::Punct {
                                                 ch: '=',
                                                 joint: false,
@@ -94,7 +98,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                                                 text: "\"Use 'new_value' instead\"",
                                                 span: ::facet::TokenSpan::DUMMY,
                                             },
-                                        ],
+                                        ])
+                                    }
+                                    ::facet::ExtensionAttr {
+                                        ns: "myns",
+                                        key: "deprecated",
                                         get: __ext_get,
                                     }
                                 })]
@@ -111,6 +119,87 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for StructWithAttributes {
                 },
             ]
         };
-        :: facet :: Shape :: builder_for_sized :: < Self > () . vtable ({ let mut vtable = :: facet :: value_vtable ! (Self , | f , _opts | :: core :: fmt :: Write :: write_str (f , "StructWithAttributes")) ; vtable }) . type_identifier ("StructWithAttributes") . ty (:: facet :: Type :: User (:: facet :: UserType :: Struct (:: facet :: StructType :: builder () . repr (:: facet :: Repr :: default ()) . kind (:: facet :: StructKind :: Struct) . fields (fields) . build ()))) . attributes (& [:: facet :: ShapeAttribute :: DenyUnknownFields , :: facet :: ShapeAttribute :: Extension ({ fn __ext_get () -> & 'static (dyn :: core :: any :: Any + :: core :: marker :: Send + :: core :: marker :: Sync) { static __UNIT : () = () ; & __UNIT } :: facet :: ExtensionAttr { ns : "myns" , key : "name" , args : & [:: facet :: Token :: Punct { ch : '=' , joint : false , span : :: facet :: TokenSpan :: DUMMY , } , :: facet :: Token :: Literal { kind : :: facet :: LiteralKind :: String , text : "\"MyCoolStruct\"" , span : :: facet :: TokenSpan :: DUMMY , }] , get : __ext_get , } }) , :: facet :: ShapeAttribute :: Extension ({ fn __ext_get () -> & 'static (dyn :: core :: any :: Any + :: core :: marker :: Send + :: core :: marker :: Sync) { static __UNIT : () = () ; & __UNIT } :: facet :: ExtensionAttr { ns : "myns" , key : "version" , args : & [:: facet :: Token :: Punct { ch : '=' , joint : false , span : :: facet :: TokenSpan :: DUMMY , } , :: facet :: Token :: Literal { kind : :: facet :: LiteralKind :: Integer , text : "2" , span : :: facet :: TokenSpan :: DUMMY , }] , get : __ext_get , } })]) . type_tag ("rs.facet.StructWithAttributes") . build ()
+        ::facet::Shape::builder_for_sized::<Self>()
+            .vtable({
+                let mut vtable =
+                    ::facet::value_vtable!(Self, |f, _opts| ::core::fmt::Write::write_str(
+                        f,
+                        "StructWithAttributes"
+                    ));
+                vtable
+            })
+            .type_identifier("StructWithAttributes")
+            .ty(::facet::Type::User(::facet::UserType::Struct(
+                ::facet::StructType::builder()
+                    .repr(::facet::Repr::default())
+                    .kind(::facet::StructKind::Struct)
+                    .fields(fields)
+                    .build(),
+            )))
+            .attributes(&[
+                ::facet::ShapeAttribute::DenyUnknownFields,
+                ::facet::ShapeAttribute::Extension({
+                    #[allow(non_camel_case_types)]
+                    struct name {
+                        _private: (),
+                    }
+                    {
+                        #[allow(unused_imports)]
+                        use myns::attrs::*;
+                        __check_attr::<name>();
+                    }
+                    fn __ext_get() -> ::facet::AnyStaticRef {
+                        myns::attrs::name(&[
+                            ::facet::Token::Punct {
+                                ch: '=',
+                                joint: false,
+                                span: ::facet::TokenSpan::DUMMY,
+                            },
+                            ::facet::Token::Literal {
+                                kind: ::facet::LiteralKind::String,
+                                text: "\"MyCoolStruct\"",
+                                span: ::facet::TokenSpan::DUMMY,
+                            },
+                        ])
+                    }
+                    ::facet::ExtensionAttr {
+                        ns: "myns",
+                        key: "name",
+                        get: __ext_get,
+                    }
+                }),
+                ::facet::ShapeAttribute::Extension({
+                    #[allow(non_camel_case_types)]
+                    struct version {
+                        _private: (),
+                    }
+                    {
+                        #[allow(unused_imports)]
+                        use myns::attrs::*;
+                        __check_attr::<version>();
+                    }
+                    fn __ext_get() -> ::facet::AnyStaticRef {
+                        myns::attrs::version(&[
+                            ::facet::Token::Punct {
+                                ch: '=',
+                                joint: false,
+                                span: ::facet::TokenSpan::DUMMY,
+                            },
+                            ::facet::Token::Literal {
+                                kind: ::facet::LiteralKind::Integer,
+                                text: "2",
+                                span: ::facet::TokenSpan::DUMMY,
+                            },
+                        ])
+                    }
+                    ::facet::ExtensionAttr {
+                        ns: "myns",
+                        key: "version",
+                        get: __ext_get,
+                    }
+                }),
+            ])
+            .type_tag("rs.facet.StructWithAttributes")
+            .build()
     };
 }
