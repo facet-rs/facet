@@ -1,0 +1,8 @@
+---
+source: facet-pretty/tests/pretty_print.rs
+expression: printer.format(&map)
+---
+BTreeMap<&str, i32> [
+  "abc" => 1,
+  "def" => 2,
+]
