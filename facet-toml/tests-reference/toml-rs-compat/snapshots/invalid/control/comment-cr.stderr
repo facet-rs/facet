@@ -1,0 +1,6 @@
+TOML parse error at line 1, column 48
+  |
+1 | comment-cr   = "Carriage return in comment" # 
+a=1
+  |                                                ^
+carriage return must be followed by newline, expected newline

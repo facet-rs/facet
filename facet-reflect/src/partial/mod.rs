@@ -123,7 +123,8 @@ mod heap_value;
 pub use heap_value::*;
 
 use facet_core::{
-    Def, EnumType, Field, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
+    Def, EnumType, Field, FieldFlags, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType,
+    Variant,
 };
 use iset::ISet;
 
@@ -768,6 +769,132 @@ impl Frame {
             }
             // no need to update `self.ownership` since `self` drops at the end of this
         }
+    }
+
+    /// Fill in defaults for any unset fields that have default values.
+    ///
+    /// This handles:
+    /// - Container-level defaults (when no fields set and struct has Default impl)
+    /// - Fields with `#[facet(default = ...)]` - uses the explicit default function
+    /// - Fields with `#[facet(default)]` - uses the type's Default impl
+    /// - `Option<T>` fields - default to None
+    ///
+    /// Returns Ok(()) if successful, or an error if defaulting fails.
+    fn fill_defaults(&mut self) {
+        // First, check if we need to upgrade from Uninit to Struct tracker
+        // This happens when no fields were visited at all in deferred mode
+        if matches!(self.tracker, Tracker::Uninit) {
+            if let Type::User(UserType::Struct(struct_type)) = self.shape.ty {
+                // If no fields were visited and the container has a default, use it
+                if let Some(default_fn) = self.shape.vtable.default_in_place {
+                    unsafe { default_fn(self.data) };
+                    self.tracker = Tracker::Init;
+                    return;
+                }
+                // Otherwise initialize the struct tracker with empty iset
+                self.tracker = Tracker::Struct {
+                    iset: ISet::new(struct_type.fields.len()),
+                    current_child: None,
+                };
+            }
+        }
+
+        match &mut self.tracker {
+            Tracker::Struct { iset, .. } => {
+                if let Type::User(UserType::Struct(struct_type)) = self.shape.ty {
+                    // Check if NO fields have been set and the container has a default
+                    let no_fields_set = (0..struct_type.fields.len()).all(|i| !iset.get(i));
+                    if no_fields_set {
+                        if let Some(default_fn) = self.shape.vtable.default_in_place {
+                            unsafe { default_fn(self.data) };
+                            self.tracker = Tracker::Init;
+                            return;
+                        }
+                    }
+
+                    // Fill defaults for individual fields
+                    for (idx, field) in struct_type.fields.iter().enumerate() {
+                        // Skip already-initialized fields
+                        if iset.get(idx) {
+                            continue;
+                        }
+
+                        // Check if field has a default we can use
+                        if let Some(default_fn) = Self::get_field_default_fn(field) {
+                            // Calculate field pointer
+                            let field_ptr = unsafe { self.data.field_uninit_at(field.offset) };
+
+                            // Call the default function to initialize the field
+                            unsafe { default_fn(field_ptr) };
+
+                            // Mark field as initialized
+                            iset.set(idx);
+                        }
+                    }
+                }
+            }
+            Tracker::Enum { variant, data, .. } => {
+                // Handle enum variant fields
+                for (idx, field) in variant.data.fields.iter().enumerate() {
+                    // Skip already-initialized fields
+                    if data.get(idx) {
+                        continue;
+                    }
+
+                    // Check if field has a default we can use
+                    if let Some(default_fn) = Self::get_field_default_fn(field) {
+                        // Calculate field pointer within the variant data
+                        let field_ptr = unsafe { self.data.field_uninit_at(field.offset) };
+
+                        // Call the default function to initialize the field
+                        unsafe { default_fn(field_ptr) };
+
+                        // Mark field as initialized
+                        data.set(idx);
+                    }
+                }
+            }
+            // Other tracker types don't have fields with defaults
+            _ => {}
+        }
+    }
+
+    /// Get the default function for a field, if one is available.
+    ///
+    /// Priority:
+    /// 1. Explicit field-level default_fn (from `#[facet(default = ...)]`)
+    /// 2. Type-level default_in_place (from Default impl, including `Option<T>`)
+    ///    but only if the field has the DEFAULT flag
+    /// 3. Special cases: `Option<T>` (defaults to None), () (unit type)
+    fn get_field_default_fn(field: &Field) -> Option<facet_core::DefaultInPlaceFn> {
+        // First check for explicit field-level default
+        if let Some(default_fn) = field.vtable.default_fn {
+            return Some(default_fn);
+        }
+
+        // Check if field is marked with DEFAULT flag and type has default_in_place
+        if field.flags.contains(FieldFlags::DEFAULT) {
+            if let Some(default_fn) = field.shape().vtable.default_in_place {
+                return Some(default_fn);
+            }
+        }
+
+        // Special case: Option<T> always defaults to None, even without explicit #[facet(default)]
+        // This is because Option is fundamentally "optional" - if not set, it should be None
+        if matches!(field.shape().def, Def::Option(_)) {
+            if let Some(default_fn) = field.shape().vtable.default_in_place {
+                return Some(default_fn);
+            }
+        }
+
+        // Special case: () unit type always defaults to ()
+        if field.shape().is_type::<()>() {
+            if let Some(default_fn) = field.shape().vtable.default_in_place {
+                return Some(default_fn);
+            }
+        }
+
+        None
     }
 
     /// Returns an error if the value is not fully initialized

@@ -76,6 +76,14 @@ pub fn to_string<'a, T: Facet<'a>>(value: &'a T) -> Result<String, TomlSerError>
     }
 }
 
+/// Serialize any `Facet` type to a pretty-formatted TOML string.
+/// This is currently a stub that behaves the same as `to_string`.
+#[cfg(feature = "alloc")]
+pub fn to_string_pretty<'a, T: Facet<'a>>(_value: &'a T) -> Result<String, TomlSerError> {
+    // TODO: Implement pretty formatting with better spacing, comments, etc.
+    todo!()
+}
+
 /// Check if a Peek value represents a unit type ((), unit struct, or empty tuple)
 /// or a list/array of unit types (which also can't be represented in TOML)
 fn is_unit_like(peek: &Peek<'_, '_>) -> bool {

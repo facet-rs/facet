@@ -1,0 +1,5 @@
+TOML parse error at line 3, column 3
+  |
+3 | [[inline-t.nest]]
+  |   ^^^^^^^^
+cannot extend value of type inline table with a dotted key

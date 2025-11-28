@@ -7,6 +7,9 @@
 
 extern crate alloc;
 
+#[doc = include_str!("../docs/design.md")]
+pub mod design {}
+
 #[cfg(feature = "deserialize")]
 mod deserialize;
 #[cfg(feature = "deserialize")]

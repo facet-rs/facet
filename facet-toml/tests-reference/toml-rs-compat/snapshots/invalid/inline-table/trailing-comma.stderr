@@ -1,0 +1,5 @@
+TOML parse error at line 3, column 18
+  |
+3 | abc = { abc = 123, }
+  |                  ^
+trailing commas are not supported in inline tables, expected nothing

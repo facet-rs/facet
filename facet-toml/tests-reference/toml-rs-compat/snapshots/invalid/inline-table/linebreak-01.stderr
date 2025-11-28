@@ -1,0 +1,5 @@
+TOML parse error at line 3, column 18
+  |
+3 | simple = { a = 1 
+  |                  ^
+newlines are unsupported in inline tables, expected nothing
