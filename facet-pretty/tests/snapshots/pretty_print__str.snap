@@ -1,5 +1,5 @@
 ---
 source: facet-pretty/tests/pretty_print.rs
-expression: "printer.format(&\"hello\").to_string()"
+expression: "printer.format(&\"hello\")"
 ---
-hello
+"hello"

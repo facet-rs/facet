@@ -1,6 +1,7 @@
 ---
 source: facet-pretty/tests/pretty_print.rs
-expression: printer.format(&bytes).to_string()
+expression: printer.format(&bytes)
 ---
-Vec<u8>
-  01 02 03 04
+Vec<u8> [
+   01 02 03 04
+]
