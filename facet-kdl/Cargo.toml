@@ -13,6 +13,7 @@ rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
 std = ["alloc", "facet-core/std", "facet-reflect/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 default = ["std"]
+slow-tests = [] # Enable slow tests (compile tests)
 
 [dependencies]
 log = "0.4"
@@ -27,6 +28,8 @@ facet = { path = "../facet" }
 facet-core = { path = "../facet-core", features = ["camino"] }
 facet-pretty = { path = "../facet-pretty" }
 facet-showcase = { path = "../facet-showcase" }
+facet-testhelpers = { path = "../facet-testhelpers" }
+tempfile = "3"
 camino = "1"
 miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
 indoc = "2.0.7"
