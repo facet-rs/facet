@@ -9,6 +9,9 @@ description = "A CSV deserializer and serializer for the facet ecosystem"
 keywords = ["csv", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parser-implementations"]
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
+
 [features]
 std = ["facet-core/std", "facet-reflect/std"]
 default = ["std"]

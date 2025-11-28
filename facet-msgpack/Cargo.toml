@@ -15,6 +15,9 @@ keywords = [
 ]
 categories = ["encoding", "parsing", "data-structures"]
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
+
 [features]
 default = []
 serialize = []

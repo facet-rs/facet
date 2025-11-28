@@ -9,6 +9,9 @@ description = "ASN.1 serialization and deserialization for Facet types"
 keywords = ["asn1", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
+
 [features]
 # TODO features for different encoding rules
 std = ["facet-core/std", "facet-reflect/std"]
