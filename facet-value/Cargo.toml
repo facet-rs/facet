@@ -12,13 +12,28 @@ categories = ["encoding", "data-structures"]
 [features]
 default = ["std"]
 std = ["alloc"]
-alloc = ["facet-core/alloc"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc", "dep:facet-reflect"]
+diagnostics = ["alloc", "dep:miette", "dep:facet-pretty", "dep:syntect", "dep:once_cell"]
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.31.8", default-features = false }
+facet-pretty = { path = "../facet-pretty", version = "0.31.0", optional = true }
+facet-reflect = { path = "../facet-reflect", version = "0.31.8", default-features = false, optional = true }
+miette = { version = "7", optional = true, features = ["fancy"] }
+syntect = { version = "5.3", optional = true }
+once_cell = { version = "1", optional = true }
 
 [dev-dependencies]
 facet-assert = { path = "../facet-assert" }
 facet-diff = { path = "../facet-diff" }
 facet-pretty = { path = "../facet-pretty" }
 facet-reflect = { path = "../facet-reflect" }
+facet-showcase = { path = "../facet-showcase" }
+facet = { path = "../facet" }
+facet-testhelpers = { path = "../facet-testhelpers" }
+miette = { version = "7", features = ["fancy"] }
+owo-colors = "4"
+
+[[example]]
+name = "from_value_showcase"
+required-features = ["diagnostics"]
