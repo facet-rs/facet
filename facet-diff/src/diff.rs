@@ -35,7 +35,7 @@ pub enum Diff<'mem, 'facet> {
         /// The name of the variant, this is [`None`] if the values are structs
         variant: Option<&'static str>,
 
-        /// cf. [`Value`]
+        /// The value of the struct/enum variant (tuple or struct fields)
         value: Value<'mem, 'facet>,
     },
 
@@ -83,7 +83,7 @@ impl<'mem, 'facet> Value<'mem, 'facet> {
     }
 }
 
-/// Extension trait that provides a [`diff`] method for `Facet` types
+/// Extension trait that provides a [`diff`](FacetDiff::diff) method for `Facet` types
 pub trait FacetDiff<'f>: Facet<'f> {
     /// Computes the difference between two values that implement `Facet`
     fn diff<'a, U: Facet<'f>>(&'a self, other: &'a U) -> Diff<'a, 'f>;

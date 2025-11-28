@@ -623,7 +623,7 @@ impl<'input> JsonDeserializer<'input> {
         }
     }
 
-    /// Deserialize into a Spanned<T> wrapper.
+    /// Deserialize into a `Spanned<T>` wrapper.
     fn deserialize_spanned(&mut self, wip: &mut Partial<'input>) -> Result<()> {
         log::trace!("deserialize_spanned");
 
@@ -701,7 +701,7 @@ impl<'input> JsonDeserializer<'input> {
         Ok(())
     }
 
-    /// Set a string value, handling &str, Cow<str>, and String appropriately.
+    /// Set a string value, handling `&str`, `Cow<str>`, and `String` appropriately.
     fn set_string_value(&mut self, wip: &mut Partial<'input>, s: Cow<'input, str>) -> Result<()> {
         let shape = wip.shape();
 

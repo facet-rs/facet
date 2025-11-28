@@ -187,7 +187,7 @@ fn get_enum_type(shape: &Shape) -> Option<EnumType> {
 }
 
 /// Find a variant in an enum type that matches the given name.
-/// Returns a 'static reference since EnumType.variants is &'static [Variant].
+/// Returns a 'static reference since `EnumType.variants` is `&'static [Variant]`.
 fn find_variant_by_name(enum_type: &EnumType, name: &str) -> Option<&'static facet_core::Variant> {
     enum_type.variants.iter().find(|v| v.name == name)
 }
