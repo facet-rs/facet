@@ -99,11 +99,8 @@ impl Variant {
     #[inline]
     pub fn has_extension_attr(&self, ns: &str, key: &str) -> bool {
         self.attributes.iter().any(|attr| {
-            if let VariantAttribute::Extension(ext) = attr {
-                ext.ns == ns && ext.key == key
-            } else {
-                false
-            }
+            let VariantAttribute::Extension(ext) = attr;
+            ext.ns == ns && ext.key == key
         })
     }
 
@@ -111,12 +108,12 @@ impl Variant {
     #[inline]
     pub fn get_extension_attr(&self, ns: &str, key: &str) -> Option<&super::ExtensionAttr> {
         self.attributes.iter().find_map(|attr| {
-            if let VariantAttribute::Extension(ext) = attr {
-                if ext.ns == ns && ext.key == key {
-                    return Some(ext);
-                }
+            let VariantAttribute::Extension(ext) = attr;
+            if ext.ns == ns && ext.key == key {
+                Some(ext)
+            } else {
+                None
             }
-            None
         })
     }
 }
@@ -192,8 +189,6 @@ pub enum VariantAttribute {
     /// An extension attribute from a third-party crate
     /// e.g., `#[facet(serde::rename = "other_name")]`
     Extension(super::ExtensionAttr),
-    /// Custom attribute containing arbitrary text
-    Arbitrary(&'static str),
 }
 
 /// All possible representations for Rust enums — ie. the type/size of the discriminant

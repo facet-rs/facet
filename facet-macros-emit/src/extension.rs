@@ -9,29 +9,21 @@ use quote::quote;
 /// - `ns`: the namespace string
 /// - `key`: the key string
 /// - `args`: a static slice of `facet::Token`
-/// - `get`: a function pointer that returns the typed data from the builder
+/// - `get`: a function pointer that returns a no-op unit value (for marker attributes)
 ///
-/// The generated code includes a `LazyLock` static that calls the builder function
-/// `{ns}::__facet_build_{key}(args)` and returns a reference to the result.
+/// For simple marker attributes like `#[facet(kdl::child)]`, this is sufficient.
+/// The attribute can be detected via `has_extension_attr("kdl", "child")` and
+/// any arguments are available in the `args` field.
 pub fn emit_extension_attr(ns: &str, key: &str, args: &TokenStream) -> TokenStream {
-    // Generate a unique name for the static and getter function
-    // We use a const block to create an anonymous scope
-    let builder_fn = quote::format_ident!("__facet_build_{}", key);
-    let ns_ident = quote::format_ident!("{}", ns);
-
     // Convert the args TokenStream into a static slice of facet::Token
     let args_tokens = emit_token_trees(args);
 
     quote! {
         {
-            // Static LazyLock to lazily initialize the typed data
-            static __EXT_DATA: ::std::sync::LazyLock<::std::boxed::Box<dyn ::core::any::Any + ::core::marker::Send + ::core::marker::Sync>> =
-                ::std::sync::LazyLock::new(|| {
-                    #ns_ident::#builder_fn(&[#args_tokens])
-                });
-
+            // No-op getter for marker attributes - returns a reference to ()
             fn __ext_get() -> &'static (dyn ::core::any::Any + ::core::marker::Send + ::core::marker::Sync) {
-                __EXT_DATA.as_ref()
+                static __UNIT: () = ();
+                &__UNIT
             }
 
             ::facet::ExtensionAttr {

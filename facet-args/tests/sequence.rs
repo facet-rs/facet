@@ -6,7 +6,7 @@ mod common;
 fn test_simplest_value_singleton_list_named() {
     #[derive(Facet, Debug, PartialEq)]
     struct Args {
-        #[facet(named, short = "s")]
+        #[facet(args::named, args::short = "s")]
         strings: Vec<String>,
     }
 
@@ -21,7 +21,7 @@ fn test_simplest_value_singleton_list_named() {
 fn test_simplest_value_singleton_list_positional() {
     #[derive(Facet, Debug, PartialEq)]
     struct Args {
-        #[facet(positional)]
+        #[facet(args::positional)]
         strings: Vec<String>,
     }
 
@@ -35,7 +35,7 @@ fn test_simplest_value_singleton_list_positional() {
 fn test_noargs_single_positional() {
     #[derive(Facet, Debug, PartialEq)]
     struct Args {
-        #[facet(positional)]
+        #[facet(args::positional)]
         strings: String,
     }
     let err = facet_args::from_slice::<Args>(&[]).unwrap_err();
@@ -46,7 +46,7 @@ fn test_noargs_single_positional() {
 fn test_noargs_vec_positional_default() {
     #[derive(Facet, Debug, PartialEq)]
     struct Args {
-        #[facet(positional, default)]
+        #[facet(args::positional, default)]
         strings: Vec<String>,
     }
     let args = facet_args::from_slice::<Args>(&[]).unwrap();
@@ -57,7 +57,7 @@ fn test_noargs_vec_positional_default() {
 fn test_noargs_vec_positional_no_default() {
     #[derive(Facet, Debug, PartialEq)]
     struct Args {
-        #[facet(positional)]
+        #[facet(args::positional)]
         strings: Vec<String>,
     }
     let err = facet_args::from_slice::<Args>(&[]).unwrap_err();
@@ -76,13 +76,13 @@ fn test_doubledash_nothing() {
 fn test_doubledash_flags_before_dd() {
     #[derive(Facet, Debug, PartialEq)]
     struct Args {
-        #[facet(named, default)]
+        #[facet(args::named, default)]
         foo: bool,
 
-        #[facet(named, default)]
+        #[facet(args::named, default)]
         bar: bool,
 
-        #[facet(positional, default)]
+        #[facet(args::positional, default)]
         args: Vec<String>,
     }
 
@@ -94,13 +94,13 @@ fn test_doubledash_flags_before_dd() {
 fn test_doubledash_flags_across_dd() {
     #[derive(Facet, Debug, PartialEq)]
     struct Args {
-        #[facet(named, default)]
+        #[facet(args::named, default)]
         foo: bool,
 
-        #[facet(named, default)]
+        #[facet(args::named, default)]
         bar: bool,
 
-        #[facet(positional, default)]
+        #[facet(args::positional, default)]
         args: Vec<String>,
     }
 
@@ -119,13 +119,13 @@ fn test_doubledash_flags_across_dd() {
 fn test_doubledash_flags_after_dd() {
     #[derive(Facet, Debug, PartialEq)]
     struct Args {
-        #[facet(named, default)]
+        #[facet(args::named, default)]
         foo: bool,
 
-        #[facet(named, default)]
+        #[facet(args::named, default)]
         bar: bool,
 
-        #[facet(positional, default)]
+        #[facet(args::positional, default)]
         args: Vec<String>,
     }
 

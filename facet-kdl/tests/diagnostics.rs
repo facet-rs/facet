@@ -11,13 +11,13 @@ use indoc::indoc;
 fn kdl_parse_error() {
     #[derive(Facet, Debug)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
     }
 
@@ -48,15 +48,15 @@ fn miette_semantic_error_with_spanned() {
 
     #[derive(Facet, Debug)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: Spanned<String>,
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: Spanned<u16>,
     }
 
@@ -134,15 +134,15 @@ fn miette_multiple_validation_errors() {
 
     #[derive(Facet, Debug)]
     struct Pipeline {
-        #[facet(children)]
+        #[facet(kdl::children)]
         tasks: Vec<Task>,
     }
 
     #[derive(Facet, Debug)]
     struct Task {
-        #[facet(node_name)]
+        #[facet(kdl::node_name)]
         name: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         #[facet(default)]
         timeout: Option<Spanned<u32>>,
     }

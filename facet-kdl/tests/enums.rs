@@ -7,9 +7,9 @@ use indoc::indoc;
 fn enum_child_by_variant_name() {
     #[derive(Facet, PartialEq, Debug)]
     struct Step {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
-        #[facet(child)]
+        #[facet(kdl::child)]
         action: Action,
     }
 
@@ -17,22 +17,22 @@ fn enum_child_by_variant_name() {
     #[repr(u8)]
     enum Action {
         Print {
-            #[facet(property)]
+            #[facet(kdl::property)]
             message: String,
-            #[facet(property)]
+            #[facet(kdl::property)]
             level: Option<String>,
         },
         Write {
-            #[facet(property)]
+            #[facet(kdl::property)]
             path: String,
-            #[facet(property)]
+            #[facet(kdl::property)]
             content: Option<String>,
         },
     }
 
     #[derive(Facet, PartialEq, Debug)]
     struct Pipeline {
-        #[facet(children)]
+        #[facet(kdl::children)]
         steps: Vec<Step>,
     }
 
@@ -73,7 +73,7 @@ fn enum_child_by_variant_name() {
 fn enum_child_with_rename_all() {
     #[derive(Facet, PartialEq, Debug)]
     struct Container {
-        #[facet(child)]
+        #[facet(kdl::child)]
         event: Event,
     }
 
@@ -83,11 +83,11 @@ fn enum_child_with_rename_all() {
     #[allow(dead_code)]
     enum Event {
         UserCreated {
-            #[facet(property)]
+            #[facet(kdl::property)]
             username: String,
         },
         FileUploaded {
-            #[facet(property)]
+            #[facet(kdl::property)]
             path: String,
         },
     }

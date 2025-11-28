@@ -3,8 +3,8 @@
 use std::mem;
 
 use facet_core::{
-    Def, EnumType, Facet, Field, FieldAttribute, FieldFlags, NumericType, PrimitiveType, Shape,
-    ShapeLayout, StructType, Type, UserType,
+    Def, EnumType, Facet, Field, FieldFlags, NumericType, PrimitiveType, Shape, ShapeLayout,
+    StructType, Type, UserType,
 };
 use facet_reflect::{Partial, is_spanned_shape};
 use facet_solver::{
@@ -58,11 +58,7 @@ fn find_property_field(
 ) -> Option<PropertyFieldMatch> {
     // First check direct fields
     for field in fields {
-        if field
-            .attributes
-            .contains(&FieldAttribute::Arbitrary("property"))
-            && field.name == property_name
-        {
+        if field.has_extension_attr("kdl", "property") && field.name == property_name {
             return Some(PropertyFieldMatch::Direct {
                 field_name: field.name,
                 field,
@@ -76,9 +72,7 @@ fn find_property_field(
             let field_shape = (field.shape)();
             if let Type::User(UserType::Struct(struct_def)) = &field_shape.ty {
                 for inner_field in struct_def.fields {
-                    if inner_field
-                        .attributes
-                        .contains(&FieldAttribute::Arbitrary("property"))
+                    if inner_field.has_extension_attr("kdl", "property")
                         && inner_field.name == property_name
                     {
                         return Some(PropertyFieldMatch::Flattened {
@@ -195,9 +189,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             log::trace!("Document `Partial` is a struct: {struct_def:#?}");
             let is_valid_toplevel = struct_def.fields.iter().all(|field| {
                 field.flags.contains(FieldFlags::CHILD)
-                    || field
-                        .attributes
-                        .contains(&FieldAttribute::Arbitrary("children"))
+                    || field.has_extension_attr("kdl", "children")
             });
             log::trace!("WIP represents a valid top-level: {is_valid_toplevel}");
 
@@ -311,11 +303,11 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             }
 
             // Third, try to match as a children container element
-            if let Some((idx, children_field)) = fields.iter().enumerate().find(|(_, field)| {
-                field
-                    .attributes
-                    .contains(&FieldAttribute::Arbitrary("children"))
-            }) {
+            if let Some((idx, children_field)) = fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| field.has_extension_attr("kdl", "children"))
+            {
                 return Some(FieldMatchResult::ChildrenContainer {
                     field_name: children_field.name,
                     field_index: idx,
@@ -546,11 +538,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         };
 
         // Handle node_name attribute
-        if let Some(node_name_field) = fields_for_matching.iter().find(|field| {
-            field
-                .attributes
-                .contains(&FieldAttribute::Arbitrary("node_name"))
-        }) {
+        if let Some(node_name_field) = fields_for_matching
+            .iter()
+            .find(|field| field.has_extension_attr("kdl", "node_name"))
+        {
             let field_shape = (node_name_field.shape)();
             if is_spanned_shape(field_shape) {
                 // Deserialize as Spanned<String>
@@ -774,10 +765,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                     if deny_unknown_fields {
                         let expected: Vec<&'static str> = fields
                             .iter()
-                            .filter(|f| {
-                                f.attributes
-                                    .contains(&FieldAttribute::Arbitrary("property"))
-                            })
+                            .filter(|f| f.has_extension_attr("kdl", "property"))
                             .map(|f| f.name)
                             .collect();
                         let name_span = name.span();
@@ -800,9 +788,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             let argument_field: Option<&Field>;
 
             if let Some((_, next_arg_field)) = fields.iter().enumerate().find(|(index, field)| {
-                field
-                    .attributes
-                    .contains(&FieldAttribute::Arbitrary("argument"))
+                field.has_extension_attr("kdl", "argument")
                     && partial.is_field_set(*index).ok() == Some(false)
             }) {
                 if *in_entry_arguments_list {
@@ -810,12 +796,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 }
                 partial.begin_field(next_arg_field.name)?;
                 argument_field = Some(next_arg_field);
-            } else if let Some((args_field_index, args_field)) =
-                fields.iter().enumerate().find(|(_, field)| {
-                    field
-                        .attributes
-                        .contains(&FieldAttribute::Arbitrary("arguments"))
-                })
+            } else if let Some((args_field_index, args_field)) = fields
+                .iter()
+                .enumerate()
+                .find(|(_, field)| field.has_extension_attr("kdl", "arguments"))
             {
                 if !*in_entry_arguments_list {
                     if partial.is_field_set(args_field_index)? {
@@ -974,12 +958,8 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         // Pre-register argument fields with the solver (they're always present)
         // This is important because the solver's finish() method checks required fields
         for field in fields {
-            if field
-                .attributes
-                .contains(&FieldAttribute::Arbitrary("argument"))
-                || field
-                    .attributes
-                    .contains(&FieldAttribute::Arbitrary("arguments"))
+            if field.has_extension_attr("kdl", "argument")
+                || field.has_extension_attr("kdl", "arguments")
             {
                 let _ = solver.see_key(field.name); // Inform solver about argument fields
             }
@@ -992,17 +972,13 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         let mut argument_index = 0;
         let argument_fields: Vec<_> = fields
             .iter()
-            .filter(|f| {
-                f.attributes
-                    .contains(&FieldAttribute::Arbitrary("argument"))
-            })
+            .filter(|f| f.has_extension_attr("kdl", "argument"))
             .collect();
 
         let mut in_arguments_list = false;
-        let arguments_field = fields.iter().find(|f| {
-            f.attributes
-                .contains(&FieldAttribute::Arbitrary("arguments"))
-        });
+        let arguments_field = fields
+            .iter()
+            .find(|f| f.has_extension_attr("kdl", "arguments"));
 
         // Separate arguments from properties
         let mut arguments: Vec<KdlEntry> = Vec::new();
@@ -1134,10 +1110,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         // Collect expected property fields for the error message
                         let expected: Vec<&'static str> = fields
                             .iter()
-                            .filter(|f| {
-                                f.attributes
-                                    .contains(&FieldAttribute::Arbitrary("property"))
-                            })
+                            .filter(|f| f.has_extension_attr("kdl", "property"))
                             .map(|f| f.name)
                             .collect();
                         // Get span from the property entry
@@ -1299,12 +1272,8 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             let mut seen_props: std::collections::BTreeSet<&str> =
                 property_names.iter().map(|s| s.as_str()).collect();
             for field in fields {
-                if field
-                    .attributes
-                    .contains(&FieldAttribute::Arbitrary("argument"))
-                    || field
-                        .attributes
-                        .contains(&FieldAttribute::Arbitrary("arguments"))
+                if field.has_extension_attr("kdl", "argument")
+                    || field.has_extension_attr("kdl", "arguments")
                 {
                     seen_props.insert(field.name);
                 }

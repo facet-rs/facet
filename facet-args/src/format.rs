@@ -3,9 +3,7 @@ use crate::{
     error::{ArgsError, ArgsErrorKind, ArgsErrorWithInput},
     span::Span,
 };
-use facet_core::{
-    Def, Facet, Field, FieldAttribute, FieldFlags, LiteralKind, Shape, Token, Type, UserType,
-};
+use facet_core::{Def, Facet, Field, FieldFlags, LiteralKind, Shape, Token, Type, UserType};
 use facet_reflect::{HeapValue, Partial};
 use heck::ToSnakeCase;
 
@@ -252,10 +250,7 @@ impl<'input> Context<'input> {
                     let mut chosen_field_index: Option<usize> = None;
 
                     for (field_index, field) in fields.iter().enumerate() {
-                        let is_positional = field.has_extension_attr("args", "positional")
-                            || field.attributes.iter().any(|attr| {
-                                matches!(attr, FieldAttribute::Arbitrary("positional"))
-                            });
+                        let is_positional = field.has_extension_attr("args", "positional");
                         if !is_positional {
                             continue;
                         }
@@ -383,34 +378,21 @@ fn test_split() {
     );
 }
 
-/// Given an array of fields, find the field with the given `short = 'a'`
-/// annotation.
+/// Given an array of fields, find the field with the given `args::short = 'a'`
+/// annotation. Uses extension attribute syntax: #[facet(args::short = "j")]
 fn find_field_index_with_short(fields: &'static [Field], short: &str) -> Option<usize> {
-    let just_short = "short";
-    let full_attr1 = format!("short = '{short}'");
-    let full_attr2 = format!("short = \"{short}\"");
-
     fields.iter().position(|f| {
-        // First try the new extension attribute syntax: #[facet(args::short = "j")]
         if let Some(ext) = f.get_extension_attr("args", "short") {
             if ext.args.is_empty() {
                 // No explicit short specified, use field name
                 return f.name == short;
             } else {
                 // Parse the args to extract the short character
-                return extract_short_from_args(ext.args).as_deref() == Some(short);
+                let extracted = extract_short_from_args(ext.args);
+                return extracted.as_deref() == Some(short);
             }
         }
-
-        // Fall back to the old Arbitrary attribute syntax: #[facet(short)] or #[facet(short = "j")]
-        f.attributes.iter().any(|attr| match attr {
-            FieldAttribute::Arbitrary(attr_str) => {
-                attr_str == &full_attr1
-                    || attr_str == &full_attr2
-                    || (attr_str == &just_short && f.name == short)
-            }
-            _ => false,
-        })
+        false
     })
 }
 

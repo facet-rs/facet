@@ -4,7 +4,7 @@ use facet::Facet;
 fn test_eq_long_solo() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         hello: String,
     }
     let args: Args = facet_args::from_slice(&["--hello=world"]).unwrap();
@@ -15,7 +15,7 @@ fn test_eq_long_solo() {
 fn test_eq_short_solo() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(short)]
+        #[facet(args::short)]
         k: i64,
     }
     let args: Args = facet_args::from_slice(&["-k=3"]).unwrap();
@@ -26,7 +26,7 @@ fn test_eq_short_solo() {
 fn test_eq_long_rename_solo() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named, rename = "cores")]
+        #[facet(args::named, rename = "cores")]
         concurrency: i64,
     }
     let args: Args = facet_args::from_slice(&["--cores=4"]).unwrap();
@@ -37,7 +37,7 @@ fn test_eq_long_rename_solo() {
 fn test_eq_short_rename_solo() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(short, rename = "j")]
+        #[facet(args::short, rename = "j")]
         concurrency: i64,
     }
     let args: Args = facet_args::from_slice(&["-j=4"]).unwrap();
@@ -48,9 +48,9 @@ fn test_eq_short_rename_solo() {
 fn test_eq_long_followed() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         hello: String,
-        #[facet(named)]
+        #[facet(args::named)]
         two: i64,
     }
     let args: Args = facet_args::from_slice(&["--hello=world", "--two", "2"]).unwrap();
@@ -62,9 +62,9 @@ fn test_eq_long_followed() {
 fn test_eq_short_followed() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(short)]
+        #[facet(args::short)]
         y: String,
-        #[facet(named)]
+        #[facet(args::named)]
         two: i64,
     }
     let args: Args = facet_args::from_slice(&["-y=yes", "--two", "2"]).unwrap();
@@ -76,9 +76,9 @@ fn test_eq_short_followed() {
 fn test_eq_long_preceded() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         one: i64,
-        #[facet(named)]
+        #[facet(args::named)]
         hello: String,
     }
     let args: Args = facet_args::from_slice(&["--one", "1", "--hello=world"]).unwrap();
@@ -90,9 +90,9 @@ fn test_eq_long_preceded() {
 fn test_eq_short_preceded() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         one: i64,
-        #[facet(short)]
+        #[facet(args::short)]
         y: String,
     }
     let args: Args = facet_args::from_slice(&["--one", "1", "-y=yes"]).unwrap();
@@ -104,11 +104,11 @@ fn test_eq_short_preceded() {
 fn test_eq_long_in_the_middle() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         one: i64,
-        #[facet(named)]
+        #[facet(args::named)]
         hello: String,
-        #[facet(named)]
+        #[facet(args::named)]
         two: i64,
     }
     let args: Args =
@@ -122,11 +122,11 @@ fn test_eq_long_in_the_middle() {
 fn test_eq_short_in_the_middle() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         one: i64,
-        #[facet(short)]
+        #[facet(args::short)]
         y: String,
-        #[facet(named)]
+        #[facet(args::named)]
         two: i64,
     }
     let args: Args = facet_args::from_slice(&["--one", "1", "-y=yes", "--two", "2"]).unwrap();

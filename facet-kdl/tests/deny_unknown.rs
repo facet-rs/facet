@@ -10,15 +10,15 @@ use indoc::indoc;
 fn unknown_properties_skipped_by_default() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: u16,
     }
 
@@ -37,16 +37,16 @@ fn unknown_properties_skipped_by_default() {
 fn deny_unknown_fields_rejects_unknown_properties() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     #[facet(deny_unknown_fields)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: u16,
     }
 
@@ -72,18 +72,18 @@ fn deny_unknown_fields_rejects_unknown_properties() {
 fn deny_unknown_fields_allows_known_properties() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     #[facet(deny_unknown_fields)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: u16,
-        #[facet(property, default)]
+        #[facet(kdl::property, default)]
         timeout: Option<u32>,
     }
 
@@ -102,14 +102,14 @@ fn deny_unknown_fields_allows_known_properties() {
 fn deny_unknown_fields_with_flatten() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     #[facet(deny_unknown_fields)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         name: String,
         #[facet(flatten)]
         connection: ConnectionSettings,
@@ -117,9 +117,9 @@ fn deny_unknown_fields_with_flatten() {
 
     #[derive(Facet, Debug, PartialEq, Default)]
     struct ConnectionSettings {
-        #[facet(property, default)]
+        #[facet(kdl::property, default)]
         host: String,
-        #[facet(property, default)]
+        #[facet(kdl::property, default)]
         port: u16,
     }
 
@@ -140,13 +140,13 @@ fn deny_unknown_fields_with_flatten() {
 fn unknown_child_nodes_skipped_by_default() {
     #[derive(Facet, Debug, PartialEq)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
     }
 
@@ -168,13 +168,13 @@ fn deny_unknown_fields_rejects_unknown_child_nodes() {
     #[derive(Facet, Debug, PartialEq)]
     #[facet(deny_unknown_fields)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug, PartialEq)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: String,
     }
 

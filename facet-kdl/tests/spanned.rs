@@ -6,15 +6,15 @@ use indoc::indoc;
 fn spanned_values() {
     #[derive(Facet, Debug)]
     struct Config {
-        #[facet(child)]
+        #[facet(kdl::child)]
         server: Server,
     }
 
     #[derive(Facet, Debug)]
     struct Server {
-        #[facet(argument)]
+        #[facet(kdl::argument)]
         host: Spanned<String>,
-        #[facet(property)]
+        #[facet(kdl::property)]
         port: Spanned<u32>,
     }
 

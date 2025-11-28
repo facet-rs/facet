@@ -144,8 +144,6 @@ pub enum FieldAttribute {
     /// An extension attribute from a third-party crate
     /// e.g., `#[facet(orm::column(name = "user_id"))]`
     Extension(super::ExtensionAttr),
-    /// Custom field attribute containing arbitrary text
-    Arbitrary(&'static str),
 }
 
 /// Builder for FieldVTable

@@ -20,7 +20,7 @@ fn test_error_non_struct_type_not_supported() {
 fn test_error_missing_value_for_argument() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named, short = 'j')]
+        #[facet(args::named, args::short = 'j')]
         concurrency: usize,
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--concurrency"]);
@@ -32,7 +32,7 @@ fn test_error_missing_value_for_argument() {
 fn test_error_wrong_type_for_argument() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named, short = 'j')]
+        #[facet(args::named, args::short = 'j')]
         concurrency: usize,
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--concurrency", "yes"]);
@@ -44,9 +44,9 @@ fn test_error_wrong_type_for_argument() {
 fn test_error_missing_value_for_argument_short_missed() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named, short = 'j')]
+        #[facet(args::named, args::short = 'j')]
         concurrency: usize,
-        #[facet(named, short = 'v')]
+        #[facet(args::named, args::short = 'v')]
         verbose: bool,
     }
     let args: Result<Args, _> = facet_args::from_slice(&["-j", "-v"]);
@@ -59,7 +59,7 @@ fn test_error_missing_value_for_argument_short_missed() {
 fn test_error_missing_value_for_argument_short_eof() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named, short = 'j')]
+        #[facet(args::named, args::short = 'j')]
         concurrency: usize,
     }
     let args: Result<Args, _> = facet_args::from_slice(&["-j"]);
@@ -71,7 +71,7 @@ fn test_error_missing_value_for_argument_short_eof() {
 fn test_error_unknown_argument() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named, short = 'j')]
+        #[facet(args::named, args::short = 'j')]
         concurrency: usize,
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--c0ncurrency"]);
@@ -83,7 +83,7 @@ fn test_error_unknown_argument() {
 fn test_error_number_outside_range() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         small: u8,
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--small", "1000"]);
@@ -95,7 +95,7 @@ fn test_error_number_outside_range() {
 fn test_error_negative_value_for_unsigned() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         count: usize,
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--count", "-10"]);
@@ -107,7 +107,7 @@ fn test_error_negative_value_for_unsigned() {
 fn test_error_out_of_range() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         byte: u8,
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--byte", "1000"]);
@@ -119,7 +119,7 @@ fn test_error_out_of_range() {
 fn test_error_bool_with_invalid_value_positional() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         enable: bool,
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--enable", "maybe"]);
@@ -131,7 +131,7 @@ fn test_error_bool_with_invalid_value_positional() {
 fn test_error_char_with_multiple_chars() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         letter: char,
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--letter", "abc"]);
@@ -148,7 +148,7 @@ fn test_error_nested_struct_with_scalar() {
 
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         config: Config,
     }
     let args: Result<Args, _> = facet_args::from_slice(&["--config", "simple"]);
@@ -160,7 +160,7 @@ fn test_error_nested_struct_with_scalar() {
 fn test_error_option_with_multiple_values() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         maybe: Option<String>,
     }
     // Try to provide a list where an Option is expected
@@ -176,7 +176,7 @@ fn test_error_tuple_struct_field_access() {
 
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         point: Point,
     }
     // Try to access tuple struct fields by name
@@ -189,7 +189,7 @@ fn test_error_tuple_struct_field_access() {
 fn test_error_unexpected_positional_arg() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         name: String,
     }
     // Provide a positional arg when none is expected
@@ -204,7 +204,7 @@ fn test_error_invalid_ip_address() {
 
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         address: IpAddr,
     }
     // Provide an invalid IP address
@@ -235,7 +235,7 @@ fn test_error_complex_nested_structure() {
 
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         config: AppConfig,
     }
     // Try to flatten complex structure incorrectly

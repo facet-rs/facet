@@ -4,16 +4,16 @@ use facet::Facet;
 fn test_arg_parse_easy() {
     #[derive(Facet)]
     struct Args {
-        #[facet(positional)]
+        #[facet(args::positional)]
         path: String,
 
-        #[facet(named, short = 'v')]
+        #[facet(args::named, args::short = 'v')]
         verbose: bool,
 
-        #[facet(named, short = 'j')]
+        #[facet(args::named, args::short = 'j')]
         concurrency: usize,
 
-        #[facet(named, short = 'x')]
+        #[facet(args::named, args::short = 'x')]
         consider_casing: usize,
     }
 
@@ -36,13 +36,13 @@ fn test_arg_parse_easy() {
 fn test_arg_parse_nums() {
     #[derive(Facet)]
     struct Args {
-        #[facet(named, short)]
+        #[facet(args::named, args::short)]
         x: i64,
 
-        #[facet(named, short)]
+        #[facet(args::named, args::short)]
         y: u64,
 
-        #[facet(named, short = "z")]
+        #[facet(args::named, args::short = "z")]
         zzz: f64,
     }
 
@@ -56,9 +56,9 @@ fn test_arg_parse_nums() {
 fn test_missing_bool_is_false() {
     #[derive(Facet)]
     struct Args {
-        #[facet(named, short = 'v')]
+        #[facet(args::named, args::short = 'v')]
         verbose: bool,
-        #[facet(positional)]
+        #[facet(args::positional)]
         path: String,
     }
     let args: Args = facet_args::from_slice(&["absence_is_falsey.rs"]).unwrap();
@@ -69,9 +69,9 @@ fn test_missing_bool_is_false() {
 fn test_missing_default() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(positional, default = 42)]
+        #[facet(args::positional, default = 42)]
         answer: usize,
-        #[facet(named, short = 'p')]
+        #[facet(args::named, args::short = 'p')]
         path: String,
     }
 
@@ -94,9 +94,9 @@ fn test_missing_default_fn() {
 
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named, short = 'p')]
+        #[facet(args::named, args::short = 'p')]
         path: String,
-        #[facet(named, short = 'j', default = default_concurrency())]
+        #[facet(args::named, args::short = 'j', default = default_concurrency())]
         concurrency: usize,
     }
 
@@ -114,7 +114,7 @@ fn test_missing_default_fn() {
 fn test_inf_float_parsing() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         rate: f64,
     }
     let args: Args = facet_args::from_slice(&["--rate", "infinity"]).unwrap();
@@ -125,7 +125,7 @@ fn test_inf_float_parsing() {
 fn test_short_rename() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named, short, rename = "j")]
+        #[facet(args::named, args::short, rename = "j")]
         concurrency: i64,
     }
     let args: Args = facet_args::from_slice(&["-j", "4"]).unwrap();
@@ -136,9 +136,9 @@ fn test_short_rename() {
 fn test_bool_str_before() {
     #[derive(Facet, Debug)]
     struct Args {
-        #[facet(named)]
+        #[facet(args::named)]
         foo: bool,
-        #[facet(named)]
+        #[facet(args::named)]
         hello: String,
     }
     let args: Args = facet_args::from_slice(&["--foo", "--hello", "world"]).unwrap();
