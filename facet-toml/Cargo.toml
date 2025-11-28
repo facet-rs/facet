@@ -14,7 +14,7 @@ rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
 
 [features]
 deserialize = ["alloc"]
-serialize = ["alloc", "dep:toml_edit", "toml_edit/display"]
+serialize = ["alloc", "dep:toml_writer"]
 std = [
     "alloc",
     "facet-core/std",
@@ -30,7 +30,7 @@ default = ["deserialize", "serialize", "std", "rich-diagnostics"]
 ariadne = { version = "=0.5.1", optional = true }
 log = "0.4.27"
 num-traits = { version = "0.2.19", default-features = false }
-toml_edit = { version = "0.22.27", default-features = false, optional = true }
+toml_writer = { version = "1.0.4", default-features = false, optional = true }
 toml_parser = { version = "1.0.4", default-features = false, features = ["alloc"] }
 facet-core = { path = "../facet-core", default-features = false }
 facet-reflect = { path = "../facet-reflect", default-features = false }
