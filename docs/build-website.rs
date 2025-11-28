@@ -55,9 +55,8 @@ fn main() {
         // (package, example_name, output_filename)
         let showcases = [
             ("facet-kdl", "kdl_showcase", "kdl"),
-            ("facet-kdl", "kdl_error_showcase", "kdl-errors"),
-            ("facet-json", "json_error_showcase", "json-errors"),
-            ("facet-yaml", "yaml_error_showcase", "yaml-errors"),
+            ("facet-json", "json_showcase", "json"),
+            ("facet-yaml", "yaml_showcase", "yaml"),
         ];
 
         let handles: Vec<_> = showcases
@@ -118,6 +117,43 @@ fn main() {
     // Step 4: Build search index with Pagefind
     step("Building search index with Pagefind", || {
         run_in(&docs_dir, "npx", &["-y", "pagefind", "--site", "public"])?;
+        Ok(())
+    });
+
+    // Step 5: Check for dead links with lychee
+    step("Checking for dead links", || {
+        // Try to install lychee with cargo binstall first (faster), fallback to cargo install
+        let lychee_available = Command::new("lychee")
+            .arg("--version")
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+
+        if !lychee_available {
+            println!("  Installing lychee...");
+            let binstall_result = Command::new("cargo")
+                .args(["binstall", "-y", "lychee"])
+                .status();
+
+            if binstall_result.is_err() || !binstall_result.unwrap().success() {
+                println!("  cargo binstall failed, falling back to cargo install...");
+                run_in(&repo_root, "cargo", &["install", "lychee"])?;
+            }
+        }
+
+        let public_dir = docs_dir.join("public");
+        run_in(
+            &docs_dir,
+            "lychee",
+            &[
+                "--verbose",
+                "--root-dir",
+                &public_dir.to_string_lossy(),
+                "--remap",
+                &format!("https://facet.rs file://{}", public_dir.to_string_lossy()),
+                "public/**/*.html",
+            ],
+        )?;
         Ok(())
     });
 
