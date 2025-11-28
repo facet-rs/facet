@@ -11,15 +11,15 @@ use facet::Facet;
 
 #[derive(Facet, Debug, PartialEq)]
 struct Config {
-    #[facet(child)]
+    #[facet(kdl::child)]
     server: Server,
 }
 
 #[derive(Facet, Debug, PartialEq)]
 struct Server {
-    #[facet(argument)]
+    #[facet(kdl::argument)]
     host: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     port: u16,
 }
 
@@ -35,9 +35,9 @@ fn main() -> Result<(), facet_kdl::KdlError> {
 
 ## Common patterns
 
-- `#[facet(child)]` for a single required child node, `#[facet(children)]` for lists/maps/sets of children.
-- `#[facet(property)]` maps node properties (key/value pairs) to fields.
-- `#[facet(arguments)]`/`#[facet(argument)]` read positional arguments on a node.
+- `#[facet(kdl::child)]` for a single required child node, `#[facet(kdl::children)]` for lists/maps/sets of children.
+- `#[facet(kdl::property)]` maps node properties (key/value pairs) to fields.
+- `#[facet(kdl::arguments)]`/`#[facet(kdl::argument)]` read positional arguments on a node.
 - `#[facet(flatten)]` merges nested structs/enums; the solver uses property/child presence to choose variants.
 - `Spanned<T>` is supported: properties/arguments can be captured with `miette::SourceSpan` data.
 
