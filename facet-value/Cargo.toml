@@ -1,0 +1,19 @@
+[package]
+name = "facet-value"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Memory-efficient dynamic value type for facet, supporting JSON-like data plus bytes"
+keywords = ["serialization", "value", "dynamic", "json"]
+categories = ["encoding", "data-structures"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[dependencies]
+
+[dev-dependencies]
