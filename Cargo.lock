@@ -444,6 +444,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-assert"
+version = "0.31.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-pretty",
+ "facet-reflect",
+ "facet-showcase",
+ "owo-colors",
+]
+
+[[package]]
 name = "facet-core"
 version = "0.31.8"
 dependencies = [

@@ -57,6 +57,7 @@ fn main() {
             ("facet-kdl", "kdl_showcase", "kdl"),
             ("facet-json", "json_showcase", "json"),
             ("facet-yaml", "yaml_showcase", "yaml"),
+            ("facet-assert", "assert_showcase", "assert"),
         ];
 
         let handles: Vec<_> = showcases

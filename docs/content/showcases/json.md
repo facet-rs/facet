@@ -295,16 +295,16 @@ title = "facet-json Comprehensive Showcase"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">HashMap&lt;i32, &amp;str&gt;</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7">: </span><span style="color:#e5c07b">two</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">: </span><span style="color:#e5c07b">one</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7">: </span><span style="color:#e5c07b">two</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 <div class="serialized-output">
 <h4>JSON Output</h4>
 <pre style="background-color:#1a1b26;">
 <span style="color:#9abdf5;">{
-</span><span style="color:#c0caf5;">  </span><span style="color:#89ddff;">&quot;</span><span style="color:#7aa2f7;">2</span><span style="color:#89ddff;">&quot;: &quot;</span><span style="color:#9ece6a;">two</span><span style="color:#89ddff;">&quot;,
-</span><span style="color:#c0caf5;">  </span><span style="color:#89ddff;">&quot;</span><span style="color:#7aa2f7;">1</span><span style="color:#89ddff;">&quot;: &quot;</span><span style="color:#9ece6a;">one</span><span style="color:#89ddff;">&quot;
+</span><span style="color:#c0caf5;">  </span><span style="color:#89ddff;">&quot;</span><span style="color:#7aa2f7;">1</span><span style="color:#89ddff;">&quot;: &quot;</span><span style="color:#9ece6a;">one</span><span style="color:#89ddff;">&quot;,
+</span><span style="color:#c0caf5;">  </span><span style="color:#89ddff;">&quot;</span><span style="color:#7aa2f7;">2</span><span style="color:#89ddff;">&quot;: &quot;</span><span style="color:#9ece6a;">two</span><span style="color:#89ddff;">&quot;
 </span><span style="color:#9abdf5;">}</span></pre>
 
 </div>

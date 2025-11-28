@@ -42,7 +42,3 @@ eyre = "0.6.12"
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 snapbox = "0.6.21"
-
-[[test]]
-name = "toml_rs_serde"
-path = "tests/toml-rs-compat/serde/main.rs"

@@ -1,0 +1,97 @@
+Pretty assertions for [Facet](https://github.com/facet-rs/facet) types.
+
+## What makes this different?
+
+### No `PartialEq` required
+
+Standard Rust assertions need `PartialEq`:
+
+```text
+assert_eq!(a, b); // Requires: PartialEq + Debug
+```
+
+`facet-assert` uses **structural comparison via reflection**:
+
+```text
+assert_same!(a, b); // Requires: Facet (that's it!)
+```
+
+This works because Facet gives us full introspection into any type's structure.
+
+### Structural sameness, not type identity
+
+Two values are "same" if they have **the same structure and values** — even if
+they have different type names:
+
+```ignore
+#[derive(Facet)]
+struct PersonV1 { name: String, age: u32 }
+
+#[derive(Facet)]
+struct PersonV2 { name: String, age: u32 }
+
+let a = PersonV1 { name: "Alice".into(), age: 30 };
+let b = PersonV2 { name: "Alice".into(), age: 30 };
+
+assert_same!(a, b); // Passes! Same structure, same values.
+```
+
+This is useful for:
+- Comparing DTOs across API versions
+- Testing serialization roundtrips (JSON → struct → JSON)
+- Comparing values parsed from different formats (YAML vs TOML vs JSON)
+
+### Smart structural diffs
+
+When values differ, you get a **structural diff** — not just line-by-line text
+comparison. We know which fields changed:
+
+```text
+.host:
+  - localhost
+  + prod.example.com
+.port:
+  - 8080
+  + 443
+.tags[1] (only in left):
+  - api
+```
+
+Instead of a wall of red/green like traditional diff tools.
+
+### Opaque types fail clearly
+
+If a type cannot be inspected (opaque), the assertion fails with a clear message
+rather than silently giving wrong results:
+
+```text
+assertion `assert_same!(left, right)` failed: cannot compare opaque type `SomeOpaqueType`
+```
+
+## Usage
+
+```ignore
+use facet::Facet;
+use facet_assert::assert_same;
+
+#[derive(Facet)]
+struct Config {
+    host: String,
+    port: u16,
+    debug: bool,
+}
+
+#[test]
+fn test_config_parsing() {
+    let from_json: Config = parse_json("...");
+    let from_yaml: Config = parse_yaml("...");
+
+    assert_same!(from_json, from_yaml);
+}
+```
+
+## Macros
+
+- `assert_same!(a, b)` — panics if `a` and `b` are not structurally same
+- `assert_same!(a, b, "message {}", x)` — with custom message
+- `debug_assert_same!(...)` — only in debug builds

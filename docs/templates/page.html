@@ -37,8 +37,9 @@
     <main class="content {% if page.path is starting_with("/showcases/") %}showcase-container{% endif %}">
         {% if page.path is starting_with("/showcases/") %}
         <nav class="format-nav">
-            <a href="/showcases/kdl/" {% if page.path == "/showcases/kdl/" %}class="active"{% endif %}>KDL</a>
+            <a href="/showcases/assert/" {% if page.path == "/showcases/assert/" %}class="active"{% endif %}>Assert</a>
             <a href="/showcases/json/" {% if page.path == "/showcases/json/" %}class="active"{% endif %}>JSON</a>
+            <a href="/showcases/kdl/" {% if page.path == "/showcases/kdl/" %}class="active"{% endif %}>KDL</a>
             <a href="/showcases/yaml/" {% if page.path == "/showcases/yaml/" %}class="active"{% endif %}>YAML</a>
         </nav>
         {% endif %}
