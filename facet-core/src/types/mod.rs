@@ -92,6 +92,7 @@ pub struct Shape {
 }
 
 impl PartialOrd for Shape {
+    #[allow(clippy::non_canonical_partial_ord_impl)]
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         self.id.get().partial_cmp(&other.id.get())
     }
