@@ -324,7 +324,7 @@ pub fn ansi_to_html(input: &str) -> String {
                 // Parse the style
                 if let Some(style) = parse_ansi_style(&seq) {
                     if !style.is_empty() {
-                        output.push_str(&format!("<span style=\"{}\">", style));
+                        output.push_str(&format!("<span style=\"{style}\">"));
                         in_span = true;
                     }
                 }
@@ -337,7 +337,7 @@ pub fn ansi_to_html(input: &str) -> String {
             output.push_str("&amp;");
         } else if c == ' ' {
             // Use non-breaking space to preserve alignment
-            output.push_str("\u{00A0}");
+            output.push('\u{00A0}');
         } else {
             output.push(c);
         }
@@ -383,7 +383,7 @@ fn parse_ansi_style(seq: &str) -> Option<String> {
                         let r = parts[i + 2];
                         let g = parts[i + 3];
                         let b = parts[i + 4];
-                        styles.push(format!("color:rgb({},{},{})", r, g, b));
+                        styles.push(format!("color:rgb({r},{g},{b})"));
                         i += 4;
                     }
                 } else if i + 1 < parts.len() && parts[i + 1] == "5" {
