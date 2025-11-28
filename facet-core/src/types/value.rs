@@ -307,9 +307,7 @@ pub type TryBorrowInnerFn =
 /// This is used for types that wrap another type (like smart pointers, newtypes, etc.)
 /// to efficiently access the inner value without transferring ownership.
 pub type TryBorrowInnerFnTyped<T> =
-    for<'src> fn(
-        src_ptr: TypedPtrConst<'src, T>,
-    ) -> Result<TypedPtrConst<'src, T>, TryBorrowInnerError>;
+    for<'src> fn(src_ptr: TypedPtrConst<'src, T>) -> Result<PtrConst<'src>, TryBorrowInnerError>;
 
 /// Error type returned by [`TryBorrowInnerFn`] when attempting to borrow
 /// the inner value from a wrapper type.

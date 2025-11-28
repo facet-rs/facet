@@ -8,15 +8,15 @@ use facet_core::{Field, FieldAttribute};
 use crate::{PeekNdArray, PeekSet, ReflectError, ScalarType};
 
 use super::{
-    ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekOption, PeekPointer, PeekStruct,
-    PeekTuple, tuple::TupleType,
+    tuple::TupleType, ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekOption,
+    PeekPointer, PeekStruct, PeekTuple,
 };
 
 #[cfg(feature = "alloc")]
 use super::OwnedPeek;
 
 /// A unique identifier for a peek value
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, PartialOrd, Ord, Eq, Hash)]
 pub struct ValueId {
     pub(crate) shape: &'static Shape,
     pub(crate) ptr: *const u8,

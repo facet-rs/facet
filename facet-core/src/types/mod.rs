@@ -91,6 +91,18 @@ pub struct Shape {
     pub inner: Option<&'static Shape>,
 }
 
+impl PartialOrd for Shape {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        self.id.get().partial_cmp(&other.id.get())
+    }
+}
+
+impl Ord for Shape {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.id.get().cmp(&other.id.get())
+    }
+}
+
 /// Layout of the shape
 #[derive(Clone, Copy, Debug, Hash)]
 pub enum ShapeLayout {
