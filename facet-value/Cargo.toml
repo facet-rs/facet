@@ -18,3 +18,7 @@ alloc = ["facet-core/alloc"]
 facet-core = { path = "../facet-core", version = "0.31.8", default-features = false }
 
 [dev-dependencies]
+facet-assert = { path = "../facet-assert" }
+facet-diff = { path = "../facet-diff" }
+facet-pretty = { path = "../facet-pretty" }
+facet-reflect = { path = "../facet-reflect" }
