@@ -3,196 +3,133 @@
 //! This example showcases the rich error reporting capabilities of facet-yaml
 //! with miette's beautiful diagnostic output.
 //!
-//! Run with: cargo run --example error_showcase
+//! Run with: cargo run --example yaml_error_showcase
 
-use boxen::{BorderStyle, TextAlignment};
 use facet::Facet;
-use facet_pretty::format_shape;
+use facet_showcase::{Language, ShowcaseRunner};
 use facet_yaml::from_str;
-use miette::{GraphicalReportHandler, GraphicalTheme, highlighters::SyntectHighlighter};
-use owo_colors::OwoColorize;
-use syntect::{
-    easy::HighlightLines,
-    highlighting::{Style, ThemeSet},
-    parsing::SyntaxSet,
-    util::{LinesWithEndings, as_24_bit_terminal_escaped},
-};
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
+fn main() {
+    let mut runner = ShowcaseRunner::new("facet-yaml Error Showcase").language(Language::Yaml);
+    runner.header();
 
-fn build_yaml_highlighter() -> SyntectHighlighter {
-    let syntax_set = SyntaxSet::load_defaults_newlines();
-    let theme_set = ThemeSet::load_defaults();
-    let theme = theme_set.themes["base16-ocean.dark"].clone();
-    SyntectHighlighter::new(syntax_set, theme, false)
-}
+    // =========================================================================
+    // Syntax Errors
+    // =========================================================================
 
-fn render_error(err: &dyn miette::Diagnostic) -> String {
-    let mut output = String::new();
-    let handler = GraphicalReportHandler::new_themed(GraphicalTheme::unicode())
-        .with_syntax_highlighting(build_yaml_highlighter());
-    handler.render_report(&mut output, err).unwrap();
-    output
-}
+    scenario_syntax_error_bad_indentation(&mut runner);
+    scenario_syntax_error_invalid_character(&mut runner);
+    scenario_syntax_error_unclosed_quote(&mut runner);
 
-fn print_scenario(name: &str, description: &str) {
-    println!();
-    println!("{}", "═".repeat(78).dimmed());
-    println!("{} {}", "SCENARIO:".bold().cyan(), name.bold().white());
-    println!("{}", "─".repeat(78).dimmed());
-    println!("{}", description.dimmed());
-    println!("{}", "═".repeat(78).dimmed());
-}
+    // =========================================================================
+    // Semantic Errors
+    // =========================================================================
 
-fn print_yaml(yaml: &str) {
-    let ps = SyntaxSet::load_defaults_newlines();
-    let ts = ThemeSet::load_defaults();
-    let theme = &ts.themes["base16-ocean.dark"];
-    let syntax = ps.find_syntax_by_extension("yaml").unwrap();
+    scenario_unknown_field(&mut runner);
+    scenario_type_mismatch_string_for_int(&mut runner);
+    scenario_type_mismatch_int_for_string(&mut runner);
+    scenario_missing_field(&mut runner);
+    scenario_number_overflow(&mut runner);
+    scenario_wrong_type_for_sequence(&mut runner);
+    scenario_wrong_type_for_mapping(&mut runner);
 
-    println!();
-    println!("{}", "YAML Input:".bold().green());
-    println!("{}", "─".repeat(60).dimmed());
+    // =========================================================================
+    // Enum Errors
+    // =========================================================================
 
-    let mut h = HighlightLines::new(syntax, theme);
-    for (i, line) in yaml.lines().enumerate() {
-        let line_with_newline = format!("{line}\n");
-        let ranges: Vec<(Style, &str)> = h.highlight_line(&line_with_newline, &ps).unwrap();
-        let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
-        print!(
-            "{} {} {}",
-            format!("{:3}", i + 1).dimmed(),
-            "│".dimmed(),
-            escaped
-        );
-    }
-    print!("\x1b[0m"); // Reset terminal colors
-    println!("{}", "─".repeat(60).dimmed());
-}
+    scenario_unknown_enum_variant(&mut runner);
+    scenario_enum_wrong_format(&mut runner);
+    scenario_internally_tagged_missing_tag(&mut runner);
 
-fn print_type_def(type_def: &str) {
-    let ps = SyntaxSet::load_defaults_newlines();
-    let ts = ThemeSet::load_defaults();
-    let theme = &ts.themes["base16-ocean.dark"];
-    let syntax = ps.find_syntax_by_extension("rs").unwrap();
+    // =========================================================================
+    // YAML-Specific Features
+    // =========================================================================
 
-    println!();
-    println!("{}", "Target Type:".bold().blue());
-    println!("{}", "─".repeat(60).dimmed());
+    scenario_duplicate_key(&mut runner);
+    scenario_anchor_reference(&mut runner);
+    scenario_multiline_string(&mut runner);
 
-    let mut h = HighlightLines::new(syntax, theme);
-    for line in LinesWithEndings::from(type_def) {
-        let ranges: Vec<(Style, &str)> = h.highlight_line(line, &ps).unwrap();
-        let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
-        print!("    {escaped}");
-    }
-    println!("\x1b[0m"); // Reset terminal colors and add newline
-    println!("{}", "─".repeat(60).dimmed());
+    // =========================================================================
+    // Edge Cases
+    // =========================================================================
+
+    scenario_empty_input(&mut runner);
+    scenario_null_for_required(&mut runner);
+    scenario_unicode_content(&mut runner);
+    scenario_nested_error(&mut runner);
+    scenario_sequence_item_error(&mut runner);
+
+    runner.footer();
 }
 
 // ============================================================================
 // Syntax Errors
 // ============================================================================
 
-fn scenario_syntax_error_bad_indentation() {
-    print_scenario(
-        "Syntax Error: Bad Indentation",
-        "YAML indentation is inconsistent or invalid.",
-    );
+fn scenario_syntax_error_bad_indentation(runner: &mut ShowcaseRunner) {
+    #[derive(Facet, Debug)]
+    struct Config {
+        name: String,
+    }
 
     let yaml = r#"name: test
   nested: value
  wrong: indent"#;
-    print_yaml(yaml);
 
+    let result: Result<Config, _> = from_str(yaml);
+
+    runner
+        .scenario("Syntax Error: Bad Indentation")
+        .description("YAML indentation is inconsistent or invalid.")
+        .input(Language::Yaml, yaml)
+        .target_type::<Config>()
+        .result(&result)
+        .finish();
+}
+
+fn scenario_syntax_error_invalid_character(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     struct Config {
         name: String,
     }
-
-    print_type_def(&format_shape(Config::SHAPE));
-
-    let result: Result<Config, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
-}
-
-fn scenario_syntax_error_invalid_character() {
-    print_scenario(
-        "Syntax Error: Invalid Character",
-        "YAML contains an invalid character in an unexpected location.",
-    );
 
     let yaml = r#"name: @invalid"#;
-    print_yaml(yaml);
-
-    #[derive(Facet, Debug)]
-    struct Config {
-        name: String,
-    }
-
-    print_type_def(&format_shape(Config::SHAPE));
-
     let result: Result<Config, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+
+    runner
+        .scenario("Syntax Error: Invalid Character")
+        .description("YAML contains an invalid character in an unexpected location.")
+        .input(Language::Yaml, yaml)
+        .target_type::<Config>()
+        .result(&result)
+        .finish();
 }
 
-fn scenario_syntax_error_unclosed_quote() {
-    print_scenario(
-        "Syntax Error: Unclosed Quote",
-        "String value has an opening quote but no closing quote.",
-    );
-
-    let yaml = r#"message: "hello world
-name: test"#;
-    print_yaml(yaml);
-
+fn scenario_syntax_error_unclosed_quote(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     struct Config {
         message: String,
         name: String,
     }
 
-    print_type_def(&format_shape(Config::SHAPE));
-
+    let yaml = r#"message: "hello world
+name: test"#;
     let result: Result<Config, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+
+    runner
+        .scenario("Syntax Error: Unclosed Quote")
+        .description("String value has an opening quote but no closing quote.")
+        .input(Language::Yaml, yaml)
+        .target_type::<Config>()
+        .result(&result)
+        .finish();
 }
 
 // ============================================================================
 // Semantic Errors
 // ============================================================================
 
-fn scenario_unknown_field() {
-    print_scenario(
-        "Unknown Field",
-        "YAML contains a field that doesn't exist in the target struct.\n\
-         The error shows the unknown field and lists valid alternatives.",
-    );
-
-    let yaml = r#"username: alice
-emial: alice@example.com"#;
-    print_yaml(yaml);
-
+fn scenario_unknown_field(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     #[facet(deny_unknown_fields)]
     struct User {
@@ -200,181 +137,136 @@ emial: alice@example.com"#;
         email: String,
     }
 
-    print_type_def(&format_shape(User::SHAPE));
-
+    let yaml = r#"username: alice
+emial: alice@example.com"#;
     let result: Result<User, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+
+    runner
+        .scenario("Unknown Field")
+        .description(
+            "YAML contains a field that doesn't exist in the target struct.\n\
+             The error shows the unknown field and lists valid alternatives.",
+        )
+        .input(Language::Yaml, yaml)
+        .target_type::<User>()
+        .result(&result)
+        .finish();
 }
 
-fn scenario_type_mismatch_string_for_int() {
-    print_scenario(
-        "Type Mismatch: String for Integer",
-        "YAML value is a string where an integer was expected.",
-    );
-
-    let yaml = r#"id: 42
-count: "not a number""#;
-    print_yaml(yaml);
-
+fn scenario_type_mismatch_string_for_int(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     struct Item {
         id: u64,
         count: i32,
     }
 
-    print_type_def(&format_shape(Item::SHAPE));
-
+    let yaml = r#"id: 42
+count: "not a number""#;
     let result: Result<Item, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+
+    runner
+        .scenario("Type Mismatch: String for Integer")
+        .description("YAML value is a string where an integer was expected.")
+        .input(Language::Yaml, yaml)
+        .target_type::<Item>()
+        .result(&result)
+        .finish();
 }
 
-fn scenario_type_mismatch_int_for_string() {
-    print_scenario(
-        "Type Mismatch: Integer for String",
-        "YAML value is an integer where a string was expected (may succeed with coercion).",
-    );
-
-    let yaml = r#"id: 42
-name: 123"#;
-    print_yaml(yaml);
-
+fn scenario_type_mismatch_int_for_string(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     struct Item {
         id: u64,
         name: String,
     }
 
-    print_type_def(&format_shape(Item::SHAPE));
-
+    let yaml = r#"id: 42
+name: 123"#;
     let result: Result<Item, _> = from_str(yaml);
-    match result {
-        Ok(item) => {
-            println!("\n{}", "Success (with coercion):".bold().green());
-            println!("  {item:?}");
-        }
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+
+    runner
+        .scenario("Type Mismatch: Integer for String")
+        .description(
+            "YAML value is an integer where a string was expected (may succeed with coercion).",
+        )
+        .input(Language::Yaml, yaml)
+        .target_type::<Item>()
+        .result(&result)
+        .finish();
 }
 
-fn scenario_missing_field() {
-    print_scenario(
-        "Missing Required Field",
-        "YAML is missing a required field that has no default.",
-    );
-
-    let yaml = r#"host: localhost"#;
-    print_yaml(yaml);
-
+fn scenario_missing_field(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     struct ServerConfig {
         host: String,
         port: u16,
     }
 
-    print_type_def(
-        r#"#[derive(Facet)]
+    let yaml = r#"host: localhost"#;
+    let result: Result<ServerConfig, _> = from_str(yaml);
+
+    runner
+        .scenario("Missing Required Field")
+        .description("YAML is missing a required field that has no default.")
+        .input(Language::Yaml, yaml)
+        .target_type_str(
+            r#"#[derive(Facet)]
 struct ServerConfig {
     host: String,
     port: u16,  // Required but missing from YAML
 }"#,
-    );
-
-    let result: Result<ServerConfig, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+        )
+        .result(&result)
+        .finish();
 }
 
-fn scenario_number_overflow() {
-    print_scenario(
-        "Number Out of Range",
-        "YAML number is too large for the target integer type.",
-    );
-
-    let yaml = r#"count: 999999999999"#;
-    print_yaml(yaml);
-
+fn scenario_number_overflow(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     struct Counter {
         count: u32,
     }
 
-    print_type_def(
-        r#"#[derive(Facet)]
+    let yaml = r#"count: 999999999999"#;
+    let result: Result<Counter, _> = from_str(yaml);
+
+    runner
+        .scenario("Number Out of Range")
+        .description("YAML number is too large for the target integer type.")
+        .input(Language::Yaml, yaml)
+        .target_type_str(
+            r#"#[derive(Facet)]
 struct Counter {
     count: u32,  // Max value is 4,294,967,295
 }"#,
-    );
-
-    let result: Result<Counter, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+        )
+        .result(&result)
+        .finish();
 }
 
-fn scenario_wrong_type_for_sequence() {
-    print_scenario(
-        "Expected Sequence, Got Scalar",
-        "YAML has a scalar where a sequence was expected.",
-    );
-
-    let yaml = r#"items: "not a sequence""#;
-    print_yaml(yaml);
-
+fn scenario_wrong_type_for_sequence(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     struct Container {
         items: Vec<i32>,
     }
 
-    print_type_def(
-        r#"#[derive(Facet)]
+    let yaml = r#"items: "not a sequence""#;
+    let result: Result<Container, _> = from_str(yaml);
+
+    runner
+        .scenario("Expected Sequence, Got Scalar")
+        .description("YAML has a scalar where a sequence was expected.")
+        .input(Language::Yaml, yaml)
+        .target_type_str(
+            r#"#[derive(Facet)]
 struct Container {
     items: Vec<i32>,  // Expected sequence, got string
 }"#,
-    );
-
-    let result: Result<Container, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+        )
+        .result(&result)
+        .finish();
 }
 
-fn scenario_wrong_type_for_mapping() {
-    print_scenario(
-        "Expected Mapping, Got Scalar",
-        "YAML has a scalar where a mapping was expected.",
-    );
-
-    let yaml = r#"config: "not a mapping""#;
-    print_yaml(yaml);
-
+fn scenario_wrong_type_for_mapping(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     struct Nested {
         value: i32,
@@ -385,8 +277,15 @@ fn scenario_wrong_type_for_mapping() {
         config: Nested,
     }
 
-    print_type_def(
-        r#"#[derive(Facet)]
+    let yaml = r#"config: "not a mapping""#;
+    let result: Result<Outer, _> = from_str(yaml);
+
+    runner
+        .scenario("Expected Mapping, Got Scalar")
+        .description("YAML has a scalar where a mapping was expected.")
+        .input(Language::Yaml, yaml)
+        .target_type_str(
+            r#"#[derive(Facet)]
 struct Nested {
     value: i32,
 }
@@ -395,31 +294,16 @@ struct Nested {
 struct Outer {
     config: Nested,  // Expected mapping, got string
 }"#,
-    );
-
-    let result: Result<Outer, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+        )
+        .result(&result)
+        .finish();
 }
 
 // ============================================================================
 // Enum Errors
 // ============================================================================
 
-fn scenario_unknown_enum_variant() {
-    print_scenario(
-        "Unknown Enum Variant",
-        "YAML specifies a variant name that doesn't exist.",
-    );
-
-    let yaml = r#"Unknown"#;
-    print_yaml(yaml);
-
+fn scenario_unknown_enum_variant(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     #[repr(u8)]
     #[allow(dead_code)]
@@ -429,8 +313,15 @@ fn scenario_unknown_enum_variant() {
         Pending,
     }
 
-    print_type_def(
-        r#"#[derive(Facet)]
+    let yaml = r#"Unknown"#;
+    let result: Result<Status, _> = from_str(yaml);
+
+    runner
+        .scenario("Unknown Enum Variant")
+        .description("YAML specifies a variant name that doesn't exist.")
+        .input(Language::Yaml, yaml)
+        .target_type_str(
+            r#"#[derive(Facet)]
 #[repr(u8)]
 enum Status {
     Active,
@@ -438,28 +329,12 @@ enum Status {
     Pending,
 }
 // YAML has "Unknown" which is not a valid variant"#,
-    );
-
-    let result: Result<Status, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+        )
+        .result(&result)
+        .finish();
 }
 
-fn scenario_enum_wrong_format() {
-    print_scenario(
-        "Enum Wrong Format",
-        "Externally tagged enum expects {Variant: content} but got wrong format.",
-    );
-
-    let yaml = r#"type: Text
-content: hello"#;
-    print_yaml(yaml);
-
+fn scenario_enum_wrong_format(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     #[repr(u8)]
     #[allow(dead_code)]
@@ -468,8 +343,16 @@ content: hello"#;
         Number(i32),
     }
 
-    print_type_def(
-        r#"#[derive(Facet)]
+    let yaml = r#"type: Text
+content: hello"#;
+    let result: Result<Message, _> = from_str(yaml);
+
+    runner
+        .scenario("Enum Wrong Format")
+        .description("Externally tagged enum expects {Variant: content} but got wrong format.")
+        .input(Language::Yaml, yaml)
+        .target_type_str(
+            r#"#[derive(Facet)]
 #[repr(u8)]
 enum Message {
     Text(String),
@@ -480,28 +363,12 @@ enum Message {
 // But YAML has:
 //   type: Text
 //   content: hello"#,
-    );
-
-    let result: Result<Message, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+        )
+        .result(&result)
+        .finish();
 }
 
-fn scenario_internally_tagged_missing_tag() {
-    print_scenario(
-        "Internally Tagged Enum: Missing Tag Field",
-        "Internally tagged enum requires the tag field to be present.",
-    );
-
-    let yaml = r#"id: "123"
-method: ping"#;
-    print_yaml(yaml);
-
+fn scenario_internally_tagged_missing_tag(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     #[repr(C)]
     #[facet(tag = "type")]
@@ -511,8 +378,16 @@ method: ping"#;
         Echo { id: String, message: String },
     }
 
-    print_type_def(
-        r#"#[derive(Facet)]
+    let yaml = r#"id: "123"
+method: ping"#;
+    let result: Result<Request, _> = from_str(yaml);
+
+    runner
+        .scenario("Internally Tagged Enum: Missing Tag Field")
+        .description("Internally tagged enum requires the tag field to be present.")
+        .input(Language::Yaml, yaml)
+        .target_type_str(
+            r#"#[derive(Facet)]
 #[repr(C)]
 #[facet(tag = "type")]
 enum Request {
@@ -520,76 +395,37 @@ enum Request {
     Echo { id: String, message: String },
 }
 // YAML is missing the "type" tag field"#,
-    );
-
-    let result: Result<Request, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+        )
+        .result(&result)
+        .finish();
 }
 
 // ============================================================================
 // YAML-Specific Features
 // ============================================================================
 
-fn scenario_duplicate_key() {
-    print_scenario(
-        "Duplicate Key",
-        "YAML mapping contains the same key more than once.",
-    );
-
-    let yaml = r#"name: first
-value: 42
-name: second"#;
-    print_yaml(yaml);
-
+fn scenario_duplicate_key(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     struct Config {
         name: String,
         value: i32,
     }
 
-    print_type_def(&format_shape(Config::SHAPE));
-
+    let yaml = r#"name: first
+value: 42
+name: second"#;
     let result: Result<Config, _> = from_str(yaml);
-    match result {
-        Ok(config) => {
-            println!(
-                "\n{}",
-                "Note: Duplicate keys may be allowed:".bold().yellow()
-            );
-            println!("  {config:?}");
-        }
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+
+    runner
+        .scenario("Duplicate Key")
+        .description("YAML mapping contains the same key more than once.")
+        .input(Language::Yaml, yaml)
+        .target_type::<Config>()
+        .result(&result)
+        .finish();
 }
 
-fn scenario_anchor_reference() {
-    print_scenario(
-        "Anchors and Aliases",
-        "YAML anchors and aliases for value reuse.",
-    );
-
-    let yaml = r#"defaults: &defaults
-  timeout: 30
-  retries: 3
-
-production:
-  <<: *defaults
-  host: prod.example.com
-
-staging:
-  <<: *defaults
-  host: staging.example.com"#;
-    print_yaml(yaml);
-
+fn scenario_anchor_reference(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     struct ServerConfig {
         timeout: u32,
@@ -604,26 +440,34 @@ staging:
         staging: ServerConfig,
     }
 
-    print_type_def(&format_shape(AllConfigs::SHAPE));
+    let yaml = r#"defaults: &defaults
+  timeout: 30
+  retries: 3
 
+production:
+  <<: *defaults
+  host: prod.example.com
+
+staging:
+  <<: *defaults
+  host: staging.example.com"#;
     let result: Result<AllConfigs, _> = from_str(yaml);
-    match result {
-        Ok(configs) => {
-            println!("\n{}", "Success:".bold().green());
-            println!("  {configs:?}");
-        }
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+
+    runner
+        .scenario("Anchors and Aliases")
+        .description("YAML anchors and aliases for value reuse.")
+        .input(Language::Yaml, yaml)
+        .target_type::<AllConfigs>()
+        .result(&result)
+        .finish();
 }
 
-fn scenario_multiline_string() {
-    print_scenario(
-        "Multiline String Styles",
-        "YAML supports various multiline string styles.",
-    );
+fn scenario_multiline_string(runner: &mut ShowcaseRunner) {
+    #[derive(Facet, Debug)]
+    struct TextContent {
+        literal: String,
+        folded: String,
+    }
 
     let yaml = r#"literal: |
   This is a literal block.
@@ -633,123 +477,75 @@ folded: >
   This is a folded block.
   Lines get folded into
   a single paragraph."#;
-    print_yaml(yaml);
-
-    #[derive(Facet, Debug)]
-    struct TextContent {
-        literal: String,
-        folded: String,
-    }
-
-    print_type_def(&format_shape(TextContent::SHAPE));
-
     let result: Result<TextContent, _> = from_str(yaml);
-    match result {
-        Ok(content) => {
-            println!("\n{}", "Success:".bold().green());
-            println!("  literal: {:?}", content.literal);
-            println!("  folded: {:?}", content.folded);
-        }
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+
+    runner
+        .scenario("Multiline String Styles")
+        .description("YAML supports various multiline string styles.")
+        .input(Language::Yaml, yaml)
+        .target_type::<TextContent>()
+        .result(&result)
+        .finish();
 }
 
 // ============================================================================
 // Edge Cases
 // ============================================================================
 
-fn scenario_empty_input() {
-    print_scenario("Empty Input", "No YAML content at all.");
-
+fn scenario_empty_input(runner: &mut ShowcaseRunner) {
     let yaml = r#""#;
-    print_yaml(yaml);
-
-    print_type_def(r#"i32"#);
-
     let result: Result<i32, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+
+    runner
+        .scenario("Empty Input")
+        .description("No YAML content at all.")
+        .input(Language::Yaml, yaml)
+        .target_type::<i32>()
+        .result(&result)
+        .finish();
 }
 
-fn scenario_null_for_required() {
-    print_scenario(
-        "Null for Required Field",
-        "YAML has explicit null where a value is required.",
-    );
-
-    let yaml = r#"name: ~
-count: 42"#;
-    print_yaml(yaml);
-
+fn scenario_null_for_required(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     struct Item {
         name: String,
         count: i32,
     }
 
-    print_type_def(&format_shape(Item::SHAPE));
-
+    let yaml = r#"name: ~
+count: 42"#;
     let result: Result<Item, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+
+    runner
+        .scenario("Null for Required Field")
+        .description("YAML has explicit null where a value is required.")
+        .input(Language::Yaml, yaml)
+        .target_type::<Item>()
+        .result(&result)
+        .finish();
 }
 
-fn scenario_unicode_content() {
-    print_scenario(
-        "Error with Unicode Content",
-        "Error reporting handles unicode correctly.",
-    );
-
-    let yaml = r#"emoji: "🎉🚀"
-count: nope"#;
-    print_yaml(yaml);
-
+fn scenario_unicode_content(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     struct EmojiData {
         emoji: String,
         count: i32,
     }
 
-    print_type_def(&format_shape(EmojiData::SHAPE));
-
+    let yaml = r#"emoji: "🎉🚀"
+count: nope"#;
     let result: Result<EmojiData, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+
+    runner
+        .scenario("Error with Unicode Content")
+        .description("Error reporting handles unicode correctly.")
+        .input(Language::Yaml, yaml)
+        .target_type::<EmojiData>()
+        .result(&result)
+        .finish();
 }
 
-fn scenario_nested_error() {
-    print_scenario(
-        "Error in Nested Structure",
-        "Error location is correctly identified in deeply nested YAML.",
-    );
-
-    let yaml = r#"server:
-  host: localhost
-  ports:
-    http: 8080
-    https: "not a number"
-  database:
-    url: postgres://localhost/db"#;
-    print_yaml(yaml);
-
+fn scenario_nested_error(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     struct Ports {
         http: u16,
@@ -773,33 +569,25 @@ fn scenario_nested_error() {
         server: Server,
     }
 
-    print_type_def(&format_shape(AppConfig::SHAPE));
-
+    let yaml = r#"server:
+  host: localhost
+  ports:
+    http: 8080
+    https: "not a number"
+  database:
+    url: postgres://localhost/db"#;
     let result: Result<AppConfig, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
+
+    runner
+        .scenario("Error in Nested Structure")
+        .description("Error location is correctly identified in deeply nested YAML.")
+        .input(Language::Yaml, yaml)
+        .target_type::<AppConfig>()
+        .result(&result)
+        .finish();
 }
 
-fn scenario_sequence_item_error() {
-    print_scenario(
-        "Error in Sequence Item",
-        "Error in one item of a sequence is reported with context.",
-    );
-
-    let yaml = r#"users:
-  - name: Alice
-    age: 30
-  - name: Bob
-    age: "twenty-five"
-  - name: Charlie
-    age: 35"#;
-    print_yaml(yaml);
-
+fn scenario_sequence_item_error(runner: &mut ShowcaseRunner) {
     #[derive(Facet, Debug)]
     struct User {
         name: String,
@@ -811,78 +599,20 @@ fn scenario_sequence_item_error() {
         users: Vec<User>,
     }
 
-    print_type_def(&format_shape(UserList::SHAPE));
-
+    let yaml = r#"users:
+  - name: Alice
+    age: 30
+  - name: Bob
+    age: "twenty-five"
+  - name: Charlie
+    age: 35"#;
     let result: Result<UserList, _> = from_str(yaml);
-    match result {
-        Ok(_) => println!("Unexpected success!"),
-        Err(e) => {
-            println!("\n{}", "Error:".bold().red());
-            println!("{}", render_error(&e));
-        }
-    }
-}
 
-// ============================================================================
-// Main
-// ============================================================================
-
-fn main() {
-    println!();
-    let header = boxen::builder()
-        .border_style(BorderStyle::Round)
-        .border_color("cyan")
-        .text_alignment(TextAlignment::Center)
-        .padding(1)
-        .render(
-            "FACET-YAML ERROR SHOWCASE\n\n\
-             Demonstrating rich error diagnostics with miette\n\
-             All errors include source context and helpful labels",
-        )
-        .unwrap();
-    println!("{header}");
-
-    // Syntax errors
-    scenario_syntax_error_bad_indentation();
-    scenario_syntax_error_invalid_character();
-    scenario_syntax_error_unclosed_quote();
-
-    // Semantic errors
-    scenario_unknown_field();
-    scenario_type_mismatch_string_for_int();
-    scenario_type_mismatch_int_for_string();
-    scenario_missing_field();
-    scenario_number_overflow();
-    scenario_wrong_type_for_sequence();
-    scenario_wrong_type_for_mapping();
-
-    // Enum errors
-    scenario_unknown_enum_variant();
-    scenario_enum_wrong_format();
-    scenario_internally_tagged_missing_tag();
-
-    // YAML-specific features
-    scenario_duplicate_key();
-    scenario_anchor_reference();
-    scenario_multiline_string();
-
-    // Edge cases
-    scenario_empty_input();
-    scenario_null_for_required();
-    scenario_unicode_content();
-    scenario_nested_error();
-    scenario_sequence_item_error();
-
-    println!();
-    let footer = boxen::builder()
-        .border_style(BorderStyle::Round)
-        .border_color("green")
-        .text_alignment(TextAlignment::Center)
-        .padding(1)
-        .render(
-            "END OF SHOWCASE\n\n\
-             All diagnostics powered by miette with YAML syntax highlighting",
-        )
-        .unwrap();
-    println!("{footer}");
+    runner
+        .scenario("Error in Sequence Item")
+        .description("Error in one item of a sequence is reported with context.")
+        .input(Language::Yaml, yaml)
+        .target_type::<UserList>()
+        .result(&result)
+        .finish();
 }

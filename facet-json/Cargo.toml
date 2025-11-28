@@ -44,6 +44,7 @@ facet = { path = "../facet", features = [
     "ordered-float",
 ] }
 facet-pretty = { path = "../facet-pretty" }
+facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = "1.43.1"
 syntect = "5.3"

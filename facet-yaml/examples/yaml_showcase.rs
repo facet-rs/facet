@@ -6,14 +6,17 @@
 use facet::Facet;
 use std::collections::HashMap;
 use syntect::easy::HighlightLines;
-use syntect::highlighting::{Style, ThemeSet};
+use syntect::highlighting::Style;
 use syntect::parsing::SyntaxSet;
 use syntect::util::{LinesWithEndings, as_24_bit_terminal_escaped};
 
+/// Path to Tokyo Night theme (shared across all format crates)
+const THEME_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../themes/TokyoNight.tmTheme");
+
 fn main() {
     let ps = SyntaxSet::load_defaults_newlines();
-    let ts = ThemeSet::load_defaults();
-    let theme = &ts.themes["base16-ocean.dark"];
+    let theme = syntect::highlighting::ThemeSet::get_theme(THEME_PATH)
+        .expect("Failed to load Tokyo Night theme");
 
     let yaml_syntax = ps.find_syntax_by_extension("yaml").unwrap();
     let rust_syntax = ps.find_syntax_by_extension("rs").unwrap();
@@ -33,7 +36,7 @@ fn main() {
             email: Some("alice@example.com".to_string()),
         },
         &ps,
-        theme,
+        &theme,
         rust_syntax,
         yaml_syntax,
     );
@@ -52,7 +55,7 @@ fn main() {
             employees: vec!["Bob".to_string(), "Carol".to_string(), "Dave".to_string()],
         },
         &ps,
-        theme,
+        &theme,
         rust_syntax,
         yaml_syntax,
     );
@@ -71,7 +74,7 @@ fn main() {
             Message::Ping,
         ],
         &ps,
-        theme,
+        &theme,
         rust_syntax,
         yaml_syntax,
     );
@@ -91,7 +94,7 @@ fn main() {
             },
         ],
         &ps,
-        theme,
+        &theme,
         rust_syntax,
         yaml_syntax,
     );
@@ -107,7 +110,7 @@ fn main() {
             Event::Resize,
         ],
         &ps,
-        theme,
+        &theme,
         rust_syntax,
         yaml_syntax,
     );
@@ -122,7 +125,7 @@ fn main() {
             StringOrNumber::Num(42),
         ],
         &ps,
-        theme,
+        &theme,
         rust_syntax,
         yaml_syntax,
     );
@@ -142,7 +145,7 @@ fn main() {
         "Maps (string keys)",
         &string_map,
         &ps,
-        theme,
+        &theme,
         rust_syntax,
         yaml_syntax,
     );
@@ -151,7 +154,7 @@ fn main() {
         "Maps (integer keys)",
         &int_map,
         &ps,
-        theme,
+        &theme,
         rust_syntax,
         yaml_syntax,
     );
@@ -163,7 +166,7 @@ fn main() {
         "Tuple Struct",
         &Point(10, 20, 30),
         &ps,
-        theme,
+        &theme,
         rust_syntax,
         yaml_syntax,
     );
@@ -178,7 +181,7 @@ fn main() {
             content: "This is a longer piece of text\nthat spans multiple lines\nand demonstrates YAML's string handling.".to_string(),
         },
         &ps,
-        theme,
+        &theme,
         rust_syntax,
         yaml_syntax,
     );
@@ -210,7 +213,7 @@ fn main() {
             ],
         },
         &ps,
-        theme,
+        &theme,
         rust_syntax,
         yaml_syntax,
     );
@@ -233,17 +236,17 @@ fn main() {
 
     println!("Original Rust value:");
     let rust_def = facet_pretty::format_shape(Config::SHAPE);
-    highlight_code(&rust_def, &ps, theme, rust_syntax);
+    highlight_code(&rust_def, &ps, &theme, rust_syntax);
 
     let peek = facet_reflect::Peek::new(&original);
     let pretty_value = facet_pretty::PrettyPrinter::new()
         .with_colors(false)
         .format_peek(peek);
-    highlight_code(&pretty_value, &ps, theme, rust_syntax);
+    highlight_code(&pretty_value, &ps, &theme, rust_syntax);
 
     println!("\nSerialized to YAML:");
     let yaml = facet_yaml::to_string(&original).unwrap();
-    highlight_code(&yaml, &ps, theme, yaml_syntax);
+    highlight_code(&yaml, &ps, &theme, yaml_syntax);
 
     println!("\nDeserialized back to Rust:");
     let roundtrip: Config = facet_yaml::from_str(&yaml).unwrap();
@@ -251,7 +254,7 @@ fn main() {
     let pretty_value = facet_pretty::PrettyPrinter::new()
         .with_colors(false)
         .format_peek(peek);
-    highlight_code(&pretty_value, &ps, theme, rust_syntax);
+    highlight_code(&pretty_value, &ps, &theme, rust_syntax);
 
     println!("\n{}", "═".repeat(70));
 }
