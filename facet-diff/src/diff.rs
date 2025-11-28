@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use facet::{Def, Shape, StructKind, Type, UserType};
+use facet::{Def, DynValueKind, Shape, StructKind, Type, UserType};
 use facet_core::Facet;
 use facet_reflect::{HasFields, Peek};
 
@@ -276,7 +276,152 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     updates,
                 }
             }
+            ((Def::DynamicValue(_), _), (Def::DynamicValue(_), _)) => {
+                Self::diff_dynamic_values(from, to)
+            }
             _ => Diff::Replace { from, to },
+        }
+    }
+
+    /// Diff two dynamic values (like `facet_value::Value`)
+    fn diff_dynamic_values(from: Peek<'mem, 'facet>, to: Peek<'mem, 'facet>) -> Self {
+        let from_dyn = from.into_dynamic_value().unwrap();
+        let to_dyn = to.into_dynamic_value().unwrap();
+
+        let from_kind = from_dyn.kind();
+        let to_kind = to_dyn.kind();
+
+        // If kinds differ, just return Replace
+        if from_kind != to_kind {
+            return Diff::Replace { from, to };
+        }
+
+        match from_kind {
+            DynValueKind::Null => Diff::Equal,
+            DynValueKind::Bool => {
+                if from_dyn.as_bool() == to_dyn.as_bool() {
+                    Diff::Equal
+                } else {
+                    Diff::Replace { from, to }
+                }
+            }
+            DynValueKind::Number => {
+                // Compare numbers - try exact integer comparison first, then float
+                let same = match (from_dyn.as_i64(), to_dyn.as_i64()) {
+                    (Some(l), Some(r)) => l == r,
+                    _ => match (from_dyn.as_u64(), to_dyn.as_u64()) {
+                        (Some(l), Some(r)) => l == r,
+                        _ => match (from_dyn.as_f64(), to_dyn.as_f64()) {
+                            (Some(l), Some(r)) => l == r,
+                            _ => false,
+                        },
+                    },
+                };
+                if same {
+                    Diff::Equal
+                } else {
+                    Diff::Replace { from, to }
+                }
+            }
+            DynValueKind::String => {
+                if from_dyn.as_str() == to_dyn.as_str() {
+                    Diff::Equal
+                } else {
+                    Diff::Replace { from, to }
+                }
+            }
+            DynValueKind::Bytes => {
+                if from_dyn.as_bytes() == to_dyn.as_bytes() {
+                    Diff::Equal
+                } else {
+                    Diff::Replace { from, to }
+                }
+            }
+            DynValueKind::Array => {
+                // Use the sequence diff algorithm for arrays
+                let from_iter = from_dyn.array_iter();
+                let to_iter = to_dyn.array_iter();
+
+                let from_elems: Vec<_> = from_iter.map(|i| i.collect()).unwrap_or_default();
+                let to_elems: Vec<_> = to_iter.map(|i| i.collect()).unwrap_or_default();
+
+                let updates = sequences::diff(from_elems, to_elems);
+
+                Diff::Sequence {
+                    from: from.shape(),
+                    to: to.shape(),
+                    updates,
+                }
+            }
+            DynValueKind::Object => {
+                // Treat objects like struct diffs
+                let from_len = from_dyn.object_len().unwrap_or(0);
+                let to_len = to_dyn.object_len().unwrap_or(0);
+
+                let mut updates = HashMap::new();
+                let mut deletions = HashMap::new();
+                let mut insertions = HashMap::new();
+                let mut unchanged = HashSet::new();
+
+                // Collect keys from `from`
+                let mut from_keys: HashMap<String, Peek<'mem, 'facet>> = HashMap::new();
+                for i in 0..from_len {
+                    if let Some((key, value)) = from_dyn.object_get_entry(i) {
+                        from_keys.insert(key.to_owned(), value);
+                    }
+                }
+
+                // Collect keys from `to`
+                let mut to_keys: HashMap<String, Peek<'mem, 'facet>> = HashMap::new();
+                for i in 0..to_len {
+                    if let Some((key, value)) = to_dyn.object_get_entry(i) {
+                        to_keys.insert(key.to_owned(), value);
+                    }
+                }
+
+                // Compare entries
+                for (key, from_value) in &from_keys {
+                    if let Some(to_value) = to_keys.get(key) {
+                        let diff = Self::new_peek(*from_value, *to_value);
+                        if diff.is_equal() {
+                            unchanged.insert(key.as_str());
+                        } else {
+                            // We need to leak the key to get a static lifetime
+                            // This is a limitation of the current API
+                            let key_static: &'static str = Box::leak(key.clone().into_boxed_str());
+                            updates.insert(key_static, diff);
+                        }
+                    } else {
+                        let key_static: &'static str = Box::leak(key.clone().into_boxed_str());
+                        deletions.insert(key_static, *from_value);
+                    }
+                }
+
+                for (key, to_value) in &to_keys {
+                    if !from_keys.contains_key(key) {
+                        let key_static: &'static str = Box::leak(key.clone().into_boxed_str());
+                        insertions.insert(key_static, *to_value);
+                    }
+                }
+
+                // Convert unchanged HashSet<&str> to HashSet<&'static str>
+                let unchanged_static: HashSet<&'static str> = unchanged
+                    .into_iter()
+                    .map(|s| -> &'static str { Box::leak(s.to_owned().into_boxed_str()) })
+                    .collect();
+
+                Diff::User {
+                    from: from.shape(),
+                    to: to.shape(),
+                    variant: None,
+                    value: Value::Struct {
+                        updates,
+                        deletions,
+                        insertions,
+                        unchanged: unchanged_static,
+                    },
+                }
+            }
         }
     }
 

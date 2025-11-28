@@ -8,8 +8,8 @@ use facet_core::{Field, FieldAttribute};
 use crate::{PeekNdArray, PeekSet, ReflectError, ScalarType};
 
 use super::{
-    tuple::TupleType, ListLikeDef, PeekEnum, PeekList, PeekListLike, PeekMap, PeekOption,
-    PeekPointer, PeekStruct, PeekTuple,
+    tuple::TupleType, ListLikeDef, PeekDynamicValue, PeekEnum, PeekList, PeekListLike, PeekMap,
+    PeekOption, PeekPointer, PeekStruct, PeekTuple,
 };
 
 #[cfg(feature = "alloc")]
@@ -431,6 +431,19 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         } else {
             Err(ReflectError::WasNotA {
                 expected: "tuple",
+                actual: self.shape,
+            })
+        }
+    }
+
+    /// Tries to identify this value as a dynamic value (like `facet_value::Value`)
+    #[inline]
+    pub fn into_dynamic_value(self) -> Result<PeekDynamicValue<'mem, 'facet>, ReflectError> {
+        if let Def::DynamicValue(def) = self.shape.def {
+            Ok(PeekDynamicValue { value: self, def })
+        } else {
+            Err(ReflectError::WasNotA {
+                expected: "dynamic value",
                 actual: self.shape,
             })
         }

@@ -708,7 +708,11 @@ dependencies = [
 name = "facet-value"
 version = "0.1.0"
 dependencies = [
+ "facet-assert",
  "facet-core",
+ "facet-diff",
+ "facet-pretty",
+ "facet-reflect",
 ]
 
 [[package]]

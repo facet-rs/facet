@@ -36,6 +36,9 @@ pub use pointer::*;
 mod tuple;
 pub use tuple::*;
 
+mod dynamic_value;
+pub use dynamic_value::*;
+
 #[cfg(feature = "alloc")]
 mod owned;
 #[cfg(feature = "alloc")]

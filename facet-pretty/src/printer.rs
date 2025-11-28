@@ -9,8 +9,8 @@ use core::{
 use std::hash::DefaultHasher;
 
 use facet_core::{
-    Def, Facet, Field, FieldFlags, PointerType, PrimitiveType, SequenceType, Shape, StructKind,
-    StructType, TextualType, Type, TypeNameOpts, UserType,
+    Def, DynValueKind, Facet, Field, FieldFlags, PointerType, PrimitiveType, SequenceType, Shape,
+    StructKind, StructType, TextualType, Type, TypeNameOpts, UserType,
 };
 use facet_reflect::{Peek, ValueId};
 
@@ -538,6 +538,109 @@ impl PrettyPrinter {
                 self.write_punctuation(f, "]")?;
             }
 
+            (Def::DynamicValue(_), _) => {
+                let dyn_val = value.into_dynamic_value().unwrap();
+                match dyn_val.kind() {
+                    DynValueKind::Null => {
+                        self.write_keyword(f, "null")?;
+                    }
+                    DynValueKind::Bool => {
+                        if let Some(b) = dyn_val.as_bool() {
+                            self.write_keyword(f, if b { "true" } else { "false" })?;
+                        }
+                    }
+                    DynValueKind::Number => {
+                        if let Some(n) = dyn_val.as_i64() {
+                            self.format_number(f, &n.to_string())?;
+                        } else if let Some(n) = dyn_val.as_u64() {
+                            self.format_number(f, &n.to_string())?;
+                        } else if let Some(n) = dyn_val.as_f64() {
+                            self.format_number(f, &n.to_string())?;
+                        }
+                    }
+                    DynValueKind::String => {
+                        if let Some(s) = dyn_val.as_str() {
+                            self.format_string(f, s)?;
+                        }
+                    }
+                    DynValueKind::Bytes => {
+                        if let Some(bytes) = dyn_val.as_bytes() {
+                            self.format_bytes(f, bytes)?;
+                        }
+                    }
+                    DynValueKind::Array => {
+                        let len = dyn_val.array_len().unwrap_or(0);
+                        if len == 0 {
+                            self.write_punctuation(f, "[]")?;
+                        } else {
+                            self.write_punctuation(f, "[")?;
+                            for idx in 0..len {
+                                if !short {
+                                    writeln!(f)?;
+                                    self.indent(f, format_depth + 1)?;
+                                }
+                                if let Some(elem) = dyn_val.array_get(idx) {
+                                    self.format_peek_internal_(
+                                        elem,
+                                        f,
+                                        visited,
+                                        format_depth + 1,
+                                        type_depth + 1,
+                                        short,
+                                    )?;
+                                }
+                                if !short || idx + 1 < len {
+                                    self.write_punctuation(f, ",")?;
+                                } else {
+                                    write!(f, " ")?;
+                                }
+                            }
+                            if !short {
+                                writeln!(f)?;
+                                self.indent(f, format_depth)?;
+                            }
+                            self.write_punctuation(f, "]")?;
+                        }
+                    }
+                    DynValueKind::Object => {
+                        let len = dyn_val.object_len().unwrap_or(0);
+                        if len == 0 {
+                            self.write_punctuation(f, "{}")?;
+                        } else {
+                            self.write_punctuation(f, "{")?;
+                            for idx in 0..len {
+                                if !short {
+                                    writeln!(f)?;
+                                    self.indent(f, format_depth + 1)?;
+                                }
+                                if let Some((key, val)) = dyn_val.object_get_entry(idx) {
+                                    self.write_field_name(f, key)?;
+                                    self.write_punctuation(f, ": ")?;
+                                    self.format_peek_internal_(
+                                        val,
+                                        f,
+                                        visited,
+                                        format_depth + 1,
+                                        type_depth + 1,
+                                        short,
+                                    )?;
+                                }
+                                if !short || idx + 1 < len {
+                                    self.write_punctuation(f, ",")?;
+                                } else {
+                                    write!(f, " ")?;
+                                }
+                            }
+                            if !short {
+                                writeln!(f)?;
+                                self.indent(f, format_depth)?;
+                            }
+                            self.write_punctuation(f, "}")?;
+                        }
+                    }
+                }
+            }
+
             _ => write!(f, "unsupported peek variant: {value:?}")?,
         }
 
@@ -722,6 +825,42 @@ impl PrettyPrinter {
         }
 
         Ok(())
+    }
+
+    /// Write a keyword (null, true, false) with coloring
+    fn write_keyword(&self, f: &mut dyn Write, keyword: &str) -> fmt::Result {
+        if self.use_colors {
+            write!(f, "\x1b[35m{keyword}\x1b[0m") // magenta for keywords
+        } else {
+            write!(f, "{keyword}")
+        }
+    }
+
+    /// Format a number for dynamic values
+    fn format_number(&self, f: &mut dyn Write, s: &str) -> fmt::Result {
+        if self.use_colors {
+            write!(f, "\x1b[36m{s}\x1b[0m") // cyan for numbers
+        } else {
+            write!(f, "{s}")
+        }
+    }
+
+    /// Format a string for dynamic values
+    fn format_string(&self, f: &mut dyn Write, s: &str) -> fmt::Result {
+        if self.use_colors {
+            write!(f, "\x1b[33m{s:?}\x1b[0m") // yellow for strings
+        } else {
+            write!(f, "{s:?}")
+        }
+    }
+
+    /// Format bytes for dynamic values
+    fn format_bytes(&self, f: &mut dyn Write, bytes: &[u8]) -> fmt::Result {
+        write!(f, "b\"")?;
+        for byte in bytes {
+            write!(f, "\\x{byte:02x}")?;
+        }
+        write!(f, "\"")
     }
 
     /// Write styled type name to formatter

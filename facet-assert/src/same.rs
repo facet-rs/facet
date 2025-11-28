@@ -1,7 +1,7 @@
 //! Structural sameness checking for Facet types.
 
 use core::fmt;
-use facet_core::{Def, Facet, Type, UserType};
+use facet_core::{Def, DynValueKind, Facet, Type, UserType};
 use facet_pretty::PrettyPrinter;
 use facet_reflect::{HasFields, Peek};
 
@@ -214,6 +214,15 @@ impl Differ {
             (left.shape().ty, right.shape().ty)
         {
             return self.check_enums(left, right);
+        }
+
+        // Handle dynamic values (like facet_value::Value) - compare based on their runtime kind
+        // This allows comparing Value against concrete types (e.g., Value array vs Vec)
+        if let Def::DynamicValue(_) = left.shape().def {
+            return self.check_with_dynamic_value(left, right);
+        }
+        if let Def::DynamicValue(_) = right.shape().def {
+            return self.check_with_dynamic_value(right, left);
         }
 
         // At this point, if either is Opaque and we haven't handled it above, fail
@@ -474,6 +483,458 @@ impl Differ {
                 self.record_changed(left, right);
                 CheckResult::Different
             }
+        }
+    }
+
+    /// Compare a DynamicValue (left) against any other Peek (right) based on the DynamicValue's runtime kind.
+    /// This enables comparing e.g. `Value::Array` against `Vec<i32>`.
+    fn check_with_dynamic_value(
+        &mut self,
+        dyn_peek: Peek<'_, '_>,
+        other: Peek<'_, '_>,
+    ) -> CheckResult {
+        let dyn_val = dyn_peek.into_dynamic_value().unwrap();
+        let kind = dyn_val.kind();
+
+        match kind {
+            DynValueKind::Null => {
+                // Null compares equal to () or Option::None
+                let other_str = Self::format_value(other);
+                if other_str == "()" || other_str == "None" {
+                    CheckResult::Same
+                } else {
+                    self.record_changed(dyn_peek, other);
+                    CheckResult::Different
+                }
+            }
+            DynValueKind::Bool => {
+                // Compare against bool
+                let dyn_bool = dyn_val.as_bool();
+
+                // Check if other is also a DynamicValue bool
+                let other_bool = if let Ok(other_dyn) = other.into_dynamic_value() {
+                    other_dyn.as_bool()
+                } else {
+                    let other_str = Self::format_value(other);
+                    match other_str.as_str() {
+                        "true" => Some(true),
+                        "false" => Some(false),
+                        _ => None,
+                    }
+                };
+
+                if dyn_bool == other_bool {
+                    CheckResult::Same
+                } else {
+                    self.record_changed(dyn_peek, other);
+                    CheckResult::Different
+                }
+            }
+            DynValueKind::Number => {
+                // Check if other is also a DynamicValue number
+                if let Ok(other_dyn) = other.into_dynamic_value() {
+                    // Compare DynamicValue numbers directly
+                    let same = match (dyn_val.as_i64(), other_dyn.as_i64()) {
+                        (Some(l), Some(r)) => l == r,
+                        _ => match (dyn_val.as_u64(), other_dyn.as_u64()) {
+                            (Some(l), Some(r)) => l == r,
+                            _ => match (dyn_val.as_f64(), other_dyn.as_f64()) {
+                                (Some(l), Some(r)) => l == r,
+                                _ => false,
+                            },
+                        },
+                    };
+                    if same {
+                        return CheckResult::Same;
+                    } else {
+                        self.record_changed(dyn_peek, other);
+                        return CheckResult::Different;
+                    }
+                }
+
+                // Compare against scalar number by parsing formatted value
+                let other_str = Self::format_value(other);
+
+                let same = if let Some(dyn_i64) = dyn_val.as_i64() {
+                    other_str.parse::<i64>().ok() == Some(dyn_i64)
+                } else if let Some(dyn_u64) = dyn_val.as_u64() {
+                    other_str.parse::<u64>().ok() == Some(dyn_u64)
+                } else if let Some(dyn_f64) = dyn_val.as_f64() {
+                    other_str.parse::<f64>().ok() == Some(dyn_f64)
+                } else {
+                    false
+                };
+
+                if same {
+                    CheckResult::Same
+                } else {
+                    self.record_changed(dyn_peek, other);
+                    CheckResult::Different
+                }
+            }
+            DynValueKind::String => {
+                // Compare against string types
+                let dyn_str = dyn_val.as_str();
+
+                // Check if other is also a DynamicValue string
+                let other_str = if let Ok(other_dyn) = other.into_dynamic_value() {
+                    other_dyn.as_str()
+                } else {
+                    other.as_str()
+                };
+
+                if dyn_str == other_str {
+                    CheckResult::Same
+                } else {
+                    self.record_changed(dyn_peek, other);
+                    CheckResult::Different
+                }
+            }
+            DynValueKind::Bytes => {
+                // Compare against byte slice types
+                let dyn_bytes = dyn_val.as_bytes();
+
+                // Check if other is also a DynamicValue bytes
+                let other_bytes = if let Ok(other_dyn) = other.into_dynamic_value() {
+                    other_dyn.as_bytes()
+                } else {
+                    other.as_bytes()
+                };
+
+                if dyn_bytes == other_bytes {
+                    CheckResult::Same
+                } else {
+                    self.record_changed(dyn_peek, other);
+                    CheckResult::Different
+                }
+            }
+            DynValueKind::Array => {
+                // Compare against any list-like type (Vec, array, slice, or another DynamicValue array)
+                self.check_dyn_array_against_other(dyn_peek, dyn_val, other)
+            }
+            DynValueKind::Object => {
+                // Compare against maps or structs
+                self.check_dyn_object_against_other(dyn_peek, dyn_val, other)
+            }
+        }
+    }
+
+    fn check_dyn_array_against_other(
+        &mut self,
+        dyn_peek: Peek<'_, '_>,
+        dyn_val: facet_reflect::PeekDynamicValue<'_, '_>,
+        other: Peek<'_, '_>,
+    ) -> CheckResult {
+        let dyn_len = dyn_val.array_len().unwrap_or(0);
+
+        // Check if other is also a DynamicValue array
+        if let Ok(other_dyn) = other.into_dynamic_value() {
+            if other_dyn.kind() == DynValueKind::Array {
+                let other_len = other_dyn.array_len().unwrap_or(0);
+                return self
+                    .check_two_dyn_arrays(dyn_peek, dyn_val, dyn_len, other, other_dyn, other_len);
+            } else {
+                self.record_changed(dyn_peek, other);
+                return CheckResult::Different;
+            }
+        }
+
+        // Check if other is list-like
+        if let Ok(other_list) = other.into_list_like() {
+            let other_len = other_list.len();
+            let mut any_different = false;
+            let min_len = dyn_len.min(other_len);
+
+            // Compare common elements
+            for i in 0..min_len {
+                self.path.push(PathSegment::Index(i));
+
+                if let (Some(dyn_elem), Some(other_elem)) =
+                    (dyn_val.array_get(i), other_list.get(i))
+                {
+                    match self.check(dyn_elem, other_elem) {
+                        CheckResult::Same => {}
+                        CheckResult::Different => any_different = true,
+                        opaque @ CheckResult::Opaque { .. } => {
+                            self.path.pop();
+                            return opaque;
+                        }
+                    }
+                }
+
+                self.path.pop();
+            }
+
+            // Elements only in dyn array
+            for i in min_len..dyn_len {
+                self.path.push(PathSegment::Index(i));
+                if let Some(dyn_elem) = dyn_val.array_get(i) {
+                    self.record_only_left(dyn_elem);
+                    any_different = true;
+                }
+                self.path.pop();
+            }
+
+            // Elements only in other list
+            for i in min_len..other_len {
+                self.path.push(PathSegment::Index(i));
+                if let Some(other_elem) = other_list.get(i) {
+                    self.record_only_right(other_elem);
+                    any_different = true;
+                }
+                self.path.pop();
+            }
+
+            if any_different {
+                CheckResult::Different
+            } else {
+                CheckResult::Same
+            }
+        } else {
+            // Other is not array-like, they're different
+            self.record_changed(dyn_peek, other);
+            CheckResult::Different
+        }
+    }
+
+    fn check_two_dyn_arrays(
+        &mut self,
+        _left_peek: Peek<'_, '_>,
+        left_dyn: facet_reflect::PeekDynamicValue<'_, '_>,
+        left_len: usize,
+        _right_peek: Peek<'_, '_>,
+        right_dyn: facet_reflect::PeekDynamicValue<'_, '_>,
+        right_len: usize,
+    ) -> CheckResult {
+        let mut any_different = false;
+        let min_len = left_len.min(right_len);
+
+        // Compare common elements
+        for i in 0..min_len {
+            self.path.push(PathSegment::Index(i));
+
+            if let (Some(left_elem), Some(right_elem)) =
+                (left_dyn.array_get(i), right_dyn.array_get(i))
+            {
+                match self.check(left_elem, right_elem) {
+                    CheckResult::Same => {}
+                    CheckResult::Different => any_different = true,
+                    opaque @ CheckResult::Opaque { .. } => {
+                        self.path.pop();
+                        return opaque;
+                    }
+                }
+            }
+
+            self.path.pop();
+        }
+
+        // Elements only in left
+        for i in min_len..left_len {
+            self.path.push(PathSegment::Index(i));
+            if let Some(left_elem) = left_dyn.array_get(i) {
+                self.record_only_left(left_elem);
+                any_different = true;
+            }
+            self.path.pop();
+        }
+
+        // Elements only in right
+        for i in min_len..right_len {
+            self.path.push(PathSegment::Index(i));
+            if let Some(right_elem) = right_dyn.array_get(i) {
+                self.record_only_right(right_elem);
+                any_different = true;
+            }
+            self.path.pop();
+        }
+
+        if any_different {
+            CheckResult::Different
+        } else {
+            CheckResult::Same
+        }
+    }
+
+    fn check_dyn_object_against_other(
+        &mut self,
+        dyn_peek: Peek<'_, '_>,
+        dyn_val: facet_reflect::PeekDynamicValue<'_, '_>,
+        other: Peek<'_, '_>,
+    ) -> CheckResult {
+        let dyn_len = dyn_val.object_len().unwrap_or(0);
+
+        // Check if other is also a DynamicValue object
+        if let Ok(other_dyn) = other.into_dynamic_value() {
+            if other_dyn.kind() == DynValueKind::Object {
+                let other_len = other_dyn.object_len().unwrap_or(0);
+                return self.check_two_dyn_objects(
+                    dyn_peek, dyn_val, dyn_len, other, other_dyn, other_len,
+                );
+            } else {
+                self.record_changed(dyn_peek, other);
+                return CheckResult::Different;
+            }
+        }
+
+        // Check if other is a map
+        if let Ok(other_map) = other.into_map() {
+            let mut any_different = false;
+            let mut seen_keys = std::collections::HashSet::new();
+
+            // Check all entries in dyn object
+            for i in 0..dyn_len {
+                if let Some((key, dyn_value)) = dyn_val.object_get_entry(i) {
+                    seen_keys.insert(key.to_owned());
+                    self.path.push(PathSegment::Key(key.to_owned()));
+
+                    // Try to find key in map - need to compare by formatted key
+                    let mut found = false;
+                    for (map_key, map_value) in other_map.iter() {
+                        if Self::format_value(map_key) == format!("{key:?}") {
+                            found = true;
+                            match self.check(dyn_value, map_value) {
+                                CheckResult::Same => {}
+                                CheckResult::Different => any_different = true,
+                                opaque @ CheckResult::Opaque { .. } => {
+                                    self.path.pop();
+                                    return opaque;
+                                }
+                            }
+                            break;
+                        }
+                    }
+
+                    if !found {
+                        self.record_only_left(dyn_value);
+                        any_different = true;
+                    }
+
+                    self.path.pop();
+                }
+            }
+
+            // Check keys only in map
+            for (map_key, map_value) in other_map.iter() {
+                let key_str = Self::format_value(map_key);
+                // Remove quotes for comparison
+                let key_unquoted = key_str.trim_matches('"');
+                if !seen_keys.contains(key_unquoted) {
+                    self.path.push(PathSegment::Key(key_unquoted.to_owned()));
+                    self.record_only_right(map_value);
+                    any_different = true;
+                    self.path.pop();
+                }
+            }
+
+            if any_different {
+                CheckResult::Different
+            } else {
+                CheckResult::Same
+            }
+        } else if let Ok(other_struct) = other.into_struct() {
+            // Compare DynamicValue object against struct fields
+            let mut any_different = false;
+            let mut seen_fields = std::collections::HashSet::new();
+
+            // Check all entries in dyn object against struct fields
+            for i in 0..dyn_len {
+                if let Some((key, dyn_value)) = dyn_val.object_get_entry(i) {
+                    seen_fields.insert(key.to_owned());
+                    self.path.push(PathSegment::Key(key.to_owned()));
+
+                    if let Ok(struct_value) = other_struct.field_by_name(key) {
+                        match self.check(dyn_value, struct_value) {
+                            CheckResult::Same => {}
+                            CheckResult::Different => any_different = true,
+                            opaque @ CheckResult::Opaque { .. } => {
+                                self.path.pop();
+                                return opaque;
+                            }
+                        }
+                    } else {
+                        self.record_only_left(dyn_value);
+                        any_different = true;
+                    }
+
+                    self.path.pop();
+                }
+            }
+
+            // Check struct fields not in dyn object
+            for (field, struct_value) in other_struct.fields() {
+                if !seen_fields.contains(field.name) {
+                    self.path.push(PathSegment::Field(field.name));
+                    self.record_only_right(struct_value);
+                    any_different = true;
+                    self.path.pop();
+                }
+            }
+
+            if any_different {
+                CheckResult::Different
+            } else {
+                CheckResult::Same
+            }
+        } else {
+            // Other is not object-like, they're different
+            self.record_changed(dyn_peek, other);
+            CheckResult::Different
+        }
+    }
+
+    fn check_two_dyn_objects(
+        &mut self,
+        _left_peek: Peek<'_, '_>,
+        left_dyn: facet_reflect::PeekDynamicValue<'_, '_>,
+        left_len: usize,
+        _right_peek: Peek<'_, '_>,
+        right_dyn: facet_reflect::PeekDynamicValue<'_, '_>,
+        right_len: usize,
+    ) -> CheckResult {
+        let mut any_different = false;
+        let mut seen_keys = std::collections::HashSet::new();
+
+        // Check all entries in left
+        for i in 0..left_len {
+            if let Some((key, left_value)) = left_dyn.object_get_entry(i) {
+                seen_keys.insert(key.to_owned());
+                self.path.push(PathSegment::Key(key.to_owned()));
+
+                if let Some(right_value) = right_dyn.object_get(key) {
+                    match self.check(left_value, right_value) {
+                        CheckResult::Same => {}
+                        CheckResult::Different => any_different = true,
+                        opaque @ CheckResult::Opaque { .. } => {
+                            self.path.pop();
+                            return opaque;
+                        }
+                    }
+                } else {
+                    self.record_only_left(left_value);
+                    any_different = true;
+                }
+
+                self.path.pop();
+            }
+        }
+
+        // Check entries only in right
+        for i in 0..right_len {
+            if let Some((key, right_value)) = right_dyn.object_get_entry(i) {
+                if !seen_keys.contains(key) {
+                    self.path.push(PathSegment::Key(key.to_owned()));
+                    self.record_only_right(right_value);
+                    any_different = true;
+                    self.path.pop();
+                }
+            }
+        }
+
+        if any_different {
+            CheckResult::Different
+        } else {
+            CheckResult::Same
         }
     }
 }
