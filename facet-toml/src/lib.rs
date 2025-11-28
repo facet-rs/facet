@@ -16,3 +16,6 @@ pub use deserialize::*;
 mod serialize;
 #[cfg(feature = "serialize")]
 pub use serialize::*;
+
+// Re-export span types from facet-reflect
+pub use facet_reflect::{Span, Spanned};

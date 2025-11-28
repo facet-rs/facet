@@ -1,6 +1,5 @@
 ---
-source: tests/tenant-config.rs
-assertion_line: 81
+source: facet-json/tests/tenant-config.rs
 expression: result
 ---
 Err(
@@ -9,13 +8,13 @@ Err(
             field: "cookie_sauce",
             object_start: Some(
                 Span {
-                    start: 211,
+                    offset: 211,
                     len: 1,
                 },
             ),
             object_end: Some(
                 Span {
-                    start: 598,
+                    offset: 598,
                     len: 1,
                 },
             ),

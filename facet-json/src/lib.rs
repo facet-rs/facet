@@ -6,8 +6,8 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-mod span;
-pub use span::{Span, Spanned};
+// Re-export span types from facet-reflect
+pub use facet_reflect::{Span, Spanned};
 
 mod deserialize;
 pub use deserialize::{JsonDeserializer, JsonError, JsonErrorKind, from_slice, from_str};

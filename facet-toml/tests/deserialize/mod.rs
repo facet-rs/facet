@@ -5,5 +5,6 @@ mod list;
 mod map;
 mod option;
 mod scalar;
+mod spanned;
 mod struct_;
 mod vec_struct;

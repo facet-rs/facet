@@ -9,39 +9,20 @@ use core::fmt::{self, Display};
 use facet_reflect::ReflectError;
 use miette::NamedSource;
 
-/// A span in the source YAML document.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Span {
-    /// Byte offset where the span starts
-    pub start: usize,
-    /// Length of the span in bytes
-    pub len: usize,
-}
+// Re-export Span from facet-reflect for consistency across format crates
+pub use facet_reflect::Span;
 
-impl Span {
-    /// Create a new span
-    pub fn new(start: usize, len: usize) -> Self {
-        Self { start, len }
-    }
-
-    /// Create a span from a saphyr-parser Marker
-    pub fn from_marker(marker: &saphyr_parser::Marker) -> Self {
-        Self {
-            start: marker.index(),
-            len: 0,
-        }
-    }
-
+/// Helper functions for creating Span from saphyr-parser types
+pub(crate) trait SpanExt {
     /// Create a span from a saphyr-parser Span
-    pub fn from_saphyr_span(span: &saphyr_parser::Span) -> Self {
+    fn from_saphyr_span(span: &saphyr_parser::Span) -> Span {
         let start = span.start.index();
         let end = span.end.index();
-        Self {
-            start,
-            len: end.saturating_sub(start),
-        }
+        Span::new(start, end.saturating_sub(start))
     }
 }
+
+impl SpanExt for Span {}
 
 /// Error type for YAML operations.
 #[derive(Debug)]
@@ -78,7 +59,7 @@ impl miette::Diagnostic for YamlError {
         let span = self.span?;
         Some(Box::new(core::iter::once(miette::LabeledSpan::new(
             Some(self.kind.label()),
-            span.start,
+            span.offset,
             span.len.max(1), // Ensure at least 1 character span for visibility
         ))))
     }

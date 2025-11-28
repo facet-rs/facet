@@ -15,8 +15,8 @@ use facet_core::{
 use facet_reflect::{Partial, ReflectError};
 use facet_solver::{PathSegment, Schema, Solver};
 
-use crate::span::{Span, Spanned};
 use crate::tokenizer::{Token, TokenError, TokenErrorKind, Tokenizer};
+use facet_reflect::{Span, Spanned};
 
 /// Find the best matching field name from a list of expected fields.
 /// Returns Some(suggestion) if a match with similarity >= 0.6 is found.
@@ -79,14 +79,14 @@ impl miette::Diagnostic for JsonError {
             if let Some(start) = object_start {
                 labels.push(miette::LabeledSpan::new(
                     Some("object started here".into()),
-                    start.start,
+                    start.offset,
                     start.len,
                 ));
             }
             if let Some(end) = object_end {
                 labels.push(miette::LabeledSpan::new(
                     Some(format!("object ended without field `{field}`")),
-                    end.start,
+                    end.offset,
                     end.len,
                 ));
             }
@@ -100,7 +100,7 @@ impl miette::Diagnostic for JsonError {
         let span = self.span?;
         Some(Box::new(core::iter::once(miette::LabeledSpan::new(
             Some(self.kind.label()),
-            span.start,
+            span.offset,
             span.len,
         ))))
     }
@@ -453,13 +453,13 @@ impl<'input> JsonDeserializer<'input> {
         let token = self.next()?;
         let start_span = token.span;
 
-        match token.node {
+        match token.value {
             Token::LBrace => {
                 // Skip object
                 let mut depth = 1;
                 while depth > 0 {
                     let t = self.next()?;
-                    match t.node {
+                    match t.value {
                         Token::LBrace => depth += 1,
                         Token::RBrace => depth -= 1,
                         _ => {}
@@ -472,7 +472,7 @@ impl<'input> JsonDeserializer<'input> {
                 let mut depth = 1;
                 while depth > 0 {
                     let t = self.next()?;
-                    match t.node {
+                    match t.value {
                         Token::LBracket => depth += 1,
                         Token::RBracket => depth -= 1,
                         _ => {}
@@ -491,7 +491,7 @@ impl<'input> JsonDeserializer<'input> {
             | Token::Null => Ok(start_span),
             _ => Err(JsonError::new(
                 JsonErrorKind::UnexpectedToken {
-                    got: format!("{}", token.node),
+                    got: format!("{}", token.value),
                     expected: "value",
                 },
                 token.span,
@@ -638,7 +638,7 @@ impl<'input> JsonDeserializer<'input> {
         // Set the span field
         wip.begin_field("span")?;
         // Span struct has offset and len fields
-        wip.set_field("offset", value_span.start)?;
+        wip.set_field("offset", value_span.offset)?;
         wip.set_field("len", value_span.len)?;
         wip.end()?;
 
@@ -649,9 +649,9 @@ impl<'input> JsonDeserializer<'input> {
     fn deserialize_scalar(&mut self, wip: &mut Partial<'input>) -> Result<()> {
         let expected_type = wip.shape().type_identifier;
         let token = self.next_expecting(expected_type)?;
-        log::trace!("deserialize_scalar: token={:?}", token.node);
+        log::trace!("deserialize_scalar: token={:?}", token.value);
 
-        match token.node {
+        match token.value {
             Token::String(s) => {
                 // Try parse_from_str first if the type supports it (e.g., chrono types)
                 if wip.shape().vtable.parse.is_some() {
@@ -691,7 +691,7 @@ impl<'input> JsonDeserializer<'input> {
             _ => {
                 return Err(JsonError::new(
                     JsonErrorKind::UnexpectedToken {
-                        got: format!("{}", token.node),
+                        got: format!("{}", token.value),
                         expected: "scalar value",
                     },
                     token.span,
@@ -1110,12 +1110,12 @@ impl<'input> JsonDeserializer<'input> {
     fn deserialize_struct_simple(&mut self, wip: &mut Partial<'input>) -> Result<()> {
         // Expect opening brace and track its span
         let open_token = self.next()?;
-        let object_start_span = match open_token.node {
+        let object_start_span = match open_token.value {
             Token::LBrace => open_token.span,
             _ => {
                 return Err(JsonError::new(
                     JsonErrorKind::UnexpectedToken {
-                        got: format!("{}", open_token.node),
+                        got: format!("{}", open_token.value),
                         expected: "'{'",
                     },
                     open_token.span,
@@ -1149,7 +1149,7 @@ impl<'input> JsonDeserializer<'input> {
         // Parse fields until closing brace
         loop {
             let token = self.peek()?;
-            match &token.node {
+            match &token.value {
                 Token::RBrace => {
                     let close_token = self.next()?; // consume the brace
                     object_end_span = Some(close_token.span);
@@ -1158,7 +1158,7 @@ impl<'input> JsonDeserializer<'input> {
                 Token::String(_) => {
                     // Parse field name
                     let key_token = self.next()?;
-                    let key = match key_token.node {
+                    let key = match key_token.value {
                         Token::String(s) => s,
                         _ => unreachable!(),
                     };
@@ -1166,10 +1166,10 @@ impl<'input> JsonDeserializer<'input> {
 
                     // Expect colon
                     let colon = self.next()?;
-                    if !matches!(colon.node, Token::Colon) {
+                    if !matches!(colon.value, Token::Colon) {
                         return Err(JsonError::new(
                             JsonErrorKind::UnexpectedToken {
-                                got: format!("{}", colon.node),
+                                got: format!("{}", colon.value),
                                 expected: "':'",
                             },
                             colon.span,
@@ -1216,7 +1216,7 @@ impl<'input> JsonDeserializer<'input> {
 
                     // Check for comma or end
                     let next = self.peek()?;
-                    if matches!(next.node, Token::Comma) {
+                    if matches!(next.value, Token::Comma) {
                         self.next()?; // consume comma
                     }
                 }
@@ -1224,7 +1224,7 @@ impl<'input> JsonDeserializer<'input> {
                     let span = token.span;
                     return Err(JsonError::new(
                         JsonErrorKind::UnexpectedToken {
-                            got: format!("{}", token.node),
+                            got: format!("{}", token.value),
                             expected: "field name or '}'",
                         },
                         span,
@@ -1297,12 +1297,12 @@ impl<'input> JsonDeserializer<'input> {
 
         // Expect opening brace
         let token = self.next()?;
-        match token.node {
+        match token.value {
             Token::LBrace => {}
             _ => {
                 return Err(JsonError::new(
                     JsonErrorKind::UnexpectedToken {
-                        got: format!("{}", token.node),
+                        got: format!("{}", token.value),
                         expected: "'{'",
                     },
                     token.span,
@@ -1313,7 +1313,7 @@ impl<'input> JsonDeserializer<'input> {
         // ========== PASS 1: Peek mode - scan all keys, feed to solver ==========
         loop {
             let token = self.peek()?;
-            match &token.node {
+            match &token.value {
                 Token::RBrace => {
                     self.next()?; // consume the brace
                     break;
@@ -1321,17 +1321,17 @@ impl<'input> JsonDeserializer<'input> {
                 Token::String(_) => {
                     // Parse field name
                     let key_token = self.next()?;
-                    let key = match &key_token.node {
+                    let key = match &key_token.value {
                         Token::String(s) => s.clone(),
                         _ => unreachable!(),
                     };
 
                     // Expect colon
                     let colon = self.next()?;
-                    if !matches!(colon.node, Token::Colon) {
+                    if !matches!(colon.value, Token::Colon) {
                         return Err(JsonError::new(
                             JsonErrorKind::UnexpectedToken {
-                                got: format!("{}", colon.node),
+                                got: format!("{}", colon.value),
                                 expected: "':'",
                             },
                             colon.span,
@@ -1342,7 +1342,7 @@ impl<'input> JsonDeserializer<'input> {
                     let key_static: &'static str = Box::leak(key.into_owned().into_boxed_str());
 
                     // Record the value position before skipping
-                    let value_start = self.peek()?.span.start;
+                    let value_start = self.peek()?.span.offset;
 
                     // Feed key to solver (decision not used in peek mode)
                     let _decision = solver.see_key(key_static);
@@ -1354,7 +1354,7 @@ impl<'input> JsonDeserializer<'input> {
 
                     // Check for comma
                     let next = self.peek()?;
-                    if matches!(next.node, Token::Comma) {
+                    if matches!(next.value, Token::Comma) {
                         self.next()?;
                     }
                 }
@@ -1362,7 +1362,7 @@ impl<'input> JsonDeserializer<'input> {
                     let span = token.span;
                     return Err(JsonError::new(
                         JsonErrorKind::UnexpectedToken {
-                            got: format!("{}", token.node),
+                            got: format!("{}", token.value),
                             expected: "field name or '}'",
                         },
                         span,
@@ -1528,7 +1528,7 @@ impl<'input> JsonDeserializer<'input> {
 
         let token = self.peek()?;
 
-        match &token.node {
+        match &token.value {
             // String = unit variant (externally tagged unit)
             Token::String(s) => {
                 let variant_name = s.clone();
@@ -1544,7 +1544,7 @@ impl<'input> JsonDeserializer<'input> {
 
                 // Get the variant name (first key)
                 let key_token = self.next()?;
-                let key = match &key_token.node {
+                let key = match &key_token.value {
                     Token::String(s) => s.clone(),
                     Token::RBrace => {
                         // Empty object - error
@@ -1558,7 +1558,7 @@ impl<'input> JsonDeserializer<'input> {
                     _ => {
                         return Err(JsonError::new(
                             JsonErrorKind::UnexpectedToken {
-                                got: format!("{}", key_token.node),
+                                got: format!("{}", key_token.value),
                                 expected: "variant name",
                             },
                             key_token.span,
@@ -1568,10 +1568,10 @@ impl<'input> JsonDeserializer<'input> {
 
                 // Expect colon
                 let colon = self.next()?;
-                if !matches!(colon.node, Token::Colon) {
+                if !matches!(colon.value, Token::Colon) {
                     return Err(JsonError::new(
                         JsonErrorKind::UnexpectedToken {
-                            got: format!("{}", colon.node),
+                            got: format!("{}", colon.value),
                             expected: "':'",
                         },
                         colon.span,
@@ -1594,10 +1594,10 @@ impl<'input> JsonDeserializer<'input> {
                         // Unit variant in object form like {"Unit": null}
                         // We should consume some token (null, empty object, etc.)
                         let tok = self.next()?;
-                        if !matches!(tok.node, Token::Null) {
+                        if !matches!(tok.value, Token::Null) {
                             return Err(JsonError::new(
                                 JsonErrorKind::UnexpectedToken {
-                                    got: format!("{}", tok.node),
+                                    got: format!("{}", tok.value),
                                     expected: "null for unit variant",
                                 },
                                 tok.span,
@@ -1609,7 +1609,7 @@ impl<'input> JsonDeserializer<'input> {
                         if num_fields == 0 {
                             // Zero-field tuple variant, treat like unit
                             let tok = self.peek()?;
-                            if matches!(tok.node, Token::Null) {
+                            if matches!(tok.value, Token::Null) {
                                 self.next()?;
                             }
                         } else if num_fields == 1 {
@@ -1628,10 +1628,10 @@ impl<'input> JsonDeserializer<'input> {
                         } else {
                             // Multi-element tuple: array (e.g., {"Y": ["hello", true]})
                             let tok = self.next()?;
-                            if !matches!(tok.node, Token::LBracket) {
+                            if !matches!(tok.value, Token::LBracket) {
                                 return Err(JsonError::new(
                                     JsonErrorKind::UnexpectedToken {
-                                        got: format!("{}", tok.node),
+                                        got: format!("{}", tok.value),
                                         expected: "'[' for tuple variant",
                                     },
                                     tok.span,
@@ -1653,16 +1653,16 @@ impl<'input> JsonDeserializer<'input> {
 
                                 // Check for comma or closing bracket
                                 let next = self.peek()?;
-                                if matches!(next.node, Token::Comma) {
+                                if matches!(next.value, Token::Comma) {
                                     self.next()?;
                                 }
                             }
 
                             let close = self.next()?;
-                            if !matches!(close.node, Token::RBracket) {
+                            if !matches!(close.value, Token::RBracket) {
                                 return Err(JsonError::new(
                                     JsonErrorKind::UnexpectedToken {
-                                        got: format!("{}", close.node),
+                                        got: format!("{}", close.value),
                                         expected: "']'",
                                     },
                                     close.span,
@@ -1678,10 +1678,10 @@ impl<'input> JsonDeserializer<'input> {
 
                 // Expect closing brace for the outer object
                 let close = self.next()?;
-                if !matches!(close.node, Token::RBrace) {
+                if !matches!(close.value, Token::RBrace) {
                     return Err(JsonError::new(
                         JsonErrorKind::UnexpectedToken {
-                            got: format!("{}", close.node),
+                            got: format!("{}", close.value),
                             expected: "'}'",
                         },
                         close.span,
@@ -1694,7 +1694,7 @@ impl<'input> JsonDeserializer<'input> {
                 let span = token.span;
                 Err(JsonError::new(
                     JsonErrorKind::UnexpectedToken {
-                        got: format!("{}", token.node),
+                        got: format!("{}", token.value),
                         expected: "string or object for enum",
                     },
                     span,
@@ -1750,10 +1750,10 @@ impl<'input> JsonDeserializer<'input> {
         fields: &[facet_core::Field],
     ) -> Result<()> {
         let token = self.next()?;
-        if !matches!(token.node, Token::LBrace) {
+        if !matches!(token.value, Token::LBrace) {
             return Err(JsonError::new(
                 JsonErrorKind::UnexpectedToken {
-                    got: format!("{}", token.node),
+                    got: format!("{}", token.value),
                     expected: "'{' for struct variant",
                 },
                 token.span,
@@ -1762,18 +1762,18 @@ impl<'input> JsonDeserializer<'input> {
 
         loop {
             let token = self.peek()?;
-            if matches!(token.node, Token::RBrace) {
+            if matches!(token.value, Token::RBrace) {
                 self.next()?;
                 break;
             }
 
             let key_token = self.next()?;
-            let field_name = match &key_token.node {
+            let field_name = match &key_token.value {
                 Token::String(s) => s.clone(),
                 _ => {
                     return Err(JsonError::new(
                         JsonErrorKind::UnexpectedToken {
-                            got: format!("{}", key_token.node),
+                            got: format!("{}", key_token.value),
                             expected: "field name",
                         },
                         key_token.span,
@@ -1782,10 +1782,10 @@ impl<'input> JsonDeserializer<'input> {
             };
 
             let colon = self.next()?;
-            if !matches!(colon.node, Token::Colon) {
+            if !matches!(colon.value, Token::Colon) {
                 return Err(JsonError::new(
                     JsonErrorKind::UnexpectedToken {
-                        got: format!("{}", colon.node),
+                        got: format!("{}", colon.value),
                         expected: "':'",
                     },
                     colon.span,
@@ -1812,7 +1812,7 @@ impl<'input> JsonDeserializer<'input> {
             }
 
             let next = self.peek()?;
-            if matches!(next.node, Token::Comma) {
+            if matches!(next.value, Token::Comma) {
                 self.next()?;
             }
         }
@@ -1823,10 +1823,10 @@ impl<'input> JsonDeserializer<'input> {
     /// Deserialize tuple fields of a variant.
     fn deserialize_variant_tuple_fields(&mut self, wip: &mut Partial<'input>) -> Result<()> {
         let token = self.next()?;
-        if !matches!(token.node, Token::LBracket) {
+        if !matches!(token.value, Token::LBracket) {
             return Err(JsonError::new(
                 JsonErrorKind::UnexpectedToken {
-                    got: format!("{}", token.node),
+                    got: format!("{}", token.value),
                     expected: "'[' for tuple variant",
                 },
                 token.span,
@@ -1836,7 +1836,7 @@ impl<'input> JsonDeserializer<'input> {
         let mut idx = 0;
         loop {
             let token = self.peek()?;
-            if matches!(token.node, Token::RBracket) {
+            if matches!(token.value, Token::RBracket) {
                 self.next()?;
                 break;
             }
@@ -1849,7 +1849,7 @@ impl<'input> JsonDeserializer<'input> {
 
             idx += 1;
             let next = self.peek()?;
-            if matches!(next.node, Token::Comma) {
+            if matches!(next.value, Token::Comma) {
                 self.next()?;
             }
         }
@@ -1862,10 +1862,10 @@ impl<'input> JsonDeserializer<'input> {
         log::trace!("deserialize_list");
 
         let token = self.next()?;
-        if !matches!(token.node, Token::LBracket) {
+        if !matches!(token.value, Token::LBracket) {
             return Err(JsonError::new(
                 JsonErrorKind::UnexpectedToken {
-                    got: format!("{}", token.node),
+                    got: format!("{}", token.value),
                     expected: "'['",
                 },
                 token.span,
@@ -1876,7 +1876,7 @@ impl<'input> JsonDeserializer<'input> {
 
         loop {
             let token = self.peek()?;
-            if matches!(token.node, Token::RBracket) {
+            if matches!(token.value, Token::RBracket) {
                 self.next()?;
                 break;
             }
@@ -1886,7 +1886,7 @@ impl<'input> JsonDeserializer<'input> {
             wip.end()?; // End the list item frame
 
             let next = self.peek()?;
-            if matches!(next.node, Token::Comma) {
+            if matches!(next.value, Token::Comma) {
                 self.next()?;
             }
         }
@@ -1900,10 +1900,10 @@ impl<'input> JsonDeserializer<'input> {
         log::trace!("deserialize_map");
 
         let token = self.next()?;
-        if !matches!(token.node, Token::LBrace) {
+        if !matches!(token.value, Token::LBrace) {
             return Err(JsonError::new(
                 JsonErrorKind::UnexpectedToken {
-                    got: format!("{}", token.node),
+                    got: format!("{}", token.value),
                     expected: "'{'",
                 },
                 token.span,
@@ -1914,19 +1914,19 @@ impl<'input> JsonDeserializer<'input> {
 
         loop {
             let token = self.peek()?;
-            if matches!(token.node, Token::RBrace) {
+            if matches!(token.value, Token::RBrace) {
                 self.next()?;
                 break;
             }
 
             // Key
             let key_token = self.next()?;
-            let key = match key_token.node {
+            let key = match key_token.value {
                 Token::String(s) => s,
                 _ => {
                     return Err(JsonError::new(
                         JsonErrorKind::UnexpectedToken {
-                            got: format!("{}", key_token.node),
+                            got: format!("{}", key_token.value),
                             expected: "string key",
                         },
                         key_token.span,
@@ -1936,10 +1936,10 @@ impl<'input> JsonDeserializer<'input> {
 
             // Colon
             let colon = self.next()?;
-            if !matches!(colon.node, Token::Colon) {
+            if !matches!(colon.value, Token::Colon) {
                 return Err(JsonError::new(
                     JsonErrorKind::UnexpectedToken {
-                        got: format!("{}", colon.node),
+                        got: format!("{}", colon.value),
                         expected: "':'",
                     },
                     colon.span,
@@ -1966,7 +1966,7 @@ impl<'input> JsonDeserializer<'input> {
 
             // Comma or end
             let next = self.peek()?;
-            if matches!(next.node, Token::Comma) {
+            if matches!(next.value, Token::Comma) {
                 self.next()?;
             }
         }
@@ -1980,7 +1980,7 @@ impl<'input> JsonDeserializer<'input> {
         log::trace!("deserialize_option");
 
         let token = self.peek()?;
-        if matches!(token.node, Token::Null) {
+        if matches!(token.value, Token::Null) {
             self.next()?;
             wip.set_default()?; // None
         } else {
@@ -2020,7 +2020,7 @@ impl<'input> JsonDeserializer<'input> {
         // Special case: &str can borrow directly from input if no escaping needed
         if is_str_ref {
             let token = self.next()?;
-            match token.node {
+            match token.value {
                 Token::String(Cow::Borrowed(s)) => {
                     // Zero-copy: borrow directly from input
                     wip.set(s)?;
@@ -2037,7 +2037,7 @@ impl<'input> JsonDeserializer<'input> {
                 _ => {
                     return Err(JsonError::new(
                         JsonErrorKind::UnexpectedToken {
-                            got: format!("{}", token.node),
+                            got: format!("{}", token.value),
                             expected: "string",
                         },
                         token.span,
@@ -2066,10 +2066,10 @@ impl<'input> JsonDeserializer<'input> {
         if is_slice_pointer {
             // This is a slice pointer like Arc<[T]> - deserialize as array
             let token = self.next()?;
-            if !matches!(token.node, Token::LBracket) {
+            if !matches!(token.value, Token::LBracket) {
                 return Err(JsonError::new(
                     JsonErrorKind::UnexpectedToken {
-                        got: format!("{}", token.node),
+                        got: format!("{}", token.value),
                         expected: "'['",
                     },
                     token.span,
@@ -2078,7 +2078,7 @@ impl<'input> JsonDeserializer<'input> {
 
             // Peek to check for empty array
             let first = self.peek()?;
-            if matches!(first.node, Token::RBracket) {
+            if matches!(first.value, Token::RBracket) {
                 self.next()?; // consume the RBracket
                 wip.end()?;
                 return Ok(());
@@ -2091,13 +2091,13 @@ impl<'input> JsonDeserializer<'input> {
                 wip.end()?;
 
                 let next = self.next()?;
-                match next.node {
+                match next.value {
                     Token::Comma => continue,
                     Token::RBracket => break,
                     _ => {
                         return Err(JsonError::new(
                             JsonErrorKind::UnexpectedToken {
-                                got: format!("{}", next.node),
+                                got: format!("{}", next.value),
                                 expected: "',' or ']'",
                             },
                             next.span,
@@ -2121,10 +2121,10 @@ impl<'input> JsonDeserializer<'input> {
         log::trace!("deserialize_array");
 
         let token = self.next()?;
-        if !matches!(token.node, Token::LBracket) {
+        if !matches!(token.value, Token::LBracket) {
             return Err(JsonError::new(
                 JsonErrorKind::UnexpectedToken {
-                    got: format!("{}", token.node),
+                    got: format!("{}", token.value),
                     expected: "'['",
                 },
                 token.span,
@@ -2145,10 +2145,10 @@ impl<'input> JsonDeserializer<'input> {
         for i in 0..array_len {
             if i > 0 {
                 let comma = self.next()?;
-                if !matches!(comma.node, Token::Comma) {
+                if !matches!(comma.value, Token::Comma) {
                     return Err(JsonError::new(
                         JsonErrorKind::UnexpectedToken {
-                            got: format!("{}", comma.node),
+                            got: format!("{}", comma.value),
                             expected: "','",
                         },
                         comma.span,
@@ -2162,9 +2162,9 @@ impl<'input> JsonDeserializer<'input> {
         }
 
         let close = self.next()?;
-        if !matches!(close.node, Token::RBracket) {
+        if !matches!(close.value, Token::RBracket) {
             // If we got a comma, that means there are more elements than the fixed array can hold
-            if matches!(close.node, Token::Comma) {
+            if matches!(close.value, Token::Comma) {
                 return Err(JsonError::new(
                     JsonErrorKind::InvalidValue {
                         message: format!(
@@ -2176,7 +2176,7 @@ impl<'input> JsonDeserializer<'input> {
             }
             return Err(JsonError::new(
                 JsonErrorKind::UnexpectedToken {
-                    got: format!("{}", close.node),
+                    got: format!("{}", close.value),
                     expected: "']'",
                 },
                 close.span,
@@ -2191,10 +2191,10 @@ impl<'input> JsonDeserializer<'input> {
         log::trace!("deserialize_set");
 
         let token = self.next()?;
-        if !matches!(token.node, Token::LBracket) {
+        if !matches!(token.value, Token::LBracket) {
             return Err(JsonError::new(
                 JsonErrorKind::UnexpectedToken {
-                    got: format!("{}", token.node),
+                    got: format!("{}", token.value),
                     expected: "'['",
                 },
                 token.span,
@@ -2205,7 +2205,7 @@ impl<'input> JsonDeserializer<'input> {
 
         loop {
             let token = self.peek()?;
-            if matches!(token.node, Token::RBracket) {
+            if matches!(token.value, Token::RBracket) {
                 self.next()?;
                 break;
             }
@@ -2215,7 +2215,7 @@ impl<'input> JsonDeserializer<'input> {
             wip.end()?; // End the set item frame
 
             let next = self.peek()?;
-            if matches!(next.node, Token::Comma) {
+            if matches!(next.value, Token::Comma) {
                 self.next()?;
             }
         }
@@ -2229,10 +2229,10 @@ impl<'input> JsonDeserializer<'input> {
         log::trace!("deserialize_tuple");
 
         let token = self.next()?;
-        if !matches!(token.node, Token::LBracket) {
+        if !matches!(token.value, Token::LBracket) {
             return Err(JsonError::new(
                 JsonErrorKind::UnexpectedToken {
-                    got: format!("{}", token.node),
+                    got: format!("{}", token.value),
                     expected: "'['",
                 },
                 token.span,
@@ -2252,10 +2252,10 @@ impl<'input> JsonDeserializer<'input> {
         for i in 0..tuple_len {
             if i > 0 {
                 let comma = self.next()?;
-                if !matches!(comma.node, Token::Comma) {
+                if !matches!(comma.value, Token::Comma) {
                     return Err(JsonError::new(
                         JsonErrorKind::UnexpectedToken {
-                            got: format!("{}", comma.node),
+                            got: format!("{}", comma.value),
                             expected: "','",
                         },
                         comma.span,
@@ -2269,10 +2269,10 @@ impl<'input> JsonDeserializer<'input> {
         }
 
         let close = self.next()?;
-        if !matches!(close.node, Token::RBracket) {
+        if !matches!(close.value, Token::RBracket) {
             return Err(JsonError::new(
                 JsonErrorKind::UnexpectedToken {
-                    got: format!("{}", close.node),
+                    got: format!("{}", close.value),
                     expected: "']'",
                 },
                 close.span,
@@ -2335,10 +2335,10 @@ where
 
     // Check that we've consumed all input (no trailing data after the root value)
     let trailing = deserializer.peek()?;
-    if !matches!(trailing.node, Token::Eof) {
+    if !matches!(trailing.value, Token::Eof) {
         let mut err = JsonError::new(
             JsonErrorKind::UnexpectedToken {
-                got: format!("{}", trailing.node),
+                got: format!("{}", trailing.value),
                 expected: "end of input",
             },
             trailing.span,

@@ -5,7 +5,6 @@ use core::{mem, ops::Deref};
 use facet_core::{
     Facet, Field, MarkerTraits, Shape, StructType, Type, TypeParam, UserType, ValueVTable,
 };
-use miette::SourceSpan;
 
 /// Source span with offset and length.
 ///
@@ -36,14 +35,16 @@ impl Span {
     }
 }
 
-impl From<Span> for SourceSpan {
+#[cfg(feature = "miette")]
+impl From<Span> for miette::SourceSpan {
     fn from(span: Span) -> Self {
-        SourceSpan::new(span.offset.into(), span.len)
+        miette::SourceSpan::new(span.offset.into(), span.len)
     }
 }
 
-impl From<SourceSpan> for Span {
-    fn from(span: SourceSpan) -> Self {
+#[cfg(feature = "miette")]
+impl From<miette::SourceSpan> for Span {
+    fn from(span: miette::SourceSpan) -> Self {
         Self {
             offset: span.offset(),
             len: span.len(),
