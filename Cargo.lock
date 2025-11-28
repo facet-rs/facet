@@ -702,6 +702,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-value"
+version = "0.1.0"
+
+[[package]]
 name = "facet-xdr"
 version = "0.31.0"
 dependencies = [

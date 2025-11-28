@@ -1,0 +1,3 @@
+# facet-value
+
+A memory-efficient dynamic value type for representing structured data, with support for bytes.

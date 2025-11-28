@@ -37,6 +37,7 @@ members = [
     # utilities
     "facet-diff",
     "facet-assert",
+    "facet-value",
 
     # showcase infrastructure
     "facet-showcase",
