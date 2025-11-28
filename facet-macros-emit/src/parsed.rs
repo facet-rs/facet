@@ -494,6 +494,12 @@ impl PAttrs {
             .any(|attr| matches!(attr, PFacetAttr::Transparent))
     }
 
+    pub(crate) fn is_opaque(&self) -> bool {
+        self.facet
+            .iter()
+            .any(|attr| matches!(attr, PFacetAttr::Opaque))
+    }
+
     pub(crate) fn type_tag(&self) -> Option<&str> {
         for attr in &self.facet {
             if let PFacetAttr::TypeTag { content } = attr {
