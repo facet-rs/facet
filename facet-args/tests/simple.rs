@@ -1,4 +1,5 @@
 use facet::Facet;
+use facet_args as args;
 
 #[test]
 fn test_arg_parse_easy() {

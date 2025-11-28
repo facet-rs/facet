@@ -17,6 +17,7 @@ pub(crate) type Result<T> = std::result::Result<T, KdlError>;
 /// # Example
 /// ```
 /// # use facet::Facet;
+/// # use facet_kdl as kdl;
 /// # use facet_kdl::to_string;
 /// #[derive(Facet)]
 /// struct Config {
@@ -62,6 +63,7 @@ pub fn to_string<T: Facet<'static>>(value: &T) -> Result<String> {
 /// Writing to a file:
 /// ```no_run
 /// # use facet::Facet;
+/// # use facet_kdl as kdl;
 /// # use facet_kdl::to_writer;
 /// # use std::fs::File;
 /// #[derive(Facet)]
@@ -92,6 +94,7 @@ pub fn to_string<T: Facet<'static>>(value: &T) -> Result<String> {
 /// Writing to a `Vec<u8>` buffer:
 /// ```
 /// # use facet::Facet;
+/// # use facet_kdl as kdl;
 /// # use facet_kdl::to_writer;
 /// #[derive(Facet)]
 /// struct Config {

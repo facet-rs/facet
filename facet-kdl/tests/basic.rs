@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 
 use facet::Facet;
+use facet_kdl as kdl;
 use indoc::indoc;
 
 #[test]

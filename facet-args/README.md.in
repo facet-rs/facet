@@ -3,6 +3,7 @@ Provides CLI argument parsing (WIP).
 ```rust
 use facet_pretty::FacetPretty;
 use facet::Facet;
+use facet_args as args;
 
 #[derive(Facet)]
 struct Args {

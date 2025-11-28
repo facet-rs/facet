@@ -2,6 +2,7 @@
 #![allow(clippy::box_collection)]
 
 use facet::Facet;
+use facet_kdl as kdl;
 use indoc::indoc;
 
 // ============================================================================

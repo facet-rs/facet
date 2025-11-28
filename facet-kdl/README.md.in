@@ -8,6 +8,7 @@ Add `facet-kdl` alongside your Facet types and derive `Facet`:
 
 ```rust
 use facet::Facet;
+use facet_kdl as kdl;
 
 #[derive(Facet, Debug, PartialEq)]
 struct Config {

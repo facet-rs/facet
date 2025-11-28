@@ -25,6 +25,28 @@ impl TokenSpan {
         Self { file, line, column }
     }
 
+    /// Create a span with line and column only.
+    ///
+    /// This is used in generated code where we extract line/column from proc_macro2
+    /// spans at macro expansion time. The file path is set to `"<unknown>"` and
+    /// can be supplemented with `file!()` on the error path.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Generated code pattern:
+    /// Token::Punct { ch: '=', span: TokenSpan::at(42, 18), .. }
+    /// // On error:
+    /// panic!("{}:{}:{}: {}", file!(), e.line, e.column, e.message)
+    /// ```
+    pub const fn at(line: u32, column: u32) -> Self {
+        Self {
+            file: "<unknown>",
+            line,
+            column,
+        }
+    }
+
     /// A dummy span for when location information is not available.
     pub const DUMMY: TokenSpan = TokenSpan {
         file: "<unknown>",
@@ -148,6 +170,52 @@ impl Token {
         }
     }
 }
+
+/// Error returned when parsing extension attribute arguments fails.
+///
+/// This error type carries line/column information so that the derive macro
+/// can format a nice error message using `file!()` on the error path:
+///
+/// ```ignore
+/// .unwrap_or_else(|e| panic!("{}:{}:{}: {}", file!(), e.line, e.column, e.message))
+/// ```
+#[derive(Debug, Clone)]
+pub struct AttrParseError {
+    /// Line number where the error occurred (1-indexed).
+    pub line: u32,
+    /// Column number where the error occurred (1-indexed).
+    pub column: u32,
+    /// Human-readable error message.
+    pub message: &'static str,
+}
+
+impl AttrParseError {
+    /// Create a new attribute parse error.
+    pub const fn new(line: u32, column: u32, message: &'static str) -> Self {
+        Self {
+            line,
+            column,
+            message,
+        }
+    }
+
+    /// Create an error from a token span.
+    pub const fn at_span(span: TokenSpan, message: &'static str) -> Self {
+        Self {
+            line: span.line,
+            column: span.column,
+            message,
+        }
+    }
+}
+
+impl core::fmt::Display for AttrParseError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}:{}: {}", self.line, self.column, self.message)
+    }
+}
+
+impl core::error::Error for AttrParseError {}
 
 #[cfg(feature = "alloc")]
 mod parsed_args {

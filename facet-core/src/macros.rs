@@ -230,38 +230,42 @@ macro_rules! shape_builder {
     };
 }
 
-/// Declares a single extension attribute builder for use with `#[facet(namespace::attr)]` syntax.
+/// Defines extension attributes for use with `#[facet(namespace::attr)]` syntax.
 ///
-/// This macro generates a builder function that facet's derive macro will call
-/// when processing extension attributes.
+/// This macro generates an `attrs` module containing:
+/// - Marker structs for each attribute
+/// - Getter functions that return `AnyStaticRef`
+/// - Validation machinery using `#[diagnostic::on_unimplemented]` for compile-time error messages
 ///
 /// # Example
 ///
 /// ```ignore
-/// pub mod kdl {
-///     use facet_core::facet_ext_attr;
-///
-///     facet_ext_attr!(property);
-///     facet_ext_attr!(argument);
-///     facet_ext_attr!(children);
+/// // In facet-kdl/src/lib.rs
+/// facet_core::define_extension_attrs! {
+///     "KDL";  // Crate name for error messages
+///     child,
+///     children,
+///     property,
+///     argument,
+///     arguments,
+///     node_name,
 /// }
 /// ```
 ///
-/// This generates:
-/// ```ignore
-/// pub mod kdl {
-///     pub fn __facet_build_property(
-///         _args: &'static [::facet_core::Token]
-///     ) -> ::std::boxed::Box<dyn ::core::any::Any + ::core::marker::Send + ::core::marker::Sync> {
-///         ::std::boxed::Box::new(())
-///     }
-///     // ... same for other attributes
-/// }
+/// This generates a `pub mod attrs` with validation that produces helpful errors:
+/// ```text
+/// error[E0277]: `chld` is not a recognized KDL attribute
+///   --> src/main.rs:5:18
+///    |
+/// 5  |     #[facet(kdl::chld)]
+///    |                  ^^^^ unknown attribute
+///    |
+///    = help: valid attributes are: `child`, `children`, `property`, ...
 /// ```
 ///
-/// Users can then write:
+/// Users import the crate with an alias to enable the namespace:
 /// ```ignore
-/// use my_crate::kdl;
+/// use facet_kdl as kdl;
 ///
 /// #[derive(Facet)]
 /// struct MyNode {
@@ -269,22 +273,68 @@ macro_rules! shape_builder {
 ///     name: String,
 /// }
 /// ```
-///
-/// And check for the attribute at runtime:
-/// ```ignore
-/// if field.has_extension_attr("kdl", "property") {
-///     // handle property field
-/// }
-/// ```
 #[macro_export]
+macro_rules! define_extension_attrs {
+    ($crate_name:literal; $($name:ident),* $(,)?) => {
+        /// Extension attributes for this crate.
+        ///
+        /// Use these with `#[facet(namespace::attr)]` syntax after importing
+        /// this crate with an alias matching the namespace you want.
+        pub mod attrs {
+            $(
+                // Marker struct for the shadowing trick - has a private field
+                // so it doesn't create a value (unlike unit structs).
+                #[doc(hidden)]
+                #[allow(non_camel_case_types)]
+                pub struct $name { _private: () }
+
+                #[doc(hidden)]
+                pub fn $name(_args: &[$crate::Token]) -> $crate::AnyStaticRef {
+                    static __UNIT: () = ();
+                    &__UNIT
+                }
+            )*
+
+            #[doc(hidden)]
+            pub struct ValidAttr<A>(::core::marker::PhantomData<A>);
+
+            #[doc(hidden)]
+            #[diagnostic::on_unimplemented(
+                message = concat!("`{A}` is not a recognized ", $crate_name, " attribute"),
+                label = "unknown attribute",
+                note = concat!("valid attributes are: ", $("`", stringify!($name), "`, ",)*)
+            )]
+            pub trait IsValidAttr {}
+
+            /// Validation function called by generated code.
+            ///
+            /// The trait bound triggers `#[diagnostic::on_unimplemented]` for invalid attributes.
+            #[doc(hidden)]
+            pub const fn __check_attr<A>() where ValidAttr<A>: IsValidAttr {}
+
+            $(
+                #[doc(hidden)]
+                impl IsValidAttr for ValidAttr<$name> {}
+            )*
+        }
+    };
+}
+
+/// Declares a single extension attribute builder for use with `#[facet(namespace::attr)]` syntax.
+///
+/// **Deprecated**: Use [`define_extension_attrs!`] instead, which provides compile-time
+/// validation and better error messages.
+#[macro_export]
+#[deprecated(since = "0.32.0", note = "use `define_extension_attrs!` instead")]
 macro_rules! facet_ext_attr {
     ($attr:ident) => {
         $crate::paste::paste! {
             #[doc(hidden)]
             pub fn [<__facet_build_ $attr>](
                 _args: &'static [$crate::Token]
-            ) -> ::std::boxed::Box<dyn ::core::any::Any + ::core::marker::Send + ::core::marker::Sync> {
-                ::std::boxed::Box::new(())
+            ) -> &'static (dyn ::core::any::Any + ::core::marker::Send + ::core::marker::Sync) {
+                static __UNIT: () = ();
+                &__UNIT
             }
         }
     };

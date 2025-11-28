@@ -1,4 +1,5 @@
 use facet::Facet;
+use facet_args as args;
 
 mod common;
 

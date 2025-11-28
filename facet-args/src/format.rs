@@ -3,7 +3,7 @@ use crate::{
     error::{ArgsError, ArgsErrorKind, ArgsErrorWithInput},
     span::Span,
 };
-use facet_core::{Def, Facet, Field, FieldFlags, LiteralKind, Shape, Token, Type, UserType};
+use facet_core::{Def, Facet, Field, FieldFlags, Shape, Type, UserType};
 use facet_reflect::{HeapValue, Partial};
 use heck::ToSnakeCase;
 
@@ -381,45 +381,23 @@ fn test_split() {
 /// Given an array of fields, find the field with the given `args::short = 'a'`
 /// annotation. Uses extension attribute syntax: #[facet(args::short = "j")]
 fn find_field_index_with_short(fields: &'static [Field], short: &str) -> Option<usize> {
+    let short_char = short.chars().next()?;
     fields.iter().position(|f| {
         if let Some(ext) = f.get_extension_attr("args", "short") {
-            if ext.args.is_empty() {
-                // No explicit short specified, use field name
-                return f.name == short;
+            // The short attribute returns Option<char>
+            if let Some(opt_char) = ext.get_as::<Option<char>>() {
+                match opt_char {
+                    Some(c) => *c == short_char,
+                    None => {
+                        // No explicit short specified, use first char of field name
+                        f.name.chars().next() == Some(short_char)
+                    }
+                }
             } else {
-                // Parse the args to extract the short character
-                let extracted = extract_short_from_args(ext.args);
-                return extracted.as_deref() == Some(short);
+                false
             }
+        } else {
+            false
         }
-        false
     })
-}
-
-/// Extract the short character from extension attribute args.
-/// Expected formats: `= "j"` or `= 'j'`
-fn extract_short_from_args(args: &'static [Token]) -> Option<String> {
-    // Skip the '=' punctuation and look for a literal
-    for tt in args.iter() {
-        if let Token::Literal { text, kind, .. } = tt {
-            // Strip quotes based on the literal kind
-            match kind {
-                LiteralKind::String => {
-                    // Strip surrounding quotes: "j" -> j
-                    let inner = text.trim_start_matches('"').trim_end_matches('"');
-                    return Some(inner.to_string());
-                }
-                LiteralKind::Char => {
-                    // Strip surrounding quotes: 'j' -> j
-                    let inner = text.trim_start_matches('\'').trim_end_matches('\'');
-                    return Some(inner.to_string());
-                }
-                _ => {
-                    // For other literal types, return as-is
-                    return Some(text.to_string());
-                }
-            }
-        }
-    }
-    None
 }

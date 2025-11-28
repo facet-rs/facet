@@ -35,16 +35,17 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     .name("VariantA")
                     .attributes(&[
                         ::facet::VariantAttribute::Extension({
-                            fn __ext_get() -> &'static (dyn ::core::any::Any
-                                             + ::core::marker::Send
-                                             + ::core::marker::Sync) {
-                                static __UNIT: () = ();
-                                &__UNIT
+                            #[allow(non_camel_case_types)]
+                            struct name {
+                                _private: (),
                             }
-                            ::facet::ExtensionAttr {
-                                ns: "myns",
-                                key: "name",
-                                args: &[
+                            {
+                                #[allow(unused_imports)]
+                                use myns::attrs::*;
+                                __check_attr::<name>();
+                            }
+                            fn __ext_get() -> ::facet::AnyStaticRef {
+                                myns::attrs::name(&[
                                     ::facet::Token::Punct {
                                         ch: '=',
                                         joint: false,
@@ -55,21 +56,26 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                                         text: "\"FirstVariant\"",
                                         span: ::facet::TokenSpan::DUMMY,
                                     },
-                                ],
+                                ])
+                            }
+                            ::facet::ExtensionAttr {
+                                ns: "myns",
+                                key: "name",
                                 get: __ext_get,
                             }
                         }),
                         ::facet::VariantAttribute::Extension({
-                            fn __ext_get() -> &'static (dyn ::core::any::Any
-                                             + ::core::marker::Send
-                                             + ::core::marker::Sync) {
-                                static __UNIT: () = ();
-                                &__UNIT
+                            #[allow(non_camel_case_types)]
+                            struct discriminant {
+                                _private: (),
                             }
-                            ::facet::ExtensionAttr {
-                                ns: "myns",
-                                key: "discriminant",
-                                args: &[
+                            {
+                                #[allow(unused_imports)]
+                                use myns::attrs::*;
+                                __check_attr::<discriminant>();
+                            }
+                            fn __ext_get() -> ::facet::AnyStaticRef {
+                                myns::attrs::discriminant(&[
                                     ::facet::Token::Punct {
                                         ch: '=',
                                         joint: false,
@@ -80,7 +86,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                                         text: "10",
                                         span: ::facet::TokenSpan::DUMMY,
                                     },
-                                ],
+                                ])
+                            }
+                            ::facet::ExtensionAttr {
+                                ns: "myns",
+                                key: "discriminant",
                                 get: __ext_get,
                             }
                         }),
@@ -120,16 +130,17 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     ::facet::Variant::builder()
                         .name("VariantC")
                         .attributes(&[::facet::VariantAttribute::Extension({
-                            fn __ext_get() -> &'static (dyn ::core::any::Any
-                                             + ::core::marker::Send
-                                             + ::core::marker::Sync) {
-                                static __UNIT: () = ();
-                                &__UNIT
+                            #[allow(non_camel_case_types)]
+                            struct deprecated {
+                                _private: (),
                             }
-                            ::facet::ExtensionAttr {
-                                ns: "myns",
-                                key: "deprecated",
-                                args: &[
+                            {
+                                #[allow(unused_imports)]
+                                use myns::attrs::*;
+                                __check_attr::<deprecated>();
+                            }
+                            fn __ext_get() -> ::facet::AnyStaticRef {
+                                myns::attrs::deprecated(&[
                                     ::facet::Token::Punct {
                                         ch: '=',
                                         joint: false,
@@ -140,7 +151,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                                         text: "\"Use VariantD instead\"",
                                         span: ::facet::TokenSpan::DUMMY,
                                     },
-                                ],
+                                ])
+                            }
+                            ::facet::ExtensionAttr {
+                                ns: "myns",
+                                key: "deprecated",
                                 get: __ext_get,
                             }
                         })])
@@ -192,16 +207,17 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
             .attributes(
                 &const {
                     [::facet::ShapeAttribute::Extension({
-                        fn __ext_get() -> &'static (dyn ::core::any::Any
-                                         + ::core::marker::Send
-                                         + ::core::marker::Sync) {
-                            static __UNIT: () = ();
-                            &__UNIT
+                        #[allow(non_camel_case_types)]
+                        struct name {
+                            _private: (),
                         }
-                        ::facet::ExtensionAttr {
-                            ns: "myns",
-                            key: "name",
-                            args: &[
+                        {
+                            #[allow(unused_imports)]
+                            use myns::attrs::*;
+                            __check_attr::<name>();
+                        }
+                        fn __ext_get() -> ::facet::AnyStaticRef {
+                            myns::attrs::name(&[
                                 ::facet::Token::Punct {
                                     ch: '=',
                                     joint: false,
@@ -212,7 +228,11 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                                     text: "\"MyCoolEnum\"",
                                     span: ::facet::TokenSpan::DUMMY,
                                 },
-                            ],
+                            ])
+                        }
+                        ::facet::ExtensionAttr {
+                            ns: "myns",
+                            key: "name",
                             get: __ext_get,
                         }
                     })]

@@ -5,7 +5,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use std::io::Write;
 
-use facet_core::{Facet, Field, FieldFlags, LiteralKind, Token};
+use facet_core::{Facet, Field, FieldFlags};
 use facet_reflect::{HasFields, Peek};
 
 use crate::error::{YamlError, YamlErrorKind};
@@ -14,26 +14,14 @@ use crate::error::{YamlError, YamlErrorKind};
 fn get_serialized_field_name(field: &Field) -> &'static str {
     // Look for rename attribute using extension syntax: #[facet(serde::rename = "value")]
     if let Some(ext) = field.get_extension_attr("serde", "rename") {
-        if let Some(name) = extract_string_from_args(ext.args) {
-            return name;
+        if let Some(opt_name) = ext.get_as::<Option<&'static str>>() {
+            if let Some(name) = opt_name {
+                return name;
+            }
         }
     }
     // Default to the field name
     field.name
-}
-
-/// Extract a string literal from extension attribute args.
-/// Expected format: `= "value"`
-fn extract_string_from_args(args: &'static [Token]) -> Option<&'static str> {
-    for tt in args.iter() {
-        if let Token::Literal { text, kind, .. } = tt {
-            if *kind == LiteralKind::String {
-                // Strip surrounding quotes: "value" -> value
-                return Some(text.trim_start_matches('"').trim_end_matches('"'));
-            }
-        }
-    }
-    None
 }
 
 type Result<T> = core::result::Result<T, YamlError>;
