@@ -2045,6 +2045,76 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     ) -> Result<(), TomlDeError<'input>> {
         trace!("deserialize_array");
 
+        // Check if we're deserializing into a fixed-size array or tuple vs a dynamic list
+        let is_fixed_size = matches!(partial.shape().def, Def::Array(_));
+        let is_tuple = matches!(partial.shape().ty, Type::User(UserType::Struct(s)) if s.kind == StructKind::Tuple);
+
+        if is_fixed_size || is_tuple {
+            // For fixed-size arrays and tuples, use begin_nth_field
+            self.deserialize_fixed_array(partial)
+        } else {
+            // For dynamic lists (Vec, etc.), use begin_list/begin_list_item
+            self.deserialize_dynamic_list(partial)
+        }
+    }
+
+    /// Deserialize into a fixed-size array or tuple using indexed field access
+    fn deserialize_fixed_array<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+    ) -> Result<(), TomlDeError<'input>> {
+        trace!("deserialize_fixed_array");
+
+        let mut index = 0;
+
+        loop {
+            let Some(event) = self.iter.peek() else { break };
+
+            match event.kind {
+                EventKind::ArrayClose => {
+                    self.iter.next();
+                    break;
+                }
+                EventKind::ValueSep => {
+                    self.iter.next(); // skip comma
+                }
+                _ => {
+                    // Start the nth element
+                    if let Err(e) = partial.begin_nth_field(index) {
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::GenericReflect(e),
+                            self.current_span(),
+                            partial.path(),
+                        ));
+                    }
+
+                    self.deserialize_value(partial)?;
+
+                    if let Err(e) = partial.end() {
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::GenericReflect(e),
+                            self.current_span(),
+                            partial.path(),
+                        ));
+                    }
+
+                    index += 1;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Deserialize into a dynamic list (Vec, etc.) using begin_list/begin_list_item
+    fn deserialize_dynamic_list<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+    ) -> Result<(), TomlDeError<'input>> {
+        trace!("deserialize_dynamic_list");
+
         if let Err(e) = partial.begin_list() {
             return Err(TomlDeError::new(
                 self.source,

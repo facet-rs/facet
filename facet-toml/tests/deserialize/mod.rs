@@ -1,5 +1,6 @@
 mod basic;
 mod document;
+mod edge_cases;
 mod enum_;
 mod list;
 mod map;
