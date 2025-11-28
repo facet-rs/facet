@@ -199,14 +199,11 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     } else {
                         let mut attrs_list = Vec::new();
                         for attr in &pv.attrs.facet {
-                            match attr {
-                                PFacetAttr::Extension { ns, key, args } => {
-                                    let ext_attr = emit_extension_attr(ns, key, args);
-                                    attrs_list.push(
-                                        quote! { ::facet::VariantAttribute::Extension(#ext_attr) },
-                                    );
-                                }
-                                _ => {}
+                            if let PFacetAttr::Extension { ns, key, args } = attr {
+                                let ext_attr = emit_extension_attr(ns, key, args);
+                                attrs_list.push(
+                                    quote! { ::facet::VariantAttribute::Extension(#ext_attr) },
+                                );
                             }
                         }
                         if attrs_list.is_empty() {
@@ -419,14 +416,11 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     } else {
                         let mut attrs_list = Vec::new();
                         for attr in &pv.attrs.facet {
-                            match attr {
-                                PFacetAttr::Extension { ns, key, args } => {
-                                    let ext_attr = emit_extension_attr(ns, key, args);
-                                    attrs_list.push(
-                                        quote! { ::facet::VariantAttribute::Extension(#ext_attr) },
-                                    );
-                                }
-                                _ => {}
+                            if let PFacetAttr::Extension { ns, key, args } = attr {
+                                let ext_attr = emit_extension_attr(ns, key, args);
+                                attrs_list.push(
+                                    quote! { ::facet::VariantAttribute::Extension(#ext_attr) },
+                                );
                             }
                         }
                         if attrs_list.is_empty() {
