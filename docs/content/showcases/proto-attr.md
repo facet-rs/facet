@@ -26,14 +26,14 @@ title = "proto-attr Compile Error Showcase"
 <div class="compiler-error">
 <h4>Compiler Error</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: unknown attribute `foobar`</span>
-       
-       <span style="font-weight:bold">available attributes: skip, rename, column</span>
+<span style="font-weight:bold">       </span>
+<span style="font-weight:bold">       available attributes: skip, rename, column</span>
  <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:5:24
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
 <span style="font-weight:bold"></span><span style="color:#61afef">5</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span>     #[faket(proto_ext::foobar)]
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>                        <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^</span>
 
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile `test` (bin "test") due to 1 previous error</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile `test` (bin "test") due to 1 previous error</code></pre>
 </div>
 </section>
 
@@ -59,14 +59,14 @@ title = "proto-attr Compile Error Showcase"
 <div class="compiler-error">
 <h4>Compiler Error</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: unknown attribute `skp`, did you mean `skip`?</span>
-       
-       <span style="font-weight:bold">available attributes: skip, rename, column</span>
+<span style="font-weight:bold">       </span>
+<span style="font-weight:bold">       available attributes: skip, rename, column</span>
  <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:4:20
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
 <span style="font-weight:bold"></span><span style="color:#61afef">4</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[faket(proto_ext::skp)]
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>                    <span style="font-weight:bold"></span><span style="color:#e06c75">^^^</span>
 
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile `test` (bin "test") due to 1 previous error</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile `test` (bin "test") due to 1 previous error</code></pre>
 </div>
 </section>
 
@@ -95,11 +95,11 @@ title = "proto-attr Compile Error Showcase"
  <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:4:1
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
 <span style="font-weight:bold"></span><span style="color:#61afef">4</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[faket(proto_ext::skip("unexpected"))]
-  <span style="font-weight:bold"></span><span style="color:#61afef">|</span> <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span> <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^^^^^^^^^^^</span>
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
   <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: this error originates in the macro `$crate::__parse_skip` which comes from the expansion of the macro `proto_ext::__parse_attr` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile `test` (bin "test") due to 1 previous error</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile `test` (bin "test") due to 1 previous error</code></pre>
 </div>
 </section>
 
@@ -128,11 +128,11 @@ title = "proto-attr Compile Error Showcase"
  <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:4:1
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
 <span style="font-weight:bold"></span><span style="color:#61afef">4</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[faket(proto_ext::rename)]
-  <span style="font-weight:bold"></span><span style="color:#61afef">|</span> <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^^^^^^^^^^^^^^^^^^^^^</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span> <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^^^^^^^^^^^</span>
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
   <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: this error originates in the macro `$crate::__parse_rename` which comes from the expansion of the macro `proto_ext::__parse_attr` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile `test` (bin "test") due to 1 previous error</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile `test` (bin "test") due to 1 previous error</code></pre>
 </div>
 </section>
 
@@ -158,14 +158,14 @@ title = "proto-attr Compile Error Showcase"
 <div class="compiler-error">
 <h4>Compiler Error</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: unknown field `nam` in `Column`, did you mean `name`?</span>
-       
-       <span style="font-weight:bold">available fields: name, primary_key</span>
+<span style="font-weight:bold">       </span>
+<span style="font-weight:bold">       available fields: name, primary_key</span>
  <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:5:31
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
 <span style="font-weight:bold"></span><span style="color:#61afef">5</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span>     #[faket(proto_ext::column(nam = "user_id"))]
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>                               <span style="font-weight:bold"></span><span style="color:#e06c75">^^^</span>
 
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile `test` (bin "test") due to 1 previous error</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile `test` (bin "test") due to 1 previous error</code></pre>
 </div>
 </section>
 
@@ -194,11 +194,11 @@ title = "proto-attr Compile Error Showcase"
  <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:5:5
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
 <span style="font-weight:bold"></span><span style="color:#61afef">5</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span>     #[faket(proto_ext::column(name, primary_key))]
-  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>     <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>     <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^^^^^^^^^^^</span>
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
   <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: this error originates in the macro `$crate::__parse_name_field` which comes from the expansion of the macro `proto_ext::__parse_attr` (in Nightly builds, run with -Z macro-backtrace for more info)
 
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile `test` (bin "test") due to 1 previous error</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile `test` (bin "test") due to 1 previous error</code></pre>
 </div>
 </section>
 

@@ -33,9 +33,9 @@ title = "facet-value: from_value Deserialization"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">Person</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,91)">Alice</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Alice</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Option&lt;String&gt;</span><span style="opacity:0.7">Some(</span><span style="color:rgb(224,81,91)">alice@example.com</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Option&lt;String&gt;</span><span style="opacity:0.7">Some(</span><span style="color:rgb(81,103,224)">alice@example.com</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -89,16 +89,16 @@ title = "facet-value: from_value Deserialization"
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">Employee</span><span style="opacity:0.7"> {</span>
   <span style="color:#56b6c2">person</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Person</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,91)">Bob</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Bob</span><span style="opacity:0.7">,</span>
     <span style="color:#56b6c2">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">42</span><span style="opacity:0.7">,</span>
     <span style="color:#56b6c2">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Option&lt;String&gt;</span><span style="opacity:0.7">None</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">address</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Address</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">street</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,91)">123 Main St</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">city</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,91)">Springfield</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">zip</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,91)">12345</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">street</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">123 Main St</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">city</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Springfield</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">zip</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">12345</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">department</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,91)">Engineering</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">department</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Engineering</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -156,7 +156,7 @@ title = "facet-value: from_value Deserialization"
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Text</span><span style="opacity:0.7">(</span><span style="color:rgb(224,81,91)">Hello world!</span><span style="opacity:0.7">)</span></code></pre>
+<pre><code><span style="font-weight:bold">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Text</span><span style="opacity:0.7">(</span><span style="color:rgb(81,103,224)">Hello world!</span><span style="opacity:0.7">)</span></code></pre>
 </div>
 </section>
 
@@ -192,7 +192,7 @@ title = "facet-value: from_value Deserialization"
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Data</span><span style="opacity:0.7"> {</span>
   <span style="color:#56b6c2">id</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,179)">42</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">payload</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,91)">secret data</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">payload</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">secret data</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -250,9 +250,9 @@ title = "facet-value: from_value Deserialization"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">[String; 3]</span><span style="opacity:0.7"> [</span>
-  <span style="color:rgb(224,81,91)">a</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,91)">b</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,91)">c</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(81,103,224)">a</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(81,103,224)">b</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(81,103,224)">c</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 </section>
@@ -278,9 +278,9 @@ title = "facet-value: from_value Deserialization"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
-  <span style="color:rgb(224,81,91)">x</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">10</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,91)">y</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">20</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,91)">z</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">30</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(81,103,224)">x</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">10</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(81,103,224)">y</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">20</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(81,103,224)">z</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">30</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 </section>
@@ -341,7 +341,7 @@ title = "facet-value: from_value Deserialization"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">Config</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,91)">minimal</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">minimal</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">enabled</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">max_retries</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Option&lt;u32&gt;</span><span style="opacity:0.7">None</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>

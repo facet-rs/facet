@@ -22,9 +22,9 @@ title = "facet-json Comprehensive Showcase"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">Person</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,91)">Alice</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Alice</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Option&lt;String&gt;</span><span style="opacity:0.7">Some(</span><span style="color:rgb(224,81,91)">alice@example.com</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Option&lt;String&gt;</span><span style="opacity:0.7">Some(</span><span style="color:rgb(81,103,224)">alice@example.com</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -63,15 +63,15 @@ title = "facet-json Comprehensive Showcase"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">Company</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,91)">Acme Corp</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Acme Corp</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">address</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Address</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">street</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,91)">123 Main St</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">city</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,91)">Springfield</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">street</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">123 Main St</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">city</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Springfield</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">employees</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
-    <span style="color:rgb(224,81,91)">Bob</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(224,81,91)">Carol</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(224,81,91)">Dave</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(81,103,224)">Bob</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(81,103,224)">Carol</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(81,103,224)">Dave</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -107,9 +107,9 @@ title = "facet-json Comprehensive Showcase"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">[Message; 3]</span><span style="opacity:0.7"> [</span>
-  <span style="font-weight:bold">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Text</span><span style="opacity:0.7">(</span><span style="color:rgb(224,81,91)">Hello, world!</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Text</span><span style="opacity:0.7">(</span><span style="color:rgb(81,103,224)">Hello, world!</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="font-weight:bold">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Image</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">url</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,91)">https://example.com/cat.jpg</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">url</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">https://example.com/cat.jpg</span><span style="opacity:0.7">,</span>
     <span style="color:#56b6c2">width</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">800</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="font-weight:bold">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Ping</span><span style="opacity:0.7">,</span>
@@ -148,11 +148,11 @@ title = "facet-json Comprehensive Showcase"
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">[ApiResponse; 2]</span><span style="opacity:0.7"> [</span>
   <span style="font-weight:bold">ApiResponse</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Success</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">data</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,91)">Operation completed</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">data</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Operation completed</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="font-weight:bold">ApiResponse</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Error</span><span style="opacity:0.7"> {</span>
     <span style="color:#56b6c2">code</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">404</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">message</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,91)">Not found</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">message</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Not found</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
@@ -231,7 +231,7 @@ title = "facet-json Comprehensive Showcase"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">[StringOrNumber; 2]</span><span style="opacity:0.7"> [</span>
-  <span style="font-weight:bold">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Str</span><span style="opacity:0.7">(</span><span style="color:rgb(224,81,91)">hello</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Str</span><span style="opacity:0.7">(</span><span style="color:rgb(81,103,224)">hello</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="font-weight:bold">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Num</span><span style="opacity:0.7">(</span><span style="color:rgb(222,81,224)">42</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
@@ -259,16 +259,16 @@ title = "facet-json Comprehensive Showcase"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
-  <span style="color:rgb(224,81,91)">two</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,91)">one</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(81,103,224)">one</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(81,103,224)">two</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
 <h4>JSON Output</h4>
 <pre style="background-color:#1a1b26;">
 <span style="color:#9abdf5;">{
-</span><span style="color:#c0caf5;">  </span><span style="color:#89ddff;">&quot;</span><span style="color:#7aa2f7;">two</span><span style="color:#89ddff;">&quot;: </span><span style="color:#ff9e64;">2</span><span style="color:#89ddff;">,
-</span><span style="color:#c0caf5;">  </span><span style="color:#89ddff;">&quot;</span><span style="color:#7aa2f7;">one</span><span style="color:#89ddff;">&quot;: </span><span style="color:#ff9e64;">1
+</span><span style="color:#c0caf5;">  </span><span style="color:#89ddff;">&quot;</span><span style="color:#7aa2f7;">one</span><span style="color:#89ddff;">&quot;: </span><span style="color:#ff9e64;">1</span><span style="color:#89ddff;">,
+</span><span style="color:#c0caf5;">  </span><span style="color:#89ddff;">&quot;</span><span style="color:#7aa2f7;">two</span><span style="color:#89ddff;">&quot;: </span><span style="color:#ff9e64;">2
 </span><span style="color:#9abdf5;">}</span></pre>
 
 </div>
@@ -354,8 +354,8 @@ title = "facet-json Comprehensive Showcase"
   <span style="color:#56b6c2">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">100</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">endpoints</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
-    <span style="color:rgb(224,81,91)">https://api1.example.com</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(224,81,91)">https://api2.example.com</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(81,103,224)">https://api1.example.com</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(81,103,224)">https://api2.example.com</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -388,8 +388,8 @@ title = "facet-json Comprehensive Showcase"
   <span style="color:#56b6c2">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">100</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">endpoints</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
-    <span style="color:rgb(224,81,91)">https://api1.example.com</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(224,81,91)">https://api2.example.com</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(81,103,224)">https://api1.example.com</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(81,103,224)">https://api2.example.com</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
