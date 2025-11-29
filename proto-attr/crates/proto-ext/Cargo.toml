@@ -11,6 +11,7 @@ proto-attr-macros.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+facet-showcase = { path = "../../../facet-showcase" }
 
 [features]
 default = []
