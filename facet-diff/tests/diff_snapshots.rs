@@ -1,0 +1,1243 @@
+//! Snapshot tests for facet-diff output formatting.
+//!
+//! These tests use insta to capture the diff output format and ensure
+//! consistent rendering across changes.
+
+#![allow(dead_code)]
+
+use facet::Facet;
+use facet_diff::FacetDiff;
+use facet_testhelpers::test;
+use facet_value::value;
+use insta::assert_snapshot;
+
+// ============================================================================
+// Scalar diff tests
+// ============================================================================
+
+#[test]
+fn diff_integers_equal() {
+    let a = 42i32;
+    let b = 42i32;
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_integers_different() {
+    let a = 42i32;
+    let b = 100i32;
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_integers_different_types() {
+    let a = 42i32;
+    let b = 42i64;
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_strings_equal() {
+    let a = "hello";
+    let b = "hello";
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_strings_different() {
+    let a = "hello";
+    let b = "world";
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_bools_equal() {
+    let a = true;
+    let b = true;
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_bools_different() {
+    let a = true;
+    let b = false;
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_floats_equal() {
+    let a = 3.14f64;
+    let b = 3.14f64;
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_floats_different() {
+    let a = 3.14f64;
+    let b = 2.71f64;
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+// ============================================================================
+// Struct diff tests
+// ============================================================================
+
+#[derive(Facet)]
+struct User<'a> {
+    name: &'a str,
+    age: u8,
+}
+
+#[derive(Facet)]
+struct OwnedUser {
+    name: String,
+    age: u8,
+}
+
+#[derive(Facet)]
+struct ExtendedUser<'a> {
+    name: &'a str,
+    age: u8,
+    email: &'a str,
+}
+
+#[derive(Facet)]
+struct Address {
+    street: String,
+    city: String,
+}
+
+#[derive(Facet)]
+struct UserWithAddress<'a> {
+    name: &'a str,
+    age: u8,
+    address: Address,
+}
+
+#[test]
+fn diff_structs_equal() {
+    let a = User {
+        name: "Alice",
+        age: 30,
+    };
+    let b = User {
+        name: "Alice",
+        age: 30,
+    };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_structs_one_field_different() {
+    let a = User {
+        name: "Alice",
+        age: 30,
+    };
+    let b = User {
+        name: "Bob",
+        age: 30,
+    };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_structs_all_fields_different() {
+    let a = User {
+        name: "Alice",
+        age: 30,
+    };
+    let b = User {
+        name: "Bob",
+        age: 25,
+    };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_structs_different_types_same_shape() {
+    let a = User {
+        name: "Alice",
+        age: 30,
+    };
+    let b = OwnedUser {
+        name: "Alice".to_string(),
+        age: 30,
+    };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_structs_field_added() {
+    let a = User {
+        name: "Alice",
+        age: 30,
+    };
+    let b = ExtendedUser {
+        name: "Alice",
+        age: 30,
+        email: "alice@example.com",
+    };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_structs_field_removed() {
+    let a = ExtendedUser {
+        name: "Alice",
+        age: 30,
+        email: "alice@example.com",
+    };
+    let b = User {
+        name: "Alice",
+        age: 30,
+    };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_structs_nested() {
+    let a = UserWithAddress {
+        name: "Alice",
+        age: 30,
+        address: Address {
+            street: "123 Main St".to_string(),
+            city: "Wonderland".to_string(),
+        },
+    };
+    let b = UserWithAddress {
+        name: "Alice",
+        age: 30,
+        address: Address {
+            street: "456 Oak Ave".to_string(),
+            city: "Wonderland".to_string(),
+        },
+    };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_structs_nested_multiple_changes() {
+    let a = UserWithAddress {
+        name: "Alice",
+        age: 30,
+        address: Address {
+            street: "123 Main St".to_string(),
+            city: "Wonderland".to_string(),
+        },
+    };
+    let b = UserWithAddress {
+        name: "Bob",
+        age: 25,
+        address: Address {
+            street: "456 Oak Ave".to_string(),
+            city: "Elsewhere".to_string(),
+        },
+    };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+// ============================================================================
+// Enum diff tests
+// ============================================================================
+
+#[derive(Facet)]
+#[repr(C)]
+enum Status {
+    Active,
+    Inactive,
+    Pending(u32),
+}
+
+#[derive(Facet)]
+#[repr(C)]
+enum Message {
+    Text(String),
+    Number(i32),
+    Pair(String, i32),
+}
+
+#[derive(Facet)]
+#[repr(C)]
+enum DetailedStatus {
+    Active { since: u32 },
+    Inactive { reason: String },
+}
+
+#[test]
+fn diff_enums_same_unit_variant() {
+    let a = Status::Active;
+    let b = Status::Active;
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_enums_different_unit_variants() {
+    let a = Status::Active;
+    let b = Status::Inactive;
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_enums_same_tuple_variant_equal() {
+    let a = Status::Pending(5);
+    let b = Status::Pending(5);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_enums_same_tuple_variant_different() {
+    let a = Status::Pending(5);
+    let b = Status::Pending(10);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_enums_unit_to_tuple_variant() {
+    let a = Status::Active;
+    let b = Status::Pending(5);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_enums_tuple_variants_same_content() {
+    let a = Message::Text("hello".to_string());
+    let b = Message::Text("hello".to_string());
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_enums_tuple_variants_different_content() {
+    let a = Message::Text("hello".to_string());
+    let b = Message::Text("world".to_string());
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_enums_different_tuple_variants() {
+    let a = Message::Text("hello".to_string());
+    let b = Message::Number(42);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_enums_struct_variant_same() {
+    let a = DetailedStatus::Active { since: 2020 };
+    let b = DetailedStatus::Active { since: 2020 };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_enums_struct_variant_different_field() {
+    let a = DetailedStatus::Active { since: 2020 };
+    let b = DetailedStatus::Active { since: 2024 };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_enums_different_struct_variants() {
+    let a = DetailedStatus::Active { since: 2020 };
+    let b = DetailedStatus::Inactive {
+        reason: "maintenance".to_string(),
+    };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+// ============================================================================
+// Sequence diff tests
+// ============================================================================
+
+#[test]
+fn diff_vecs_equal() {
+    let a = vec![1, 2, 3];
+    let b = vec![1, 2, 3];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_vecs_one_element_different() {
+    let a = vec![1, 2, 3];
+    let b = vec![1, 2, 4];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_vecs_element_added() {
+    let a = vec![1, 2, 3];
+    let b = vec![1, 2, 3, 4];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_vecs_element_removed() {
+    let a = vec![1, 2, 3, 4];
+    let b = vec![1, 2, 3];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_vecs_element_inserted_middle() {
+    let a = vec![1, 2, 4];
+    let b = vec![1, 2, 3, 4];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_vecs_completely_different() {
+    let a = vec![1, 2, 3];
+    let b = vec![4, 5, 6];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_vecs_reordered() {
+    let a = vec![1, 2, 3];
+    let b = vec![3, 1, 2];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_arrays_equal() {
+    let a = [1, 2, 3];
+    let b = [1, 2, 3];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_arrays_different() {
+    let a = [1, 2, 3];
+    let b = [1, 5, 3];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_slices() {
+    let a = [1, 2, 3];
+    let b = [1, 2, 4];
+    let a_slice: &[i32] = &a;
+    let b_slice: &[i32] = &b;
+    assert_snapshot!(a_slice.diff(&b_slice).to_string());
+}
+
+#[test]
+fn diff_vec_vs_array() {
+    let a = vec![1, 2, 3];
+    let b = [1, 2, 3];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_vec_of_structs() {
+    let a = vec![
+        User {
+            name: "Alice",
+            age: 30,
+        },
+        User {
+            name: "Bob",
+            age: 25,
+        },
+    ];
+    let b = vec![
+        User {
+            name: "Alice",
+            age: 31,
+        },
+        User {
+            name: "Bob",
+            age: 25,
+        },
+    ];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+// ============================================================================
+// Tuple diff tests
+// ============================================================================
+
+#[test]
+fn diff_tuples_equal() {
+    let a = (1, 2, 3);
+    let b = (1, 2, 3);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_tuples_one_element_different() {
+    let a = (1, 2, 3);
+    let b = (1, 5, 3);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_tuples_different_sizes() {
+    let a = (1, 2, 3);
+    let b = (1, 2, 3, 4);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_tuples_nested() {
+    let a = ((1, 2), (3, 4));
+    let b = ((1, 2), (3, 5));
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_tuples_nested_different_sizes() {
+    let a = ((1, 2), (3, 4));
+    let b = ((1, 2, 3), (4, 5));
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+// ============================================================================
+// Option diff tests
+// ============================================================================
+
+#[test]
+fn diff_options_both_some_equal() {
+    let a = Some(42);
+    let b = Some(42);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_options_both_some_different() {
+    let a = Some(42);
+    let b = Some(100);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_options_some_vs_none() {
+    let a = Some(42);
+    let b: Option<i32> = None;
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_options_none_vs_some() {
+    let a: Option<i32> = None;
+    let b = Some(42);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_options_both_none() {
+    let a: Option<i32> = None;
+    let b: Option<i32> = None;
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_options_nested_structs() {
+    let a = Some(User {
+        name: "Alice",
+        age: 30,
+    });
+    let b = Some(User {
+        name: "Alice",
+        age: 31,
+    });
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+// ============================================================================
+// Value vs Value tests (dynamic values)
+// ============================================================================
+
+#[test]
+fn diff_value_null_equal() {
+    let a = value!(null);
+    let b = value!(null);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_bool_equal() {
+    let a = value!(true);
+    let b = value!(true);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_bool_different() {
+    let a = value!(true);
+    let b = value!(false);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_number_equal() {
+    let a = value!(42);
+    let b = value!(42);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_number_different() {
+    let a = value!(42);
+    let b = value!(100);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_string_equal() {
+    let a = value!("hello");
+    let b = value!("hello");
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_string_different() {
+    let a = value!("hello");
+    let b = value!("world");
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_array_equal() {
+    let a = value!([1, 2, 3]);
+    let b = value!([1, 2, 3]);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_array_different() {
+    let a = value!([1, 2, 3]);
+    let b = value!([1, 2, 4]);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_array_element_added() {
+    let a = value!([1, 2, 3]);
+    let b = value!([1, 2, 3, 4]);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_object_equal() {
+    let a = value!({"name": "Alice", "age": 30});
+    let b = value!({"name": "Alice", "age": 30});
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_object_field_different() {
+    let a = value!({"name": "Alice", "age": 30});
+    let b = value!({"name": "Bob", "age": 30});
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_object_field_added() {
+    let a = value!({"name": "Alice"});
+    let b = value!({"name": "Alice", "age": 30});
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_object_field_removed() {
+    let a = value!({"name": "Alice", "age": 30});
+    let b = value!({"name": "Alice"});
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_nested_object() {
+    let a = value!({
+        "user": {
+            "name": "Alice",
+            "address": {
+                "city": "Wonderland"
+            }
+        }
+    });
+    let b = value!({
+        "user": {
+            "name": "Alice",
+            "address": {
+                "city": "Elsewhere"
+            }
+        }
+    });
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_different_types() {
+    let a = value!(42);
+    let b = value!("42");
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_null_vs_value() {
+    let a = value!(null);
+    let b = value!(42);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+// ============================================================================
+// Value vs T and T vs Value tests (cross-type comparisons)
+// ============================================================================
+
+#[test]
+fn diff_value_number_vs_i32() {
+    let a = value!(42);
+    let b: i32 = 42;
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_i32_vs_value_number() {
+    let a: i32 = 42;
+    let b = value!(42);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_string_vs_string() {
+    let a = value!("hello");
+    let b = String::from("hello");
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_string_vs_value_string() {
+    let a = String::from("hello");
+    let b = value!("hello");
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_array_vs_vec() {
+    let a = value!([1, 2, 3]);
+    let b: Vec<i64> = vec![1, 2, 3];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_vec_vs_value_array() {
+    let a: Vec<i64> = vec![1, 2, 3];
+    let b = value!([1, 2, 3]);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_array_vs_vec_different() {
+    let a = value!([1, 2, 3]);
+    let b: Vec<i64> = vec![1, 2, 4];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_bool_vs_bool() {
+    let a = value!(true);
+    let b = true;
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_bool_vs_value_bool() {
+    let a = true;
+    let b = value!(true);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_bool_vs_bool_different() {
+    let a = value!(true);
+    let b = false;
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+// ============================================================================
+// Edge cases and complex scenarios
+// ============================================================================
+
+#[test]
+fn diff_empty_vecs() {
+    let a: Vec<i32> = vec![];
+    let b: Vec<i32> = vec![];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_empty_to_nonempty_vec() {
+    let a: Vec<i32> = vec![];
+    let b = vec![1, 2, 3];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_nonempty_to_empty_vec() {
+    let a = vec![1, 2, 3];
+    let b: Vec<i32> = vec![];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_empty_array() {
+    let a = value!([]);
+    let b = value!([]);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_empty_object() {
+    let a = value!({});
+    let b = value!({});
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_deeply_nested_structs() {
+    #[derive(Facet)]
+    struct Level3 {
+        value: i32,
+    }
+
+    #[derive(Facet)]
+    struct Level2 {
+        inner: Level3,
+    }
+
+    #[derive(Facet)]
+    struct Level1 {
+        inner: Level2,
+    }
+
+    let a = Level1 {
+        inner: Level2 {
+            inner: Level3 { value: 1 },
+        },
+    };
+    let b = Level1 {
+        inner: Level2 {
+            inner: Level3 { value: 2 },
+        },
+    };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_vec_with_many_changes() {
+    let a = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    let b = vec![1, 20, 3, 40, 5, 60, 7, 80, 9, 100];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_struct_with_vec_field() {
+    #[derive(Facet)]
+    struct Container {
+        items: Vec<i32>,
+    }
+
+    let a = Container {
+        items: vec![1, 2, 3],
+    };
+    let b = Container {
+        items: vec![1, 2, 4],
+    };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_struct_with_option_field() {
+    #[derive(Facet)]
+    struct MaybeUser<'a> {
+        name: &'a str,
+        nickname: Option<&'a str>,
+    }
+
+    let a = MaybeUser {
+        name: "Alice",
+        nickname: Some("Ali"),
+    };
+    let b = MaybeUser {
+        name: "Alice",
+        nickname: None,
+    };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+// ============================================================================
+// Comprehensive shape matrix tests
+// T/T, Dynamic/T, T/Dynamic, Dynamic/Dynamic for various types
+// ============================================================================
+
+// --- Structs/Objects ---
+
+#[test]
+fn diff_value_object_vs_value_object_nested_change() {
+    // Dynamic/Dynamic with nested field change
+    let a = value!({"user": {"name": "Alice", "age": 30}});
+    let b = value!({"user": {"name": "Alice", "age": 31}});
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_object_vs_value_object_field_type_change() {
+    // Dynamic/Dynamic with type change in field
+    let a = value!({"count": 42});
+    let b = value!({"count": "forty-two"});
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+// --- Sequences with nested diffs ---
+
+#[test]
+fn diff_value_array_nested_objects() {
+    // Dynamic/Dynamic - array of objects with changes
+    let a = value!([{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]);
+    let b = value!([{"id": 1, "name": "Alicia"}, {"id": 2, "name": "Bob"}]);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_vec_of_values() {
+    // T/Dynamic - Vec containing Value items
+    let a: Vec<facet_value::Value> = vec![value!(1), value!(2), value!(3)];
+    let b: Vec<facet_value::Value> = vec![value!(1), value!(20), value!(3)];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+// --- Mixed scalar comparisons ---
+
+#[test]
+fn diff_value_number_vs_i32_different() {
+    // Dynamic/T with different values
+    let a = value!(42);
+    let b: i32 = 100;
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_i32_vs_value_number_different() {
+    // T/Dynamic with different values
+    let a: i32 = 42;
+    let b = value!(100);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_string_vs_str_different() {
+    // Dynamic/T with different strings
+    let a = value!("hello");
+    let b = "world";
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_str_vs_value_string_different() {
+    // T/Dynamic with different strings
+    let a = "hello";
+    let b = value!("world");
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+// --- Type mismatches ---
+
+#[test]
+fn diff_value_number_vs_string() {
+    // Dynamic/T type mismatch
+    let a = value!(42);
+    let b = "42";
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_string_vs_value_number() {
+    // T/Dynamic type mismatch
+    let a = "42";
+    let b = value!(42);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+// --- Sequences cross-type ---
+
+#[test]
+fn diff_value_array_vs_vec_element_change() {
+    // Dynamic/T with element changes
+    let a = value!([1, 2, 3, 4, 5]);
+    let b: Vec<i64> = vec![1, 2, 30, 4, 5];
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_vec_vs_value_array_element_added() {
+    // T/Dynamic with additions
+    let a: Vec<i64> = vec![1, 2, 3];
+    let b = value!([1, 2, 3, 4, 5]);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_vec_vs_value_array_element_removed() {
+    // T/Dynamic with removals
+    let a: Vec<i64> = vec![1, 2, 3, 4, 5];
+    let b = value!([1, 2, 3]);
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+// ============================================================================
+// Complex/stress tests - big structs, deep nesting, large collections
+// ============================================================================
+
+#[derive(Facet, Debug, PartialEq)]
+struct BigConfig {
+    name: String,
+    version: u32,
+    enabled: bool,
+    max_connections: u64,
+    timeout_ms: u32,
+    retry_count: u8,
+    debug_mode: bool,
+    log_level: String,
+    cache_size: usize,
+    description: String,
+}
+
+#[test]
+fn diff_big_struct_multiple_changes() {
+    let a = BigConfig {
+        name: "my-service".to_string(),
+        version: 1,
+        enabled: true,
+        max_connections: 100,
+        timeout_ms: 5000,
+        retry_count: 3,
+        debug_mode: false,
+        log_level: "info".to_string(),
+        cache_size: 1024,
+        description: "A cool service".to_string(),
+    };
+    let b = BigConfig {
+        name: "my-service".to_string(),
+        version: 2, // changed
+        enabled: true,
+        max_connections: 200, // changed
+        timeout_ms: 10000,    // changed
+        retry_count: 3,
+        debug_mode: true,               // changed
+        log_level: "debug".to_string(), // changed
+        cache_size: 1024,
+        description: "An even cooler service".to_string(), // changed
+    };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct Level4 {
+    value: i32,
+    name: String,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct Level3 {
+    inner: Level4,
+    count: u32,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct Level2 {
+    inner: Level3,
+    enabled: bool,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct Level1 {
+    inner: Level2,
+    label: String,
+}
+
+#[test]
+fn diff_four_level_nesting() {
+    let a = Level1 {
+        inner: Level2 {
+            inner: Level3 {
+                inner: Level4 {
+                    value: 42,
+                    name: "original".to_string(),
+                },
+                count: 10,
+            },
+            enabled: true,
+        },
+        label: "root".to_string(),
+    };
+    let b = Level1 {
+        inner: Level2 {
+            inner: Level3 {
+                inner: Level4 {
+                    value: 100,                   // changed deep inside
+                    name: "modified".to_string(), // changed deep inside
+                },
+                count: 10,
+            },
+            enabled: false, // changed at level 2
+        },
+        label: "root".to_string(),
+    };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_large_vec_scattered_changes() {
+    let a: Vec<i32> = (0..20).collect();
+    let mut b: Vec<i32> = (0..20).collect();
+    b[3] = 300; // change at index 3
+    b[7] = 700; // change at index 7
+    b[15] = 1500; // change at index 15
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_large_vec_with_insertions_and_deletions() {
+    let a: Vec<i32> = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    let b: Vec<i32> = vec![1, 2, 100, 101, 5, 6, 8, 9, 10, 11, 12];
+    // removed: 3, 4, 7
+    // added: 100, 101, 11, 12
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct Employee {
+    id: u32,
+    name: String,
+    department: String,
+    salary: u64,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct Team {
+    name: String,
+    lead: Employee,
+    members: Vec<Employee>,
+}
+
+#[test]
+fn diff_struct_with_vec_of_structs_complex() {
+    let a = Team {
+        name: "Engineering".to_string(),
+        lead: Employee {
+            id: 1,
+            name: "Alice".to_string(),
+            department: "Engineering".to_string(),
+            salary: 150000,
+        },
+        members: vec![
+            Employee {
+                id: 2,
+                name: "Bob".to_string(),
+                department: "Engineering".to_string(),
+                salary: 120000,
+            },
+            Employee {
+                id: 3,
+                name: "Charlie".to_string(),
+                department: "Engineering".to_string(),
+                salary: 110000,
+            },
+            Employee {
+                id: 4,
+                name: "Diana".to_string(),
+                department: "Engineering".to_string(),
+                salary: 130000,
+            },
+        ],
+    };
+    let b = Team {
+        name: "Engineering".to_string(),
+        lead: Employee {
+            id: 1,
+            name: "Alice".to_string(),
+            department: "Engineering".to_string(),
+            salary: 160000, // got a raise
+        },
+        members: vec![
+            Employee {
+                id: 2,
+                name: "Bob".to_string(),
+                department: "Engineering".to_string(),
+                salary: 125000, // got a raise
+            },
+            // Charlie left
+            Employee {
+                id: 4,
+                name: "Diana".to_string(),
+                department: "Engineering".to_string(),
+                salary: 135000, // got a raise
+            },
+            Employee {
+                id: 5,
+                name: "Eve".to_string(), // new hire
+                department: "Engineering".to_string(),
+                salary: 115000,
+            },
+        ],
+    };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct NestedOptions {
+    outer: Option<Option<Option<i32>>>,
+}
+
+#[test]
+fn diff_triple_nested_option() {
+    let a = NestedOptions {
+        outer: Some(Some(Some(42))),
+    };
+    let b = NestedOptions {
+        outer: Some(Some(Some(100))),
+    };
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_deeply_nested_object() {
+    let a = value!({
+        "level1": {
+            "level2": {
+                "level3": {
+                    "level4": {
+                        "value": 42,
+                        "name": "deep"
+                    }
+                }
+            }
+        }
+    });
+    let b = value!({
+        "level1": {
+            "level2": {
+                "level3": {
+                    "level4": {
+                        "value": 100,
+                        "name": "deep"
+                    }
+                }
+            }
+        }
+    });
+    assert_snapshot!(a.diff(&b).to_string());
+}
+
+#[test]
+fn diff_value_array_of_objects_complex() {
+    let a = value!([
+        {"id": 1, "name": "Alice", "active": true},
+        {"id": 2, "name": "Bob", "active": true},
+        {"id": 3, "name": "Charlie", "active": false},
+    ]);
+    let b = value!([
+        {"id": 1, "name": "Alicia", "active": true},
+        {"id": 2, "name": "Bob", "active": false},
+        {"id": 4, "name": "Diana", "active": true},
+    ]);
+    assert_snapshot!(a.diff(&b).to_string());
+}

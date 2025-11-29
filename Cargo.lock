@@ -496,6 +496,10 @@ dependencies = [
  "facet-core",
  "facet-pretty",
  "facet-reflect",
+ "facet-testhelpers",
+ "facet-value",
+ "insta",
+ "owo-colors",
 ]
 
 [[package]]

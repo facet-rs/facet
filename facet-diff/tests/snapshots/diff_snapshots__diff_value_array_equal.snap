@@ -1,0 +1,9 @@
+---
+source: facet-diff/tests/diff_snapshots.rs
+expression: a.diff(&b).to_string()
+---
+[
+  1,
+  2,
+  3,
+]

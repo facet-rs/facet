@@ -24,6 +24,8 @@ pub struct PrettyPrinter {
     color_generator: ColorGenerator,
     use_colors: bool,
     list_u8_as_bytes: bool,
+    /// Skip type names for Options (show `Some(x)` instead of `Option<T>::Some(x)`)
+    minimal_option_names: bool,
 }
 
 impl Default for PrettyPrinter {
@@ -34,6 +36,7 @@ impl Default for PrettyPrinter {
             color_generator: ColorGenerator::default(),
             use_colors: std::env::var_os("NO_COLOR").is_none(),
             list_u8_as_bytes: true,
+            minimal_option_names: false,
         }
     }
 }
@@ -65,6 +68,12 @@ impl PrettyPrinter {
     /// Enable or disable colors
     pub fn with_colors(mut self, use_colors: bool) -> Self {
         self.use_colors = use_colors;
+        self
+    }
+
+    /// Use minimal names for Options (show `Some(x)` instead of `Option<T>::Some(x)`)
+    pub fn with_minimal_option_names(mut self, minimal: bool) -> Self {
+        self.minimal_option_names = minimal;
         self
     }
 
@@ -203,11 +212,18 @@ impl PrettyPrinter {
             (Def::Option(_), _) => {
                 let option = value.into_option().unwrap();
 
-                // Print the Option name
-                self.write_type_name(f, &value)?;
+                // Print the Option name (unless minimal mode)
+                if !self.minimal_option_names {
+                    self.write_type_name(f, &value)?;
+                }
 
                 if let Some(inner) = option.value() {
-                    self.write_punctuation(f, "Some(")?;
+                    let prefix = if self.minimal_option_names {
+                        "Some("
+                    } else {
+                        "::Some("
+                    };
+                    self.write_punctuation(f, prefix)?;
                     self.format_peek_internal_(
                         inner,
                         f,
@@ -218,7 +234,12 @@ impl PrettyPrinter {
                     )?;
                     self.write_punctuation(f, ")")?;
                 } else {
-                    self.write_punctuation(f, "None")?;
+                    let suffix = if self.minimal_option_names {
+                        "None"
+                    } else {
+                        "::None"
+                    };
+                    self.write_punctuation(f, suffix)?;
                 }
             }
 

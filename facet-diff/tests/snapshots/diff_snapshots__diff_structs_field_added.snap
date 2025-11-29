@@ -1,0 +1,7 @@
+---
+source: facet-diff/tests/diff_snapshots.rs
+expression: a.diff(&b).to_string()
+---
+{
+  [32m+ email: "alice@example.com"[39m
+}

@@ -14,3 +14,9 @@ facet = { path = "../facet" }
 facet-core = { path = "../facet-core" }
 facet-pretty = { path = "../facet-pretty" }
 facet-reflect = { path = "../facet-reflect" }
+owo-colors = "4"
+
+[dev-dependencies]
+insta = "1.43.1"
+facet-value = { path = "../facet-value" }
+facet-testhelpers = { path = "../facet-testhelpers" }

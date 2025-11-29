@@ -1,0 +1,7 @@
+---
+source: facet-diff/tests/diff_snapshots.rs
+expression: a.diff(&b).to_string()
+---
+{
+  nickname: [31mSome("Ali")[39m → [32mNone[39m
+}

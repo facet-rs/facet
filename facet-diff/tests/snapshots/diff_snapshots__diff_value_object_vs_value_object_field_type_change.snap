@@ -1,0 +1,7 @@
+---
+source: facet-diff/tests/diff_snapshots.rs
+expression: a.diff(&b).to_string()
+---
+{
+  count: [31m42[39m → [32m"forty-two"[39m
+}

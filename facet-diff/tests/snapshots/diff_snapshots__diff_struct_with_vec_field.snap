@@ -1,0 +1,12 @@
+---
+source: facet-diff/tests/diff_snapshots.rs
+expression: a.diff(&b).to_string()
+---
+{
+  items: [
+    1
+    2
+    [31m- 3[39m
+    [32m+ 4[39m
+  ]
+}

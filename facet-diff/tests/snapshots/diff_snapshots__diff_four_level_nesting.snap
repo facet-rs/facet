@@ -1,0 +1,15 @@
+---
+source: facet-diff/tests/diff_snapshots.rs
+expression: a.diff(&b).to_string()
+---
+{
+  inner: {
+    enabled: [31mtrue[39m → [32mfalse[39m
+    inner: {
+      inner: {
+        name: [31moriginal[39m → [32mmodified[39m
+        value: [31m42[39m → [32m100[39m
+      }
+    }
+  }
+}

@@ -15,7 +15,10 @@ use crate::sequences::{self, Updates};
 /// The `from` value does not necessarily have to have the same type as the `to` value.
 pub enum Diff<'mem, 'facet> {
     /// The two values are equal
-    Equal,
+    Equal {
+        /// The value (stored for display purposes)
+        value: Option<Peek<'mem, 'facet>>,
+    },
 
     /// Fallback case.
     ///
@@ -102,7 +105,7 @@ impl<'f, T: Facet<'f>> FacetDiff<'f> for T {
 impl<'mem, 'facet> Diff<'mem, 'facet> {
     /// Returns true if the two values were equal
     pub fn is_equal(&self) -> bool {
-        matches!(self, Self::Equal)
+        matches!(self, Self::Equal { .. })
     }
 
     /// Computes the difference between two values that implement `Facet`
@@ -111,8 +114,12 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
     }
 
     pub(crate) fn new_peek(from: Peek<'mem, 'facet>, to: Peek<'mem, 'facet>) -> Self {
+        // Dereference pointers/references to compare the underlying values
+        let from = Self::deref_if_pointer(from);
+        let to = Self::deref_if_pointer(to);
+
         if from.shape().id == to.shape().id && from.shape().is_partial_eq() && from == to {
-            return Diff::Equal;
+            return Diff::Equal { value: Some(from) };
         }
 
         match (
@@ -247,13 +254,8 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     return Diff::Replace { from, to };
                 };
 
-                let mut updates = Updates::default();
-
-                let diff = Self::new_peek(from_value, to_value);
-                if !diff.is_equal() {
-                    updates.push_add(to_value);
-                    updates.push_remove(from_value);
-                }
+                // Use sequences::diff to properly handle nested diffs
+                let updates = sequences::diff(vec![from_value], vec![to_value]);
 
                 Diff::User {
                     from: from.shape(),
@@ -263,8 +265,8 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                 }
             }
             (
-                (Def::List(_), _) | (_, Type::Sequence(_)),
-                (Def::List(_), _) | (_, Type::Sequence(_)),
+                (Def::List(_) | Def::Slice(_), _) | (_, Type::Sequence(_)),
+                (Def::List(_) | Def::Slice(_), _) | (_, Type::Sequence(_)),
             ) => {
                 let from_list = from.into_list_like().unwrap();
                 let to_list = to.into_list_like().unwrap();
@@ -283,6 +285,9 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
             ((Def::DynamicValue(_), _), (Def::DynamicValue(_), _)) => {
                 Self::diff_dynamic_values(from, to)
             }
+            // DynamicValue vs concrete type
+            ((Def::DynamicValue(_), _), _) => Self::diff_dynamic_vs_concrete(from, to),
+            (_, (Def::DynamicValue(_), _)) => Self::diff_dynamic_vs_concrete(to, from),
             _ => Diff::Replace { from, to },
         }
     }
@@ -301,10 +306,10 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
         }
 
         match from_kind {
-            DynValueKind::Null => Diff::Equal,
+            DynValueKind::Null => Diff::Equal { value: Some(from) },
             DynValueKind::Bool => {
                 if from_dyn.as_bool() == to_dyn.as_bool() {
-                    Diff::Equal
+                    Diff::Equal { value: Some(from) }
                 } else {
                     Diff::Replace { from, to }
                 }
@@ -322,21 +327,21 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     },
                 };
                 if same {
-                    Diff::Equal
+                    Diff::Equal { value: Some(from) }
                 } else {
                     Diff::Replace { from, to }
                 }
             }
             DynValueKind::String => {
                 if from_dyn.as_str() == to_dyn.as_str() {
-                    Diff::Equal
+                    Diff::Equal { value: Some(from) }
                 } else {
                     Diff::Replace { from, to }
                 }
             }
             DynValueKind::Bytes => {
                 if from_dyn.as_bytes() == to_dyn.as_bytes() {
-                    Diff::Equal
+                    Diff::Equal { value: Some(from) }
                 } else {
                     Diff::Replace { from, to }
                 }
@@ -418,7 +423,7 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
             DynValueKind::DateTime => {
                 // Compare datetime by their components
                 if from_dyn.as_datetime() == to_dyn.as_datetime() {
-                    Diff::Equal
+                    Diff::Equal { value: Some(from) }
                 } else {
                     Diff::Replace { from, to }
                 }
@@ -426,9 +431,153 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
         }
     }
 
+    /// Diff a DynamicValue against a concrete type
+    /// `dyn_peek` is the DynamicValue, `concrete_peek` is the concrete type
+    fn diff_dynamic_vs_concrete(
+        dyn_peek: Peek<'mem, 'facet>,
+        concrete_peek: Peek<'mem, 'facet>,
+    ) -> Self {
+        let dyn_val = dyn_peek.into_dynamic_value().unwrap();
+        let dyn_kind = dyn_val.kind();
+
+        // Try to match based on the DynamicValue's kind
+        match dyn_kind {
+            DynValueKind::Bool => {
+                if concrete_peek
+                    .get::<bool>()
+                    .ok()
+                    .is_some_and(|&v| dyn_val.as_bool() == Some(v))
+                {
+                    return Diff::Equal {
+                        value: Some(dyn_peek),
+                    };
+                }
+            }
+            DynValueKind::Number => {
+                let is_equal =
+                    // Try signed integers
+                    concrete_peek.get::<i8>().ok().is_some_and(|&v| dyn_val.as_i64() == Some(v as i64))
+                    || concrete_peek.get::<i16>().ok().is_some_and(|&v| dyn_val.as_i64() == Some(v as i64))
+                    || concrete_peek.get::<i32>().ok().is_some_and(|&v| dyn_val.as_i64() == Some(v as i64))
+                    || concrete_peek.get::<i64>().ok().is_some_and(|&v| dyn_val.as_i64() == Some(v))
+                    || concrete_peek.get::<isize>().ok().is_some_and(|&v| dyn_val.as_i64() == Some(v as i64))
+                    // Try unsigned integers
+                    || concrete_peek.get::<u8>().ok().is_some_and(|&v| dyn_val.as_u64() == Some(v as u64))
+                    || concrete_peek.get::<u16>().ok().is_some_and(|&v| dyn_val.as_u64() == Some(v as u64))
+                    || concrete_peek.get::<u32>().ok().is_some_and(|&v| dyn_val.as_u64() == Some(v as u64))
+                    || concrete_peek.get::<u64>().ok().is_some_and(|&v| dyn_val.as_u64() == Some(v))
+                    || concrete_peek.get::<usize>().ok().is_some_and(|&v| dyn_val.as_u64() == Some(v as u64))
+                    // Try floats
+                    || concrete_peek.get::<f32>().ok().is_some_and(|&v| dyn_val.as_f64() == Some(v as f64))
+                    || concrete_peek.get::<f64>().ok().is_some_and(|&v| dyn_val.as_f64() == Some(v));
+                if is_equal {
+                    return Diff::Equal {
+                        value: Some(dyn_peek),
+                    };
+                }
+            }
+            DynValueKind::String => {
+                if concrete_peek
+                    .as_str()
+                    .is_some_and(|s| dyn_val.as_str() == Some(s))
+                {
+                    return Diff::Equal {
+                        value: Some(dyn_peek),
+                    };
+                }
+            }
+            DynValueKind::Array => {
+                // Try to diff as sequences if the concrete type is list-like
+                if let Ok(concrete_list) = concrete_peek.into_list_like() {
+                    let dyn_elems: Vec<_> = dyn_val
+                        .array_iter()
+                        .map(|i| i.collect())
+                        .unwrap_or_default();
+                    let concrete_elems: Vec<_> = concrete_list.iter().collect();
+
+                    let updates = sequences::diff(dyn_elems, concrete_elems);
+
+                    return Diff::Sequence {
+                        from: dyn_peek.shape(),
+                        to: concrete_peek.shape(),
+                        updates,
+                    };
+                }
+            }
+            DynValueKind::Object => {
+                // Try to diff as struct if the concrete type is a struct
+                if let Ok(concrete_struct) = concrete_peek.into_struct() {
+                    let dyn_len = dyn_val.object_len().unwrap_or(0);
+
+                    let mut updates = HashMap::new();
+                    let mut deletions = HashMap::new();
+                    let mut insertions = HashMap::new();
+                    let mut unchanged = HashSet::new();
+
+                    // Collect keys from dynamic object
+                    let mut dyn_keys: HashMap<String, Peek<'mem, 'facet>> = HashMap::new();
+                    for i in 0..dyn_len {
+                        if let Some((key, value)) = dyn_val.object_get_entry(i) {
+                            dyn_keys.insert(key.to_owned(), value);
+                        }
+                    }
+
+                    // Compare with concrete struct fields
+                    for (key, dyn_value) in &dyn_keys {
+                        if let Ok(concrete_value) = concrete_struct.field_by_name(key) {
+                            let diff = Self::new_peek(*dyn_value, concrete_value);
+                            if diff.is_equal() {
+                                unchanged.insert(Cow::Owned(key.clone()));
+                            } else {
+                                updates.insert(Cow::Owned(key.clone()), diff);
+                            }
+                        } else {
+                            deletions.insert(Cow::Owned(key.clone()), *dyn_value);
+                        }
+                    }
+
+                    for (field, concrete_value) in concrete_struct.fields() {
+                        if !dyn_keys.contains_key(field.name) {
+                            insertions.insert(Cow::Borrowed(field.name), concrete_value);
+                        }
+                    }
+
+                    return Diff::User {
+                        from: dyn_peek.shape(),
+                        to: concrete_peek.shape(),
+                        variant: None,
+                        value: Value::Struct {
+                            updates,
+                            deletions,
+                            insertions,
+                            unchanged,
+                        },
+                    };
+                }
+            }
+            // For other kinds (Null, Bytes, DateTime), fall through to Replace
+            _ => {}
+        }
+
+        Diff::Replace {
+            from: dyn_peek,
+            to: concrete_peek,
+        }
+    }
+
+    /// Dereference a pointer/reference to get the underlying value
+    fn deref_if_pointer(peek: Peek<'mem, 'facet>) -> Peek<'mem, 'facet> {
+        if let Ok(ptr) = peek.into_pointer() {
+            if let Some(target) = ptr.borrow_inner() {
+                return Self::deref_if_pointer(target);
+            }
+        }
+        peek
+    }
+
     pub(crate) fn closeness(&self) -> usize {
         match self {
-            Self::Equal => 1, // This does not actually matter for flattening sequence diffs, because all diffs there are non-equal
+            Self::Equal { .. } => 1, // This does not actually matter for flattening sequence diffs, because all diffs there are non-equal
             Self::Replace { .. } => 0,
             Self::Sequence { updates, .. } => updates.closeness(),
             Self::User {

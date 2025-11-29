@@ -1,0 +1,11 @@
+---
+source: facet-diff/tests/diff_snapshots.rs
+expression: a.diff(&b).to_string()
+---
+{
+  user: {
+    address: {
+      city: [31m"Wonderland"[39m → [32m"Elsewhere"[39m
+    }
+  }
+}
