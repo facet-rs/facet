@@ -16,3 +16,4 @@ facet-showcase = { path = "../../../facet-showcase" }  # relative to proto-attr/
 [features]
 default = []
 slow-tests = []
+nightly = ["proto-attr/nightly"]

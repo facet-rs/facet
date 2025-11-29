@@ -39,6 +39,15 @@ fn compile_snippet(code: &str) -> String {
     let proto_attr_path = proto_attr_crates.join("proto-attr");
     let proto_ext_path = proto_attr_crates.join("proto-ext");
 
+    // Check if we're running with the nightly feature
+    let nightly_feature = cfg!(feature = "nightly");
+
+    let features = if nightly_feature {
+        ", features = [\"nightly\"]"
+    } else {
+        ""
+    };
+
     fs::write(
         test_dir.join("Cargo.toml"),
         format!(
@@ -48,10 +57,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-proto-attr = {{ path = "{}" }}
+proto-attr = {{ path = "{}"{} }}
 proto-ext = {{ path = "{}" }}
 "#,
             proto_attr_path.display(),
+            features,
             proto_ext_path.display()
         ),
     )
