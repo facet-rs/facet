@@ -85,6 +85,7 @@ impl<'mem, 'facet> PeekDynamicValue<'mem, 'facet> {
     ///
     /// Returns `(year, month, day, hour, minute, second, nanos, kind)`.
     #[inline]
+    #[allow(clippy::type_complexity)]
     pub fn as_datetime(&self) -> Option<(i32, u8, u8, u8, u8, u8, u32, DynDateTimeKind)> {
         self.def
             .vtable
