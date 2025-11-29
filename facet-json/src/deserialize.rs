@@ -15,6 +15,7 @@ use facet_core::{
 use facet_reflect::{Partial, ReflectError};
 use facet_solver::{PathSegment, Schema, Solver};
 
+use crate::RawJson;
 use crate::tokenizer::{Token, TokenError, TokenErrorKind, Tokenizer};
 use facet_reflect::{Span, Spanned};
 
@@ -499,6 +500,74 @@ impl<'input> JsonDeserializer<'input> {
         }
     }
 
+    /// Capture a raw JSON value as a string slice.
+    ///
+    /// This skips the value while tracking its full span, then returns
+    /// the raw JSON text.
+    fn capture_raw_value(&mut self) -> Result<&'input str> {
+        let token = self.next()?;
+        let start_offset = token.span.offset;
+
+        let end_offset = match token.value {
+            Token::LBrace => {
+                // Capture object
+                let mut depth = 1;
+                let mut last_span = token.span;
+                while depth > 0 {
+                    let t = self.next()?;
+                    last_span = t.span;
+                    match t.value {
+                        Token::LBrace => depth += 1,
+                        Token::RBrace => depth -= 1,
+                        _ => {}
+                    }
+                }
+                last_span.offset + last_span.len
+            }
+            Token::LBracket => {
+                // Capture array
+                let mut depth = 1;
+                let mut last_span = token.span;
+                while depth > 0 {
+                    let t = self.next()?;
+                    last_span = t.span;
+                    match t.value {
+                        Token::LBracket => depth += 1,
+                        Token::RBracket => depth -= 1,
+                        _ => {}
+                    }
+                }
+                last_span.offset + last_span.len
+            }
+            Token::String(_)
+            | Token::F64(_)
+            | Token::I64(_)
+            | Token::U64(_)
+            | Token::U128(_)
+            | Token::I128(_)
+            | Token::True
+            | Token::False
+            | Token::Null => token.span.offset + token.span.len,
+            _ => {
+                return Err(JsonError::new(
+                    JsonErrorKind::UnexpectedToken {
+                        got: format!("{}", token.value),
+                        expected: "value",
+                    },
+                    token.span,
+                ));
+            }
+        };
+
+        // Extract the raw bytes and convert to str
+        let raw_bytes = &self.input[start_offset..end_offset];
+        core::str::from_utf8(raw_bytes).map_err(|e| {
+            JsonError::without_span(JsonErrorKind::InvalidValue {
+                message: format!("invalid UTF-8 in raw JSON: {e}"),
+            })
+        })
+    }
+
     /// Navigate a FieldPath from the solver and deserialize a value at that location.
     ///
     /// The FieldPath contains segments like:
@@ -578,6 +647,13 @@ impl<'input> JsonDeserializer<'input> {
         // Check for Spanned<T> wrapper first
         if is_spanned_shape(shape) {
             return self.deserialize_spanned(wip);
+        }
+
+        // Check for RawJson - capture raw bytes without parsing
+        if shape == RawJson::SHAPE {
+            let raw = self.capture_raw_value()?;
+            wip.set(RawJson::new(raw))?;
+            return Ok(());
         }
 
         // Check Def first for Option (which is also a Type::User::Enum)
