@@ -1,0 +1,5 @@
+---
+source: facet-diff/tests/diff_snapshots.rs
+expression: a.diff(&b).to_string()
+---
+[31mNone[39m → [32mSome(42)[39m

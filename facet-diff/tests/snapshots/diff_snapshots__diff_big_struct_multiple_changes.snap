@@ -1,0 +1,12 @@
+---
+source: facet-diff/tests/diff_snapshots.rs
+expression: a.diff(&b).to_string()
+---
+{
+  debug_mode: [31mfalse[39m → [32mtrue[39m
+  description: [31mA cool service[39m → [32mAn even cooler service[39m
+  log_level: [31minfo[39m → [32mdebug[39m
+  max_connections: [31m100[39m → [32m200[39m
+  timeout_ms: [31m5000[39m → [32m10000[39m
+  version: [31m1[39m → [32m2[39m
+}

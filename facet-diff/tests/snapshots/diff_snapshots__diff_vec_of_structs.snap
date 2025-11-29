@@ -1,0 +1,10 @@
+---
+source: facet-diff/tests/diff_snapshots.rs
+expression: a.diff(&b).to_string()
+---
+[
+  {
+    age: [31m30[39m → [32m31[39m
+  }
+  (no changes)
+]

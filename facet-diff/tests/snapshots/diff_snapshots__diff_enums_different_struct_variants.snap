@@ -1,0 +1,9 @@
+---
+source: facet-diff/tests/diff_snapshots.rs
+expression: a.diff(&b).to_string()
+---
+[31mDetailedStatus::Active {
+  since: 2020,
+}[39m → [32mDetailedStatus::Inactive {
+  reason: maintenance,
+}[39m

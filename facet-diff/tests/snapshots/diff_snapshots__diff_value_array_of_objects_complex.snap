@@ -1,0 +1,17 @@
+---
+source: facet-diff/tests/diff_snapshots.rs
+expression: a.diff(&b).to_string()
+---
+[
+  {
+    name: [31m"Alice"[39m → [32m"Alicia"[39m
+  }
+  {
+    active: [31mtrue[39m → [32mfalse[39m
+  }
+  {
+    active: [31mfalse[39m → [32mtrue[39m
+    id: [31m3[39m → [32m4[39m
+    name: [31m"Charlie"[39m → [32m"Diana"[39m
+  }
+]

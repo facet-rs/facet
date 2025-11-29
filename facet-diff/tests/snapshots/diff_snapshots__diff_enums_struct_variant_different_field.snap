@@ -1,0 +1,7 @@
+---
+source: facet-diff/tests/diff_snapshots.rs
+expression: a.diff(&b).to_string()
+---
+[1mActive[0m {
+  since: [31m2020[39m → [32m2024[39m
+}

@@ -1,0 +1,24 @@
+---
+source: facet-diff/tests/diff_snapshots.rs
+expression: a.diff(&b).to_string()
+---
+{
+  lead: {
+    salary: [31m150000[39m → [32m160000[39m
+  }
+  members: [
+    {
+      salary: [31m120000[39m → [32m125000[39m
+    }
+    {
+      id: [31m3[39m → [32m4[39m
+      name: [31mCharlie[39m → [32mDiana[39m
+      salary: [31m110000[39m → [32m135000[39m
+    }
+    {
+      id: [31m4[39m → [32m5[39m
+      name: [31mDiana[39m → [32mEve[39m
+      salary: [31m130000[39m → [32m115000[39m
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+---
+source: facet-diff/tests/diff_snapshots.rs
+expression: a.diff(&b).to_string()
+---
+{
+  level1: {
+    level2: {
+      level3: {
+        level4: {
+          value: [31m42[39m → [32m100[39m
+        }
+      }
+    }
+  }
+}
