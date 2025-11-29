@@ -1332,3 +1332,194 @@ fn diff_value_array_of_objects_complex() {
     ]);
     assert_snapshot!(format_diff_comparison(&a, &b));
 }
+
+// ============================================================================
+// Value vs Native Type comparisons
+// ============================================================================
+
+#[test]
+fn diff_value_array_vs_native_array_equal() {
+    let a = value!([1, 2, 3]);
+    let b: [i64; 3] = [1, 2, 3];
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_native_array_vs_value_array_equal() {
+    let a: [i64; 3] = [1, 2, 3];
+    let b = value!([1, 2, 3]);
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_value_array_vs_native_array_different() {
+    let a = value!([1, 2, 3]);
+    let b: [i64; 3] = [1, 2, 100];
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_value_array_vs_native_array_different_length() {
+    let a = value!([1, 2, 3, 4, 5]);
+    let b: [i64; 3] = [1, 2, 3];
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_value_object_vs_struct_equal() {
+    let a = value!({"name": "Alice", "age": 30});
+    let b = OwnedUser {
+        name: "Alice".to_string(),
+        age: 30,
+    };
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_struct_vs_value_object_equal() {
+    let a = OwnedUser {
+        name: "Alice".to_string(),
+        age: 30,
+    };
+    let b = value!({"name": "Alice", "age": 30});
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_value_object_vs_struct_different() {
+    let a = value!({"name": "Alice", "age": 30});
+    let b = OwnedUser {
+        name: "Bob".to_string(),
+        age: 25,
+    };
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_value_nested_vs_nested_struct() {
+    let a = value!({
+        "name": "Alice",
+        "age": 30,
+        "address": {
+            "street": "123 Main St",
+            "city": "Wonderland"
+        }
+    });
+    let b = UserWithAddress {
+        name: "Alice",
+        age: 30,
+        address: Address {
+            street: "123 Main St".to_string(),
+            city: "Wonderland".to_string(),
+        },
+    };
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_value_nested_vs_nested_struct_different() {
+    let a = value!({
+        "name": "Alice",
+        "age": 30,
+        "address": {
+            "street": "123 Main St",
+            "city": "Wonderland"
+        }
+    });
+    let b = UserWithAddress {
+        name: "Alice",
+        age: 31,
+        address: Address {
+            street: "456 Oak Ave".to_string(),
+            city: "Wonderland".to_string(),
+        },
+    };
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_value_array_of_objects_vs_vec_of_structs() {
+    let a = value!([
+        {"name": "Alice", "age": 30},
+        {"name": "Bob", "age": 25}
+    ]);
+    let b: Vec<OwnedUser> = vec![
+        OwnedUser {
+            name: "Alice".to_string(),
+            age: 30,
+        },
+        OwnedUser {
+            name: "Bob".to_string(),
+            age: 25,
+        },
+    ];
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_value_array_of_objects_vs_vec_of_structs_different() {
+    let a = value!([
+        {"name": "Alice", "age": 30},
+        {"name": "Bob", "age": 25}
+    ]);
+    let b: Vec<OwnedUser> = vec![
+        OwnedUser {
+            name: "Alice".to_string(),
+            age: 31,
+        },
+        OwnedUser {
+            name: "Charlie".to_string(),
+            age: 35,
+        },
+    ];
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_value_mixed_array_vs_tuple() {
+    let a = value!([1, "hello", true]);
+    let b: (i64, &str, bool) = (1, "hello", true);
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_value_mixed_array_vs_tuple_different() {
+    let a = value!([1, "hello", true]);
+    let b: (i64, &str, bool) = (2, "world", false);
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_value_number_vs_float() {
+    let a = value!(3.14);
+    let b: f64 = 3.14;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_value_number_vs_float_different() {
+    let a = value!(3.14);
+    let b: f64 = 2.71;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_value_null_vs_none() {
+    let a = value!(null);
+    let b: Option<i32> = None;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_value_vs_some() {
+    let a = value!(42);
+    let b: Option<i64> = Some(42);
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_value_vs_some_different() {
+    let a = value!(42);
+    let b: Option<i64> = Some(100);
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
