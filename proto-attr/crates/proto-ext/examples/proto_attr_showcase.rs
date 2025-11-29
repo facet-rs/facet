@@ -13,12 +13,25 @@ fn main() {
         ShowcaseRunner::new("proto-attr Compile Error Showcase").language(Language::Rust);
     runner.header();
 
+    // Basic attribute errors
     scenario_unknown_attribute(&mut runner);
     scenario_typo_skip(&mut runner);
     scenario_skip_with_args(&mut runner);
     scenario_rename_missing_value(&mut runner);
     scenario_column_unknown_field(&mut runner);
     scenario_column_name_missing_value(&mut runner);
+
+    // Index attribute errors (list_string field type)
+    scenario_index_typo_columns(&mut runner);
+    scenario_index_wrong_type(&mut runner);
+
+    // Range attribute errors (opt_i64 field type)
+    scenario_range_wrong_type(&mut runner);
+
+    // OnDelete attribute errors (ident field type)
+    scenario_on_delete_string_instead_of_ident(&mut runner);
+
+    // Valid usage showcasing all field types
     scenario_valid_usage(&mut runner);
 
     runner.footer();
@@ -264,6 +277,112 @@ fn main() {}
         .finish();
 }
 
+fn scenario_index_typo_columns(runner: &mut ShowcaseRunner) {
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+#[faket(proto_ext::index(column = ["id", "email"]))]
+struct UserIndex {
+    id: i64,
+    email: String,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error = extract_error(&output);
+
+    runner
+        .scenario("Index Field Typo (list_string)")
+        .description(
+            "Typos in field names like `column` instead of `columns` are caught\n\
+             with a helpful \"did you mean?\" suggestion.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error)
+        .finish();
+}
+
+fn scenario_index_wrong_type(runner: &mut ShowcaseRunner) {
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+#[faket(proto_ext::index(columns = "email"))]
+struct UserIndex {
+    id: i64,
+    email: String,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error = extract_error(&output);
+
+    runner
+        .scenario("Index Wrong Type for List")
+        .description(
+            "The `columns` field expects a list like `[\"a\", \"b\"]`, not a string.\n\
+             Using the wrong type produces a clear error explaining the expected format.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error)
+        .finish();
+}
+
+fn scenario_range_wrong_type(runner: &mut ShowcaseRunner) {
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+struct User {
+    #[faket(proto_ext::range(min = "zero", max = 100))]
+    age: i32,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error = extract_error(&output);
+
+    runner
+        .scenario("Range Wrong Type for Integer")
+        .description(
+            "The `min` and `max` fields in `range` expect integers, not strings.\n\
+             Using a string produces an error showing the correct syntax.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error)
+        .finish();
+}
+
+fn scenario_on_delete_string_instead_of_ident(runner: &mut ShowcaseRunner) {
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+struct Post {
+    #[faket(proto_ext::on_delete(action = "cascade"))]
+    author_id: i64,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error = extract_error(&output);
+
+    runner
+        .scenario("OnDelete String Instead of Identifier")
+        .description(
+            "The `action` field expects a bare identifier like `cascade`, not a string.\n\
+             Using `\"cascade\"` instead of `cascade` produces an error.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error)
+        .finish();
+}
+
 fn scenario_valid_usage(runner: &mut ShowcaseRunner) {
     let code = r#"use proto_attr::Faket;
 
@@ -283,6 +402,7 @@ struct UserProfile {
 
 /// Full ORM column configuration example
 #[derive(Faket)]
+#[faket(proto_ext::index(name = "idx_user_email", columns = ["email"], unique))]
 struct User {
     /// Primary key with auto-increment
     #[faket(proto_ext::column(name = "id", primary_key, auto_increment))]
@@ -307,6 +427,39 @@ struct User {
     /// Rename field for API compatibility
     #[faket(proto_ext::rename("email_address"))]
     email: String,
+
+    /// Validation: age must be between 0 and 150
+    #[faket(proto_ext::range(min = 0, max = 150, message = "Age must be realistic"))]
+    age: i32,
+}
+
+/// Foreign key with ON DELETE behavior
+#[derive(Faket)]
+struct Post {
+    #[faket(proto_ext::column(primary_key, auto_increment))]
+    id: i64,
+
+    /// When author is deleted, cascade delete their posts
+    #[faket(proto_ext::on_delete(action = cascade))]
+    author_id: i64,
+
+    /// When category is deleted, set to null
+    #[faket(proto_ext::on_delete(action = set_null))]
+    category_id: Option<i64>,
+
+    title: String,
+}
+
+/// Composite index example
+#[derive(Faket)]
+#[faket(proto_ext::index(columns = ["user_id", "created_at"]))]
+#[faket(proto_ext::index(name = "idx_status", columns = ["status"], unique))]
+struct Order {
+    #[faket(proto_ext::column(primary_key))]
+    id: i64,
+    user_id: i64,
+    status: String,
+    created_at: i64,
 }
 
 fn main() {
@@ -330,7 +483,10 @@ fn main() {
              This shows realistic usage patterns:\n\
              • skip - exclude structs/fields from generation\n\
              • rename - map to different table/column names\n\
-             • column - full control: name, nullable, sql_type, primary_key, auto_increment",
+             • column - full control: name, nullable, sql_type, primary_key, auto_increment\n\
+             • index - database indexes with columns list (list_string field type)\n\
+             • range - validation bounds with min/max (opt_i64 field type)\n\
+             • on_delete - foreign key behavior with bare identifiers (ident field type)",
         )
         .input(Language::Rust, code)
         .compiler_error(&error_output)
