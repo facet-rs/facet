@@ -20,6 +20,9 @@ mod unescaping;
 mod extension;
 pub use extension::*;
 
+mod on_error;
+pub use on_error::*;
+
 #[cfg(feature = "function")]
 pub mod function;
 

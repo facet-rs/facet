@@ -5,6 +5,7 @@ use super::*;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 impl Partial<'_> {
     /// Begin building the Some variant of an Option
+    #[facet_macros::on_error(self.poison_and_cleanup())]
     pub fn begin_some(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
@@ -79,6 +80,7 @@ impl Partial<'_> {
     }
 
     /// Begin building the inner value of a wrapper type
+    #[facet_macros::on_error(self.poison_and_cleanup())]
     pub fn begin_inner(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 
@@ -157,6 +159,7 @@ impl Partial<'_> {
 
     /// Begin bulding the source shape for custom deserialization, calling end() for this frame will
     /// call the deserialize_with function provided by the field and set the field using the result.
+    #[facet_macros::on_error(self.poison_and_cleanup())]
     pub fn begin_custom_deserialization(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
 

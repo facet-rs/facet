@@ -49,3 +49,34 @@ pub fn __unknown_attr(input: proc_macro::TokenStream) -> proc_macro::TokenStream
 pub fn __no_args(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     facet_macros_emit::no_args(input.into()).into()
 }
+
+/// Attribute macro that runs cleanup code when a method returns an error.
+///
+/// # Usage
+///
+/// ```ignore
+/// #[on_error(self.cleanup())]
+/// pub fn do_something(&mut self) -> Result<(), Error> {
+///     self.inner_work()?;
+///     Ok(())
+/// }
+/// ```
+///
+/// For methods returning `Result<&mut Self, E>`, the macro properly handles
+/// the borrow by discarding the returned reference and returning a fresh `Ok(self)`:
+///
+/// ```ignore
+/// #[on_error(self.poison_and_cleanup())]
+/// pub fn begin_some(&mut self) -> Result<&mut Self, ReflectError> {
+///     self.require_active()?;
+///     // ... implementation
+///     Ok(self)
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn on_error(
+    attr: proc_macro::TokenStream,
+    item: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    facet_macros_emit::on_error(attr.into(), item.into()).into()
+}
