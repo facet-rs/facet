@@ -267,7 +267,7 @@ impl VNumber {
 
     pub(crate) fn drop_impl(&mut self) {
         unsafe {
-            Self::dealloc(self.0.heap_ptr().cast());
+            Self::dealloc(self.0.heap_ptr_mut().cast());
         }
     }
 }

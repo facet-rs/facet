@@ -84,7 +84,9 @@ impl VArray {
     }
 
     fn items_ptr(&self) -> *const Value {
-        unsafe { (self.header() as *const ArrayHeader).add(1).cast() }
+        // Go through heap_ptr directly to avoid creating intermediate reference
+        // that would limit provenance to just the header
+        unsafe { (self.0.heap_ptr() as *const ArrayHeader).add(1).cast() }
     }
 
     fn items_ptr_mut(&mut self) -> *mut Value {
@@ -154,7 +156,7 @@ impl VArray {
         let new_cap = cmp::max(current_cap * 2, desired_cap.max(4));
 
         unsafe {
-            let new_ptr = Self::realloc_ptr(self.0.heap_ptr().cast(), new_cap);
+            let new_ptr = Self::realloc_ptr(self.0.heap_ptr_mut().cast(), new_cap);
             self.0.set_ptr(new_ptr.cast());
         }
     }
@@ -265,7 +267,7 @@ impl VArray {
 
         if len < cap {
             unsafe {
-                let new_ptr = Self::realloc_ptr(self.0.heap_ptr().cast(), len);
+                let new_ptr = Self::realloc_ptr(self.0.heap_ptr_mut().cast(), len);
                 self.0.set_ptr(new_ptr.cast());
             }
         }
@@ -282,7 +284,7 @@ impl VArray {
     pub(crate) fn drop_impl(&mut self) {
         self.clear();
         unsafe {
-            Self::dealloc_ptr(self.0.heap_ptr().cast());
+            Self::dealloc_ptr(self.0.heap_ptr_mut().cast());
         }
     }
 }

@@ -67,7 +67,9 @@ impl VBytes {
     }
 
     fn data_ptr(&self) -> *const u8 {
-        unsafe { (self.header() as *const BytesHeader).add(1).cast() }
+        // Go through heap_ptr directly to avoid creating intermediate reference
+        // that would limit provenance to just the header
+        unsafe { (self.0.heap_ptr() as *const BytesHeader).add(1).cast() }
     }
 
     /// Creates new bytes from a byte slice.
@@ -119,7 +121,7 @@ impl VBytes {
 
     pub(crate) fn drop_impl(&mut self) {
         unsafe {
-            Self::dealloc_ptr(self.0.heap_ptr().cast());
+            Self::dealloc_ptr(self.0.heap_ptr_mut().cast());
         }
     }
 }
