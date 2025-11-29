@@ -208,6 +208,17 @@ impl PrettyPrinter {
                     write!(f, "{pad:#<width$}")?;
                 }
             }
+            // Handle String specially to add quotes (like &str)
+            (Def::Scalar, _) if value.shape().id == <alloc::string::String as Facet>::SHAPE.id => {
+                let s = value.get::<alloc::string::String>().unwrap();
+                write!(f, "\"")?;
+                if self.use_colors {
+                    write!(f, "\x1b[33m{s}\x1b[0m")?; // yellow
+                } else {
+                    write!(f, "{s}")?;
+                }
+                write!(f, "\"")?;
+            }
             (Def::Scalar, _) => self.format_scalar(value, f)?,
             (Def::Option(_), _) => {
                 let option = value.into_option().unwrap();
