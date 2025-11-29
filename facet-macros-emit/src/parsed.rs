@@ -168,10 +168,8 @@ impl PFacetAttr {
                     let args = match &ext.args {
                         Some(ExtensionArgs::Parens(p)) => p.content.to_token_stream(),
                         Some(ExtensionArgs::Equals(e)) => {
-                            // Convert `= value` to a token stream including the equals sign
-                            let eq = e._eq.to_token_stream();
-                            let val = e.value.to_token_stream();
-                            quote::quote! { #eq #val }
+                            // Just use value - _eq is zero-sized and creates new token with default span
+                            e.value.to_token_stream()
                         }
                         None => TokenStream::new(),
                     };

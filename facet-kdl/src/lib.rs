@@ -61,8 +61,8 @@ macro_rules! __child {
         ::facet::ExtensionAttr::new("kdl", "child", &__UNIT)
     }};
     // Field with type and args (not expected, but handle gracefully)
-    { $field:ident : $ty:ty | $($args:tt)+ } => {{
-        ::core::compile_error!("kdl::child does not accept arguments")
+    { $field:ident : $ty:ty | $first:tt $($rest:tt)* } => {{
+        ::facet::__no_args!("kdl::child", $first)
     }};
     // Container level (no field)
     { } => {{
@@ -70,8 +70,8 @@ macro_rules! __child {
         ::facet::ExtensionAttr::new("kdl", "child", &__UNIT)
     }};
     // Container level with args
-    { | $($args:tt)+ } => {{
-        ::core::compile_error!("kdl::child does not accept arguments")
+    { | $first:tt $($rest:tt)* } => {{
+        ::facet::__no_args!("kdl::child", $first)
     }};
 }
 
@@ -83,15 +83,15 @@ macro_rules! __children {
         static __UNIT: () = ();
         ::facet::ExtensionAttr::new("kdl", "children", &__UNIT)
     }};
-    { $field:ident : $ty:ty | $($args:tt)+ } => {{
-        ::core::compile_error!("kdl::children does not accept arguments")
+    { $field:ident : $ty:ty | $first:tt $($rest:tt)* } => {{
+        ::facet::__no_args!("kdl::children", $first)
     }};
     { } => {{
         static __UNIT: () = ();
         ::facet::ExtensionAttr::new("kdl", "children", &__UNIT)
     }};
-    { | $($args:tt)+ } => {{
-        ::core::compile_error!("kdl::children does not accept arguments")
+    { | $first:tt $($rest:tt)* } => {{
+        ::facet::__no_args!("kdl::children", $first)
     }};
 }
 
@@ -103,15 +103,15 @@ macro_rules! __property {
         static __UNIT: () = ();
         ::facet::ExtensionAttr::new("kdl", "property", &__UNIT)
     }};
-    { $field:ident : $ty:ty | $($args:tt)+ } => {{
-        ::core::compile_error!("kdl::property does not accept arguments")
+    { $field:ident : $ty:ty | $first:tt $($rest:tt)* } => {{
+        ::facet::__no_args!("kdl::property", $first)
     }};
     { } => {{
         static __UNIT: () = ();
         ::facet::ExtensionAttr::new("kdl", "property", &__UNIT)
     }};
-    { | $($args:tt)+ } => {{
-        ::core::compile_error!("kdl::property does not accept arguments")
+    { | $first:tt $($rest:tt)* } => {{
+        ::facet::__no_args!("kdl::property", $first)
     }};
 }
 
@@ -123,15 +123,15 @@ macro_rules! __argument {
         static __UNIT: () = ();
         ::facet::ExtensionAttr::new("kdl", "argument", &__UNIT)
     }};
-    { $field:ident : $ty:ty | $($args:tt)+ } => {{
-        ::core::compile_error!("kdl::argument does not accept arguments")
+    { $field:ident : $ty:ty | $first:tt $($rest:tt)* } => {{
+        ::facet::__no_args!("kdl::argument", $first)
     }};
     { } => {{
         static __UNIT: () = ();
         ::facet::ExtensionAttr::new("kdl", "argument", &__UNIT)
     }};
-    { | $($args:tt)+ } => {{
-        ::core::compile_error!("kdl::argument does not accept arguments")
+    { | $first:tt $($rest:tt)* } => {{
+        ::facet::__no_args!("kdl::argument", $first)
     }};
 }
 
@@ -143,15 +143,15 @@ macro_rules! __arguments {
         static __UNIT: () = ();
         ::facet::ExtensionAttr::new("kdl", "arguments", &__UNIT)
     }};
-    { $field:ident : $ty:ty | $($args:tt)+ } => {{
-        ::core::compile_error!("kdl::arguments does not accept arguments")
+    { $field:ident : $ty:ty | $first:tt $($rest:tt)* } => {{
+        ::facet::__no_args!("kdl::arguments", $first)
     }};
     { } => {{
         static __UNIT: () = ();
         ::facet::ExtensionAttr::new("kdl", "arguments", &__UNIT)
     }};
-    { | $($args:tt)+ } => {{
-        ::core::compile_error!("kdl::arguments does not accept arguments")
+    { | $first:tt $($rest:tt)* } => {{
+        ::facet::__no_args!("kdl::arguments", $first)
     }};
 }
 
@@ -163,14 +163,14 @@ macro_rules! __node_name {
         static __UNIT: () = ();
         ::facet::ExtensionAttr::new("kdl", "node_name", &__UNIT)
     }};
-    { $field:ident : $ty:ty | $($args:tt)+ } => {{
-        ::core::compile_error!("kdl::node_name does not accept arguments")
+    { $field:ident : $ty:ty | $first:tt $($rest:tt)* } => {{
+        ::facet::__no_args!("kdl::node_name", $first)
     }};
     { } => {{
         static __UNIT: () = ();
         ::facet::ExtensionAttr::new("kdl", "node_name", &__UNIT)
     }};
-    { | $($args:tt)+ } => {{
-        ::core::compile_error!("kdl::node_name does not accept arguments")
+    { | $first:tt $($rest:tt)* } => {{
+        ::facet::__no_args!("kdl::node_name", $first)
     }};
 }

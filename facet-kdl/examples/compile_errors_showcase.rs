@@ -19,9 +19,9 @@ fn main() {
     // =========================================================================
 
     scenario_unknown_attribute(&mut runner);
-    // scenario_typo_in_attribute(&mut runner);
-    // scenario_attribute_with_unexpected_args(&mut runner);
-    // scenario_valid_usage(&mut runner);
+    scenario_typo_in_attribute(&mut runner);
+    scenario_attribute_with_unexpected_args(&mut runner);
+    scenario_valid_usage(&mut runner);
 
     runner.footer();
 }

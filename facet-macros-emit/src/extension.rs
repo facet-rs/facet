@@ -163,7 +163,49 @@ pub fn unknown_attr(input: TokenStream) -> TokenStream {
     };
 
     let span = ident.span();
-    let message = format!("unknown extension attribute `{}`", ident);
+    let message = format!("unknown extension attribute `{ident}`");
+
+    quote_spanned! { span =>
+        ::core::compile_error!(#message)
+    }
+}
+
+/// Implementation of the `__no_args!` proc macro.
+///
+/// Generates a "does not accept arguments" error with the span pointing to the arguments.
+///
+/// Input: `"ns::attr", token`
+/// Output: `compile_error!("ns::attr does not accept arguments")` with span on token
+pub fn no_args(input: TokenStream) -> TokenStream {
+    let mut tokens = input.into_iter();
+
+    // Get the message string literal
+    let msg = match tokens.next() {
+        Some(TokenTree::Literal(lit)) => {
+            let s = lit.to_string();
+            s.trim_matches('"').to_string()
+        }
+        _ => {
+            return quote! {
+                ::core::compile_error!("__no_args!: expected string literal")
+            };
+        }
+    };
+
+    // Skip comma
+    tokens.next();
+
+    // Get token for span
+    let span = match tokens.next() {
+        Some(tt) => tt.span(),
+        None => {
+            return quote! {
+                ::core::compile_error!("__no_args!: expected token for span")
+            };
+        }
+    };
+
+    let message = format!("{msg} does not accept arguments");
 
     quote_spanned! { span =>
         ::core::compile_error!(#message)

@@ -39,3 +39,13 @@ pub fn fn_shape(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
 pub fn __unknown_attr(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     facet_macros_emit::unknown_attr(input.into()).into()
 }
+
+/// Internal proc macro for "does not accept arguments" errors.
+///
+/// Input: `"ns::attr", token`
+/// Generates compile_error! with span on the token.
+#[doc(hidden)]
+#[proc_macro]
+pub fn __no_args(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    facet_macros_emit::no_args(input.into()).into()
+}
