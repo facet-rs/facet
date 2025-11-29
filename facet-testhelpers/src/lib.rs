@@ -50,32 +50,36 @@ impl Log for SimpleLogger {
 /// Panics if not running under `cargo-nextest`. This crate requires nextest
 /// for proper test isolation and logger setup.
 pub fn setup() {
-    // Check if we're running under cargo-nextest or miri
-    // (miri runs via `cargo miri nextest run` but doesn't set NEXTEST=1)
     let is_nextest = std::env::var("NEXTEST").as_deref() == Ok("1");
-    let is_miri = cfg!(miri);
-    if !is_nextest && !is_miri {
-        panic!(
-            "\n\
-            ╔══════════════════════════════════════════════════════════════════════════════╗\n\
-            ║                                                                              ║\n\
-            ║  This test suite requires cargo-nextest to run.                              ║\n\
-            ║                                                                              ║\n\
-            ║  cargo-nextest provides:                                                     ║\n\
-            ║    • Process-per-test isolation (required for our logger setup)              ║\n\
-            ║    • Faster parallel test execution                                          ║\n\
-            ║    • Better test output and reporting                                        ║\n\
-            ║                                                                              ║\n\
-            ║  Install it with:                                                            ║\n\
-            ║    cargo install cargo-nextest                                               ║\n\
-            ║                                                                              ║\n\
-            ║  Then run tests with:                                                        ║\n\
-            ║    cargo nextest run                                                         ║\n\
-            ║                                                                              ║\n\
-            ║  For more information, visit: https://nexte.st                               ║\n\
-            ║                                                                              ║\n\
-            ╚══════════════════════════════════════════════════════════════════════════════╝\n"
+    if !is_nextest {
+        let command = if cfg!(miri) {
+            "cargo miri nextest run"
+        } else {
+            "cargo nextest run"
+        };
+        let message = format!(
+            "This test suite requires cargo-nextest to run.\n\
+            \n\
+            cargo-nextest provides:\n\
+              • Process-per-test isolation (required for our logger setup)\n\
+              • Faster parallel test execution\n\
+              • Better test output and reporting\n\
+            \n\
+            Install it with:\n\
+              cargo install cargo-nextest\n\
+            \n\
+            Then run tests with:\n\
+              {command}\n\
+            \n\
+            For more information, visit: https://nexte.st"
         );
+        let boxed = boxen::builder()
+            .border_style(boxen::BorderStyle::Round)
+            .padding(1)
+            .border_color("red")
+            .render(&message)
+            .unwrap();
+        panic!("\n{boxed}");
     }
 
     let logger = Box::new(SimpleLogger);
