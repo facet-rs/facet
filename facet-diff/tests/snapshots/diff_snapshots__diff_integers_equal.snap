@@ -1,5 +1,13 @@
 ---
 source: facet-diff/tests/diff_snapshots.rs
-expression: a.diff(&b).to_string()
+expression: "format_diff_comparison(&a, &b)"
 ---
-42
+╭Before──────╮
+│42          │
+╰────────────╯
+╭After───────╮
+│42          │
+╰────────────╯
+╔Diff════════╗
+║42          ║
+╚════════════╝

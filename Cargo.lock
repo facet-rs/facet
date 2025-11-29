@@ -492,6 +492,7 @@ dependencies = [
 name = "facet-diff"
 version = "0.31.0"
 dependencies = [
+ "boxen",
  "facet",
  "facet-core",
  "facet-pretty",

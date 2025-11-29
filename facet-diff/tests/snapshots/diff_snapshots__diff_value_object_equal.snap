@@ -1,8 +1,22 @@
 ---
 source: facet-diff/tests/diff_snapshots.rs
-expression: a.diff(&b).to_string()
+expression: "format_diff_comparison(&a, &b)"
 ---
-{
-  name: "Alice",
-  age: 30,
-}
+╭Before──────────╮
+│{               │
+│  name: "Alice",│
+│  age: 30,      │
+│}               │
+╰────────────────╯
+╭After───────────╮
+│{               │
+│  name: "Alice",│
+│  age: 30,      │
+│}               │
+╰────────────────╯
+╔Diff════════════╗
+║{               ║
+║  name: "Alice",║
+║  age: 30,      ║
+║}               ║
+╚════════════════╝

@@ -1,24 +1,88 @@
 ---
 source: facet-diff/tests/diff_snapshots.rs
-expression: a.diff(&b).to_string()
+expression: "format_diff_comparison(&a, &b)"
 ---
-{
-  lead: {
-    salary: [31m150000[39m → [32m160000[39m
-  }
-  members: [
-    {
-      salary: [31m120000[39m → [32m125000[39m
-    }
-    {
-      id: [31m3[39m → [32m4[39m
-      name: [31mCharlie[39m → [32mDiana[39m
-      salary: [31m110000[39m → [32m135000[39m
-    }
-    {
-      id: [31m4[39m → [32m5[39m
-      name: [31mDiana[39m → [32mEve[39m
-      salary: [31m130000[39m → [32m115000[39m
-    }
-  ]
-}
+╭Before─────────────────────────╮
+│Team {                         │
+│  name: Engineering,           │
+│  lead: Employee {             │
+│    id: 1,                     │
+│    name: Alice,               │
+│    department: Engineering,   │
+│    salary: 150000,            │
+│  },                           │
+│  members: Vec<Employee> [     │
+│    Employee {                 │
+│      id: 2,                   │
+│      name: Bob,               │
+│      department: Engineering, │
+│      salary: 120000,          │
+│    },                         │
+│    Employee {                 │
+│      id: 3,                   │
+│      name: Charlie,           │
+│      department: Engineering, │
+│      salary: 110000,          │
+│    },                         │
+│    Employee {                 │
+│      id: 4,                   │
+│      name: Diana,             │
+│      department: Engineering, │
+│      salary: 130000,          │
+│    },                         │
+│  ],                           │
+│}                              │
+╰───────────────────────────────╯
+╭After──────────────────────────╮
+│Team {                         │
+│  name: Engineering,           │
+│  lead: Employee {             │
+│    id: 1,                     │
+│    name: Alice,               │
+│    department: Engineering,   │
+│    salary: 160000,            │
+│  },                           │
+│  members: Vec<Employee> [     │
+│    Employee {                 │
+│      id: 2,                   │
+│      name: Bob,               │
+│      department: Engineering, │
+│      salary: 125000,          │
+│    },                         │
+│    Employee {                 │
+│      id: 4,                   │
+│      name: Diana,             │
+│      department: Engineering, │
+│      salary: 135000,          │
+│    },                         │
+│    Employee {                 │
+│      id: 5,                   │
+│      name: Eve,               │
+│      department: Engineering, │
+│      salary: 115000,          │
+│    },                         │
+│  ],                           │
+│}                              │
+╰───────────────────────────────╯
+╔Diff═══════════════════════════╗
+║{                              ║
+║  lead: {                      ║
+║    salary: 150000 → 160000    ║
+║  }                            ║
+║  members: [                   ║
+║    {                          ║
+║      salary: 120000 → 125000  ║
+║    }                          ║
+║    {                          ║
+║      id: 3 → 4                ║
+║      name: Charlie → Diana    ║
+║      salary: 110000 → 135000  ║
+║    }                          ║
+║    {                          ║
+║      id: 4 → 5                ║
+║      name: Diana → Eve        ║
+║      salary: 130000 → 115000  ║
+║    }                          ║
+║  ]                            ║
+║}                              ║
+╚═══════════════════════════════╝

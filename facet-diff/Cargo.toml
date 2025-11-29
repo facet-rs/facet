@@ -17,6 +17,7 @@ facet-reflect = { path = "../facet-reflect" }
 owo-colors = "4"
 
 [dev-dependencies]
+boxen = "0.1"
 insta = "1.43.1"
 facet-value = { path = "../facet-value" }
 facet-testhelpers = { path = "../facet-testhelpers" }
