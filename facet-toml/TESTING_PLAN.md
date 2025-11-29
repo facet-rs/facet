@@ -20,21 +20,18 @@ Run the toml-rs compatibility tests and TOML compliance fixtures against facet-t
 
 ### Known Issues
 
-1. **Empty table `[empty]` causes memory safety crash**
-   - When a table header has no key-value pairs
-   - Likely missing initialization of the nested object value
+1. **Implicit table merging not yet implemented**
+   - TOML allows `[a]` followed by `[a.b.c]` which should navigate into existing `a`
+   - Currently creates duplicate keys instead of merging
+   - Need `begin_object_entry` to support "get or create" semantics
 
-2. **Array of tables `[[users]]` result differs from expected**
-   - The root object wrapper isn't being created correctly
-   - Need to investigate frame management
+### Recently Fixed
 
-### Deferred
-
-1. **Datetime support**
-   - TOML has native datetime types
-   - `facet_value::Value` doesn't have a Datetime variant
-   - Will deserialize datetimes to `time::DateTime` or similar (out of scope for Value)
-   - Skip datetime-related tests for now
+1. ~~Empty table `[empty]` causes memory safety crash~~ ✅
+2. ~~Array of tables `[[users]]` result differs from expected~~ ✅
+3. **Datetime support added** ✅
+   - Added `VDateTime` type to `facet_value::Value`
+   - Supports all TOML datetime variants (offset, local, date, time)
 
 ### Reference Test Files
 
