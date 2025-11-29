@@ -1501,6 +1501,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "proto-attr"
+version = "0.1.0"
+dependencies = [
+ "proto-attr-core",
+ "proto-attr-macros",
+]
+
+[[package]]
+name = "proto-attr-core"
+version = "0.1.0"
+
+[[package]]
+name = "proto-attr-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "strsim",
+ "syn",
+]
+
+[[package]]
+name = "proto-ext"
+version = "0.1.0"
+dependencies = [
+ "facet-showcase",
+ "proto-attr",
+ "proto-attr-macros",
+ "tempfile",
+]
+
+[[package]]
+name = "proto-user"
+version = "0.1.0"
+dependencies = [
+ "proto-attr",
+ "proto-ext",
+]
+
+[[package]]
 name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

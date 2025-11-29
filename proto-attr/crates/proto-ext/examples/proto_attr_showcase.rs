@@ -3,7 +3,7 @@
 //! This example demonstrates the helpful error messages you get when
 //! using extension attributes incorrectly.
 //!
-//! Run with: cargo run --example compile_errors_showcase
+//! Run with: cargo run --example proto_attr_showcase
 
 use facet_showcase::{Language, ShowcaseRunner};
 use std::process::Command;
@@ -35,9 +35,9 @@ fn compile_snippet(code: &str) -> String {
     fs::create_dir_all(&src_dir).unwrap();
 
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    let workspace_dir = Path::new(manifest_dir).parent().unwrap().parent().unwrap();
-    let proto_attr_path = workspace_dir.join("crates/proto-attr");
-    let proto_ext_path = workspace_dir.join("crates/proto-ext");
+    let proto_attr_crates = Path::new(manifest_dir).parent().unwrap();
+    let proto_attr_path = proto_attr_crates.join("proto-attr");
+    let proto_ext_path = proto_attr_crates.join("proto-ext");
 
     fs::write(
         test_dir.join("Cargo.toml"),

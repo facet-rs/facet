@@ -41,11 +41,30 @@ members = [
 
     # showcase infrastructure
     "facet-showcase",
+
+    # proto-attr experiment (temporary)
+    "proto-attr/crates/proto-attr-core",
+    "proto-attr/crates/proto-attr-macros",
+    "proto-attr/crates/proto-attr",
+    "proto-attr/crates/proto-ext",
+    "proto-attr/crates/proto-user",
 ]
 resolver = "3"
 
 [workspace.package]
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.88.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet"
+
+[workspace.dependencies]
+# proto-attr workspace dependencies
+proto-attr-core = { path = "proto-attr/crates/proto-attr-core" }
+proto-attr-macros = { path = "proto-attr/crates/proto-attr-macros" }
+proto-attr = { path = "proto-attr/crates/proto-attr" }
+proto-ext = { path = "proto-attr/crates/proto-ext" }
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "parsing", "printing"] }
+strsim = "0.11"
