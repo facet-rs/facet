@@ -9,6 +9,8 @@
 #[doc(hidden)]
 pub use proto_attr_macros::__attr_error as __attr_error_proc_macro;
 #[doc(hidden)]
+pub use proto_attr_macros::__build_struct_fields;
+#[doc(hidden)]
 pub use proto_attr_macros::__dispatch_attr;
 #[doc(hidden)]
 pub use proto_attr_macros::__dispatch_column_field;
@@ -50,11 +52,16 @@ pub struct Column {
 /// Uses proc-macro dispatcher to preserve spans for error messages.
 #[macro_export]
 macro_rules! __parse_attr {
-    // Dispatch via proc-macro to preserve span of $name for errors
+    // Dispatch via proc-macro to handle all variant types
     ($name:ident $($rest:tt)*) => {
         $crate::__dispatch_attr!{
             @namespace { $crate }
-            @known_attrs { skip, rename, column }
+            @enum_name { Attr }
+            @variants {
+                skip: unit,
+                rename: newtype,
+                column: rec Column { name: opt_string, primary_key: bool }
+            }
             @name { $name }
             @rest { $($rest)* }
         }
@@ -66,260 +73,9 @@ macro_rules! __parse_attr {
     };
 }
 
-// ============================================================================
-// SKIP VARIANT PARSER
-// ============================================================================
-
-/// Parse the `skip` attribute (unit variant, no arguments).
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __parse_skip {
-    // Valid: no arguments
-    (@name $name:ident @rest) => {
-        $crate::Attr::Skip
-    };
-
-    // Error: parentheses with content
-    (@name $name:ident @rest ($($args:tt)+)) => {
-        $crate::__spanned_error!{ { $name ($($args)+) } => "`skip` does not take arguments; use just `skip`" }
-    };
-
-    // Error: empty parentheses (allowed but unnecessary)
-    (@name $name:ident @rest ()) => {
-        $crate::Attr::Skip
-    };
-
-    // Error: equals syntax
-    (@name $name:ident @rest = $($rest:tt)*) => {
-        $crate::__spanned_error!{ { $name = $($rest)* } => "`skip` does not take a value; use just `skip`" }
-    };
-
-    // Error: any other trailing tokens
-    (@name $name:ident @rest $($rest:tt)+) => {
-        $crate::__spanned_error!{ { $name $($rest)+ } => "`skip` does not take arguments; use just `skip`" }
-    };
-}
-
-// ============================================================================
-// RENAME VARIANT PARSER
-// ============================================================================
-
-/// Parse the `rename` attribute (newtype variant, requires a string literal).
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __parse_rename {
-    // Valid: parens style with string literal
-    (@name $name:ident @rest ($lit:literal)) => {
-        $crate::Attr::Rename($lit)
-    };
-
-    // Valid: equals style with string literal
-    (@name $name:ident @rest = $lit:literal) => {
-        $crate::Attr::Rename($lit)
-    };
-
-    // Error: no value provided
-    (@name $name:ident @rest) => {
-        $crate::__spanned_error!{ { $name } => "`rename` requires a string value: `rename(\"name\")` or `rename = \"name\"`" }
-    };
-
-    // Error: empty parens
-    (@name $name:ident @rest ()) => {
-        $crate::__spanned_error!{ { $name () } => "`rename` requires a string value: `rename(\"name\")`" }
-    };
-
-    // Error: multiple values in parens
-    (@name $name:ident @rest ($a:tt $b:tt $($rest:tt)*)) => {
-        $crate::__spanned_error!{ { $name ($a $b $($rest)*) } => "`rename` takes exactly one string literal: `rename(\"name\")`" }
-    };
-
-    // Error: equals with no value after
-    (@name $name:ident @rest =) => {
-        $crate::__spanned_error!{ { $name = } => "`rename` requires a value after `=`: `rename = \"name\"`" }
-    };
-
-    // Error: something other than literal after equals (catch-all for = case)
-    (@name $name:ident @rest = $($rest:tt)+) => {
-        $crate::__spanned_error!{ { $name = $($rest)+ } => "`rename` expects a string literal: `rename = \"name\"`" }
-    };
-
-    // Error: parens with non-literal (will fail to match literal pattern above)
-    (@name $name:ident @rest ($($inner:tt)+)) => {
-        $crate::__spanned_error!{ { $name ($($inner)+) } => "`rename` expects a string literal: `rename(\"name\")`" }
-    };
-
-    // Error: any other syntax
-    (@name $name:ident @rest $($rest:tt)+) => {
-        $crate::__spanned_error!{ { $name $($rest)+ } => "`rename` expects: `rename(\"name\")` or `rename = \"name\"`" }
-    };
-}
-
-// ============================================================================
-// COLUMN VARIANT PARSER (entry point)
-// ============================================================================
-
-/// Parse the `column` attribute (struct variant with optional fields).
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __parse_column {
-    // Valid: with parentheses containing fields
-    (@name $attr_name:ident @rest ($($fields:tt)*)) => {
-        $crate::__parse_column_fields!{
-            @slots { @name { None } @primary_key { false } }
-            @rest { $($fields)* }
-        }
-    };
-
-    // Valid: no parentheses (use all defaults)
-    (@name $attr_name:ident @rest) => {
-        $crate::Attr::Column($crate::Column {
-            name: None,
-            primary_key: false,
-        })
-    };
-
-    // Error: equals syntax not supported for struct variants
-    (@name $attr_name:ident @rest = $($rest:tt)*) => {
-        $crate::__spanned_error!{ { $attr_name = $($rest)* } => "`column` uses parentheses syntax: `column(name = \"...\", primary_key)`" }
-    };
-
-    // Error: any other trailing tokens
-    (@name $attr_name:ident @rest $($rest:tt)+) => {
-        $crate::__spanned_error!{ { $attr_name $($rest)+ } => "`column` expects parentheses: `column(...)` or just `column`" }
-    };
-}
-
-// ============================================================================
-// COLUMN FIELD PARSER
-// ============================================================================
-
-/// Parse fields for the `column` struct variant.
-///
-/// Uses slot-based tracking to avoid duplicate field errors.
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __parse_column_fields {
-    // ========================================================================
-    // Terminal: all input consumed, build the struct from slots
-    // ========================================================================
-    (@slots { @name { $name:expr } @primary_key { $pk:expr } } @rest {}) => {
-        $crate::Attr::Column($crate::Column {
-            name: $name,
-            primary_key: $pk,
-        })
-    };
-    (@slots { @name { $name:expr } @primary_key { $pk:expr } } @rest { , }) => {
-        $crate::Attr::Column($crate::Column {
-            name: $name,
-            primary_key: $pk,
-        })
-    };
-
-    // ========================================================================
-    // Skip leading/trailing commas
-    // ========================================================================
-    (@slots { $($slots:tt)* } @rest { , $($rest:tt)* }) => {
-        $crate::__parse_column_fields!{ @slots { $($slots)* } @rest { $($rest)* } }
-    };
-
-    // ========================================================================
-    // Dispatch via proc-macro to handle fields with preserved spans
-    // ========================================================================
-    (@slots { $($slots:tt)* } @rest { $field:ident $($rest:tt)* }) => {
-        $crate::__dispatch_column_field!{
-            @namespace { $crate }
-            @slots { $($slots)* }
-            @field { $field }
-            @rest { $($rest)* }
-        }
-    };
-
-    // ========================================================================
-    // Callbacks from proc-macro with captured field token
-    // ========================================================================
-
-    // name = "literal"
-    (@field $field:ident @slots { @name { $_old:expr } @primary_key { $pk:expr } } @assign $lit:literal @rest { $($rest:tt)* }) => {
-        $crate::__parse_column_fields!{
-            @slots { @name { Some($lit) } @primary_key { $pk } }
-            @rest { $($rest)* }
-        }
-    };
-
-    // name without = (error with span)
-    (@field $field:ident @slots { $($slots:tt)* } @error_missing_value @rest { $($rest:tt)* }) => {
-        $crate::__spanned_error!{ { $field } => "`name` requires a string value: `name = \"column_name\"`" }
-    };
-
-    // primary_key = true
-    (@field $field:ident @slots { @name { $name:expr } @primary_key { $_old:expr } } @assign_bool true @rest { $($rest:tt)* }) => {
-        $crate::__parse_column_fields!{
-            @slots { @name { $name } @primary_key { true } }
-            @rest { $($rest)* }
-        }
-    };
-
-    // primary_key = false
-    (@field $field:ident @slots { @name { $name:expr } @primary_key { $_old:expr } } @assign_bool false @rest { $($rest:tt)* }) => {
-        $crate::__parse_column_fields!{
-            @slots { @name { $name } @primary_key { false } }
-            @rest { $($rest)* }
-        }
-    };
-
-    // primary_key (flag, no value)
-    (@field $field:ident @slots { @name { $name:expr } @primary_key { $_old:expr } } @flag @rest { $($rest:tt)* }) => {
-        $crate::__parse_column_fields!{
-            @slots { @name { $name } @primary_key { true } }
-            @rest { $($rest)* }
-        }
-    };
-}
-
-/// Helper to provide better error for `name` field without `=`
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __parse_name_field {
-    // name, ... or name (end) - missing value
-    (@name $name:ident @rest , $($rest:tt)*) => {
-        $crate::__spanned_error!{ { $name } => "`name` requires a string value: `name = \"column_name\"`" }
-    };
-    (@name $name:ident @rest) => {
-        $crate::__spanned_error!{ { $name } => "`name` requires a string value: `name = \"column_name\"`" }
-    };
-    // name(...) - wrong syntax
-    (@name $name:ident @rest ($($inner:tt)*) $($rest:tt)*) => {
-        $crate::__spanned_error!{ { $name ($($inner)*) } => "`name` uses equals syntax: `name = \"column_name\"`, not `name(...)`" }
-    };
-    // Anything else
-    (@name $name:ident @rest $($rest:tt)*) => {
-        $crate::__spanned_error!{ { $name } => "`name` requires a string value: `name = \"column_name\"`" }
-    };
-}
-
-// ============================================================================
-// BRIDGE MACROS (to call proc-macros with @-prefixed args)
-// ============================================================================
-
-/// Bridge macro to call the proc-macro for attribute errors.
-/// Uses $crate to reference the re-exported proc-macro, making it work cross-crate.
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __attr_error_bridge {
-    ($($tt:tt)*) => {
-        $crate::__attr_error_proc_macro!{ $($tt)* }
-    };
-}
-
-/// Bridge macro to call the proc-macro for field errors.
-/// Uses $crate to reference the re-exported proc-macro, making it work cross-crate.
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __field_error_bridge {
-    ($($tt:tt)*) => {
-        $crate::__field_error_proc_macro!{ $($tt)* }
-    };
-}
+// NOTE: The variant-specific macros (__parse_skip, __parse_rename, __parse_column, etc.)
+// are no longer needed since __dispatch_attr now handles all parsing directly.
+// They have been removed to keep the code clean.
 
 // ============================================================================
 // TESTS

@@ -15,5 +15,5 @@ nightly = []
 [dependencies]
 proc-macro2.workspace = true
 quote.workspace = true
-syn.workspace = true
+unsynn = "0.3.0"
 strsim.workspace = true

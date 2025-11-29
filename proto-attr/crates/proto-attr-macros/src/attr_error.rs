@@ -1,75 +1,79 @@
 //! Implementation of `__attr_error!` proc-macro.
 
 use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
 #[cfg(not(feature = "nightly"))]
 use quote::quote_spanned;
-use syn::parse::{Parse, ParseStream};
-use syn::{Ident, Token, braced};
+use unsynn::*;
 
-/// Input format:
-/// ```ignore
-/// @known_attrs { skip, rename, column }
-/// @got_name { colum }
-/// @got_rest { (...) }
-/// ```
-struct AttrErrorInput {
-    known_attrs: Vec<Ident>,
-    got_name: Ident,
-    // got_rest is captured but not used for now
+keyword! {
+    KKnownAttrs = "known_attrs";
+    KGotName = "got_name";
+    KGotRest = "got_rest";
 }
 
-impl Parse for AttrErrorInput {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        // @known_attrs { ... }
-        input.parse::<Token![@]>()?;
-        let label: Ident = input.parse()?;
-        if label != "known_attrs" {
-            return Err(syn::Error::new(label.span(), "expected `known_attrs`"));
-        }
-        let known_content;
-        braced!(known_content in input);
-        let known_attrs = known_content
-            .parse_terminated(Ident::parse, Token![,])?
-            .into_iter()
-            .collect();
+operator! {
+    At = "@";
+}
 
-        // @got_name { ... }
-        input.parse::<Token![@]>()?;
-        let label: Ident = input.parse()?;
-        if label != "got_name" {
-            return Err(syn::Error::new(label.span(), "expected `got_name`"));
-        }
-        let got_name_content;
-        braced!(got_name_content in input);
-        let got_name: Ident = got_name_content.parse()?;
+unsynn! {
+    /// Input format:
+    /// ```ignore
+    /// @known_attrs { skip, rename, column }
+    /// @got_name { colum }
+    /// @got_rest { (...) }
+    /// ```
+    struct AttrErrorInput {
+        known_attrs_section: KnownAttrsSection,
+        got_name_section: GotNameSection,
+        got_rest_section: GotRestSection,
+    }
 
-        // @got_rest { ... } - consume but ignore
-        input.parse::<Token![@]>()?;
-        let label: Ident = input.parse()?;
-        if label != "got_rest" {
-            return Err(syn::Error::new(label.span(), "expected `got_rest`"));
-        }
-        let _got_rest_content;
-        braced!(_got_rest_content in input);
-        // Consume all tokens in got_rest
-        let _: proc_macro2::TokenStream = _got_rest_content.parse()?;
+    struct KnownAttrsSection {
+        _at: At,
+        _kw: KKnownAttrs,
+        content: BraceGroupContaining<CommaDelimitedVec<Ident>>,
+    }
 
-        Ok(AttrErrorInput {
-            known_attrs,
-            got_name,
-        })
+    struct GotNameSection {
+        _at: At,
+        _kw: KGotName,
+        content: BraceGroupContaining<Ident>,
+    }
+
+    struct GotRestSection {
+        _at: At,
+        _kw: KGotRest,
+        content: BraceGroup,
     }
 }
 
 pub fn attr_error(input: TokenStream) -> TokenStream {
-    let input = syn::parse_macro_input!(input as AttrErrorInput);
+    let input2 = TokenStream2::from(input);
+    let mut iter = input2.to_token_iter();
 
-    let got_name_str = input.got_name.to_string();
-    let got_span = input.got_name.span();
+    let parsed: AttrErrorInput = match iter.parse() {
+        Ok(i) => i,
+        Err(e) => {
+            let msg = e.to_string();
+            return quote::quote! { compile_error!(#msg); }.into();
+        }
+    };
+
+    let known_attrs: Vec<_> = parsed
+        .known_attrs_section
+        .content
+        .content
+        .iter()
+        .map(|d| d.value.clone())
+        .collect();
+    let got_name = &parsed.got_name_section.content.content;
+    let got_name_str = got_name.to_string();
+    let got_span = got_name.span();
 
     // Find best suggestion using strsim
     let mut best_suggestion: Option<(&Ident, f64)> = None;
-    for known in &input.known_attrs {
+    for known in &known_attrs {
         let score = strsim::jaro_winkler(&got_name_str, &known.to_string());
         if score > 0.7 {
             match &best_suggestion {
@@ -82,7 +86,7 @@ pub fn attr_error(input: TokenStream) -> TokenStream {
         }
     }
 
-    let known_list: Vec<_> = input.known_attrs.iter().map(|i| i.to_string()).collect();
+    let known_list: Vec<_> = known_attrs.iter().map(|i| i.to_string()).collect();
     let known_str = known_list.join(", ");
 
     #[cfg(feature = "nightly")]

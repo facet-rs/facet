@@ -1,89 +1,91 @@
 //! Implementation of `__field_error!` proc-macro.
 
 use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
 #[cfg(not(feature = "nightly"))]
 use quote::quote_spanned;
-use syn::parse::{Parse, ParseStream};
-use syn::{Ident, Token, braced};
+use unsynn::*;
 
-/// Input format:
-/// ```ignore
-/// @struct_name { Column }
-/// @known_fields { name, primary_key }
-/// @got_name { nam }
-/// @got_rest { = "..." }
-/// ```
-struct FieldErrorInput {
-    struct_name: Ident,
-    known_fields: Vec<Ident>,
-    got_name: Ident,
-    // got_rest is captured but not used for now
+keyword! {
+    KStructName = "struct_name";
+    KKnownFields = "known_fields";
+    KGotName = "got_name";
+    KGotRest = "got_rest";
 }
 
-impl Parse for FieldErrorInput {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        // @struct_name { ... }
-        input.parse::<Token![@]>()?;
-        let label: Ident = input.parse()?;
-        if label != "struct_name" {
-            return Err(syn::Error::new(label.span(), "expected `struct_name`"));
-        }
-        let struct_name_content;
-        braced!(struct_name_content in input);
-        let struct_name: Ident = struct_name_content.parse()?;
+operator! {
+    At = "@";
+}
 
-        // @known_fields { ... }
-        input.parse::<Token![@]>()?;
-        let label: Ident = input.parse()?;
-        if label != "known_fields" {
-            return Err(syn::Error::new(label.span(), "expected `known_fields`"));
-        }
-        let known_content;
-        braced!(known_content in input);
-        let known_fields = known_content
-            .parse_terminated(Ident::parse, Token![,])?
-            .into_iter()
-            .collect();
+unsynn! {
+    /// Input format:
+    /// ```ignore
+    /// @struct_name { Column }
+    /// @known_fields { name, primary_key }
+    /// @got_name { nam }
+    /// @got_rest { = "..." }
+    /// ```
+    struct FieldErrorInput {
+        struct_name_section: StructNameSection,
+        known_fields_section: KnownFieldsSection,
+        got_name_section: GotNameSection,
+        got_rest_section: GotRestSection,
+    }
 
-        // @got_name { ... }
-        input.parse::<Token![@]>()?;
-        let label: Ident = input.parse()?;
-        if label != "got_name" {
-            return Err(syn::Error::new(label.span(), "expected `got_name`"));
-        }
-        let got_name_content;
-        braced!(got_name_content in input);
-        let got_name: Ident = got_name_content.parse()?;
+    struct StructNameSection {
+        _at: At,
+        _kw: KStructName,
+        content: BraceGroupContaining<Ident>,
+    }
 
-        // @got_rest { ... } - consume but ignore
-        input.parse::<Token![@]>()?;
-        let label: Ident = input.parse()?;
-        if label != "got_rest" {
-            return Err(syn::Error::new(label.span(), "expected `got_rest`"));
-        }
-        let _got_rest_content;
-        braced!(_got_rest_content in input);
-        // Consume all tokens in got_rest
-        let _: proc_macro2::TokenStream = _got_rest_content.parse()?;
+    struct KnownFieldsSection {
+        _at: At,
+        _kw: KKnownFields,
+        content: BraceGroupContaining<CommaDelimitedVec<Ident>>,
+    }
 
-        Ok(FieldErrorInput {
-            struct_name,
-            known_fields,
-            got_name,
-        })
+    struct GotNameSection {
+        _at: At,
+        _kw: KGotName,
+        content: BraceGroupContaining<Ident>,
+    }
+
+    struct GotRestSection {
+        _at: At,
+        _kw: KGotRest,
+        content: BraceGroup,
     }
 }
 
 pub fn field_error(input: TokenStream) -> TokenStream {
-    let input = syn::parse_macro_input!(input as FieldErrorInput);
+    let input2 = TokenStream2::from(input);
+    let mut iter = input2.to_token_iter();
 
-    let struct_name_str = input.struct_name.to_string();
-    let got_name_str = input.got_name.to_string();
-    let got_span = input.got_name.span();
+    let parsed: FieldErrorInput = match iter.parse() {
+        Ok(i) => i,
+        Err(e) => {
+            let msg = e.to_string();
+            return quote::quote! { compile_error!(#msg); }.into();
+        }
+    };
+
+    let struct_name = &parsed.struct_name_section.content.content;
+    let struct_name_str = struct_name.to_string();
+
+    let known_fields: Vec<_> = parsed
+        .known_fields_section
+        .content
+        .content
+        .iter()
+        .map(|d| d.value.clone())
+        .collect();
+    let got_name = &parsed.got_name_section.content.content;
+    let got_name_str = got_name.to_string();
+    let got_span = got_name.span();
 
     // Find best suggestion using strsim
     let mut best_suggestion: Option<(&Ident, f64)> = None;
-    for known in &input.known_fields {
+    for known in &known_fields {
         let score = strsim::jaro_winkler(&got_name_str, &known.to_string());
         if score > 0.7 {
             match &best_suggestion {
@@ -96,7 +98,7 @@ pub fn field_error(input: TokenStream) -> TokenStream {
         }
     }
 
-    let known_list: Vec<_> = input.known_fields.iter().map(|i| i.to_string()).collect();
+    let known_list: Vec<_> = known_fields.iter().map(|i| i.to_string()).collect();
     let known_str = known_list.join(", ");
 
     #[cfg(feature = "nightly")]

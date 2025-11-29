@@ -47,6 +47,7 @@ members = [
     "proto-attr/crates/proto-attr-macros",
     "proto-attr/crates/proto-attr",
     "proto-attr/crates/proto-ext",
+    "proto-attr/crates/proto-ext-gen",
     "proto-attr/crates/proto-user",
 ]
 resolver = "3"
