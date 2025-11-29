@@ -1,0 +1,10 @@
+[package]
+name = "proto-ext"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Example extension crate using proto-attr grammar"
+
+[dependencies]
+proto-attr.workspace = true
+proto-attr-macros.workspace = true

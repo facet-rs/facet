@@ -1,0 +1,10 @@
+[package]
+name = "proto-attr"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Declarative attribute grammar system"
+
+[dependencies]
+proto-attr-core.workspace = true
+proto-attr-macros.workspace = true
