@@ -39,6 +39,15 @@ fn main() {
     scenario_bool_as_string(&mut runner);
     scenario_integer_used_as_flag(&mut runner);
 
+    // Smart suggestions for common mistakes
+    scenario_ident_instead_of_string(&mut runner);
+    scenario_single_string_instead_of_list(&mut runner);
+
+    // Help text in error messages
+    scenario_help_text_column(&mut runner);
+    scenario_help_text_index(&mut runner);
+    scenario_help_text_range(&mut runner);
+
     // Valid usage showcasing all field types
     scenario_valid_usage(&mut runner);
 
@@ -384,7 +393,7 @@ fn main() {}
         .scenario("OnDelete String Instead of Identifier")
         .description(
             "The `action` field expects a bare identifier like `cascade`, not a string.\n\
-             Using `\"cascade\"` instead of `cascade` produces an error.",
+             The error message suggests removing the quotes: `action = cascade`.",
         )
         .input(Language::Rust, code)
         .compiler_error(&error)
@@ -468,7 +477,7 @@ fn main() {}
         .scenario("Wrong Bracket Type for List")
         .description(
             "Lists use square brackets `[...]`, not curly braces `{...}`.\n\
-             Using the wrong delimiter produces a helpful error.",
+             The error specifically tells you to use square brackets.",
         )
         .input(Language::Rust, code)
         .compiler_error(&error)
@@ -493,8 +502,8 @@ fn main() {}
     runner
         .scenario("Integer Overflow")
         .description(
-            "Integer values must fit within i64 range.\n\
-             Numbers that overflow produce an error at compile time.",
+            "The error shows the field name, the value, and the schema-defined type.\n\
+             Each integer field in the grammar specifies its type (here: i64).",
         )
         .input(Language::Rust, code)
         .compiler_error(&error)
@@ -520,7 +529,7 @@ fn main() {}
         .scenario("Bool Field with String Value")
         .description(
             "Boolean fields expect `true` or `false` literals, not strings.\n\
-             Using `\"true\"` instead of `true` produces an error.",
+             The error suggests removing the quotes: `primary_key = true`.",
         )
         .input(Language::Rust, code)
         .compiler_error(&error)
@@ -547,6 +556,146 @@ fn main() {}
         .description(
             "Integer fields require a value; they cannot be used as flags.\n\
              Using `min` without `= value` produces an error.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error)
+        .finish();
+}
+
+// ============================================================================
+// SMART SUGGESTIONS FOR COMMON MISTAKES
+// ============================================================================
+
+fn scenario_ident_instead_of_string(runner: &mut ShowcaseRunner) {
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+struct User {
+    #[faket(proto_ext::column(name = user_id))]
+    id: i64,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error = extract_error(&output);
+
+    runner
+        .scenario("Identifier Instead of String")
+        .description(
+            "String fields require quoted values, not bare identifiers.\n\
+             The error suggests adding quotes: `name = \"user_id\"`.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error)
+        .finish();
+}
+
+fn scenario_single_string_instead_of_list(runner: &mut ShowcaseRunner) {
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+#[faket(proto_ext::index(columns = "email"))]
+struct UserIndex {
+    id: i64,
+    email: String,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error = extract_error(&output);
+
+    runner
+        .scenario("Single String Instead of List")
+        .description(
+            "List fields require `[...]` syntax even for a single element.\n\
+             The error suggests wrapping in brackets: `columns = [\"email\"]`.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error)
+        .finish();
+}
+
+// ============================================================================
+// HELP TEXT IN ERROR MESSAGES
+// ============================================================================
+
+fn scenario_help_text_column(runner: &mut ShowcaseRunner) {
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+struct User {
+    #[faket(proto_ext::column(primary_key = "yes"))]
+    id: i64,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error = extract_error(&output);
+
+    runner
+        .scenario("Help Text: Column Primary Key")
+        .description(
+            "Error messages include contextual help explaining the field AND how to use it.\n\
+             The help shows: correct syntax, typical usage, and semantic meaning.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error)
+        .finish();
+}
+
+fn scenario_help_text_index(runner: &mut ShowcaseRunner) {
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+#[faket(proto_ext::index(columns))]
+struct UserIndex {
+    id: i64,
+    email: String,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error = extract_error(&output);
+
+    runner
+        .scenario("Help Text: Index Columns")
+        .description(
+            "The help text explains that `columns` specifies which columns\n\
+             to include in the index: \"Columns to include in the index\".",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error)
+        .finish();
+}
+
+fn scenario_help_text_range(runner: &mut ShowcaseRunner) {
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+struct User {
+    #[faket(proto_ext::range(min = "zero"))]
+    age: i32,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error = extract_error(&output);
+
+    runner
+        .scenario("Help Text: Range Min")
+        .description(
+            "The help text clarifies that `min` is the \"Minimum value (inclusive)\".\n\
+             Doc comments in the grammar DSL become contextual help in errors.",
         )
         .input(Language::Rust, code)
         .compiler_error(&error)

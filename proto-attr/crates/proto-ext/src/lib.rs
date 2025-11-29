@@ -139,23 +139,35 @@ macro_rules! __parse_attr {
                 skip: unit,
                 rename: newtype,
                 column: rec Column {
+                    /// Override the database column name; use `name = "col_name"` (defaults to Rust field name)
                     name: opt_string,
+                    /// Whether this column accepts NULL; use `nullable` or `nullable = true/false` (default: inferred from Option<T>)
                     nullable: opt_bool,
+                    /// Override the SQL type; use `sql_type = "VARCHAR(255)"` or `sql_type = "TEXT"` (default: inferred from Rust type)
                     sql_type: opt_string,
+                    /// Mark as primary key; use `primary_key` or `primary_key = true` (tables typically have one primary key)
                     primary_key: bool,
+                    /// Enable auto-increment; use `auto_increment` (usually combined with `primary_key` for integer IDs)
                     auto_increment: bool
                 },
                 index: rec Index {
+                    /// Custom index name; use `name = "idx_..."` (auto-generated like `idx_table_cols` if not specified)
                     name: opt_string,
+                    /// Columns in this index; use `columns = ["col1", "col2"]` (order matters for query optimization)
                     columns: list_string,
+                    /// Enforce uniqueness; use `unique` to prevent duplicate values in indexed columns
                     unique: bool
                 },
                 range: rec Range {
+                    /// Minimum allowed value (inclusive); use `min = 0` to reject negative numbers
                     min: opt_i64,
+                    /// Maximum allowed value (inclusive); use `max = 100` to cap the value
                     max: opt_i64,
+                    /// Custom validation error; use `message = "..."` to override the default error text
                     message: opt_string
                 },
                 on_delete: rec OnDelete {
+                    /// What happens when referenced row is deleted; use `action = cascade` (delete), `set_null`, `restrict` (prevent), or `no_action`
                     action: ident
                 }
             }
