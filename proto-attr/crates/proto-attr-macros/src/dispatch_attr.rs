@@ -140,6 +140,12 @@ enum FieldKind {
     String,
     OptString,
     OptBool,
+    I64,
+    OptI64,
+    ListString,
+    ListI64,
+    /// Bare identifier like `cascade` or `post` - captured as &'static str
+    Ident,
 }
 
 impl DispatchAttrInput {
@@ -188,6 +194,11 @@ impl VariantDef {
                             "string" => FieldKind::String,
                             "opt_string" => FieldKind::OptString,
                             "opt_bool" => FieldKind::OptBool,
+                            "i64" => FieldKind::I64,
+                            "opt_i64" => FieldKind::OptI64,
+                            "list_string" => FieldKind::ListString,
+                            "list_i64" => FieldKind::ListI64,
+                            "ident" => FieldKind::Ident,
                             _ => return Err(format!("unknown field kind: {}", kind_str)),
                         };
                         Ok((name, kind))
@@ -455,6 +466,11 @@ fn generate_struct(
                 FieldKind::String => quote! { string },
                 FieldKind::OptString => quote! { opt_string },
                 FieldKind::OptBool => quote! { opt_bool },
+                FieldKind::I64 => quote! { i64 },
+                FieldKind::OptI64 => quote! { opt_i64 },
+                FieldKind::ListString => quote! { list_string },
+                FieldKind::ListI64 => quote! { list_i64 },
+                FieldKind::Ident => quote! { ident },
             };
             quote! { #name: #kind_str }
         })
@@ -469,6 +485,11 @@ fn generate_struct(
                 FieldKind::String => quote! { "" },
                 FieldKind::OptString => quote! { None },
                 FieldKind::OptBool => quote! { None },
+                FieldKind::I64 => quote! { 0 },
+                FieldKind::OptI64 => quote! { None },
+                FieldKind::ListString => quote! { &[] },
+                FieldKind::ListI64 => quote! { &[] },
+                FieldKind::Ident => quote! { "" },
             };
             quote! { #name: #default }
         })

@@ -2,6 +2,44 @@
 //!
 //! This proc-macro handles all struct field parsing in one shot,
 //! avoiding the need for recursive macro_rules calls.
+//!
+//! # Future Improvement: Span Preservation
+//!
+//! Currently, we extract raw values (String, i64, etc.) but discard source
+//! location information. For better runtime diagnostics, we should preserve
+//! spans so consumers can point back to exact source locations:
+//!
+//! ```ignore
+//! pub struct Spanned<T> {
+//!     pub value: T,
+//!     pub span: SourceSpan,
+//! }
+//!
+//! pub struct SourceSpan {
+//!     pub file: &'static str,
+//!     pub line: u32,
+//!     pub column: u32,
+//! }
+//! ```
+//!
+//! This would let libraries say "this `cascade` at line 47 col 12 is invalid..."
+//! Implementation would require:
+//! 1. Capture `proc_macro2::Span` during parsing
+//! 2. Convert to runtime-friendly `SourceSpan` struct
+//! 3. Wrap values in `Spanned<T>` (e.g., `Spanned<&'static str>`)
+//!
+//! # Future Improvement: Nested Struct Types
+//!
+//! Currently, we don't support nested struct fields like:
+//! ```ignore
+//! #[facet(api::endpoint(auth(required, roles = ["admin"])))]
+//! ```
+//!
+//! Supporting this would require:
+//! 1. Defining nested types in the grammar DSL
+//! 2. Referencing them from fields (e.g., `auth: nested AuthConfig`)
+//! 3. Recursively parsing parenthesized groups as struct fields
+//! 4. Generating nested struct instances at compile time
 
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree};
@@ -120,6 +158,12 @@ enum FieldKind {
     String,
     OptString,
     OptBool,
+    I64,
+    OptI64,
+    ListString,
+    ListI64,
+    /// Bare identifier like `cascade` or `post` - captured as &'static str
+    Ident,
 }
 
 /// Parsed field value from input
@@ -135,6 +179,14 @@ enum FieldValue {
     String(String),
     /// Bool literal: `primary_key = true`
     Bool(bool),
+    /// Integer literal: `min = 0`
+    I64(i64),
+    /// List of strings: `columns = ["id", "name"]`
+    ListString(Vec<String>),
+    /// List of integers: `values = [1, 2, 3]`
+    ListI64(Vec<i64>),
+    /// Bare identifier: `method = post`
+    Ident(String),
     /// Flag (no value): `primary_key`
     Flag,
 }
@@ -159,11 +211,13 @@ impl BuildStructFieldsInput {
                     "string" => FieldKind::String,
                     "opt_string" => FieldKind::OptString,
                     "opt_bool" => FieldKind::OptBool,
+                    "i64" => FieldKind::I64,
+                    "opt_i64" => FieldKind::OptI64,
+                    "list_string" => FieldKind::ListString,
+                    "list_i64" => FieldKind::ListI64,
+                    "ident" => FieldKind::Ident,
                     _ => {
-                        return Err(format!(
-                            "expected `bool`, `string`, `opt_string`, or `opt_bool`, got `{}`",
-                            kind_str
-                        ));
+                        return Err(format!("unknown field kind `{}`", kind_str));
                     }
                 };
                 Ok(ParsedFieldDef { name, kind })
@@ -239,6 +293,11 @@ fn emit_error(err: SpannedError, input: &ParsedBuildInput) -> TokenStream {
                     FieldKind::String => quote! { "" },
                     FieldKind::OptString => quote! { None },
                     FieldKind::OptBool => quote! { None },
+                    FieldKind::I64 => quote! { 0 },
+                    FieldKind::OptI64 => quote! { None },
+                    FieldKind::ListString => quote! { &[] },
+                    FieldKind::ListI64 => quote! { &[] },
+                    FieldKind::Ident => quote! { "" },
                 };
                 quote! { #name: #default }
             })
@@ -300,10 +359,35 @@ fn build_struct_fields_impl(
                     FieldValue::Flag => quote! { Some(true) },
                     _ => quote! { None },
                 },
+                (Some(p), FieldKind::I64) => match &p.value {
+                    FieldValue::I64(n) => quote! { #n },
+                    _ => quote! { 0 }, // Will error elsewhere
+                },
+                (Some(p), FieldKind::OptI64) => match &p.value {
+                    FieldValue::I64(n) => quote! { Some(#n) },
+                    _ => quote! { None },
+                },
+                (Some(p), FieldKind::ListString) => match &p.value {
+                    FieldValue::ListString(items) => quote! { &[#(#items),*] },
+                    _ => quote! { &[] },
+                },
+                (Some(p), FieldKind::ListI64) => match &p.value {
+                    FieldValue::ListI64(items) => quote! { &[#(#items),*] },
+                    _ => quote! { &[] },
+                },
+                (Some(p), FieldKind::Ident) => match &p.value {
+                    FieldValue::Ident(s) => quote! { #s },
+                    _ => quote! { "" },
+                },
                 (None, FieldKind::String) => quote! { "" },
                 (None, FieldKind::OptString) => quote! { None },
                 (None, FieldKind::Bool) => quote! { false },
                 (None, FieldKind::OptBool) => quote! { None },
+                (None, FieldKind::I64) => quote! { 0 },
+                (None, FieldKind::OptI64) => quote! { None },
+                (None, FieldKind::ListString) => quote! { &[] },
+                (None, FieldKind::ListI64) => quote! { &[] },
+                (None, FieldKind::Ident) => quote! { "" },
             };
 
             quote! { #field_name: #value }
@@ -392,6 +476,42 @@ fn parse_input_fields(
                     return Err(SpannedError {
                         message: format!(
                             "`{}` requires a string value: `{} = \"value\"`",
+                            field_name_str, field_name_str
+                        ),
+                        span: field_span,
+                    });
+                }
+                FieldKind::I64 | FieldKind::OptI64 => {
+                    return Err(SpannedError {
+                        message: format!(
+                            "`{}` requires an integer value: `{} = 42`",
+                            field_name_str, field_name_str
+                        ),
+                        span: field_span,
+                    });
+                }
+                FieldKind::ListString => {
+                    return Err(SpannedError {
+                        message: format!(
+                            "`{}` requires a list value: `{} = [\"a\", \"b\"]`",
+                            field_name_str, field_name_str
+                        ),
+                        span: field_span,
+                    });
+                }
+                FieldKind::ListI64 => {
+                    return Err(SpannedError {
+                        message: format!(
+                            "`{}` requires a list value: `{} = [1, 2, 3]`",
+                            field_name_str, field_name_str
+                        ),
+                        span: field_span,
+                    });
+                }
+                FieldKind::Ident => {
+                    return Err(SpannedError {
+                        message: format!(
+                            "`{}` requires an identifier value: `{} = some_value`",
                             field_name_str, field_name_str
                         ),
                         span: field_span,
@@ -487,6 +607,93 @@ fn parse_input_fields(
                             });
                         }
                     }
+                    FieldKind::I64 | FieldKind::OptI64 => {
+                        // Expect integer literal (possibly negative)
+                        let (value, advance) = parse_integer_value(&tokens[i - 1..], value_token)?;
+                        parsed.push(ParsedField {
+                            name: field_name_str,
+                            name_span: field_span,
+                            value: FieldValue::I64(value),
+                        });
+                        // Advance past any additional tokens consumed (for negative numbers)
+                        i += advance;
+                    }
+                    FieldKind::ListString => {
+                        // Expect bracket group with string literals: ["a", "b"]
+                        if let TokenTree::Group(g) = value_token {
+                            if g.delimiter() == proc_macro2::Delimiter::Bracket {
+                                let items = parse_string_list(&g.stream())?;
+                                parsed.push(ParsedField {
+                                    name: field_name_str,
+                                    name_span: field_span,
+                                    value: FieldValue::ListString(items),
+                                });
+                            } else {
+                                return Err(SpannedError {
+                                    message: format!(
+                                        "`{}` expects a list: `{} = [\"a\", \"b\"]`",
+                                        field_name_str, field_name_str
+                                    ),
+                                    span: value_token.span(),
+                                });
+                            }
+                        } else {
+                            return Err(SpannedError {
+                                message: format!(
+                                    "`{}` expects a list: `{} = [\"a\", \"b\"]`",
+                                    field_name_str, field_name_str
+                                ),
+                                span: value_token.span(),
+                            });
+                        }
+                    }
+                    FieldKind::ListI64 => {
+                        // Expect bracket group with integer literals: [1, 2, 3]
+                        if let TokenTree::Group(g) = value_token {
+                            if g.delimiter() == proc_macro2::Delimiter::Bracket {
+                                let items = parse_i64_list(&g.stream())?;
+                                parsed.push(ParsedField {
+                                    name: field_name_str,
+                                    name_span: field_span,
+                                    value: FieldValue::ListI64(items),
+                                });
+                            } else {
+                                return Err(SpannedError {
+                                    message: format!(
+                                        "`{}` expects a list: `{} = [1, 2, 3]`",
+                                        field_name_str, field_name_str
+                                    ),
+                                    span: value_token.span(),
+                                });
+                            }
+                        } else {
+                            return Err(SpannedError {
+                                message: format!(
+                                    "`{}` expects a list: `{} = [1, 2, 3]`",
+                                    field_name_str, field_name_str
+                                ),
+                                span: value_token.span(),
+                            });
+                        }
+                    }
+                    FieldKind::Ident => {
+                        // Expect bare identifier: method = post
+                        if let TokenTree::Ident(ident) = value_token {
+                            parsed.push(ParsedField {
+                                name: field_name_str,
+                                name_span: field_span,
+                                value: FieldValue::Ident(ident.to_string()),
+                            });
+                        } else {
+                            return Err(SpannedError {
+                                message: format!(
+                                    "`{}` expects an identifier: `{} = some_value`",
+                                    field_name_str, field_name_str
+                                ),
+                                span: value_token.span(),
+                            });
+                        }
+                    }
                 }
             } else if p.as_char() == ',' {
                 // Flag followed by comma
@@ -502,6 +709,42 @@ fn parse_input_fields(
                         return Err(SpannedError {
                             message: format!(
                                 "`{}` requires a string value: `{} = \"value\"`",
+                                field_name_str, field_name_str
+                            ),
+                            span: field_span,
+                        });
+                    }
+                    FieldKind::I64 | FieldKind::OptI64 => {
+                        return Err(SpannedError {
+                            message: format!(
+                                "`{}` requires an integer value: `{} = 42`",
+                                field_name_str, field_name_str
+                            ),
+                            span: field_span,
+                        });
+                    }
+                    FieldKind::ListString => {
+                        return Err(SpannedError {
+                            message: format!(
+                                "`{}` requires a list value: `{} = [\"a\", \"b\"]`",
+                                field_name_str, field_name_str
+                            ),
+                            span: field_span,
+                        });
+                    }
+                    FieldKind::ListI64 => {
+                        return Err(SpannedError {
+                            message: format!(
+                                "`{}` requires a list value: `{} = [1, 2, 3]`",
+                                field_name_str, field_name_str
+                            ),
+                            span: field_span,
+                        });
+                    }
+                    FieldKind::Ident => {
+                        return Err(SpannedError {
+                            message: format!(
+                                "`{}` requires an identifier value: `{} = some_value`",
                                 field_name_str, field_name_str
                             ),
                             span: field_span,
@@ -535,11 +778,196 @@ fn parse_input_fields(
                         span: field_span,
                     });
                 }
+                FieldKind::I64 | FieldKind::OptI64 => {
+                    return Err(SpannedError {
+                        message: format!(
+                            "`{}` requires an integer value: `{} = 42`",
+                            field_name_str, field_name_str
+                        ),
+                        span: field_span,
+                    });
+                }
+                FieldKind::ListString => {
+                    return Err(SpannedError {
+                        message: format!(
+                            "`{}` requires a list value: `{} = [\"a\", \"b\"]`",
+                            field_name_str, field_name_str
+                        ),
+                        span: field_span,
+                    });
+                }
+                FieldKind::ListI64 => {
+                    return Err(SpannedError {
+                        message: format!(
+                            "`{}` requires a list value: `{} = [1, 2, 3]`",
+                            field_name_str, field_name_str
+                        ),
+                        span: field_span,
+                    });
+                }
+                FieldKind::Ident => {
+                    return Err(SpannedError {
+                        message: format!(
+                            "`{}` requires an identifier value: `{} = some_value`",
+                            field_name_str, field_name_str
+                        ),
+                        span: field_span,
+                    });
+                }
             }
         }
     }
 
     Ok(parsed)
+}
+
+/// Parse an integer value, handling optional negative sign
+fn parse_integer_value(
+    tokens: &[TokenTree],
+    value_token: &TokenTree,
+) -> std::result::Result<(i64, usize), SpannedError> {
+    // Check if the value token is a negative sign
+    if let TokenTree::Punct(p) = value_token {
+        if p.as_char() == '-' {
+            // Next token should be the number
+            if tokens.len() > 1 {
+                if let TokenTree::Literal(lit) = &tokens[1] {
+                    let lit_str = lit.to_string();
+                    if let Ok(n) = lit_str.parse::<i64>() {
+                        return Ok((-n, 1)); // Consumed one extra token
+                    }
+                }
+            }
+            return Err(SpannedError {
+                message: "expected integer literal after `-`".to_string(),
+                span: p.span(),
+            });
+        }
+    }
+
+    // Regular positive integer
+    if let TokenTree::Literal(lit) = value_token {
+        let lit_str = lit.to_string();
+        // Try to parse as integer
+        if let Ok(n) = lit_str.parse::<i64>() {
+            return Ok((n, 0));
+        }
+        // Also try parsing with suffix (like 0i64)
+        let cleaned = lit_str.trim_end_matches(|c: char| c.is_alphabetic() || c == '_');
+        if let Ok(n) = cleaned.parse::<i64>() {
+            return Ok((n, 0));
+        }
+        return Err(SpannedError {
+            message: format!("expected integer literal, got `{}`", lit_str),
+            span: lit.span(),
+        });
+    }
+
+    Err(SpannedError {
+        message: format!("expected integer literal, got `{}`", value_token),
+        span: value_token.span(),
+    })
+}
+
+/// Parse a list of string literals from bracket contents: "a", "b", "c"
+fn parse_string_list(stream: &TokenStream2) -> std::result::Result<Vec<String>, SpannedError> {
+    let tokens: Vec<TokenTree> = stream.clone().into_iter().collect();
+    let mut items = Vec::new();
+
+    let mut i = 0;
+    while i < tokens.len() {
+        // Skip commas
+        if let TokenTree::Punct(p) = &tokens[i] {
+            if p.as_char() == ',' {
+                i += 1;
+                continue;
+            }
+        }
+
+        // Expect string literal
+        if let TokenTree::Literal(lit) = &tokens[i] {
+            let lit_str = lit.to_string();
+            if lit_str.starts_with('\"') && lit_str.ends_with('\"') {
+                let inner = lit_str[1..lit_str.len() - 1].to_string();
+                items.push(inner);
+                i += 1;
+            } else {
+                return Err(SpannedError {
+                    message: format!("expected string literal in list, got `{}`", lit_str),
+                    span: lit.span(),
+                });
+            }
+        } else {
+            return Err(SpannedError {
+                message: format!("expected string literal in list, got `{}`", tokens[i]),
+                span: tokens[i].span(),
+            });
+        }
+    }
+
+    Ok(items)
+}
+
+/// Parse a list of integer literals from bracket contents: 1, 2, 3
+fn parse_i64_list(stream: &TokenStream2) -> std::result::Result<Vec<i64>, SpannedError> {
+    let tokens: Vec<TokenTree> = stream.clone().into_iter().collect();
+    let mut items = Vec::new();
+
+    let mut i = 0;
+    while i < tokens.len() {
+        // Skip commas
+        if let TokenTree::Punct(p) = &tokens[i] {
+            if p.as_char() == ',' {
+                i += 1;
+                continue;
+            }
+            // Handle negative numbers
+            if p.as_char() == '-' {
+                if i + 1 < tokens.len() {
+                    if let TokenTree::Literal(lit) = &tokens[i + 1] {
+                        let lit_str = lit.to_string();
+                        if let Ok(n) = lit_str.parse::<i64>() {
+                            items.push(-n);
+                            i += 2;
+                            continue;
+                        }
+                    }
+                }
+                return Err(SpannedError {
+                    message: "expected integer after `-`".to_string(),
+                    span: p.span(),
+                });
+            }
+        }
+
+        // Expect integer literal
+        if let TokenTree::Literal(lit) = &tokens[i] {
+            let lit_str = lit.to_string();
+            if let Ok(n) = lit_str.parse::<i64>() {
+                items.push(n);
+                i += 1;
+            } else {
+                // Try stripping suffix
+                let cleaned = lit_str.trim_end_matches(|c: char| c.is_alphabetic() || c == '_');
+                if let Ok(n) = cleaned.parse::<i64>() {
+                    items.push(n);
+                    i += 1;
+                } else {
+                    return Err(SpannedError {
+                        message: format!("expected integer literal in list, got `{}`", lit_str),
+                        span: lit.span(),
+                    });
+                }
+            }
+        } else {
+            return Err(SpannedError {
+                message: format!("expected integer literal in list, got `{}`", tokens[i]),
+                span: tokens[i].span(),
+            });
+        }
+    }
+
+    Ok(items)
 }
 
 fn find_closest<'a>(target: &str, candidates: &'a [String]) -> Option<&'a str> {

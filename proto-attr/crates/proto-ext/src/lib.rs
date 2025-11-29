@@ -32,15 +32,93 @@ pub enum Attr {
     Rename(&'static str),
     /// Column configuration
     Column(Column),
+    /// Index configuration (demonstrates list_string)
+    Index(Index),
+    /// Validation range (demonstrates i64)
+    Range(Range),
+    /// Foreign key on_delete behavior (demonstrates ident for enum-like values)
+    OnDelete(OnDelete),
 }
 
 /// Column configuration for ORM mapping.
+///
+/// This attribute customizes how a field maps to a database column.
+///
+/// # Examples
+/// ```ignore
+/// #[facet(orm::column)]                                    // all defaults
+/// #[facet(orm::column(name = "user_id"))]                  // override column name
+/// #[facet(orm::column(primary_key, auto_increment))]       // primary key with auto-increment
+/// #[facet(orm::column(nullable, sql_type = "TEXT"))]       // nullable TEXT column
+/// ```
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Column {
-    /// Override the column name
+    /// Override the column name (defaults to field name)
     pub name: Option<&'static str>,
-    /// Is this a primary key?
+    /// Column is nullable (default: inferred from Option<T>)
+    pub nullable: Option<bool>,
+    /// Custom SQL type override (e.g., "BIGINT UNSIGNED", "TEXT")
+    pub sql_type: Option<&'static str>,
+    /// This is a primary key
     pub primary_key: bool,
+    /// Auto-increment this column
+    pub auto_increment: bool,
+}
+
+/// Index configuration for ORM mapping.
+///
+/// Demonstrates `list_string` field type for column lists.
+///
+/// # Examples
+/// ```ignore
+/// #[facet(orm::index(columns = ["id", "created_at"]))]
+/// #[facet(orm::index(columns = ["email"], unique))]
+/// #[facet(orm::index(name = "idx_user_email", columns = ["user_id", "email"], unique))]
+/// ```
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Index {
+    /// Custom index name (optional, auto-generated if not specified)
+    pub name: Option<&'static str>,
+    /// Columns to include in the index
+    pub columns: &'static [&'static str],
+    /// Make this a unique index
+    pub unique: bool,
+}
+
+/// Validation range constraint.
+///
+/// Demonstrates `i64` and `opt_i64` field types for numeric values.
+///
+/// # Examples
+/// ```ignore
+/// #[facet(validate::range(min = 0, max = 100))]
+/// #[facet(validate::range(min = 1))]                       // no upper bound
+/// #[facet(validate::range(max = 1000, message = "Too large"))]
+/// ```
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Range {
+    /// Minimum value (inclusive)
+    pub min: Option<i64>,
+    /// Maximum value (inclusive)
+    pub max: Option<i64>,
+    /// Custom error message
+    pub message: Option<&'static str>,
+}
+
+/// Foreign key ON DELETE behavior.
+///
+/// Demonstrates `ident` field type for enum-like values.
+///
+/// # Examples
+/// ```ignore
+/// #[facet(orm::on_delete(action = cascade))]
+/// #[facet(orm::on_delete(action = set_null))]
+/// #[facet(orm::on_delete(action = restrict))]
+/// ```
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct OnDelete {
+    /// The action to take: cascade, set_null, restrict, no_action
+    pub action: &'static str,
 }
 
 // ============================================================================
@@ -60,7 +138,26 @@ macro_rules! __parse_attr {
             @variants {
                 skip: unit,
                 rename: newtype,
-                column: rec Column { name: opt_string, primary_key: bool }
+                column: rec Column {
+                    name: opt_string,
+                    nullable: opt_bool,
+                    sql_type: opt_string,
+                    primary_key: bool,
+                    auto_increment: bool
+                },
+                index: rec Index {
+                    name: opt_string,
+                    columns: list_string,
+                    unique: bool
+                },
+                range: rec Range {
+                    min: opt_i64,
+                    max: opt_i64,
+                    message: opt_string
+                },
+                on_delete: rec OnDelete {
+                    action: ident
+                }
             }
             @name { $name }
             @rest { $($rest)* }
@@ -85,6 +182,17 @@ macro_rules! __parse_attr {
 mod tests {
     use super::*;
 
+    // Helper to create default Column for test assertions
+    fn default_column() -> Column {
+        Column {
+            name: None,
+            nullable: None,
+            sql_type: None,
+            primary_key: false,
+            auto_increment: false,
+        }
+    }
+
     #[test]
     fn test_skip() {
         let attr = __parse_attr!(skip);
@@ -106,25 +214,13 @@ mod tests {
     #[test]
     fn test_column_empty() {
         let attr = __parse_attr!(column());
-        assert_eq!(
-            attr,
-            Attr::Column(Column {
-                name: None,
-                primary_key: false,
-            })
-        );
+        assert_eq!(attr, Attr::Column(default_column()));
     }
 
     #[test]
     fn test_column_no_parens() {
         let attr = __parse_attr!(column);
-        assert_eq!(
-            attr,
-            Attr::Column(Column {
-                name: None,
-                primary_key: false,
-            })
-        );
+        assert_eq!(attr, Attr::Column(default_column()));
     }
 
     #[test]
@@ -134,7 +230,7 @@ mod tests {
             attr,
             Attr::Column(Column {
                 name: Some("user_id"),
-                primary_key: false,
+                ..default_column()
             })
         );
     }
@@ -145,8 +241,8 @@ mod tests {
         assert_eq!(
             attr,
             Attr::Column(Column {
-                name: None,
                 primary_key: true,
+                ..default_column()
             })
         );
     }
@@ -157,20 +253,21 @@ mod tests {
         assert_eq!(
             attr,
             Attr::Column(Column {
-                name: None,
                 primary_key: true,
+                ..default_column()
             })
         );
     }
 
     #[test]
-    fn test_column_full() {
+    fn test_column_name_and_primary_key() {
         let attr = __parse_attr!(column(name = "user_id", primary_key));
         assert_eq!(
             attr,
             Attr::Column(Column {
                 name: Some("user_id"),
                 primary_key: true,
+                ..default_column()
             })
         );
     }
@@ -183,6 +280,312 @@ mod tests {
             Attr::Column(Column {
                 name: Some("user_id"),
                 primary_key: true,
+                ..default_column()
+            })
+        );
+    }
+
+    // New tests for extended Column fields
+
+    #[test]
+    fn test_column_auto_increment() {
+        let attr = __parse_attr!(column(primary_key, auto_increment));
+        assert_eq!(
+            attr,
+            Attr::Column(Column {
+                primary_key: true,
+                auto_increment: true,
+                ..default_column()
+            })
+        );
+    }
+
+    #[test]
+    fn test_column_nullable_flag() {
+        let attr = __parse_attr!(column(nullable));
+        assert_eq!(
+            attr,
+            Attr::Column(Column {
+                nullable: Some(true),
+                ..default_column()
+            })
+        );
+    }
+
+    #[test]
+    fn test_column_nullable_explicit_false() {
+        let attr = __parse_attr!(column(nullable = false));
+        assert_eq!(
+            attr,
+            Attr::Column(Column {
+                nullable: Some(false),
+                ..default_column()
+            })
+        );
+    }
+
+    #[test]
+    fn test_column_sql_type() {
+        let attr = __parse_attr!(column(sql_type = "BIGINT UNSIGNED"));
+        assert_eq!(
+            attr,
+            Attr::Column(Column {
+                sql_type: Some("BIGINT UNSIGNED"),
+                ..default_column()
+            })
+        );
+    }
+
+    #[test]
+    fn test_column_full_realistic() {
+        // Realistic ORM column: primary key with auto-increment
+        let attr = __parse_attr!(column(name = "id", primary_key, auto_increment));
+        assert_eq!(
+            attr,
+            Attr::Column(Column {
+                name: Some("id"),
+                nullable: None,
+                sql_type: None,
+                primary_key: true,
+                auto_increment: true,
+            })
+        );
+    }
+
+    #[test]
+    fn test_column_nullable_text() {
+        // Realistic ORM column: nullable TEXT field
+        let attr = __parse_attr!(column(name = "bio", nullable, sql_type = "TEXT"));
+        assert_eq!(
+            attr,
+            Attr::Column(Column {
+                name: Some("bio"),
+                nullable: Some(true),
+                sql_type: Some("TEXT"),
+                primary_key: false,
+                auto_increment: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_column_all_fields() {
+        let attr = __parse_attr!(column(
+            name = "user_id",
+            nullable = false,
+            sql_type = "BIGINT",
+            primary_key,
+            auto_increment
+        ));
+        assert_eq!(
+            attr,
+            Attr::Column(Column {
+                name: Some("user_id"),
+                nullable: Some(false),
+                sql_type: Some("BIGINT"),
+                primary_key: true,
+                auto_increment: true,
+            })
+        );
+    }
+
+    // ========================================================================
+    // Index tests (demonstrates list_string field type)
+    // ========================================================================
+
+    #[test]
+    fn test_index_no_parens() {
+        let attr = __parse_attr!(index);
+        assert_eq!(
+            attr,
+            Attr::Index(Index {
+                name: None,
+                columns: &[],
+                unique: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_index_empty_parens() {
+        let attr = __parse_attr!(index());
+        assert_eq!(
+            attr,
+            Attr::Index(Index {
+                name: None,
+                columns: &[],
+                unique: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_index_single_column() {
+        let attr = __parse_attr!(index(columns = ["email"]));
+        assert_eq!(
+            attr,
+            Attr::Index(Index {
+                name: None,
+                columns: &["email"],
+                unique: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_index_multiple_columns() {
+        let attr = __parse_attr!(index(columns = ["id", "created_at"]));
+        assert_eq!(
+            attr,
+            Attr::Index(Index {
+                name: None,
+                columns: &["id", "created_at"],
+                unique: false,
+            })
+        );
+    }
+
+    #[test]
+    fn test_index_unique() {
+        let attr = __parse_attr!(index(columns = ["email"], unique));
+        assert_eq!(
+            attr,
+            Attr::Index(Index {
+                name: None,
+                columns: &["email"],
+                unique: true,
+            })
+        );
+    }
+
+    #[test]
+    fn test_index_full() {
+        let attr = __parse_attr!(index(
+            name = "idx_user_email",
+            columns = ["user_id", "email"],
+            unique
+        ));
+        assert_eq!(
+            attr,
+            Attr::Index(Index {
+                name: Some("idx_user_email"),
+                columns: &["user_id", "email"],
+                unique: true,
+            })
+        );
+    }
+
+    // ========================================================================
+    // Range tests (demonstrates opt_i64 field type)
+    // ========================================================================
+
+    #[test]
+    fn test_range_no_parens() {
+        let attr = __parse_attr!(range);
+        assert_eq!(
+            attr,
+            Attr::Range(Range {
+                min: None,
+                max: None,
+                message: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_range_min_only() {
+        let attr = __parse_attr!(range(min = 0));
+        assert_eq!(
+            attr,
+            Attr::Range(Range {
+                min: Some(0),
+                max: None,
+                message: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_range_max_only() {
+        let attr = __parse_attr!(range(max = 100));
+        assert_eq!(
+            attr,
+            Attr::Range(Range {
+                min: None,
+                max: Some(100),
+                message: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_range_min_max() {
+        let attr = __parse_attr!(range(min = 0, max = 100));
+        assert_eq!(
+            attr,
+            Attr::Range(Range {
+                min: Some(0),
+                max: Some(100),
+                message: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_range_negative() {
+        let attr = __parse_attr!(range(min = -100, max = 100));
+        assert_eq!(
+            attr,
+            Attr::Range(Range {
+                min: Some(-100),
+                max: Some(100),
+                message: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_range_with_message() {
+        let attr = __parse_attr!(range(min = 1, max = 1000, message = "Value out of range"));
+        assert_eq!(
+            attr,
+            Attr::Range(Range {
+                min: Some(1),
+                max: Some(1000),
+                message: Some("Value out of range"),
+            })
+        );
+    }
+
+    // ========================================================================
+    // OnDelete tests (demonstrates ident field type)
+    // ========================================================================
+
+    #[test]
+    fn test_on_delete_cascade() {
+        let attr = __parse_attr!(on_delete(action = cascade));
+        assert_eq!(attr, Attr::OnDelete(OnDelete { action: "cascade" }));
+    }
+
+    #[test]
+    fn test_on_delete_set_null() {
+        let attr = __parse_attr!(on_delete(action = set_null));
+        assert_eq!(attr, Attr::OnDelete(OnDelete { action: "set_null" }));
+    }
+
+    #[test]
+    fn test_on_delete_restrict() {
+        let attr = __parse_attr!(on_delete(action = restrict));
+        assert_eq!(attr, Attr::OnDelete(OnDelete { action: "restrict" }));
+    }
+
+    #[test]
+    fn test_on_delete_no_action() {
+        let attr = __parse_attr!(on_delete(action = no_action));
+        assert_eq!(
+            attr,
+            Attr::OnDelete(OnDelete {
+                action: "no_action",
             })
         );
     }
