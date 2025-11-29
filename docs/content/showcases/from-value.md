@@ -278,9 +278,9 @@ title = "facet-value: from_value Deserialization"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
-  <span style="color:rgb(81,103,224)">x</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">10</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(81,103,224)">y</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">20</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(81,103,224)">z</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">30</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(81,103,224)">x</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">10</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 </section>

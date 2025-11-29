@@ -8,6 +8,10 @@ description = "Proc-macros for proto-attr grammar system"
 [lib]
 proc-macro = true
 
+[features]
+default = []
+nightly = []
+
 [dependencies]
 proc-macro2.workspace = true
 quote.workspace = true

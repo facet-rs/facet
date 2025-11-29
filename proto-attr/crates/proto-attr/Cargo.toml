@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "Declarative attribute grammar system"
 
+[features]
+default = []
+nightly = ["proto-attr-macros/nightly"]
+
 [dependencies]
 proto-attr-core.workspace = true
 proto-attr-macros.workspace = true

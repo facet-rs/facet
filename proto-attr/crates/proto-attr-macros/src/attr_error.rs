@@ -1,6 +1,7 @@
 //! Implementation of `__attr_error!` proc-macro.
 
 use proc_macro::TokenStream;
+#[cfg(not(feature = "nightly"))]
 use quote::quote_spanned;
 use syn::parse::{Parse, ParseStream};
 use syn::{Ident, Token, braced};
@@ -84,24 +85,47 @@ pub fn attr_error(input: TokenStream) -> TokenStream {
     let known_list: Vec<_> = input.known_attrs.iter().map(|i| i.to_string()).collect();
     let known_str = known_list.join(", ");
 
-    let message = match best_suggestion {
-        Some((suggestion, _)) => {
-            format!(
-                "unknown attribute `{}`, did you mean `{}`?\n\navailable attributes: {}",
-                got_name_str, suggestion, known_str
-            )
-        }
-        None => {
-            format!(
-                "unknown attribute `{}`\n\navailable attributes: {}",
-                got_name_str, known_str
-            )
-        }
-    };
+    #[cfg(feature = "nightly")]
+    {
+        use proc_macro::{Diagnostic, Level};
 
-    let expanded = quote_spanned! { got_span =>
-        compile_error!(#message)
-    };
+        let error_msg = format!("unknown attribute `{}`", got_name_str);
+        let mut diag = Diagnostic::spanned(got_span.unwrap(), Level::Error, error_msg);
 
-    expanded.into()
+        diag = diag.note(format!("expected {}", known_str));
+
+        if let Some((suggestion, _)) = best_suggestion {
+            diag = diag.help(format!("did you mean `{}`?", suggestion));
+        }
+
+        diag.emit();
+
+        // Return a dummy valid value to satisfy type inference
+        // The error is already shown; this just prevents cascading errors
+        "proto_ext::Attr::Skip".parse().unwrap()
+    }
+
+    #[cfg(not(feature = "nightly"))]
+    {
+        let message = match best_suggestion {
+            Some((suggestion, _)) => {
+                format!(
+                    "unknown attribute `{}`, did you mean `{}`?\navailable proto-ext attributes: {}",
+                    got_name_str, suggestion, known_str
+                )
+            }
+            None => {
+                format!(
+                    "unknown attribute `{}`\navailable proto-ext attributes: {}",
+                    got_name_str, known_str
+                )
+            }
+        };
+
+        let expanded = quote_spanned! { got_span =>
+            compile_error!(#message)
+        };
+
+        expanded.into()
+    }
 }
