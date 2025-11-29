@@ -1,12 +1,37 @@
 use std::fmt::{Display, Write};
 
-use facet_pretty::PrettyPrinter;
+use facet_pretty::{PrettyPrinter, tokyo_night};
 use owo_colors::OwoColorize;
 
 use crate::{
     diff::{Diff, Value},
     sequences::{ReplaceGroup, Updates, UpdatesGroup},
 };
+
+/// Format text for deletions
+fn deleted(s: &str) -> String {
+    format!("{}", s.color(tokyo_night::DELETION))
+}
+
+/// Format text for insertions
+fn inserted(s: &str) -> String {
+    format!("{}", s.color(tokyo_night::INSERTION))
+}
+
+/// Format muted text (unchanged indicators, structural equality)
+fn muted(s: &str) -> String {
+    format!("{}", s.color(tokyo_night::MUTED))
+}
+
+/// Format field name
+fn field(s: &str) -> String {
+    format!("{}", s.color(tokyo_night::FIELD_NAME))
+}
+
+/// Format punctuation as dimmed
+fn punct(s: &str) -> String {
+    format!("{}", s.color(tokyo_night::COMMENT))
+}
 
 struct PadAdapter<'a, 'b: 'a> {
     fmt: &'a mut std::fmt::Formatter<'b>,
@@ -52,15 +77,8 @@ impl<'a, 'b> Write for PadAdapter<'a, 'b> {
 impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Diff::Equal { value } => {
-                if let Some(peek) = value {
-                    let printer = PrettyPrinter::default()
-                        .with_colors(false)
-                        .with_minimal_option_names(true);
-                    write!(f, "{}", printer.format_peek(*peek))
-                } else {
-                    f.write_str("(no changes)")
-                }
+            Diff::Equal { value: _ } => {
+                write!(f, "{}", muted("(structurally equal)"))
             }
             Diff::Replace { from, to } => {
                 let printer = PrettyPrinter::default()
@@ -71,8 +89,8 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                 write!(
                     f,
                     "{} → {}",
-                    printer.format_peek(*from).red(),
-                    printer.format_peek(*to).green()
+                    deleted(&printer.format_peek(*from)),
+                    inserted(&printer.format_peek(*to))
                 )
             }
             Diff::User {
@@ -97,49 +115,74 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                         updates,
                         deletions,
                         insertions,
-                        unchanged: _,
+                        unchanged,
                     } => {
                         if updates.is_empty() && deletions.is_empty() && insertions.is_empty() {
-                            return f.write_str(if has_prefix {
-                                " (no changes)"
-                            } else {
-                                "(no changes)"
-                            });
+                            return write!(f, "{}", muted("(structurally equal)"));
                         }
 
-                        f.write_str(if has_prefix { " {\n" } else { "{\n" })?;
+                        if has_prefix {
+                            write!(f, " {}\n", punct("{"))?;
+                        } else {
+                            write!(f, "{}\n", punct("{"))?;
+                        }
                         let mut indent = PadAdapter::new_indented(f);
+
+                        // Show unchanged fields indicator first
+                        let unchanged_count = unchanged.len();
+                        if unchanged_count > 0 {
+                            let label = if unchanged_count == 1 {
+                                "field"
+                            } else {
+                                "fields"
+                            };
+                            writeln!(
+                                indent,
+                                "{}",
+                                muted(&format!(".. {unchanged_count} unchanged {label}"))
+                            )?;
+                        }
 
                         // Sort fields for deterministic output
                         let mut updates: Vec<_> = updates.iter().collect();
                         updates.sort_by(|(a, _), (b, _)| a.cmp(b));
-                        for (field, update) in updates {
-                            writeln!(indent, "{field}: {update}")?;
+                        for (fld, update) in updates {
+                            writeln!(indent, "{}{} {update}", field(fld), punct(":"))?;
                         }
 
                         let mut deletions: Vec<_> = deletions.iter().collect();
                         deletions.sort_by(|(a, _), (b, _)| a.cmp(b));
-                        for (field, value) in deletions {
+                        for (fld, value) in deletions {
                             writeln!(
                                 indent,
-                                "{}",
-                                format_args!("- {field}: {}", printer.format_peek(*value)).red()
+                                "{} {}{} {}",
+                                deleted("-"),
+                                field(fld),
+                                punct(":"),
+                                deleted(&printer.format_peek(*value))
                             )?;
                         }
 
                         let mut insertions: Vec<_> = insertions.iter().collect();
                         insertions.sort_by(|(a, _), (b, _)| a.cmp(b));
-                        for (field, value) in insertions {
+                        for (fld, value) in insertions {
                             writeln!(
                                 indent,
-                                "{}",
-                                format_args!("+ {field}: {}", printer.format_peek(*value)).green()
+                                "{} {}{} {}",
+                                inserted("+"),
+                                field(fld),
+                                punct(":"),
+                                inserted(&printer.format_peek(*value))
                             )?;
                         }
 
-                        f.write_str("}")
+                        write!(f, "{}", punct("}"))
                     }
                     Value::Tuple { updates } => {
+                        // No changes in tuple
+                        if updates.is_empty() {
+                            return write!(f, "{}", muted("(structurally equal)"));
+                        }
                         // For single-element tuples (like Option::Some), try to be concise
                         if updates.is_single_replace() {
                             if has_prefix {
@@ -160,10 +203,14 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                 to: _,
                 updates,
             } => {
-                f.write_str("[\n")?;
-                let mut indent = PadAdapter::new_indented(f);
-                write!(indent, "{updates}")?;
-                f.write_str("]")
+                if updates.is_empty() {
+                    write!(f, "{}", muted("(structurally equal)"))
+                } else {
+                    write!(f, "{}\n", punct("["))?;
+                    let mut indent = PadAdapter::new_indented(f);
+                    write!(indent, "{updates}")?;
+                    write!(f, "{}", punct("]"))
+                }
             }
         }
     }
@@ -173,6 +220,11 @@ impl<'mem, 'facet> Updates<'mem, 'facet> {
     /// Check if this is a single replace operation (useful for Option::Some)
     fn is_single_replace(&self) -> bool {
         self.0.first.is_some() && self.0.values.is_empty() && self.0.last.is_none()
+    }
+
+    /// Check if there are no changes (everything is unchanged)
+    fn is_empty(&self) -> bool {
+        self.0.first.is_none() && self.0.values.is_empty()
     }
 }
 
@@ -217,11 +269,12 @@ impl<'mem, 'facet> Display for ReplaceGroup<'mem, 'facet> {
 
             match &diff {
                 Diff::Equal { .. } => {
-                    // Values are equal, just show the value
-                    return writeln!(f, "{}", printer.format_peek(from));
+                    // Values are equal, show muted
+                    return writeln!(f, "{}", muted(&printer.format_peek(from)));
                 }
                 Diff::Replace { .. } => {
-                    // Fall through to - / + display below
+                    // Simple value change, show inline: old → new
+                    return writeln!(f, "{diff}");
                 }
                 _ => {
                     // Has nested structure, show the diff
@@ -235,7 +288,7 @@ impl<'mem, 'facet> Display for ReplaceGroup<'mem, 'facet> {
             writeln!(
                 f,
                 "{}",
-                format_args!("- {}", printer.format_peek(*remove)).red()
+                deleted(&format!("- {}", printer.format_peek(*remove)))
             )?;
         }
 
@@ -243,7 +296,7 @@ impl<'mem, 'facet> Display for ReplaceGroup<'mem, 'facet> {
             writeln!(
                 f,
                 "{}",
-                format_args!("+ {}", printer.format_peek(*add)).green()
+                inserted(&format!("+ {}", printer.format_peek(*add)))
             )?;
         }
 

@@ -14,7 +14,96 @@ use facet_core::{
 };
 use facet_reflect::{Peek, ValueId};
 
+use owo_colors::{OwoColorize, Rgb};
+
 use crate::color::ColorGenerator;
+
+/// Tokyo Night color palette (RGB values from official theme)
+///
+/// See: <https://github.com/tokyo-night/tokyo-night-vscode-theme>
+pub mod tokyo_night {
+    use owo_colors::Rgb;
+
+    // ========================================================================
+    // Core colors
+    // ========================================================================
+
+    /// Foreground - main text (#a9b1d6)
+    pub const FOREGROUND: Rgb = Rgb(169, 177, 214);
+    /// Background (#1a1b26)
+    pub const BACKGROUND: Rgb = Rgb(26, 27, 38);
+    /// Comment - muted text (#565f89)
+    pub const COMMENT: Rgb = Rgb(86, 95, 137);
+
+    // ========================================================================
+    // Terminal ANSI colors
+    // ========================================================================
+
+    /// Black (#414868)
+    pub const BLACK: Rgb = Rgb(65, 72, 104);
+    /// Red (#f7768e)
+    pub const RED: Rgb = Rgb(247, 118, 142);
+    /// Green - teal/cyan green (#73daca)
+    pub const GREEN: Rgb = Rgb(115, 218, 202);
+    /// Yellow - warm orange-yellow (#e0af68)
+    pub const YELLOW: Rgb = Rgb(224, 175, 104);
+    /// Blue (#7aa2f7)
+    pub const BLUE: Rgb = Rgb(122, 162, 247);
+    /// Magenta - purple (#bb9af7)
+    pub const MAGENTA: Rgb = Rgb(187, 154, 247);
+    /// Cyan - bright cyan (#7dcfff)
+    pub const CYAN: Rgb = Rgb(125, 207, 255);
+    /// White - muted white (#787c99)
+    pub const WHITE: Rgb = Rgb(120, 124, 153);
+
+    /// Bright white (#acb0d0)
+    pub const BRIGHT_WHITE: Rgb = Rgb(172, 176, 208);
+
+    // ========================================================================
+    // Extended syntax colors
+    // ========================================================================
+
+    /// Orange - numbers, constants (#ff9e64)
+    pub const ORANGE: Rgb = Rgb(255, 158, 100);
+    /// Dark green - strings (#9ece6a)
+    pub const DARK_GREEN: Rgb = Rgb(158, 206, 106);
+
+    // ========================================================================
+    // Semantic/status colors
+    // ========================================================================
+
+    /// Error - bright red for errors (#db4b4b)
+    pub const ERROR: Rgb = Rgb(219, 75, 75);
+    /// Warning - same as yellow (#e0af68)
+    pub const WARNING: Rgb = YELLOW;
+    /// Info - teal-blue (#0db9d7)
+    pub const INFO: Rgb = Rgb(13, 185, 215);
+    /// Hint - same as comment, muted
+    pub const HINT: Rgb = COMMENT;
+
+    // ========================================================================
+    // Semantic aliases for specific uses
+    // ========================================================================
+
+    /// Type names - blue, bold
+    pub const TYPE_NAME: Rgb = BLUE;
+    /// Field names - green/teal
+    pub const FIELD_NAME: Rgb = GREEN;
+    /// String literals - dark green
+    pub const STRING: Rgb = DARK_GREEN;
+    /// Number literals - orange
+    pub const NUMBER: Rgb = ORANGE;
+    /// Keywords (null, true, false) - magenta
+    pub const KEYWORD: Rgb = MAGENTA;
+    /// Deletions in diffs - red
+    pub const DELETION: Rgb = RED;
+    /// Insertions in diffs - green
+    pub const INSERTION: Rgb = GREEN;
+    /// Muted/unchanged - comment color
+    pub const MUTED: Rgb = COMMENT;
+    /// Borders - very muted, comment color
+    pub const BORDER: Rgb = COMMENT;
+}
 
 /// A formatter for pretty-printing Facet types
 pub struct PrettyPrinter {
@@ -199,7 +288,7 @@ impl PrettyPrinter {
                 }
                 write!(f, "\"")?;
                 if self.use_colors {
-                    write!(f, "\x1b[33m{value}\x1b[0m")?; // yellow
+                    write!(f, "{}", value.color(tokyo_night::STRING))?;
                 } else {
                     write!(f, "{value}")?;
                 }
@@ -213,7 +302,7 @@ impl PrettyPrinter {
                 let s = value.get::<alloc::string::String>().unwrap();
                 write!(f, "\"")?;
                 if self.use_colors {
-                    write!(f, "\x1b[33m{s}\x1b[0m")?; // yellow
+                    write!(f, "{}", s.color(tokyo_night::STRING))?;
                 } else {
                     write!(f, "{s}")?;
                 }
@@ -378,12 +467,7 @@ impl PrettyPrinter {
 
                         // Apply color for variant name
                         if self.use_colors {
-                            if self.use_colors {
-                                write!(f, "\x1b[1m{}\x1b[0m", variant.name)?;
-                            // bold
-                            } else {
-                                write!(f, "{}", variant.name)?;
-                            }
+                            write!(f, "{}", variant.name.bold())?;
                         } else {
                             write!(f, "{}", variant.name)?;
                         }
@@ -442,13 +526,11 @@ impl PrettyPrinter {
                                 byte.hash(&mut hasher);
                                 let hash = hasher.finish();
                                 let color = self.color_generator.generate_color(hash);
-                                write!(f, "\x1b[38;2;{};{};{}m", color.r, color.g, color.b)?;
+                                let rgb = Rgb(color.r, color.g, color.b);
+                                write!(f, "{}", format!("{byte:02x}").color(rgb))?;
+                            } else {
+                                write!(f, "{byte:02x}")?;
                             }
-                            // Display the byte in hex format
-                            write!(f, "{byte:02x}")?;
-                        }
-                        if self.use_colors {
-                            write!(f, "\x1b[0m")?
                         }
                         if !short {
                             writeln!(f)?;
@@ -903,16 +985,8 @@ impl PrettyPrinter {
 
         // Apply color if needed and display
         if self.use_colors {
-            // We need to use direct ANSI codes for RGB colors
-            write!(
-                f,
-                "\x1b[38;2;{};{};{}m{}",
-                color.r,
-                color.g,
-                color.b,
-                DisplayWrapper(&value)
-            )?;
-            write!(f, "\x1b[0m")?;
+            let rgb = Rgb(color.r, color.g, color.b);
+            write!(f, "{}", DisplayWrapper(&value).color(rgb))?;
         } else {
             write!(f, "{}", DisplayWrapper(&value))?;
         }
@@ -923,7 +997,7 @@ impl PrettyPrinter {
     /// Write a keyword (null, true, false) with coloring
     fn write_keyword(&self, f: &mut dyn Write, keyword: &str) -> fmt::Result {
         if self.use_colors {
-            write!(f, "\x1b[35m{keyword}\x1b[0m") // magenta for keywords
+            write!(f, "{}", keyword.color(tokyo_night::KEYWORD))
         } else {
             write!(f, "{keyword}")
         }
@@ -932,7 +1006,7 @@ impl PrettyPrinter {
     /// Format a number for dynamic values
     fn format_number(&self, f: &mut dyn Write, s: &str) -> fmt::Result {
         if self.use_colors {
-            write!(f, "\x1b[36m{s}\x1b[0m") // cyan for numbers
+            write!(f, "{}", s.color(tokyo_night::NUMBER))
         } else {
             write!(f, "{s}")
         }
@@ -941,7 +1015,7 @@ impl PrettyPrinter {
     /// Format a string for dynamic values
     fn format_string(&self, f: &mut dyn Write, s: &str) -> fmt::Result {
         if self.use_colors {
-            write!(f, "\x1b[33m{s:?}\x1b[0m") // yellow for strings
+            write!(f, "\"{}\"", s.color(tokyo_night::STRING))
         } else {
             write!(f, "{s:?}")
         }
@@ -968,7 +1042,7 @@ impl PrettyPrinter {
         let type_name = TypeNameWriter(peek);
 
         if self.use_colors {
-            write!(f, "\x1b[1m{type_name}\x1b[0m") // bold
+            write!(f, "{}", type_name.color(tokyo_night::TYPE_NAME).bold())
         } else {
             write!(f, "{type_name}")
         }
@@ -985,8 +1059,7 @@ impl PrettyPrinter {
     /// Write styled field name to formatter
     fn write_field_name(&self, f: &mut dyn Write, name: &str) -> fmt::Result {
         if self.use_colors {
-            // Use cyan color for field names (approximating original RGB color)
-            write!(f, "\x1b[36m{name}\x1b[0m") // cyan
+            write!(f, "{}", name.color(tokyo_night::FIELD_NAME))
         } else {
             write!(f, "{name}")
         }
@@ -995,7 +1068,7 @@ impl PrettyPrinter {
     /// Write styled punctuation to formatter
     fn write_punctuation(&self, f: &mut dyn Write, text: &str) -> fmt::Result {
         if self.use_colors {
-            write!(f, "\x1b[2m{text}\x1b[0m") // dim
+            write!(f, "{}", text.dimmed())
         } else {
             write!(f, "{text}")
         }
@@ -1004,7 +1077,7 @@ impl PrettyPrinter {
     /// Write styled comment to formatter
     fn write_comment(&self, f: &mut dyn Write, text: &str) -> fmt::Result {
         if self.use_colors {
-            write!(f, "\x1b[2m{text}\x1b[0m") // dim
+            write!(f, "{}", text.color(tokyo_night::MUTED))
         } else {
             write!(f, "{text}")
         }
@@ -1013,12 +1086,7 @@ impl PrettyPrinter {
     /// Write styled redacted value to formatter
     fn write_redacted(&self, f: &mut dyn Write, text: &str) -> fmt::Result {
         if self.use_colors {
-            // Use bright red and bold for redacted values
-            if self.use_colors {
-                write!(f, "\x1b[91;1m{text}\x1b[0m") // bright red + bold
-            } else {
-                write!(f, "{text}")
-            }
+            write!(f, "{}", text.color(tokyo_night::ERROR).bold())
         } else {
             write!(f, "{text}")
         }
