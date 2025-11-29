@@ -84,17 +84,19 @@ doc-tests-ci *args:
 
 miri *args:
     export RUSTUP_TOOLCHAIN=nightly-2025-06-29
+    export MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-env-forward=NEXTEST"
     rustup toolchain install nightly-2025-06-29
     rustup +nightly-2025-06-29 component add miri rust-src
-    cargo +nightly-2025-06-29 miri nextest run --target-dir target/miri -p facet-reflect -p facet-core {{args}}
+    cargo +nightly-2025-06-29 miri nextest run --target-dir target/miri -p facet-reflect -p facet-core -p facet-value --lib {{args}}
 
 miri-ci *args:
     #!/usr/bin/env -S bash -euxo pipefail
     source .envrc
-    echo -e "\033[1;31m🧪 Running tests under Miri...\033[0m"
+    echo -e "\033[1;31m🧪 Running tests under Miri with strict provenance...\033[0m"
 
     export CARGO_TARGET_DIR=target/miri
-    cmd_group "cargo miri nextest run {{args}}"
+    export MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-env-forward=NEXTEST"
+    cmd_group "cargo miri nextest run -p facet-reflect -p facet-core -p facet-value --lib {{args}}"
 
 absolve:
     ./facet-dev/absolve.sh
