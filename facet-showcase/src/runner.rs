@@ -21,10 +21,15 @@ pub struct ShowcaseRunner {
     scenario_count: usize,
     /// Whether we're currently inside a section (affects heading levels)
     in_section: bool,
+    /// Filter for scenario names (case-insensitive contains)
+    filter: Option<String>,
 }
 
 impl ShowcaseRunner {
     /// Create a new showcase runner with the given title.
+    ///
+    /// The filter can be set via the `SHOWCASE_FILTER` environment variable.
+    /// Only scenarios whose names contain the filter string (case-insensitive) will be shown.
     pub fn new(title: impl Into<String>) -> Self {
         Self {
             title: title.into(),
@@ -34,7 +39,16 @@ impl ShowcaseRunner {
             primary_language: Language::Json,
             scenario_count: 0,
             in_section: false,
+            filter: std::env::var("SHOWCASE_FILTER").ok(),
         }
+    }
+
+    /// Set a filter for scenario names (case-insensitive contains).
+    ///
+    /// Only scenarios whose names contain this string will be displayed.
+    pub fn filter(mut self, filter: impl Into<String>) -> Self {
+        self.filter = Some(filter.into());
+        self
     }
 
     /// Set the URL slug for Zola (overrides the default derived from filename).
@@ -77,9 +91,18 @@ impl ShowcaseRunner {
     }
 
     /// Start a new scenario.
+    ///
+    /// If a filter is set, scenarios that don't match are skipped (all methods become no-ops).
     pub fn scenario(&mut self, name: impl Into<String>) -> Scenario<'_> {
-        self.scenario_count += 1;
-        Scenario::new(self, name.into())
+        let name = name.into();
+        let skipped = match &self.filter {
+            Some(filter) => !name.to_lowercase().contains(&filter.to_lowercase()),
+            None => false,
+        };
+        if !skipped {
+            self.scenario_count += 1;
+        }
+        Scenario::new(self, name, skipped)
     }
 
     /// Start a new section (h2 heading).
@@ -187,15 +210,18 @@ pub struct Scenario<'a> {
     name: String,
     description: Option<String>,
     printed_header: bool,
+    /// Whether this scenario is skipped due to filtering
+    skipped: bool,
 }
 
 impl<'a> Scenario<'a> {
-    fn new(runner: &'a mut ShowcaseRunner, name: String) -> Self {
+    fn new(runner: &'a mut ShowcaseRunner, name: String, skipped: bool) -> Self {
         Self {
             runner,
             name,
             description: None,
             printed_header: false,
+            skipped,
         }
     }
 
@@ -207,7 +233,7 @@ impl<'a> Scenario<'a> {
 
     /// Print the scenario header (called automatically on first content).
     fn ensure_header(&mut self) {
-        if self.printed_header {
+        if self.skipped || self.printed_header {
             return;
         }
         self.printed_header = true;
@@ -243,6 +269,9 @@ impl<'a> Scenario<'a> {
 
     /// Display input code with syntax highlighting.
     pub fn input(mut self, lang: Language, code: &str) -> Self {
+        if self.skipped {
+            return self;
+        }
         self.ensure_header();
 
         match self.runner.mode {
@@ -271,6 +300,9 @@ impl<'a> Scenario<'a> {
 
     /// Display a Facet value as input using facet-pretty.
     pub fn input_value<'b, T: facet::Facet<'b>>(mut self, value: &'b T) -> Self {
+        if self.skipped {
+            return self;
+        }
         self.ensure_header();
 
         use facet_pretty::FacetPretty;
@@ -296,6 +328,9 @@ impl<'a> Scenario<'a> {
 
     /// Display serialized output with syntax highlighting.
     pub fn serialized_output(mut self, lang: Language, code: &str) -> Self {
+        if self.skipped {
+            return self;
+        }
         self.ensure_header();
 
         match self.runner.mode {
@@ -324,6 +359,9 @@ impl<'a> Scenario<'a> {
 
     /// Display the target type definition using facet-pretty.
     pub fn target_type<T: facet::Facet<'static>>(mut self) -> Self {
+        if self.skipped {
+            return self;
+        }
         self.ensure_header();
 
         let type_def = facet_pretty::format_shape(T::SHAPE);
@@ -359,6 +397,9 @@ impl<'a> Scenario<'a> {
 
     /// Display a custom type definition string.
     pub fn target_type_str(mut self, type_def: &str) -> Self {
+        if self.skipped {
+            return self;
+        }
         self.ensure_header();
 
         match self.runner.mode {
@@ -392,6 +433,9 @@ impl<'a> Scenario<'a> {
 
     /// Display an error using miette's graphical reporter.
     pub fn error(mut self, err: &dyn Diagnostic) -> Self {
+        if self.skipped {
+            return self;
+        }
         self.ensure_header();
 
         match self.runner.mode {
@@ -431,6 +475,9 @@ impl<'a> Scenario<'a> {
 
     /// Display a compiler error from raw ANSI output (e.g., from `cargo check`).
     pub fn compiler_error(mut self, ansi_output: &str) -> Self {
+        if self.skipped {
+            return self;
+        }
         self.ensure_header();
 
         match self.runner.mode {
@@ -451,6 +498,9 @@ impl<'a> Scenario<'a> {
 
     /// Display a successful result.
     pub fn success<'b, T: facet::Facet<'b>>(mut self, value: &'b T) -> Self {
+        if self.skipped {
+            return self;
+        }
         self.ensure_header();
 
         use facet_pretty::FacetPretty;
@@ -482,6 +532,9 @@ impl<'a> Scenario<'a> {
 
     /// Finish this scenario.
     pub fn finish(mut self) {
+        if self.skipped {
+            return;
+        }
         self.ensure_header();
 
         if self.runner.mode == OutputMode::Markdown {

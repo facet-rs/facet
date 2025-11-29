@@ -26,6 +26,27 @@ pub use proto_attr_macros::__spanned_error;
 /// ORM attributes for field and struct configuration.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Attr {
+    // ========================================================================
+    // Official facet attributes (top-level, unprefixed)
+    // ========================================================================
+    /// Indicates this is a transparent wrapper type (newtype pattern)
+    Transparent,
+    /// Enum should be serialized without a tag (untagged representation)
+    Untagged,
+    /// Specifies case conversion for all fields/variants (e.g., "kebab-case", "camelCase")
+    RenameAll(&'static str),
+    /// Specifies the tag field name for internally/adjacently tagged enums
+    Tag(&'static str),
+    /// Specifies the content field name for adjacently tagged enums
+    Content(&'static str),
+    /// Reject unknown fields during deserialization
+    DenyUnknownFields,
+    /// Use Default::default() for missing fields
+    Default,
+
+    // ========================================================================
+    // Extension attributes (namespaced, e.g., proto_ext::skip)
+    // ========================================================================
     /// Skip this field entirely
     Skip,
     /// Rename this field/struct
@@ -136,6 +157,15 @@ macro_rules! __parse_attr {
             @namespace { $crate }
             @enum_name { Attr }
             @variants {
+                // Official facet attributes (top-level, unprefixed)
+                transparent: unit,
+                untagged: unit,
+                rename_all: newtype,
+                tag: newtype,
+                content: newtype,
+                deny_unknown_fields: unit,
+                default: unit,
+                // Extension attributes
                 skip: unit,
                 rename: newtype,
                 column: rec Column {

@@ -109,18 +109,112 @@ fn extract_faket_attrs(attrs: &[Attribute]) -> Vec<&Attribute> {
     attrs.iter().filter(|attr| is_faket_attr(attr)).collect()
 }
 
-/// Generate the __parse_attr! call for a single attribute
-fn generate_parse_call(attr: &Attribute) -> std::result::Result<TokenStream2, String> {
-    let stream = attr.content.0.stream();
+/// Split tokens by top-level commas (respecting balanced parens/brackets/braces)
+fn split_by_comma(tokens: Vec<proc_macro2::TokenTree>) -> Vec<Vec<proc_macro2::TokenTree>> {
+    let mut result = Vec::new();
+    let mut current = Vec::new();
+    let mut depth: i32 = 0;
 
-    // Parse the attribute content: faket(ns::attr_name ...)
-    let tokens: Vec<proc_macro2::TokenTree> = stream.into_iter().collect();
+    for token in tokens {
+        match &token {
+            proc_macro2::TokenTree::Group(_) => {
+                // Groups are already balanced, just add them
+                current.push(token);
+            }
+            proc_macro2::TokenTree::Punct(p) if p.as_char() == ',' && depth == 0 => {
+                // Top-level comma - start new segment
+                if !current.is_empty() {
+                    result.push(std::mem::take(&mut current));
+                }
+            }
+            proc_macro2::TokenTree::Punct(p)
+                if p.as_char() == '(' || p.as_char() == '[' || p.as_char() == '{' =>
+            {
+                depth += 1;
+                current.push(token);
+            }
+            proc_macro2::TokenTree::Punct(p)
+                if p.as_char() == ')' || p.as_char() == ']' || p.as_char() == '}' =>
+            {
+                depth = depth.saturating_sub(1);
+                current.push(token);
+            }
+            _ => {
+                current.push(token);
+            }
+        }
+    }
 
-    // Get span from the first token, or use call_site if empty
+    if !current.is_empty() {
+        result.push(current);
+    }
+
+    result
+}
+
+/// Generate __parse_attr! call for a single attribute segment
+fn generate_single_attr_call(
+    tokens: Vec<proc_macro2::TokenTree>,
+) -> std::result::Result<TokenStream2, String> {
+    if tokens.is_empty() {
+        return Err("expected attribute content".to_string());
+    }
+
+    // Get span from the first token
     let span = tokens
         .first()
         .map(|t| t.span())
         .unwrap_or_else(proc_macro2::Span::call_site);
+
+    // First should be namespace/attr ident
+    let ns = match &tokens[0] {
+        proc_macro2::TokenTree::Ident(i) => i.clone(),
+        _ => {
+            return Err("expected identifier".to_string());
+        }
+    };
+
+    // Check for ::
+    let is_path_sep = tokens.len() >= 3
+        && matches!(
+            (&tokens.get(1), &tokens.get(2)),
+            (Some(proc_macro2::TokenTree::Punct(p1)), Some(proc_macro2::TokenTree::Punct(p2)))
+            if p1.as_char() == ':' && p2.as_char() == ':'
+        );
+
+    if is_path_sep {
+        // Namespaced attribute: ns::attr_name rest
+        let attr_name = match &tokens.get(3) {
+            Some(proc_macro2::TokenTree::Ident(i)) => i.clone(),
+            _ => {
+                return Err("expected attribute name after ::".to_string());
+            }
+        };
+
+        // Rest of tokens
+        let rest: TokenStream2 = tokens.into_iter().skip(4).collect();
+
+        Ok(quote_spanned! { span =>
+            #ns::__parse_attr!(#attr_name #rest)
+        })
+    } else {
+        // Unprefixed attribute: treat as top-level facet attribute via proto_ext
+        // The first ident IS the attribute name, rest follows
+        let attr_name = ns; // ns is actually the attr name here
+        let rest: TokenStream2 = tokens.into_iter().skip(1).collect();
+
+        Ok(quote_spanned! { span =>
+            proto_ext::__parse_attr!(#attr_name #rest)
+        })
+    }
+}
+
+/// Generate the __parse_attr! calls for all attributes in a #[faket(...)]
+fn generate_parse_calls(attr: &Attribute) -> std::result::Result<Vec<TokenStream2>, String> {
+    let stream = attr.content.0.stream();
+
+    // Parse the attribute content: faket(...)
+    let tokens: Vec<proc_macro2::TokenTree> = stream.into_iter().collect();
 
     // First token should be "faket"
     if tokens.is_empty() {
@@ -142,64 +236,33 @@ fn generate_parse_call(attr: &Attribute) -> std::result::Result<TokenStream2, St
 
     let inner_tokens: Vec<proc_macro2::TokenTree> = inner_stream.into_iter().collect();
 
-    // Parse: ns::attr_name rest
     if inner_tokens.is_empty() {
         return Err("expected attribute content inside faket(...)".to_string());
     }
 
-    // First should be namespace ident
-    let ns = match &inner_tokens[0] {
-        proc_macro2::TokenTree::Ident(i) => i.clone(),
-        _ => {
-            return Err("expected namespace identifier".to_string());
-        }
-    };
+    // Split by top-level commas
+    let segments = split_by_comma(inner_tokens);
 
-    // Check for ::
-    if inner_tokens.len() < 3 {
-        return Ok(quote_spanned! { span =>
-            compile_error!("unprefixed attributes not yet supported in prototype; use `ns::attr` syntax")
-        });
-    }
-
-    let is_path_sep = matches!(
-        (&inner_tokens.get(1), &inner_tokens.get(2)),
-        (Some(proc_macro2::TokenTree::Punct(p1)), Some(proc_macro2::TokenTree::Punct(p2)))
-        if p1.as_char() == ':' && p2.as_char() == ':'
-    );
-
-    if !is_path_sep {
-        return Ok(quote_spanned! { span =>
-            compile_error!("unprefixed attributes not yet supported in prototype; use `ns::attr` syntax")
-        });
-    }
-
-    // Attribute name
-    let attr_name = match &inner_tokens.get(3) {
-        Some(proc_macro2::TokenTree::Ident(i)) => i.clone(),
-        _ => {
-            return Err("expected attribute name after ::".to_string());
-        }
-    };
-
-    // Rest of tokens
-    let rest: TokenStream2 = inner_tokens.into_iter().skip(4).collect();
-
-    Ok(quote_spanned! { span =>
-        #ns::__parse_attr!(#attr_name #rest)
-    })
+    // Generate a parse call for each segment
+    segments
+        .into_iter()
+        .map(generate_single_attr_call)
+        .collect()
 }
 
 /// Process a struct and generate the Faket impl
 fn process_struct(def: &StructDef) -> std::result::Result<TokenStream2, String> {
     let name = &def.name;
 
-    // Collect struct-level attributes
+    // Collect struct-level attributes (flattening multiple attrs per #[faket(...)])
     let struct_attrs = extract_faket_attrs(&def.attrs);
     let struct_attr_calls: Vec<TokenStream2> = struct_attrs
         .iter()
-        .map(|a| generate_parse_call(a))
-        .collect::<std::result::Result<_, _>>()?;
+        .map(|a| generate_parse_calls(a))
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .into_iter()
+        .flatten()
+        .collect();
 
     // Collect field-level attributes
     let mut field_attr_sections = Vec::new();
@@ -212,8 +275,11 @@ fn process_struct(def: &StructDef) -> std::result::Result<TokenStream2, String> 
                 let field_attrs = extract_faket_attrs(&field.value.attrs);
                 let field_attr_calls: Vec<TokenStream2> = field_attrs
                     .iter()
-                    .map(|a| generate_parse_call(a))
-                    .collect::<std::result::Result<_, _>>()?;
+                    .map(|a| generate_parse_calls(a))
+                    .collect::<std::result::Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect();
 
                 if !field_attr_calls.is_empty() {
                     field_attr_sections.push(quote! {
@@ -227,8 +293,11 @@ fn process_struct(def: &StructDef) -> std::result::Result<TokenStream2, String> 
                 let field_attrs = extract_faket_attrs(&field.value.attrs);
                 let field_attr_calls: Vec<TokenStream2> = field_attrs
                     .iter()
-                    .map(|a| generate_parse_call(a))
-                    .collect::<std::result::Result<_, _>>()?;
+                    .map(|a| generate_parse_calls(a))
+                    .collect::<std::result::Result<Vec<_>, _>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect();
 
                 if !field_attr_calls.is_empty() {
                     field_attr_sections.push(quote! {

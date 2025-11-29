@@ -51,6 +51,9 @@ fn main() {
     // Valid usage showcasing all field types
     scenario_valid_usage(&mut runner);
 
+    // Top-level annotations scenarios
+    top_level_annotations(&mut runner);
+
     runner.footer();
 }
 
@@ -806,6 +809,297 @@ fn main() {
              • index - database indexes with columns list (list_string field type)\n\
              • range - validation bounds with min/max (opt_i64 field type)\n\
              • on_delete - foreign key behavior with bare identifiers (ident field type)",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error_output)
+        .finish();
+}
+
+fn top_level_annotations(runner: &mut ShowcaseRunner) {
+    // Scenario 1: Basic top-level attributes
+    let code = r#"use proto_attr::Faket;
+
+/// A newtype wrapper (transparent)
+#[derive(Faket)]
+#[faket(transparent)]
+struct UserId(i64);
+
+/// An untagged enum
+#[derive(Faket)]
+#[faket(untagged)]
+enum Message {
+    Text(String),
+    Number(i64),
+}
+
+/// Struct with rename_all for field case conversion
+#[derive(Faket)]
+#[faket(rename_all = "kebab-case")]
+struct Config {
+    api_key: String,
+    max_retries: i32,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error_output = if output.contains("error[") || output.contains("error:") {
+        extract_error(&output)
+    } else {
+        "✓ Compilation successful! No errors.".to_string()
+    };
+
+    runner
+        .scenario("Top-Level: Basic Attributes")
+        .description(
+            "Top-level facet attributes like `transparent`, `untagged`, and `rename_all`\n\
+             work without a namespace prefix.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error_output)
+        .finish();
+
+    // Scenario 2: Multiple top-level attrs in one #[faket(...)]
+    let code = r#"use proto_attr::Faket;
+
+/// Tagged enum with custom tag and content field names
+#[derive(Faket)]
+#[faket(tag = "type", content = "payload")]
+enum Event {
+    Click { x: i32, y: i32 },
+    KeyPress(String),
+}
+
+/// Struct with multiple top-level attrs
+#[derive(Faket)]
+#[faket(deny_unknown_fields, default, rename_all = "camelCase")]
+struct ApiRequest {
+    user_id: i64,
+    request_type: String,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error_output = if output.contains("error[") || output.contains("error:") {
+        extract_error(&output)
+    } else {
+        "✓ Compilation successful! No errors.".to_string()
+    };
+
+    runner
+        .scenario("Top-Level: Multiple Attrs Combined")
+        .description(
+            "Multiple top-level attributes can be combined in a single `#[faket(...)]`.\n\
+             Commas separate distinct attributes, respecting balanced parentheses.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error_output)
+        .finish();
+
+    // Scenario 3: Mixing top-level and namespaced attributes
+    let code = r#"use proto_attr::Faket;
+
+/// Mix top-level facet attrs with extension attrs on a struct
+#[derive(Faket)]
+#[faket(rename_all = "snake_case", proto_ext::index(columns = ["id", "name"]))]
+struct User {
+    #[faket(proto_ext::column(primary_key, auto_increment))]
+    id: i64,
+
+    #[faket(default, proto_ext::column(name = "user_name"))]
+    name: String,
+
+    #[faket(proto_ext::skip, proto_ext::rename("ignored"))]
+    internal_cache: Vec<u8>,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error_output = if output.contains("error[") || output.contains("error:") {
+        extract_error(&output)
+    } else {
+        "✓ Compilation successful! No errors.".to_string()
+    };
+
+    runner
+        .scenario("Top-Level: Mixed with Namespaced")
+        .description(
+            "Top-level facet attributes and namespaced extension attributes can be\n\
+             freely mixed in the same `#[faket(...)]` or on different lines.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error_output)
+        .finish();
+
+    // Scenario 4: Field-level top-level attrs
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+struct Settings {
+    /// Field uses default if missing
+    #[faket(default)]
+    timeout_ms: i64,
+
+    /// Multiple field attrs: default + extension
+    #[faket(default, proto_ext::range(min = 1, max = 100))]
+    max_retries: i32,
+
+    /// Combining untagged with column config (field-level)
+    #[faket(untagged, proto_ext::column(nullable))]
+    optional_data: Option<String>,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error_output = if output.contains("error[") || output.contains("error:") {
+        extract_error(&output)
+    } else {
+        "✓ Compilation successful! No errors.".to_string()
+    };
+
+    runner
+        .scenario("Top-Level: Field-Level Attrs")
+        .description(
+            "Top-level attributes like `default` and `untagged` can also be used\n\
+             at the field level, mixed with extension attributes.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error_output)
+        .finish();
+
+    // Scenario 5: Complex real-world example
+    let code = r#"use proto_attr::Faket;
+
+/// A complete API model with all attribute types
+#[derive(Faket)]
+#[faket(deny_unknown_fields, rename_all = "camelCase")]
+#[faket(proto_ext::index(name = "idx_api_model", columns = ["id", "created_at"], unique))]
+struct ApiModel {
+    #[faket(proto_ext::column(primary_key, auto_increment, name = "model_id"))]
+    id: i64,
+
+    #[faket(default, proto_ext::column(sql_type = "TIMESTAMP"))]
+    created_at: i64,
+
+    #[faket(proto_ext::rename("modelName"), proto_ext::column(name = "name"))]
+    model_name: String,
+
+    #[faket(default, proto_ext::range(min = 0, max = 1000000))]
+    score: i64,
+
+    #[faket(proto_ext::skip)]
+    internal_state: Vec<u8>,
+
+    #[faket(proto_ext::on_delete(action = cascade))]
+    parent_id: Option<i64>,
+}
+
+/// Enum with adjacently tagged representation
+#[derive(Faket)]
+#[faket(tag = "kind", content = "data", rename_all = "SCREAMING_SNAKE_CASE")]
+enum ApiResponse {
+    Success { value: i64 },
+    Error { code: i32, message: String },
+    Pending,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error_output = if output.contains("error[") || output.contains("error:") {
+        extract_error(&output)
+    } else {
+        "✓ Compilation successful! No errors.".to_string()
+    };
+
+    runner
+        .scenario("Top-Level: Complex Real-World Example")
+        .description(
+            "A complete real-world example combining:\n\
+             • Struct-level: deny_unknown_fields, rename_all, index\n\
+             • Field-level: default, column, range, skip, rename, on_delete\n\
+             • Enum: tag, content, rename_all",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error_output)
+        .finish();
+
+    // Scenario 6: Error case - unknown top-level attribute
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+#[faket(unknown_attr)]
+struct Bad {
+    field: i32,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error_output = extract_error(&output);
+
+    runner
+        .scenario("Top-Level: Unknown Attribute Error")
+        .description(
+            "Using an unknown top-level attribute produces a helpful error\n\
+             with suggestions for valid attributes.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error_output)
+        .finish();
+
+    // Scenario 7: Error case - wrong syntax for top-level attr
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+#[faket(transparent("value"))]
+struct Bad(i64);
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error_output = extract_error(&output);
+
+    runner
+        .scenario("Top-Level: Wrong Syntax Error")
+        .description(
+            "Top-level unit attributes like `transparent` don't take arguments.\n\
+             The error message explains the correct usage.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error_output)
+        .finish();
+
+    // Scenario 8: Error case - missing value for newtype attr
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+#[faket(rename_all)]
+struct Bad {
+    field: i32,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error_output = extract_error(&output);
+
+    runner
+        .scenario("Top-Level: Missing Value Error")
+        .description(
+            "Newtype attributes like `rename_all` require a value.\n\
+             Omitting it produces a clear error.",
         )
         .input(Language::Rust, code)
         .compiler_error(&error_output)
