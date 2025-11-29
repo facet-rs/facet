@@ -40,9 +40,9 @@ macro_rules! __attr {
     (arguments { $($tt:tt)* }) => { $crate::__arguments!{ $($tt)* } };
     (node_name { $($tt:tt)* }) => { $crate::__node_name!{ $($tt)* } };
 
-    // Unknown attribute: use path resolution to get the error span on the unknown identifier.
+    // Unknown attribute: use proc macro to get error span on the unknown identifier.
     ($unknown:ident $($tt:tt)*) => {
-        $crate::__unknown::$unknown
+        ::facet::__unknown_attr!($unknown)
     };
 }
 

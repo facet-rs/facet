@@ -30,3 +30,12 @@ pub fn facet_fn(
 pub fn fn_shape(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     facet_macros_emit::function::fn_shape(input.into()).into()
 }
+
+/// Internal proc macro for unknown extension attribute errors.
+///
+/// This generates a compile_error! with the span pointing to the unknown identifier.
+#[doc(hidden)]
+#[proc_macro]
+pub fn __unknown_attr(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    facet_macros_emit::unknown_attr(input.into()).into()
+}

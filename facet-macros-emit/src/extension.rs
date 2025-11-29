@@ -1,7 +1,7 @@
 //! Code generation for extension attributes.
 
 use facet_macros_parse::{Delimiter, Group, Ident, Punct, Spacing, TokenStream, TokenTree};
-use quote::{ToTokens, quote};
+use quote::{ToTokens, quote, quote_spanned};
 
 /// Emits the code for an `ExtensionAttr` on a field.
 ///
@@ -141,4 +141,31 @@ pub fn ext_attr(input: TokenStream) -> TokenStream {
     output.extend([TokenTree::Group(args_group)]);
 
     output
+}
+
+/// Implementation of the `__unknown_attr!` proc macro.
+///
+/// This generates a compile_error! with the span pointing to the unknown identifier.
+///
+/// Input: `unknown_ident`
+/// Output: `compile_error!("unknown extension attribute `unknown_ident`")` with span on the ident
+pub fn unknown_attr(input: TokenStream) -> TokenStream {
+    let mut tokens = input.into_iter();
+
+    // Get the unknown attribute identifier
+    let ident = match tokens.next() {
+        Some(TokenTree::Ident(ident)) => ident,
+        _ => {
+            return quote! {
+                ::core::compile_error!("__unknown_attr!: expected identifier")
+            };
+        }
+    };
+
+    let span = ident.span();
+    let message = format!("unknown extension attribute `{}`", ident);
+
+    quote_spanned! { span =>
+        ::core::compile_error!(#message)
+    }
 }
