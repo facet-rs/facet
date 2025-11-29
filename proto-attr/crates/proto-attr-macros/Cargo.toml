@@ -1,0 +1,15 @@
+[package]
+name = "proto-attr-macros"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Proc-macros for proto-attr grammar system"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2.workspace = true
+quote.workspace = true
+syn.workspace = true
+strsim.workspace = true
