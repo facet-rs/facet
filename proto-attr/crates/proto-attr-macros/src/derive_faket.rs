@@ -6,111 +6,214 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
-use syn::parse::{Parse, ParseStream};
-use syn::spanned::Spanned;
-use syn::{Attribute, Data, DeriveInput, Fields, Ident, Path, Token, parse_macro_input};
+use unsynn::*;
 
-/// Parse a faket attribute's content.
-///
-/// Formats:
-/// - `skip` → unprefixed, calls `proto_attr::__parse_attr!(skip)`
-/// - `rename = "foo"` → unprefixed
-/// - `ns::skip` → namespaced, calls `ns::__parse_attr!(skip)`
-/// - `ns::column(name = "id")` → namespaced with args
-struct FaketAttrContent {
-    /// The namespace path (e.g., `proto_ext`), if any
-    namespace: Option<Path>,
-    /// The attribute name (e.g., `skip`, `column`)
-    attr_name: Ident,
-    /// Everything after the attr name (e.g., `(name = "id")` or `= "foo"`)
-    rest: TokenStream2,
+keyword! {
+    KStruct = "struct";
+    KEnum = "enum";
+    KPub = "pub";
+    KFaket = "faket";
 }
 
-impl Parse for FaketAttrContent {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        // Try to parse as a path first (could be `ns::attr` or just `attr`)
-        let first_ident: Ident = input.parse()?;
+operator! {
+    PathSep = "::";
+    Eq = "=";
+}
 
-        if input.peek(Token![::]) {
-            // Namespaced: ns::attr...
-            input.parse::<Token![::]>()?;
-            let attr_name: Ident = input.parse()?;
-            let rest: TokenStream2 = input.parse()?;
-
-            // Build the namespace path from just the first ident
-            let namespace = syn::parse_quote!(#first_ident);
-
-            Ok(FaketAttrContent {
-                namespace: Some(namespace),
-                attr_name,
-                rest,
-            })
-        } else {
-            // Unprefixed: attr...
-            let rest: TokenStream2 = input.parse()?;
-
-            Ok(FaketAttrContent {
-                namespace: None,
-                attr_name: first_ident,
-                rest,
-            })
-        }
+unsynn! {
+    /// Visibility: `pub` or nothing
+    enum Vis {
+        PubIn(Cons<KPub, ParenthesisGroup>),
+        Pub(KPub),
     }
+
+    /// An attribute: `#[...]`
+    struct Attribute {
+        _pound: Pound,
+        content: BracketGroup,
+    }
+
+    /// The top-level derive input (simplified for our needs)
+    enum DeriveInput {
+        Struct(StructDef),
+        Enum(EnumDef),
+    }
+
+    /// A struct definition
+    struct StructDef {
+        attrs: Vec<Attribute>,
+        vis: Option<Vis>,
+        _kw_struct: KStruct,
+        name: Ident,
+        body: StructBody,
+    }
+
+    /// Struct body - braces with fields or semicolon for unit struct
+    enum StructBody {
+        Named(BraceGroupContaining<CommaDelimitedVec<StructField>>),
+        Tuple(Cons<ParenthesisGroupContaining<CommaDelimitedVec<TupleField>>, Semicolon>),
+        Unit(Semicolon),
+    }
+
+    /// A named struct field
+    struct StructField {
+        attrs: Vec<Attribute>,
+        vis: Option<Vis>,
+        name: Ident,
+        _colon: Colon,
+        ty: FieldType,
+    }
+
+    /// A tuple struct field
+    struct TupleField {
+        attrs: Vec<Attribute>,
+        vis: Option<Vis>,
+        ty: FieldType,
+    }
+
+    /// Field type - collect tokens until comma
+    struct FieldType {
+        tokens: Any<Cons<Except<Comma>, TokenTree>>,
+    }
+
+    /// An enum definition
+    struct EnumDef {
+        attrs: Vec<Attribute>,
+        vis: Option<Vis>,
+        _kw_enum: KEnum,
+        name: Ident,
+        body: BraceGroup,
+    }
+
+    /// Attribute content (for parsing faket args)
+    struct FaketAttrContent {
+        namespace: Ident,
+        _sep: PathSep,
+        attr_name: Ident,
+        rest: Vec<TokenTree>,
+    }
+}
+
+/// Check if an attribute is a faket attribute
+fn is_faket_attr(attr: &Attribute) -> bool {
+    let stream = attr.content.0.stream();
+    let tokens: Vec<_> = stream.into_iter().collect();
+    if let Some(proc_macro2::TokenTree::Ident(ident)) = tokens.first() {
+        return ident.to_string() == "faket";
+    }
+    false
 }
 
 /// Extract faket attributes from a list of attributes
 fn extract_faket_attrs(attrs: &[Attribute]) -> Vec<&Attribute> {
-    attrs
-        .iter()
-        .filter(|attr| attr.path().is_ident("faket"))
-        .collect()
+    attrs.iter().filter(|attr| is_faket_attr(attr)).collect()
 }
 
 /// Generate the __parse_attr! call for a single attribute
-fn generate_parse_call(attr: &Attribute) -> syn::Result<TokenStream2> {
-    let content: FaketAttrContent = attr.parse_args()?;
-    let attr_name = &content.attr_name;
-    let rest = &content.rest;
-    let span = attr.span();
+fn generate_parse_call(attr: &Attribute) -> std::result::Result<TokenStream2, String> {
+    let stream = attr.content.0.stream();
 
-    match &content.namespace {
-        Some(ns) => {
-            // Namespaced: call ns::__parse_attr!(attr_name rest)
-            Ok(quote_spanned! { span =>
-                #ns::__parse_attr!(#attr_name #rest)
-            })
-        }
-        None => {
-            // Unprefixed: for now, just error - in real facet this would call facet's parser
-            Ok(quote_spanned! { span =>
-                compile_error!("unprefixed attributes not yet supported in prototype; use `ns::attr` syntax")
-            })
-        }
+    // Parse the attribute content: faket(ns::attr_name ...)
+    let tokens: Vec<proc_macro2::TokenTree> = stream.into_iter().collect();
+
+    // Get span from the first token, or use call_site if empty
+    let span = tokens
+        .first()
+        .map(|t| t.span())
+        .unwrap_or_else(proc_macro2::Span::call_site);
+
+    // First token should be "faket"
+    if tokens.is_empty() {
+        return Err("expected faket attribute content".to_string());
     }
+
+    // Find the parenthesis group after "faket"
+    let paren_group = tokens.get(1);
+    let inner_stream = match paren_group {
+        Some(proc_macro2::TokenTree::Group(g))
+            if g.delimiter() == proc_macro2::Delimiter::Parenthesis =>
+        {
+            g.stream()
+        }
+        _ => {
+            return Err("expected faket(...)".to_string());
+        }
+    };
+
+    let inner_tokens: Vec<proc_macro2::TokenTree> = inner_stream.into_iter().collect();
+
+    // Parse: ns::attr_name rest
+    if inner_tokens.is_empty() {
+        return Err("expected attribute content inside faket(...)".to_string());
+    }
+
+    // First should be namespace ident
+    let ns = match &inner_tokens[0] {
+        proc_macro2::TokenTree::Ident(i) => i.clone(),
+        _ => {
+            return Err("expected namespace identifier".to_string());
+        }
+    };
+
+    // Check for ::
+    if inner_tokens.len() < 3 {
+        return Ok(quote_spanned! { span =>
+            compile_error!("unprefixed attributes not yet supported in prototype; use `ns::attr` syntax")
+        });
+    }
+
+    let is_path_sep = matches!(
+        (&inner_tokens.get(1), &inner_tokens.get(2)),
+        (Some(proc_macro2::TokenTree::Punct(p1)), Some(proc_macro2::TokenTree::Punct(p2)))
+        if p1.as_char() == ':' && p2.as_char() == ':'
+    );
+
+    if !is_path_sep {
+        return Ok(quote_spanned! { span =>
+            compile_error!("unprefixed attributes not yet supported in prototype; use `ns::attr` syntax")
+        });
+    }
+
+    // Attribute name
+    let attr_name = match &inner_tokens.get(3) {
+        Some(proc_macro2::TokenTree::Ident(i)) => i.clone(),
+        _ => {
+            return Err("expected attribute name after ::".to_string());
+        }
+    };
+
+    // Rest of tokens
+    let rest: TokenStream2 = inner_tokens.into_iter().skip(4).collect();
+
+    Ok(quote_spanned! { span =>
+        #ns::__parse_attr!(#attr_name #rest)
+    })
 }
 
 /// Process a struct and generate the Faket impl
-fn process_struct(name: &Ident, attrs: &[Attribute], fields: &Fields) -> syn::Result<TokenStream2> {
+fn process_struct(def: &StructDef) -> std::result::Result<TokenStream2, String> {
+    let name = &def.name;
+
     // Collect struct-level attributes
-    let struct_attrs = extract_faket_attrs(attrs);
+    let struct_attrs = extract_faket_attrs(&def.attrs);
     let struct_attr_calls: Vec<TokenStream2> = struct_attrs
         .iter()
         .map(|a| generate_parse_call(a))
-        .collect::<syn::Result<_>>()?;
+        .collect::<std::result::Result<_, _>>()?;
 
     // Collect field-level attributes
     let mut field_attr_sections = Vec::new();
 
-    match fields {
-        Fields::Named(named) => {
-            for field in &named.named {
-                let field_name = field.ident.as_ref().unwrap();
+    match &def.body {
+        StructBody::Named(fields) => {
+            for field in fields.content.iter() {
+                let field_name = &field.value.name;
                 let field_name_str = field_name.to_string();
-                let field_attrs = extract_faket_attrs(&field.attrs);
+                let field_attrs = extract_faket_attrs(&field.value.attrs);
                 let field_attr_calls: Vec<TokenStream2> = field_attrs
                     .iter()
                     .map(|a| generate_parse_call(a))
-                    .collect::<syn::Result<_>>()?;
+                    .collect::<std::result::Result<_, _>>()?;
 
                 if !field_attr_calls.is_empty() {
                     field_attr_sections.push(quote! {
@@ -119,13 +222,13 @@ fn process_struct(name: &Ident, attrs: &[Attribute], fields: &Fields) -> syn::Re
                 }
             }
         }
-        Fields::Unnamed(unnamed) => {
-            for (idx, field) in unnamed.unnamed.iter().enumerate() {
-                let field_attrs = extract_faket_attrs(&field.attrs);
+        StructBody::Tuple(tuple) => {
+            for (idx, field) in tuple.first.content.iter().enumerate() {
+                let field_attrs = extract_faket_attrs(&field.value.attrs);
                 let field_attr_calls: Vec<TokenStream2> = field_attrs
                     .iter()
                     .map(|a| generate_parse_call(a))
-                    .collect::<syn::Result<_>>()?;
+                    .collect::<std::result::Result<_, _>>()?;
 
                 if !field_attr_calls.is_empty() {
                     field_attr_sections.push(quote! {
@@ -134,11 +237,10 @@ fn process_struct(name: &Ident, attrs: &[Attribute], fields: &Fields) -> syn::Re
                 }
             }
         }
-        Fields::Unit => {}
+        StructBody::Unit(_) => {}
     }
 
     // Generate a simple trait impl that holds the parsed attributes
-    // For the prototype, we just generate code that exercises the parsing
     Ok(quote! {
         impl #name {
             /// Returns the parsed struct-level attributes (prototype)
@@ -156,23 +258,24 @@ fn process_struct(name: &Ident, attrs: &[Attribute], fields: &Fields) -> syn::Re
 }
 
 pub fn derive_faket(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as DeriveInput);
-    let name = &input.ident;
+    let input2 = TokenStream2::from(input);
+    let mut iter = input2.to_token_iter();
 
-    let expanded = match &input.data {
-        Data::Struct(data) => process_struct(name, &input.attrs, &data.fields),
-        Data::Enum(_) => Err(syn::Error::new_spanned(
-            &input,
-            "Faket derive not yet implemented for enums",
-        )),
-        Data::Union(_) => Err(syn::Error::new_spanned(
-            &input,
-            "Faket derive not supported for unions",
-        )),
+    let parsed: DeriveInput = match iter.parse() {
+        Ok(i) => i,
+        Err(e) => {
+            let msg = e.to_string();
+            return quote! { compile_error!(#msg); }.into();
+        }
+    };
+
+    let expanded = match parsed {
+        DeriveInput::Struct(def) => process_struct(&def),
+        DeriveInput::Enum(_def) => Err(format!("Faket derive not yet implemented for enums")),
     };
 
     match expanded {
         Ok(tokens) => tokens.into(),
-        Err(err) => err.to_compile_error().into(),
+        Err(err) => quote! { compile_error!(#err); }.into(),
     }
 }

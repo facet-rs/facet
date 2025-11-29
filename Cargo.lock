@@ -1519,7 +1519,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "strsim",
- "syn",
+ "unsynn",
 ]
 
 [[package]]
@@ -1530,6 +1530,14 @@ dependencies = [
  "proto-attr",
  "proto-attr-macros",
  "tempfile",
+]
+
+[[package]]
+name = "proto-ext-gen"
+version = "0.1.0"
+dependencies = [
+ "proto-attr",
+ "proto-attr-macros",
 ]
 
 [[package]]

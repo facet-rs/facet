@@ -5,83 +5,77 @@
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote_spanned;
-use syn::parse::{Parse, ParseStream};
-use syn::{Ident, Token, braced};
+use unsynn::*;
 
-/// Input format:
-/// ```ignore
-/// @namespace { proto_ext }
-/// @slots { @name { None } @primary_key { false } }
-/// @field { name }
-/// @rest { = "value", primary_key }
-/// ```
-struct DispatchColumnFieldInput {
-    namespace: Ident,
-    slots: TokenStream2,
-    field: Ident,
-    rest: TokenStream2,
+keyword! {
+    KNamespace = "namespace";
+    KSlots = "slots";
+    KField = "field";
+    KRest = "rest";
 }
 
-impl Parse for DispatchColumnFieldInput {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        // @namespace { ... }
-        input.parse::<Token![@]>()?;
-        let label: Ident = input.parse()?;
-        if label != "namespace" {
-            return Err(syn::Error::new(label.span(), "expected `namespace`"));
-        }
-        let ns_content;
-        braced!(ns_content in input);
-        let namespace: Ident = ns_content.parse()?;
+operator! {
+    At = "@";
+}
 
-        // @slots { ... }
-        input.parse::<Token![@]>()?;
-        let label: Ident = input.parse()?;
-        if label != "slots" {
-            return Err(syn::Error::new(label.span(), "expected `slots`"));
-        }
-        let slots_content;
-        braced!(slots_content in input);
-        let slots: TokenStream2 = slots_content.parse()?;
+unsynn! {
+    /// Input format:
+    /// ```ignore
+    /// @namespace { proto_ext }
+    /// @slots { @name { None } @primary_key { false } }
+    /// @field { name }
+    /// @rest { = "value", primary_key }
+    /// ```
+    struct DispatchColumnFieldInput {
+        namespace_section: NamespaceSection,
+        slots_section: SlotsSection,
+        field_section: FieldSection,
+        rest_section: RestSection,
+    }
 
-        // @field { ... }
-        input.parse::<Token![@]>()?;
-        let label: Ident = input.parse()?;
-        if label != "field" {
-            return Err(syn::Error::new(label.span(), "expected `field`"));
-        }
-        let field_content;
-        braced!(field_content in input);
-        let field: Ident = field_content.parse()?;
+    struct NamespaceSection {
+        _at: At,
+        _kw: KNamespace,
+        content: BraceGroupContaining<Ident>,
+    }
 
-        // @rest { ... }
-        input.parse::<Token![@]>()?;
-        let label: Ident = input.parse()?;
-        if label != "rest" {
-            return Err(syn::Error::new(label.span(), "expected `rest`"));
-        }
-        let rest_content;
-        braced!(rest_content in input);
-        let rest: TokenStream2 = rest_content.parse()?;
+    struct SlotsSection {
+        _at: At,
+        _kw: KSlots,
+        content: BraceGroup,
+    }
 
-        Ok(DispatchColumnFieldInput {
-            namespace,
-            slots,
-            field,
-            rest,
-        })
+    struct FieldSection {
+        _at: At,
+        _kw: KField,
+        content: BraceGroupContaining<Ident>,
+    }
+
+    struct RestSection {
+        _at: At,
+        _kw: KRest,
+        content: BraceGroup,
     }
 }
 
 pub fn dispatch_column_field(input: TokenStream) -> TokenStream {
-    let input = syn::parse_macro_input!(input as DispatchColumnFieldInput);
+    let input2 = TokenStream2::from(input);
+    let mut iter = input2.to_token_iter();
 
-    let namespace = &input.namespace;
-    let field = &input.field;
+    let parsed: DispatchColumnFieldInput = match iter.parse() {
+        Ok(i) => i,
+        Err(e) => {
+            let msg = e.to_string();
+            return quote::quote! { compile_error!(#msg); }.into();
+        }
+    };
+
+    let namespace = &parsed.namespace_section.content.content;
+    let field = &parsed.field_section.content.content;
     let field_str = field.to_string();
     let field_span = field.span();
-    let slots = &input.slots;
-    let rest = &input.rest;
+    let slots = parsed.slots_section.content.0.stream();
+    let rest = parsed.rest_section.content.0.stream();
 
     // Parse rest to check what follows the field name
     let rest_tokens: Vec<proc_macro2::TokenTree> = rest.clone().into_iter().collect();

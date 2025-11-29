@@ -12,9 +12,11 @@
 use proc_macro::TokenStream;
 
 mod attr_error;
+mod build_struct_fields;
 mod derive_faket;
 mod dispatch_attr;
 mod dispatch_column_field;
+mod dispatch_struct_field;
 mod field_error;
 mod make_parse_attr;
 mod spanned_error;
@@ -83,7 +85,27 @@ pub fn __dispatch_attr(input: TokenStream) -> TokenStream {
 }
 
 /// Dispatches column field parsing while preserving spans.
+///
+/// Note: This is the hardcoded version for the Column struct.
+/// For generated code, use `__dispatch_struct_field` instead.
 #[proc_macro]
 pub fn __dispatch_column_field(input: TokenStream) -> TokenStream {
     dispatch_column_field::dispatch_column_field(input)
+}
+
+/// Generic struct field dispatcher that preserves spans.
+///
+/// Takes field metadata as parameters, making it usable for any struct.
+#[proc_macro]
+pub fn __dispatch_struct_field(input: TokenStream) -> TokenStream {
+    dispatch_struct_field::dispatch_struct_field(input)
+}
+
+/// Builds a struct from field assignments in one shot.
+///
+/// This avoids the need for recursive macro_rules calls which hit
+/// the Rust limitation on macro-expanded macro_export macros.
+#[proc_macro]
+pub fn __build_struct_fields(input: TokenStream) -> TokenStream {
+    build_struct_fields::build_struct_fields(input)
 }

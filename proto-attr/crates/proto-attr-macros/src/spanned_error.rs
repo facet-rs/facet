@@ -3,49 +3,46 @@
 //! A generic helper for emitting errors with precise spans from macro_rules.
 
 use proc_macro::TokenStream;
+use proc_macro2::TokenStream as TokenStream2;
 #[cfg(not(feature = "nightly"))]
 use quote::quote_spanned;
-use syn::parse::{Parse, ParseStream};
-use syn::{LitStr, Token};
+use unsynn::*;
 
-/// Input format:
-/// ```ignore
-/// { tokens for span } => "error message"
-/// ```
-struct SpannedErrorInput {
-    span_tokens: proc_macro2::TokenStream,
-    message: LitStr,
+operator! {
+    Arrow = "=>";
 }
 
-impl Parse for SpannedErrorInput {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        // Parse the braced tokens for span
-        let content;
-        syn::braced!(content in input);
-        let span_tokens: proc_macro2::TokenStream = content.parse()?;
-
-        // Parse =>
-        input.parse::<Token![=>]>()?;
-
-        // Parse the message string
-        let message: LitStr = input.parse()?;
-
-        Ok(SpannedErrorInput {
-            span_tokens,
-            message,
-        })
+unsynn! {
+    /// Input format:
+    /// ```ignore
+    /// { tokens for span } => "error message"
+    /// ```
+    struct SpannedErrorInput {
+        span_tokens: BraceGroup,
+        _arrow: Arrow,
+        message: LiteralString,
     }
 }
 
 pub fn spanned_error(input: TokenStream) -> TokenStream {
-    let input = syn::parse_macro_input!(input as SpannedErrorInput);
+    let input2 = TokenStream2::from(input);
+    let mut iter = input2.to_token_iter();
 
-    let message = input.message.value();
+    let parsed: SpannedErrorInput = match iter.parse() {
+        Ok(i) => i,
+        Err(e) => {
+            let msg = e.to_string();
+            return quote::quote! { compile_error!(#msg); }.into();
+        }
+    };
+
+    let message = parsed.message.value();
 
     // Get span from the first token, or use call_site if empty
-    let span = input
+    let span = parsed
         .span_tokens
-        .clone()
+        .0
+        .stream()
         .into_iter()
         .next()
         .map(|t| t.span())
@@ -55,7 +52,7 @@ pub fn spanned_error(input: TokenStream) -> TokenStream {
     {
         use proc_macro::{Diagnostic, Level};
 
-        let diag = Diagnostic::spanned(span.unwrap(), Level::Error, &message);
+        let diag = Diagnostic::spanned(span.unwrap(), Level::Error, message);
         diag.emit();
 
         // Return a dummy valid value to satisfy type inference
