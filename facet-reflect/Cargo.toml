@@ -47,6 +47,7 @@ miette = ["dep:miette"] # Enable Spanned<T> type for source span tracking
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "0.31.8", default-features = false }
+facet-macros = { path = "../facet-macros", version = "0.31.8" }
 log = { version = "0.4.27", optional = true }
 camino = { version = "1", optional = true }
 uuid = { version = "1.17.0", optional = true }
