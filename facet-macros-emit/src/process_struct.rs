@@ -98,7 +98,8 @@ pub(crate) fn gen_field_from_pfield(
                 shape_of = quote! { shape_of_opaque };
             }
             PFacetAttr::Extension { ns, key, args } => {
-                let ext_attr = emit_extension_attr(ns, key, args);
+                let ext_attr =
+                    emit_extension_attr_for_field(ns, key, args, field_name_raw, field_type);
                 attribute_list.push(quote! { ::facet::FieldAttribute::Extension(#ext_attr) });
 
                 // Set CHILD flag for kdl::child extension attribute

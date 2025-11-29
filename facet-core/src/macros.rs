@@ -229,23 +229,3 @@ macro_rules! shape_builder {
         }
     };
 }
-
-/// Declares a single extension attribute builder for use with `#[facet(namespace::attr)]` syntax.
-///
-/// **Deprecated**: Use [`define_extension_attrs!`] instead, which provides compile-time
-/// validation and better error messages.
-#[macro_export]
-#[deprecated(since = "0.32.0", note = "use `define_extension_attrs!` instead")]
-macro_rules! facet_ext_attr {
-    ($attr:ident) => {
-        $crate::paste::paste! {
-            #[doc(hidden)]
-            pub fn [<__facet_build_ $attr>](
-                _args: &'static [$crate::Token]
-            ) -> &'static (dyn ::core::any::Any + ::core::marker::Send + ::core::marker::Sync) {
-                static __UNIT: () = ();
-                &__UNIT
-            }
-        }
-    };
-}

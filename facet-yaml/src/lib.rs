@@ -48,62 +48,51 @@ pub use facet_reflect::{Span, Spanned};
 ///
 /// Users import `use facet_yaml::serde;` to use these attributes.
 pub mod serde {
-    pub use crate::serde_attrs::*;
+    pub use crate::__serde_attr as __attr;
+    pub use crate::__serde_rename as __rename;
 }
 
-mod serde_attrs {
-    use facet_core::{AnyStaticRef, LiteralKind, Token};
+/// Dispatcher macro for serde extension attributes.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __serde_attr {
+    (rename { $($tt:tt)* }) => { $crate::__serde_rename!{ $($tt)* } };
 
-    // Marker struct for rename attribute
-    #[doc(hidden)]
-    #[allow(non_camel_case_types)]
-    pub struct rename {
-        _private: (),
-    }
+    ($unknown:ident $($tt:tt)*) => {
+        ::core::compile_error!(::core::concat!(
+            "unknown serde attribute `", ::core::stringify!($unknown), "`. ",
+            "expected one of: rename"
+        ))
+    };
+}
 
-    /// The rename attribute function parses `= "name"` and returns the string.
-    #[doc(hidden)]
-    pub fn rename(args: &[Token]) -> AnyStaticRef {
-        // Parse `= "name"` syntax and leak the result
-        let result: Option<&'static str> = parse_rename_args(args);
-        Box::leak(Box::new(result))
-    }
-
-    fn parse_rename_args(args: &[Token]) -> Option<&'static str> {
-        let mut iter = args.iter();
-
-        // Skip the '=' if present
-        if let Some(Token::Punct { ch: '=', .. }) = iter.next() {
-            // Look for a string literal
-            if let Some(Token::Literal { text, kind, .. }) = iter.next() {
-                if *kind == LiteralKind::String {
-                    // Strip surrounding quotes: "value" -> value
-                    return Some(text.trim_start_matches('"').trim_end_matches('"'));
-                }
-            }
-        }
-        None
-    }
-
-    // Validation machinery
-    #[doc(hidden)]
-    pub struct ValidAttr<A>(::core::marker::PhantomData<A>);
-
-    #[doc(hidden)]
-    #[diagnostic::on_unimplemented(
-        message = "`{Self}` is not a recognized serde attribute",
-        label = "unknown attribute",
-        note = "valid attributes are: `rename`"
-    )]
-    pub trait IsValidAttr {}
-
-    #[doc(hidden)]
-    pub const fn __check_attr<A>()
-    where
-        ValidAttr<A>: IsValidAttr,
-    {
-    }
-
-    #[doc(hidden)]
-    impl IsValidAttr for ValidAttr<rename> {}
+/// The rename attribute for serde compatibility.
+///
+/// Usage: `#[facet(serde::rename = "name")]`
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __serde_rename {
+    // Field with rename value: #[facet(serde::rename = "new_name")]
+    { $field:ident : $ty:ty | = $name:literal } => {{
+        static __VAL: ::core::option::Option<&'static str> = ::core::option::Option::Some($name);
+        ::facet::ExtensionAttr::new("serde", "rename", &__VAL)
+    }};
+    // Field without rename value (shouldn't happen, but handle)
+    { $field:ident : $ty:ty } => {{
+        static __VAL: ::core::option::Option<&'static str> = ::core::option::Option::None;
+        ::facet::ExtensionAttr::new("serde", "rename", &__VAL)
+    }};
+    // Container level
+    { } => {{
+        static __VAL: ::core::option::Option<&'static str> = ::core::option::Option::None;
+        ::facet::ExtensionAttr::new("serde", "rename", &__VAL)
+    }};
+    { | = $name:literal } => {{
+        static __VAL: ::core::option::Option<&'static str> = ::core::option::Option::Some($name);
+        ::facet::ExtensionAttr::new("serde", "rename", &__VAL)
+    }};
+    // Invalid syntax
+    { $($tt:tt)* } => {{
+        ::core::compile_error!("serde::rename expects `= \"name\"` syntax, e.g., #[facet(serde::rename = \"new_name\")]")
+    }};
 }

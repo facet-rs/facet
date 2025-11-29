@@ -18,7 +18,7 @@ pub use deserialize::from_str;
 // Re-export serialization
 pub use serialize::{to_string, to_writer};
 
-// Define KDL extension attributes for use with #[facet(kdl::attr)] syntax.
+// KDL extension attributes for use with #[facet(kdl::attr)] syntax.
 //
 // After importing `use facet_kdl as kdl;`, users can write:
 //   #[facet(kdl::child)]
@@ -27,12 +27,148 @@ pub use serialize::{to_string, to_writer};
 //   #[facet(kdl::argument)]
 //   #[facet(kdl::arguments)]
 //   #[facet(kdl::node_name)]
-facet_core::define_extension_attrs! {
-    "KDL";
-    child,
-    children,
-    property,
-    argument,
-    arguments,
-    node_name,
+
+/// Dispatcher macro for KDL extension attributes.
+/// This is called by the derive macro to resolve attribute names.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __attr {
+    (child { $($tt:tt)* }) => { $crate::__child!{ $($tt)* } };
+    (children { $($tt:tt)* }) => { $crate::__children!{ $($tt)* } };
+    (property { $($tt:tt)* }) => { $crate::__property!{ $($tt)* } };
+    (argument { $($tt:tt)* }) => { $crate::__argument!{ $($tt)* } };
+    (arguments { $($tt:tt)* }) => { $crate::__arguments!{ $($tt)* } };
+    (node_name { $($tt:tt)* }) => { $crate::__node_name!{ $($tt)* } };
+
+    // Unknown attribute: emit a clear compile error with suggestions
+    ($unknown:ident $($tt:tt)*) => {
+        ::core::compile_error!(::core::concat!(
+            "unknown kdl attribute `", ::core::stringify!($unknown), "`. ",
+            "expected one of: child, children, property, argument, arguments, node_name"
+        ))
+    };
+}
+
+/// Marks a field as a KDL child node.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __child {
+    // Field with type, no args
+    { $field:ident : $ty:ty } => {{
+        static __UNIT: () = ();
+        ::facet::ExtensionAttr::new("kdl", "child", &__UNIT)
+    }};
+    // Field with type and args (not expected, but handle gracefully)
+    { $field:ident : $ty:ty | $($args:tt)+ } => {{
+        ::core::compile_error!("kdl::child does not accept arguments")
+    }};
+    // Container level (no field)
+    { } => {{
+        static __UNIT: () = ();
+        ::facet::ExtensionAttr::new("kdl", "child", &__UNIT)
+    }};
+    // Container level with args
+    { | $($args:tt)+ } => {{
+        ::core::compile_error!("kdl::child does not accept arguments")
+    }};
+}
+
+/// Marks a field as collecting multiple KDL children.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __children {
+    { $field:ident : $ty:ty } => {{
+        static __UNIT: () = ();
+        ::facet::ExtensionAttr::new("kdl", "children", &__UNIT)
+    }};
+    { $field:ident : $ty:ty | $($args:tt)+ } => {{
+        ::core::compile_error!("kdl::children does not accept arguments")
+    }};
+    { } => {{
+        static __UNIT: () = ();
+        ::facet::ExtensionAttr::new("kdl", "children", &__UNIT)
+    }};
+    { | $($args:tt)+ } => {{
+        ::core::compile_error!("kdl::children does not accept arguments")
+    }};
+}
+
+/// Marks a field as a KDL property (key=value).
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __property {
+    { $field:ident : $ty:ty } => {{
+        static __UNIT: () = ();
+        ::facet::ExtensionAttr::new("kdl", "property", &__UNIT)
+    }};
+    { $field:ident : $ty:ty | $($args:tt)+ } => {{
+        ::core::compile_error!("kdl::property does not accept arguments")
+    }};
+    { } => {{
+        static __UNIT: () = ();
+        ::facet::ExtensionAttr::new("kdl", "property", &__UNIT)
+    }};
+    { | $($args:tt)+ } => {{
+        ::core::compile_error!("kdl::property does not accept arguments")
+    }};
+}
+
+/// Marks a field as a KDL positional argument.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __argument {
+    { $field:ident : $ty:ty } => {{
+        static __UNIT: () = ();
+        ::facet::ExtensionAttr::new("kdl", "argument", &__UNIT)
+    }};
+    { $field:ident : $ty:ty | $($args:tt)+ } => {{
+        ::core::compile_error!("kdl::argument does not accept arguments")
+    }};
+    { } => {{
+        static __UNIT: () = ();
+        ::facet::ExtensionAttr::new("kdl", "argument", &__UNIT)
+    }};
+    { | $($args:tt)+ } => {{
+        ::core::compile_error!("kdl::argument does not accept arguments")
+    }};
+}
+
+/// Marks a field as collecting all KDL positional arguments.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __arguments {
+    { $field:ident : $ty:ty } => {{
+        static __UNIT: () = ();
+        ::facet::ExtensionAttr::new("kdl", "arguments", &__UNIT)
+    }};
+    { $field:ident : $ty:ty | $($args:tt)+ } => {{
+        ::core::compile_error!("kdl::arguments does not accept arguments")
+    }};
+    { } => {{
+        static __UNIT: () = ();
+        ::facet::ExtensionAttr::new("kdl", "arguments", &__UNIT)
+    }};
+    { | $($args:tt)+ } => {{
+        ::core::compile_error!("kdl::arguments does not accept arguments")
+    }};
+}
+
+/// Marks a field as storing the KDL node name.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __node_name {
+    { $field:ident : $ty:ty } => {{
+        static __UNIT: () = ();
+        ::facet::ExtensionAttr::new("kdl", "node_name", &__UNIT)
+    }};
+    { $field:ident : $ty:ty | $($args:tt)+ } => {{
+        ::core::compile_error!("kdl::node_name does not accept arguments")
+    }};
+    { } => {{
+        static __UNIT: () = ();
+        ::facet::ExtensionAttr::new("kdl", "node_name", &__UNIT)
+    }};
+    { | $($args:tt)+ } => {{
+        ::core::compile_error!("kdl::node_name does not accept arguments")
+    }};
 }

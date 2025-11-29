@@ -34,80 +34,12 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                 ::facet::Variant::builder()
                     .name("VariantA")
                     .attributes(&[
-                        ::facet::VariantAttribute::Extension({
-                            #[allow(non_camel_case_types)]
-                            struct name {
-                                _private: (),
-                            }
-                            #[allow(non_camel_case_types)]
-                            fn name(_args: &[::facet::Token]) -> ::facet::AnyStaticRef {
-                                static __UNIT: () = ();
-                                &__UNIT
-                            }
-                            {
-                                #[allow(unused_imports)]
-                                use myns::attrs::*;
-                                __check_attr::<name>();
-                            }
-                            fn __ext_get() -> ::facet::AnyStaticRef {
-                                #[allow(unused_imports)]
-                                use myns::attrs::*;
-                                name(&[
-                                    ::facet::Token::Punct {
-                                        ch: '=',
-                                        joint: false,
-                                        span: ::facet::TokenSpan::DUMMY,
-                                    },
-                                    ::facet::Token::Literal {
-                                        kind: ::facet::LiteralKind::String,
-                                        text: "\"FirstVariant\"",
-                                        span: ::facet::TokenSpan::DUMMY,
-                                    },
-                                ])
-                            }
-                            ::facet::ExtensionAttr {
-                                ns: "myns",
-                                key: "name",
-                                get: __ext_get,
-                            }
-                        }),
-                        ::facet::VariantAttribute::Extension({
-                            #[allow(non_camel_case_types)]
-                            struct discriminant {
-                                _private: (),
-                            }
-                            #[allow(non_camel_case_types)]
-                            fn discriminant(_args: &[::facet::Token]) -> ::facet::AnyStaticRef {
-                                static __UNIT: () = ();
-                                &__UNIT
-                            }
-                            {
-                                #[allow(unused_imports)]
-                                use myns::attrs::*;
-                                __check_attr::<discriminant>();
-                            }
-                            fn __ext_get() -> ::facet::AnyStaticRef {
-                                #[allow(unused_imports)]
-                                use myns::attrs::*;
-                                discriminant(&[
-                                    ::facet::Token::Punct {
-                                        ch: '=',
-                                        joint: false,
-                                        span: ::facet::TokenSpan::DUMMY,
-                                    },
-                                    ::facet::Token::Literal {
-                                        kind: ::facet::LiteralKind::Integer,
-                                        text: "10",
-                                        span: ::facet::TokenSpan::DUMMY,
-                                    },
-                                ])
-                            }
-                            ::facet::ExtensionAttr {
-                                ns: "myns",
-                                key: "discriminant",
-                                get: __ext_get,
-                            }
-                        }),
+                        ::facet::VariantAttribute::Extension(
+                            myns :: __attr ! (name { | = "FirstVariant" }),
+                        ),
+                        ::facet::VariantAttribute::Extension(
+                            myns :: __attr ! (discriminant { | = 10 }),
+                        ),
                     ])
                     .discriminant(0i64 as i64)
                     .data(
@@ -143,43 +75,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     };
                     ::facet::Variant::builder()
                         .name("VariantC")
-                        .attributes(&[::facet::VariantAttribute::Extension({
-                            #[allow(non_camel_case_types)]
-                            struct deprecated {
-                                _private: (),
-                            }
-                            #[allow(non_camel_case_types)]
-                            fn deprecated(_args: &[::facet::Token]) -> ::facet::AnyStaticRef {
-                                static __UNIT: () = ();
-                                &__UNIT
-                            }
-                            {
-                                #[allow(unused_imports)]
-                                use myns::attrs::*;
-                                __check_attr::<deprecated>();
-                            }
-                            fn __ext_get() -> ::facet::AnyStaticRef {
-                                #[allow(unused_imports)]
-                                use myns::attrs::*;
-                                deprecated(&[
-                                    ::facet::Token::Punct {
-                                        ch: '=',
-                                        joint: false,
-                                        span: ::facet::TokenSpan::DUMMY,
-                                    },
-                                    ::facet::Token::Literal {
-                                        kind: ::facet::LiteralKind::String,
-                                        text: "\"Use VariantD instead\"",
-                                        span: ::facet::TokenSpan::DUMMY,
-                                    },
-                                ])
-                            }
-                            ::facet::ExtensionAttr {
-                                ns: "myns",
-                                key: "deprecated",
-                                get: __ext_get,
-                            }
-                        })])
+                        .attributes(&[::facet::VariantAttribute::Extension(
+                            myns :: __attr ! (deprecated { | = "Use VariantD instead" }),
+                        )])
                         .discriminant(2i64 as i64)
                         .data(
                             ::facet::StructType::builder()
@@ -227,43 +125,9 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
             )))
             .attributes(
                 &const {
-                    [::facet::ShapeAttribute::Extension({
-                        #[allow(non_camel_case_types)]
-                        struct name {
-                            _private: (),
-                        }
-                        #[allow(non_camel_case_types)]
-                        fn name(_args: &[::facet::Token]) -> ::facet::AnyStaticRef {
-                            static __UNIT: () = ();
-                            &__UNIT
-                        }
-                        {
-                            #[allow(unused_imports)]
-                            use myns::attrs::*;
-                            __check_attr::<name>();
-                        }
-                        fn __ext_get() -> ::facet::AnyStaticRef {
-                            #[allow(unused_imports)]
-                            use myns::attrs::*;
-                            name(&[
-                                ::facet::Token::Punct {
-                                    ch: '=',
-                                    joint: false,
-                                    span: ::facet::TokenSpan::DUMMY,
-                                },
-                                ::facet::Token::Literal {
-                                    kind: ::facet::LiteralKind::String,
-                                    text: "\"MyCoolEnum\"",
-                                    span: ::facet::TokenSpan::DUMMY,
-                                },
-                            ])
-                        }
-                        ::facet::ExtensionAttr {
-                            ns: "myns",
-                            key: "name",
-                            get: __ext_get,
-                        }
-                    })]
+                    [::facet::ShapeAttribute::Extension(
+                        myns :: __attr ! (name { | = "MyCoolEnum" }),
+                    )]
                 },
             )
             .type_tag("rs.facet.EnumWithAttributes")

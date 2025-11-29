@@ -463,7 +463,6 @@ dependencies = [
  "bytes",
  "camino",
  "chrono",
- "facet-core-proc-macros",
  "facet-testhelpers",
  "impls",
  "jiff",
@@ -475,15 +474,6 @@ dependencies = [
  "ulid",
  "url",
  "uuid",
-]
-
-[[package]]
-name = "facet-core-proc-macros"
-version = "0.31.8"
-dependencies = [
- "proc-macro2",
- "quote",
- "unsynn",
 ]
 
 [[package]]

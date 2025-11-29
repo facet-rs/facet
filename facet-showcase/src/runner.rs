@@ -376,6 +376,26 @@ impl<'a> Scenario<'a> {
         self
     }
 
+    /// Display a compiler error from raw ANSI output (e.g., from `cargo check`).
+    pub fn compiler_error(mut self, ansi_output: &str) -> Self {
+        self.ensure_header();
+
+        match self.runner.mode {
+            OutputMode::Terminal => {
+                println!();
+                println!("{}", "Compiler Error:".bold().red());
+                println!("{ansi_output}");
+            }
+            OutputMode::Markdown => {
+                println!("<div class=\"compiler-error\">");
+                println!("<h4>Compiler Error</h4>");
+                println!("<pre><code>{}</code></pre>", ansi_to_html(ansi_output));
+                println!("</div>");
+            }
+        }
+        self
+    }
+
     /// Display a successful result.
     pub fn success<'b, T: facet::Facet<'b>>(mut self, value: &'b T) -> Self {
         self.ensure_header();

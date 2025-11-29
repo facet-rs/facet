@@ -2,7 +2,6 @@
 members = [
     # core
     "facet-core",
-    "facet-core-proc-macros",
     "facet",
 
     # derive macro
