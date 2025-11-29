@@ -2,12 +2,12 @@
 source: facet-diff/tests/diff_snapshots.rs
 expression: "format_diff_comparison(&a, &b)"
 ---
-╭Before──────╮
-│"hello"     │
-╰────────────╯
-╭After───────╮
-│"hello"     │
-╰────────────╯
-╔Diff════════╗
-║"hello"     ║
-╚════════════╝
+[36m╭Before──────╮[0m
+[36m│[0m"hello"     [36m│[0m
+[36m╰────────────╯[0m
+[32m╭After───────╮[0m
+[32m│[0m"hello"     [32m│[0m
+[32m╰────────────╯[0m
+[33m╔Diff════════╗[0m
+[33m║[0m"hello"     [33m║[0m
+[33m╚════════════╝[0m
