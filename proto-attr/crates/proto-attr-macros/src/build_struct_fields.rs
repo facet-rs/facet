@@ -432,6 +432,20 @@ fn parse_input_fields(
         let field_span = field_name.span();
         i += 1;
 
+        // Check for duplicate field
+        if parsed
+            .iter()
+            .any(|p: &ParsedField| p.name == field_name_str)
+        {
+            return Err(SpannedError {
+                message: format!(
+                    "duplicate field `{}`; each field can only be specified once",
+                    field_name_str
+                ),
+                span: field_span,
+            });
+        }
+
         // Find field definition
         let field_def = field_defs
             .iter()
