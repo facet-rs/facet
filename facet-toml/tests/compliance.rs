@@ -6,7 +6,115 @@
 //! 3. Comparing with assert_same!
 
 use facet_assert::assert_same;
-use facet_value::Value;
+use facet_value::{VDateTime, Value};
+
+/// Parse a datetime string into a VDateTime Value.
+fn parse_datetime_value(s: &str) -> Value {
+    // Check if this is a local time (starts with HH:MM, no date)
+    if s.len() >= 5 && s.as_bytes()[2] == b':' && !s.contains('-') {
+        // Local time: HH:MM:SS[.fractional]
+        let (hour, minute, second, nanos) = parse_time_part(s);
+        return VDateTime::new_local_time(hour, minute, second, nanos).into();
+    }
+
+    // Must start with a date (YYYY-MM-DD)
+    let year: i32 = s[0..4].parse().unwrap();
+    let month: u8 = s[5..7].parse().unwrap();
+    let day: u8 = s[8..10].parse().unwrap();
+
+    // If that's all, it's a local date
+    if s.len() == 10 {
+        return VDateTime::new_local_date(year, month, day).into();
+    }
+
+    // Has time component
+    let time_part = &s[11..];
+    let (hour, minute, second, nanos, offset) = parse_time_with_offset(time_part);
+
+    match offset {
+        Some(offset_minutes) => VDateTime::new_offset(
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            nanos,
+            offset_minutes,
+        )
+        .into(),
+        None => VDateTime::new_local_datetime(year, month, day, hour, minute, second, nanos).into(),
+    }
+}
+
+fn parse_time_part(s: &str) -> (u8, u8, u8, u32) {
+    let hour: u8 = s[0..2].parse().unwrap();
+    let minute: u8 = s[3..5].parse().unwrap();
+    let second: u8 = s[6..8].parse().unwrap();
+
+    let nanos = if s.len() > 8 && s.as_bytes()[8] == b'.' {
+        parse_nanos(&s[9..])
+    } else {
+        0
+    };
+
+    (hour, minute, second, nanos)
+}
+
+fn parse_time_with_offset(s: &str) -> (u8, u8, u8, u32, Option<i16>) {
+    let hour: u8 = s[0..2].parse().unwrap();
+    let minute: u8 = s[3..5].parse().unwrap();
+    let second: u8 = s[6..8].parse().unwrap();
+
+    let rest = &s[8..];
+    let (nanos, offset_rest) = if rest.starts_with('.') {
+        let frac_end = rest[1..]
+            .find(|c: char| !c.is_ascii_digit())
+            .map(|i| i + 1)
+            .unwrap_or(rest.len());
+        let nanos = parse_nanos(&rest[1..frac_end]);
+        (nanos, &rest[frac_end..])
+    } else {
+        (0, rest)
+    };
+
+    let offset = if offset_rest.is_empty() {
+        None
+    } else if offset_rest == "Z" || offset_rest == "z" {
+        Some(0i16)
+    } else if offset_rest.starts_with('+') || offset_rest.starts_with('-') {
+        Some(parse_offset(offset_rest))
+    } else {
+        None
+    };
+
+    (hour, minute, second, nanos, offset)
+}
+
+fn parse_nanos(s: &str) -> u32 {
+    let digits: String = s.chars().take(9).filter(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return 0;
+    }
+    let padded = format!("{:0<9}", digits);
+    padded.parse().unwrap_or(0)
+}
+
+fn parse_offset(s: &str) -> i16 {
+    let sign: i16 = if s.starts_with('+') { 1 } else { -1 };
+    let rest = &s[1..];
+
+    let (hours, minutes) = if rest.len() >= 5 && rest.as_bytes()[2] == b':' {
+        let h: i16 = rest[0..2].parse().unwrap();
+        let m: i16 = rest[3..5].parse().unwrap();
+        (h, m)
+    } else {
+        let h: i16 = rest[0..2].parse().unwrap();
+        (h, 0)
+    };
+
+    sign * (hours * 60 + minutes)
+}
 
 /// Convert a tagged JSON Value (from toml-test format) to a plain Value.
 /// Tagged format: {"type": "string", "value": "hello"} → "hello"
@@ -37,9 +145,21 @@ fn untagged(v: &Value) -> Value {
                     Value::from(f)
                 }
                 "bool" => Value::from(value_str == "true"),
-                "datetime" | "datetime-local" | "date-local" | "date" | "time-local" | "time" => {
-                    // Skip datetime for now - return as string
-                    Value::from(value_str)
+                "datetime" => {
+                    // Offset datetime: 1979-05-27T07:32:00Z or 1979-05-27T07:32:00+05:30
+                    parse_datetime_value(value_str)
+                }
+                "datetime-local" => {
+                    // Local datetime: 1979-05-27T07:32:00
+                    parse_datetime_value(value_str)
+                }
+                "date-local" | "date" => {
+                    // Local date: 1979-05-27
+                    parse_datetime_value(value_str)
+                }
+                "time-local" | "time" => {
+                    // Local time: 07:32:00
+                    parse_datetime_value(value_str)
                 }
                 _ => panic!("Unknown type: {}", type_),
             }
@@ -60,12 +180,6 @@ fn test_valid_fixtures() {
 
     for valid in toml_test_data::valid() {
         let name = valid.name().display().to_string();
-
-        // Skip datetime tests for now
-        if name.contains("datetime") || name.contains("local-date") || name.contains("local-time") {
-            skipped += 1;
-            continue;
-        }
 
         let fixture = match std::str::from_utf8(valid.fixture()) {
             Ok(s) => s,
@@ -94,6 +208,11 @@ fn test_valid_fixtures() {
                     facet_assert::Sameness::Different(diff) => {
                         failed += 1;
                         println!("\n--- {} ---", name);
+                        if name.contains("implicit") {
+                            println!("TOML:\n{}", fixture);
+                            println!("Actual: {:?}", actual);
+                            println!("Expected: {:?}", expected);
+                        }
                         println!("{}", diff);
                     }
                     facet_assert::Sameness::Opaque { type_name } => {
@@ -119,7 +238,7 @@ fn test_valid_fixtures() {
     println!("\n=== Compliance Test Results ===");
     println!("Passed:  {}", passed);
     println!("Failed:  {}", failed);
-    println!("Skipped: {} (datetime)", skipped);
+    println!("Skipped: {}", skipped);
 
     if failed > 0 {
         panic!("{} tests failed", failed);

@@ -15,7 +15,8 @@ use alloc::{
 };
 use core::ops::Range;
 use facet_core::{
-    Def, Facet, FieldError, FieldFlags, Shape, StructKind, StructType, Type, UserType,
+    Def, DynDateTimeKind, Facet, FieldError, FieldFlags, Shape, StructKind, StructType, Type,
+    UserType,
 };
 use facet_reflect::{Partial, ReflectError, Resolution, ScalarType, VariantSelection};
 use facet_solver::{KeyResult, Schema, Solver};
@@ -59,6 +60,230 @@ impl ErrorSink for ParseErrorCollector {
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+/// Parse a TOML datetime string into components.
+///
+/// Returns `(year, month, day, hour, minute, second, nanos, offset_minutes, kind)`.
+/// - For LocalTime, year/month/day are 0.
+/// - For LocalDate, hour/minute/second/nanos are 0.
+/// - offset_minutes is Some only for Offset datetimes.
+#[derive(Debug)]
+enum ParsedDateTime {
+    Offset {
+        year: i32,
+        month: u8,
+        day: u8,
+        hour: u8,
+        minute: u8,
+        second: u8,
+        nanos: u32,
+        offset_minutes: i16,
+    },
+    LocalDateTime {
+        year: i32,
+        month: u8,
+        day: u8,
+        hour: u8,
+        minute: u8,
+        second: u8,
+        nanos: u32,
+    },
+    LocalDate {
+        year: i32,
+        month: u8,
+        day: u8,
+    },
+    LocalTime {
+        hour: u8,
+        minute: u8,
+        second: u8,
+        nanos: u32,
+    },
+}
+
+fn parse_toml_datetime(s: &str) -> Option<ParsedDateTime> {
+    // Check if this is a local time (starts with HH:MM)
+    if s.len() >= 5 && s.as_bytes()[2] == b':' && !s.contains('-') {
+        // Local time: HH:MM:SS[.fractional]
+        return parse_local_time(s);
+    }
+
+    // Must start with a date (YYYY-MM-DD)
+    if s.len() < 10 {
+        return None;
+    }
+
+    let year = s[0..4].parse::<i32>().ok()?;
+    if s.as_bytes()[4] != b'-' {
+        return None;
+    }
+    let month = s[5..7].parse::<u8>().ok()?;
+    if s.as_bytes()[7] != b'-' {
+        return None;
+    }
+    let day = s[8..10].parse::<u8>().ok()?;
+
+    // If that's all, it's a local date
+    if s.len() == 10 {
+        return Some(ParsedDateTime::LocalDate { year, month, day });
+    }
+
+    // Must have 'T' or ' ' separator for datetime
+    let sep = s.as_bytes()[10];
+    if sep != b'T' && sep != b't' && sep != b' ' {
+        return None;
+    }
+
+    // Parse time part - minimum is HH:MM (5 chars)
+    let time_part = &s[11..];
+    if time_part.len() < 5 {
+        return None;
+    }
+
+    let hour = time_part[0..2].parse::<u8>().ok()?;
+    if time_part.as_bytes()[2] != b':' {
+        return None;
+    }
+    let minute = time_part[3..5].parse::<u8>().ok()?;
+
+    // Seconds are optional in TOML
+    let (second, rest) = if time_part.len() > 5 && time_part.as_bytes()[5] == b':' {
+        if time_part.len() < 8 {
+            return None;
+        }
+        let sec = time_part[6..8].parse::<u8>().ok()?;
+        (sec, &time_part[8..])
+    } else {
+        (0u8, &time_part[5..])
+    };
+
+    // Parse optional fractional seconds and offset
+    let (nanos, offset_rest) = parse_fractional_and_offset(rest);
+
+    match offset_rest {
+        Some(offset_minutes) => Some(ParsedDateTime::Offset {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            nanos,
+            offset_minutes,
+        }),
+        None => Some(ParsedDateTime::LocalDateTime {
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            nanos,
+        }),
+    }
+}
+
+fn parse_local_time(s: &str) -> Option<ParsedDateTime> {
+    // Minimum is HH:MM (5 chars)
+    if s.len() < 5 {
+        return None;
+    }
+
+    let hour = s[0..2].parse::<u8>().ok()?;
+    if s.as_bytes()[2] != b':' {
+        return None;
+    }
+    let minute = s[3..5].parse::<u8>().ok()?;
+
+    // Seconds are optional in TOML
+    let (second, rest) = if s.len() > 5 && s.as_bytes()[5] == b':' {
+        if s.len() < 8 {
+            return None;
+        }
+        let sec = s[6..8].parse::<u8>().ok()?;
+        (sec, &s[8..])
+    } else {
+        (0, &s[5..])
+    };
+
+    // Parse optional fractional seconds
+    let nanos = if rest.starts_with('.') {
+        parse_nanos(&rest[1..])
+    } else {
+        0
+    };
+
+    Some(ParsedDateTime::LocalTime {
+        hour,
+        minute,
+        second,
+        nanos,
+    })
+}
+
+fn parse_fractional_and_offset(s: &str) -> (u32, Option<i16>) {
+    if s.is_empty() {
+        return (0, None);
+    }
+
+    let (nanos, rest) = if s.starts_with('.') {
+        // Find where fractional part ends
+        let frac_end = s[1..]
+            .find(|c: char| !c.is_ascii_digit())
+            .map(|i| i + 1)
+            .unwrap_or(s.len());
+        let nanos = parse_nanos(&s[1..frac_end]);
+        (nanos, &s[frac_end..])
+    } else {
+        (0, s)
+    };
+
+    // Parse offset
+    let offset = if rest.is_empty() {
+        None
+    } else if rest == "Z" || rest == "z" {
+        Some(0i16)
+    } else if rest.starts_with('+') || rest.starts_with('-') {
+        parse_offset(rest)
+    } else {
+        None
+    };
+
+    (nanos, offset)
+}
+
+fn parse_nanos(s: &str) -> u32 {
+    // Take up to 9 digits, pad with zeros
+    let digits: String = s.chars().take(9).filter(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return 0;
+    }
+    let padded = format!("{:0<9}", digits);
+    padded.parse().unwrap_or(0)
+}
+
+fn parse_offset(s: &str) -> Option<i16> {
+    // Format: +HH:MM or -HH:MM or +HH or -HH
+    if s.len() < 3 {
+        return None;
+    }
+
+    let sign: i16 = if s.starts_with('+') { 1 } else { -1 };
+    let rest = &s[1..];
+
+    let (hours, minutes) = if rest.len() >= 5 && rest.as_bytes()[2] == b':' {
+        let h = rest[0..2].parse::<i16>().ok()?;
+        let m = rest[3..5].parse::<i16>().ok()?;
+        (h, m)
+    } else if rest.len() >= 2 {
+        let h = rest[0..2].parse::<i16>().ok()?;
+        (h, 0)
+    } else {
+        return None;
+    };
+
+    Some(sign * (hours * 60 + minutes))
+}
 
 /// Check if a shape represents `Spanned<T>`.
 ///
@@ -2176,15 +2401,93 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                         }
                     }
                     ScalarKind::DateTime => {
-                        // DateTime is not currently supported for DynamicValue
-                        return Err(TomlDeError::new(
-                            self.source,
-                            TomlDeErrorKind::GenericTomlError(
-                                "DateTime values cannot be deserialized into dynamic Value (use a typed datetime field instead)".to_string()
+                        // Parse the TOML datetime string
+                        let Some(parsed) = parse_toml_datetime(&decoded) else {
+                            return Err(TomlDeError::new(
+                                self.source,
+                                TomlDeErrorKind::GenericTomlError(format!(
+                                    "Invalid datetime: {}",
+                                    decoded
+                                )),
+                                Some(event_span),
+                                partial.path(),
+                            ));
+                        };
+
+                        // Convert to DynDateTimeKind and call set_datetime
+                        let result = match parsed {
+                            ParsedDateTime::Offset {
+                                year,
+                                month,
+                                day,
+                                hour,
+                                minute,
+                                second,
+                                nanos,
+                                offset_minutes,
+                            } => partial.set_datetime(
+                                year,
+                                month,
+                                day,
+                                hour,
+                                minute,
+                                second,
+                                nanos,
+                                DynDateTimeKind::Offset { offset_minutes },
                             ),
-                            Some(event_span),
-                            partial.path(),
-                        ));
+                            ParsedDateTime::LocalDateTime {
+                                year,
+                                month,
+                                day,
+                                hour,
+                                minute,
+                                second,
+                                nanos,
+                            } => partial.set_datetime(
+                                year,
+                                month,
+                                day,
+                                hour,
+                                minute,
+                                second,
+                                nanos,
+                                DynDateTimeKind::LocalDateTime,
+                            ),
+                            ParsedDateTime::LocalDate { year, month, day } => partial.set_datetime(
+                                year,
+                                month,
+                                day,
+                                0,
+                                0,
+                                0,
+                                0,
+                                DynDateTimeKind::LocalDate,
+                            ),
+                            ParsedDateTime::LocalTime {
+                                hour,
+                                minute,
+                                second,
+                                nanos,
+                            } => partial.set_datetime(
+                                0,
+                                0,
+                                0,
+                                hour,
+                                minute,
+                                second,
+                                nanos,
+                                DynDateTimeKind::LocalTime,
+                            ),
+                        };
+
+                        if let Err(e) = result {
+                            return Err(TomlDeError::new(
+                                self.source,
+                                TomlDeErrorKind::GenericReflect(e),
+                                Some(event_span),
+                                partial.path(),
+                            ));
+                        }
                     }
                 }
             }

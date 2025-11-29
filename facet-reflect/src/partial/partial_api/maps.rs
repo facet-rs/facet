@@ -300,9 +300,9 @@ impl Partial<'_> {
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a DynamicValue in Object state with Idle insert_state
-        match (&frame.shape.def, &frame.tracker) {
+        let dyn_def = match (&frame.shape.def, &frame.tracker) {
             (
-                Def::DynamicValue(_),
+                Def::DynamicValue(dyn_def),
                 Tracker::DynamicValue {
                     state:
                         DynamicValueState::Object {
@@ -311,6 +311,7 @@ impl Partial<'_> {
                 },
             ) if frame.is_init => {
                 // Good, proceed
+                dyn_def
             }
             (
                 Def::DynamicValue(_),
@@ -338,10 +339,34 @@ impl Partial<'_> {
                     operation: "begin_object_entry can only be called on DynamicValue types",
                 });
             }
-        }
+        };
 
         // For DynamicValue objects, the value shape is the same DynamicValue shape
         let value_shape = frame.shape;
+
+        // Check if key already exists using object_get_mut (for "get or create" semantics)
+        // This is needed for formats like TOML with implicit tables: [a] followed by [a.b.c]
+        if let Some(get_mut_fn) = dyn_def.vtable.object_get_mut {
+            let object_ptr = unsafe { frame.data.assume_init() };
+            if let Some(existing_ptr) = unsafe { get_mut_fn(object_ptr, key) } {
+                // Key exists - push a frame pointing to existing value
+                // Leave insert_state as Idle (no insertion needed on end())
+                // Use ManagedElsewhere since parent object owns this value
+                let mut new_frame = Frame::new(
+                    existing_ptr.as_uninit(),
+                    value_shape,
+                    FrameOwnership::ManagedElsewhere,
+                );
+                new_frame.is_init = true;
+                // Set tracker to reflect it's an initialized DynamicValue
+                // The caller will likely call begin_map() which will set proper Object state
+                new_frame.tracker = Tracker::Scalar;
+                self.frames_mut().push(new_frame);
+                return Ok(self);
+            }
+        }
+
+        // Key doesn't exist - allocate new value
         let value_layout = match value_shape.layout.sized_layout() {
             Ok(layout) => layout,
             Err(_) => {

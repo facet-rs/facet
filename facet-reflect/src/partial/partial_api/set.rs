@@ -1,5 +1,5 @@
 use super::*;
-use facet_core::{Def, NumericType, PrimitiveType, Type};
+use facet_core::{Def, DynDateTimeKind, NumericType, PrimitiveType, Type};
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // `Set` and set helpers
@@ -222,6 +222,59 @@ impl<'facet> Partial<'facet> {
                     });
                 }
             }
+        }
+
+        fr.tracker = Tracker::DynamicValue {
+            state: DynamicValueState::Scalar,
+        };
+        unsafe { fr.mark_as_init() };
+        Ok(self)
+    }
+
+    /// Sets a datetime value into a DynamicValue target.
+    ///
+    /// This is used for format-specific datetime types (like TOML datetime).
+    /// Returns an error if the target doesn't support datetime values.
+    pub fn set_datetime(
+        &mut self,
+        year: i32,
+        month: u8,
+        day: u8,
+        hour: u8,
+        minute: u8,
+        second: u8,
+        nanos: u32,
+        kind: DynDateTimeKind,
+    ) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
+        let fr = self.frames_mut().last_mut().unwrap();
+
+        // Must be a DynamicValue type
+        let dyn_def = match &fr.shape.def {
+            Def::DynamicValue(dv) => dv,
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: fr.shape,
+                    operation: "set_datetime requires a DynamicValue target",
+                });
+            }
+        };
+
+        let vtable = dyn_def.vtable;
+
+        // Check if the vtable supports datetime
+        let Some(set_datetime_fn) = vtable.set_datetime else {
+            return Err(ReflectError::OperationFailed {
+                shape: fr.shape,
+                operation: "dynamic value type does not support datetime",
+            });
+        };
+
+        fr.deinit();
+
+        // Call the vtable's set_datetime function
+        unsafe {
+            set_datetime_fn(fr.data, year, month, day, hour, minute, second, nanos, kind);
         }
 
         fr.tracker = Tracker::DynamicValue {

@@ -3,11 +3,12 @@
 use core::ptr::NonNull;
 
 use facet_core::{
-    ConstTypeId, Def, DynValueKind, DynamicValueDef, DynamicValueVTable, Facet, MarkerTraits,
-    PtrConst, PtrMut, PtrUninit, Shape, ShapeLayout, Type, TypeNameOpts, UserType, ValueVTable,
+    ConstTypeId, Def, DynDateTimeKind, DynValueKind, DynamicValueDef, DynamicValueVTable, Facet,
+    MarkerTraits, PtrConst, PtrMut, PtrUninit, Shape, ShapeLayout, Type, TypeNameOpts, UserType,
+    ValueVTable,
 };
 
-use crate::{VArray, VBytes, VNumber, VObject, VString, Value};
+use crate::{DateTimeKind, VArray, VBytes, VDateTime, VNumber, VObject, VString, Value};
 
 // ============================================================================
 // Scalar setters
@@ -69,6 +70,40 @@ unsafe fn dyn_set_bytes(dst: PtrUninit<'_>, value: &[u8]) {
     unsafe {
         let ptr = dst.as_mut_byte_ptr() as *mut Value;
         ptr.write(VBytes::new(value).into_value());
+    }
+}
+
+unsafe fn dyn_set_datetime(
+    dst: PtrUninit<'_>,
+    year: i32,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    nanos: u32,
+    kind: DynDateTimeKind,
+) {
+    unsafe {
+        let ptr = dst.as_mut_byte_ptr() as *mut Value;
+        let dt = match kind {
+            DynDateTimeKind::Offset { offset_minutes } => VDateTime::new_offset(
+                year,
+                month,
+                day,
+                hour,
+                minute,
+                second,
+                nanos,
+                offset_minutes,
+            ),
+            DynDateTimeKind::LocalDateTime => {
+                VDateTime::new_local_datetime(year, month, day, hour, minute, second, nanos)
+            }
+            DynDateTimeKind::LocalDate => VDateTime::new_local_date(year, month, day),
+            DynDateTimeKind::LocalTime => VDateTime::new_local_time(hour, minute, second, nanos),
+        };
+        ptr.write(dt.into());
     }
 }
 
@@ -142,6 +177,7 @@ unsafe fn dyn_get_kind(value: PtrConst<'_>) -> DynValueKind {
             crate::ValueType::Bytes => DynValueKind::Bytes,
             crate::ValueType::Array => DynValueKind::Array,
             crate::ValueType::Object => DynValueKind::Object,
+            crate::ValueType::DateTime => DynValueKind::DateTime,
         }
     }
 }
@@ -185,6 +221,34 @@ unsafe fn dyn_get_bytes<'a>(value: PtrConst<'a>) -> Option<&'a [u8]> {
     unsafe {
         let ptr = value.as_byte_ptr() as *const Value;
         (*ptr).as_bytes().map(|b| b.as_slice())
+    }
+}
+
+unsafe fn dyn_get_datetime(
+    value: PtrConst<'_>,
+) -> Option<(i32, u8, u8, u8, u8, u8, u32, DynDateTimeKind)> {
+    unsafe {
+        let ptr = value.as_byte_ptr() as *const Value;
+        (*ptr).as_datetime().map(|dt| {
+            let kind = match dt.kind() {
+                DateTimeKind::Offset { offset_minutes } => {
+                    DynDateTimeKind::Offset { offset_minutes }
+                }
+                DateTimeKind::LocalDateTime => DynDateTimeKind::LocalDateTime,
+                DateTimeKind::LocalDate => DynDateTimeKind::LocalDate,
+                DateTimeKind::LocalTime => DynDateTimeKind::LocalTime,
+            };
+            (
+                dt.year(),
+                dt.month(),
+                dt.day(),
+                dt.hour(),
+                dt.minute(),
+                dt.second(),
+                dt.nanos(),
+                kind,
+            )
+        })
     }
 }
 
@@ -239,6 +303,16 @@ unsafe fn dyn_object_get<'a>(value: PtrConst<'a>, key: &str) -> Option<PtrConst<
     }
 }
 
+unsafe fn dyn_object_get_mut<'a>(value: PtrMut<'a>, key: &str) -> Option<PtrMut<'a>> {
+    unsafe {
+        let ptr = value.as_mut_byte_ptr() as *mut Value;
+        (*ptr).as_object_mut().and_then(|o| {
+            o.get_mut(key)
+                .map(|v| PtrMut::new(NonNull::new_unchecked(v as *mut Value as *mut u8)))
+        })
+    }
+}
+
 // ============================================================================
 // VTable and Shape
 // ============================================================================
@@ -251,6 +325,7 @@ static DYNAMIC_VALUE_VTABLE: DynamicValueVTable = DynamicValueVTable::builder()
     .set_f64(dyn_set_f64)
     .set_str(dyn_set_str)
     .set_bytes(dyn_set_bytes)
+    .set_datetime(dyn_set_datetime)
     .begin_array(dyn_begin_array)
     .push_array_element(dyn_push_array_element)
     .begin_object(dyn_begin_object)
@@ -262,11 +337,13 @@ static DYNAMIC_VALUE_VTABLE: DynamicValueVTable = DynamicValueVTable::builder()
     .get_f64(dyn_get_f64)
     .get_str(dyn_get_str)
     .get_bytes(dyn_get_bytes)
+    .get_datetime(dyn_get_datetime)
     .array_len(dyn_array_len)
     .array_get(dyn_array_get)
     .object_len(dyn_object_len)
     .object_get_entry(dyn_object_get_entry)
     .object_get(dyn_object_get)
+    .object_get_mut(dyn_object_get_mut)
     .build();
 
 static DYNAMIC_VALUE_DEF: DynamicValueDef = DynamicValueDef::builder()

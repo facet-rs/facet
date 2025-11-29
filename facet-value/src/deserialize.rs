@@ -27,11 +27,12 @@
 //! assert_eq!(person.age, 30);
 //! ```
 
-use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::{String, ToString};
-use alloc::vec;
 use alloc::vec::Vec;
+
+#[cfg(feature = "diagnostics")]
+use alloc::boxed::Box;
 
 use facet_core::{Def, Facet, Shape, StructKind, Type, UserType};
 use facet_reflect::{Partial, ReflectError};

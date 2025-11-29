@@ -616,6 +616,24 @@ impl Differ {
                 // Compare against maps or structs
                 self.check_dyn_object_against_other(dyn_peek, dyn_val, other)
             }
+            DynValueKind::DateTime => {
+                // Compare datetime values by their components
+                let dyn_dt = dyn_val.as_datetime();
+
+                // Check if other is also a DynamicValue datetime
+                let other_dt = if let Ok(other_dyn) = other.into_dynamic_value() {
+                    other_dyn.as_datetime()
+                } else {
+                    None
+                };
+
+                if dyn_dt == other_dt {
+                    CheckResult::Same
+                } else {
+                    self.record_changed(dyn_peek, other);
+                    CheckResult::Different
+                }
+            }
         }
     }
 
