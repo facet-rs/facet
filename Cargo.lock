@@ -688,6 +688,7 @@ dependencies = [
  "facet-reflect",
  "facet-solver",
  "facet-testhelpers",
+ "facet-value",
  "log",
  "num-traits",
  "owo-colors",

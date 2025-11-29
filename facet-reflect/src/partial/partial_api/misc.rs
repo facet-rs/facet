@@ -1007,6 +1007,31 @@ impl<'facet> Partial<'facet> {
                     }
                 }
             }
+            Tracker::DynamicValue {
+                state: DynamicValueState::Object { insert_state },
+            } => {
+                if let DynamicObjectInsertState::BuildingValue { key } = insert_state {
+                    // We just popped a value frame, now insert it into the dynamic object
+                    if let Def::DynamicValue(dyn_def) = parent_frame.shape.def {
+                        // Get mutable pointers - both object and value need PtrMut
+                        let object_ptr = unsafe { parent_frame.data.assume_init() };
+                        let value_ptr = unsafe { popped_frame.data.assume_init() };
+
+                        // Use insert_object_entry to add the key-value pair
+                        unsafe {
+                            (dyn_def.vtable.insert_object_entry)(object_ptr, key, value_ptr);
+                        }
+
+                        // Insert moved out of popped_frame
+                        popped_frame.tracker = Tracker::Scalar;
+                        popped_frame.is_init = false;
+                        popped_frame.dealloc();
+
+                        // Reset insert state to Idle
+                        *insert_state = DynamicObjectInsertState::Idle;
+                    }
+                }
+            }
             _ => {}
         }
 

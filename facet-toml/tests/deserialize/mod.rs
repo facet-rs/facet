@@ -8,4 +8,5 @@ mod option;
 mod scalar;
 mod spanned;
 mod struct_;
+mod value;
 mod vec_struct;
