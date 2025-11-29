@@ -275,7 +275,7 @@ pub(crate) enum MapInsertState {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) enum FrameOwnership {
     /// This frame owns the allocation and should deallocate it on drop
     Owned,

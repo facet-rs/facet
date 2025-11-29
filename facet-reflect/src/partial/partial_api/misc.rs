@@ -217,6 +217,18 @@ impl<'facet> Partial<'facet> {
     /// Mark a field as initialized in a frame's tracker
     fn mark_field_initialized(frame: &mut Frame, field_name: &str) {
         if let Some(idx) = Self::find_field_index(frame, field_name) {
+            // If the tracker is Scalar but this is a struct type, upgrade to Struct tracker.
+            // This can happen if the frame was deinit'd (e.g., by a failed set_default)
+            // which resets the tracker to Scalar.
+            if matches!(frame.tracker, Tracker::Scalar) {
+                if let Type::User(UserType::Struct(struct_type)) = frame.shape.ty {
+                    frame.tracker = Tracker::Struct {
+                        iset: ISet::new(struct_type.fields.len()),
+                        current_child: None,
+                    };
+                }
+            }
+
             match &mut frame.tracker {
                 Tracker::Struct { iset, .. } => {
                     iset.set(idx);

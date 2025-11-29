@@ -1187,3 +1187,94 @@ fn test_double_free_truncated() {
 
     eprintln!("=== About to drop ===");
 }
+
+#[test]
+fn test_leak_092c76fc() {
+    // Reproduction of leak artifact: leak-092c76fcb6f7f6bae36e389cbaa14cc08f1a55d2
+    // 1 byte leaked - the "h" string allocated at step 23
+    //
+    // Root cause: In deferred mode, when a parent frame's tracker gets reset to Scalar
+    // (e.g., by a failed set_default calling deinit()), the mark_field_initialized()
+    // function couldn't update the parent's iset because there was no iset to update.
+    // This meant child fields weren't tracked for cleanup, causing leaks.
+    //
+    // Fix: In mark_field_initialized(), if the tracker is Scalar but the shape is a
+    // struct type, upgrade the tracker to Struct with a fresh iset before setting bits.
+    let mut typed_partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let p = typed_partial.inner_mut();
+
+    let _ = p.begin_list();
+    let _ = p.end();
+    let _ = p.begin_deferred(Resolution::new());
+    let _ = p.set_default();
+    let _ = p.set_default();
+    let _ = p.begin_smart_ptr();
+    let _ = p.begin_field("nested");
+    let _ = p.set_default();
+    let _ = p.set_default();
+    let _ = p.begin_inner();
+    let _ = p.begin_set();
+    let _ = p.begin_field("x");
+    let _ = p.begin_inner();
+    let _ = p.set_default();
+    let _ = p.end();
+    let _ = p.set_nth_field_to_default(35);
+    let _ = p.begin_value();
+    let _ = p.set_nth_field_to_default(1);
+    let _ = p.begin_field("label");
+    let _ = p.set_default();
+    let _ = p.begin_deferred(Resolution::new());
+    let _ = p.set(false);
+    let _ = p.begin_inner();
+    let _ = p.set(String::from("h")); // This string was leaking!
+    let _ = p.begin_list();
+    let _ = p.end();
+    let _ = p.end();
+    let _ = p.set_default();
+    let _ = p.set_default();
+    let _ = p.begin_smart_ptr();
+    let _ = p.begin_field("nested");
+    let _ = p.begin_set();
+    let _ = p.begin_deferred(Resolution::new());
+    let _ = p.begin_deferred(Resolution::new());
+    let _ = p.end();
+    let _ = p.begin_value();
+    let _ = p.set_nth_field_to_default(223);
+    let _ = p.begin_field("y");
+    let _ = p.begin_deferred(Resolution::new());
+    let _ = p.begin_deferred(Resolution::new());
+    let _ = p.begin_value();
+    let _ = p.begin_field("mapping");
+    let _ = p.begin_list();
+    let _ = p.end();
+    let _ = p.begin_deferred(Resolution::new());
+    let _ = p.set_default();
+    let _ = p.set_default();
+    let _ = p.begin_smart_ptr();
+    let _ = p.begin_field("nested");
+    let _ = p.set_default();
+    let _ = p.set_default();
+    let _ = p.begin_inner();
+    let _ = p.begin_set();
+    let _ = p.begin_field("x");
+    let _ = p.begin_inner();
+    let _ = p.set_default();
+    let _ = p.end();
+    let _ = p.set_nth_field_to_default(35);
+    let _ = p.begin_value();
+    let _ = p.set_nth_field_to_default(1);
+    let _ = p.set(1608474463u32);
+    let _ = p.set_nth_field_to_default(223);
+    let _ = p.end();
+    let _ = p.set_default();
+    let _ = p.set_default();
+    let _ = p.begin_smart_ptr();
+    let _ = p.begin_smart_ptr();
+    let _ = p.end();
+    let _ = p.end();
+    let _ = p.set_nth_field_to_default(223);
+    let _ = p.finish_deferred();
+    let _ = p.end();
+    let _ = p.begin_field("name");
+    // Drop - should not leak
+}
