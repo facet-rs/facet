@@ -1,6 +1,6 @@
 //! Support for peeking into DynamicValue types like `facet_value::Value`
 
-use facet_core::{DynValueKind, DynamicValueDef};
+use facet_core::{DynDateTimeKind, DynValueKind, DynamicValueDef};
 
 use super::Peek;
 
@@ -78,6 +78,17 @@ impl<'mem, 'facet> PeekDynamicValue<'mem, 'facet> {
         self.def
             .vtable
             .get_bytes
+            .and_then(|f| unsafe { f(self.value.data()) })
+    }
+
+    /// Returns the datetime components if this is a datetime, None otherwise
+    ///
+    /// Returns `(year, month, day, hour, minute, second, nanos, kind)`.
+    #[inline]
+    pub fn as_datetime(&self) -> Option<(i32, u8, u8, u8, u8, u8, u32, DynDateTimeKind)> {
+        self.def
+            .vtable
+            .get_datetime
             .and_then(|f| unsafe { f(self.value.data()) })
     }
 

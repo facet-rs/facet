@@ -1,12 +1,13 @@
 //! `facet-value` provides a memory-efficient dynamic value type for representing
-//! structured data similar to JSON, but with added support for binary data (bytes).
+//! structured data similar to JSON, but with added support for binary data and datetime.
 //!
 //! # Features
 //!
 //! - **Pointer-sized `Value` type**: The main `Value` type is exactly one pointer in size
-//! - **Seven value types**: Null, Bool, Number, String, Bytes, Array, Object
+//! - **Eight value types**: Null, Bool, Number, String, Bytes, Array, Object, DateTime
 //! - **`no_std` compatible**: Works with just `alloc`, no standard library required
 //! - **Bytes support**: First-class support for binary data (useful for MessagePack, CBOR, etc.)
+//! - **DateTime support**: First-class support for temporal data (useful for TOML, YAML, etc.)
 //!
 //! # Design
 //!
@@ -42,6 +43,9 @@ pub use array::*;
 
 mod object;
 pub use object::*;
+
+mod datetime;
+pub use datetime::*;
 
 #[cfg(feature = "alloc")]
 mod facet_impl;

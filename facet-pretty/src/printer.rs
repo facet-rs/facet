@@ -9,8 +9,8 @@ use core::{
 use std::hash::DefaultHasher;
 
 use facet_core::{
-    Def, DynValueKind, Facet, Field, FieldFlags, PointerType, PrimitiveType, SequenceType, Shape,
-    StructKind, StructType, TextualType, Type, TypeNameOpts, UserType,
+    Def, DynDateTimeKind, DynValueKind, Facet, Field, FieldFlags, PointerType, PrimitiveType,
+    SequenceType, Shape, StructKind, StructType, TextualType, Type, TypeNameOpts, UserType,
 };
 use facet_reflect::{Peek, ValueId};
 
@@ -636,6 +636,66 @@ impl PrettyPrinter {
                                 self.indent(f, format_depth)?;
                             }
                             self.write_punctuation(f, "}")?;
+                        }
+                    }
+                    DynValueKind::DateTime => {
+                        // Format datetime using the vtable's get_datetime
+                        if let Some((year, month, day, hour, minute, second, nanos, kind)) =
+                            dyn_val.as_datetime()
+                        {
+                            match kind {
+                                DynDateTimeKind::Offset { offset_minutes } => {
+                                    if nanos > 0 {
+                                        write!(
+                                            f,
+                                            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:09}",
+                                            year, month, day, hour, minute, second, nanos
+                                        )?;
+                                    } else {
+                                        write!(
+                                            f,
+                                            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+                                            year, month, day, hour, minute, second
+                                        )?;
+                                    }
+                                    if offset_minutes == 0 {
+                                        write!(f, "Z")?;
+                                    } else {
+                                        let sign = if offset_minutes >= 0 { '+' } else { '-' };
+                                        let abs = offset_minutes.abs();
+                                        write!(f, "{}{:02}:{:02}", sign, abs / 60, abs % 60)?;
+                                    }
+                                }
+                                DynDateTimeKind::LocalDateTime => {
+                                    if nanos > 0 {
+                                        write!(
+                                            f,
+                                            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:09}",
+                                            year, month, day, hour, minute, second, nanos
+                                        )?;
+                                    } else {
+                                        write!(
+                                            f,
+                                            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}",
+                                            year, month, day, hour, minute, second
+                                        )?;
+                                    }
+                                }
+                                DynDateTimeKind::LocalDate => {
+                                    write!(f, "{:04}-{:02}-{:02}", year, month, day)?;
+                                }
+                                DynDateTimeKind::LocalTime => {
+                                    if nanos > 0 {
+                                        write!(
+                                            f,
+                                            "{:02}:{:02}:{:02}.{:09}",
+                                            hour, minute, second, nanos
+                                        )?;
+                                    } else {
+                                        write!(f, "{:02}:{:02}:{:02}", hour, minute, second)?;
+                                    }
+                                }
+                            }
                         }
                     }
                 }

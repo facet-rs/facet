@@ -111,6 +111,50 @@ pub type DynSetStrFn = unsafe fn(dst: PtrUninit<'_>, value: &str);
 /// After this call, `dst` is fully initialized.
 pub type DynSetBytesFn = unsafe fn(dst: PtrUninit<'_>, value: &[u8]);
 
+/// The kind of datetime value (for dynamic value datetime support).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DynDateTimeKind {
+    /// Offset date-time with UTC offset in minutes.
+    Offset {
+        /// Offset from UTC in minutes. Range: -1440 to +1440 (±24 hours).
+        offset_minutes: i16,
+    },
+    /// Local date-time without offset (civil time).
+    LocalDateTime,
+    /// Local date only.
+    LocalDate,
+    /// Local time only.
+    LocalTime,
+}
+
+/// Set the value to a datetime.
+///
+/// # Safety
+///
+/// `dst` must point to uninitialized memory of the correct size and alignment.
+/// After this call, `dst` is fully initialized.
+pub type DynSetDateTimeFn = unsafe fn(
+    dst: PtrUninit<'_>,
+    year: i32,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    nanos: u32,
+    kind: DynDateTimeKind,
+);
+
+/// Get datetime components from a datetime value.
+///
+/// Returns `(year, month, day, hour, minute, second, nanos, kind)` if the value is a datetime.
+///
+/// # Safety
+///
+/// `value` must point to an initialized dynamic value.
+pub type DynGetDateTimeFn =
+    unsafe fn(value: PtrConst<'_>) -> Option<(i32, u8, u8, u8, u8, u8, u32, DynDateTimeKind)>;
+
 // ============================================================================
 // Array operations
 // ============================================================================
@@ -190,6 +234,8 @@ pub enum DynValueKind {
     Array,
     /// Object (string keys, dynamic values)
     Object,
+    /// DateTime value
+    DateTime,
 }
 
 /// Get the kind of value stored.
@@ -279,6 +325,17 @@ pub type DynObjectGetEntryFn =
 /// `value` must point to an initialized dynamic value.
 pub type DynObjectGetFn = for<'a> unsafe fn(value: PtrConst<'a>, key: &str) -> Option<PtrConst<'a>>;
 
+/// Get a mutable reference to a value from an object by key.
+/// Returns None if not an object or key not found.
+///
+/// This is used for navigating into existing object entries during deserialization
+/// (e.g., TOML implicit tables like `[a]` followed by `[a.b.c]`).
+///
+/// # Safety
+///
+/// `value` must point to an initialized dynamic value that is an object.
+pub type DynObjectGetMutFn = for<'a> unsafe fn(value: PtrMut<'a>, key: &str) -> Option<PtrMut<'a>>;
+
 // ============================================================================
 // VTable
 // ============================================================================
@@ -305,6 +362,8 @@ pub struct DynamicValueVTable {
     pub set_str: DynSetStrFn,
     /// Set to bytes (optional - not all dynamic value types support bytes)
     pub set_bytes: Option<DynSetBytesFn>,
+    /// Set to datetime (optional - not all dynamic value types support datetime)
+    pub set_datetime: Option<DynSetDateTimeFn>,
 
     // --- Array operations (required) ---
     /// Initialize as empty array
@@ -337,6 +396,8 @@ pub struct DynamicValueVTable {
     pub get_str: DynGetStrFn,
     /// Get bytes reference
     pub get_bytes: Option<DynGetBytesFn>,
+    /// Get datetime components
+    pub get_datetime: Option<DynGetDateTimeFn>,
     /// Get array length
     pub array_len: DynArrayLenFn,
     /// Get array element by index
@@ -347,6 +408,8 @@ pub struct DynamicValueVTable {
     pub object_get_entry: DynObjectGetEntryFn,
     /// Get object value by key
     pub object_get: DynObjectGetFn,
+    /// Get mutable reference to object value by key (for navigating into existing entries)
+    pub object_get_mut: Option<DynObjectGetMutFn>,
 }
 
 impl core::fmt::Debug for DynamicValueVTable {
@@ -371,6 +434,7 @@ pub struct DynamicValueVTableBuilder {
     set_f64: Option<DynSetF64Fn>,
     set_str: Option<DynSetStrFn>,
     set_bytes: Option<DynSetBytesFn>,
+    set_datetime: Option<DynSetDateTimeFn>,
     begin_array: Option<DynBeginArrayFn>,
     push_array_element: Option<DynPushArrayElementFn>,
     end_array: Option<DynEndArrayFn>,
@@ -384,11 +448,13 @@ pub struct DynamicValueVTableBuilder {
     get_f64: Option<DynGetF64Fn>,
     get_str: Option<DynGetStrFn>,
     get_bytes: Option<DynGetBytesFn>,
+    get_datetime: Option<DynGetDateTimeFn>,
     array_len: Option<DynArrayLenFn>,
     array_get: Option<DynArrayGetFn>,
     object_len: Option<DynObjectLenFn>,
     object_get_entry: Option<DynObjectGetEntryFn>,
     object_get: Option<DynObjectGetFn>,
+    object_get_mut: Option<DynObjectGetMutFn>,
 }
 
 impl DynamicValueVTableBuilder {
@@ -403,6 +469,7 @@ impl DynamicValueVTableBuilder {
             set_f64: None,
             set_str: None,
             set_bytes: None,
+            set_datetime: None,
             begin_array: None,
             push_array_element: None,
             end_array: None,
@@ -416,11 +483,13 @@ impl DynamicValueVTableBuilder {
             get_f64: None,
             get_str: None,
             get_bytes: None,
+            get_datetime: None,
             array_len: None,
             array_get: None,
             object_len: None,
             object_get_entry: None,
             object_get: None,
+            object_get_mut: None,
         }
     }
 
@@ -463,6 +532,12 @@ impl DynamicValueVTableBuilder {
     /// Sets the set_bytes function
     pub const fn set_bytes(mut self, f: DynSetBytesFn) -> Self {
         self.set_bytes = Some(f);
+        self
+    }
+
+    /// Sets the set_datetime function
+    pub const fn set_datetime(mut self, f: DynSetDateTimeFn) -> Self {
+        self.set_datetime = Some(f);
         self
     }
 
@@ -544,6 +619,12 @@ impl DynamicValueVTableBuilder {
         self
     }
 
+    /// Sets the get_datetime function
+    pub const fn get_datetime(mut self, f: DynGetDateTimeFn) -> Self {
+        self.get_datetime = Some(f);
+        self
+    }
+
     /// Sets the array_len function
     pub const fn array_len(mut self, f: DynArrayLenFn) -> Self {
         self.array_len = Some(f);
@@ -574,6 +655,12 @@ impl DynamicValueVTableBuilder {
         self
     }
 
+    /// Sets the object_get_mut function
+    pub const fn object_get_mut(mut self, f: DynObjectGetMutFn) -> Self {
+        self.object_get_mut = Some(f);
+        self
+    }
+
     /// Builds the DynamicValueVTable
     ///
     /// # Panics
@@ -588,6 +675,7 @@ impl DynamicValueVTableBuilder {
             set_f64: self.set_f64.unwrap(),
             set_str: self.set_str.unwrap(),
             set_bytes: self.set_bytes,
+            set_datetime: self.set_datetime,
             begin_array: self.begin_array.unwrap(),
             push_array_element: self.push_array_element.unwrap(),
             end_array: self.end_array,
@@ -601,11 +689,13 @@ impl DynamicValueVTableBuilder {
             get_f64: self.get_f64.unwrap(),
             get_str: self.get_str.unwrap(),
             get_bytes: self.get_bytes,
+            get_datetime: self.get_datetime,
             array_len: self.array_len.unwrap(),
             array_get: self.array_get.unwrap(),
             object_len: self.object_len.unwrap(),
             object_get_entry: self.object_get_entry.unwrap(),
             object_get: self.object_get.unwrap(),
+            object_get_mut: self.object_get_mut,
         }
     }
 }

@@ -181,6 +181,11 @@ fn format_value_into(ctx: &mut FormatContext, value: &Value, current_path: &[Pat
                 ctx.output.push('}');
             }
         }
+        ValueType::DateTime => {
+            let dt = value.as_datetime().unwrap();
+            // Format using Debug which produces ISO 8601 format
+            let _ = write!(ctx.output, "{:?}", dt);
+        }
     }
 
     let end = ctx.len();
