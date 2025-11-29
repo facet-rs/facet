@@ -29,6 +29,8 @@
 
 use alloc::format;
 use alloc::string::{String, ToString};
+#[cfg(feature = "diagnostics")]
+use alloc::vec;
 use alloc::vec::Vec;
 
 #[cfg(feature = "diagnostics")]
