@@ -81,27 +81,27 @@ impl<'input> Context<'input> {
     /// this is where we toggle something on, look for a value, etc.
     fn handle_field(
         &mut self,
-        p: &mut Partial<'static>,
+        p: Partial<'static>,
         field_index: usize,
         value: Option<SplitToken<'input>>,
-    ) -> Result<(), ArgsErrorKind> {
-        let fields = self.fields(p)?;
+    ) -> Result<Partial<'static>, ArgsErrorKind> {
+        let fields = self.fields(&p)?;
         let field = fields[field_index];
         log::trace!("Found field {field:?}");
 
-        p.begin_nth_field(field_index)?;
+        let mut p = p.begin_nth_field(field_index)?;
 
         log::trace!("After begin_field, shape is {}", p.shape());
         if p.shape().is_shape(bool::SHAPE) {
             log::trace!("Flag is boolean, setting it to true");
-            p.set(true)?;
+            p = p.set(true)?;
 
             self.index += 1;
         } else {
             log::trace!("Flag isn't boolean, expecting a {} value", p.shape());
 
             if let Some(value) = value {
-                self.handle_value(p, value.s)?;
+                p = self.handle_value(p, value.s)?;
             } else {
                 if self.index + 1 >= self.args.len() {
                     return Err(ArgsErrorKind::ExpectedValueGotEof { shape: p.shape() });
@@ -109,37 +109,37 @@ impl<'input> Context<'input> {
                 let value = self.args[self.index + 1];
 
                 self.index += 1;
-                self.handle_value(p, value)?;
+                p = self.handle_value(p, value)?;
             }
 
             self.index += 1;
         }
 
-        p.end()?;
+        p = p.end()?;
 
-        Ok(())
+        Ok(p)
     }
 
     fn handle_value(
         &mut self,
-        p: &mut Partial<'static>,
+        p: Partial<'static>,
         value: &'input str,
-    ) -> Result<(), ArgsErrorKind> {
-        match p.shape().def {
+    ) -> Result<Partial<'static>, ArgsErrorKind> {
+        let p = match p.shape().def {
             Def::List(_) => {
                 // if it's a list, then we'll want to initialize the list first and push to it
-                p.begin_list()?;
-                p.begin_list_item()?;
-                p.parse_from_str(value)?;
-                p.end()?;
+                let mut p = p.begin_list()?;
+                p = p.begin_list_item()?;
+                p = p.parse_from_str(value)?;
+                p.end()?
             }
             _ => {
                 // TODO: this surely won't be enough eventually
-                p.parse_from_str(value)?;
+                p.parse_from_str(value)?
             }
-        }
+        };
 
-        Ok(())
+        Ok(p)
     }
 
     fn work_add_input(&mut self) -> Result<HeapValue<'static>, ArgsErrorWithInput> {
@@ -200,7 +200,7 @@ impl<'input> Context<'input> {
                             let Some(field_index) = p.field_index(&snek) else {
                                 return Err(ArgsErrorKind::UnknownLongFlag);
                             };
-                            self.handle_field(&mut p, field_index, Some(value))?;
+                            p = self.handle_field(p, field_index, Some(value))?;
                         }
                         None => {
                             let snek = flag.to_snake_case();
@@ -208,7 +208,7 @@ impl<'input> Context<'input> {
                             let Some(field_index) = p.field_index(&snek) else {
                                 return Err(ArgsErrorKind::UnknownLongFlag);
                             };
-                            self.handle_field(&mut p, field_index, None)?;
+                            p = self.handle_field(p, field_index, None)?;
                         }
                     }
                 }
@@ -232,7 +232,7 @@ impl<'input> Context<'input> {
                             else {
                                 return Err(ArgsErrorKind::UnknownShortFlag);
                             };
-                            self.handle_field(&mut p, field_index, Some(value))?;
+                            p = self.handle_field(p, field_index, Some(value))?;
                         }
                         None => {
                             log::trace!("Looking up short flag {flag}");
@@ -241,7 +241,7 @@ impl<'input> Context<'input> {
                             else {
                                 return Err(ArgsErrorKind::UnknownShortFlag);
                             };
-                            self.handle_field(&mut p, field_index, None)?;
+                            p = self.handle_field(p, field_index, None)?;
                         }
                     }
                 }
@@ -273,12 +273,12 @@ impl<'input> Context<'input> {
                         return Err(ArgsErrorKind::UnexpectedPositionalArgument);
                     };
 
-                    p.begin_nth_field(chosen_field_index)?;
+                    p = p.begin_nth_field(chosen_field_index)?;
 
                     let value = self.args[self.index];
-                    self.handle_value(&mut p, value)?;
+                    p = self.handle_value(p, value)?;
 
-                    p.end()?;
+                    p = p.end()?;
                     self.index += 1;
                 }
                 ArgType::None => todo!(),
@@ -295,10 +295,10 @@ impl<'input> Context<'input> {
 
                 if field.flags.contains(FieldFlags::DEFAULT) {
                     log::trace!("Setting #{field_index} field to default: {field:?}");
-                    p.set_nth_field_to_default(field_index)?;
+                    p = p.set_nth_field_to_default(field_index)?;
                 } else if (field.shape)().is_shape(bool::SHAPE) {
                     // bools are just set to false
-                    p.set_nth_field(field_index, false)?;
+                    p = p.set_nth_field(field_index, false)?;
                 } else {
                     return Err(ArgsErrorKind::MissingArgument { field });
                 }

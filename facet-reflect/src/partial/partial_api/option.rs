@@ -5,10 +5,7 @@ use super::*;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 impl Partial<'_> {
     /// Begin building the Some variant of an Option
-    #[facet_macros::on_error(self.poison_and_cleanup())]
-    pub fn begin_some(&mut self) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
+    pub fn begin_some(mut self) -> Result<Self, ReflectError> {
         // Verify we're working with an Option and get the def
         let option_def = {
             let frame = self.frames().last().unwrap();
@@ -80,10 +77,7 @@ impl Partial<'_> {
     }
 
     /// Begin building the inner value of a wrapper type
-    #[facet_macros::on_error(self.poison_and_cleanup())]
-    pub fn begin_inner(&mut self) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
+    pub fn begin_inner(mut self) -> Result<Self, ReflectError> {
         // Get the inner shape and check for try_from
         let (inner_shape, has_try_from, parent_shape, is_option) = {
             let frame = self.frames().last().unwrap();
@@ -159,10 +153,7 @@ impl Partial<'_> {
 
     /// Begin bulding the source shape for custom deserialization, calling end() for this frame will
     /// call the deserialize_with function provided by the field and set the field using the result.
-    #[facet_macros::on_error(self.poison_and_cleanup())]
-    pub fn begin_custom_deserialization(&mut self) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
+    pub fn begin_custom_deserialization(mut self) -> Result<Self, ReflectError> {
         let current_frame = self.frames().last().unwrap();
         let target_shape = current_frame.shape;
         if let Some(field) = self.parent_field() {

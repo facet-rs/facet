@@ -15,16 +15,16 @@ fn build_with_invariants() -> Result<(), IPanic> {
     }
 
     let mut partial = Partial::alloc::<MyNonZeroU8>()?;
-    partial.begin_nth_field(0)?;
-    partial.set(42u8)?;
-    partial.end()?;
-    let wip: MyNonZeroU8 = *partial.build()?;
+    partial = partial.begin_nth_field(0)?;
+    partial = partial.set(42u8)?;
+    partial = partial.end()?;
+    let wip: MyNonZeroU8 = partial.build()?.materialize::<MyNonZeroU8>()?;
     assert_eq!(wip, MyNonZeroU8(42));
 
     let mut partial = Partial::alloc::<MyNonZeroU8>()?;
-    partial.begin_nth_field(0)?;
-    partial.set(0_u8)?;
-    partial.end()?;
+    partial = partial.begin_nth_field(0)?;
+    partial = partial.set(0_u8)?;
+    partial = partial.end()?;
     let result = partial.build();
     assert!(result.is_err());
     Ok(())
@@ -57,45 +57,45 @@ fn build_struct_with_enum_field() -> Result<(), IPanic> {
 
     // Valid Low variant
     let mut partial = Partial::alloc::<ValidatedRange>()?;
-    partial.begin_field("range")?;
-    partial.select_variant_named("Low")?;
-    partial.begin_nth_field(0)?;
-    partial.set(25u8)?;
-    partial.end()?;
-    partial.end()?;
-    let value: ValidatedRange = *partial.build()?;
+    partial = partial.begin_field("range")?;
+    partial = partial.select_variant_named("Low")?;
+    partial = partial.begin_nth_field(0)?;
+    partial = partial.set(25u8)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
+    let value: ValidatedRange = partial.build()?.materialize::<ValidatedRange>()?;
     assert_eq!(value.range, Range::Low(25));
 
     // Invalid Low variant (too high)
     let mut partial = Partial::alloc::<ValidatedRange>()?;
-    partial.begin_field("range")?;
-    partial.select_variant_named("Low")?;
-    partial.begin_nth_field(0)?;
-    partial.set(75u8)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("range")?;
+    partial = partial.select_variant_named("Low")?;
+    partial = partial.begin_nth_field(0)?;
+    partial = partial.set(75u8)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
     let result = partial.build();
     assert!(result.is_err());
 
     // Valid High variant
     let mut partial = Partial::alloc::<ValidatedRange>()?;
-    partial.begin_field("range")?;
-    partial.select_variant_named("High")?;
-    partial.begin_nth_field(0)?;
-    partial.set(75u8)?;
-    partial.end()?;
-    partial.end()?;
-    let value: ValidatedRange = *partial.build()?;
+    partial = partial.begin_field("range")?;
+    partial = partial.select_variant_named("High")?;
+    partial = partial.begin_nth_field(0)?;
+    partial = partial.set(75u8)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
+    let value: ValidatedRange = partial.build()?.materialize::<ValidatedRange>()?;
     assert_eq!(value.range, Range::High(75));
 
     // Invalid High variant (too low)
     let mut partial = Partial::alloc::<ValidatedRange>()?;
-    partial.begin_field("range")?;
-    partial.select_variant_named("High")?;
-    partial.begin_nth_field(0)?;
-    partial.set(25u8)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("range")?;
+    partial = partial.select_variant_named("High")?;
+    partial = partial.begin_nth_field(0)?;
+    partial = partial.set(25u8)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
     let result = partial.build();
     assert!(result.is_err());
     Ok(())
@@ -124,19 +124,19 @@ fn build_nested_with_invariants() -> Result<(), IPanic> {
 
     // Valid point
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_field("point")?;
-    partial.set_field("x", 10i32)?;
-    partial.set_field("y", 20i32)?;
-    partial.end()?;
-    let container: Container = *partial.build()?;
+    partial = partial.begin_field("point")?;
+    partial = partial.set_field("x", 10i32)?;
+    partial = partial.set_field("y", 20i32)?;
+    partial = partial.end()?;
+    let container: Container = partial.build()?.materialize::<Container>()?;
     assert_eq!(container.point, Point { x: 10, y: 20 });
 
     // Invalid point (negative x)
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_field("point")?;
-    partial.set_field("x", -10i32)?;
-    partial.set_field("y", 20i32)?;
-    partial.end()?;
+    partial = partial.begin_field("point")?;
+    partial = partial.set_field("x", -10i32)?;
+    partial = partial.set_field("y", 20i32)?;
+    partial = partial.end()?;
     let result = partial.build();
     // This should succeed because Container itself has no invariants,
     // only Point does, and we're not checking nested invariants yet

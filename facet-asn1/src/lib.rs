@@ -714,7 +714,7 @@ impl<'input> Asn1DeserializerStack<'input> {
 
     fn next<'f>(
         &mut self,
-        mut wip: Partial<'f>,
+        wip: Partial<'f>,
         with_tag: Option<u8>,
     ) -> Result<Partial<'f>, Asn1DeserError> {
         let shape = wip.shape();
@@ -722,36 +722,40 @@ impl<'input> Asn1DeserializerStack<'input> {
         match (shape.def, shape.ty) {
             (Def::Scalar, Type::Primitive(pt)) => match pt {
                 PrimitiveType::Boolean => {
-                    wip.set(self.next_bool(tag_for_shape.unwrap())?).unwrap();
+                    let wip = wip.set(self.next_bool(tag_for_shape.unwrap())?).unwrap();
                     Ok(wip)
                 }
                 PrimitiveType::Numeric(nt) => match nt {
                     NumericType::Integer { .. } => {
                         let number = self.next_int(tag_for_shape.unwrap())?;
-                        if shape.is_type::<i8>() {
-                            wip.set(number as i8).unwrap();
+                        let wip = if shape.is_type::<i8>() {
+                            wip.set(number as i8).unwrap()
                         } else if shape.is_type::<i16>() {
-                            wip.set(number as i16).unwrap();
+                            wip.set(number as i16).unwrap()
                         } else if shape.is_type::<i32>() {
-                            wip.set(number as i32).unwrap();
+                            wip.set(number as i32).unwrap()
                         } else if shape.is_type::<i64>() {
-                            wip.set(number).unwrap();
-                        }
+                            wip.set(number).unwrap()
+                        } else {
+                            wip
+                        };
                         Ok(wip)
                     }
                     NumericType::Float => {
                         let value = self.next_float(tag_for_shape.unwrap())?;
-                        if shape.is_type::<f32>() {
-                            wip.set(value as f32).unwrap();
+                        let wip = if shape.is_type::<f32>() {
+                            wip.set(value as f32).unwrap()
                         } else if shape.is_type::<f64>() {
-                            wip.set(value).unwrap();
-                        }
+                            wip.set(value).unwrap()
+                        } else {
+                            wip
+                        };
                         Ok(wip)
                     }
                 },
                 PrimitiveType::Textual(TextualType::Str) => {
                     let value = self.next_str(tag_for_shape.unwrap())?;
-                    wip.set(value.to_owned()).unwrap();
+                    let wip = wip.set(value.to_owned()).unwrap();
                     Ok(wip)
                 }
                 _ => Err(Asn1DeserError::UnsupportedShape),
@@ -759,7 +763,7 @@ impl<'input> Asn1DeserializerStack<'input> {
             (Def::Scalar, Type::User(UserType::Opaque)) => {
                 if shape.vtable.has_parse() {
                     let value = self.next_str(tag_for_shape.unwrap())?.to_owned();
-                    wip.set(value).unwrap();
+                    let wip = wip.set(value).unwrap();
                     Ok(wip)
                 } else {
                     Err(Asn1DeserError::UnsupportedShape)
@@ -768,34 +772,35 @@ impl<'input> Asn1DeserializerStack<'input> {
             (Def::List(_), _) => {
                 if shape.is_type::<Vec<u8>>() {
                     let bytes = self.next_tlv(tag_for_shape.unwrap())?;
-                    wip.set(bytes.to_vec()).unwrap();
+                    let wip = wip.set(bytes.to_vec()).unwrap();
+                    Ok(wip)
                 } else {
                     let len = self.next_tl(tag_for_shape.unwrap())?;
                     self.stack.push(DeserializeTask::Pop(PopReason::ListVal {
                         end: self.pos + len,
                     }));
                     self.stack.push(DeserializeTask::Value { with_tag: None });
+                    Ok(wip)
                 }
-                Ok(wip)
             }
             (Def::Option(od), _) => {
                 if self.pos == self.input.len() {
-                    wip.set_default().unwrap();
+                    let wip = wip.set_default().unwrap();
                     return Ok(wip);
                 }
                 let tag = self.input[self.pos];
-                match tag_for_shape {
+                let wip = match tag_for_shape {
                     Some(t) if t == tag => {
-                        wip.begin_some().unwrap();
+                        let wip = wip.begin_some().unwrap();
                         self.stack.push(DeserializeTask::Pop(PopReason::Some));
                         self.stack
                             .push(DeserializeTask::Value { with_tag: Some(t) });
+                        wip
                     }
-                    Some(_) => {
-                        wip.set_default().unwrap();
-                    }
+                    Some(_) => wip.set_default().unwrap(),
                     None => {
                         if let Type::User(UserType::Enum(et)) = od.t.ty {
+                            let mut found = false;
                             for v in et.variants {
                                 if let Some(variant_tag) = match v.data.kind {
                                     StructKind::Tuple if v.data.fields.len() == 1 => {
@@ -809,19 +814,24 @@ impl<'input> Asn1DeserializerStack<'input> {
                                     }),
                                 } {
                                     if tag == variant_tag {
-                                        wip.begin_some().unwrap();
-                                        self.stack.push(DeserializeTask::Pop(PopReason::Some));
-                                        self.stack.push(DeserializeTask::Value { with_tag: None });
+                                        found = true;
                                         break;
                                     }
                                 }
                             }
-                            wip.set_default().unwrap();
+                            if found {
+                                let wip = wip.begin_some().unwrap();
+                                self.stack.push(DeserializeTask::Pop(PopReason::Some));
+                                self.stack.push(DeserializeTask::Value { with_tag: None });
+                                wip
+                            } else {
+                                wip.set_default().unwrap()
+                            }
                         } else {
-                            wip.set_default().unwrap();
+                            wip.set_default().unwrap()
                         }
                     }
-                }
+                };
                 Ok(wip)
             }
             (_, Type::User(ut)) => match ut {
@@ -842,7 +852,7 @@ impl<'input> Asn1DeserializerStack<'input> {
                         if st.fields.len() == 1
                             && shape.attributes.contains(&ShapeAttribute::Transparent) =>
                     {
-                        wip.begin_nth_field(0).unwrap();
+                        let wip = wip.begin_nth_field(0).unwrap();
                         self.stack.push(DeserializeTask::Pop(PopReason::ObjectVal));
                         self.stack.push(DeserializeTask::Value {
                             with_tag: tag_for_shape,
@@ -869,7 +879,7 @@ impl<'input> Asn1DeserializerStack<'input> {
                                     let expected_tag =
                                         discriminant as u8 | tag::ASN1_CLASS_CONTEXT_SPECIFIC;
                                     if tag == expected_tag {
-                                        wip.select_nth_variant(i).unwrap();
+                                        let wip = wip.select_nth_variant(i).unwrap();
                                         let len = self.next_tl(tag)?;
                                         if len != 0 {
                                             return Err(Asn1DeserError::LengthMismatch {
@@ -886,9 +896,10 @@ impl<'input> Asn1DeserializerStack<'input> {
                             StructKind::Tuple if v.data.fields.len() == 1 => {
                                 let inner_tag = ber_tag_for_shape((v.data.fields[0].shape)())?;
                                 if inner_tag.is_some_and(|vtag| vtag == tag) {
-                                    wip.select_nth_variant(i).unwrap();
+                                    let wip = wip.select_nth_variant(i).unwrap();
                                     self.stack.push(DeserializeTask::Pop(PopReason::ObjectVal));
                                     self.stack.push(DeserializeTask::Value { with_tag: None });
+                                    return Ok(wip);
                                 }
                             }
                             StructKind::TupleStruct | StructKind::Struct | StructKind::Tuple => {
@@ -896,7 +907,7 @@ impl<'input> Asn1DeserializerStack<'input> {
                                     let expected_tag =
                                         discriminant as u8 | tag::ASN1_CLASS_CONTEXT_SPECIFIC;
                                     if tag == expected_tag {
-                                        wip.select_nth_variant(i).unwrap();
+                                        let wip = wip.select_nth_variant(i).unwrap();
                                         let len = self.next_tl(tag)?;
                                         self.stack.push(DeserializeTask::Pop(PopReason::Object {
                                             end: self.pos + len,
@@ -925,7 +936,7 @@ impl<'input> Asn1DeserializerStack<'input> {
 /// Deserialize an ASN.1 DER slice given some some [`Partial`] into a [`HeapValue`]
 pub fn deserialize_der_wip<'facet>(
     input: &[u8],
-    mut wip: Partial<'facet>,
+    wip: Partial<'facet>,
 ) -> Result<HeapValue<'facet>, Asn1DeserError> {
     let mut runner = Asn1DeserializerStack {
         _rules: EncodingRules::Distinguished,
@@ -937,6 +948,7 @@ pub fn deserialize_der_wip<'facet>(
         ],
     };
 
+    let mut wip = wip;
     loop {
         match runner.stack.pop() {
             Some(DeserializeTask::Pop(reason)) => match reason {
@@ -965,7 +977,7 @@ pub fn deserialize_der_wip<'facet>(
                     }
                 }
                 _ => {
-                    wip.end().unwrap();
+                    wip = wip.end().unwrap();
                 }
             },
             Some(DeserializeTask::Value { with_tag }) => {
@@ -976,7 +988,7 @@ pub fn deserialize_der_wip<'facet>(
                     .stack
                     .push(DeserializeTask::Pop(PopReason::ObjectVal));
                 runner.stack.push(DeserializeTask::Value { with_tag: None });
-                wip.begin_nth_field(index).unwrap();
+                wip = wip.begin_nth_field(index).unwrap();
             }
             None => unreachable!("Instruction stack is empty"),
         }

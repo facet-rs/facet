@@ -458,65 +458,71 @@ pub type Result<T> = core::result::Result<T, ValueError>;
 /// assert_eq!(point, Point { x: 10, y: 20 });
 /// ```
 pub fn from_value<'facet, T: Facet<'facet>>(value: Value) -> Result<T> {
-    let mut wip = Partial::alloc::<T>().map_err(|e| {
+    let partial = Partial::alloc::<T>().map_err(|e| {
         ValueError::from(e)
             .with_shape(T::SHAPE)
             .with_value(value.clone())
     })?;
-    deserialize_value_into(&value, wip.inner_mut())
+    let partial = deserialize_value_into(&value, partial)
         .map_err(|e| e.with_shape(T::SHAPE).with_value(value.clone()))?;
-    Ok(*wip.build().map_err(|e| {
+    let heap_value = partial.build().map_err(|e| {
         ValueError::from(e)
             .with_shape(T::SHAPE)
             .with_value(value.clone())
-    })?)
+    })?;
+    heap_value.materialize().map_err(|e| {
+        ValueError::from(e)
+            .with_shape(T::SHAPE)
+            .with_value(value.clone())
+    })
 }
 
 /// Internal deserializer that reads from a Value and writes to a Partial.
-fn deserialize_value_into(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
-    let shape = wip.shape();
+fn deserialize_value_into<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p>> {
+    let mut partial = partial;
+    let shape = partial.shape();
 
     // Check for Option first (it's also an enum but needs special handling)
     if matches!(&shape.def, Def::Option(_)) {
-        return deserialize_option(value, wip);
+        return deserialize_option(value, partial);
     }
 
     // Check for smart pointers
     if matches!(&shape.def, Def::Pointer(_)) {
-        return deserialize_pointer(value, wip);
+        return deserialize_pointer(value, partial);
     }
 
     // Check for transparent/inner wrapper types
     if shape.inner.is_some() {
-        wip.begin_inner()?;
-        deserialize_value_into(value, wip)?;
-        wip.end()?;
-        return Ok(());
+        partial = partial.begin_inner()?;
+        partial = deserialize_value_into(value, partial)?;
+        partial = partial.end()?;
+        return Ok(partial);
     }
 
     // Check the Type for structs and enums
     match &shape.ty {
         Type::User(UserType::Struct(struct_def)) => {
             if struct_def.kind == StructKind::Tuple {
-                return deserialize_tuple(value, wip);
+                return deserialize_tuple(value, partial);
             }
-            return deserialize_struct(value, wip);
+            return deserialize_struct(value, partial);
         }
-        Type::User(UserType::Enum(_)) => return deserialize_enum(value, wip),
+        Type::User(UserType::Enum(_)) => return deserialize_enum(value, partial),
         _ => {}
     }
 
     // Check Def for containers and special types
     match &shape.def {
-        Def::Scalar => deserialize_scalar(value, wip),
-        Def::List(_) => deserialize_list(value, wip),
-        Def::Map(_) => deserialize_map(value, wip),
-        Def::Array(_) => deserialize_array(value, wip),
-        Def::Set(_) => deserialize_set(value, wip),
+        Def::Scalar => deserialize_scalar(value, partial),
+        Def::List(_) => deserialize_list(value, partial),
+        Def::Map(_) => deserialize_map(value, partial),
+        Def::Array(_) => deserialize_array(value, partial),
+        Def::Set(_) => deserialize_set(value, partial),
         Def::DynamicValue(_) => {
             // Target is a DynamicValue (like Value itself) - just clone
-            wip.set(value.clone())?;
-            Ok(())
+            partial = partial.set(value.clone())?;
+            Ok(partial)
         }
         _ => Err(ValueError::new(ValueErrorKind::Unsupported {
             message: format!("unsupported shape def: {:?}", shape.def),
@@ -525,37 +531,38 @@ fn deserialize_value_into(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
 }
 
 /// Deserialize a scalar value (primitives, strings).
-fn deserialize_scalar(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
-    let shape = wip.shape();
+fn deserialize_scalar<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p>> {
+    let mut partial = partial;
+    let shape = partial.shape();
 
     match value.value_type() {
         ValueType::Null => {
-            wip.set_default()?;
-            Ok(())
+            partial = partial.set_default()?;
+            Ok(partial)
         }
         ValueType::Bool => {
             let b = value.as_bool().unwrap();
-            wip.set(b)?;
-            Ok(())
+            partial = partial.set(b)?;
+            Ok(partial)
         }
         ValueType::Number => {
             let num = value.as_number().unwrap();
-            set_number(num, wip, shape)
+            set_number(num, partial, shape)
         }
         ValueType::String => {
             let s = value.as_string().unwrap();
             // Try parse_from_str first if the type supports it
             if shape.vtable.parse.is_some() {
-                wip.parse_from_str(s.as_str())?;
+                partial = partial.parse_from_str(s.as_str())?;
             } else {
-                wip.set(s.as_str().to_string())?;
+                partial = partial.set(s.as_str().to_string())?;
             }
-            Ok(())
+            Ok(partial)
         }
         ValueType::Bytes => {
             let bytes = value.as_bytes().unwrap();
-            wip.set(bytes.as_slice().to_vec())?;
-            Ok(())
+            partial = partial.set(bytes.as_slice().to_vec())?;
+            Ok(partial)
         }
         other => Err(ValueError::new(ValueErrorKind::TypeMismatch {
             expected: shape.type_identifier,
@@ -565,9 +572,10 @@ fn deserialize_scalar(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
 }
 
 /// Set a numeric value with appropriate type conversion.
-fn set_number(num: &VNumber, wip: &mut Partial<'_>, shape: &Shape) -> Result<()> {
+fn set_number<'p>(num: &VNumber, partial: Partial<'p>, shape: &Shape) -> Result<Partial<'p>> {
     use facet_core::{NumericType, PrimitiveType, ShapeLayout};
 
+    let mut partial = partial;
     let size = match shape.layout {
         ShapeLayout::Sized(layout) => layout.size(),
         _ => {
@@ -591,7 +599,7 @@ fn set_number(num: &VNumber, wip: &mut Partial<'_>, shape: &Shape) -> Result<()>
                             message: format!("{val} out of range for i8"),
                         })
                     })?;
-                    wip.set(v)?;
+                    partial = partial.set(v)?;
                 }
                 2 => {
                     let v = i16::try_from(val).map_err(|_| {
@@ -599,7 +607,7 @@ fn set_number(num: &VNumber, wip: &mut Partial<'_>, shape: &Shape) -> Result<()>
                             message: format!("{val} out of range for i16"),
                         })
                     })?;
-                    wip.set(v)?;
+                    partial = partial.set(v)?;
                 }
                 4 => {
                     let v = i32::try_from(val).map_err(|_| {
@@ -607,13 +615,13 @@ fn set_number(num: &VNumber, wip: &mut Partial<'_>, shape: &Shape) -> Result<()>
                             message: format!("{val} out of range for i32"),
                         })
                     })?;
-                    wip.set(v)?;
+                    partial = partial.set(v)?;
                 }
                 8 => {
-                    wip.set(val)?;
+                    partial = partial.set(val)?;
                 }
                 16 => {
-                    wip.set(val as i128)?;
+                    partial = partial.set(val as i128)?;
                 }
                 _ => {
                     return Err(ValueError::new(ValueErrorKind::Unsupported {
@@ -635,7 +643,7 @@ fn set_number(num: &VNumber, wip: &mut Partial<'_>, shape: &Shape) -> Result<()>
                             message: format!("{val} out of range for u8"),
                         })
                     })?;
-                    wip.set(v)?;
+                    partial = partial.set(v)?;
                 }
                 2 => {
                     let v = u16::try_from(val).map_err(|_| {
@@ -643,7 +651,7 @@ fn set_number(num: &VNumber, wip: &mut Partial<'_>, shape: &Shape) -> Result<()>
                             message: format!("{val} out of range for u16"),
                         })
                     })?;
-                    wip.set(v)?;
+                    partial = partial.set(v)?;
                 }
                 4 => {
                     let v = u32::try_from(val).map_err(|_| {
@@ -651,13 +659,13 @@ fn set_number(num: &VNumber, wip: &mut Partial<'_>, shape: &Shape) -> Result<()>
                             message: format!("{val} out of range for u32"),
                         })
                     })?;
-                    wip.set(v)?;
+                    partial = partial.set(v)?;
                 }
                 8 => {
-                    wip.set(val)?;
+                    partial = partial.set(val)?;
                 }
                 16 => {
-                    wip.set(val as u128)?;
+                    partial = partial.set(val as u128)?;
                 }
                 _ => {
                     return Err(ValueError::new(ValueErrorKind::Unsupported {
@@ -670,10 +678,10 @@ fn set_number(num: &VNumber, wip: &mut Partial<'_>, shape: &Shape) -> Result<()>
             let val = num.to_f64_lossy();
             match size {
                 4 => {
-                    wip.set(val as f32)?;
+                    partial = partial.set(val as f32)?;
                 }
                 8 => {
-                    wip.set(val)?;
+                    partial = partial.set(val)?;
                 }
                 _ => {
                     return Err(ValueError::new(ValueErrorKind::Unsupported {
@@ -689,11 +697,12 @@ fn set_number(num: &VNumber, wip: &mut Partial<'_>, shape: &Shape) -> Result<()>
             }));
         }
     }
-    Ok(())
+    Ok(partial)
 }
 
 /// Deserialize a struct from a Value::Object.
-fn deserialize_struct(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
+fn deserialize_struct<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p>> {
+    let mut partial = partial;
     let obj = value.as_object().ok_or_else(|| {
         ValueError::new(ValueErrorKind::TypeMismatch {
             expected: "object",
@@ -701,7 +710,7 @@ fn deserialize_struct(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
         })
     })?;
 
-    let struct_def = match &wip.shape().ty {
+    let struct_def = match &partial.shape().ty {
         Type::User(UserType::Struct(s)) => s,
         _ => {
             return Err(ValueError::new(ValueErrorKind::Unsupported {
@@ -710,7 +719,7 @@ fn deserialize_struct(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
         }
     };
 
-    let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
+    let deny_unknown_fields = partial.shape().has_deny_unknown_fields_attr();
 
     // Track which fields we've set
     let num_fields = struct_def.fields.len();
@@ -728,9 +737,9 @@ fn deserialize_struct(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
             .find(|(_, f)| f.name == key_str);
 
         if let Some((idx, _field)) = field_info {
-            wip.begin_field(key_str)?;
-            deserialize_value_into(val, wip)?;
-            wip.end()?;
+            partial = partial.begin_field(key_str)?;
+            partial = deserialize_value_into(val, partial)?;
+            partial = partial.end()?;
             fields_set[idx] = true;
         } else if deny_unknown_fields {
             return Err(ValueError::new(ValueErrorKind::UnknownField {
@@ -747,18 +756,17 @@ fn deserialize_struct(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
         }
 
         // Try to set default for the field
-        if wip.set_nth_field_to_default(idx).is_err() {
-            return Err(ValueError::new(ValueErrorKind::MissingField {
-                field: field.name,
-            }));
-        }
+        partial = partial
+            .set_nth_field_to_default(idx)
+            .map_err(|_| ValueError::new(ValueErrorKind::MissingField { field: field.name }))?;
     }
 
-    Ok(())
+    Ok(partial)
 }
 
 /// Deserialize a tuple from a Value::Array.
-fn deserialize_tuple(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
+fn deserialize_tuple<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p>> {
+    let mut partial = partial;
     let arr = value.as_array().ok_or_else(|| {
         ValueError::new(ValueErrorKind::TypeMismatch {
             expected: "array",
@@ -766,7 +774,7 @@ fn deserialize_tuple(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
         })
     })?;
 
-    let tuple_len = match &wip.shape().ty {
+    let tuple_len = match &partial.shape().ty {
         Type::User(UserType::Struct(struct_def)) => struct_def.fields.len(),
         _ => {
             return Err(ValueError::new(ValueErrorKind::Unsupported {
@@ -782,22 +790,23 @@ fn deserialize_tuple(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
     }
 
     for (i, item) in arr.iter().enumerate() {
-        wip.begin_nth_field(i)?;
-        deserialize_value_into(item, wip)?;
-        wip.end()?;
+        partial = partial.begin_nth_field(i)?;
+        partial = deserialize_value_into(item, partial)?;
+        partial = partial.end()?;
     }
 
-    Ok(())
+    Ok(partial)
 }
 
 /// Deserialize an enum from a Value.
-fn deserialize_enum(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
+fn deserialize_enum<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p>> {
+    let mut partial = partial;
     match value.value_type() {
         // String = unit variant
         ValueType::String => {
             let variant_name = value.as_string().unwrap().as_str();
-            wip.select_variant_named(variant_name)?;
-            Ok(())
+            partial = partial.select_variant_named(variant_name)?;
+            Ok(partial)
         }
         // Object = externally tagged variant with data
         ValueType::Object => {
@@ -811,10 +820,10 @@ fn deserialize_enum(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
             let (key, val) = obj.iter().next().unwrap();
             let variant_name = key.as_str();
 
-            wip.select_variant_named(variant_name)?;
+            partial = partial.select_variant_named(variant_name)?;
 
             // Get the selected variant to determine how to deserialize
-            let variant = wip.selected_variant().ok_or_else(|| {
+            let variant = partial.selected_variant().ok_or_else(|| {
                 ValueError::new(ValueErrorKind::Unsupported {
                     message: "failed to get selected variant".into(),
                 })
@@ -836,9 +845,9 @@ fn deserialize_enum(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
                         // Zero-field tuple variant, same as unit
                     } else if num_fields == 1 {
                         // Single-element tuple: value directly
-                        wip.begin_nth_field(0)?;
-                        deserialize_value_into(val, wip)?;
-                        wip.end()?;
+                        partial = partial.begin_nth_field(0)?;
+                        partial = deserialize_value_into(val, partial)?;
+                        partial = partial.end()?;
                     } else {
                         // Multi-element tuple: array
                         let arr = val.as_array().ok_or_else(|| {
@@ -859,9 +868,9 @@ fn deserialize_enum(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
                         }
 
                         for (i, item) in arr.iter().enumerate() {
-                            wip.begin_nth_field(i)?;
-                            deserialize_value_into(item, wip)?;
-                            wip.end()?;
+                            partial = partial.begin_nth_field(i)?;
+                            partial = deserialize_value_into(item, partial)?;
+                            partial = partial.end()?;
                         }
                     }
                 }
@@ -875,14 +884,14 @@ fn deserialize_enum(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
                     })?;
 
                     for (field_key, field_val) in inner_obj.iter() {
-                        wip.begin_field(field_key.as_str())?;
-                        deserialize_value_into(field_val, wip)?;
-                        wip.end()?;
+                        partial = partial.begin_field(field_key.as_str())?;
+                        partial = deserialize_value_into(field_val, partial)?;
+                        partial = partial.end()?;
                     }
                 }
             }
 
-            Ok(())
+            Ok(partial)
         }
         other => Err(ValueError::new(ValueErrorKind::TypeMismatch {
             expected: "string or object for enum",
@@ -892,7 +901,8 @@ fn deserialize_enum(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
 }
 
 /// Deserialize a list/Vec from a Value::Array.
-fn deserialize_list(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
+fn deserialize_list<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p>> {
+    let mut partial = partial;
     let arr = value.as_array().ok_or_else(|| {
         ValueError::new(ValueErrorKind::TypeMismatch {
             expected: "array",
@@ -900,19 +910,20 @@ fn deserialize_list(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
         })
     })?;
 
-    wip.begin_list()?;
+    partial = partial.begin_list()?;
 
     for item in arr.iter() {
-        wip.begin_list_item()?;
-        deserialize_value_into(item, wip)?;
-        wip.end()?;
+        partial = partial.begin_list_item()?;
+        partial = deserialize_value_into(item, partial)?;
+        partial = partial.end()?;
     }
 
-    Ok(())
+    Ok(partial)
 }
 
 /// Deserialize a fixed-size array from a Value::Array.
-fn deserialize_array(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
+fn deserialize_array<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p>> {
+    let mut partial = partial;
     let arr = value.as_array().ok_or_else(|| {
         ValueError::new(ValueErrorKind::TypeMismatch {
             expected: "array",
@@ -920,7 +931,7 @@ fn deserialize_array(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
         })
     })?;
 
-    let array_len = match &wip.shape().def {
+    let array_len = match &partial.shape().def {
         Def::Array(arr_def) => arr_def.n,
         _ => {
             return Err(ValueError::new(ValueErrorKind::Unsupported {
@@ -940,16 +951,17 @@ fn deserialize_array(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
     }
 
     for (i, item) in arr.iter().enumerate() {
-        wip.begin_nth_field(i)?;
-        deserialize_value_into(item, wip)?;
-        wip.end()?;
+        partial = partial.begin_nth_field(i)?;
+        partial = deserialize_value_into(item, partial)?;
+        partial = partial.end()?;
     }
 
-    Ok(())
+    Ok(partial)
 }
 
 /// Deserialize a set from a Value::Array.
-fn deserialize_set(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
+fn deserialize_set<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p>> {
+    let mut partial = partial;
     let arr = value.as_array().ok_or_else(|| {
         ValueError::new(ValueErrorKind::TypeMismatch {
             expected: "array",
@@ -957,19 +969,20 @@ fn deserialize_set(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
         })
     })?;
 
-    wip.begin_set()?;
+    partial = partial.begin_set()?;
 
     for item in arr.iter() {
-        wip.begin_set_item()?;
-        deserialize_value_into(item, wip)?;
-        wip.end()?;
+        partial = partial.begin_set_item()?;
+        partial = deserialize_value_into(item, partial)?;
+        partial = partial.end()?;
     }
 
-    Ok(())
+    Ok(partial)
 }
 
 /// Deserialize a map from a Value::Object.
-fn deserialize_map(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
+fn deserialize_map<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p>> {
+    let mut partial = partial;
     let obj = value.as_object().ok_or_else(|| {
         ValueError::new(ValueErrorKind::TypeMismatch {
             expected: "object",
@@ -977,48 +990,50 @@ fn deserialize_map(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
         })
     })?;
 
-    wip.begin_map()?;
+    partial = partial.begin_map()?;
 
     for (key, val) in obj.iter() {
         // Set the key
-        wip.begin_key()?;
+        partial = partial.begin_key()?;
         // For map keys, we need to handle the key type
         // Most commonly it's String, but could be other types with inner
-        if wip.shape().inner.is_some() {
-            wip.begin_inner()?;
-            wip.set(key.as_str().to_string())?;
-            wip.end()?;
+        if partial.shape().inner.is_some() {
+            partial = partial.begin_inner()?;
+            partial = partial.set(key.as_str().to_string())?;
+            partial = partial.end()?;
         } else {
-            wip.set(key.as_str().to_string())?;
+            partial = partial.set(key.as_str().to_string())?;
         }
-        wip.end()?;
+        partial = partial.end()?;
 
         // Set the value
-        wip.begin_value()?;
-        deserialize_value_into(val, wip)?;
-        wip.end()?;
+        partial = partial.begin_value()?;
+        partial = deserialize_value_into(val, partial)?;
+        partial = partial.end()?;
     }
 
-    Ok(())
+    Ok(partial)
 }
 
 /// Deserialize an Option from a Value.
-fn deserialize_option(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
+fn deserialize_option<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p>> {
+    let mut partial = partial;
     if value.is_null() {
-        wip.set_default()?; // None
+        partial = partial.set_default()?; // None
     } else {
-        wip.begin_some()?;
-        deserialize_value_into(value, wip)?;
-        wip.end()?;
+        partial = partial.begin_some()?;
+        partial = deserialize_value_into(value, partial)?;
+        partial = partial.end()?;
     }
-    Ok(())
+    Ok(partial)
 }
 
 /// Deserialize a smart pointer (Box, Arc, Rc) from a Value.
-fn deserialize_pointer(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
+fn deserialize_pointer<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p>> {
     use facet_core::{KnownPointer, SequenceType};
 
-    let (is_slice_pointer, is_reference) = if let Def::Pointer(ptr_def) = wip.shape().def {
+    let mut partial = partial;
+    let (is_slice_pointer, is_reference) = if let Def::Pointer(ptr_def) = partial.shape().def {
         let is_slice = if let Some(pointee) = ptr_def.pointee() {
             matches!(pointee.ty, Type::Sequence(SequenceType::Slice(_)))
         } else {
@@ -1038,12 +1053,12 @@ fn deserialize_pointer(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
         return Err(ValueError::new(ValueErrorKind::Unsupported {
             message: format!(
                 "cannot deserialize into reference type '{}'",
-                wip.shape().type_identifier
+                partial.shape().type_identifier
             ),
         }));
     }
 
-    wip.begin_smart_ptr()?;
+    partial = partial.begin_smart_ptr()?;
 
     if is_slice_pointer {
         // This is a slice pointer like Arc<[T]> - deserialize as array
@@ -1055,17 +1070,17 @@ fn deserialize_pointer(value: &Value, wip: &mut Partial<'_>) -> Result<()> {
         })?;
 
         for item in arr.iter() {
-            wip.begin_list_item()?;
-            deserialize_value_into(item, wip)?;
-            wip.end()?;
+            partial = partial.begin_list_item()?;
+            partial = deserialize_value_into(item, partial)?;
+            partial = partial.end()?;
         }
     } else {
         // Regular smart pointer - deserialize the inner type
-        deserialize_value_into(value, wip)?;
+        partial = deserialize_value_into(value, partial)?;
     }
 
-    wip.end()?;
-    Ok(())
+    partial = partial.end()?;
+    Ok(partial)
 }
 
 #[cfg(test)]

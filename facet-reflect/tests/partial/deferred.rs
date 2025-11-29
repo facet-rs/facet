@@ -1,3 +1,7 @@
+// In ownership-based APIs, the last assignment to `partial` is often unused
+// because the value is consumed by `.build()` - this is expected behavior
+#![allow(unused_assignments)]
+
 use facet::Facet;
 use facet_reflect::{Partial, Resolution};
 use facet_testhelpers::{IPanic, test};
@@ -16,13 +20,13 @@ fn deferred_simple_struct_all_fields() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Simple>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("a", 1u32)?;
-    partial.set_field("b", String::from("hello"))?;
+    partial = partial.set_field("a", 1u32)?;
+    partial = partial.set_field("b", String::from("hello"))?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Simple>()?;
     assert_eq!(result.a, 1);
     assert_eq!(result.b, "hello");
 
@@ -39,9 +43,9 @@ fn deferred_simple_struct_missing_field_should_fail() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Simple>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("a", 1u32)?;
+    partial = partial.set_field("a", 1u32)?;
     // Missing: b
 
     // TODO: This SHOULD fail but currently doesn't
@@ -74,22 +78,22 @@ fn deferred_nested_struct_all_fields_interleaved() -> Result<(), IPanic> {
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Outer>()?;
 
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
     assert!(partial.is_deferred());
 
-    partial.set_field("name", String::from("test"))?;
-    partial.begin_field("inner")?;
-    partial.set_field("x", 42u32)?;
-    partial.end()?;
-    partial.set_field("count", 100u64)?;
-    partial.begin_field("inner")?;
-    partial.set_field("y", String::from("hello"))?;
-    partial.end()?;
+    partial = partial.set_field("name", String::from("test"))?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.set_field("x", 42u32)?;
+    partial = partial.end()?;
+    partial = partial.set_field("count", 100u64)?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.set_field("y", String::from("hello"))?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
+    partial = partial.finish_deferred()?;
     assert!(!partial.is_deferred());
 
-    let outer = *partial.build()?;
+    let outer = partial.build()?.materialize::<Outer>()?;
     assert_eq!(outer.name, "test");
     assert_eq!(outer.inner.x, 42);
     assert_eq!(outer.inner.y, "hello");
@@ -118,12 +122,12 @@ fn deferred_nested_struct_missing_field_build_succeeds_currently() -> Result<(),
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Outer>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("name", String::from("test"))?;
-    partial.begin_field("inner")?;
-    partial.set_field("x", 42u32)?;
-    partial.end()?;
+    partial = partial.set_field("name", String::from("test"))?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.set_field("x", 42u32)?;
+    partial = partial.end()?;
 
     // Current implementation: these don't fail even with missing inner.y
     let _ = partial.finish_deferred();
@@ -140,15 +144,11 @@ fn deferred_without_begin_fails() -> Result<(), IPanic> {
         value: u32,
     }
 
-    let mut partial = Partial::alloc::<Simple>()?;
-    let result = partial.finish_deferred();
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("deferred mode is not enabled")
-    );
+    let partial = Partial::alloc::<Simple>()?;
+    match partial.finish_deferred() {
+        Ok(_) => panic!("Expected error but got Ok"),
+        Err(err) => assert!(err.to_string().contains("deferred mode is not enabled")),
+    }
 
     Ok(())
 }
@@ -164,11 +164,11 @@ fn deferred_can_access_resolution() -> Result<(), IPanic> {
     let mut partial = Partial::alloc::<Simple>()?;
     assert!(partial.deferred_resolution().is_none());
 
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
     assert!(partial.deferred_resolution().is_some());
 
-    partial.set_field("value", 123u32)?;
-    partial.finish_deferred()?;
+    partial = partial.set_field("value", 123u32)?;
+    partial = partial.finish_deferred()?;
 
     assert!(partial.deferred_resolution().is_none());
 
@@ -196,22 +196,22 @@ fn deferred_deeply_nested_interleaved() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Level1>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("top_value", 1u64)?;
-    partial.begin_field("level2")?;
-    partial.begin_field("level3")?;
-    partial.set_field("deep_value", 42i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.set_field("top_value", 1u64)?;
+    partial = partial.begin_field("level2")?;
+    partial = partial.begin_field("level3")?;
+    partial = partial.set_field("deep_value", 42i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.begin_field("level2")?;
-    partial.set_field("mid_value", String::from("middle"))?;
-    partial.end()?;
+    partial = partial.begin_field("level2")?;
+    partial = partial.set_field("mid_value", String::from("middle"))?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
+    partial = partial.finish_deferred()?;
 
-    let result = *partial.build()?;
+    let result = partial.build()?.materialize::<Level1>()?;
     assert_eq!(result.top_value, 1);
     assert_eq!(result.level2.mid_value, "middle");
     assert_eq!(result.level2.level3.deep_value, 42);
@@ -235,13 +235,13 @@ fn deferred_enum_variant_with_fields() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Message>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.select_variant_named("Text")?;
-    partial.set_field("content", String::from("hello"))?;
+    partial = partial.select_variant_named("Text")?;
+    partial = partial.set_field("content", String::from("hello"))?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Message>()?;
     assert_eq!(
         result,
         Message::Text {
@@ -263,10 +263,10 @@ fn deferred_enum_missing_variant_field_should_fail() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Message>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.select_variant_named("Text")?;
-    partial.set_field("content", String::from("hello"))?;
+    partial = partial.select_variant_named("Text")?;
+    partial = partial.set_field("content", String::from("hello"))?;
     // Missing: sender
 
     // TODO: This SHOULD fail but currently doesn't
@@ -294,19 +294,19 @@ fn deferred_struct_containing_enum() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<User>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Set name first
-    partial.set_field("name", String::from("alice"))?;
+    partial = partial.set_field("name", String::from("alice"))?;
 
     // Then set status enum
-    partial.begin_field("status")?;
-    partial.select_variant_named("Inactive")?;
-    partial.set_field("reason", String::from("on vacation"))?;
-    partial.end()?;
+    partial = partial.begin_field("status")?;
+    partial = partial.select_variant_named("Inactive")?;
+    partial = partial.set_field("reason", String::from("on vacation"))?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<User>()?;
     assert_eq!(result.name, "alice");
     assert_eq!(
         result.status,
@@ -330,12 +330,12 @@ fn deferred_enum_unit_variant() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Status>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.select_variant_named("Active")?;
+    partial = partial.select_variant_named("Active")?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Status>()?;
     assert_eq!(result, Status::Active);
 
     Ok(())
@@ -364,20 +364,20 @@ fn deferred_struct_containing_enum_interleaved() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<User>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // For now, we set all enum fields in one visit (non-interleaved)
-    partial.set_field("name", String::from("bob"))?;
-    partial.set_field("age", 30u32)?;
+    partial = partial.set_field("name", String::from("bob"))?;
+    partial = partial.set_field("age", 30u32)?;
 
-    partial.begin_field("status")?;
-    partial.select_variant_named("Inactive")?;
-    partial.set_field("reason", String::from("quit"))?;
-    partial.set_field("code", 42u32)?;
-    partial.end()?;
+    partial = partial.begin_field("status")?;
+    partial = partial.select_variant_named("Inactive")?;
+    partial = partial.set_field("reason", String::from("quit"))?;
+    partial = partial.set_field("code", 42u32)?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<User>()?;
     assert_eq!(result.name, "bob");
     assert_eq!(result.age, 30);
     assert_eq!(
@@ -415,17 +415,17 @@ fn deferred_struct_with_option_set_to_some() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<WithOption>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("required", String::from("hello"))?;
-    partial.begin_field("optional")?;
-    partial.begin_some()?;
-    partial.set(42u32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.set_field("required", String::from("hello"))?;
+    partial = partial.begin_field("optional")?;
+    partial = partial.begin_some()?;
+    partial = partial.set(42u32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<WithOption>()?;
     assert_eq!(result.required, "hello");
     assert_eq!(result.optional, Some(42));
 
@@ -442,9 +442,9 @@ fn deferred_struct_with_option_left_none() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<WithOption>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("required", String::from("hello"))?;
+    partial = partial.set_field("required", String::from("hello"))?;
     // Don't set optional - should default to None
 
     // TODO: Need to handle Option specially - it should auto-default to None
@@ -469,9 +469,9 @@ fn deferred_struct_with_default_field() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<WithDefault>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("name", String::from("test"))?;
+    partial = partial.set_field("name", String::from("test"))?;
     // Don't set count - should use default
 
     // TODO: finish_deferred should apply defaults for missing fields
@@ -511,35 +511,35 @@ fn deferred_three_level_nesting_all_interleaved() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<A>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Maximally interleaved ordering
-    partial.set_field("a1", 1u64)?;
+    partial = partial.set_field("a1", 1u64)?;
 
-    partial.begin_field("b")?;
-    partial.set_field("b1", String::from("first"))?;
-    partial.end()?;
+    partial = partial.begin_field("b")?;
+    partial = partial.set_field("b1", String::from("first"))?;
+    partial = partial.end()?;
 
-    partial.set_field("a2", 2u64)?;
+    partial = partial.set_field("a2", 2u64)?;
 
-    partial.begin_field("b")?;
-    partial.begin_field("c")?;
-    partial.set_field("c1", 10u32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("b")?;
+    partial = partial.begin_field("c")?;
+    partial = partial.set_field("c1", 10u32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.begin_field("b")?;
-    partial.set_field("b2", String::from("second"))?;
-    partial.end()?;
+    partial = partial.begin_field("b")?;
+    partial = partial.set_field("b2", String::from("second"))?;
+    partial = partial.end()?;
 
-    partial.begin_field("b")?;
-    partial.begin_field("c")?;
-    partial.set_field("c2", 20u32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("b")?;
+    partial = partial.begin_field("c")?;
+    partial = partial.set_field("c2", 20u32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<A>()?;
 
     assert_eq!(result.a1, 1);
     assert_eq!(result.a2, 2);
@@ -573,16 +573,16 @@ fn deferred_three_level_missing_deep_field_should_fail() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<A>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("a1", 1u64)?;
-    partial.begin_field("b")?;
-    partial.set_field("b1", String::from("hello"))?;
-    partial.begin_field("c")?;
-    partial.set_field("c1", 10u32)?;
+    partial = partial.set_field("a1", 1u64)?;
+    partial = partial.begin_field("b")?;
+    partial = partial.set_field("b1", String::from("hello"))?;
+    partial = partial.begin_field("c")?;
+    partial = partial.set_field("c1", 10u32)?;
     // Missing: c2
-    partial.end()?;
-    partial.end()?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
     // TODO: This SHOULD fail - c2 is missing
     // assert!(partial.finish_deferred().is_err());
@@ -604,13 +604,13 @@ fn deferred_overwrite_field_value() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Simple>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("value", 1u32)?;
-    partial.set_field("value", 2u32)?; // Overwrite
+    partial = partial.set_field("value", 1u32)?;
+    partial = partial.set_field("value", 2u32)?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Simple>()?;
     assert_eq!(result.value, 2);
 
     Ok(())
@@ -630,18 +630,18 @@ fn deferred_overwrite_nested_field_value() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Outer>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.begin_field("inner")?;
-    partial.set_field("x", 1u32)?;
-    partial.end()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.set_field("x", 1u32)?;
+    partial = partial.end()?;
 
-    partial.begin_field("inner")?;
-    partial.set_field("x", 2u32)?; // Overwrite
-    partial.end()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.set_field("x", 2u32)?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Outer>()?;
     assert_eq!(result.inner.x, 2);
 
     Ok(())
@@ -661,25 +661,25 @@ fn deferred_reenter_vec_push_more_items() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Push first item (need begin_list on first visit)
-    partial.begin_field("items")?;
-    partial.begin_list()?;
-    partial.push(1u32)?;
-    partial.end()?;
+    partial = partial.begin_field("items")?;
+    partial = partial.begin_list()?;
+    partial = partial.push(1u32)?;
+    partial = partial.end()?;
 
     // Set other field
-    partial.set_field("other", String::from("middle"))?;
+    partial = partial.set_field("other", String::from("middle"))?;
 
     // Re-enter and push more items (no begin_list needed - list is already initialized)
-    partial.begin_field("items")?;
-    partial.push(2u32)?;
-    partial.push(3u32)?;
-    partial.end()?;
+    partial = partial.begin_field("items")?;
+    partial = partial.push(2u32)?;
+    partial = partial.push(3u32)?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Container>()?;
     assert_eq!(result.items, vec![1, 2, 3]);
     assert_eq!(result.other, "middle");
 
@@ -696,28 +696,28 @@ fn deferred_reenter_vec_multiple_times() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // First visit
-    partial.begin_field("items")?;
-    partial.begin_list()?;
-    partial.push(String::from("a"))?;
-    partial.end()?;
+    partial = partial.begin_field("items")?;
+    partial = partial.begin_list()?;
+    partial = partial.push(String::from("a"))?;
+    partial = partial.end()?;
 
-    partial.set_field("count", 1u32)?;
+    partial = partial.set_field("count", 1u32)?;
 
     // Second visit
-    partial.begin_field("items")?;
-    partial.push(String::from("b"))?;
-    partial.end()?;
+    partial = partial.begin_field("items")?;
+    partial = partial.push(String::from("b"))?;
+    partial = partial.end()?;
 
     // Third visit
-    partial.begin_field("items")?;
-    partial.push(String::from("c"))?;
-    partial.end()?;
+    partial = partial.begin_field("items")?;
+    partial = partial.push(String::from("c"))?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Container>()?;
     assert_eq!(result.items, vec!["a", "b", "c"]);
     assert_eq!(result.count, 1);
 
@@ -739,26 +739,26 @@ fn deferred_nested_vec_reentry() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Outer>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.begin_field("inner")?;
-    partial.begin_field("values")?;
-    partial.begin_list()?;
-    partial.push(1i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.begin_field("values")?;
+    partial = partial.begin_list()?;
+    partial = partial.push(1i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.set_field("name", String::from("test"))?;
+    partial = partial.set_field("name", String::from("test"))?;
 
-    partial.begin_field("inner")?;
-    partial.begin_field("values")?;
-    partial.push(2i32)?;
-    partial.push(3i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.begin_field("values")?;
+    partial = partial.push(2i32)?;
+    partial = partial.push(3i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Outer>()?;
     assert_eq!(result.inner.values, vec![1, 2, 3]);
     assert_eq!(result.name, "test");
 
@@ -781,39 +781,39 @@ fn deferred_reenter_hashmap() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Insert first entry
-    partial.begin_field("map")?;
-    partial.begin_map()?;
-    partial.begin_key()?;
-    partial.set(String::from("a"))?;
-    partial.end()?;
-    partial.begin_value()?;
-    partial.set(1i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("map")?;
+    partial = partial.begin_map()?;
+    partial = partial.begin_key()?;
+    partial = partial.set(String::from("a"))?;
+    partial = partial.end()?;
+    partial = partial.begin_value()?;
+    partial = partial.set(1i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.set_field("label", String::from("test"))?;
+    partial = partial.set_field("label", String::from("test"))?;
 
     // Re-enter and insert more
-    partial.begin_field("map")?;
-    partial.begin_key()?;
-    partial.set(String::from("b"))?;
-    partial.end()?;
-    partial.begin_value()?;
-    partial.set(2i32)?;
-    partial.end()?;
-    partial.begin_key()?;
-    partial.set(String::from("c"))?;
-    partial.end()?;
-    partial.begin_value()?;
-    partial.set(3i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("map")?;
+    partial = partial.begin_key()?;
+    partial = partial.set(String::from("b"))?;
+    partial = partial.end()?;
+    partial = partial.begin_value()?;
+    partial = partial.set(2i32)?;
+    partial = partial.end()?;
+    partial = partial.begin_key()?;
+    partial = partial.set(String::from("c"))?;
+    partial = partial.end()?;
+    partial = partial.begin_value()?;
+    partial = partial.set(3i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Container>()?;
     assert_eq!(result.map.get("a"), Some(&1));
     assert_eq!(result.map.get("b"), Some(&2));
     assert_eq!(result.map.get("c"), Some(&3));
@@ -834,31 +834,31 @@ fn deferred_reenter_btreemap() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.begin_field("map")?;
-    partial.begin_map()?;
-    partial.begin_key()?;
-    partial.set(String::from("x"))?;
-    partial.end()?;
-    partial.begin_value()?;
-    partial.set(100u64)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("map")?;
+    partial = partial.begin_map()?;
+    partial = partial.begin_key()?;
+    partial = partial.set(String::from("x"))?;
+    partial = partial.end()?;
+    partial = partial.begin_value()?;
+    partial = partial.set(100u64)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.set_field("count", 42u32)?;
+    partial = partial.set_field("count", 42u32)?;
 
-    partial.begin_field("map")?;
-    partial.begin_key()?;
-    partial.set(String::from("y"))?;
-    partial.end()?;
-    partial.begin_value()?;
-    partial.set(200u64)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("map")?;
+    partial = partial.begin_key()?;
+    partial = partial.set(String::from("y"))?;
+    partial = partial.end()?;
+    partial = partial.begin_value()?;
+    partial = partial.set(200u64)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Container>()?;
     assert_eq!(result.map.get("x"), Some(&100));
     assert_eq!(result.map.get("y"), Some(&200));
     assert_eq!(result.count, 42);
@@ -880,29 +880,29 @@ fn deferred_reenter_array() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Set first element
-    partial.begin_field("values")?;
-    partial.begin_nth_field(0)?;
-    partial.set(10u32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("values")?;
+    partial = partial.begin_nth_field(0)?;
+    partial = partial.set(10u32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.set_field("name", String::from("test"))?;
+    partial = partial.set_field("name", String::from("test"))?;
 
     // Re-enter and set more elements
-    partial.begin_field("values")?;
-    partial.begin_nth_field(1)?;
-    partial.set(20u32)?;
-    partial.end()?;
-    partial.begin_nth_field(2)?;
-    partial.set(30u32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("values")?;
+    partial = partial.begin_nth_field(1)?;
+    partial = partial.set(20u32)?;
+    partial = partial.end()?;
+    partial = partial.begin_nth_field(2)?;
+    partial = partial.set(30u32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Container>()?;
     assert_eq!(result.values, [10, 20, 30]);
     assert_eq!(result.name, "test");
 
@@ -918,26 +918,26 @@ fn deferred_reenter_array_overwrite_element() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.begin_field("arr")?;
-    partial.begin_nth_field(0)?;
-    partial.set(1i32)?;
-    partial.end()?;
-    partial.begin_nth_field(1)?;
-    partial.set(2i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("arr")?;
+    partial = partial.begin_nth_field(0)?;
+    partial = partial.set(1i32)?;
+    partial = partial.end()?;
+    partial = partial.begin_nth_field(1)?;
+    partial = partial.set(2i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
     // Re-enter and overwrite
-    partial.begin_field("arr")?;
-    partial.begin_nth_field(0)?;
-    partial.set(100i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("arr")?;
+    partial = partial.begin_nth_field(0)?;
+    partial = partial.set(100i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Container>()?;
     assert_eq!(result.arr, [100, 2]);
 
     Ok(())
@@ -963,24 +963,24 @@ fn deferred_reenter_enum_set_more_fields() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Enter enum, select variant, set one field
-    partial.begin_field("data")?;
-    partial.select_variant_named("Record")?;
-    partial.set_field("id", 42u32)?;
-    partial.end()?;
+    partial = partial.begin_field("data")?;
+    partial = partial.select_variant_named("Record")?;
+    partial = partial.set_field("id", 42u32)?;
+    partial = partial.end()?;
 
-    partial.set_field("tag", String::from("important"))?;
+    partial = partial.set_field("tag", String::from("important"))?;
 
     // Re-enter and set more fields
-    partial.begin_field("data")?;
-    partial.set_field("name", String::from("test"))?;
-    partial.set_field("value", 999i64)?;
-    partial.end()?;
+    partial = partial.begin_field("data")?;
+    partial = partial.set_field("name", String::from("test"))?;
+    partial = partial.set_field("value", 999i64)?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Container>()?;
     assert_eq!(
         result.data,
         Data::Record {
@@ -1010,22 +1010,22 @@ fn deferred_reenter_hashset() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.begin_field("tags")?;
-    partial.begin_set()?;
-    partial.insert(String::from("alpha"))?;
-    partial.end()?;
+    partial = partial.begin_field("tags")?;
+    partial = partial.begin_set()?;
+    partial = partial.insert(String::from("alpha"))?;
+    partial = partial.end()?;
 
-    partial.set_field("count", 1u32)?;
+    partial = partial.set_field("count", 1u32)?;
 
-    partial.begin_field("tags")?;
-    partial.insert(String::from("beta"))?;
-    partial.insert(String::from("gamma"))?;
-    partial.end()?;
+    partial = partial.begin_field("tags")?;
+    partial = partial.insert(String::from("beta"))?;
+    partial = partial.insert(String::from("gamma"))?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Container>()?;
     assert!(result.tags.contains("alpha"));
     assert!(result.tags.contains("beta"));
     assert!(result.tags.contains("gamma"));
@@ -1047,22 +1047,22 @@ fn deferred_reenter_btreeset() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.begin_field("ids")?;
-    partial.begin_set()?;
-    partial.insert(1i32)?;
-    partial.insert(2i32)?;
-    partial.end()?;
+    partial = partial.begin_field("ids")?;
+    partial = partial.begin_set()?;
+    partial = partial.insert(1i32)?;
+    partial = partial.insert(2i32)?;
+    partial = partial.end()?;
 
-    partial.set_field("name", String::from("test"))?;
+    partial = partial.set_field("name", String::from("test"))?;
 
-    partial.begin_field("ids")?;
-    partial.insert(3i32)?;
-    partial.end()?;
+    partial = partial.begin_field("ids")?;
+    partial = partial.insert(3i32)?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Container>()?;
     let expected: BTreeSet<i32> = [1, 2, 3].into_iter().collect();
     assert_eq!(result.ids, expected);
     assert_eq!(result.name, "test");
@@ -1093,63 +1093,63 @@ fn deferred_deeply_interleaved_everything() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Outer>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Start inner.list
-    partial.begin_field("inner")?;
-    partial.begin_field("list")?;
-    partial.begin_list()?;
-    partial.push(1i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.begin_field("list")?;
+    partial = partial.begin_list()?;
+    partial = partial.push(1i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
     // Set outer.name
-    partial.set_field("name", String::from("test"))?;
+    partial = partial.set_field("name", String::from("test"))?;
 
     // Add to inner.list again
-    partial.begin_field("inner")?;
-    partial.begin_field("list")?;
-    partial.push(2i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.begin_field("list")?;
+    partial = partial.push(2i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
     // Set outer.count
-    partial.set_field("count", 42u64)?;
+    partial = partial.set_field("count", 42u64)?;
 
     // Start inner.map
-    partial.begin_field("inner")?;
-    partial.begin_field("map")?;
-    partial.begin_map()?;
-    partial.begin_key()?;
-    partial.set(String::from("a"))?;
-    partial.end()?;
-    partial.begin_value()?;
-    partial.set(100u32)?;
-    partial.end()?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.begin_field("map")?;
+    partial = partial.begin_map()?;
+    partial = partial.begin_key()?;
+    partial = partial.set(String::from("a"))?;
+    partial = partial.end()?;
+    partial = partial.begin_value()?;
+    partial = partial.set(100u32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
     // Add more to inner.list
-    partial.begin_field("inner")?;
-    partial.begin_field("list")?;
-    partial.push(3i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.begin_field("list")?;
+    partial = partial.push(3i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
     // Add more to inner.map
-    partial.begin_field("inner")?;
-    partial.begin_field("map")?;
-    partial.begin_key()?;
-    partial.set(String::from("b"))?;
-    partial.end()?;
-    partial.begin_value()?;
-    partial.set(200u32)?;
-    partial.end()?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.begin_field("map")?;
+    partial = partial.begin_key()?;
+    partial = partial.set(String::from("b"))?;
+    partial = partial.end()?;
+    partial = partial.begin_value()?;
+    partial = partial.set(200u32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Outer>()?;
 
     assert_eq!(result.name, "test");
     assert_eq!(result.count, 42);
@@ -1171,11 +1171,11 @@ fn deferred_empty_struct() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Empty>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Nothing to set
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Empty>()?;
     assert_eq!(result, Empty {});
 
     Ok(())
@@ -1190,12 +1190,12 @@ fn deferred_single_field_struct() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Single>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("value", 42u32)?;
+    partial = partial.set_field("value", 42u32)?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Single>()?;
     assert_eq!(result.value, 42);
 
     Ok(())
@@ -1215,17 +1215,17 @@ fn deferred_nested_empty_structs() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Empty structs need explicit begin/end to mark them as initialized
-    partial.begin_field("empty1")?;
-    partial.end()?;
-    partial.set_field("value", 123u32)?;
-    partial.begin_field("empty2")?;
-    partial.end()?;
+    partial = partial.begin_field("empty1")?;
+    partial = partial.end()?;
+    partial = partial.set_field("value", 123u32)?;
+    partial = partial.begin_field("empty2")?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Container>()?;
     assert_eq!(result.value, 123);
 
     Ok(())
@@ -1246,21 +1246,21 @@ fn deferred_reenter_with_no_changes() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Outer>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Set everything in first visit
-    partial.begin_field("inner")?;
-    partial.set_field("x", 42u32)?;
-    partial.end()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.set_field("x", 42u32)?;
+    partial = partial.end()?;
 
-    partial.set_field("name", String::from("test"))?;
+    partial = partial.set_field("name", String::from("test"))?;
 
     // Re-enter but make no changes (just looking around)
-    partial.begin_field("inner")?;
-    partial.end()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Outer>()?;
     assert_eq!(result.inner.x, 42);
     assert_eq!(result.name, "test");
 
@@ -1282,23 +1282,23 @@ fn deferred_multiple_reentries_no_changes() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Outer>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.begin_field("inner")?;
-    partial.set_field("a", 1u32)?;
-    partial.set_field("b", 2u32)?;
-    partial.end()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.set_field("a", 1u32)?;
+    partial = partial.set_field("b", 2u32)?;
+    partial = partial.end()?;
 
     // Multiple empty re-entries
-    partial.begin_field("inner")?;
-    partial.end()?;
-    partial.begin_field("inner")?;
-    partial.end()?;
-    partial.begin_field("inner")?;
-    partial.end()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.end()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.end()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Outer>()?;
     assert_eq!(result.inner.a, 1);
     assert_eq!(result.inner.b, 2);
 
@@ -1321,30 +1321,30 @@ fn deferred_sibling_fields_interleaved() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Parent>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Interleave access to siblings
-    partial.begin_field("child_a")?;
-    partial.set_field("value", 1i32)?;
-    partial.end()?;
+    partial = partial.begin_field("child_a")?;
+    partial = partial.set_field("value", 1i32)?;
+    partial = partial.end()?;
 
-    partial.begin_field("child_c")?;
-    partial.set_field("value", 3i32)?;
-    partial.end()?;
+    partial = partial.begin_field("child_c")?;
+    partial = partial.set_field("value", 3i32)?;
+    partial = partial.end()?;
 
-    partial.begin_field("child_b")?;
-    partial.set_field("value", 2i32)?;
-    partial.end()?;
+    partial = partial.begin_field("child_b")?;
+    partial = partial.set_field("value", 2i32)?;
+    partial = partial.end()?;
 
     // Re-enter each to verify stored state
-    partial.begin_field("child_b")?;
-    partial.end()?;
+    partial = partial.begin_field("child_b")?;
+    partial = partial.end()?;
 
-    partial.begin_field("child_a")?;
-    partial.end()?;
+    partial = partial.begin_field("child_a")?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Parent>()?;
     assert_eq!(result.child_a.value, 1);
     assert_eq!(result.child_b.value, 2);
     assert_eq!(result.child_c.value, 3);
@@ -1362,23 +1362,23 @@ fn deferred_vec_empty_first_visit() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // First visit: just initialize the list, don't push anything
-    partial.begin_field("items")?;
-    partial.begin_list()?;
-    partial.end()?;
+    partial = partial.begin_field("items")?;
+    partial = partial.begin_list()?;
+    partial = partial.end()?;
 
-    partial.set_field("done", false)?;
+    partial = partial.set_field("done", false)?;
 
     // Second visit: now push items
-    partial.begin_field("items")?;
-    partial.push(1u32)?;
-    partial.push(2u32)?;
-    partial.end()?;
+    partial = partial.begin_field("items")?;
+    partial = partial.push(1u32)?;
+    partial = partial.push(2u32)?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Container>()?;
     assert_eq!(result.items, vec![1, 2]);
     assert!(!result.done);
 
@@ -1397,27 +1397,27 @@ fn deferred_map_empty_first_visit() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // First visit: just initialize the map
-    partial.begin_field("data")?;
-    partial.begin_map()?;
-    partial.end()?;
+    partial = partial.begin_field("data")?;
+    partial = partial.begin_map()?;
+    partial = partial.end()?;
 
-    partial.set_field("ready", true)?;
+    partial = partial.set_field("ready", true)?;
 
     // Second visit: add entries
-    partial.begin_field("data")?;
-    partial.begin_key()?;
-    partial.set(String::from("key"))?;
-    partial.end()?;
-    partial.begin_value()?;
-    partial.set(42i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("data")?;
+    partial = partial.begin_key()?;
+    partial = partial.set(String::from("key"))?;
+    partial = partial.end()?;
+    partial = partial.begin_value()?;
+    partial = partial.set(42i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Container>()?;
     assert_eq!(result.data.get("key"), Some(&42));
     assert!(result.ready);
 
@@ -1445,35 +1445,35 @@ fn deferred_deeply_nested_siblings_interleaved() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Tree>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Access leaves in arbitrary order
-    partial.begin_field("root_right")?;
-    partial.begin_field("left")?;
-    partial.set_field("val", 3i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("root_right")?;
+    partial = partial.begin_field("left")?;
+    partial = partial.set_field("val", 3i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.begin_field("root_left")?;
-    partial.begin_field("right")?;
-    partial.set_field("val", 2i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("root_left")?;
+    partial = partial.begin_field("right")?;
+    partial = partial.set_field("val", 2i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.begin_field("root_left")?;
-    partial.begin_field("left")?;
-    partial.set_field("val", 1i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("root_left")?;
+    partial = partial.begin_field("left")?;
+    partial = partial.set_field("val", 1i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.begin_field("root_right")?;
-    partial.begin_field("right")?;
-    partial.set_field("val", 4i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("root_right")?;
+    partial = partial.begin_field("right")?;
+    partial = partial.set_field("val", 4i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Tree>()?;
     assert_eq!(result.root_left.left.val, 1);
     assert_eq!(result.root_left.right.val, 2);
     assert_eq!(result.root_right.left.val, 3);
@@ -1506,26 +1506,26 @@ fn deferred_vec_of_structs_single_visit() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Set total first (interleaved with items)
-    partial.set_field("total", 100u32)?;
+    partial = partial.set_field("total", 100u32)?;
 
     // Build items in single visit
-    partial.begin_field("items")?;
-    partial.begin_list()?;
-    partial.begin_list_item()?;
-    partial.set_field("id", 1u32)?;
-    partial.set_field("name", String::from("first"))?;
-    partial.end()?;
-    partial.begin_list_item()?;
-    partial.set_field("id", 2u32)?;
-    partial.set_field("name", String::from("second"))?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("items")?;
+    partial = partial.begin_list()?;
+    partial = partial.begin_list_item()?;
+    partial = partial.set_field("id", 1u32)?;
+    partial = partial.set_field("name", String::from("first"))?;
+    partial = partial.end()?;
+    partial = partial.begin_list_item()?;
+    partial = partial.set_field("id", 2u32)?;
+    partial = partial.set_field("name", String::from("second"))?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Container>()?;
     assert_eq!(result.items.len(), 2);
     assert_eq!(result.items[0].id, 1);
     assert_eq!(result.items[0].name, "first");
@@ -1557,34 +1557,34 @@ fn deferred_map_with_struct_values_single_visit() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Directory>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Set count first (interleaved)
-    partial.set_field("count", 2u32)?;
+    partial = partial.set_field("count", 2u32)?;
 
     // Build map in single visit
-    partial.begin_field("people")?;
-    partial.begin_map()?;
+    partial = partial.begin_field("people")?;
+    partial = partial.begin_map()?;
     // First entry
-    partial.begin_key()?;
-    partial.set(String::from("alice"))?;
-    partial.end()?;
-    partial.begin_value()?;
-    partial.set_field("age", 30u32)?;
-    partial.set_field("city", String::from("NYC"))?;
-    partial.end()?;
+    partial = partial.begin_key()?;
+    partial = partial.set(String::from("alice"))?;
+    partial = partial.end()?;
+    partial = partial.begin_value()?;
+    partial = partial.set_field("age", 30u32)?;
+    partial = partial.set_field("city", String::from("NYC"))?;
+    partial = partial.end()?;
     // Second entry
-    partial.begin_key()?;
-    partial.set(String::from("bob"))?;
-    partial.end()?;
-    partial.begin_value()?;
-    partial.set_field("age", 25u32)?;
-    partial.set_field("city", String::from("LA"))?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_key()?;
+    partial = partial.set(String::from("bob"))?;
+    partial = partial.end()?;
+    partial = partial.begin_value()?;
+    partial = partial.set_field("age", 25u32)?;
+    partial = partial.set_field("city", String::from("LA"))?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Directory>()?;
     assert_eq!(result.count, 2);
     let alice = result.people.get("alice").unwrap();
     assert_eq!(alice.age, 30);
@@ -1618,30 +1618,30 @@ fn deferred_multiple_enums_interleaved() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Design>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Set foreground variant and first field
-    partial.begin_field("foreground")?;
-    partial.select_variant_named("Rgb")?;
-    partial.set_field("r", 255u8)?;
-    partial.end()?;
+    partial = partial.begin_field("foreground")?;
+    partial = partial.select_variant_named("Rgb")?;
+    partial = partial.set_field("r", 255u8)?;
+    partial = partial.end()?;
 
-    partial.set_field("label", String::from("design1"))?;
+    partial = partial.set_field("label", String::from("design1"))?;
 
     // Set background (different variant)
-    partial.begin_field("background")?;
-    partial.select_variant_named("Named")?;
-    partial.set_field("name", String::from("black"))?;
-    partial.end()?;
+    partial = partial.begin_field("background")?;
+    partial = partial.select_variant_named("Named")?;
+    partial = partial.set_field("name", String::from("black"))?;
+    partial = partial.end()?;
 
     // Complete foreground
-    partial.begin_field("foreground")?;
-    partial.set_field("g", 128u8)?;
-    partial.set_field("b", 0u8)?;
-    partial.end()?;
+    partial = partial.begin_field("foreground")?;
+    partial = partial.set_field("g", 128u8)?;
+    partial = partial.set_field("b", 0u8)?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Design>()?;
     assert_eq!(result.label, "design1");
     assert_eq!(
         result.foreground,
@@ -1672,22 +1672,22 @@ fn deferred_tuple_struct() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Point>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.begin_nth_field(0)?;
-    partial.set(10i32)?;
-    partial.end()?;
+    partial = partial.begin_nth_field(0)?;
+    partial = partial.set(10i32)?;
+    partial = partial.end()?;
 
-    partial.begin_nth_field(2)?;
-    partial.set(30i32)?;
-    partial.end()?;
+    partial = partial.begin_nth_field(2)?;
+    partial = partial.set(30i32)?;
+    partial = partial.end()?;
 
-    partial.begin_nth_field(1)?;
-    partial.set(20i32)?;
-    partial.end()?;
+    partial = partial.begin_nth_field(1)?;
+    partial = partial.set(20i32)?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Point>()?;
     assert_eq!(result, Point(10, 20, 30));
 
     Ok(())
@@ -1706,24 +1706,24 @@ fn deferred_nested_tuple_struct_reentry() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.begin_field("pair")?;
-    partial.begin_nth_field(0)?;
-    partial.set(1i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("pair")?;
+    partial = partial.begin_nth_field(0)?;
+    partial = partial.set(1i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.set_field("name", String::from("test"))?;
+    partial = partial.set_field("name", String::from("test"))?;
 
-    partial.begin_field("pair")?;
-    partial.begin_nth_field(1)?;
-    partial.set(2i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("pair")?;
+    partial = partial.begin_nth_field(1)?;
+    partial = partial.set(2i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Container>()?;
     assert_eq!(result.pair, Pair(1, 2));
     assert_eq!(result.name, "test");
 
@@ -1755,32 +1755,32 @@ fn deferred_reentry_at_varying_depths() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Level1>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Go deep first
-    partial.begin_field("level2")?;
-    partial.begin_field("level3")?;
-    partial.set_field("deep", String::from("bottom"))?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("level2")?;
+    partial = partial.begin_field("level3")?;
+    partial = partial.set_field("deep", String::from("bottom"))?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
     // Set top level
-    partial.set_field("top", String::from("surface"))?;
+    partial = partial.set_field("top", String::from("surface"))?;
 
     // Re-enter at depth 1 only
-    partial.begin_field("level2")?;
-    partial.set_field("mid", 42u32)?;
-    partial.end()?;
+    partial = partial.begin_field("level2")?;
+    partial = partial.set_field("mid", 42u32)?;
+    partial = partial.end()?;
 
     // Re-enter all the way down again
-    partial.begin_field("level2")?;
-    partial.begin_field("level3")?;
+    partial = partial.begin_field("level2")?;
+    partial = partial.begin_field("level3")?;
     // Don't change anything, just re-enter
-    partial.end()?;
-    partial.end()?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Level1>()?;
     assert_eq!(result.top, "surface");
     assert_eq!(result.level2.mid, 42);
     assert_eq!(result.level2.level3.deep, "bottom");
@@ -1808,24 +1808,24 @@ fn deferred_many_siblings_interleaved() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Big>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Set in random order, interleaved with re-entries
-    partial.set_field("h", 8u32)?;
-    partial.set_field("a", 1u32)?;
-    partial.set_field("d", 4u32)?;
-    partial.set_field("c", 3u32)?;
-    partial.set_field("f", 6u32)?;
-    partial.set_field("b", 2u32)?;
-    partial.set_field("g", 7u32)?;
-    partial.set_field("e", 5u32)?;
+    partial = partial.set_field("h", 8u32)?;
+    partial = partial.set_field("a", 1u32)?;
+    partial = partial.set_field("d", 4u32)?;
+    partial = partial.set_field("c", 3u32)?;
+    partial = partial.set_field("f", 6u32)?;
+    partial = partial.set_field("b", 2u32)?;
+    partial = partial.set_field("g", 7u32)?;
+    partial = partial.set_field("e", 5u32)?;
 
     // Overwrite some
-    partial.set_field("a", 10u32)?;
-    partial.set_field("h", 80u32)?;
+    partial = partial.set_field("a", 10u32)?;
+    partial = partial.set_field("h", 80u32)?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Big>()?;
     assert_eq!(result.a, 10);
     assert_eq!(result.b, 2);
     assert_eq!(result.c, 3);
@@ -1859,12 +1859,12 @@ fn wip_deferred_drop_without_finish_simple() {
     {
         let resolution = Resolution::new();
         let mut partial = Partial::alloc::<Simple>().unwrap();
-        partial.begin_deferred(resolution).unwrap();
+        partial = partial.begin_deferred(resolution).unwrap();
 
-        partial
+        partial = partial
             .set_field("value", String::from("this will be dropped"))
             .unwrap();
-        partial.set_field("count", 42u32).unwrap();
+        partial = partial.set_field("count", 42u32).unwrap();
 
         // Don't call finish_deferred() or build()
         // Partial is dropped here
@@ -1890,16 +1890,16 @@ fn wip_deferred_drop_without_finish_nested() {
     {
         let resolution = Resolution::new();
         let mut partial = Partial::alloc::<Outer>().unwrap();
-        partial.begin_deferred(resolution).unwrap();
+        partial = partial.begin_deferred(resolution).unwrap();
 
-        partial
+        partial = partial
             .set_field("name", String::from("outer name"))
             .unwrap();
-        partial.begin_field("inner").unwrap();
-        partial
+        partial = partial.begin_field("inner").unwrap();
+        partial = partial
             .set_field("text", String::from("inner text"))
             .unwrap();
-        partial.end().unwrap();
+        partial = partial.end().unwrap();
 
         // Drop without finishing
     }
@@ -1919,24 +1919,24 @@ fn wip_deferred_drop_without_finish_collections() {
     {
         let resolution = Resolution::new();
         let mut partial = Partial::alloc::<WithCollections>().unwrap();
-        partial.begin_deferred(resolution).unwrap();
+        partial = partial.begin_deferred(resolution).unwrap();
 
-        partial.begin_field("strings").unwrap();
-        partial.begin_list().unwrap();
-        partial.push(String::from("item1")).unwrap();
-        partial.push(String::from("item2")).unwrap();
-        partial.push(String::from("item3")).unwrap();
-        partial.end().unwrap();
+        partial = partial.begin_field("strings").unwrap();
+        partial = partial.begin_list().unwrap();
+        partial = partial.push(String::from("item1")).unwrap();
+        partial = partial.push(String::from("item2")).unwrap();
+        partial = partial.push(String::from("item3")).unwrap();
+        partial = partial.end().unwrap();
 
-        partial.begin_field("map").unwrap();
-        partial.begin_map().unwrap();
-        partial.begin_key().unwrap();
-        partial.set(String::from("key1")).unwrap();
-        partial.end().unwrap();
-        partial.begin_value().unwrap();
-        partial.set(String::from("value1")).unwrap();
-        partial.end().unwrap();
-        partial.end().unwrap();
+        partial = partial.begin_field("map").unwrap();
+        partial = partial.begin_map().unwrap();
+        partial = partial.begin_key().unwrap();
+        partial = partial.set(String::from("key1")).unwrap();
+        partial = partial.end().unwrap();
+        partial = partial.begin_value().unwrap();
+        partial = partial.set(String::from("value1")).unwrap();
+        partial = partial.end().unwrap();
+        partial = partial.end().unwrap();
 
         // Drop without finishing - lots of allocations to clean up
     }
@@ -1959,10 +1959,10 @@ fn wip_deferred_drop_mid_field() {
     {
         let resolution = Resolution::new();
         let mut partial = Partial::alloc::<Outer>().unwrap();
-        partial.begin_deferred(resolution).unwrap();
+        partial = partial.begin_deferred(resolution).unwrap();
 
-        partial.begin_field("inner").unwrap();
-        partial.set_field("a", 1u32).unwrap();
+        partial = partial.begin_field("inner").unwrap();
+        partial = partial.set_field("a", 1u32).unwrap();
         // Don't call end() - frame is still on the stack
 
         // Drop with frame stack: [Outer, Inner]
@@ -1979,21 +1979,17 @@ fn error_finish_deferred_twice() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Simple>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("value", 42u32)?;
+    partial = partial.set_field("value", 42u32)?;
 
-    partial.finish_deferred()?;
+    partial = partial.finish_deferred()?;
 
     // Second call should fail
-    let result = partial.finish_deferred();
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("deferred mode is not enabled")
-    );
+    match partial.finish_deferred() {
+        Ok(_) => panic!("Expected error on second finish_deferred"),
+        Err(err) => assert!(err.to_string().contains("deferred mode is not enabled")),
+    }
 
     Ok(())
 }
@@ -2010,19 +2006,14 @@ fn error_begin_deferred_twice() -> Result<(), IPanic> {
     let resolution2 = Resolution::new();
     let mut partial = Partial::alloc::<Simple>()?;
 
-    partial.begin_deferred(resolution1)?;
+    partial = partial.begin_deferred(resolution1)?;
     assert!(partial.is_deferred());
 
-    // Second begin_deferred should return an error
+    // Second begin_deferred should return an error and consume the partial
     assert!(partial.begin_deferred(resolution2).is_err());
-    // But we're still in deferred mode from the first call
-    assert!(partial.is_deferred());
 
-    partial.set_field("value", 42u32)?;
-    partial.finish_deferred()?;
-
-    let result = *partial.build()?;
-    assert_eq!(result.value, 42);
+    // Note: partial was consumed by the error above, so we can't continue this test
+    // The test verified the error case, which is what we wanted
 
     Ok(())
 }
@@ -2041,34 +2032,32 @@ fn error_enum_variant_switch() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Choice>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Select variant A and set its field
-    partial.select_variant_named("OptionA")?;
-    partial.set_field("a_value", 42u32)?;
+    partial = partial.select_variant_named("OptionA")?;
+    partial = partial.set_field("a_value", 42u32)?;
 
     // Now try to select variant B - this might fail or reset
-    let switch_result = partial.select_variant_named("OptionB");
-
-    // Document whatever behavior we get
-    if switch_result.is_ok() {
-        // If switching is allowed, the previous data should be gone
-        // and we should be able to set B's fields
-        partial.set_field("b_value", String::from("switched"))?;
-        partial.finish_deferred()?;
-        let result = *partial.build()?;
-        assert_eq!(
-            result,
-            Choice::OptionB {
-                b_value: String::from("switched")
-            }
-        );
-    } else {
-        // If switching is not allowed, we should get an error
-        // and the original variant should still be intact
-        partial.finish_deferred()?;
-        let result = *partial.build()?;
-        assert_eq!(result, Choice::OptionA { a_value: 42 });
+    // With ownership API, if this fails, the partial is consumed
+    match partial.select_variant_named("OptionB") {
+        Ok(mut p) => {
+            // If switching is allowed, the previous data should be gone
+            // and we should be able to set B's fields
+            p = p.set_field("b_value", String::from("switched"))?;
+            p = p.finish_deferred()?;
+            let result = p.build()?.materialize::<Choice>()?;
+            assert_eq!(
+                result,
+                Choice::OptionB {
+                    b_value: String::from("switched")
+                }
+            );
+        }
+        Err(_) => {
+            // If switching is not allowed, we get an error and partial is consumed
+            // We can't continue to verify the original state
+        }
     }
 
     Ok(())
@@ -2093,30 +2082,32 @@ fn error_enum_variant_switch_with_reentry() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Record>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Set up Active variant
-    partial.begin_field("status")?;
-    partial.select_variant_named("Active")?;
-    partial.set_field("code", 200u32)?;
-    partial.end()?;
+    partial = partial.begin_field("status")?;
+    partial = partial.select_variant_named("Active")?;
+    partial = partial.set_field("code", 200u32)?;
+    partial = partial.end()?;
 
-    partial.set_field("id", 1u32)?;
+    partial = partial.set_field("id", 1u32)?;
 
     // Re-enter and try to switch variant
-    partial.begin_field("status")?;
-    let switch_result = partial.select_variant_named("Inactive");
+    partial = partial.begin_field("status")?;
 
-    // Whatever the behavior, don't leave things in a bad state
-    if switch_result.is_ok() {
-        partial.set_field("reason", String::from("changed mind"))?;
+    // Try to switch variant - if this fails, partial is consumed
+    match partial.select_variant_named("Inactive") {
+        Ok(mut p) => {
+            p = p.set_field("reason", String::from("changed mind"))?;
+            p = p.end()?;
+            p = p.finish_deferred()?;
+            let _result = p.build()?.materialize::<Record>()?;
+        }
+        Err(_) => {
+            // Variant switch failed, partial is consumed
+            // We just want to make sure we don't crash or leak
+        }
     }
-    partial.end()?;
-
-    partial.finish_deferred()?;
-    let _result = *partial.build()?;
-
-    // We just want to make sure we don't crash or leak
     Ok(())
 }
 
@@ -2130,9 +2121,9 @@ fn error_build_without_finish_deferred() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Simple>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("value", 42u32)?;
+    partial = partial.set_field("value", 42u32)?;
 
     // Try to build without finishing deferred mode
     // This might succeed (deferred mode just affects validation timing)
@@ -2141,7 +2132,7 @@ fn error_build_without_finish_deferred() -> Result<(), IPanic> {
 
     // Either way, we shouldn't crash
     if build_result.is_ok() {
-        let result = *build_result.unwrap();
+        let result = build_result.unwrap().materialize::<Simple>()?;
         assert_eq!(result.value, 42);
     }
 
@@ -2159,25 +2150,24 @@ fn error_operations_after_finish() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Simple>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("a", 1u32)?;
-    partial.set_field("b", 2u32)?;
+    partial = partial.set_field("a", 1u32)?;
+    partial = partial.set_field("b", 2u32)?;
 
-    partial.finish_deferred()?;
+    partial = partial.finish_deferred()?;
 
     // Now we're no longer in deferred mode - can we still modify?
-    let modify_result = partial.set_field("a", 100u32);
-
-    // Document the behavior
-    if modify_result.is_ok() {
-        let result = *partial.build()?;
-        assert_eq!(result.a, 100); // Modified after finish
-        assert_eq!(result.b, 2);
-    } else {
-        let result = *partial.build()?;
-        assert_eq!(result.a, 1); // Original value
-        assert_eq!(result.b, 2);
+    match partial.set_field("a", 100u32) {
+        Ok(p) => {
+            let result = p.build()?.materialize::<Simple>()?;
+            assert_eq!(result.a, 100); // Modified after finish
+            assert_eq!(result.b, 2);
+        }
+        Err(_) => {
+            // Modification after finish failed, which is also valid behavior
+            // The partial is consumed by the error
+        }
     }
 
     Ok(())
@@ -2205,19 +2195,19 @@ fn wip_deferred_drop_with_stored_frames() {
     {
         let resolution = Resolution::new();
         let mut partial = Partial::alloc::<L1>().unwrap();
-        partial.begin_deferred(resolution).unwrap();
+        partial = partial.begin_deferred(resolution).unwrap();
 
         // Go deep
-        partial.begin_field("l2").unwrap();
-        partial.begin_field("l3").unwrap();
-        partial
+        partial = partial.begin_field("l2").unwrap();
+        partial = partial.begin_field("l3").unwrap();
+        partial = partial
             .set_field("val", String::from("deep value"))
             .unwrap();
-        partial.end().unwrap(); // Store l3 frame
-        partial.end().unwrap(); // Store l2 frame
+        partial = partial.end().unwrap();
+        partial = partial.end().unwrap();
 
         // Set another field (l2 and l3 are now in stored_frames)
-        partial
+        partial = partial
             .set_field("other", String::from("other value"))
             .unwrap();
 
@@ -2254,29 +2244,29 @@ fn deferred_started_from_nested_position() -> Result<(), IPanic> {
     let mut partial = Partial::alloc::<Config>()?;
 
     // Navigate into server first (simulating what facet-kdl does)
-    partial.begin_field("server")?;
+    partial = partial.begin_field("server")?;
 
     // Now start deferred mode from the nested position
     // At this point, frames = [Config, Server], start_depth = 2
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Set host (direct field of Server)
-    partial.set_field("host", String::from("localhost"))?;
+    partial = partial.set_field("host", String::from("localhost"))?;
 
     // Set connection.port (nested from Server's perspective)
-    partial.begin_field("connection")?;
-    partial.set_field("port", 8080u16)?;
-    partial.end()?;
+    partial = partial.begin_field("connection")?;
+    partial = partial.set_field("port", 8080u16)?;
+    partial = partial.end()?;
 
     // Set connection.timeout (interleaved)
-    partial.begin_field("connection")?;
-    partial.set_field("timeout", 30u32)?;
-    partial.end()?;
+    partial = partial.begin_field("connection")?;
+    partial = partial.set_field("timeout", 30u32)?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    partial.end()?; // End server
+    partial = partial.finish_deferred()?;
+    partial = partial.end()?;
 
-    let result = *partial.build()?;
+    let result = partial.build()?.materialize::<Config>()?;
     assert_eq!(result.server.host, "localhost");
     assert_eq!(result.server.connection.port, 8080);
     assert_eq!(result.server.connection.timeout, 30);
@@ -2312,25 +2302,25 @@ fn deferred_started_from_deeply_nested_position() -> Result<(), IPanic> {
     let mut partial = Partial::alloc::<Root>()?;
 
     // Navigate deep before starting deferred mode
-    partial.begin_field("level1")?;
-    partial.begin_field("level2")?;
+    partial = partial.begin_field("level1")?;
+    partial = partial.begin_field("level2")?;
 
     // Start deferred mode at Level2 depth
     // frames = [Root, Level1, Level2], start_depth = 3
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Set fields in interleaved order
-    partial.set_field("other", String::from("test"))?;
+    partial = partial.set_field("other", String::from("test"))?;
 
-    partial.begin_field("leaf")?;
-    partial.set_field("value", 42i32)?;
-    partial.end()?;
+    partial = partial.begin_field("leaf")?;
+    partial = partial.set_field("value", 42i32)?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    partial.end()?; // End level2
-    partial.end()?; // End level1
+    partial = partial.finish_deferred()?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    let result = *partial.build()?;
+    let result = partial.build()?.materialize::<Root>()?;
     assert_eq!(result.level1.level2.other, "test");
     assert_eq!(result.level1.level2.leaf.value, 42);
 
@@ -2351,13 +2341,13 @@ fn deferred_option_field_auto_defaults_to_none() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<WithOption>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("required", String::from("hello"))?;
+    partial = partial.set_field("required", String::from("hello"))?;
     // Don't set optional - it should auto-default to None
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<WithOption>()?;
     assert_eq!(result.required, "hello");
     assert_eq!(result.optional, None);
 
@@ -2376,18 +2366,18 @@ fn deferred_multiple_option_fields_auto_default() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<ManyOptions>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("name", String::from("test"))?;
+    partial = partial.set_field("name", String::from("test"))?;
     // Set only one optional field
-    partial.begin_field("opt2")?;
-    partial.begin_some()?;
-    partial.set(String::from("has value"))?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.begin_field("opt2")?;
+    partial = partial.begin_some()?;
+    partial = partial.set(String::from("has value"))?;
+    partial = partial.end()?;
+    partial = partial.end()?;
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<ManyOptions>()?;
     assert_eq!(result.name, "test");
     assert_eq!(result.opt1, None);
     assert_eq!(result.opt2, Some(String::from("has value")));
@@ -2407,13 +2397,13 @@ fn deferred_field_with_default_attr_auto_applies() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<WithDefault>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("name", String::from("test"))?;
+    partial = partial.set_field("name", String::from("test"))?;
     // Don't set count - should use default value of 100
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<WithDefault>()?;
     assert_eq!(result.name, "test");
     assert_eq!(result.count, 100);
 
@@ -2431,13 +2421,13 @@ fn deferred_field_with_default_impl_auto_applies() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<WithDefault>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.set_field("name", String::from("test"))?;
+    partial = partial.set_field("name", String::from("test"))?;
     // Don't set items - should use Default::default() (empty Vec)
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<WithDefault>()?;
     assert_eq!(result.name, "test");
     assert_eq!(result.items, Vec::<i32>::new());
 
@@ -2457,18 +2447,18 @@ fn deferred_enum_variant_option_field_auto_defaults() -> Result<(), IPanic> {
     // Test variant B with only one field set
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Root>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.select_variant_named("B")?;
-    partial.begin_field("b1")?;
-    partial.begin_some()?;
-    partial.set(42i32)?;
-    partial.end()?;
-    partial.end()?;
+    partial = partial.select_variant_named("B")?;
+    partial = partial.begin_field("b1")?;
+    partial = partial.begin_some()?;
+    partial = partial.set(42i32)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
     // Don't set b2 - should default to None
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Root>()?;
     assert_eq!(
         result,
         Root::B {
@@ -2493,13 +2483,13 @@ fn deferred_enum_tuple_variant_option_defaults() -> Result<(), IPanic> {
     // Test variant A with no field set (table header case like [A] in TOML)
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Root>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.select_variant_named("A")?;
+    partial = partial.select_variant_named("A")?;
     // Don't set field 0 - should default to None
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Root>()?;
     assert_eq!(result, Root::A(None));
 
     Ok(())
@@ -2521,16 +2511,16 @@ fn deferred_nested_struct_option_fields_auto_default() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<Outer>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
-    partial.begin_field("inner")?;
-    partial.set_field("required", String::from("hello"))?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.set_field("required", String::from("hello"))?;
     // Don't set inner.optional
-    partial.end()?;
+    partial = partial.end()?;
     // Don't set outer.opt
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Outer>()?;
     assert_eq!(result.inner.required, "hello");
     assert_eq!(result.inner.optional, None);
     assert_eq!(result.opt, None);
@@ -2549,12 +2539,12 @@ fn deferred_all_fields_are_optional() -> Result<(), IPanic> {
 
     let resolution = Resolution::new();
     let mut partial = Partial::alloc::<AllOptional>()?;
-    partial.begin_deferred(resolution)?;
+    partial = partial.begin_deferred(resolution)?;
 
     // Set nothing at all - all should default to None
 
-    partial.finish_deferred()?;
-    let result = *partial.build()?;
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<AllOptional>()?;
     assert_eq!(result.a, None);
     assert_eq!(result.b, None);
     assert_eq!(result.c, None);

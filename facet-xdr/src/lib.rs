@@ -441,7 +441,7 @@ impl<'input> XdrDeserializerStack<'input> {
         Ok(data)
     }
 
-    fn next<'f>(&mut self, mut wip: Partial<'f>) -> Result<Partial<'f>, XdrDeserError> {
+    fn next<'f>(&mut self, wip: Partial<'f>) -> Result<Partial<'f>, XdrDeserError> {
         match (wip.shape().def, wip.shape().ty) {
             (Def::Scalar, Type::Primitive(PrimitiveType::Numeric(numeric_type))) => {
                 let size = wip.shape().layout.sized_layout().unwrap().size();
@@ -449,56 +449,56 @@ impl<'input> XdrDeserializerStack<'input> {
                     NumericType::Integer { signed: false } => match size {
                         1 => {
                             let value = self.next_u32()? as u8;
-                            wip.set(value).unwrap();
+                            let wip = wip.set(value).unwrap();
                             Ok(wip)
                         }
                         2 => {
                             let value = self.next_u32()? as u16;
-                            wip.set(value).unwrap();
+                            let wip = wip.set(value).unwrap();
                             Ok(wip)
                         }
                         4 => {
                             let value = self.next_u32()?;
-                            wip.set(value).unwrap();
+                            let wip = wip.set(value).unwrap();
                             Ok(wip)
                         }
                         8 => {
                             let value = self.next_u64()?;
-                            wip.set(value).unwrap();
+                            let wip = wip.set(value).unwrap();
                             Ok(wip)
                         }
                         _ => {
                             // Handle usize - use 64-bit on most platforms
                             let value = self.next_u64()? as usize;
-                            wip.set(value).unwrap();
+                            let wip = wip.set(value).unwrap();
                             Ok(wip)
                         }
                     },
                     NumericType::Integer { signed: true } => match size {
                         1 => {
                             let value = self.next_u32()? as i8;
-                            wip.set(value).unwrap();
+                            let wip = wip.set(value).unwrap();
                             Ok(wip)
                         }
                         2 => {
                             let value = self.next_u32()? as i16;
-                            wip.set(value).unwrap();
+                            let wip = wip.set(value).unwrap();
                             Ok(wip)
                         }
                         4 => {
                             let value = self.next_u32()? as i32;
-                            wip.set(value).unwrap();
+                            let wip = wip.set(value).unwrap();
                             Ok(wip)
                         }
                         8 => {
                             let value = self.next_u64()? as i64;
-                            wip.set(value).unwrap();
+                            let wip = wip.set(value).unwrap();
                             Ok(wip)
                         }
                         _ => {
                             // Handle isize - use 64-bit on most platforms
                             let value = self.next_u64()? as isize;
-                            wip.set(value).unwrap();
+                            let wip = wip.set(value).unwrap();
                             Ok(wip)
                         }
                     },
@@ -506,13 +506,13 @@ impl<'input> XdrDeserializerStack<'input> {
                         4 => {
                             let bits = self.next_u32()?;
                             let float = f32::from_bits(bits);
-                            wip.set(float).unwrap();
+                            let wip = wip.set(float).unwrap();
                             Ok(wip)
                         }
                         8 => {
                             let bits = self.next_u64()?;
                             let float = f64::from_bits(bits);
-                            wip.set(float).unwrap();
+                            let wip = wip.set(float).unwrap();
                             Ok(wip)
                         }
                         _ => Err(XdrDeserError::UnsupportedNumericType),
@@ -526,16 +526,16 @@ impl<'input> XdrDeserializerStack<'input> {
                         source: e,
                     }
                 })?;
-                wip.set(string.to_owned()).unwrap();
+                let wip = wip.set(string.to_owned()).unwrap();
                 Ok(wip)
             }
             (Def::Scalar, Type::Primitive(PrimitiveType::Boolean)) => match self.next_u32()? {
                 0 => {
-                    wip.set(false).unwrap();
+                    let wip = wip.set(false).unwrap();
                     Ok(wip)
                 }
                 1 => {
-                    wip.set(true).unwrap();
+                    let wip = wip.set(true).unwrap();
                     Ok(wip)
                 }
                 _ => Err(XdrDeserError::InvalidBoolean {
@@ -544,7 +544,7 @@ impl<'input> XdrDeserializerStack<'input> {
             },
             (Def::Scalar, Type::Primitive(PrimitiveType::Textual(TextualType::Char))) => {
                 let value = self.next_u32()?;
-                wip.set(char::from_u32(value).unwrap()).unwrap();
+                let wip = wip.set(char::from_u32(value).unwrap()).unwrap();
                 Ok(wip)
             }
             (Def::Scalar, _) => {
@@ -555,17 +555,17 @@ impl<'input> XdrDeserializerStack<'input> {
                         source: e,
                     }
                 })?;
-                wip.set(string.to_owned()).unwrap();
+                let wip = wip.set(string.to_owned()).unwrap();
                 Ok(wip)
             }
             (Def::List(ld), _) => {
                 if ld.t().is_type::<u8>() {
                     let data = self.next_data(None)?;
-                    wip.set(data.to_vec()).unwrap();
+                    let wip = wip.set(data.to_vec()).unwrap();
                     Ok(wip)
                 } else {
                     let len = self.next_u32()?;
-                    wip.begin_list().unwrap();
+                    let wip = wip.begin_list().unwrap();
                     if len == 0 {
                         Ok(wip)
                     } else {
@@ -581,10 +581,11 @@ impl<'input> XdrDeserializerStack<'input> {
                 if ad.t().is_type::<u8>() {
                     self.pos += len;
                     let pad_len = len % 4;
+                    let mut wip = wip;
                     for byte in &self.input[self.pos - len..self.pos] {
-                        wip.begin_list_item().unwrap();
-                        wip.set(*byte).unwrap();
-                        wip.end().unwrap();
+                        wip = wip.begin_list_item().unwrap();
+                        wip = wip.set(*byte).unwrap();
+                        wip = wip.end().unwrap();
                     }
                     if pad_len != 0 {
                         self.pos += 4 - pad_len;
@@ -600,7 +601,7 @@ impl<'input> XdrDeserializerStack<'input> {
             (Def::Slice(sd), _) => {
                 if sd.t().is_type::<u8>() {
                     let data = self.next_data(None)?;
-                    wip.set(data.to_vec()).unwrap();
+                    let wip = wip.set(data.to_vec()).unwrap();
                     Ok(wip)
                 } else {
                     let len = self.next_u32()?;
@@ -612,13 +613,13 @@ impl<'input> XdrDeserializerStack<'input> {
             }
             (Def::Option(_), _) => match self.next_u32()? {
                 0 => {
-                    wip.set_default().unwrap();
+                    let wip = wip.set_default().unwrap();
                     Ok(wip)
                 }
                 1 => {
                     self.stack.push(DeserializeTask::Pop(PopReason::Some));
                     self.stack.push(DeserializeTask::Value);
-                    wip.select_variant(1).unwrap();
+                    let wip = wip.select_variant(1).unwrap();
                     Ok(wip)
                 }
                 _ => Err(XdrDeserError::InvalidOptional {
@@ -654,7 +655,7 @@ impl<'input> XdrDeserializerStack<'input> {
                         for (index, _field) in variant.data.fields.iter().enumerate().rev() {
                             self.stack.push(DeserializeTask::Field(index));
                         }
-                        wip.select_variant(discriminant as i64).unwrap();
+                        let wip = wip.select_variant(discriminant as i64).unwrap();
                         Ok(wip)
                     } else {
                         Err(XdrDeserError::InvalidVariant {
@@ -692,7 +693,7 @@ pub fn deserialize_wip<'facet>(
                 if reason == PopReason::TopLevel {
                     return Ok(wip.build().unwrap());
                 } else {
-                    wip.end().unwrap();
+                    wip = wip.end().unwrap();
                 }
             }
             Some(DeserializeTask::Value) => {
@@ -703,14 +704,14 @@ pub fn deserialize_wip<'facet>(
                     .stack
                     .push(DeserializeTask::Pop(PopReason::ObjectOrListVal));
                 runner.stack.push(DeserializeTask::Value);
-                wip.begin_nth_field(index).unwrap();
+                wip = wip.begin_nth_field(index).unwrap();
             }
             Some(DeserializeTask::ListItem) => {
                 runner
                     .stack
                     .push(DeserializeTask::Pop(PopReason::ObjectOrListVal));
                 runner.stack.push(DeserializeTask::Value);
-                wip.begin_list_item().unwrap();
+                wip = wip.begin_list_item().unwrap();
             }
             None => unreachable!("Instruction stack is empty"),
         }

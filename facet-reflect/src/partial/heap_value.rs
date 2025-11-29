@@ -1,7 +1,6 @@
 use crate::Peek;
 use crate::ReflectError;
 use crate::trace;
-use alloc::boxed::Box;
 use core::ptr::NonNull;
 use core::{alloc::Layout, marker::PhantomData};
 use facet_core::{Facet, PtrConst, PtrMut, Shape};
@@ -160,19 +159,6 @@ impl Drop for Guard {
 }
 
 impl<'facet> HeapValue<'facet> {
-    /// Unsafely convert this HeapValue into a `Box<T>` without checking shape.
-    ///
-    /// # Safety
-    ///
-    /// Caller must guarantee that the underlying value is of type T with a compatible layout.
-    pub(crate) unsafe fn into_box_unchecked<T: Facet<'facet>>(mut self) -> Box<T> {
-        let guard = self.guard.take().unwrap();
-        let ptr = guard.ptr.as_ptr() as *mut T;
-        // Don't drop, just forget the guard so we don't double free.
-        core::mem::forget(guard);
-        unsafe { Box::from_raw(ptr) }
-    }
-
     /// Unsafely get a reference to the underlying value as type T.
     ///
     /// # Safety

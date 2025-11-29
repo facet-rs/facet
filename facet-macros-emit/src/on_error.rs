@@ -21,7 +21,7 @@ pub fn on_error(attr: TokenStream, item: TokenStream) -> TokenStream {
     // Find the function name - it's the identifier after "fn"
     let fn_pos = tokens
         .iter()
-        .position(|tt| matches!(tt, TokenTree::Ident(id) if id.to_string() == "fn"))
+        .position(|tt| matches!(tt, TokenTree::Ident(id) if *id == "fn"))
         .expect("Method must have 'fn' keyword");
 
     let fn_name = if let TokenTree::Ident(id) = &tokens[fn_pos + 1] {
@@ -55,7 +55,7 @@ pub fn on_error(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     // Generate inner method name
-    let inner_name = Ident::new(&format!("__{}_inner", fn_name), Span::call_site());
+    let inner_name = Ident::new(&format!("__{fn_name}_inner"), Span::call_site());
 
     // Build the signature for the inner method (everything before the body, with renamed fn)
     let mut inner_sig_tokens: Vec<TokenTree> = Vec::new();

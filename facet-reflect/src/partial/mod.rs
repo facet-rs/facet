@@ -11,6 +11,9 @@
 //! - Handle complex nested structures including structs, enums, collections, and smart pointers
 //! - Build the final value once all required fields are initialized
 //!
+//! **Note**: This is the only API for partial value construction. The previous `TypedPartial`
+//! wrapper has been removed in favor of using `Partial` directly.
+//!
 //! # Basic Usage
 //!
 //! ```no_run
@@ -21,14 +24,14 @@
 //! let mut partial = Partial::alloc::<T>()?;
 //!
 //! // Set simple fields
-//! partial.set_field("name", "Alice")?;
-//! partial.set_field("age", 30u32)?;
+//! partial = partial.set_field("name", "Alice")?;
+//! partial = partial.set_field("age", 30u32)?;
 //!
 //! // Work with nested structures
-//! partial.begin_field("address")?;
-//! partial.set_field("street", "123 Main St")?;
-//! partial.set_field("city", "Springfield")?;
-//! partial.end()?;
+//! partial = partial.begin_field("address")?;
+//! partial = partial.set_field("street", "123 Main St")?;
+//! partial = partial.set_field("city", "Springfield")?;
+//! partial = partial.end()?;
 //!
 //! // Build the final value
 //! let value = partial.build()?;
@@ -63,13 +66,13 @@
 //! let mut partial = Partial::alloc::<Vec<String>>()?;
 //!
 //! // Add items to a list
-//! partial.begin_list_item()?;
-//! partial.set("first")?;
-//! partial.end()?;
+//! partial = partial.begin_list_item()?;
+//! partial = partial.set("first")?;
+//! partial = partial.end()?;
 //!
-//! partial.begin_list_item()?;
-//! partial.set("second")?;
-//! partial.end()?;
+//! partial = partial.begin_list_item()?;
+//! partial = partial.set("second")?;
+//! partial = partial.end()?;
 //!
 //! let vec = partial.build()?;
 //! # Ok(())
@@ -86,12 +89,12 @@
 //! let mut partial = Partial::alloc::<HashMap<String, i32>>()?;
 //!
 //! // Insert key-value pairs
-//! partial.begin_key()?;
-//! partial.set("score")?;
-//! partial.end()?;
-//! partial.begin_value()?;
-//! partial.set(100i32)?;
-//! partial.end()?;
+//! partial = partial.begin_key()?;
+//! partial = partial.set("score")?;
+//! partial = partial.end()?;
+//! partial = partial.begin_value()?;
+//! partial = partial.set(100i32)?;
+//! partial = partial.end()?;
 //!
 //! let map = partial.build()?;
 //! # Ok(())
@@ -111,9 +114,6 @@ use alloc::{collections::BTreeMap, vec::Vec};
 mod iset;
 
 mod partial_api;
-
-mod typed;
-pub use typed::*;
 
 use crate::{KeyPath, ReflectError, Resolution, TrackerKind, trace};
 
@@ -136,9 +136,6 @@ enum PartialState {
 
     /// Partial has been successfully built and cannot be reused
     Built,
-
-    /// Building failed and Partial is poisoned
-    BuildFailed,
 }
 
 /// Mode of operation for frame management.
@@ -236,11 +233,6 @@ impl FrameMode {
 /// an error is returned: in other words, if you navigate down to a field,
 /// you have to fully initialize it one go. You can't go back up and back down
 /// to it again.
-///
-/// You might be interested in [TypedPartial] as well, which carries a generic
-/// type parameter to make [TypedPartial::build] type-safe. However, when
-/// implementing deserializers for example, if you want to avoid monomorphization,
-/// you might want to work with [Partial] directly.
 pub struct Partial<'facet> {
     /// Frame management mode (strict or deferred) and associated state.
     mode: FrameMode,

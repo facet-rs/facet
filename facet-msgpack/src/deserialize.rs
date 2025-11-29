@@ -32,16 +32,19 @@ pub fn from_slice<T: Facet<'static>>(msgpack: &[u8]) -> Result<T, DecodeError> {
     // FIXME: why is the bound `'static` up there? msgpack can borrow from the input afaict?
 
     trace!("from_slice: Starting deserialization for type {}", T::SHAPE);
-    let mut typed_partial = Partial::alloc::<T>()?;
+    let partial = Partial::alloc::<T>()?;
     trace!(
-        "from_slice: Allocated TypedPartial, inner shape: {}",
-        typed_partial.inner_mut().shape()
+        "from_slice: Allocated Partial, inner shape: {}",
+        partial.shape()
     );
-    from_slice_value(msgpack, typed_partial.inner_mut())?;
+
+    let partial = from_slice_value(msgpack, partial)?;
+
     trace!("from_slice: Deserialization complete, building value");
-    let boxed_value = typed_partial.build()?;
+    let heap_value = partial.build()?;
     trace!("from_slice: Value built successfully");
-    Ok(*boxed_value)
+    let value = heap_value.materialize()?;
+    Ok(value)
 }
 
 /// Deserializes MessagePack-encoded data into a Facet value.
@@ -85,8 +88,8 @@ pub fn from_slice<T: Facet<'static>>(msgpack: &[u8]) -> Result<T, DecodeError> {
 /// <https://github.com/msgpack/msgpack/blob/master/spec.md>
 pub fn from_slice_value<'facet>(
     msgpack: &[u8],
-    wip: &mut Partial<'facet>,
-) -> Result<(), DecodeError> {
+    wip: Partial<'facet>,
+) -> Result<Partial<'facet>, DecodeError> {
     trace!("from_slice_value: Starting with shape {}", wip.shape());
     let mut decoder = Decoder::new(msgpack);
     let result = decoder.deserialize_value(wip);
@@ -418,8 +421,12 @@ impl<'input> Decoder<'input> {
         }
     }
 
-    fn deserialize_value<'facet>(&mut self, wip: &mut Partial<'facet>) -> Result<(), DecodeError> {
-        let shape = wip.shape();
+    fn deserialize_value<'facet>(
+        &mut self,
+        partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, DecodeError> {
+        let mut partial = partial;
+        let shape = partial.shape();
         trace!("Deserializing {shape:?}");
 
         // First check the type system (Type)
@@ -435,11 +442,12 @@ impl<'input> Decoder<'input> {
 
                 for _ in 0..map_len {
                     let key = self.decode_string()?;
-                    match wip.field_index(&key) {
+                    match partial.field_index(&key) {
                         Some(index) => {
                             seen_fields[index] = true;
-                            self.deserialize_value(wip.begin_nth_field(index).unwrap())?;
-                            wip.end().unwrap();
+                            let field_partial = partial.begin_nth_field(index).unwrap();
+                            let field_partial = self.deserialize_value(field_partial)?;
+                            partial = field_partial.end().unwrap();
                         }
                         None => {
                             // Skip unknown field value
@@ -454,7 +462,7 @@ impl<'input> Decoder<'input> {
                     if !seen {
                         let field = &struct_type.fields[i];
                         if field.flags.contains(facet_core::FieldFlags::DEFAULT) {
-                            wip.set_nth_field_to_default(i)?;
+                            partial = partial.set_nth_field_to_default(i)?;
                         } else {
                             // Non-default field was missing
                             return Err(DecodeError::MissingField(field.name.to_string()));
@@ -462,7 +470,7 @@ impl<'input> Decoder<'input> {
                     }
                 }
 
-                return Ok(());
+                return Ok(partial);
             }
             Type::User(facet_core::UserType::Struct(struct_type))
                 if struct_type.kind == facet_core::StructKind::Tuple =>
@@ -478,12 +486,12 @@ impl<'input> Decoder<'input> {
                 // For tuples, deserialize fields in order
                 for idx in 0..field_count {
                     trace!("Deserializing tuple field {idx}");
-                    wip.begin_nth_field(idx)?;
-                    self.deserialize_value(wip)?;
-                    wip.end().map_err(DecodeError::ReflectError)?;
+                    let field_partial = partial.begin_nth_field(idx)?;
+                    let field_partial = self.deserialize_value(field_partial)?;
+                    partial = field_partial.end().map_err(DecodeError::ReflectError)?;
                 }
 
-                return Ok(());
+                return Ok(partial);
             }
             Type::User(UserType::Enum(enum_type)) => {
                 trace!("Deserializing enum");
@@ -493,8 +501,8 @@ impl<'input> Decoder<'input> {
                     let variant_name = self.decode_string()?;
                     for (idx, variant) in enum_type.variants.iter().enumerate() {
                         if variant.name == variant_name {
-                            wip.select_nth_variant(idx)?;
-                            return Ok(());
+                            partial = partial.select_nth_variant(idx)?;
+                            return Ok(partial);
                         }
                     }
                     return Err(DecodeError::InvalidEnum(format!(
@@ -517,8 +525,8 @@ impl<'input> Decoder<'input> {
                             facet_core::StructKind::Unit => {
                                 // Need to skip any value that might be present
                                 self.skip_value()?;
-                                wip.select_nth_variant(idx)?;
-                                return Ok(());
+                                partial = partial.select_nth_variant(idx)?;
+                                return Ok(partial);
                             }
 
                             // Handle tuple variant
@@ -530,28 +538,30 @@ impl<'input> Decoder<'input> {
                                     return Err(DecodeError::InvalidData);
                                 }
 
-                                wip.select_nth_variant(idx)?;
+                                partial = partial.select_nth_variant(idx)?;
                                 for field_idx in 0..field_count {
-                                    wip.begin_nth_field(field_idx)?;
-                                    self.deserialize_value(wip)?;
-                                    wip.end()?;
+                                    let field_partial = partial.begin_nth_field(field_idx)?;
+                                    let field_partial = self.deserialize_value(field_partial)?;
+                                    partial = field_partial.end()?;
                                 }
-                                return Ok(());
+                                return Ok(partial);
                             }
 
                             // Handle struct variant
                             facet_core::StructKind::Struct => {
                                 let map_len = self.decode_map_len()?;
-                                wip.select_nth_variant(idx)?;
+                                partial = partial.select_nth_variant(idx)?;
 
                                 // Handle fields as a normal struct
                                 for _ in 0..map_len {
                                     let field_name = self.decode_string()?;
-                                    match wip.field_index(&field_name) {
+                                    match partial.field_index(&field_name) {
                                         Some(field_idx) => {
-                                            wip.begin_nth_field(field_idx)?;
-                                            self.deserialize_value(wip)?;
-                                            wip.end()?;
+                                            let field_partial =
+                                                partial.begin_nth_field(field_idx)?;
+                                            let field_partial =
+                                                self.deserialize_value(field_partial)?;
+                                            partial = field_partial.end()?;
                                         }
                                         None => {
                                             // Skip unknown field
@@ -561,7 +571,7 @@ impl<'input> Decoder<'input> {
                                     }
                                 }
 
-                                return Ok(());
+                                return Ok(partial);
                             }
 
                             // Handle other kinds that might be added in the future
@@ -587,53 +597,53 @@ impl<'input> Decoder<'input> {
             trace!("Deserializing scalar");
             if shape.is_type::<String>() {
                 let s = self.decode_string()?;
-                wip.set(s)?;
+                partial = partial.set(s)?;
             } else if shape.is_type::<u64>() {
                 let n = self.decode_u64()?;
-                wip.set(n)?;
+                partial = partial.set(n)?;
             } else if shape.is_type::<u32>() {
                 let n = self.decode_u64()?;
                 if n > u32::MAX as u64 {
                     return Err(DecodeError::IntegerOverflow);
                 }
-                wip.set(n as u32)?;
+                partial = partial.set(n as u32)?;
             } else if shape.is_type::<u16>() {
                 let n = self.decode_u64()?;
                 if n > u16::MAX as u64 {
                     return Err(DecodeError::IntegerOverflow);
                 }
-                wip.set(n as u16)?;
+                partial = partial.set(n as u16)?;
             } else if shape.is_type::<u8>() {
                 let n = self.decode_u64()?;
                 if n > u8::MAX as u64 {
                     return Err(DecodeError::IntegerOverflow);
                 }
-                wip.set(n as u8)?;
+                partial = partial.set(n as u8)?;
             } else if shape.is_type::<i64>() {
                 // TODO: implement proper signed int decoding including negative values
                 let n = self.decode_u64()?;
                 if n > i64::MAX as u64 {
                     return Err(DecodeError::IntegerOverflow);
                 }
-                wip.set(n as i64)?;
+                partial = partial.set(n as i64)?;
             } else if shape.is_type::<i32>() {
                 let n = self.decode_u64()?;
                 if n > i32::MAX as u64 {
                     return Err(DecodeError::IntegerOverflow);
                 }
-                wip.set(n as i32)?;
+                partial = partial.set(n as i32)?;
             } else if shape.is_type::<i16>() {
                 let n = self.decode_u64()?;
                 if n > i16::MAX as u64 {
                     return Err(DecodeError::IntegerOverflow);
                 }
-                wip.set(n as i16)?;
+                partial = partial.set(n as i16)?;
             } else if shape.is_type::<i8>() {
                 let n = self.decode_u64()?;
                 if n > i8::MAX as u64 {
                     return Err(DecodeError::IntegerOverflow);
                 }
-                wip.set(n as i8)?;
+                partial = partial.set(n as i8)?;
             } else if shape.is_type::<f64>() {
                 // TODO: Implement proper f64 decoding from MessagePack format
                 return Err(DecodeError::NotImplemented(
@@ -646,34 +656,34 @@ impl<'input> Decoder<'input> {
                 ));
             } else if shape.is_type::<bool>() {
                 let b = self.decode_bool()?;
-                wip.set(b)?;
+                partial = partial.set(b)?;
             } else {
                 return Err(DecodeError::UnsupportedType(format!("{shape}")));
             }
         } else if let Def::Map(_map_def) = shape.def {
             trace!("Deserializing map");
             let map_len = self.decode_map_len()?;
-            wip.begin_map()?;
+            partial = partial.begin_map()?;
 
             for _ in 0..map_len {
                 // Each map entry has a key and value
-                wip.begin_key()?;
-                self.deserialize_value(wip)?;
-                wip.end()?;
+                let key_partial = partial.begin_key()?;
+                let key_partial = self.deserialize_value(key_partial)?;
+                partial = key_partial.end()?;
 
-                wip.begin_value()?;
-                self.deserialize_value(wip)?;
-                wip.end()?;
+                let value_partial = partial.begin_value()?;
+                let value_partial = self.deserialize_value(value_partial)?;
+                partial = value_partial.end()?;
             }
         } else if let Def::List(_list_def) = shape.def {
             trace!("Deserializing list");
             let array_len = self.decode_array_len()?;
-            wip.begin_list()?;
+            partial = partial.begin_list()?;
 
             for _ in 0..array_len {
-                wip.begin_list_item()?;
-                self.deserialize_value(wip)?;
-                wip.end()?;
+                let item_partial = partial.begin_list_item()?;
+                let item_partial = self.deserialize_value(item_partial)?;
+                partial = item_partial.end()?;
             }
         } else if let Def::Option(_option_def) = shape.def {
             trace!("Deserializing option with shape: {shape}");
@@ -682,21 +692,21 @@ impl<'input> Decoder<'input> {
                 // Consume the nil value
                 self.decode_nil()?;
                 // Initialize None option
-                wip.set_default()?;
+                partial = partial.set_default()?;
             } else {
                 trace!("Option value is present, setting to Some");
                 // Value is present - initialize a Some option
-                wip.begin_some()?;
-                trace!("After begin_some, wip shape: {}", wip.shape());
-                self.deserialize_value(wip)?;
+                let some_partial = partial.begin_some()?;
+                trace!("After begin_some, partial shape: {}", some_partial.shape());
+                let some_partial = self.deserialize_value(some_partial)?;
                 trace!("After deserialize_value, calling end");
-                wip.end()?;
-                trace!("After end, wip shape: {}", wip.shape());
+                partial = some_partial.end()?;
+                trace!("After end, partial shape: {}", partial.shape());
             }
         } else {
             return Err(DecodeError::UnsupportedShape(format!("{shape:?}")));
         }
 
-        Ok(())
+        Ok(partial)
     }
 }

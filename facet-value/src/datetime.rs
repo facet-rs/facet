@@ -107,6 +107,7 @@ impl VDateTime {
     /// * `offset_minutes` - Offset from UTC in minutes
     #[cfg(feature = "alloc")]
     #[must_use]
+    #[allow(clippy::too_many_arguments)]
     pub fn new_offset(
         year: i32,
         month: u8,

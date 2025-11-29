@@ -10,9 +10,8 @@ impl Partial<'_> {
     /// `begin_set` does not clear the set if it was previously initialized.
     /// `begin_set` does not push a new frame to the stack, and thus does not
     /// require `end` to be called afterwards.
-    pub fn begin_set(&mut self) -> Result<&mut Self, ReflectError> {
+    pub fn begin_set(mut self) -> Result<Self, ReflectError> {
         crate::trace!("begin_set()");
-        self.require_active()?;
         let frame = self.frames_mut().last_mut().unwrap();
 
         match &frame.tracker {
@@ -69,9 +68,8 @@ impl Partial<'_> {
 
     /// Begins pushing an element to the set.
     /// The element should be set using `set()` or similar methods, then `end()` to complete.
-    pub fn begin_set_item(&mut self) -> Result<&mut Self, ReflectError> {
+    pub fn begin_set_item(mut self) -> Result<Self, ReflectError> {
         crate::trace!("begin_set_item()");
-        self.require_active()?;
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a Set that's been initialized

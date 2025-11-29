@@ -73,6 +73,7 @@ unsafe fn dyn_set_bytes(dst: PtrUninit<'_>, value: &[u8]) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn dyn_set_datetime(
     dst: PtrUninit<'_>,
     year: i32,
@@ -224,6 +225,7 @@ unsafe fn dyn_get_bytes<'a>(value: PtrConst<'a>) -> Option<&'a [u8]> {
     }
 }
 
+#[allow(clippy::type_complexity)]
 unsafe fn dyn_get_datetime(
     value: PtrConst<'_>,
 ) -> Option<(i32, u8, u8, u8, u8, u8, u32, DynDateTimeKind)> {

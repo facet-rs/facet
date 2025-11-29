@@ -1714,17 +1714,18 @@ fn test_ipv4_addr_parse_from_str() {
     use facet_reflect::Partial;
 
     // Test that Ipv4Addr can be parsed from a string using facet reflection
-    let mut wip = Partial::alloc_shape(Ipv4Addr::SHAPE).unwrap();
+    let wip = Partial::alloc_shape(Ipv4Addr::SHAPE).unwrap();
 
     // This should work - parse a valid IP address
-    let result = wip.parse_from_str("127.0.0.1");
-    assert!(result.is_ok(), "Failed to parse valid IP address");
+    let wip = wip
+        .parse_from_str("127.0.0.1")
+        .expect("Failed to parse valid IP address");
 
     let value: Ipv4Addr = wip.build().unwrap().materialize().unwrap();
     assert_eq!(value, "127.0.0.1".parse::<Ipv4Addr>().unwrap());
 
     // Test that invalid IP addresses fail to parse
-    let mut wip2 = Partial::alloc_shape(Ipv4Addr::SHAPE).unwrap();
+    let wip2 = Partial::alloc_shape(Ipv4Addr::SHAPE).unwrap();
     let result2 = wip2.parse_from_str("not.an.ip.address");
     assert!(result2.is_err(), "Should fail to parse invalid IP address");
 

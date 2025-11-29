@@ -10,11 +10,10 @@ impl<'facet> Partial<'facet> {
     /// If the current frame was already initialized, the previous value is
     /// dropped. If it was partially initialized, the fields that were initialized
     /// are dropped, etc.
-    pub fn set<U>(&mut self, value: U) -> Result<&mut Self, ReflectError>
+    pub fn set<U>(mut self, value: U) -> Result<Self, ReflectError>
     where
         U: Facet<'facet>,
     {
-        self.require_active()?;
         struct DropVal<U> {
             ptr: *mut U,
         }
@@ -31,10 +30,8 @@ impl<'facet> Partial<'facet> {
         };
 
         let ptr_const = PtrConst::new(unsafe { NonNull::new_unchecked(drop.ptr) });
-        unsafe {
-            // Safety: We are calling set_shape with a valid shape and a valid pointer
-            self.set_shape(ptr_const, U::SHAPE)?
-        };
+        // Safety: We are calling set_shape with a valid shape and a valid pointer
+        self = unsafe { self.set_shape(ptr_const, U::SHAPE)? };
         core::mem::forget(drop);
 
         Ok(self)
@@ -55,12 +52,10 @@ impl<'facet> Partial<'facet> {
     /// If an error is returned, the destination remains unmodified and safe for future operations.
     #[inline]
     pub unsafe fn set_shape(
-        &mut self,
+        mut self,
         src_value: PtrConst<'_>,
         src_shape: &'static Shape,
-    ) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
+    ) -> Result<Self, ReflectError> {
         let fr = self.frames_mut().last_mut().unwrap();
         crate::trace!("set_shape({src_shape:?})");
 
@@ -100,11 +95,11 @@ impl<'facet> Partial<'facet> {
     ///
     /// Same safety requirements as `set_shape`.
     unsafe fn set_into_dynamic_value(
-        &mut self,
+        mut self,
         src_value: PtrConst<'_>,
         src_shape: &'static Shape,
         dyn_def: &facet_core::DynamicValueDef,
-    ) -> Result<&mut Self, ReflectError> {
+    ) -> Result<Self, ReflectError> {
         let fr = self.frames_mut().last_mut().unwrap();
         let vtable = dyn_def.vtable;
 
@@ -224,6 +219,7 @@ impl<'facet> Partial<'facet> {
             }
         }
 
+        let fr = self.frames_mut().last_mut().unwrap();
         fr.tracker = Tracker::DynamicValue {
             state: DynamicValueState::Scalar,
         };
@@ -237,7 +233,7 @@ impl<'facet> Partial<'facet> {
     /// Returns an error if the target doesn't support datetime values.
     #[allow(clippy::too_many_arguments)]
     pub fn set_datetime(
-        &mut self,
+        mut self,
         year: i32,
         month: u8,
         day: u8,
@@ -246,8 +242,7 @@ impl<'facet> Partial<'facet> {
         second: u8,
         nanos: u32,
         kind: DynDateTimeKind,
-    ) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
+    ) -> Result<Self, ReflectError> {
         let fr = self.frames_mut().last_mut().unwrap();
 
         // Must be a DynamicValue type
@@ -278,6 +273,7 @@ impl<'facet> Partial<'facet> {
             set_datetime_fn(fr.data, year, month, day, hour, minute, second, nanos, kind);
         }
 
+        let fr = self.frames_mut().last_mut().unwrap();
         fr.tracker = Tracker::DynamicValue {
             state: DynamicValueState::Scalar,
         };
@@ -294,11 +290,10 @@ impl<'facet> Partial<'facet> {
     ///
     /// If `f` returns Err(), it is assumed that it did NOT initialize the passed pointer and that
     /// there is no need to drop it in place.
-    pub unsafe fn set_from_function<F>(&mut self, f: F) -> Result<&mut Self, ReflectError>
+    pub unsafe fn set_from_function<F>(mut self, f: F) -> Result<Self, ReflectError>
     where
         F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError>,
     {
-        self.require_active()?;
         let frame = self.frames_mut().last_mut().unwrap();
 
         frame.deinit();
@@ -321,8 +316,7 @@ impl<'facet> Partial<'facet> {
     ///
     /// If the current frame's shape does not implement `Default`, then this returns an error.
     #[inline]
-    pub fn set_default(&mut self) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
+    pub fn set_default(self) -> Result<Self, ReflectError> {
         let frame = self.frames().last().unwrap();
 
         let Some(default_fn) = frame.shape.vtable.default_in_place else {
@@ -352,9 +346,7 @@ impl<'facet> Partial<'facet> {
     ///
     /// If this succeeds, the value `Peek` points to has been moved out of, and
     /// as such, should not be dropped (but should be deallocated).
-    pub unsafe fn set_from_peek(&mut self, peek: &Peek<'_, '_>) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
+    pub unsafe fn set_from_peek(self, peek: &Peek<'_, '_>) -> Result<Self, ReflectError> {
         // Get the source value's pointer and shape
         let src_ptr = peek.data();
         let src_shape = peek.shape();
@@ -366,9 +358,7 @@ impl<'facet> Partial<'facet> {
     /// Parses a string value into the current frame using the type's ParseFn from the vtable.
     ///
     /// If the current frame was previously initialized, its contents are dropped in place.
-    pub fn parse_from_str(&mut self, s: &str) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
+    pub fn parse_from_str(mut self, s: &str) -> Result<Self, ReflectError> {
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check if the type has a parse function

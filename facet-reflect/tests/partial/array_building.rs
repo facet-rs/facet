@@ -1,3 +1,7 @@
+// In ownership-based APIs, the last assignment to `partial` is often unused
+// because the value is consumed by `.build()` - this is expected behavior
+#![allow(unused_assignments)]
+
 use facet::Facet;
 use facet_reflect::{Partial, ReflectError};
 use facet_testhelpers::{IPanic, test};
@@ -5,11 +9,12 @@ use facet_testhelpers::{IPanic, test};
 #[test]
 fn test_building_array_f32_3_pushback() -> Result<(), IPanic> {
     // Test building a [f32; 3] array using set_nth_field API
-    let array = *Partial::alloc::<[f32; 3]>()?
+    let array = Partial::alloc::<[f32; 3]>()?
         .set_nth_field(0, 1.0f32)?
         .set_nth_field(1, 2.0f32)?
         .set_nth_field(2, 3.0f32)?
-        .build()?;
+        .build()?
+        .materialize::<[f32; 3]>()?;
 
     assert_eq!(array, [1.0, 2.0, 3.0]);
     assert_eq!(array.len(), 3);
@@ -19,12 +24,13 @@ fn test_building_array_f32_3_pushback() -> Result<(), IPanic> {
 #[test]
 fn test_building_array_u8_4_pushback() -> Result<(), IPanic> {
     // Test building a [u8; 4] array using set_nth_field API
-    let array = *Partial::alloc::<[u8; 4]>()?
+    let array = Partial::alloc::<[u8; 4]>()?
         .set_nth_field(0, 1u8)?
         .set_nth_field(1, 2u8)?
         .set_nth_field(2, 3u8)?
         .set_nth_field(3, 4u8)?
-        .build()?;
+        .build()?
+        .materialize::<[u8; 4]>()?;
 
     assert_eq!(array, [1, 2, 3, 4]);
     assert_eq!(array.len(), 4);
@@ -42,25 +48,25 @@ fn test_building_array_in_struct() -> Result<(), IPanic> {
     let mut partial = Partial::alloc::<WithArrays>()?;
     println!("Allocated WithArrays");
 
-    partial.set_field("name", "test array".to_string())?;
+    partial = partial.set_field("name", "test array".to_string())?;
     println!("Set 'name' field");
 
-    partial.begin_field("values")?;
+    partial = partial.begin_field("values")?;
     println!("Selected 'values' field (array)");
 
-    partial.set_nth_field(0, 1.1f32)?;
+    partial = partial.set_nth_field(0, 1.1f32)?;
     println!("Set first array element");
 
-    partial.set_nth_field(1, 2.2f32)?;
+    partial = partial.set_nth_field(1, 2.2f32)?;
     println!("Set second array element");
 
-    partial.set_nth_field(2, 3.3f32)?;
+    partial = partial.set_nth_field(2, 3.3f32)?;
     println!("Set third array element");
 
-    partial.end()?;
+    partial = partial.end()?;
     println!("Popped from array level back to struct");
 
-    let with_arrays = *partial.build()?;
+    let with_arrays = partial.build()?.materialize::<WithArrays>()?;
     println!("Built and materialized WithArrays struct");
 
     assert_eq!(
@@ -77,8 +83,8 @@ fn test_building_array_in_struct() -> Result<(), IPanic> {
 fn test_too_many_items_in_array() -> Result<(), IPanic> {
     // Try to set more elements than array size
     let mut partial = Partial::alloc::<[u8; 2]>()?;
-    partial.set_nth_field(0, 1u8)?;
-    partial.set_nth_field(1, 2u8)?;
+    partial = partial.set_nth_field(0, 1u8)?;
+    partial = partial.set_nth_field(1, 2u8)?;
 
     let result = partial.begin_nth_field(2); // This is the 3rd element, but the array can only hold 2 items
 
@@ -120,40 +126,40 @@ fn test_nested_array_building() -> Result<(), IPanic> {
     let mut partial = Partial::alloc::<NestedArrays>()?;
     println!("Allocated NestedArrays");
 
-    partial.set_field("name", "test matrix".to_string())?;
+    partial = partial.set_field("name", "test matrix".to_string())?;
     println!("Set 'name' field");
 
-    partial.begin_field("matrix")?;
+    partial = partial.begin_field("matrix")?;
     println!("Selected 'matrix' field (outer array)");
 
     // First row [1, 2]
-    partial.begin_nth_field(0)?;
+    partial = partial.begin_nth_field(0)?;
     println!("Started first row");
-    partial.set_nth_field(0, 1i32)?;
-    partial.set_nth_field(1, 2i32)?;
-    partial.end()?;
+    partial = partial.set_nth_field(0, 1i32)?;
+    partial = partial.set_nth_field(1, 2i32)?;
+    partial = partial.end()?;
     println!("Completed first row");
 
     // Second row [3, 4]
-    partial.begin_nth_field(1)?;
+    partial = partial.begin_nth_field(1)?;
     println!("Started second row");
-    partial.set_nth_field(0, 3i32)?;
-    partial.set_nth_field(1, 4i32)?;
-    partial.end()?;
+    partial = partial.set_nth_field(0, 3i32)?;
+    partial = partial.set_nth_field(1, 4i32)?;
+    partial = partial.end()?;
     println!("Completed second row");
 
     // Third row [5, 6]
-    partial.begin_nth_field(2)?;
+    partial = partial.begin_nth_field(2)?;
     println!("Started third row");
-    partial.set_nth_field(0, 5i32)?;
-    partial.set_nth_field(1, 6i32)?;
-    partial.end()?;
+    partial = partial.set_nth_field(0, 5i32)?;
+    partial = partial.set_nth_field(1, 6i32)?;
+    partial = partial.end()?;
     println!("Completed third row");
 
-    partial.end()?;
+    partial = partial.end()?;
     println!("Popped from outer array back to struct level");
 
-    let nested_arrays = *partial.build()?;
+    let nested_arrays = partial.build()?.materialize::<NestedArrays>()?;
     println!("Built and materialized NestedArrays struct");
 
     assert_eq!(
@@ -188,8 +194,9 @@ fn array_init() -> Result<(), IPanic> {
         .set_nth_field(0, 42u32)?
         .set_nth_field(1, 43u32)?
         .set_nth_field(2, 44u32)?
-        .build()?;
-    assert_eq!(*hv, [42, 43, 44]);
+        .build()?
+        .materialize::<[u32; 3]>()?;
+    assert_eq!(hv, [42, 43, 44]);
     Ok(())
 }
 
@@ -200,8 +207,9 @@ fn array_init_out_of_order() -> Result<(), IPanic> {
         .set_nth_field(2, 44u32)?
         .set_nth_field(0, 42u32)?
         .set_nth_field(1, 43u32)?
-        .build()?;
-    assert_eq!(*hv, [42, 43, 44]);
+        .build()?
+        .materialize::<[u32; 3]>()?;
+    assert_eq!(hv, [42, 43, 44]);
     Ok(())
 }
 
@@ -243,8 +251,8 @@ fn drop_array_partially_initialized() -> Result<(), IPanic> {
         let mut partial = Partial::alloc::<[NoisyDrop; 4]>()?;
 
         // Initialize elements 0 and 2
-        partial.set_nth_field(0, NoisyDrop { value: 10 })?;
-        partial.set_nth_field(2, NoisyDrop { value: 30 })?;
+        partial = partial.set_nth_field(0, NoisyDrop { value: 10 })?;
+        partial = partial.set_nth_field(2, NoisyDrop { value: 30 })?;
 
         // Drop without initializing elements 1 and 3
     }
@@ -285,7 +293,8 @@ fn array_element_set_twice() -> Result<(), IPanic> {
         .set_nth_field(1, DropTracker { id: 3 })?
         // Set element 2
         .set_nth_field(2, DropTracker { id: 4 })?
-        .build()?;
+        .build()?
+        .materialize::<[DropTracker; 3]>()?;
 
     // Verify the final array has the expected values
     assert_eq!(array[0].id, 2); // Re-initialized value

@@ -94,6 +94,7 @@ name = "facet-reflect"
 version = "0.31.8"
 dependencies = [
  "facet-core",
+ "facet-macros",
 ]
 
 [[package]]

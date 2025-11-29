@@ -44,9 +44,7 @@ impl<'facet> Partial<'facet> {
     /// In other words, it's not possible to "switch to a different variant" once you've selected one.
     ///
     /// This does _not_ push a frame on the stack.
-    pub fn select_nth_variant(&mut self, index: usize) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
+    pub fn select_nth_variant(mut self, index: usize) -> Result<Self, ReflectError> {
         let frame = self.frames().last().unwrap();
         let enum_type = frame.get_enum_type()?;
 
@@ -65,9 +63,7 @@ impl<'facet> Partial<'facet> {
     /// Pushes a variant for enum initialization by name
     ///
     /// See [Self::select_nth_variant] for more notes.
-    pub fn select_variant_named(&mut self, variant_name: &str) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
+    pub fn select_variant_named(mut self, variant_name: &str) -> Result<Self, ReflectError> {
         let frame = self.frames_mut().last_mut().unwrap();
         let enum_type = frame.get_enum_type()?;
 
@@ -86,9 +82,7 @@ impl<'facet> Partial<'facet> {
     /// of the frame's enum have that discriminant, this returns an error.
     ///
     /// See [Self::select_nth_variant] for more notes.
-    pub fn select_variant(&mut self, discriminant: i64) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
+    pub fn select_variant(mut self, discriminant: i64) -> Result<Self, ReflectError> {
         // Check all invariants early before making any changes
         let frame = self.frames().last().unwrap();
 

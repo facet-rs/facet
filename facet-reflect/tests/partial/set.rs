@@ -8,13 +8,13 @@ extern crate alloc;
 
 #[test]
 fn set_hashset_basic() -> Result<(), IPanic> {
-    let hv = Partial::alloc::<HashSet<i32>>()?
+    let set = Partial::alloc::<HashSet<i32>>()?
         .begin_set()?
         .insert(42)?
         .insert(84)?
         .insert(126)?
-        .build()?;
-    let set: &HashSet<i32> = hv.as_ref();
+        .build()?
+        .materialize::<HashSet<i32>>()?;
     assert_eq!(set.len(), 3);
     assert!(set.contains(&42));
     assert!(set.contains(&84));
@@ -24,13 +24,13 @@ fn set_hashset_basic() -> Result<(), IPanic> {
 
 #[test]
 fn set_hashset_strings() -> Result<(), IPanic> {
-    let hv = Partial::alloc::<HashSet<String>>()?
+    let set = Partial::alloc::<HashSet<String>>()?
         .begin_set()?
         .insert("foo".to_string())?
         .insert("bar".to_string())?
         .insert("baz".to_string())?
-        .build()?;
-    let set: &HashSet<String> = hv.as_ref();
+        .build()?
+        .materialize::<HashSet<String>>()?;
     assert_eq!(set.len(), 3);
     assert!(set.contains("foo"));
     assert!(set.contains("bar"));
@@ -40,21 +40,23 @@ fn set_hashset_strings() -> Result<(), IPanic> {
 
 #[test]
 fn set_hashset_empty() -> Result<(), IPanic> {
-    let hv = Partial::alloc::<HashSet<String>>()?.begin_set()?.build()?;
-    let set: &HashSet<String> = hv.as_ref();
+    let set = Partial::alloc::<HashSet<String>>()?
+        .begin_set()?
+        .build()?
+        .materialize::<HashSet<String>>()?;
     assert_eq!(set.len(), 0);
     Ok(())
 }
 
 #[test]
 fn set_hashset_duplicates() -> Result<(), IPanic> {
-    let hv = Partial::alloc::<HashSet<i32>>()?
+    let set = Partial::alloc::<HashSet<i32>>()?
         .begin_set()?
         .insert(42)?
         .insert(42)?
         .insert(42)?
-        .build()?;
-    let set: &HashSet<i32> = hv.as_ref();
+        .build()?
+        .materialize::<HashSet<i32>>()?;
     assert_eq!(set.len(), 1);
     assert!(set.contains(&42));
     Ok(())
@@ -62,13 +64,13 @@ fn set_hashset_duplicates() -> Result<(), IPanic> {
 
 #[test]
 fn set_btreeset_basic() -> Result<(), IPanic> {
-    let hv = Partial::alloc::<BTreeSet<i32>>()?
+    let set = Partial::alloc::<BTreeSet<i32>>()?
         .begin_set()?
         .insert(3)?
         .insert(1)?
         .insert(2)?
-        .build()?;
-    let set: &BTreeSet<i32> = hv.as_ref();
+        .build()?
+        .materialize::<BTreeSet<i32>>()?;
     assert_eq!(set.len(), 3);
     let vec: Vec<_> = set.iter().copied().collect();
     assert_eq!(vec, vec![1, 2, 3]);
@@ -77,7 +79,7 @@ fn set_btreeset_basic() -> Result<(), IPanic> {
 
 #[test]
 fn set_using_begin_set_item() -> Result<(), IPanic> {
-    let hv = Partial::alloc::<HashSet<i32>>()?
+    let set = Partial::alloc::<HashSet<i32>>()?
         .begin_set()?
         .begin_set_item()?
         .set(100)?
@@ -85,8 +87,8 @@ fn set_using_begin_set_item() -> Result<(), IPanic> {
         .begin_set_item()?
         .set(200)?
         .end()?
-        .build()?;
-    let set: &HashSet<i32> = hv.as_ref();
+        .build()?
+        .materialize::<HashSet<i32>>()?;
     assert_eq!(set.len(), 2);
     assert!(set.contains(&100));
     assert!(set.contains(&200));
@@ -123,16 +125,16 @@ fn set_duplicate_drops_new_value() -> Result<(), IPanic> {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let hv = Partial::alloc::<HashSet<DropTracker>>()?
+        let set = Partial::alloc::<HashSet<DropTracker>>()?
             .begin_set()?
             .insert(DropTracker { id: 1 })?
             .insert(DropTracker { id: 2 })?
             .insert(DropTracker { id: 1 })?
             .insert(DropTracker { id: 3 })?
             .insert(DropTracker { id: 2 })?
-            .build()?;
+            .build()?
+            .materialize::<HashSet<DropTracker>>()?;
 
-        let set: &HashSet<DropTracker> = hv.as_ref();
         assert_eq!(set.len(), 3);
         assert_eq!(DROP_COUNT.load(Ordering::SeqCst), 2);
     }
@@ -171,8 +173,8 @@ fn set_partial_initialization_drop() -> Result<(), IPanic> {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let mut partial = Partial::alloc::<HashSet<DropTracker>>()?;
-        partial
+        let partial = Partial::alloc::<HashSet<DropTracker>>()?;
+        let _partial = partial
             .begin_set()?
             .insert(DropTracker { id: 1 })?
             .insert(DropTracker { id: 2 })?;

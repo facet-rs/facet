@@ -54,21 +54,20 @@ where
     );
 
     let mut deserializer = YamlDeserializer::new(yaml)?;
-    let mut typed_partial = Partial::alloc::<T>()?;
+    let partial = Partial::alloc::<T>()?;
 
-    {
-        let partial = typed_partial.inner_mut();
-        deserializer.deserialize_document(partial)?;
-    }
+    let partial = deserializer.deserialize_document(partial)?;
 
     // Check we consumed everything meaningful
     deserializer.expect_end()?;
 
-    let result = typed_partial
+    let result = partial
         .build()
+        .map_err(|e| YamlError::without_span(YamlErrorKind::Reflect(e)).with_source(yaml))?
+        .materialize()
         .map_err(|e| YamlError::without_span(YamlErrorKind::Reflect(e)).with_source(yaml))?;
 
-    Ok(*result)
+    Ok(result)
 }
 
 // ============================================================================
@@ -256,7 +255,10 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize a YAML document.
-    fn deserialize_document<'facet>(&mut self, partial: &mut Partial<'facet>) -> Result<()> {
+    fn deserialize_document<'facet>(
+        &mut self,
+        partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>> {
         log::trace!("deserialize_document: shape = {}", partial.shape());
 
         // Skip StreamStart and DocumentStart
@@ -274,7 +276,7 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Main deserialization dispatch based on shape.
-    fn deserialize_value<'facet>(&mut self, partial: &mut Partial<'facet>) -> Result<()> {
+    fn deserialize_value<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
         let shape = partial.shape();
         log::trace!(
             "deserialize_value: shape = {}, path = {}",
@@ -311,10 +313,11 @@ impl<'input> YamlDeserializer<'input> {
         // Handle transparent types (newtype wrappers) AFTER checking for concrete types
         if shape.inner.is_some() {
             log::trace!("Handling transparent type: {}", shape.type_identifier);
-            partial.begin_inner()?;
-            self.deserialize_value(partial)?;
-            partial.end()?;
-            return Ok(());
+            let mut partial = partial;
+            partial = partial.begin_inner()?;
+            partial = self.deserialize_value(partial)?;
+            partial = partial.end()?;
+            return Ok(partial);
         }
 
         // Check the Type for structs and enums
@@ -338,7 +341,7 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize into a `Spanned<T>` wrapper.
-    fn deserialize_spanned<'facet>(&mut self, partial: &mut Partial<'facet>) -> Result<()> {
+    fn deserialize_spanned<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
         log::trace!("deserialize_spanned");
 
         // Peek to get the span of the value we're about to parse
@@ -347,23 +350,24 @@ impl<'input> YamlDeserializer<'input> {
             .map(|e| Span::from_saphyr_span(&e.span))
             .unwrap_or(Span::new(self.input.len(), 0));
 
+        let mut partial = partial;
         // Deserialize the inner value into the `value` field
-        partial.begin_field("value")?;
-        self.deserialize_value(partial)?;
-        partial.end()?;
+        partial = partial.begin_field("value")?;
+        partial = self.deserialize_value(partial)?;
+        partial = partial.end()?;
 
         // Set the span field
-        partial.begin_field("span")?;
+        partial = partial.begin_field("span")?;
         // Span struct has offset and len fields
-        partial.set_field("offset", value_span.offset)?;
-        partial.set_field("len", value_span.len)?;
-        partial.end()?;
+        partial = partial.set_field("offset", value_span.offset)?;
+        partial = partial.set_field("len", value_span.len)?;
+        partial = partial.end()?;
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Deserialize a scalar value.
-    fn deserialize_scalar<'facet>(&mut self, partial: &mut Partial<'facet>) -> Result<()> {
+    fn deserialize_scalar<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
         let shape = partial.shape();
         log::trace!("deserialize_scalar: shape = {shape}");
 
@@ -391,10 +395,11 @@ impl<'input> YamlDeserializer<'input> {
     /// Set a scalar value on the partial based on its type.
     fn set_scalar_value<'facet>(
         &self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         value: &str,
         span: Span,
-    ) -> Result<()> {
+    ) -> Result<Partial<'facet>> {
+        let mut partial = partial;
         let shape = partial.shape();
 
         // Handle usize and isize explicitly before other numeric types
@@ -408,8 +413,8 @@ impl<'input> YamlDeserializer<'input> {
                 )
                 .with_source(self.input)
             })?;
-            partial.set(n)?;
-            return Ok(());
+            partial = partial.set(n)?;
+            return Ok(partial);
         }
 
         if shape.is_type::<isize>() {
@@ -422,8 +427,8 @@ impl<'input> YamlDeserializer<'input> {
                 )
                 .with_source(self.input)
             })?;
-            partial.set(n)?;
-            return Ok(());
+            partial = partial.set(n)?;
+            return Ok(partial);
         }
 
         // Try other numeric types
@@ -455,8 +460,8 @@ impl<'input> YamlDeserializer<'input> {
                 )
                 .with_source(self.input)
             })?;
-            partial.set(b)?;
-            return Ok(());
+            partial = partial.set(b)?;
+            return Ok(partial);
         }
 
         // Char
@@ -480,41 +485,42 @@ impl<'input> YamlDeserializer<'input> {
                 )
                 .with_source(self.input));
             }
-            partial.set(c)?;
-            return Ok(());
+            partial = partial.set(c)?;
+            return Ok(partial);
         }
 
         // String
         if shape.is_type::<String>() {
-            partial.set(value.to_string())?;
-            return Ok(());
+            partial = partial.set(value.to_string())?;
+            return Ok(partial);
         }
 
         // Try parse_from_str for other types (IpAddr, DateTime, etc.)
         if partial.shape().vtable.parse.is_some() {
-            partial.parse_from_str(value).map_err(|e| {
+            partial = partial.parse_from_str(value).map_err(|e| {
                 YamlError::new(YamlErrorKind::Reflect(e), span).with_source(self.input)
             })?;
-            return Ok(());
+            return Ok(partial);
         }
 
         // Last resort: try setting as string
-        partial
+        partial = partial
             .set(value.to_string())
             .map_err(|e| YamlError::new(YamlErrorKind::Reflect(e), span).with_source(self.input))?;
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Set a numeric value with proper type conversion.
     fn set_numeric_value<'facet>(
         &self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         value: &str,
         numeric_type: NumericType,
         size: usize,
         span: Span,
-    ) -> Result<()> {
+    ) -> Result<Partial<'facet>> {
+        let mut partial = partial;
         match numeric_type {
             NumericType::Integer { signed: false } => {
                 let n: u64 = value.parse().map_err(|_| {
@@ -539,7 +545,7 @@ impl<'input> YamlDeserializer<'input> {
                             )
                             .with_source(self.input)
                         })?;
-                        partial.set(v)?;
+                        partial = partial.set(v)?;
                     }
                     2 => {
                         let v = u16::try_from(n).map_err(|_| {
@@ -552,7 +558,7 @@ impl<'input> YamlDeserializer<'input> {
                             )
                             .with_source(self.input)
                         })?;
-                        partial.set(v)?;
+                        partial = partial.set(v)?;
                     }
                     4 => {
                         let v = u32::try_from(n).map_err(|_| {
@@ -565,10 +571,10 @@ impl<'input> YamlDeserializer<'input> {
                             )
                             .with_source(self.input)
                         })?;
-                        partial.set(v)?;
+                        partial = partial.set(v)?;
                     }
                     8 => {
-                        partial.set(n)?;
+                        partial = partial.set(n)?;
                     }
                     16 => {
                         let n: u128 = value.parse().map_err(|_| {
@@ -580,7 +586,7 @@ impl<'input> YamlDeserializer<'input> {
                             )
                             .with_source(self.input)
                         })?;
-                        partial.set(n)?;
+                        partial = partial.set(n)?;
                     }
                     _ => {
                         return Err(YamlError::new(
@@ -614,7 +620,7 @@ impl<'input> YamlDeserializer<'input> {
                             )
                             .with_source(self.input)
                         })?;
-                        partial.set(v)?;
+                        partial = partial.set(v)?;
                     }
                     2 => {
                         let v = i16::try_from(n).map_err(|_| {
@@ -627,7 +633,7 @@ impl<'input> YamlDeserializer<'input> {
                             )
                             .with_source(self.input)
                         })?;
-                        partial.set(v)?;
+                        partial = partial.set(v)?;
                     }
                     4 => {
                         let v = i32::try_from(n).map_err(|_| {
@@ -640,10 +646,10 @@ impl<'input> YamlDeserializer<'input> {
                             )
                             .with_source(self.input)
                         })?;
-                        partial.set(v)?;
+                        partial = partial.set(v)?;
                     }
                     8 => {
-                        partial.set(n)?;
+                        partial = partial.set(n)?;
                     }
                     16 => {
                         let n: i128 = value.parse().map_err(|_| {
@@ -655,7 +661,7 @@ impl<'input> YamlDeserializer<'input> {
                             )
                             .with_source(self.input)
                         })?;
-                        partial.set(n)?;
+                        partial = partial.set(n)?;
                     }
                     _ => {
                         return Err(YamlError::new(
@@ -678,8 +684,8 @@ impl<'input> YamlDeserializer<'input> {
                 })?;
 
                 match size {
-                    4 => partial.set(f as f32)?,
-                    8 => partial.set(f)?,
+                    4 => partial = partial.set(f as f32)?,
+                    8 => partial = partial.set(f)?,
                     _ => {
                         return Err(YamlError::new(
                             YamlErrorKind::Unsupported(format!("unsupported float size: {size}")),
@@ -691,34 +697,35 @@ impl<'input> YamlDeserializer<'input> {
             }
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Deserialize an Option.
-    fn deserialize_option<'facet>(&mut self, partial: &mut Partial<'facet>) -> Result<()> {
+    fn deserialize_option<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
         log::trace!("deserialize_option at path = {}", partial.path());
 
+        let mut partial = partial;
         // Check if the next value is null
         if let Some(event) = self.peek() {
             if let OwnedEvent::Scalar { value, .. } = &event.event {
                 if is_yaml_null(value) {
                     self.next(); // consume the null
                     // Option stays as None (set_default)
-                    partial.set_default()?;
-                    return Ok(());
+                    partial = partial.set_default()?;
+                    return Ok(partial);
                 }
             }
         }
 
         // Non-null value: wrap in Some
-        partial.begin_some()?;
-        self.deserialize_value(partial)?;
-        partial.end()?;
-        Ok(())
+        partial = partial.begin_some()?;
+        partial = self.deserialize_value(partial)?;
+        partial = partial.end()?;
+        Ok(partial)
     }
 
     /// Deserialize a list/Vec.
-    fn deserialize_list<'facet>(&mut self, partial: &mut Partial<'facet>) -> Result<()> {
+    fn deserialize_list<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
         log::trace!("deserialize_list at path = {}", partial.path());
 
         // Expect SequenceStart
@@ -740,7 +747,8 @@ impl<'input> YamlDeserializer<'input> {
             }
         }
 
-        partial.begin_list()?;
+        let mut partial = partial;
+        partial = partial.begin_list()?;
 
         // Process items until SequenceEnd
         loop {
@@ -755,16 +763,16 @@ impl<'input> YamlDeserializer<'input> {
                 }));
             }
 
-            partial.begin_list_item()?;
-            self.deserialize_value(partial)?;
-            partial.end()?;
+            partial = partial.begin_list_item()?;
+            partial = self.deserialize_value(partial)?;
+            partial = partial.end()?;
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Deserialize a map.
-    fn deserialize_map<'facet>(&mut self, partial: &mut Partial<'facet>) -> Result<()> {
+    fn deserialize_map<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
         log::trace!("deserialize_map at path = {}", partial.path());
 
         // Expect MappingStart
@@ -786,7 +794,8 @@ impl<'input> YamlDeserializer<'input> {
             }
         }
 
-        partial.begin_map()?;
+        let mut partial = partial;
+        partial = partial.begin_map()?;
 
         // Process key-value pairs until MappingEnd
         loop {
@@ -821,21 +830,21 @@ impl<'input> YamlDeserializer<'input> {
             };
 
             // Set the key
-            partial.begin_key()?;
-            partial.set(key)?;
-            partial.end()?;
+            partial = partial.begin_key()?;
+            partial = partial.set(key)?;
+            partial = partial.end()?;
 
             // Set the value
-            partial.begin_value()?;
-            self.deserialize_value(partial)?;
-            partial.end()?;
+            partial = partial.begin_value()?;
+            partial = self.deserialize_value(partial)?;
+            partial = partial.end()?;
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Deserialize a struct.
-    fn deserialize_struct<'facet>(&mut self, partial: &mut Partial<'facet>) -> Result<()> {
+    fn deserialize_struct<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
         log::trace!(
             "deserialize_struct: {} at path = {}",
             partial.shape(),
@@ -879,6 +888,7 @@ impl<'input> YamlDeserializer<'input> {
         let num_fields = struct_def.fields.len();
         let mut fields_set = alloc::vec![false; num_fields];
 
+        let mut partial = partial;
         // Process fields until MappingEnd
         loop {
             if let Some(event) = self.peek() {
@@ -922,9 +932,9 @@ impl<'input> YamlDeserializer<'input> {
 
             match field_info {
                 Some((idx, field)) => {
-                    partial.begin_field(field.name)?;
-                    self.deserialize_value(partial)?;
-                    partial.end()?;
+                    partial = partial.begin_field(field.name)?;
+                    partial = self.deserialize_value(partial)?;
+                    partial = partial.end()?;
                     fields_set[idx] = true;
                 }
                 None => {
@@ -961,15 +971,15 @@ impl<'input> YamlDeserializer<'input> {
                 || field_has_default_flag
                 || (struct_has_default && field_type_has_default)
             {
-                partial.set_nth_field_to_default(idx)?;
+                partial = partial.set_nth_field_to_default(idx)?;
             }
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Deserialize an enum (externally tagged by default).
-    fn deserialize_enum<'facet>(&mut self, partial: &mut Partial<'facet>) -> Result<()> {
+    fn deserialize_enum<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
         log::trace!(
             "deserialize_enum: {} at path = {}",
             partial.shape(),
@@ -977,13 +987,26 @@ impl<'input> YamlDeserializer<'input> {
         );
 
         // Check for unit variant as plain string
-        if let Some(event) = self.peek() {
+        let mut partial = partial;
+        let try_unit_variant = if let Some(event) = self.peek() {
             if let OwnedEvent::Scalar { value, .. } = &event.event {
-                // Try to select this as a unit variant
-                let variant_name = value.clone();
-                if partial.select_variant_named(&variant_name).is_ok() {
+                Some(value.clone())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(variant_name) = try_unit_variant {
+            // Check if this variant exists first (to avoid moving partial if it doesn't)
+            if let Some((_, variant)) = partial.find_variant(&variant_name) {
+                // Check if it's a unit variant
+                if variant.data.kind == StructKind::Unit {
+                    // Select this as a unit variant
+                    partial = partial.select_variant_named(&variant_name)?;
                     self.next(); // consume the scalar
-                    return Ok(());
+                    return Ok(partial);
                 }
             }
         }
@@ -1015,7 +1038,7 @@ impl<'input> YamlDeserializer<'input> {
                 };
 
                 // Select the variant
-                partial.select_variant_named(&variant_name)?;
+                partial = partial.select_variant_named(&variant_name)?;
 
                 // Get the selected variant info
                 let variant = partial.selected_variant().ok_or_else(|| {
@@ -1040,17 +1063,17 @@ impl<'input> YamlDeserializer<'input> {
                         let num_fields = variant.data.fields.len();
                         if num_fields == 1 {
                             // Newtype variant: value directly
-                            partial.begin_nth_field(0)?;
-                            self.deserialize_value(partial)?;
-                            partial.end()?;
+                            partial = partial.begin_nth_field(0)?;
+                            partial = self.deserialize_value(partial)?;
+                            partial = partial.end()?;
                         } else if num_fields > 1 {
                             // Multi-field tuple: sequence
-                            self.deserialize_tuple_variant_fields(partial, num_fields)?;
+                            partial = self.deserialize_tuple_variant_fields(partial, num_fields)?;
                         }
                     }
                     StructKind::Struct => {
                         // Struct variant: mapping with named fields
-                        self.deserialize_struct_variant_fields(partial)?;
+                        partial = self.deserialize_struct_variant_fields(partial)?;
                     }
                 }
 
@@ -1060,7 +1083,7 @@ impl<'input> YamlDeserializer<'input> {
                 let end_event_kind = end_event.event.clone();
 
                 match &end_event_kind {
-                    OwnedEvent::MappingEnd => Ok(()),
+                    OwnedEvent::MappingEnd => Ok(partial),
                     other => Err(YamlError::new(
                         YamlErrorKind::UnexpectedEvent {
                             got: format!("{other:?}"),
@@ -1085,9 +1108,9 @@ impl<'input> YamlDeserializer<'input> {
     /// Deserialize tuple variant fields from a sequence.
     fn deserialize_tuple_variant_fields<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         num_fields: usize,
-    ) -> Result<()> {
+    ) -> Result<Partial<'facet>> {
         let event = self.next_or_eof("sequence start")?;
         let event_span = event.span;
         let event_kind = event.event.clone();
@@ -1106,10 +1129,11 @@ impl<'input> YamlDeserializer<'input> {
             }
         }
 
+        let mut partial = partial;
         for i in 0..num_fields {
-            partial.begin_nth_field(i)?;
-            self.deserialize_value(partial)?;
-            partial.end()?;
+            partial = partial.begin_nth_field(i)?;
+            partial = self.deserialize_value(partial)?;
+            partial = partial.end()?;
         }
 
         let end_event = self.next_or_eof("sequence end")?;
@@ -1117,7 +1141,7 @@ impl<'input> YamlDeserializer<'input> {
         let end_event_kind = end_event.event.clone();
 
         match &end_event_kind {
-            OwnedEvent::SequenceEnd => Ok(()),
+            OwnedEvent::SequenceEnd => Ok(partial),
             other => Err(YamlError::new(
                 YamlErrorKind::UnexpectedEvent {
                     got: format!("{other:?}"),
@@ -1132,8 +1156,8 @@ impl<'input> YamlDeserializer<'input> {
     /// Deserialize struct variant fields from a mapping.
     fn deserialize_struct_variant_fields<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
-    ) -> Result<()> {
+        partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>> {
         let event = self.next_or_eof("mapping start")?;
         let event_span = event.span;
         let event_kind = event.event.clone();
@@ -1152,6 +1176,7 @@ impl<'input> YamlDeserializer<'input> {
             }
         }
 
+        let mut partial = partial;
         loop {
             if let Some(event) = self.peek() {
                 if matches!(&event.event, OwnedEvent::MappingEnd) {
@@ -1182,16 +1207,16 @@ impl<'input> YamlDeserializer<'input> {
                 }
             };
 
-            partial.begin_field(&field_name)?;
-            self.deserialize_value(partial)?;
-            partial.end()?;
+            partial = partial.begin_field(&field_name)?;
+            partial = self.deserialize_value(partial)?;
+            partial = partial.end()?;
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Deserialize a smart pointer (Box, Arc, Rc).
-    fn deserialize_pointer<'facet>(&mut self, partial: &mut Partial<'facet>) -> Result<()> {
+    fn deserialize_pointer<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
         log::trace!("deserialize_pointer at path = {}", partial.path());
 
         // Check what kind of pointer this is BEFORE calling begin_smart_ptr
@@ -1208,7 +1233,8 @@ impl<'input> YamlDeserializer<'input> {
             false
         };
 
-        partial.begin_smart_ptr()?;
+        let mut partial = partial;
+        partial = partial.begin_smart_ptr()?;
 
         if is_slice_pointer {
             // This is a slice pointer like Arc<[T]> - deserialize as array
@@ -1243,21 +1269,21 @@ impl<'input> YamlDeserializer<'input> {
                     }));
                 }
 
-                partial.begin_list_item()?;
-                self.deserialize_value(partial)?;
-                partial.end()?;
+                partial = partial.begin_list_item()?;
+                partial = self.deserialize_value(partial)?;
+                partial = partial.end()?;
             }
         } else {
             // Regular pointer - deserialize the inner value
-            self.deserialize_value(partial)?;
+            partial = self.deserialize_value(partial)?;
         }
 
-        partial.end()?;
-        Ok(())
+        partial = partial.end()?;
+        Ok(partial)
     }
 
     /// Deserialize a fixed-size array.
-    fn deserialize_array<'facet>(&mut self, partial: &mut Partial<'facet>) -> Result<()> {
+    fn deserialize_array<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
         log::trace!("deserialize_array at path = {}", partial.path());
 
         let array_len = match &partial.shape().def {
@@ -1287,10 +1313,11 @@ impl<'input> YamlDeserializer<'input> {
             }
         }
 
+        let mut partial = partial;
         for i in 0..array_len {
-            partial.begin_nth_field(i)?;
-            self.deserialize_value(partial)?;
-            partial.end()?;
+            partial = partial.begin_nth_field(i)?;
+            partial = self.deserialize_value(partial)?;
+            partial = partial.end()?;
         }
 
         let end_event = self.next_or_eof("sequence end")?;
@@ -1298,7 +1325,7 @@ impl<'input> YamlDeserializer<'input> {
         let end_event_kind = end_event.event.clone();
 
         match &end_event_kind {
-            OwnedEvent::SequenceEnd => Ok(()),
+            OwnedEvent::SequenceEnd => Ok(partial),
             other => Err(YamlError::new(
                 YamlErrorKind::UnexpectedEvent {
                     got: format!("{other:?}"),
@@ -1311,7 +1338,7 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize a set.
-    fn deserialize_set<'facet>(&mut self, partial: &mut Partial<'facet>) -> Result<()> {
+    fn deserialize_set<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
         log::trace!("deserialize_set at path = {}", partial.path());
 
         let event = self.next_or_eof("sequence start")?;
@@ -1332,7 +1359,8 @@ impl<'input> YamlDeserializer<'input> {
             }
         }
 
-        partial.begin_set()?;
+        let mut partial = partial;
+        partial = partial.begin_set()?;
 
         loop {
             if let Some(event) = self.peek() {
@@ -1346,16 +1374,16 @@ impl<'input> YamlDeserializer<'input> {
                 }));
             }
 
-            partial.begin_set_item()?;
-            self.deserialize_value(partial)?;
-            partial.end()?;
+            partial = partial.begin_set_item()?;
+            partial = self.deserialize_value(partial)?;
+            partial = partial.end()?;
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Deserialize a tuple.
-    fn deserialize_tuple<'facet>(&mut self, partial: &mut Partial<'facet>) -> Result<()> {
+    fn deserialize_tuple<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
         log::trace!("deserialize_tuple at path = {}", partial.path());
 
         let tuple_len = match &partial.shape().ty {
@@ -1385,10 +1413,11 @@ impl<'input> YamlDeserializer<'input> {
             }
         }
 
+        let mut partial = partial;
         for i in 0..tuple_len {
-            partial.begin_nth_field(i)?;
-            self.deserialize_value(partial)?;
-            partial.end()?;
+            partial = partial.begin_nth_field(i)?;
+            partial = self.deserialize_value(partial)?;
+            partial = partial.end()?;
         }
 
         let end_event = self.next_or_eof("sequence end")?;
@@ -1396,7 +1425,7 @@ impl<'input> YamlDeserializer<'input> {
         let end_event_kind = end_event.event.clone();
 
         match &end_event_kind {
-            OwnedEvent::SequenceEnd => Ok(()),
+            OwnedEvent::SequenceEnd => Ok(partial),
             other => Err(YamlError::new(
                 YamlErrorKind::UnexpectedEvent {
                     got: format!("{other:?}"),
