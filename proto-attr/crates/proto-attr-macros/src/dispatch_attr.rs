@@ -95,14 +95,8 @@ unsynn! {
     struct StructVariantDef {
         _rec: KRec,
         struct_name: Ident,
-        fields: BraceGroupContaining<CommaDelimitedVec<FieldDef>>,
-    }
-
-    /// A field definition: `name: opt_string`
-    struct FieldDef {
-        name: Ident,
-        _colon: Col,
-        kind: Ident,
+        /// Raw token stream - parsed manually to extract doc comments
+        fields: BraceGroup,
     }
 }
 
@@ -130,8 +124,17 @@ enum ParsedVariantKind {
     Newtype,
     Struct {
         struct_name: Ident,
-        fields: Vec<(Ident, FieldKind)>,
+        fields: Vec<ParsedFieldDef>,
     },
+}
+
+/// A parsed field definition with doc comment
+#[derive(Clone)]
+struct ParsedFieldDef {
+    name: Ident,
+    kind: FieldKind,
+    /// Doc comment for help text in errors
+    doc: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -182,31 +185,10 @@ impl VariantDef {
             VariantKindDef::Unit(_) => ParsedVariantKind::Unit,
             VariantKindDef::Newtype(_) => ParsedVariantKind::Newtype,
             VariantKindDef::Struct(s) => {
-                let fields: std::result::Result<Vec<_>, _> = s
-                    .fields
-                    .content
-                    .iter()
-                    .map(|d| {
-                        let name = d.value.name.clone();
-                        let kind_str = d.value.kind.to_string();
-                        let kind = match kind_str.as_str() {
-                            "bool" => FieldKind::Bool,
-                            "string" => FieldKind::String,
-                            "opt_string" => FieldKind::OptString,
-                            "opt_bool" => FieldKind::OptBool,
-                            "i64" => FieldKind::I64,
-                            "opt_i64" => FieldKind::OptI64,
-                            "list_string" => FieldKind::ListString,
-                            "list_i64" => FieldKind::ListI64,
-                            "ident" => FieldKind::Ident,
-                            _ => return Err(format!("unknown field kind: {}", kind_str)),
-                        };
-                        Ok((name, kind))
-                    })
-                    .collect();
+                let fields = parse_fields_with_docs(&s.fields.0.stream())?;
                 ParsedVariantKind::Struct {
                     struct_name: s.struct_name.clone(),
-                    fields: fields?,
+                    fields,
                 }
             }
         };
@@ -216,6 +198,159 @@ impl VariantDef {
             kind,
         })
     }
+}
+
+/// Parse fields from token stream, extracting doc comments
+fn parse_fields_with_docs(
+    tokens: &TokenStream2,
+) -> std::result::Result<Vec<ParsedFieldDef>, String> {
+    let tokens: Vec<TokenTree> = tokens.clone().into_iter().collect();
+    let mut fields = Vec::new();
+    let mut i = 0;
+    let mut current_doc: Option<String> = None;
+
+    while i < tokens.len() {
+        // Skip commas
+        if let TokenTree::Punct(p) = &tokens[i] {
+            if p.as_char() == ',' {
+                i += 1;
+                continue;
+            }
+        }
+
+        // Check for doc comment: #[doc = "..."]
+        if let TokenTree::Punct(p) = &tokens[i] {
+            if p.as_char() == '#' && i + 1 < tokens.len() {
+                if let TokenTree::Group(g) = &tokens[i + 1] {
+                    if g.delimiter() == proc_macro2::Delimiter::Bracket {
+                        if let Some(doc) = extract_doc_from_attr(&g.stream()) {
+                            // Accumulate doc comments (for multi-line)
+                            let trimmed = doc.trim();
+                            if let Some(existing) = &mut current_doc {
+                                existing.push(' ');
+                                existing.push_str(trimmed);
+                            } else {
+                                current_doc = Some(trimmed.to_string());
+                            }
+                            i += 2;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Expect field: name: kind
+        let name = match &tokens[i] {
+            TokenTree::Ident(ident) => ident.clone(),
+            other => return Err(format!("expected field name, found `{}`", other)),
+        };
+        i += 1;
+
+        // Expect colon
+        if i >= tokens.len() {
+            return Err(format!("expected `:` after field name `{}`", name));
+        }
+        if let TokenTree::Punct(p) = &tokens[i] {
+            if p.as_char() != ':' {
+                return Err(format!(
+                    "expected `:` after field name `{}`, found `{}`",
+                    name, p
+                ));
+            }
+        } else {
+            return Err(format!("expected `:` after field name `{}`", name));
+        }
+        i += 1;
+
+        // Expect kind
+        if i >= tokens.len() {
+            return Err(format!("expected field kind after `{}:`", name));
+        }
+        let kind_ident = match &tokens[i] {
+            TokenTree::Ident(ident) => ident.clone(),
+            other => return Err(format!("expected field kind, found `{}`", other)),
+        };
+        i += 1;
+
+        let kind_str = kind_ident.to_string();
+        let kind = match kind_str.as_str() {
+            "bool" => FieldKind::Bool,
+            "string" => FieldKind::String,
+            "opt_string" => FieldKind::OptString,
+            "opt_bool" => FieldKind::OptBool,
+            "i64" => FieldKind::I64,
+            "opt_i64" => FieldKind::OptI64,
+            "list_string" => FieldKind::ListString,
+            "list_i64" => FieldKind::ListI64,
+            "ident" => FieldKind::Ident,
+            _ => return Err(format!("unknown field kind: {}", kind_str)),
+        };
+
+        fields.push(ParsedFieldDef {
+            name,
+            kind,
+            doc: current_doc.take(),
+        });
+    }
+
+    Ok(fields)
+}
+
+/// Unescape a string with Rust-style escape sequences (e.g., `\"` -> `"`)
+fn unescape_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('\\') => out.push('\\'),
+                Some('"') => out.push('"'),
+                Some('\'') => out.push('\''),
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('t') => out.push('\t'),
+                Some('0') => out.push('\0'),
+                Some(other) => {
+                    // Unknown escape, keep as-is
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Extract doc string from #[doc = "..."] attribute content
+fn extract_doc_from_attr(tokens: &TokenStream2) -> Option<String> {
+    let tokens: Vec<TokenTree> = tokens.clone().into_iter().collect();
+
+    // Expected: doc = "..."
+    if tokens.len() >= 3 {
+        if let TokenTree::Ident(ident) = &tokens[0] {
+            if ident.to_string() == "doc" {
+                if let TokenTree::Punct(p) = &tokens[1] {
+                    if p.as_char() == '=' {
+                        if let TokenTree::Literal(lit) = &tokens[2] {
+                            let lit_str = lit.to_string();
+                            // Remove quotes, unescape, and trim leading space
+                            if lit_str.starts_with('"') && lit_str.ends_with('"') {
+                                let inner = &lit_str[1..lit_str.len() - 1];
+                                // Doc comments have a leading space after ///
+                                return Some(unescape_string(inner.trim_start()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 // ============================================================================
@@ -449,7 +584,7 @@ fn generate_struct(
     enum_name: &Ident,
     variant_ident: &proc_macro2::Ident,
     struct_name: &Ident,
-    fields: &[(Ident, FieldKind)],
+    fields: &[ParsedFieldDef],
     attr_name: &Ident,
     rest: &TokenStream2,
     span: Span,
@@ -457,11 +592,12 @@ fn generate_struct(
     let rest_tokens: Vec<TokenTree> = rest.clone().into_iter().collect();
     let attr_str = attr_name.to_string();
 
-    // Generate field metadata for __build_struct_fields
+    // Generate field metadata for __build_struct_fields (including doc comments)
     let fields_meta: Vec<TokenStream2> = fields
         .iter()
-        .map(|(name, kind)| {
-            let kind_str = match kind {
+        .map(|f| {
+            let name = &f.name;
+            let kind_str = match f.kind {
                 FieldKind::Bool => quote! { bool },
                 FieldKind::String => quote! { string },
                 FieldKind::OptString => quote! { opt_string },
@@ -472,15 +608,21 @@ fn generate_struct(
                 FieldKind::ListI64 => quote! { list_i64 },
                 FieldKind::Ident => quote! { ident },
             };
-            quote! { #name: #kind_str }
+            // Include doc comment if present
+            if let Some(doc) = &f.doc {
+                quote! { #[doc = #doc] #name: #kind_str }
+            } else {
+                quote! { #name: #kind_str }
+            }
         })
         .collect();
 
     // Generate default field values
     let default_fields: Vec<TokenStream2> = fields
         .iter()
-        .map(|(name, kind)| {
-            let default = match kind {
+        .map(|f| {
+            let name = &f.name;
+            let default = match f.kind {
                 FieldKind::Bool => quote! { false },
                 FieldKind::String => quote! { "" },
                 FieldKind::OptString => quote! { None },

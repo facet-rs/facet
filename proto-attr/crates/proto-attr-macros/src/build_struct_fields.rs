@@ -52,6 +52,8 @@ use unsynn::*;
 struct SpannedError {
     message: String,
     span: Span,
+    /// Optional help text (from doc comment)
+    help: Option<String>,
 }
 
 // ============================================================================
@@ -112,10 +114,12 @@ unsynn! {
     }
 
     /// @fields { name: opt_string, primary_key: bool }
+    /// May include doc comments: #[doc = "..."] name: opt_string
     struct FieldsSection {
         _at: At,
         _kw: KFields,
-        content: BraceGroupContaining<CommaDelimitedVec<FieldDef>>,
+        /// Raw tokens - parsed manually to extract doc comments
+        content: BraceGroup,
     }
 
     /// @input { ... }
@@ -123,13 +127,6 @@ unsynn! {
         _at: At,
         _kw: KInput,
         content: BraceGroup,
-    }
-
-    /// A field definition: `name: opt_string`
-    struct FieldDef {
-        name: Ident,
-        _colon: Col,
-        kind: Ident,
     }
 }
 
@@ -150,6 +147,8 @@ struct ParsedBuildInput {
 struct ParsedFieldDef {
     name: Ident,
     kind: FieldKind,
+    /// Doc comment for help text in errors
+    doc: Option<String>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -198,31 +197,8 @@ impl BuildStructFieldsInput {
         let variant_name = self.variant_name_section.content.content.clone();
         let struct_name = self.struct_name_section.content.content.clone();
 
-        let fields: std::result::Result<Vec<_>, _> = self
-            .fields_section
-            .content
-            .content
-            .iter()
-            .map(|d| {
-                let name = d.value.name.clone();
-                let kind_str = d.value.kind.to_string();
-                let kind = match kind_str.as_str() {
-                    "bool" => FieldKind::Bool,
-                    "string" => FieldKind::String,
-                    "opt_string" => FieldKind::OptString,
-                    "opt_bool" => FieldKind::OptBool,
-                    "i64" => FieldKind::I64,
-                    "opt_i64" => FieldKind::OptI64,
-                    "list_string" => FieldKind::ListString,
-                    "list_i64" => FieldKind::ListI64,
-                    "ident" => FieldKind::Ident,
-                    _ => {
-                        return Err(format!("unknown field kind `{}`", kind_str));
-                    }
-                };
-                Ok(ParsedFieldDef { name, kind })
-            })
-            .collect();
+        // Parse fields manually to extract doc comments
+        let fields = parse_field_defs_with_docs(&self.fields_section.content.0.stream())?;
 
         let input = self.input_section.content.0.stream();
 
@@ -231,10 +207,162 @@ impl BuildStructFieldsInput {
             enum_name,
             variant_name,
             struct_name,
-            fields: fields?,
+            fields,
             input,
         })
     }
+}
+
+/// Parse field definitions from token stream, extracting doc comments
+fn parse_field_defs_with_docs(
+    tokens: &TokenStream2,
+) -> std::result::Result<Vec<ParsedFieldDef>, String> {
+    let tokens: Vec<TokenTree> = tokens.clone().into_iter().collect();
+    let mut fields = Vec::new();
+    let mut i = 0;
+    let mut current_doc: Option<String> = None;
+
+    while i < tokens.len() {
+        // Skip commas
+        if let TokenTree::Punct(p) = &tokens[i] {
+            if p.as_char() == ',' {
+                i += 1;
+                continue;
+            }
+        }
+
+        // Check for doc comment: #[doc = "..."]
+        if let TokenTree::Punct(p) = &tokens[i] {
+            if p.as_char() == '#' && i + 1 < tokens.len() {
+                if let TokenTree::Group(g) = &tokens[i + 1] {
+                    if g.delimiter() == proc_macro2::Delimiter::Bracket {
+                        if let Some(doc) = extract_doc_from_attr(&g.stream()) {
+                            // Accumulate doc comments (for multi-line)
+                            let trimmed = doc.trim();
+                            if let Some(existing) = &mut current_doc {
+                                existing.push(' ');
+                                existing.push_str(trimmed);
+                            } else {
+                                current_doc = Some(trimmed.to_string());
+                            }
+                            i += 2;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Expect field: name: kind
+        let name = match &tokens[i] {
+            TokenTree::Ident(ident) => ident.clone(),
+            other => return Err(format!("expected field name, found `{}`", other)),
+        };
+        i += 1;
+
+        // Expect colon
+        if i >= tokens.len() {
+            return Err(format!("expected `:` after field name `{}`", name));
+        }
+        if let TokenTree::Punct(p) = &tokens[i] {
+            if p.as_char() != ':' {
+                return Err(format!(
+                    "expected `:` after field name `{}`, found `{}`",
+                    name, p
+                ));
+            }
+        } else {
+            return Err(format!("expected `:` after field name `{}`", name));
+        }
+        i += 1;
+
+        // Expect kind
+        if i >= tokens.len() {
+            return Err(format!("expected field kind after `{}:`", name));
+        }
+        let kind_ident = match &tokens[i] {
+            TokenTree::Ident(ident) => ident.clone(),
+            other => return Err(format!("expected field kind, found `{}`", other)),
+        };
+        i += 1;
+
+        let kind_str = kind_ident.to_string();
+        let kind = match kind_str.as_str() {
+            "bool" => FieldKind::Bool,
+            "string" => FieldKind::String,
+            "opt_string" => FieldKind::OptString,
+            "opt_bool" => FieldKind::OptBool,
+            "i64" => FieldKind::I64,
+            "opt_i64" => FieldKind::OptI64,
+            "list_string" => FieldKind::ListString,
+            "list_i64" => FieldKind::ListI64,
+            "ident" => FieldKind::Ident,
+            _ => return Err(format!("unknown field kind: {}", kind_str)),
+        };
+
+        fields.push(ParsedFieldDef {
+            name,
+            kind,
+            doc: current_doc.take(),
+        });
+    }
+
+    Ok(fields)
+}
+
+/// Extract doc string from #[doc = "..."] attribute content
+/// Unescape a string with Rust-style escape sequences (e.g., `\"` -> `"`)
+fn unescape_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('\\') => out.push('\\'),
+                Some('"') => out.push('"'),
+                Some('\'') => out.push('\''),
+                Some('n') => out.push('\n'),
+                Some('r') => out.push('\r'),
+                Some('t') => out.push('\t'),
+                Some('0') => out.push('\0'),
+                Some(other) => {
+                    // Unknown escape, keep as-is
+                    out.push('\\');
+                    out.push(other);
+                }
+                None => out.push('\\'),
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn extract_doc_from_attr(tokens: &TokenStream2) -> Option<String> {
+    let tokens: Vec<TokenTree> = tokens.clone().into_iter().collect();
+
+    // Expected: doc = "..."
+    if tokens.len() >= 3 {
+        if let TokenTree::Ident(ident) = &tokens[0] {
+            if ident.to_string() == "doc" {
+                if let TokenTree::Punct(p) = &tokens[1] {
+                    if p.as_char() == '=' {
+                        if let TokenTree::Literal(lit) = &tokens[2] {
+                            let lit_str = lit.to_string();
+                            // Remove quotes and unescape
+                            if lit_str.starts_with('"') && lit_str.ends_with('"') {
+                                let inner = &lit_str[1..lit_str.len() - 1];
+                                return Some(unescape_string(inner.trim_start()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 // ============================================================================
@@ -269,11 +397,15 @@ pub fn build_struct_fields(input: TokenStream) -> TokenStream {
 fn emit_error(err: SpannedError, input: &ParsedBuildInput) -> TokenStream {
     let message = err.message;
     let span = err.span;
+    let help = err.help;
 
     #[cfg(feature = "nightly")]
     {
         use proc_macro::{Diagnostic, Level};
-        let diag = Diagnostic::spanned(span.unwrap(), Level::Error, &message);
+        let mut diag = Diagnostic::spanned(span.unwrap(), Level::Error, &message);
+        if let Some(help_text) = &help {
+            diag = diag.help(help_text);
+        }
         diag.emit();
 
         // Return a valid dummy expression with default field values
@@ -314,7 +446,13 @@ fn emit_error(err: SpannedError, input: &ParsedBuildInput) -> TokenStream {
     #[cfg(not(feature = "nightly"))]
     {
         let _ = input; // unused on stable
-        quote_spanned! { span => compile_error!(#message) }.into()
+        // On stable, append help text to the message
+        let full_message = if let Some(help_text) = help {
+            format!("{}\n  = help: {}", message, help_text)
+        } else {
+            message
+        };
+        quote_spanned! { span => compile_error!(#full_message) }.into()
     }
 }
 
@@ -425,6 +563,7 @@ fn parse_input_fields(
                 return Err(SpannedError {
                     message: format!("expected field name, found `{}`", other),
                     span: other.span(),
+                    help: None,
                 });
             }
         };
@@ -443,6 +582,7 @@ fn parse_input_fields(
                     field_name_str
                 ),
                 span: field_span,
+                help: None,
             });
         }
 
@@ -471,6 +611,7 @@ fn parse_input_fields(
             return Err(SpannedError {
                 message: msg,
                 span: field_span,
+                help: None,
             });
         }
         let field_def = field_def.unwrap();
@@ -493,6 +634,7 @@ fn parse_input_fields(
                             field_name_str, field_name_str
                         ),
                         span: field_span,
+                        help: field_def.doc.clone(),
                     });
                 }
                 FieldKind::I64 | FieldKind::OptI64 => {
@@ -502,6 +644,7 @@ fn parse_input_fields(
                             field_name_str, field_name_str
                         ),
                         span: field_span,
+                        help: field_def.doc.clone(),
                     });
                 }
                 FieldKind::ListString => {
@@ -511,6 +654,7 @@ fn parse_input_fields(
                             field_name_str, field_name_str
                         ),
                         span: field_span,
+                        help: field_def.doc.clone(),
                     });
                 }
                 FieldKind::ListI64 => {
@@ -520,6 +664,7 @@ fn parse_input_fields(
                             field_name_str, field_name_str
                         ),
                         span: field_span,
+                        help: field_def.doc.clone(),
                     });
                 }
                 FieldKind::Ident => {
@@ -529,6 +674,7 @@ fn parse_input_fields(
                             field_name_str, field_name_str
                         ),
                         span: field_span,
+                        help: field_def.doc.clone(),
                     });
                 }
             }
@@ -544,6 +690,7 @@ fn parse_input_fields(
                     return Err(SpannedError {
                         message: format!("`{}` requires a value after `=`", field_name_str),
                         span: field_span,
+                        help: field_def.doc.clone(),
                     });
                 }
 
@@ -570,8 +717,20 @@ fn parse_input_fields(
                                         field_name_str, field_name_str
                                     ),
                                     span: value_token.span(),
+                                    help: field_def.doc.clone(),
                                 });
                             }
+                        } else if let TokenTree::Ident(ident) = value_token {
+                            // Common mistake: using an identifier instead of a string
+                            return Err(SpannedError {
+                                message: format!(
+                                    "`{}` expects a string literal, not an identifier; \
+                                     try `{} = \"{}\"` (with quotes)",
+                                    field_name_str, field_name_str, ident
+                                ),
+                                span: value_token.span(),
+                                help: field_def.doc.clone(),
+                            });
                         } else {
                             return Err(SpannedError {
                                 message: format!(
@@ -579,6 +738,7 @@ fn parse_input_fields(
                                     field_name_str, field_name_str
                                 ),
                                 span: value_token.span(),
+                                help: field_def.doc.clone(),
                             });
                         }
                     }
@@ -608,9 +768,39 @@ fn parse_input_fields(
                                             field_name_str, field_name_str
                                         ),
                                         span: value_token.span(),
+                                        help: field_def.doc.clone(),
                                     });
                                 }
                             }
+                        } else if let TokenTree::Literal(lit) = value_token {
+                            // Common mistake: using a string instead of bool
+                            let lit_str = lit.to_string();
+                            if lit_str.starts_with('"') && lit_str.ends_with('"') {
+                                let inner = &lit_str[1..lit_str.len() - 1];
+                                // Check if the string content looks like a bool
+                                let suggestion = match inner {
+                                    "true" | "yes" | "1" | "on" => "true",
+                                    "false" | "no" | "0" | "off" => "false",
+                                    _ => "true",
+                                };
+                                return Err(SpannedError {
+                                    message: format!(
+                                        "`{}` expects `true` or `false`, not a string; \
+                                         try `{} = {}` (without quotes)",
+                                        field_name_str, field_name_str, suggestion
+                                    ),
+                                    span: value_token.span(),
+                                    help: field_def.doc.clone(),
+                                });
+                            }
+                            return Err(SpannedError {
+                                message: format!(
+                                    "`{}` expects `true` or `false`: `{} = true`",
+                                    field_name_str, field_name_str
+                                ),
+                                span: value_token.span(),
+                                help: field_def.doc.clone(),
+                            });
                         } else {
                             return Err(SpannedError {
                                 message: format!(
@@ -618,12 +808,14 @@ fn parse_input_fields(
                                     field_name_str, field_name_str
                                 ),
                                 span: value_token.span(),
+                                help: field_def.doc.clone(),
                             });
                         }
                     }
                     FieldKind::I64 | FieldKind::OptI64 => {
                         // Expect integer literal (possibly negative)
-                        let (value, advance) = parse_integer_value(&tokens[i - 1..], value_token)?;
+                        let (value, advance) =
+                            parse_integer_value(&tokens[i - 1..], value_token, &field_name_str)?;
                         parsed.push(ParsedField {
                             name: field_name_str,
                             name_span: field_span,
@@ -643,14 +835,45 @@ fn parse_input_fields(
                                     value: FieldValue::ListString(items),
                                 });
                             } else {
+                                // Common mistake: wrong bracket type
+                                let bracket_name = match g.delimiter() {
+                                    proc_macro2::Delimiter::Brace => "curly braces `{}`",
+                                    proc_macro2::Delimiter::Parenthesis => "parentheses `()`",
+                                    _ => "wrong delimiters",
+                                };
                                 return Err(SpannedError {
                                     message: format!(
-                                        "`{}` expects a list: `{} = [\"a\", \"b\"]`",
-                                        field_name_str, field_name_str
+                                        "`{}` expects square brackets `[]`, not {}; \
+                                         try `{} = [\"a\", \"b\"]`",
+                                        field_name_str, bracket_name, field_name_str
                                     ),
                                     span: value_token.span(),
+                                    help: field_def.doc.clone(),
                                 });
                             }
+                        } else if let TokenTree::Literal(lit) = value_token {
+                            // Common mistake: single string instead of list
+                            let lit_str = lit.to_string();
+                            if lit_str.starts_with('"') && lit_str.ends_with('"') {
+                                let inner = &lit_str[1..lit_str.len() - 1];
+                                return Err(SpannedError {
+                                    message: format!(
+                                        "`{}` expects a list, not a single string; \
+                                         try `{} = [\"{}\"]`",
+                                        field_name_str, field_name_str, inner
+                                    ),
+                                    span: value_token.span(),
+                                    help: field_def.doc.clone(),
+                                });
+                            }
+                            return Err(SpannedError {
+                                message: format!(
+                                    "`{}` expects a list: `{} = [\"a\", \"b\"]`",
+                                    field_name_str, field_name_str
+                                ),
+                                span: value_token.span(),
+                                help: field_def.doc.clone(),
+                            });
                         } else {
                             return Err(SpannedError {
                                 message: format!(
@@ -658,6 +881,7 @@ fn parse_input_fields(
                                     field_name_str, field_name_str
                                 ),
                                 span: value_token.span(),
+                                help: field_def.doc.clone(),
                             });
                         }
                     }
@@ -672,14 +896,44 @@ fn parse_input_fields(
                                     value: FieldValue::ListI64(items),
                                 });
                             } else {
+                                // Common mistake: wrong bracket type
+                                let bracket_name = match g.delimiter() {
+                                    proc_macro2::Delimiter::Brace => "curly braces `{}`",
+                                    proc_macro2::Delimiter::Parenthesis => "parentheses `()`",
+                                    _ => "wrong delimiters",
+                                };
                                 return Err(SpannedError {
                                     message: format!(
-                                        "`{}` expects a list: `{} = [1, 2, 3]`",
-                                        field_name_str, field_name_str
+                                        "`{}` expects square brackets `[]`, not {}; \
+                                         try `{} = [1, 2, 3]`",
+                                        field_name_str, bracket_name, field_name_str
                                     ),
                                     span: value_token.span(),
+                                    help: field_def.doc.clone(),
                                 });
                             }
+                        } else if let TokenTree::Literal(lit) = value_token {
+                            // Common mistake: single number instead of list
+                            let lit_str = lit.to_string();
+                            if lit_str.chars().all(|c| c.is_ascii_digit() || c == '-') {
+                                return Err(SpannedError {
+                                    message: format!(
+                                        "`{}` expects a list, not a single value; \
+                                         try `{} = [{}]`",
+                                        field_name_str, field_name_str, lit_str
+                                    ),
+                                    span: value_token.span(),
+                                    help: field_def.doc.clone(),
+                                });
+                            }
+                            return Err(SpannedError {
+                                message: format!(
+                                    "`{}` expects a list: `{} = [1, 2, 3]`",
+                                    field_name_str, field_name_str
+                                ),
+                                span: value_token.span(),
+                                help: field_def.doc.clone(),
+                            });
                         } else {
                             return Err(SpannedError {
                                 message: format!(
@@ -687,6 +941,7 @@ fn parse_input_fields(
                                     field_name_str, field_name_str
                                 ),
                                 span: value_token.span(),
+                                help: field_def.doc.clone(),
                             });
                         }
                     }
@@ -698,6 +953,29 @@ fn parse_input_fields(
                                 name_span: field_span,
                                 value: FieldValue::Ident(ident.to_string()),
                             });
+                        } else if let TokenTree::Literal(lit) = value_token {
+                            // Common mistake: using a string instead of identifier
+                            let lit_str = lit.to_string();
+                            if lit_str.starts_with('"') && lit_str.ends_with('"') {
+                                let inner = &lit_str[1..lit_str.len() - 1];
+                                return Err(SpannedError {
+                                    message: format!(
+                                        "`{}` expects a bare identifier, not a string; \
+                                         try `{} = {}` (without quotes)",
+                                        field_name_str, field_name_str, inner
+                                    ),
+                                    span: value_token.span(),
+                                    help: field_def.doc.clone(),
+                                });
+                            }
+                            return Err(SpannedError {
+                                message: format!(
+                                    "`{}` expects an identifier: `{} = some_value`",
+                                    field_name_str, field_name_str
+                                ),
+                                span: value_token.span(),
+                                help: field_def.doc.clone(),
+                            });
                         } else {
                             return Err(SpannedError {
                                 message: format!(
@@ -705,6 +983,7 @@ fn parse_input_fields(
                                     field_name_str, field_name_str
                                 ),
                                 span: value_token.span(),
+                                help: field_def.doc.clone(),
                             });
                         }
                     }
@@ -726,6 +1005,7 @@ fn parse_input_fields(
                                 field_name_str, field_name_str
                             ),
                             span: field_span,
+                            help: field_def.doc.clone(),
                         });
                     }
                     FieldKind::I64 | FieldKind::OptI64 => {
@@ -735,6 +1015,7 @@ fn parse_input_fields(
                                 field_name_str, field_name_str
                             ),
                             span: field_span,
+                            help: field_def.doc.clone(),
                         });
                     }
                     FieldKind::ListString => {
@@ -744,6 +1025,7 @@ fn parse_input_fields(
                                 field_name_str, field_name_str
                             ),
                             span: field_span,
+                            help: field_def.doc.clone(),
                         });
                     }
                     FieldKind::ListI64 => {
@@ -753,6 +1035,7 @@ fn parse_input_fields(
                                 field_name_str, field_name_str
                             ),
                             span: field_span,
+                            help: field_def.doc.clone(),
                         });
                     }
                     FieldKind::Ident => {
@@ -762,6 +1045,7 @@ fn parse_input_fields(
                                 field_name_str, field_name_str
                             ),
                             span: field_span,
+                            help: field_def.doc.clone(),
                         });
                     }
                 }
@@ -770,6 +1054,7 @@ fn parse_input_fields(
                 return Err(SpannedError {
                     message: format!("expected `=` or `,` after field name `{}`", field_name_str),
                     span: p.span(),
+                    help: None,
                 });
             }
         } else {
@@ -790,6 +1075,7 @@ fn parse_input_fields(
                             field_name_str, field_name_str
                         ),
                         span: field_span,
+                        help: field_def.doc.clone(),
                     });
                 }
                 FieldKind::I64 | FieldKind::OptI64 => {
@@ -799,6 +1085,7 @@ fn parse_input_fields(
                             field_name_str, field_name_str
                         ),
                         span: field_span,
+                        help: field_def.doc.clone(),
                     });
                 }
                 FieldKind::ListString => {
@@ -808,6 +1095,7 @@ fn parse_input_fields(
                             field_name_str, field_name_str
                         ),
                         span: field_span,
+                        help: field_def.doc.clone(),
                     });
                 }
                 FieldKind::ListI64 => {
@@ -817,6 +1105,7 @@ fn parse_input_fields(
                             field_name_str, field_name_str
                         ),
                         span: field_span,
+                        help: field_def.doc.clone(),
                     });
                 }
                 FieldKind::Ident => {
@@ -826,6 +1115,7 @@ fn parse_input_fields(
                             field_name_str, field_name_str
                         ),
                         span: field_span,
+                        help: field_def.doc.clone(),
                     });
                 }
             }
@@ -839,6 +1129,7 @@ fn parse_input_fields(
 fn parse_integer_value(
     tokens: &[TokenTree],
     value_token: &TokenTree,
+    field_name: &str,
 ) -> std::result::Result<(i64, usize), SpannedError> {
     // Check if the value token is a negative sign
     if let TokenTree::Punct(p) = value_token {
@@ -855,6 +1146,7 @@ fn parse_integer_value(
             return Err(SpannedError {
                 message: "expected integer literal after `-`".to_string(),
                 span: p.span(),
+                help: None,
             });
         }
     }
@@ -871,15 +1163,37 @@ fn parse_integer_value(
         if let Ok(n) = cleaned.parse::<i64>() {
             return Ok((n, 0));
         }
+        // Check if it looks like a number that overflowed
+        if cleaned.chars().all(|c| c.is_ascii_digit()) {
+            return Err(SpannedError {
+                message: format!(
+                    "`{}` value `{}` is too large; this field accepts i64 (range {} to {})",
+                    field_name,
+                    cleaned,
+                    i64::MIN,
+                    i64::MAX
+                ),
+                span: lit.span(),
+                help: None,
+            });
+        }
         return Err(SpannedError {
-            message: format!("expected integer literal, got `{}`", lit_str),
+            message: format!(
+                "`{}` expected integer literal, got `{}`",
+                field_name, lit_str
+            ),
             span: lit.span(),
+            help: None,
         });
     }
 
     Err(SpannedError {
-        message: format!("expected integer literal, got `{}`", value_token),
+        message: format!(
+            "`{}` expected integer literal, got `{}`",
+            field_name, value_token
+        ),
         span: value_token.span(),
+        help: None,
     })
 }
 
@@ -909,12 +1223,14 @@ fn parse_string_list(stream: &TokenStream2) -> std::result::Result<Vec<String>, 
                 return Err(SpannedError {
                     message: format!("expected string literal in list, got `{}`", lit_str),
                     span: lit.span(),
+                    help: None,
                 });
             }
         } else {
             return Err(SpannedError {
                 message: format!("expected string literal in list, got `{}`", tokens[i]),
                 span: tokens[i].span(),
+                help: None,
             });
         }
     }
@@ -950,6 +1266,7 @@ fn parse_i64_list(stream: &TokenStream2) -> std::result::Result<Vec<i64>, Spanne
                 return Err(SpannedError {
                     message: "expected integer after `-`".to_string(),
                     span: p.span(),
+                    help: None,
                 });
             }
         }
@@ -970,6 +1287,7 @@ fn parse_i64_list(stream: &TokenStream2) -> std::result::Result<Vec<i64>, Spanne
                     return Err(SpannedError {
                         message: format!("expected integer literal in list, got `{}`", lit_str),
                         span: lit.span(),
+                        help: None,
                     });
                 }
             }
@@ -977,6 +1295,7 @@ fn parse_i64_list(stream: &TokenStream2) -> std::result::Result<Vec<i64>, Spanne
             return Err(SpannedError {
                 message: format!("expected integer literal in list, got `{}`", tokens[i]),
                 span: tokens[i].span(),
+                help: None,
             });
         }
     }
