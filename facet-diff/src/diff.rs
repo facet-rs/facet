@@ -286,8 +286,8 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                 Self::diff_dynamic_values(from, to)
             }
             // DynamicValue vs concrete type
-            ((Def::DynamicValue(_), _), _) => Self::diff_dynamic_vs_concrete(from, to),
-            (_, (Def::DynamicValue(_), _)) => Self::diff_dynamic_vs_concrete(to, from),
+            ((Def::DynamicValue(_), _), _) => Self::diff_dynamic_vs_concrete(from, to, false),
+            (_, (Def::DynamicValue(_), _)) => Self::diff_dynamic_vs_concrete(to, from, true),
             _ => Diff::Replace { from, to },
         }
     }
@@ -433,10 +433,18 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
 
     /// Diff a DynamicValue against a concrete type
     /// `dyn_peek` is the DynamicValue, `concrete_peek` is the concrete type
+    /// `swapped` indicates if the original from/to were swapped (true means dyn_peek is actually "to")
     fn diff_dynamic_vs_concrete(
         dyn_peek: Peek<'mem, 'facet>,
         concrete_peek: Peek<'mem, 'facet>,
+        swapped: bool,
     ) -> Self {
+        // Determine actual from/to based on swapped flag
+        let (from_peek, to_peek) = if swapped {
+            (concrete_peek, dyn_peek)
+        } else {
+            (dyn_peek, concrete_peek)
+        };
         let dyn_val = dyn_peek.into_dynamic_value().unwrap();
         let dyn_kind = dyn_val.kind();
 
@@ -449,7 +457,7 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     .is_some_and(|&v| dyn_val.as_bool() == Some(v))
                 {
                     return Diff::Equal {
-                        value: Some(dyn_peek),
+                        value: Some(from_peek),
                     };
                 }
             }
@@ -472,7 +480,7 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     || concrete_peek.get::<f64>().ok().is_some_and(|&v| dyn_val.as_f64() == Some(v));
                 if is_equal {
                     return Diff::Equal {
-                        value: Some(dyn_peek),
+                        value: Some(from_peek),
                     };
                 }
             }
@@ -482,7 +490,7 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     .is_some_and(|s| dyn_val.as_str() == Some(s))
                 {
                     return Diff::Equal {
-                        value: Some(dyn_peek),
+                        value: Some(from_peek),
                     };
                 }
             }
@@ -495,11 +503,17 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                         .unwrap_or_default();
                     let concrete_elems: Vec<_> = concrete_list.iter().collect();
 
-                    let updates = sequences::diff(dyn_elems, concrete_elems);
+                    // Use correct order based on swapped flag
+                    let (from_elems, to_elems) = if swapped {
+                        (concrete_elems, dyn_elems)
+                    } else {
+                        (dyn_elems, concrete_elems)
+                    };
+                    let updates = sequences::diff(from_elems, to_elems);
 
                     return Diff::Sequence {
-                        from: dyn_peek.shape(),
-                        to: concrete_peek.shape(),
+                        from: from_peek.shape(),
+                        to: to_peek.shape(),
                         updates,
                     };
                 }
@@ -523,28 +537,47 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     }
 
                     // Compare with concrete struct fields
+                    // When swapped, dyn is "to" and concrete is "from", so we need to swap the diff direction
                     for (key, dyn_value) in &dyn_keys {
                         if let Ok(concrete_value) = concrete_struct.field_by_name(key) {
-                            let diff = Self::new_peek(*dyn_value, concrete_value);
+                            let diff = if swapped {
+                                Self::new_peek(concrete_value, *dyn_value)
+                            } else {
+                                Self::new_peek(*dyn_value, concrete_value)
+                            };
                             if diff.is_equal() {
                                 unchanged.insert(Cow::Owned(key.clone()));
                             } else {
                                 updates.insert(Cow::Owned(key.clone()), diff);
                             }
                         } else {
-                            deletions.insert(Cow::Owned(key.clone()), *dyn_value);
+                            // Field in dyn but not in concrete
+                            // If swapped: dyn is "to", so this is an insertion
+                            // If not swapped: dyn is "from", so this is a deletion
+                            if swapped {
+                                insertions.insert(Cow::Owned(key.clone()), *dyn_value);
+                            } else {
+                                deletions.insert(Cow::Owned(key.clone()), *dyn_value);
+                            }
                         }
                     }
 
                     for (field, concrete_value) in concrete_struct.fields() {
                         if !dyn_keys.contains_key(field.name) {
-                            insertions.insert(Cow::Borrowed(field.name), concrete_value);
+                            // Field in concrete but not in dyn
+                            // If swapped: concrete is "from", so this is a deletion
+                            // If not swapped: concrete is "to", so this is an insertion
+                            if swapped {
+                                deletions.insert(Cow::Borrowed(field.name), concrete_value);
+                            } else {
+                                insertions.insert(Cow::Borrowed(field.name), concrete_value);
+                            }
                         }
                     }
 
                     return Diff::User {
-                        from: dyn_peek.shape(),
-                        to: concrete_peek.shape(),
+                        from: from_peek.shape(),
+                        to: to_peek.shape(),
                         variant: None,
                         value: Value::Struct {
                             updates,
@@ -560,8 +593,8 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
         }
 
         Diff::Replace {
-            from: dyn_peek,
-            to: concrete_peek,
+            from: from_peek,
+            to: to_peek,
         }
     }
 
