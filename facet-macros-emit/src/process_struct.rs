@@ -103,7 +103,7 @@ pub(crate) fn gen_field_from_pfield(
                 attribute_list.push(quote! { ::facet::FieldAttribute::Extension(#ext_attr) });
 
                 // Set CHILD flag for kdl::child extension attribute
-                if ns.to_string() == "kdl" && key.to_string() == "child" {
+                if *ns == "kdl" && *key == "child" {
                     if flags_empty {
                         flags_empty = false;
                         flags = quote! { ::facet::FieldFlags::CHILD };

@@ -1478,10 +1478,8 @@ fn is_yaml_null(value: &str) -> bool {
 fn get_serialized_name(field: &Field) -> &'static str {
     // Look for rename attribute using extension syntax: #[facet(serde::rename = "value")]
     if let Some(ext) = field.get_extension_attr("serde", "rename") {
-        if let Some(opt_name) = ext.get_as::<Option<&'static str>>() {
-            if let Some(name) = opt_name {
-                return name;
-            }
+        if let Some(Some(name)) = ext.get_as::<Option<&'static str>>() {
+            return name;
         }
     }
     // Default to the field name

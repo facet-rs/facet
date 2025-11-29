@@ -390,7 +390,7 @@ fn find_field_index_with_short(fields: &'static [Field], short: &str) -> Option<
                     Some(c) => *c == short_char,
                     None => {
                         // No explicit short specified, use first char of field name
-                        f.name.chars().next() == Some(short_char)
+                        f.name.starts_with(short_char)
                     }
                 }
             } else {
