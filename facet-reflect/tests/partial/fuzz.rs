@@ -8,6 +8,9 @@
 //! Run with: `cargo nextest run -p facet-reflect --features fuzz-tests`
 
 #![cfg(feature = "fuzz-tests")]
+// In ownership-based APIs, the last assignment to `partial` is often unused
+// because the value is consumed by `.build()` - this is expected behavior
+#![allow(unused_assignments)]
 
 use facet::Facet;
 use facet_reflect::{Partial, Resolution};
@@ -229,100 +232,67 @@ fn op_sequence_strategy() -> impl Strategy<Value = Vec<PartialOp>> {
 /// Returns Ok if we successfully built something, Err if any operation failed.
 /// The key property: this function should NEVER panic or cause UB.
 fn apply_ops(ops: &[PartialOp]) -> Result<(), String> {
-    let mut typed_partial =
-        Partial::alloc::<FuzzTarget>().map_err(|e| format!("alloc failed: {e}"))?;
-    let partial = typed_partial.inner_mut();
+    let mut partial = Partial::alloc::<FuzzTarget>().map_err(|e| format!("alloc failed: {e}"))?;
 
     for (i, op) in ops.iter().enumerate() {
-        let result = apply_single_op(partial, op);
-        if let Err(e) = result {
-            // Operation failed - that's fine, we just stop here
-            // The partial will be dropped and should clean up properly
-            return Err(format!("op {i} ({op:?}) failed: {e}"));
+        match apply_single_op(partial, op) {
+            Ok(p) => partial = p,
+            Err(e) => {
+                // Operation failed - that's fine, we just stop here
+                // The partial will be dropped and should clean up properly
+                return Err(format!("op {i} ({op:?}) failed: {e}"));
+            }
         }
     }
 
     Ok(())
 }
 
-fn apply_single_op(partial: &mut Partial<'_>, op: &PartialOp) -> Result<(), String> {
-    match op {
-        PartialOp::BeginField(field) => {
-            partial
-                .begin_field(field.as_str())
-                .map_err(|e| e.to_string())?;
-        }
-        PartialOp::BeginNthField(idx) => {
-            partial
-                .begin_nth_field(*idx as usize)
-                .map_err(|e| e.to_string())?;
-        }
-        PartialOp::SetFieldU32(field, value) => {
-            partial
-                .set_field(field.as_str(), *value)
-                .map_err(|e| e.to_string())?;
-        }
-        PartialOp::SetFieldString(field, value) => {
-            partial
-                .set_field(field.as_str(), value.clone())
-                .map_err(|e| e.to_string())?;
-        }
-        PartialOp::SetU32(value) => {
-            partial.set(*value).map_err(|e| e.to_string())?;
-        }
-        PartialOp::SetString(value) => {
-            partial.set(value.clone()).map_err(|e| e.to_string())?;
-        }
-        PartialOp::SetI32(value) => {
-            partial.set(*value).map_err(|e| e.to_string())?;
-        }
-        PartialOp::End => {
-            partial.end().map_err(|e| e.to_string())?;
-        }
-        PartialOp::BeginList => {
-            partial.begin_list().map_err(|e| e.to_string())?;
-        }
-        PartialOp::BeginListItem => {
-            partial.begin_list_item().map_err(|e| e.to_string())?;
-        }
-        PartialOp::Push(value) => {
-            partial.push(value.clone()).map_err(|e| e.to_string())?;
-        }
-        PartialOp::BeginMap => {
-            partial.begin_map().map_err(|e| e.to_string())?;
-        }
-        PartialOp::BeginKey => {
-            partial.begin_key().map_err(|e| e.to_string())?;
-        }
-        PartialOp::BeginValue => {
-            partial.begin_value().map_err(|e| e.to_string())?;
-        }
-        PartialOp::BeginSome => {
-            partial.begin_some().map_err(|e| e.to_string())?;
-        }
-        PartialOp::BeginInner => {
-            partial.begin_inner().map_err(|e| e.to_string())?;
-        }
-        PartialOp::SelectVariant(variant) => {
-            partial
-                .select_variant_named(variant.as_str())
-                .map_err(|e| e.to_string())?;
-        }
+fn apply_single_op<'a>(partial: Partial<'a>, op: &'a PartialOp) -> Result<Partial<'a>, String> {
+    let partial = match op {
+        PartialOp::BeginField(field) => partial
+            .begin_field(field.as_str())
+            .map_err(|e| e.to_string())?,
+        PartialOp::BeginNthField(idx) => partial
+            .begin_nth_field(*idx as usize)
+            .map_err(|e| e.to_string())?,
+        PartialOp::SetFieldU32(field, value) => partial
+            .set_field(field.as_str(), *value)
+            .map_err(|e| e.to_string())?,
+        PartialOp::SetFieldString(field, value) => partial
+            .set_field(field.as_str(), value.clone())
+            .map_err(|e| e.to_string())?,
+        PartialOp::SetU32(value) => partial.set(*value).map_err(|e| e.to_string())?,
+        PartialOp::SetString(value) => partial.set(value.clone()).map_err(|e| e.to_string())?,
+        PartialOp::SetI32(value) => partial.set(*value).map_err(|e| e.to_string())?,
+        PartialOp::End => partial.end().map_err(|e| e.to_string())?,
+        PartialOp::BeginList => partial.begin_list().map_err(|e| e.to_string())?,
+        PartialOp::BeginListItem => partial.begin_list_item().map_err(|e| e.to_string())?,
+        PartialOp::Push(value) => partial.push(value.clone()).map_err(|e| e.to_string())?,
+        PartialOp::BeginMap => partial.begin_map().map_err(|e| e.to_string())?,
+        PartialOp::BeginKey => partial.begin_key().map_err(|e| e.to_string())?,
+        PartialOp::BeginValue => partial.begin_value().map_err(|e| e.to_string())?,
+        PartialOp::BeginSome => partial.begin_some().map_err(|e| e.to_string())?,
+        PartialOp::BeginInner => partial.begin_inner().map_err(|e| e.to_string())?,
+        PartialOp::SelectVariant(variant) => partial
+            .select_variant_named(variant.as_str())
+            .map_err(|e| e.to_string())?,
         PartialOp::BeginDeferred => {
             // Create a fresh resolution for deferred mode
             let resolution = Resolution::new();
             partial
                 .begin_deferred(resolution)
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| e.to_string())?
         }
-        PartialOp::FinishDeferred => {
-            partial.finish_deferred().map_err(|e| e.to_string())?;
-        }
+        PartialOp::FinishDeferred => partial.finish_deferred().map_err(|e| e.to_string())?,
         PartialOp::Build => {
+            // Build consumes the Partial and returns HeapValue
+            // Signal success by returning a special error to end the loop
             partial.build().map_err(|e| e.to_string())?;
+            return Err("build_succeeded".to_string());
         }
-    }
-    Ok(())
+    };
+    Ok(partial)
 }
 
 // =============================================================================
@@ -393,26 +363,31 @@ proptest! {
         let mut str_idx = 0;
 
         for op in ops {
+            // Handle build separately since it consumes Partial and returns HeapValue
+            if op == "build" {
+                let _ = partial.build();
+                break;
+            }
             let result = match op {
-                "begin_a" => partial.begin_field("a").map(|_| ()),
-                "begin_b" => partial.begin_field("b").map(|_| ()),
-                "begin_bogus" => partial.begin_field("bogus").map(|_| ()),
+                "begin_a" => partial.begin_field("a"),
+                "begin_b" => partial.begin_field("b"),
+                "begin_bogus" => partial.begin_field("bogus"),
                 "set_u32" => {
                     let v = values_u32[u32_idx % values_u32.len()];
                     u32_idx += 1;
-                    partial.set(v).map(|_| ())
+                    partial.set(v)
                 }
                 "set_string" => {
                     let v = &values_str[str_idx % values_str.len()];
                     str_idx += 1;
-                    partial.set(v.clone()).map(|_| ())
+                    partial.set(v.clone())
                 }
-                "end" => partial.end().map(|_| ()),
-                "build" => partial.build().map(|_| ()),
-                _ => Ok(()),
+                "end" => partial.end(),
+                _ => Ok(partial),
             };
-            if result.is_err() {
-                break;
+            match result {
+                Ok(p) => partial = p,
+                Err(_) => break,
             }
         }
         // Partial dropped here - should not leak or crash
@@ -439,26 +414,31 @@ proptest! {
         let mut idx = 0;
 
         for op in ops {
+            // Handle build separately since it consumes Partial and returns HeapValue
+            if op == "build" {
+                let _ = partial.build();
+                break;
+            }
             let result = match op {
-                "begin_items" => partial.begin_field("items").map(|_| ()),
-                "begin_list" => partial.begin_list().map(|_| ()),
-                "begin_list_item" => partial.begin_list_item().map(|_| ()),
+                "begin_items" => partial.begin_field("items"),
+                "begin_list" => partial.begin_list(),
+                "begin_list_item" => partial.begin_list_item(),
                 "push" => {
                     let v = values[idx % values.len()];
                     idx += 1;
-                    partial.push(v).map(|_| ())
+                    partial.push(v)
                 }
                 "set" => {
                     let v = values[idx % values.len()];
                     idx += 1;
-                    partial.set(v).map(|_| ())
+                    partial.set(v)
                 }
-                "end" => partial.end().map(|_| ()),
-                "build" => partial.build().map(|_| ()),
-                _ => Ok(()),
+                "end" => partial.end(),
+                _ => Ok(partial),
             };
-            if result.is_err() {
-                break;
+            match result {
+                Ok(p) => partial = p,
+                Err(_) => break,
             }
         }
     }
@@ -487,27 +467,32 @@ proptest! {
         let mut val_idx = 0;
 
         for op in ops {
+            // Handle build separately since it consumes Partial and returns HeapValue
+            if op == "build" {
+                let _ = partial.build();
+                break;
+            }
             let result = match op {
-                "begin_data" => partial.begin_field("data").map(|_| ()),
-                "begin_map" => partial.begin_map().map(|_| ()),
-                "begin_key" => partial.begin_key().map(|_| ()),
-                "begin_value" => partial.begin_value().map(|_| ()),
+                "begin_data" => partial.begin_field("data"),
+                "begin_map" => partial.begin_map(),
+                "begin_key" => partial.begin_key(),
+                "begin_value" => partial.begin_value(),
                 "set_key" => {
                     let k = &keys[key_idx % keys.len()];
                     key_idx += 1;
-                    partial.set(k.clone()).map(|_| ())
+                    partial.set(k.clone())
                 }
                 "set_value" => {
                     let v = values[val_idx % values.len()];
                     val_idx += 1;
-                    partial.set(v).map(|_| ())
+                    partial.set(v)
                 }
-                "end" => partial.end().map(|_| ()),
-                "build" => partial.build().map(|_| ()),
-                _ => Ok(()),
+                "end" => partial.end(),
+                _ => Ok(partial),
             };
-            if result.is_err() {
-                break;
+            match result {
+                Ok(p) => partial = p,
+                Err(_) => break,
             }
         }
     }
@@ -521,76 +506,96 @@ proptest! {
 #[::core::prelude::v1::test]
 fn wip_fuzz_drop_after_partial_init() {
     // Start building, set some fields, drop without finishing
-    let mut partial = Partial::alloc::<FuzzTarget>().unwrap();
-    let _ = partial.set_field("name", String::from("test"));
-    let _ = partial.set_field("count", 42u32);
+    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial = partial.set_field("name", String::from("test")).ok();
+    if let Some(partial) = partial {
+        let _ = partial.set_field("count", 42u32);
+    }
     // Drop here
 }
 
 #[::core::prelude::v1::test]
 fn wip_fuzz_drop_mid_nested() {
     // Navigate into nested struct, set a field, drop
-    let mut partial = Partial::alloc::<FuzzTarget>().unwrap();
-    let _ = partial.begin_field("nested");
-    let _ = partial.set_field("x", 10i32);
+    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial = partial.begin_field("nested").ok();
+    if let Some(partial) = partial {
+        let _ = partial.set_field("x", 10i32);
+    }
     // Drop with frame stack: [FuzzTarget, NestedStruct]
 }
 
 #[::core::prelude::v1::test]
 fn wip_fuzz_drop_mid_list() {
     // Start building a list, add some items, drop
-    let mut partial = Partial::alloc::<FuzzTarget>().unwrap();
-    let _ = partial.begin_field("items");
-    let _ = partial.begin_list();
-    let _ = partial.push(String::from("item1"));
-    let _ = partial.push(String::from("item2"));
+    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    if let Ok(partial) = partial.begin_field("items") {
+        if let Ok(partial) = partial.begin_list() {
+            if let Ok(partial) = partial.push(String::from("item1")) {
+                let _ = partial.push(String::from("item2"));
+            }
+        }
+    }
     // Drop with list partially built
 }
 
 #[::core::prelude::v1::test]
 fn wip_fuzz_drop_mid_map() {
     // Start building a map, add a key, drop before value
-    let mut partial = Partial::alloc::<FuzzTarget>().unwrap();
-    let _ = partial.begin_field("mapping");
-    let _ = partial.begin_map();
-    let _ = partial.begin_key();
-    let _ = partial.set(String::from("key1"));
-    let _ = partial.end(); // end key
-    let _ = partial.begin_value();
+    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    if let Ok(partial) = partial.begin_field("mapping") {
+        if let Ok(partial) = partial.begin_map() {
+            if let Ok(partial) = partial.begin_key() {
+                if let Ok(partial) = partial.set(String::from("key1")) {
+                    if let Ok(partial) = partial.end() {
+                        // end key
+                        let _ = partial.begin_value();
+                    }
+                }
+            }
+        }
+    }
     // Drop with map in "pushing value" state
 }
 
 #[::core::prelude::v1::test]
 fn wip_fuzz_invalid_ops_sequence() {
     // Try a bunch of invalid operations - should all return errors, not panic
-    let mut partial = Partial::alloc::<FuzzTarget>().unwrap();
 
     // Try to end when there's nothing to end
+    let partial = Partial::alloc::<FuzzTarget>().unwrap();
     assert!(partial.end().is_err());
 
     // Try to begin_list on a struct
+    let partial = Partial::alloc::<FuzzTarget>().unwrap();
     assert!(partial.begin_list().is_err());
 
     // Try to set a value on a struct (need to select field first)
+    let partial = Partial::alloc::<FuzzTarget>().unwrap();
     assert!(partial.set(42u32).is_err());
 
     // Try invalid field name
+    let partial = Partial::alloc::<FuzzTarget>().unwrap();
     assert!(partial.begin_field("nonexistent").is_err());
 
     // Try to build incomplete struct
+    let partial = Partial::alloc::<FuzzTarget>().unwrap();
     assert!(partial.build().is_err());
 }
 
 #[::core::prelude::v1::test]
 fn wip_fuzz_deferred_drop_without_finish() {
     // Enter deferred mode, do some work, drop without finish_deferred
-    let mut partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial = Partial::alloc::<FuzzTarget>().unwrap();
     let resolution = Resolution::new();
-    partial.begin_deferred(resolution).unwrap();
+    let mut partial = partial.begin_deferred(resolution).unwrap();
 
-    let _ = partial.set_field("name", String::from("test"));
-    let _ = partial.begin_field("nested");
-    let _ = partial.set_field("x", 1i32);
+    partial = partial
+        .set_field("name", String::from("test"))
+        .ok()
+        .unwrap();
+    partial = partial.begin_field("nested").ok().unwrap();
+    partial = partial.set_field("x", 1i32).ok().unwrap();
     let _ = partial.end();
     // Drop without calling finish_deferred - should clean up properly
 }
@@ -598,21 +603,24 @@ fn wip_fuzz_deferred_drop_without_finish() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_deferred_interleaved_fields() {
     // Test the re-entry pattern that deferred mode is designed for
-    let mut partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial = Partial::alloc::<FuzzTarget>().unwrap();
     let resolution = Resolution::new();
-    partial.begin_deferred(resolution).unwrap();
+    let mut partial = partial.begin_deferred(resolution).unwrap();
 
     // First visit to nested
-    let _ = partial.begin_field("nested");
-    let _ = partial.set_field("x", 1i32);
-    let _ = partial.end();
+    partial = partial.begin_field("nested").ok().unwrap();
+    partial = partial.set_field("x", 1i32).ok().unwrap();
+    partial = partial.end().ok().unwrap();
 
     // Set a top-level field
-    let _ = partial.set_field("name", String::from("test"));
+    partial = partial
+        .set_field("name", String::from("test"))
+        .ok()
+        .unwrap();
 
     // Re-enter nested
-    let _ = partial.begin_field("nested");
-    let _ = partial.set_field("y", 2i32);
+    partial = partial.begin_field("nested").ok().unwrap();
+    partial = partial.set_field("y", 2i32).ok().unwrap();
     let _ = partial.end();
 
     // Drop without finishing - tests stored frame cleanup
@@ -621,21 +629,21 @@ fn wip_fuzz_deferred_interleaved_fields() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_deferred_double_begin() {
     // Calling begin_deferred twice should return an error on the second call
-    let mut partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial = Partial::alloc::<FuzzTarget>().unwrap();
     let resolution1 = Resolution::new();
     let resolution2 = Resolution::new();
 
-    partial.begin_deferred(resolution1).unwrap();
-    assert!(partial.begin_deferred(resolution2).is_err()); // Second call should error
+    let partial = partial.begin_deferred(resolution1).unwrap();
+    assert!(partial.begin_deferred(resolution2).is_err()); // Second call should error (partial consumed)
 
-    let _ = partial.set_field("count", 42u32);
+    // Note: partial was consumed by the error above, so we can't use it anymore
     // Drop
 }
 
 #[::core::prelude::v1::test]
 fn wip_fuzz_deferred_finish_without_begin() {
     // Calling finish_deferred without begin_deferred
-    let mut partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial = Partial::alloc::<FuzzTarget>().unwrap();
     let result = partial.finish_deferred();
     // Should return an error, not panic
     assert!(result.is_err());
@@ -645,10 +653,11 @@ fn wip_fuzz_deferred_finish_without_begin() {
 /// Operations: BeginField(Name), SetString("aaaaaaaaaaaa")
 #[::core::prelude::v1::test]
 fn wip_fuzz_begin_field_set_string_drop() {
-    let mut partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial = Partial::alloc::<FuzzTarget>().unwrap();
     // BeginField(Name)
-    let _ = partial.begin_field("name");
-    // SetString("aaaaaaaaaaaa")
-    let _ = partial.set(String::from("aaaaaaaaaaaa"));
+    if let Ok(partial) = partial.begin_field("name") {
+        // SetString("aaaaaaaaaaaa")
+        let _ = partial.set(String::from("aaaaaaaaaaaa"));
+    }
     // Partial dropped here - must not leak or crash
 }

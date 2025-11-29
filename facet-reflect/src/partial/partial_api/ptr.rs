@@ -5,9 +5,8 @@ use super::*;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 impl Partial<'_> {
     /// Pushes a frame to initialize the inner value of a smart pointer (`Box<T>`, `Arc<T>`, etc.)
-    pub fn begin_smart_ptr(&mut self) -> Result<&mut Self, ReflectError> {
+    pub fn begin_smart_ptr(mut self) -> Result<Self, ReflectError> {
         crate::trace!("begin_smart_ptr()");
-        self.require_active()?;
 
         // Check that we have a SmartPointer and get necessary data
         let (smart_ptr_def, pointee_shape) = {

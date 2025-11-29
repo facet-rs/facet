@@ -159,29 +159,25 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         let document: KdlDocument = kdl.parse()?;
         log::trace!("KDL parsed");
 
-        let mut typed_partial = Partial::alloc::<T>().expect("failed to allocate");
-        log::trace!(
-            "Allocated WIP for type {}",
-            typed_partial.inner_mut().shape()
-        );
+        let partial = Partial::alloc::<T>().expect("failed to allocate");
+        let shape = partial.shape();
+        log::trace!("Allocated WIP for type {shape}");
 
-        {
-            let partial = typed_partial.inner_mut();
-            Self { kdl }.deserialize_toplevel_document(partial, document)?;
-        }
+        let partial = Self { kdl }.deserialize_toplevel_document(partial, document)?;
 
-        let boxed_value = typed_partial.build()?;
+        let heap_value = partial.build()?;
         log::trace!("WIP fully built");
         log::trace!("Type of WIP unerased");
 
-        Ok(*boxed_value)
+        let value = heap_value.materialize()?;
+        Ok(value)
     }
 
     fn deserialize_toplevel_document(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         document: KdlDocument,
-    ) -> Result<()> {
+    ) -> Result<Partial<'facet>> {
         log::trace!("Entering `deserialize_toplevel_document` method");
 
         // Check that the target type is a struct with child/children fields
@@ -213,18 +209,19 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
     fn deserialize_document(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         document: KdlDocument,
-    ) -> Result<()> {
+    ) -> Result<Partial<'facet>> {
         self.deserialize_document_with_fields(partial, document, None)
     }
 
     fn deserialize_document_with_fields(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         mut document: KdlDocument,
         override_fields: Option<&[Field]>,
-    ) -> Result<()> {
+    ) -> Result<Partial<'facet>> {
+        let mut partial = partial;
         log::trace!(
             "Entering `deserialize_document` method at {}",
             partial.path()
@@ -236,7 +233,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
         for node in document.nodes_mut().drain(..) {
             // log::trace!("Processing node: {node:#?}");
-            self.deserialize_node_with_fields(
+            partial = self.deserialize_node_with_fields(
                 partial,
                 node,
                 document_shape,
@@ -246,7 +243,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         }
 
         if children_container_state != ChildrenContainerState::None {
-            partial.end()?;
+            partial = partial.end()?;
         }
 
         log::trace!(
@@ -254,17 +251,18 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             partial.path()
         );
 
-        Ok(())
+        Ok(partial)
     }
 
     fn deserialize_node_with_fields(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         mut node: KdlNode,
         document_shape: &Shape,
         children_container_state: &mut ChildrenContainerState,
         override_fields: Option<&[Field]>,
-    ) -> Result<()> {
+    ) -> Result<Partial<'facet>> {
+        let mut partial = partial;
         log::trace!("Entering `deserialize_node` method at {}", partial.path());
 
         // Track whether we found an enum variant to select after beginning the field
@@ -337,10 +335,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             Some(FieldMatchResult::ExactChild(field_name)) => {
                 log::trace!("Node matched expected child {field_name}");
                 if *children_container_state != ChildrenContainerState::None {
-                    partial.end()?;
+                    partial = partial.end()?;
                     *children_container_state = ChildrenContainerState::None;
                 }
-                partial.begin_field(field_name)?;
+                partial = partial.begin_field(field_name)?;
             }
             Some(FieldMatchResult::EnumVariant {
                 field_name,
@@ -349,10 +347,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             }) => {
                 log::trace!("Node matched enum variant {variant_name} of field {field_name}");
                 if *children_container_state != ChildrenContainerState::None {
-                    partial.end()?;
+                    partial = partial.end()?;
                     *children_container_state = ChildrenContainerState::None;
                 }
-                partial.begin_field(field_name)?;
+                partial = partial.begin_field(field_name)?;
                 enum_variant_to_select = Some((variant_name, variant_data));
             }
             Some(FieldMatchResult::ChildrenContainer {
@@ -372,20 +370,20 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         )
                         .into());
                     }
-                    partial.begin_field(field_name)?;
+                    partial = partial.begin_field(field_name)?;
 
                     // Check if it's a Map, Set, or List type
                     match field_shape.def {
                         Def::Map(_) => {
-                            partial.begin_map()?;
+                            partial = partial.begin_map()?;
                             *children_container_state = ChildrenContainerState::Map;
                         }
                         Def::Set(_) => {
-                            partial.begin_set()?;
+                            partial = partial.begin_set()?;
                             *children_container_state = ChildrenContainerState::Set;
                         }
                         _ => {
-                            partial.begin_list()?;
+                            partial = partial.begin_list()?;
                             *children_container_state = ChildrenContainerState::List;
                         }
                     }
@@ -394,18 +392,18 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 match *children_container_state {
                     ChildrenContainerState::Map => {
                         // For maps, use node name as key
-                        partial.begin_key()?;
+                        partial = partial.begin_key()?;
                         // For transparent types (like Utf8PathBuf), we need to use begin_inner
                         // to set the inner value
                         if partial.shape().inner.is_some() {
-                            partial.begin_inner()?;
-                            partial.set(node.name().value().to_string())?;
-                            partial.end()?;
+                            partial = partial.begin_inner()?;
+                            partial = partial.set(node.name().value().to_string())?;
+                            partial = partial.end()?;
                         } else {
-                            partial.set(node.name().value().to_string())?;
+                            partial = partial.set(node.name().value().to_string())?;
                         }
-                        partial.end()?;
-                        partial.begin_value()?;
+                        partial = partial.end()?;
+                        partial = partial.begin_value()?;
 
                         // Check if the value type is a simple type (not a struct)
                         // If so, deserialize the first argument directly as the value
@@ -419,9 +417,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                                     // It's an argument (not a property)
                                     let entry_span = entry.span();
                                     let value = mem::replace(entry.value_mut(), KdlValue::Null);
-                                    self.deserialize_value(partial, value, Some(entry_span))?;
-                                    partial.end()?; // end value
-                                    return Ok(());
+                                    partial =
+                                        self.deserialize_value(partial, value, Some(entry_span))?;
+                                    partial = partial.end()?; // end value
+                                    return Ok(partial);
                                 }
                             }
                             return Err(KdlErrorKind::NoMatchingArgument.into());
@@ -429,7 +428,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         // For struct values, continue with normal processing below
                     }
                     ChildrenContainerState::List => {
-                        partial.begin_list_item()?;
+                        partial = partial.begin_list_item()?;
 
                         // After beginning the list item, check if it's an enum type
                         if let Some(enum_type) = get_enum_type(partial.shape()) {
@@ -446,7 +445,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         }
                     }
                     ChildrenContainerState::Set => {
-                        partial.begin_set_item()?;
+                        partial = partial.begin_set_item()?;
 
                         // After beginning the set item, check if it's an enum type
                         if let Some(enum_type) = get_enum_type(partial.shape()) {
@@ -483,7 +482,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 }
                 // Skip unknown child node
                 log::trace!("Skipping unknown child node '{}'", node.name().value());
-                return Ok(());
+                return Ok(partial);
             }
         }
 
@@ -496,7 +495,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 "DEBUG: Field is Option<T>, calling begin_some() at path={}",
                 partial.path()
             );
-            partial.begin_some()?;
+            partial = partial.begin_some()?;
             log::trace!(
                 "DEBUG: After begin_some() at path={}, shape={}",
                 partial.path(),
@@ -512,7 +511,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 "Field is Pointer type ({:?}), calling begin_smart_ptr()",
                 ptr_def.known
             );
-            partial.begin_smart_ptr()?;
+            partial = partial.begin_smart_ptr()?;
             entered_pointer = true;
         }
 
@@ -520,7 +519,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         let variant_fields: Option<&[Field]> =
             if let Some((variant_name, variant_data)) = enum_variant_to_select {
                 log::trace!("Selecting enum variant: {variant_name}");
-                partial.select_variant_named(variant_name)?;
+                partial = partial.select_variant_named(variant_name)?;
                 Some(variant_data.fields)
             } else {
                 None
@@ -545,18 +544,19 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             let field_shape = (node_name_field.shape)();
             if is_spanned_shape(field_shape) {
                 // Deserialize as Spanned<String>
-                partial.begin_field(node_name_field.name)?;
-                partial.begin_field("value")?;
-                partial.set(node.name().value().to_string())?;
-                partial.end()?;
-                partial.begin_field("span")?;
+                partial = partial.begin_field(node_name_field.name)?;
+                partial = partial.begin_field("value")?;
+                partial = partial.set(node.name().value().to_string())?;
+                partial = partial.end()?;
+                partial = partial.begin_field("span")?;
                 let node_name_span = node.name().span();
-                partial.set_field("offset", node_name_span.offset())?;
-                partial.set_field("len", node_name_span.len())?;
-                partial.end()?;
-                partial.end()?;
+                partial = partial.set_field("offset", node_name_span.offset())?;
+                partial = partial.set_field("len", node_name_span.len())?;
+                partial = partial.end()?;
+                partial = partial.end()?;
             } else {
-                partial.set_field(node_name_field.name, node.name().value().to_string())?;
+                partial =
+                    partial.set_field(node_name_field.name, node.name().value().to_string())?;
             }
         }
 
@@ -582,7 +582,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         if has_flatten(fields_for_matching) || is_enum {
             // Use solver-based deserialization for flattened fields
             log::trace!(" Using solver-based deserialization");
-            self.deserialize_entries_with_solver(
+            partial = self.deserialize_entries_with_solver(
                 partial,
                 &mut node,
                 fields_for_matching,
@@ -606,7 +606,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                     partial.path()
                 );
 
-                self.deserialize_entry(
+                partial = self.deserialize_entry(
                     partial,
                     entry,
                     fields_for_matching,
@@ -618,20 +618,24 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             }
 
             if in_entry_arguments_list {
-                partial.end()?;
+                partial = partial.end()?;
             }
 
             // End any open flattened field before processing children
             if let Some(flattened_name) = open_flattened_field.take() {
                 log::trace!("Ending open flattened field: {flattened_name}");
-                partial.end()?;
+                partial = partial.end()?;
             }
         }
 
         if let Some(children) = node.children_mut().take() {
             // Pass the fields_for_matching so child nodes can be matched correctly
             // This is especially important for enum variants where partial.shape() is the enum
-            self.deserialize_document_with_fields(partial, children, Some(fields_for_matching))?;
+            partial = self.deserialize_document_with_fields(
+                partial,
+                children,
+                Some(fields_for_matching),
+            )?;
         }
 
         // Set defaults for any unset fields that have the DEFAULT flag or skip attribute
@@ -642,7 +646,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 let has_skip = field.flags.contains(FieldFlags::SKIP_DESERIALIZING);
                 if field.flags.contains(FieldFlags::DEFAULT) || has_skip {
                     log::trace!("Setting default for unset field: {}", field.name);
-                    partial.set_nth_field_to_default(idx)?;
+                    partial = partial.set_nth_field_to_default(idx)?;
                 }
             }
         }
@@ -662,18 +666,18 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             partial.shape(),
             partial.frame_count()
         );
-        partial.end()?;
+        partial = partial.end()?;
 
         // If we entered a Pointer, end that too
         if entered_pointer {
             log::trace!("About to end() pointer at path={}", partial.path());
-            partial.end()?;
+            partial = partial.end()?;
         }
 
         // If we entered an Option, end that too
         if entered_option {
             log::trace!("About to end() option at path={}", partial.path());
-            partial.end()?;
+            partial = partial.end()?;
         }
 
         log::trace!(
@@ -681,18 +685,19 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             partial.path()
         );
 
-        Ok(())
+        Ok(partial)
     }
 
     fn deserialize_entry(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         mut entry: KdlEntry,
         fields: &'static [Field],
         in_entry_arguments_list: &mut bool,
         open_flattened_field: &mut Option<&'static str>,
         deny_unknown_fields: bool,
-    ) -> Result<()> {
+    ) -> Result<Partial<'facet>> {
+        let mut partial = partial;
         log::trace!("Entering `deserialize_entry` method at {}", partial.path());
 
         if let Some(name) = entry.name() {
@@ -704,23 +709,23 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         log::trace!(
                             "Closing flattened field {flattened_name} before direct property"
                         );
-                        partial.end()?;
+                        partial = partial.end()?;
                     }
-                    partial.begin_field(field_name)?;
+                    partial = partial.begin_field(field_name)?;
 
                     // Check for custom deserialization
                     let entry_span = entry.span();
                     let value = mem::replace(entry.value_mut(), KdlValue::Null);
                     if field.vtable.deserialize_with.is_some() {
-                        partial.begin_custom_deserialization()?;
-                        self.deserialize_value(partial, value, Some(entry_span))?;
-                        partial.end()?; // Calls deserialize_with function
+                        partial = partial.begin_custom_deserialization()?;
+                        partial = self.deserialize_value(partial, value, Some(entry_span))?;
+                        partial = partial.end()?; // Calls deserialize_with function
                     } else {
-                        self.deserialize_value(partial, value, Some(entry_span))?;
+                        partial = self.deserialize_value(partial, value, Some(entry_span))?;
                     }
-                    partial.end()?; // end field
+                    partial = partial.end()?; // end field
                     log::trace!("Exiting `deserialize_entry` method (direct property)");
-                    Ok(())
+                    Ok(partial)
                 }
                 Some(PropertyFieldMatch::Flattened {
                     flattened_field_name,
@@ -734,31 +739,31 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                             log::trace!(
                                 "Switching from flattened field {current} to {flattened_field_name}"
                             );
-                            partial.end()?;
-                            partial.begin_field(flattened_field_name)?;
+                            partial = partial.end()?;
+                            partial = partial.begin_field(flattened_field_name)?;
                             *open_flattened_field = Some(flattened_field_name);
                         }
                         // else: same flattened field, already open
                     } else {
                         // No flattened field open, open this one
-                        partial.begin_field(flattened_field_name)?;
+                        partial = partial.begin_field(flattened_field_name)?;
                         *open_flattened_field = Some(flattened_field_name);
                     }
                     // Now set the property inside the flattened struct
-                    partial.begin_field(property_field_name)?;
+                    partial = partial.begin_field(property_field_name)?;
                     let entry_span = entry.span();
                     let value = mem::replace(entry.value_mut(), KdlValue::Null);
                     // Check for custom deserialization on the inner field
                     if inner_field.vtable.deserialize_with.is_some() {
-                        partial.begin_custom_deserialization()?;
-                        self.deserialize_value(partial, value, Some(entry_span))?;
-                        partial.end()?; // Calls deserialize_with function
+                        partial = partial.begin_custom_deserialization()?;
+                        partial = self.deserialize_value(partial, value, Some(entry_span))?;
+                        partial = partial.end()?; // Calls deserialize_with function
                     } else {
-                        self.deserialize_value(partial, value, Some(entry_span))?;
+                        partial = self.deserialize_value(partial, value, Some(entry_span))?;
                     }
-                    partial.end()?; // end property field (but keep flattened field open)
+                    partial = partial.end()?; // end property field (but keep flattened field open)
                     log::trace!("Exiting `deserialize_entry` method (flattened property)");
-                    Ok(())
+                    Ok(partial)
                 }
                 None => {
                     // Unknown property
@@ -779,7 +784,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                     }
                     // Skip unknown property
                     log::trace!("Skipping unknown property '{}'", name.value());
-                    Ok(())
+                    Ok(partial)
                 }
             }
         } else {
@@ -794,7 +799,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 if *in_entry_arguments_list {
                     return Err(KdlErrorKind::UnexpectedArgument.into());
                 }
-                partial.begin_field(next_arg_field.name)?;
+                partial = partial.begin_field(next_arg_field.name)?;
                 argument_field = Some(next_arg_field);
             } else if let Some((args_field_index, args_field)) = fields
                 .iter()
@@ -808,11 +813,11 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         )
                         .into());
                     }
-                    partial.begin_field(args_field.name)?;
-                    partial.begin_list()?;
+                    partial = partial.begin_field(args_field.name)?;
+                    partial = partial.begin_list()?;
                     *in_entry_arguments_list = true;
                 }
-                partial.begin_list_item()?;
+                partial = partial.begin_list_item()?;
                 // For list items, deserialize_with doesn't apply to the container
                 // (it would be on the element type, but we don't have that reference here)
                 argument_field = None;
@@ -835,20 +840,20 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             // Check for custom deserialization on the argument field
             if let Some(field) = argument_field {
                 if field.vtable.deserialize_with.is_some() {
-                    partial.begin_custom_deserialization()?;
-                    self.deserialize_value(partial, value, Some(entry_span))?;
-                    partial.end()?; // Calls deserialize_with function
+                    partial = partial.begin_custom_deserialization()?;
+                    partial = self.deserialize_value(partial, value, Some(entry_span))?;
+                    partial = partial.end()?; // Calls deserialize_with function
                 } else {
-                    self.deserialize_value(partial, value, Some(entry_span))?;
+                    partial = self.deserialize_value(partial, value, Some(entry_span))?;
                 }
             } else {
                 // List item or no field reference - just deserialize directly
-                self.deserialize_value(partial, value, Some(entry_span))?;
+                partial = self.deserialize_value(partial, value, Some(entry_span))?;
             }
-            partial.end()?;
+            partial = partial.end()?;
 
             log::trace!("Exiting `deserialize_entry` method (argument)");
-            Ok(())
+            Ok(partial)
         }
     }
 
@@ -863,14 +868,15 @@ impl<'input, 'facet> KdlDeserializer<'input> {
     /// KDL value can fit into.
     fn deserialize_entries_with_solver(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         node: &mut KdlNode,
         fields: &[Field],
         deny_unknown_fields: bool,
         has_flatten: bool,
-    ) -> Result<()> {
+    ) -> Result<Partial<'facet>> {
         use std::collections::BTreeSet;
 
+        let mut partial = partial;
         log::trace!(
             "Entering `deserialize_entries_with_solver` at {}",
             partial.path()
@@ -888,18 +894,20 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         let mut solver = Solver::new(&schema);
 
         // Helper to start deferred mode once.
-        let start_deferred = |partial: &mut Partial<'facet>, res: &Resolution| -> Result<()> {
-            if has_flatten && !partial.is_deferred() {
-                partial.begin_deferred(res.clone())?;
-            }
-            Ok(())
-        };
+        let start_deferred =
+            |partial: Partial<'facet>, res: &Resolution| -> Result<Partial<'facet>> {
+                let mut partial = partial;
+                if has_flatten && !partial.is_deferred() {
+                    partial = partial.begin_deferred(res.clone())?;
+                }
+                Ok(partial)
+            };
 
         // If this shape has flatten fields and only one resolution, we can
         // enter deferred mode immediately to handle interleaved fields/children
         // without extra buffering.
         if has_flatten && resolutions.len() == 1 {
-            start_deferred(partial, &resolutions[0])?;
+            partial = start_deferred(partial, &resolutions[0])?;
         }
 
         // Check for KDL type annotation for explicit variant disambiguation
@@ -1012,7 +1020,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                     // Disambiguated by key alone
                     log::trace!("Solved to resolution: {}", resolution.describe());
                     resolved_resolution = Some(resolution);
-                    start_deferred(partial, resolution)?;
+                    partial = start_deferred(partial, resolution)?;
                 }
                 KeyResult::Unambiguous { shape: _ } => {
                     // All candidates agree on the type - continue
@@ -1092,7 +1100,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                                 resolution.describe()
                             );
                             resolved_resolution = Some(resolution);
-                            start_deferred(partial, resolution)?;
+                            partial = start_deferred(partial, resolution)?;
                         }
                         SatisfyResult::Continue => {
                             // Still multiple candidates, keep going
@@ -1156,7 +1164,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                                 resolution.describe()
                             );
                             resolved_resolution = Some(resolution);
-                            start_deferred(partial, resolution)?;
+                            partial = start_deferred(partial, resolution)?;
                         }
                         KeyResult::Unambiguous { .. } | KeyResult::Unknown => {
                             // Continue - either all agree or this child isn't tracked
@@ -1238,7 +1246,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                                                     resolution.describe()
                                                 );
                                                 resolved_resolution = Some(resolution);
-                                                start_deferred(partial, resolution)?;
+                                                partial = start_deferred(partial, resolution)?;
                                                 break;
                                             }
                                             SatisfyResult::Continue => {
@@ -1329,7 +1337,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             }
         };
 
-        start_deferred(partial, final_resolution)?;
+        partial = start_deferred(partial, final_resolution)?;
 
         log::trace!("Final resolution: {}", final_resolution.describe());
 
@@ -1342,9 +1350,9 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 .ok_or_else(|| KdlErrorKind::NoMatchingProperty(prop_name.clone()))?;
 
             let entry = &mut properties[idx];
-            self.close_paths_to(partial, &mut open_paths, &field_info.path)?;
+            partial = self.close_paths_to(partial, &mut open_paths, &field_info.path)?;
             // Always enter new Options for actual property values
-            self.open_path_to(partial, &mut open_paths, &field_info.path, true)?;
+            (partial, _) = self.open_path_to(partial, &mut open_paths, &field_info.path, true)?;
 
             let entry_span = entry.span();
             let value = mem::replace(entry.value_mut(), KdlValue::Null);
@@ -1356,13 +1364,13 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 .unwrap_or(false);
 
             if has_custom_deser {
-                partial.begin_custom_deserialization()?;
-                self.deserialize_value(partial, value, Some(entry_span))?;
-                partial.end()?; // Calls deserialize_with function
+                partial = partial.begin_custom_deserialization()?;
+                partial = self.deserialize_value(partial, value, Some(entry_span))?;
+                partial = partial.end()?; // Calls deserialize_with function
             } else {
-                self.deserialize_value(partial, value, Some(entry_span))?;
+                partial = self.deserialize_value(partial, value, Some(entry_span))?;
             }
-            partial.end()?;
+            partial = partial.end()?;
         }
 
         // Initialize missing optional fields BEFORE closing all paths
@@ -1408,12 +1416,13 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             );
 
             // Navigate to the field (may need to open intermediate structs)
-            self.close_paths_to(partial, &mut open_paths, &field_info.path)?;
+            partial = self.close_paths_to(partial, &mut open_paths, &field_info.path)?;
             // Don't enter new Options - if this field is under an unopened Option<T>,
             // skip it and record the Option field so we can set it to None
-            if let Some(option_field_name) =
-                self.open_path_to(partial, &mut open_paths, &field_info.path, false)?
-            {
+            let option_field_name;
+            (partial, option_field_name) =
+                self.open_path_to(partial, &mut open_paths, &field_info.path, false)?;
+            if let Some(option_field_name) = option_field_name {
                 log::trace!(
                     "Skipping missing optional field '{}' - inside unopened Option field '{}'",
                     field_info.serialized_name,
@@ -1422,8 +1431,8 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 skipped_option_fields.insert(option_field_name);
                 continue;
             }
-            partial.set_default()?;
-            partial.end()?; // End the field itself
+            partial = partial.set_default()?;
+            partial = partial.end()?; // End the field itself
         }
         log::trace!(" Finished processing missing_optional_fields loop");
 
@@ -1436,10 +1445,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             log::trace!("Setting skipped Option field '{option_field_name}' to None");
             log::trace!("DEBUG: Setting skipped Option field '{option_field_name}' to None");
             // Close all open paths first (we're at the root level for these fields)
-            self.close_paths_to(partial, &mut open_paths, &FieldPath::empty())?;
-            partial.begin_field(option_field_name)?;
-            partial.set_default()?; // This sets Option<T> to None
-            partial.end()?;
+            partial = self.close_paths_to(partial, &mut open_paths, &FieldPath::empty())?;
+            partial = partial.begin_field(option_field_name)?;
+            partial = partial.set_default()?; // This sets Option<T> to None
+            partial = partial.end()?;
         }
         log::trace!(" Done setting skipped option fields");
 
@@ -1486,17 +1495,19 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         // First close paths to the common prefix with the target field
                         // This handles cases like: we're inside `connection` (a flatten struct)
                         // but `logging` is a sibling field at the parent level
-                        self.close_paths_to(partial, &mut open_paths, &field_info.path)?;
+                        partial =
+                            self.close_paths_to(partial, &mut open_paths, &field_info.path)?;
 
                         // Navigate to the field using its path
                         // Don't enter new options here - we handle Option wrapping ourselves
-                        self.open_path_to(partial, &mut open_paths, &field_info.path, false)?;
+                        (partial, _) =
+                            self.open_path_to(partial, &mut open_paths, &field_info.path, false)?;
 
                         // Handle Option wrapper
                         let mut entered_option = false;
                         if let Def::Option(_) = partial.shape().def {
                             log::trace!("Child field is Option<T>, calling begin_some()");
-                            partial.begin_some()?;
+                            partial = partial.begin_some()?;
                             entered_option = true;
                         }
 
@@ -1507,7 +1518,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                             let mut open_flattened_field: Option<&'static str> = None;
 
                             for entry in child_node.entries_mut().drain(..) {
-                                self.deserialize_entry(
+                                partial = self.deserialize_entry(
                                     partial,
                                     entry,
                                     struct_def.fields,
@@ -1518,7 +1529,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                             }
 
                             if open_flattened_field.is_some() {
-                                partial.end()?;
+                                partial = partial.end()?;
                             }
 
                             // Set defaults for unset fields
@@ -1527,18 +1538,18 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                                     let has_skip =
                                         field.flags.contains(FieldFlags::SKIP_DESERIALIZING);
                                     if field.flags.contains(FieldFlags::DEFAULT) || has_skip {
-                                        partial.set_nth_field_to_default(idx)?;
+                                        partial = partial.set_nth_field_to_default(idx)?;
                                     }
                                 }
                             }
                         }
 
                         // End the struct
-                        partial.end()?;
+                        partial = partial.end()?;
 
                         // End the Option if we entered one
                         if entered_option {
-                            partial.end()?;
+                            partial = partial.end()?;
                         }
 
                         continue;
@@ -1555,13 +1566,13 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 if let Some(child_field) = fields.iter().find(|field| {
                     field.flags.contains(FieldFlags::CHILD) && field.name == child_name.as_str()
                 }) {
-                    partial.begin_field(child_field.name)?;
+                    partial = partial.begin_field(child_field.name)?;
                     let _field_shape = (child_field.shape)();
 
                     // Handle Option wrapper
                     let mut entered_option = false;
                     if let Def::Option(_) = partial.shape().def {
-                        partial.begin_some()?;
+                        partial = partial.begin_some()?;
                         entered_option = true;
                     }
 
@@ -1572,7 +1583,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         let mut open_flattened_field: Option<&'static str> = None;
 
                         for entry in child_node.entries_mut().drain(..) {
-                            self.deserialize_entry(
+                            partial = self.deserialize_entry(
                                 partial,
                                 entry,
                                 struct_def.fields,
@@ -1583,22 +1594,22 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         }
 
                         if open_flattened_field.is_some() {
-                            partial.end()?;
+                            partial = partial.end()?;
                         }
 
                         for (idx, field) in struct_def.fields.iter().enumerate() {
                             if !partial.is_field_set(idx)? {
                                 let has_skip = field.flags.contains(FieldFlags::SKIP_DESERIALIZING);
                                 if field.flags.contains(FieldFlags::DEFAULT) || has_skip {
-                                    partial.set_nth_field_to_default(idx)?;
+                                    partial = partial.set_nth_field_to_default(idx)?;
                                 }
                             }
                         }
                     }
 
-                    partial.end()?;
+                    partial = partial.end()?;
                     if entered_option {
-                        partial.end()?;
+                        partial = partial.end()?;
                     }
                 } else {
                     // Check for enum variant matching
@@ -1616,8 +1627,8 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                             None
                         })
                     {
-                        partial.begin_field(child_field.name)?;
-                        partial.select_variant_named(variant.name)?;
+                        partial = partial.begin_field(child_field.name)?;
+                        partial = partial.select_variant_named(variant.name)?;
 
                         // Deserialize variant's struct fields
                         if let Type::User(UserType::Struct(struct_def)) = &partial.shape().ty {
@@ -1626,7 +1637,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                             let mut open_flattened_field: Option<&'static str> = None;
 
                             for entry in child_node.entries_mut().drain(..) {
-                                self.deserialize_entry(
+                                partial = self.deserialize_entry(
                                     partial,
                                     entry,
                                     struct_def.fields,
@@ -1637,7 +1648,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                             }
 
                             if open_flattened_field.is_some() {
-                                partial.end()?;
+                                partial = partial.end()?;
                             }
 
                             for (idx, field) in struct_def.fields.iter().enumerate() {
@@ -1645,14 +1656,14 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                                     let has_skip =
                                         field.flags.contains(FieldFlags::SKIP_DESERIALIZING);
                                     if field.flags.contains(FieldFlags::DEFAULT) || has_skip {
-                                        partial.set_nth_field_to_default(idx)?;
+                                        partial = partial.set_nth_field_to_default(idx)?;
                                     }
                                 }
                             }
                         }
 
-                        partial.end()?; // End variant/struct
-                        partial.end()?; // End field
+                        partial = partial.end()?; // End variant/struct
+                        partial = partial.end()?; // End field
                     } else {
                         log::warn!("Unknown child node '{child_name}', skipping");
                     }
@@ -1662,7 +1673,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
         // Close all paths after processing child nodes
         log::trace!("DEBUG: About to close paths after children, open_paths={open_paths:?}");
-        self.close_paths_to(partial, &mut open_paths, &FieldPath::empty())?;
+        partial = self.close_paths_to(partial, &mut open_paths, &FieldPath::empty())?;
         log::trace!(" Closed all paths, partial.path()={}", partial.path());
 
         // Initialize any flattened enum variants that weren't already selected via property paths.
@@ -1730,17 +1741,17 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 for seg in vs.path.segments() {
                     match seg {
                         PathSegment::Field(name) => {
-                            partial.begin_field(name)?;
+                            partial = partial.begin_field(name)?;
                         }
                         PathSegment::Variant(_, variant_name) => {
-                            partial.select_variant_named(variant_name)?;
+                            partial = partial.select_variant_named(variant_name)?;
                         }
                     }
                 }
                 // Now select the variant
-                partial.select_variant_named(vs.variant_name)?;
+                partial = partial.select_variant_named(vs.variant_name)?;
                 // For unit variants, just end immediately (no fields to set)
-                partial.end()?;
+                partial = partial.end()?;
             }
         }
 
@@ -1749,7 +1760,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             "DEBUG: About to close_all_paths before arguments, open_paths len={}",
             open_paths.len()
         );
-        self.close_all_paths(partial, &mut open_paths)?;
+        partial = self.close_all_paths(partial, &mut open_paths)?;
         log::trace!(
             "DEBUG: After close_all_paths, partial.path()={}",
             partial.path()
@@ -1768,26 +1779,26 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                     return Err(KdlErrorKind::UnexpectedArgument.into());
                 }
                 let arg_field = argument_fields[argument_index];
-                partial.begin_field(arg_field.name)?;
+                partial = partial.begin_field(arg_field.name)?;
                 let entry_span = entry.span();
                 let mut entry = entry;
                 let value = mem::replace(entry.value_mut(), KdlValue::Null);
-                self.deserialize_value(partial, value, Some(entry_span))?;
-                partial.end()?;
+                partial = self.deserialize_value(partial, value, Some(entry_span))?;
+                partial = partial.end()?;
                 argument_index += 1;
             } else if let Some(args_field) = arguments_field {
                 // Arguments list
                 if !in_arguments_list {
-                    partial.begin_field(args_field.name)?;
-                    partial.begin_list()?;
+                    partial = partial.begin_field(args_field.name)?;
+                    partial = partial.begin_list()?;
                     in_arguments_list = true;
                 }
-                partial.begin_list_item()?;
+                partial = partial.begin_list_item()?;
                 let entry_span = entry.span();
                 let mut entry = entry;
                 let value = mem::replace(entry.value_mut(), KdlValue::Null);
-                self.deserialize_value(partial, value, Some(entry_span))?;
-                partial.end()?; // End list item
+                partial = self.deserialize_value(partial, value, Some(entry_span))?;
+                partial = partial.end()?; // End list item
             } else {
                 return Err(KdlErrorKind::NoMatchingArgument.into());
             }
@@ -1795,16 +1806,16 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
         // Close arguments list if open
         if in_arguments_list {
-            partial.end()?; // End list
-            partial.end()?; // End field
+            partial = partial.end()?; // End list
+            partial = partial.end()?; // End field
         }
 
         log::trace!("Exiting `deserialize_entries_with_solver`");
 
         if partial.is_deferred() {
-            partial.finish_deferred()?;
+            partial = partial.finish_deferred()?;
         }
-        Ok(())
+        Ok(partial)
     }
 
     /// Deserialize a node's content into the current shape (for solver-based child processing).
@@ -1812,17 +1823,18 @@ impl<'input, 'facet> KdlDeserializer<'input> {
     #[allow(dead_code)]
     fn deserialize_node_inner(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         mut node: KdlNode,
         _target_shape: &Shape,
-    ) -> Result<()> {
+    ) -> Result<Partial<'facet>> {
+        let mut partial = partial;
         log::trace!("deserialize_node_inner: shape = {:?}", partial.shape().ty);
 
         // Handle Option wrapper
         let mut entered_option = false;
         if let Def::Option(_) = partial.shape().def {
             log::trace!("Field is Option<T>, calling begin_some()");
-            partial.begin_some()?;
+            partial = partial.begin_some()?;
             entered_option = true;
         }
 
@@ -1841,7 +1853,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
         for entry in node.entries_mut().drain(..) {
             log::trace!("Processing entry in node_inner: {entry:?}");
-            self.deserialize_entry(
+            partial = self.deserialize_entry(
                 partial,
                 entry,
                 fields,
@@ -1852,17 +1864,17 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         }
 
         if in_entry_arguments_list {
-            partial.end()?;
+            partial = partial.end()?;
         }
 
         if let Some(flattened_name) = open_flattened_field.take() {
             log::trace!("Ending open flattened field: {flattened_name}");
-            partial.end()?;
+            partial = partial.end()?;
         }
 
         // Process nested children
         if let Some(children) = node.children_mut().take() {
-            self.deserialize_document_with_fields(partial, children, Some(fields))?;
+            partial = self.deserialize_document_with_fields(partial, children, Some(fields))?;
         }
 
         // Set defaults for unset fields
@@ -1871,7 +1883,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 let has_skip = field.flags.contains(FieldFlags::SKIP_DESERIALIZING);
                 if field.flags.contains(FieldFlags::DEFAULT) || has_skip {
                     log::trace!("Setting default for unset field: {}", field.name);
-                    partial.set_nth_field_to_default(idx)?;
+                    partial = partial.set_nth_field_to_default(idx)?;
                 }
             }
         }
@@ -1882,19 +1894,20 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
         // End Option if we entered one
         if entered_option {
-            partial.end()?;
+            partial = partial.end()?;
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Close paths from the current open state back to the common prefix with target.
     fn close_paths_to(
         &self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         open_paths: &mut Vec<OpenPathEntry>,
         target: &FieldPath,
-    ) -> Result<()> {
+    ) -> Result<Partial<'facet>> {
+        let mut partial = partial;
         let target_segments = target.segments();
 
         // Find common prefix length
@@ -1912,10 +1925,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                     PathSegment::Field(_) => {
                         // If we entered an Option for this field, close it first
                         if entry.entered_option {
-                            partial.end()?; // Close the Some wrapper
+                            partial = partial.end()?; // Close the Some wrapper
                             log::trace!("Closed Option wrapper, depth now {}", open_paths.len());
                         }
-                        partial.end()?; // Close the field itself
+                        partial = partial.end()?; // Close the field itself
                         log::trace!("Closed field segment, depth now {}", open_paths.len());
                     }
                     PathSegment::Variant(_, _) => {
@@ -1930,7 +1943,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             }
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Open path segments from current state to target (excluding the final field).
@@ -1944,11 +1957,12 @@ impl<'input, 'facet> KdlDeserializer<'input> {
     /// Returns `Ok(None)` if the path was fully opened.
     fn open_path_to(
         &self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         open_paths: &mut Vec<OpenPathEntry>,
         target: &FieldPath,
         enter_new_options: bool,
-    ) -> Result<Option<&'static str>> {
+    ) -> Result<(Partial<'facet>, Option<&'static str>)> {
+        let mut partial = partial;
         let target_segments = target.segments();
 
         // The last segment is the actual field we're setting - don't open it as a struct
@@ -1975,13 +1989,13 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                                         log::trace!(
                                             "Field {name} is Option<T>, not entering (enter_new_options=false)"
                                         );
-                                        return Ok(Some(name));
+                                        return Ok((partial, Some(name)));
                                     }
                                 }
                             }
                         }
                         log::trace!("Opening field: {name}");
-                        partial.begin_field(name)?;
+                        partial = partial.begin_field(name)?;
                         // Handle Option wrapper - if the field is Option<T>, call begin_some()
                         // to unwrap it so we can access fields inside T
                         let entered_option = if let Def::Option(_) = partial.shape().def {
@@ -1991,11 +2005,11 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                                 log::trace!(
                                     "Field {name} is Option<T> but enter_new_options=false, backing out"
                                 );
-                                partial.end()?; // Close the field we just opened
-                                return Ok(Some(name));
+                                partial = partial.end()?; // Close the field we just opened
+                                return Ok((partial, Some(name)));
                             }
                             log::trace!("Field {name} is Option<T>, calling begin_some()");
-                            partial.begin_some()?;
+                            partial = partial.begin_some()?;
                             true
                         } else {
                             false
@@ -2009,7 +2023,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         // Variant segment: the field was already entered by a preceding
                         // Field segment, so we just need to select the variant
                         log::trace!("Selecting variant: {variant_name}");
-                        partial.select_variant_named(variant_name)?;
+                        partial = partial.select_variant_named(variant_name)?;
                         open_paths.push(OpenPathEntry {
                             segment: segment.clone(),
                             entered_option: false,
@@ -2024,25 +2038,26 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             match last_segment {
                 PathSegment::Field(name) => {
                     log::trace!("Beginning final field: {name}");
-                    partial.begin_field(name)?;
+                    partial = partial.begin_field(name)?;
                 }
                 PathSegment::Variant(_field_name, variant_name) => {
                     // Unlikely for the final segment to be a variant, but handle it
                     log::trace!("Selecting final variant: {variant_name}");
-                    partial.select_variant_named(variant_name)?;
+                    partial = partial.select_variant_named(variant_name)?;
                 }
             }
         }
 
-        Ok(None)
+        Ok((partial, None))
     }
 
     /// Close all open paths.
     fn close_all_paths(
         &self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         open_paths: &mut Vec<OpenPathEntry>,
-    ) -> Result<()> {
+    ) -> Result<Partial<'facet>> {
+        let mut partial = partial;
         while !open_paths.is_empty() {
             let entry = open_paths.pop();
             if let Some(entry) = entry {
@@ -2050,10 +2065,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 if let PathSegment::Field(_) = entry.segment {
                     // If we entered an Option for this field, close it first
                     if entry.entered_option {
-                        partial.end()?; // Close the Some wrapper
+                        partial = partial.end()?; // Close the Some wrapper
                         log::trace!("Closed Option wrapper, depth now {}", open_paths.len());
                     }
-                    partial.end()?;
+                    partial = partial.end()?;
                     log::trace!("Closed field segment, depth now {}", open_paths.len());
                 } else {
                     log::trace!(
@@ -2063,16 +2078,17 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 }
             }
         }
-        Ok(())
+        Ok(partial)
     }
 
     #[allow(clippy::only_used_in_recursion)]
     fn deserialize_value(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         value: KdlValue,
         span: Option<SourceSpan>,
-    ) -> Result<()> {
+    ) -> Result<Partial<'facet>> {
+        let mut partial = partial;
         log::trace!("Entering `deserialize_value` method at {}", partial.path());
 
         log::trace!("Parsing {:?} into {}", &value, partial.path());
@@ -2082,39 +2098,39 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             log::trace!("Detected Spanned<T> wrapper at {}", partial.path());
 
             // Deserialize the inner value into the `value` field
-            partial.begin_field("value")?;
-            self.deserialize_value(partial, value, None)?; // No span for inner value
-            partial.end()?;
+            partial = partial.begin_field("value")?;
+            partial = self.deserialize_value(partial, value, None)?; // No span for inner value
+            partial = partial.end()?;
 
             // Set the span field - SourceSpan stores offset and length
-            partial.begin_field("span")?;
+            partial = partial.begin_field("span")?;
             if let Some(ss) = span {
-                partial.set_field("offset", ss.offset())?;
-                partial.set_field("len", ss.len())?;
+                partial = partial.set_field("offset", ss.offset())?;
+                partial = partial.set_field("len", ss.len())?;
             } else {
                 // No span available, use defaults (0, 0)
-                partial.set_field("offset", 0usize)?;
-                partial.set_field("len", 0usize)?;
+                partial = partial.set_field("offset", 0usize)?;
+                partial = partial.set_field("len", 0usize)?;
             }
-            partial.end()?;
+            partial = partial.end()?;
 
             log::trace!("Exiting `deserialize_value` method (Spanned path)");
-            return Ok(());
+            return Ok(partial);
         }
 
         // Handle Option<T> - either set to None (for null) or unwrap and recurse
         if let Def::Option(_) = partial.shape().def {
             if value == KdlValue::Null {
-                partial.set_default()?;
+                partial = partial.set_default()?;
                 log::trace!("Exiting `deserialize_value` method (Option None)");
-                return Ok(());
+                return Ok(partial);
             } else {
-                partial.begin_some()?;
+                partial = partial.begin_some()?;
                 // Recurse to handle the inner type (which might be Spanned<T>, etc.)
-                self.deserialize_value(partial, value, span)?;
-                partial.end()?;
+                partial = self.deserialize_value(partial, value, span)?;
+                partial = partial.end()?;
                 log::trace!("Exiting `deserialize_value` method (Option Some)");
-                return Ok(());
+                return Ok(partial);
             }
         }
 
@@ -2124,12 +2140,12 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 "Field is Pointer type ({:?}), calling begin_smart_ptr()",
                 ptr_def.known
             );
-            partial.begin_smart_ptr()?;
+            partial = partial.begin_smart_ptr()?;
             // Recurse to handle the inner type
-            self.deserialize_value(partial, value, span)?;
-            partial.end()?;
+            partial = self.deserialize_value(partial, value, span)?;
+            partial = partial.end()?;
             log::trace!("Exiting `deserialize_value` method (Pointer)");
-            return Ok(());
+            return Ok(partial);
         }
 
         // Handle transparent/inner wrapper types (like Utf8PathBuf, newtype wrappers, etc.)
@@ -2139,11 +2155,11 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 "Field has inner type, using begin_inner() for {}",
                 partial.shape().type_identifier
             );
-            partial.begin_inner()?;
-            self.deserialize_value(partial, value, span)?;
-            partial.end()?;
+            partial = partial.begin_inner()?;
+            partial = self.deserialize_value(partial, value, span)?;
+            partial = partial.end()?;
             log::trace!("Exiting `deserialize_value` method (inner/transparent)");
-            return Ok(());
+            return Ok(partial);
         }
 
         // For scalars, handle primitive values directly
@@ -2155,7 +2171,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
         match value {
             KdlValue::String(string) => {
-                partial.set(string)?;
+                partial = partial.set(string)?;
             }
             KdlValue::Integer(integer) => {
                 let size = match partial.shape().layout {
@@ -2178,20 +2194,40 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 };
                 match (ty, size) {
                     // Unsigned integers
-                    (NumericType::Integer { signed: false }, 1) => partial.set(integer as u8)?,
-                    (NumericType::Integer { signed: false }, 2) => partial.set(integer as u16)?,
-                    (NumericType::Integer { signed: false }, 4) => partial.set(integer as u32)?,
-                    (NumericType::Integer { signed: false }, 8) => partial.set(integer as u64)?,
-                    (NumericType::Integer { signed: false }, 16) => partial.set(integer as u128)?,
+                    (NumericType::Integer { signed: false }, 1) => {
+                        partial = partial.set(integer as u8)?
+                    }
+                    (NumericType::Integer { signed: false }, 2) => {
+                        partial = partial.set(integer as u16)?
+                    }
+                    (NumericType::Integer { signed: false }, 4) => {
+                        partial = partial.set(integer as u32)?
+                    }
+                    (NumericType::Integer { signed: false }, 8) => {
+                        partial = partial.set(integer as u64)?
+                    }
+                    (NumericType::Integer { signed: false }, 16) => {
+                        partial = partial.set(integer as u128)?
+                    }
                     // Signed integers
-                    (NumericType::Integer { signed: true }, 1) => partial.set(integer as i8)?,
-                    (NumericType::Integer { signed: true }, 2) => partial.set(integer as i16)?,
-                    (NumericType::Integer { signed: true }, 4) => partial.set(integer as i32)?,
-                    (NumericType::Integer { signed: true }, 8) => partial.set(integer as i64)?,
-                    (NumericType::Integer { signed: true }, 16) => partial.set(integer)?, // already i128
+                    (NumericType::Integer { signed: true }, 1) => {
+                        partial = partial.set(integer as i8)?
+                    }
+                    (NumericType::Integer { signed: true }, 2) => {
+                        partial = partial.set(integer as i16)?
+                    }
+                    (NumericType::Integer { signed: true }, 4) => {
+                        partial = partial.set(integer as i32)?
+                    }
+                    (NumericType::Integer { signed: true }, 8) => {
+                        partial = partial.set(integer as i64)?
+                    }
+                    (NumericType::Integer { signed: true }, 16) => {
+                        partial = partial.set(integer)?
+                    } // already i128
                     // Floats from integer literals
-                    (NumericType::Float, 4) => partial.set(integer as f32)?,
-                    (NumericType::Float, 8) => partial.set(integer as f64)?,
+                    (NumericType::Float, 4) => partial = partial.set(integer as f32)?,
+                    (NumericType::Float, 8) => partial = partial.set(integer as f64)?,
                     _ => {
                         return Err(KdlErrorKind::InvalidValueForShape(format!(
                             "unhandled numeric type: {ty:?} with size {size}"
@@ -2211,8 +2247,8 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                     }
                 };
                 match size {
-                    4 => partial.set(float as f32)?,
-                    8 => partial.set(float)?, // already f64
+                    4 => partial = partial.set(float as f32)?,
+                    8 => partial = partial.set(float)?, // already f64
                     _ => {
                         return Err(KdlErrorKind::InvalidValueForShape(format!(
                             "unhandled float size: {size}"
@@ -2222,7 +2258,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 };
             }
             KdlValue::Bool(bool) => {
-                partial.set(bool)?;
+                partial = partial.set(bool)?;
             }
             KdlValue::Null => {
                 // Null should have been handled by Option above
@@ -2235,7 +2271,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
         log::trace!("Exiting `deserialize_value` method");
 
-        Ok(())
+        Ok(partial)
     }
 }
 

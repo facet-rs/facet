@@ -18,7 +18,7 @@ fn struct_uninit() {
         foo: u32,
     }
 
-    let mut partial = Partial::alloc::<FooBar>().unwrap();
+    let partial = Partial::alloc::<FooBar>().unwrap();
     assert!(matches!(
         partial.build(),
         Err(ReflectError::UninitializedValue { .. })
@@ -35,18 +35,18 @@ fn enum_uninit() {
         Bar { x: u32 },
     }
 
-    let mut partial = Partial::alloc::<FooBar>().unwrap();
+    let partial = Partial::alloc::<FooBar>().unwrap();
     assert!(matches!(
         partial.build(),
         Err(ReflectError::UninitializedValue { .. })
     ));
 
     let mut partial = Partial::alloc::<FooBar>().unwrap();
-    partial.select_variant_named("Foo").unwrap();
+    partial = partial.select_variant_named("Foo").unwrap();
     assert!(partial.build().map(|_| ()).is_ok());
 
     let mut partial = Partial::alloc::<FooBar>().unwrap();
-    partial.select_variant_named("Bar").unwrap();
+    partial = partial.select_variant_named("Bar").unwrap();
     assert!(matches!(
         partial.build(),
         Err(ReflectError::UninitializedEnumField { .. })
@@ -65,7 +65,7 @@ fn list_uninit() {
 
 #[test]
 fn array_uninit() {
-    let mut partial = Partial::alloc::<[f32; 8]>().unwrap();
+    let partial = Partial::alloc::<[f32; 8]>().unwrap();
     let res = partial.build();
     assert!(
         matches!(res, Err(ReflectError::UninitializedValue { .. })),
@@ -89,7 +89,7 @@ fn smart_pointer_uninit() {
 }
 
 fn test_uninit<T: Facet<'static>>() {
-    let mut partial = Partial::alloc::<T>().unwrap();
+    let partial = Partial::alloc::<T>().unwrap();
     let res = partial.build().map(|_| ());
     assert!(
         matches!(res, Err(ReflectError::UninitializedValue { .. })),

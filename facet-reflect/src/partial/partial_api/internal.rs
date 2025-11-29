@@ -341,49 +341,6 @@ impl<'facet> Partial<'facet> {
         Ok(next_frame)
     }
 
-    /// Require that the partial is active
-    #[inline]
-    pub(crate) fn require_active(&self) -> Result<(), ReflectError> {
-        if self.state == PartialState::Active {
-            Ok(())
-        } else {
-            Err(ReflectError::InvariantViolation {
-                invariant: "Cannot use Partial after it has been built or poisoned",
-            })
-        }
-    }
-
-    /// Poisons the Partial and cleans up all frames.
-    ///
-    /// This is called when an unrecoverable error occurs (e.g., finish_deferred fails).
-    /// After poisoning:
-    /// - All frames are deinitialized and deallocated
-    /// - The Partial's state is set to BuildFailed
-    /// - All subsequent operations will fail with an error
-    ///
-    /// This prevents use-after-error bugs where continuing to use a Partial after
-    /// a failed operation could lead to memory leaks or double-frees.
-    pub(crate) fn poison_and_cleanup(&mut self) {
-        // First, clean up any stored frames (if we were in deferred mode)
-        if let FrameMode::Deferred { stored_frames, .. } = &mut self.mode {
-            for (_, mut frame) in core::mem::take(stored_frames) {
-                frame.deinit();
-                // Don't deallocate - Field ownership means parent owns the memory
-            }
-        }
-
-        // Then clean up all stack frames
-        while let Some(mut frame) = self.mode.stack_mut().pop() {
-            frame.deinit();
-            if let FrameOwnership::Owned = frame.ownership {
-                frame.dealloc();
-            }
-        }
-
-        // Mark as poisoned
-        self.state = PartialState::BuildFailed;
-    }
-
     /// Prepares the current frame for re-initialization by dropping any existing
     /// value and unmarking it in the parent's iset.
     ///

@@ -41,10 +41,12 @@ fn wip_struct_testleak1() {
         .end()
         .unwrap()
         .build()
+        .unwrap()
+        .materialize::<Outer>()
         .unwrap();
 
     assert_eq!(
-        *v,
+        v,
         Outer {
             name: String::from("Hello, world!"),
             inner: Inner { x: 42, b: 43 }

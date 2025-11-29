@@ -5,7 +5,6 @@
 //! 2. Parsing the expected JSON (tagged format) and converting to plain Value
 //! 3. Comparing with assert_same!
 
-use facet_assert::assert_same;
 use facet_value::{VDateTime, Value};
 
 /// Parse a datetime string into a VDateTime Value.
@@ -67,13 +66,12 @@ fn parse_time_with_offset(s: &str) -> (u8, u8, u8, u32, Option<i16>) {
     let second: u8 = s[6..8].parse().unwrap();
 
     let rest = &s[8..];
-    let (nanos, offset_rest) = if rest.starts_with('.') {
-        let frac_end = rest[1..]
+    let (nanos, offset_rest) = if let Some(stripped) = rest.strip_prefix('.') {
+        let frac_end = stripped
             .find(|c: char| !c.is_ascii_digit())
-            .map(|i| i + 1)
-            .unwrap_or(rest.len());
-        let nanos = parse_nanos(&rest[1..frac_end]);
-        (nanos, &rest[frac_end..])
+            .unwrap_or(stripped.len());
+        let nanos = parse_nanos(&stripped[..frac_end]);
+        (nanos, &stripped[frac_end..])
     } else {
         (0, rest)
     };
@@ -96,7 +94,7 @@ fn parse_nanos(s: &str) -> u32 {
     if digits.is_empty() {
         return 0;
     }
-    let padded = format!("{:0<9}", digits);
+    let padded = format!("{digits:0<9}");
     padded.parse().unwrap_or(0)
 }
 
@@ -161,14 +159,14 @@ fn untagged(v: &Value) -> Value {
                     // Local time: 07:32:00
                     parse_datetime_value(value_str)
                 }
-                _ => panic!("Unknown type: {}", type_),
+                _ => panic!("Unknown type: {type_}"),
             }
         } else {
             // Regular object - recurse
             Value::from_iter(obj.iter().map(|(k, v)| (k.as_str(), untagged(v))))
         }
     } else {
-        panic!("Expected object or array in tagged JSON, got {:?}", v);
+        panic!("Expected object or array in tagged JSON, got {v:?}");
     }
 }
 
@@ -190,7 +188,7 @@ fn test_valid_fixtures() {
         };
 
         // Parse TOML into Value
-        eprintln!("Testing: {}", name);
+        eprintln!("Testing: {name}");
         let actual: Result<Value, _> = facet_toml::from_str(fixture);
 
         // Parse expected JSON and convert from tagged format
@@ -208,40 +206,40 @@ fn test_valid_fixtures() {
                     }
                     facet_assert::Sameness::Different(diff) => {
                         failed += 1;
-                        println!("\n--- {} ---", name);
+                        println!("\n--- {name} ---");
                         if name.contains("implicit") {
-                            println!("TOML:\n{}", fixture);
-                            println!("Actual: {:?}", actual);
-                            println!("Expected: {:?}", expected);
+                            println!("TOML:\n{fixture}");
+                            println!("Actual: {actual:?}");
+                            println!("Expected: {expected:?}");
                         }
-                        println!("{}", diff);
+                        println!("{diff}");
                     }
                     facet_assert::Sameness::Opaque { type_name } => {
                         failed += 1;
-                        println!("\n--- {} ---", name);
-                        println!("Cannot compare opaque type: {}", type_name);
+                        println!("\n--- {name} ---");
+                        println!("Cannot compare opaque type: {type_name}");
                     }
                 }
             }
             (Err(e), _) => {
                 failed += 1;
-                println!("\n--- {} ---", name);
-                println!("Failed to parse TOML: {}", e);
+                println!("\n--- {name} ---");
+                println!("Failed to parse TOML: {e}");
             }
             (_, Err(e)) => {
                 failed += 1;
-                println!("\n--- {} ---", name);
-                println!("Failed to parse expected JSON: {}", e);
+                println!("\n--- {name} ---");
+                println!("Failed to parse expected JSON: {e}");
             }
         }
     }
 
     println!("\n=== Compliance Test Results ===");
-    println!("Passed:  {}", passed);
-    println!("Failed:  {}", failed);
-    println!("Skipped: {}", skipped);
+    println!("Passed:  {passed}");
+    println!("Failed:  {failed}");
+    println!("Skipped: {skipped}");
 
     if failed > 0 {
-        panic!("{} tests failed", failed);
+        panic!("{failed} tests failed");
     }
 }

@@ -6,8 +6,9 @@ use facet_testhelpers::test;
 // If we partially initialize a map, do we leak memory.unwrap()
 #[test]
 fn wip_map_leaktest1() {
-    let mut wip = Partial::alloc::<HashMap<String, String>>().unwrap();
-    wip.begin_map()
+    let wip = Partial::alloc::<HashMap<String, String>>()
+        .unwrap()
+        .begin_map()
         .unwrap()
         .begin_key()
         .unwrap()
@@ -20,16 +21,18 @@ fn wip_map_leaktest1() {
         .set("value".to_string())
         .unwrap()
         .end()
+        .unwrap()
+        .build()
         .unwrap();
-    let wip = wip.build().unwrap();
     drop(wip);
 }
 
 // If we partially initialize a map, do we leak memory.unwrap()
 #[test]
 fn wip_map_leaktest2() {
-    let mut wip = Partial::alloc::<HashMap<String, String>>().unwrap();
-    wip.begin_map()
+    let wip = Partial::alloc::<HashMap<String, String>>()
+        .unwrap()
+        .begin_map()
         .unwrap()
         .begin_key()
         .unwrap()
@@ -49,8 +52,9 @@ fn wip_map_leaktest2() {
 // If we partially initialize a map, do we leak memory.unwrap()
 #[test]
 fn wip_map_leaktest3() {
-    let mut wip = Partial::alloc::<HashMap<String, String>>().unwrap();
-    wip.begin_map()
+    let wip = Partial::alloc::<HashMap<String, String>>()
+        .unwrap()
+        .begin_map()
         .unwrap()
         .begin_key()
         .unwrap()
@@ -68,8 +72,9 @@ fn wip_map_leaktest3() {
 // If we partially initialize a map, do we leak memory.unwrap()
 #[test]
 fn wip_map_leaktest4() {
-    let mut wip = Partial::alloc::<HashMap<String, String>>().unwrap();
-    wip.begin_map()
+    let wip = Partial::alloc::<HashMap<String, String>>()
+        .unwrap()
+        .begin_map()
         .unwrap()
         .begin_key()
         .unwrap()
@@ -85,8 +90,9 @@ fn wip_map_leaktest4() {
 // If we partially initialize a map, do we leak memory.unwrap()
 #[test]
 fn wip_map_leaktest5() {
-    let mut wip = Partial::alloc::<HashMap<String, String>>().unwrap();
-    wip.begin_map()
+    let wip = Partial::alloc::<HashMap<String, String>>()
+        .unwrap()
+        .begin_map()
         .unwrap()
         .begin_key()
         .unwrap()
@@ -98,16 +104,22 @@ fn wip_map_leaktest5() {
 // If we partially initialize a map, do we leak memory.unwrap()
 #[test]
 fn wip_map_leaktest6() {
-    let mut wip = Partial::alloc::<HashMap<String, String>>().unwrap();
-    wip.begin_map().unwrap().begin_key().unwrap();
+    let wip = Partial::alloc::<HashMap<String, String>>()
+        .unwrap()
+        .begin_map()
+        .unwrap()
+        .begin_key()
+        .unwrap();
     drop(wip);
 }
 
 // If we partially initialize a map, do we leak memory.unwrap()
 #[test]
 fn wip_map_leaktest7() {
-    let mut wip = Partial::alloc::<HashMap<String, String>>().unwrap();
-    wip.begin_map().unwrap();
+    let wip = Partial::alloc::<HashMap<String, String>>()
+        .unwrap()
+        .begin_map()
+        .unwrap();
     drop(wip);
 }
 

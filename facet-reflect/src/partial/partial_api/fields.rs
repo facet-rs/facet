@@ -77,9 +77,7 @@ impl Partial<'_> {
     ///
     /// For enums, the variant needs to be selected first, see [Self::select_nth_variant]
     /// and friends.
-    pub fn begin_field(&mut self, field_name: &str) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
+    pub fn begin_field(self, field_name: &str) -> Result<Self, ReflectError> {
         let frame = self.frames().last().unwrap();
         let fields = self.get_fields()?;
         let Some(idx) = fields.iter().position(|f| f.name == field_name) else {
@@ -94,9 +92,7 @@ impl Partial<'_> {
     /// Begins the nth field of a struct, enum variant, or array, by index.
     ///
     /// On success, this pushes a new frame which must be ended with a call to [Partial::end]
-    pub fn begin_nth_field(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
+    pub fn begin_nth_field(mut self, idx: usize) -> Result<Self, ReflectError> {
         // In deferred mode, get the field name for path tracking and check for stored frames.
         // Only track the path if we're at a "navigable" level - i.e., the path length matches
         // the expected depth (frames.len() - 1). If we're inside a collection item, the path
@@ -220,9 +216,7 @@ impl Partial<'_> {
     /// But without going all the way up to the parent struct's `Default` impl.
     ///
     /// Errors out if idx is out of bound, if the field has no default method or Default impl.
-    pub fn set_nth_field_to_default(&mut self, idx: usize) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
+    pub fn set_nth_field_to_default(mut self, idx: usize) -> Result<Self, ReflectError> {
         let frame = self.frames().last().unwrap();
         let fields = self.get_fields()?;
 
@@ -237,23 +231,23 @@ impl Partial<'_> {
 
         // Check for field-level default function first, then type-level default
         if let Some(field_default_fn) = field.vtable.default_fn {
-            self.begin_nth_field(idx)?;
+            self = self.begin_nth_field(idx)?;
             // the field default fn should be well-behaved
-            unsafe {
+            self = unsafe {
                 self.set_from_function(|ptr| {
                     field_default_fn(ptr);
                     Ok(())
-                })?;
-            }
+                })?
+            };
             self.end()
         } else if field.shape().is(Characteristic::Default) {
-            self.begin_nth_field(idx)?;
-            self.set_default()?;
+            self = self.begin_nth_field(idx)?;
+            self = self.set_default()?;
             self.end()
         } else {
-            return Err(ReflectError::DefaultAttrButNoDefaultImpl {
+            Err(ReflectError::DefaultAttrButNoDefaultImpl {
                 shape: field.shape(),
-            });
+            })
         }
     }
 
@@ -261,10 +255,10 @@ impl Partial<'_> {
     /// field initialized, move the value from `src` to `self`, marking it as deinitialized
     /// in `src`.
     pub fn steal_nth_field(
-        &mut self,
+        mut self,
         src: &mut Partial,
         field_index: usize,
-    ) -> Result<&mut Self, ReflectError> {
+    ) -> Result<Self, ReflectError> {
         let dst_shape = self.shape();
         let src_shape = src.shape();
         if dst_shape != src_shape {
@@ -318,19 +312,21 @@ impl Partial<'_> {
 
         let src_frame = src.frames_mut().last_mut().unwrap();
 
-        self.begin_nth_field(field_index)?;
-        unsafe {
+        self = self.begin_nth_field(field_index)?;
+        self = unsafe {
             self.set_from_function(|dst_field_ptr| {
                 let src_field_ptr = src_frame.data.field_init_at(field.offset).as_const();
                 dst_field_ptr
                     .copy_from(src_field_ptr, field.shape())
                     .unwrap();
                 Ok(())
-            })?;
-        }
-        self.end()?;
+            })?
+        };
+        self = self.end()?;
 
         // now mark field as uninitialized in `src`
+        // Note: we need to get src_frame again since we moved self above
+        let src_frame = src.frames_mut().last_mut().unwrap();
         match &mut src_frame.tracker {
             Tracker::Scalar => {
                 if !src_frame.is_init {

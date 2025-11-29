@@ -4,7 +4,7 @@ use facet_reflect::Partial;
 #[test]
 fn test_empty_tuple_always_initialized() {
     // Empty tuple should always be considered initialized
-    let mut partial = Partial::alloc_shape(<()>::SHAPE).unwrap();
+    let partial = Partial::alloc_shape(<()>::SHAPE).unwrap();
 
     // Check the shape
     let shape = partial.shape();
@@ -32,14 +32,14 @@ fn test_nested_empty_tuple_field_check() {
 
     if !field_0_initialized {
         // If not initialized, try to navigate to it
-        partial.begin_nth_field(0).unwrap();
+        partial = partial.begin_nth_field(0).unwrap();
 
         // Now we're at type (), which should be considered complete
         let inner_shape = partial.shape();
         println!("Inner shape: {inner_shape:?}");
 
         // No need to set anything - it's a ZST
-        partial.end().unwrap();
+        partial = partial.end().unwrap();
     }
 
     // Build should succeed
@@ -62,12 +62,12 @@ fn test_double_empty_tuple() {
 
     // If not initialized, try setting them
     if !field_0_initialized {
-        partial.begin_nth_field(0).unwrap();
-        partial.end().unwrap();
+        partial = partial.begin_nth_field(0).unwrap();
+        partial = partial.end().unwrap();
     }
     if !field_1_initialized {
-        partial.begin_nth_field(1).unwrap();
-        partial.end().unwrap();
+        partial = partial.begin_nth_field(1).unwrap();
+        partial = partial.end().unwrap();
     }
 
     // Build should succeed
@@ -86,17 +86,17 @@ fn test_deeply_nested_empty_tuple() {
     println!("Is field 0 of (((),),) initialized? {field_0_initialized}");
 
     if !field_0_initialized {
-        partial.begin_nth_field(0).unwrap(); // Now at ((),)
+        partial = partial.begin_nth_field(0).unwrap(); // Now at ((),)
 
         let inner_field_0_initialized = partial.is_field_set(0).unwrap();
         println!("Is field 0 of ((),) initialized? {inner_field_0_initialized}");
 
         if !inner_field_0_initialized {
-            partial.begin_nth_field(0).unwrap(); // Now at ()
-            partial.end().unwrap(); // Back to ((),)
+            partial = partial.begin_nth_field(0).unwrap(); // Now at ()
+            partial = partial.end().unwrap(); // Back to ((),)
         }
 
-        partial.end().unwrap(); // Back to (((),),)
+        partial = partial.end().unwrap(); // Back to (((),),)
     }
 
     // Build should succeed
@@ -161,7 +161,7 @@ fn test_building_nested_empty_tuples_without_navigation() {
     // With the new behavior, we should be able to build trivially constructible tuples
 
     // ((),) - should now work without navigation
-    let mut partial = Partial::alloc_shape(<((),)>::SHAPE).unwrap();
+    let partial = Partial::alloc_shape(<((),)>::SHAPE).unwrap();
     let result = partial.build();
     // This will still fail because build() checks actual initialization, not just is_field_set
     assert!(
@@ -171,8 +171,8 @@ fn test_building_nested_empty_tuples_without_navigation() {
 
     // Navigation is still required for build to succeed
     let mut partial = Partial::alloc_shape(<((),)>::SHAPE).unwrap();
-    partial.begin_nth_field(0).unwrap();
-    partial.end().unwrap();
+    partial = partial.begin_nth_field(0).unwrap();
+    partial = partial.end().unwrap();
     let built = partial.build().unwrap();
     let value: ((),) = built.materialize().unwrap();
     assert_eq!(value, ((),));

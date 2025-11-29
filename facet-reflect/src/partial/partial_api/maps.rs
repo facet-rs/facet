@@ -10,8 +10,7 @@ impl Partial<'_> {
     /// It does _not_ push a new frame onto the stack.
     ///
     /// For `Def::DynamicValue` types, this initializes as an object instead of a map.
-    pub fn begin_map(&mut self) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
+    pub fn begin_map(mut self) -> Result<Self, ReflectError> {
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check tracker state before initializing
@@ -110,8 +109,7 @@ impl Partial<'_> {
     /// Pushes a frame for the map key. After that, `set()` should be called
     /// (or the key should be initialized somehow) and `end()` should be called
     /// to pop the frame.
-    pub fn begin_key(&mut self) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
+    pub fn begin_key(mut self) -> Result<Self, ReflectError> {
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a Map in Idle state
@@ -199,8 +197,7 @@ impl Partial<'_> {
 
     /// Pushes a frame for the map value
     /// Must be called after the key has been set and popped
-    pub fn begin_value(&mut self) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
+    pub fn begin_value(mut self) -> Result<Self, ReflectError> {
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a Map in PushingValue state with no value_ptr yet
@@ -294,9 +291,8 @@ impl Partial<'_> {
     /// will be inserted into the object.
     ///
     /// For `Def::Map` types, use `begin_key()` / `begin_value()` instead.
-    pub fn begin_object_entry(&mut self, key: &str) -> Result<&mut Self, ReflectError> {
+    pub fn begin_object_entry(mut self, key: &str) -> Result<Self, ReflectError> {
         crate::trace!("begin_object_entry({key:?})");
-        self.require_active()?;
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check that we have a DynamicValue in Object state with Idle insert_state

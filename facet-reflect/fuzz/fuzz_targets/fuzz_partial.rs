@@ -111,84 +111,45 @@ impl<'a> Arbitrary<'a> for SmallString {
     }
 }
 
-fn apply_op(partial: &mut Partial<'_>, op: &PartialOp) {
+/// Applies an operation to the Partial, returning the new Partial on success
+/// or None on error (which means the Partial was consumed).
+fn apply_op(partial: Partial<'_>, op: &PartialOp) -> Option<Partial<'_>> {
     match op {
-        PartialOp::BeginField(field) => {
-            let _ = partial.begin_field(field.as_str());
-        }
-        PartialOp::BeginNthField(idx) => {
-            let _ = partial.begin_nth_field(*idx as usize);
-        }
-        PartialOp::SetU32(v) => {
-            let _ = partial.set(*v);
-        }
-        PartialOp::SetI32(v) => {
-            let _ = partial.set(*v);
-        }
-        PartialOp::SetI64(v) => {
-            let _ = partial.set(*v);
-        }
-        PartialOp::SetF64(v) => {
-            let _ = partial.set(*v);
-        }
-        PartialOp::SetBool(v) => {
-            let _ = partial.set(*v);
-        }
-        PartialOp::SetString(s) => {
-            let _ = partial.set(s.0.clone());
-        }
-        PartialOp::End => {
-            let _ = partial.end();
-        }
-        PartialOp::BeginList => {
-            let _ = partial.begin_list();
-        }
-        PartialOp::BeginListItem => {
-            let _ = partial.begin_list_item();
-        }
-        PartialOp::BeginMap => {
-            let _ = partial.begin_map();
-        }
-        PartialOp::BeginKey => {
-            let _ = partial.begin_key();
-        }
-        PartialOp::BeginValue => {
-            let _ = partial.begin_value();
-        }
-        PartialOp::BeginSet => {
-            let _ = partial.begin_set();
-        }
-        PartialOp::BeginSetItem => {
-            let _ = partial.begin_set_item();
-        }
-        PartialOp::BeginSome => {
-            let _ = partial.begin_some();
-        }
-        PartialOp::BeginInner => {
-            let _ = partial.begin_inner();
-        }
-        PartialOp::BeginSmartPtr => {
-            let _ = partial.begin_smart_ptr();
-        }
-        PartialOp::SetDefault => {
-            let _ = partial.set_default();
-        }
+        PartialOp::BeginField(field) => partial.begin_field(field.as_str()).ok(),
+        PartialOp::BeginNthField(idx) => partial.begin_nth_field(*idx as usize).ok(),
+        PartialOp::SetU32(v) => partial.set(*v).ok(),
+        PartialOp::SetI32(v) => partial.set(*v).ok(),
+        PartialOp::SetI64(v) => partial.set(*v).ok(),
+        PartialOp::SetF64(v) => partial.set(*v).ok(),
+        PartialOp::SetBool(v) => partial.set(*v).ok(),
+        PartialOp::SetString(s) => partial.set(s.0.clone()).ok(),
+        PartialOp::End => partial.end().ok(),
+        PartialOp::BeginList => partial.begin_list().ok(),
+        PartialOp::BeginListItem => partial.begin_list_item().ok(),
+        PartialOp::BeginMap => partial.begin_map().ok(),
+        PartialOp::BeginKey => partial.begin_key().ok(),
+        PartialOp::BeginValue => partial.begin_value().ok(),
+        PartialOp::BeginSet => partial.begin_set().ok(),
+        PartialOp::BeginSetItem => partial.begin_set_item().ok(),
+        PartialOp::BeginSome => partial.begin_some().ok(),
+        PartialOp::BeginInner => partial.begin_inner().ok(),
+        PartialOp::BeginSmartPtr => partial.begin_smart_ptr().ok(),
+        PartialOp::SetDefault => partial.set_default().ok(),
         PartialOp::SetNthFieldToDefault(idx) => {
-            let _ = partial.set_nth_field_to_default(*idx as usize);
+            partial.set_nth_field_to_default(*idx as usize).ok()
         }
         PartialOp::BeginDeferred => {
             let resolution = Resolution::new();
-            let _ = partial.begin_deferred(resolution);
+            partial.begin_deferred(resolution).ok()
         }
-        PartialOp::FinishDeferred => {
-            let _ = partial.finish_deferred();
-        }
+        PartialOp::FinishDeferred => partial.finish_deferred().ok(),
         PartialOp::Build => {
+            // Build consumes the partial and returns a HeapValue
+            // We return None because after build, the partial is gone
             let _ = partial.build();
+            None
         }
-        PartialOp::BeginObjectEntry(key) => {
-            let _ = partial.begin_object_entry(&key.0);
-        }
+        PartialOp::BeginObjectEntry(key) => partial.begin_object_entry(&key.0).ok(),
     }
 }
 
@@ -207,21 +168,31 @@ fuzz_target!(|input: (TargetType, Vec<PartialOp>)| {
 
     match target_type {
         TargetType::FuzzTarget => {
-            if let Ok(mut typed_partial) = Partial::alloc::<FuzzTarget>() {
-                let partial = typed_partial.inner_mut();
+            if let Ok(partial) = Partial::alloc::<FuzzTarget>() {
+                let mut partial = Some(partial);
                 for op in ops {
-                    apply_op(partial, op);
+                    if let Some(p) = partial.take() {
+                        partial = apply_op(p, op);
+                    } else {
+                        // Partial was consumed by an error or build, stop
+                        break;
+                    }
                 }
-                // Partial is dropped here - must not leak or crash
+                // Partial is dropped here (if Some) - must not leak or crash
             }
         }
         TargetType::DynamicValue => {
-            if let Ok(mut typed_partial) = Partial::alloc::<Value>() {
-                let partial = typed_partial.inner_mut();
+            if let Ok(partial) = Partial::alloc::<Value>() {
+                let mut partial = Some(partial);
                 for op in ops {
-                    apply_op(partial, op);
+                    if let Some(p) = partial.take() {
+                        partial = apply_op(p, op);
+                    } else {
+                        // Partial was consumed by an error or build, stop
+                        break;
+                    }
                 }
-                // Partial is dropped here - must not leak or crash
+                // Partial is dropped here (if Some) - must not leak or crash
             }
         }
     }

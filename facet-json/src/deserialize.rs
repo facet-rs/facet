@@ -576,9 +576,9 @@ impl<'input> JsonDeserializer<'input> {
     #[allow(dead_code)]
     fn deserialize_at_path(
         &mut self,
-        wip: &mut Partial<'input>,
+        mut wip: Partial<'input>,
         field_info: &facet_solver::FieldInfo,
-    ) -> Result<()> {
+    ) -> Result<Partial<'input>> {
         let segments = field_info.path.segments();
 
         // Count only Field segments for the unwind depth
@@ -598,13 +598,13 @@ impl<'input> JsonDeserializer<'input> {
         for segment in segments {
             match segment {
                 PathSegment::Field(name) => {
-                    wip.begin_field(name)?;
+                    wip = wip.begin_field(name)?;
                 }
                 PathSegment::Variant(_field_name, variant_name) => {
                     // Variant segment just selects the variant - the field was already
                     // entered by a prior Field segment. The field_name in the Variant
                     // segment is for display/debugging only.
-                    wip.select_variant_named(variant_name)?;
+                    wip = wip.select_variant_named(variant_name)?;
                 }
             }
         }
@@ -614,17 +614,17 @@ impl<'input> JsonDeserializer<'input> {
             // For externally tagged enum variants, after selecting the variant,
             // we need to deserialize the variant's content (struct fields).
             // The JSON value is the struct content, e.g., {"field1":"a","field2":"b"}
-            self.deserialize_variant_struct_content(wip)?;
+            wip = self.deserialize_variant_struct_content(wip)?;
         } else {
-            self.deserialize_into(wip)?;
+            wip = self.deserialize_into(wip)?;
         }
 
         // Unwind the stack (call end() only for Field segments)
         for _ in 0..field_depth {
-            wip.end()?;
+            wip = wip.end()?;
         }
 
-        Ok(())
+        Ok(wip)
     }
 
     /// Check if a struct has any flattened fields.
@@ -636,7 +636,7 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Main deserialization entry point - deserialize into a Partial.
-    pub fn deserialize_into(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    pub fn deserialize_into(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
         let shape = wip.shape();
         log::trace!(
             "deserialize_into: shape={}, def={:?}",
@@ -652,8 +652,8 @@ impl<'input> JsonDeserializer<'input> {
         // Check for RawJson - capture raw bytes without parsing
         if shape == RawJson::SHAPE {
             let raw = self.capture_raw_value()?;
-            wip.set(RawJson::new(raw))?;
-            return Ok(());
+            wip = wip.set(RawJson::new(raw))?;
+            return Ok(wip);
         }
 
         // Check Def first for Option (which is also a Type::User::Enum)
@@ -673,21 +673,21 @@ impl<'input> JsonDeserializer<'input> {
         // Check for transparent/inner wrapper types (like Bytes -> BytesMut, Utf8PathBuf, etc.)
         // These should deserialize as their inner type
         if shape.inner.is_some() {
-            wip.begin_inner()?;
+            wip = wip.begin_inner()?;
             // Check if field has custom deserialization
             if wip
                 .parent_field()
                 .and_then(|field| field.vtable.deserialize_with)
                 .is_some()
             {
-                wip.begin_custom_deserialization()?;
-                self.deserialize_into(wip)?;
-                wip.end()?;
+                wip = wip.begin_custom_deserialization()?;
+                wip = self.deserialize_into(wip)?;
+                wip = wip.end()?;
             } else {
-                self.deserialize_into(wip)?;
+                wip = self.deserialize_into(wip)?;
             }
-            wip.end()?;
-            return Ok(());
+            wip = wip.end()?;
+            return Ok(wip);
         }
 
         // Check the Type - structs and enums are identified by Type, not Def
@@ -718,29 +718,29 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Deserialize into a `Spanned<T>` wrapper.
-    fn deserialize_spanned(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    fn deserialize_spanned(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
         log::trace!("deserialize_spanned");
 
         // Peek to get the span of the value we're about to parse
         let value_span = self.peek()?.span;
 
         // Deserialize the inner value into the `value` field
-        wip.begin_field("value")?;
-        self.deserialize_into(wip)?;
-        wip.end()?;
+        wip = wip.begin_field("value")?;
+        wip = self.deserialize_into(wip)?;
+        wip = wip.end()?;
 
         // Set the span field
-        wip.begin_field("span")?;
+        wip = wip.begin_field("span")?;
         // Span struct has offset and len fields
-        wip.set_field("offset", value_span.offset)?;
-        wip.set_field("len", value_span.len)?;
-        wip.end()?;
+        wip = wip.set_field("offset", value_span.offset)?;
+        wip = wip.set_field("len", value_span.len)?;
+        wip = wip.end()?;
 
-        Ok(())
+        Ok(wip)
     }
 
     /// Deserialize a scalar value.
-    fn deserialize_scalar(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    fn deserialize_scalar(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
         let expected_type = wip.shape().type_identifier;
         let token = self.next_expecting(expected_type)?;
         log::trace!("deserialize_scalar: token={:?}", token.value);
@@ -749,38 +749,38 @@ impl<'input> JsonDeserializer<'input> {
             Token::String(s) => {
                 // Try parse_from_str first if the type supports it (e.g., chrono types)
                 if wip.shape().vtable.parse.is_some() {
-                    wip.parse_from_str(&s)?;
+                    wip = wip.parse_from_str(&s)?;
                 } else if wip.shape().type_identifier == "Cow" {
                     // Zero-copy Cow<str>: preserve borrowed/owned status
-                    wip.set(s)?;
+                    wip = wip.set(s)?;
                 } else {
-                    wip.set(s.into_owned())?;
+                    wip = wip.set(s.into_owned())?;
                 }
             }
             Token::True => {
-                wip.set(true)?;
+                wip = wip.set(true)?;
             }
             Token::False => {
-                wip.set(false)?;
+                wip = wip.set(false)?;
             }
             Token::Null => {
                 // For scalars, null typically means default
-                wip.set_default()?;
+                wip = wip.set_default()?;
             }
             Token::F64(n) => {
-                self.set_number_f64(wip, n, token.span)?;
+                wip = self.set_number_f64(wip, n, token.span)?;
             }
             Token::I64(n) => {
-                self.set_number_i64(wip, n, token.span)?;
+                wip = self.set_number_i64(wip, n, token.span)?;
             }
             Token::U64(n) => {
-                self.set_number_u64(wip, n, token.span)?;
+                wip = self.set_number_u64(wip, n, token.span)?;
             }
             Token::I128(n) => {
-                self.set_number_i128(wip, n, token.span)?;
+                wip = self.set_number_i128(wip, n, token.span)?;
             }
             Token::U128(n) => {
-                self.set_number_u128(wip, n, token.span)?;
+                wip = self.set_number_u128(wip, n, token.span)?;
             }
             _ => {
                 return Err(JsonError::new(
@@ -792,51 +792,51 @@ impl<'input> JsonDeserializer<'input> {
                 ));
             }
         }
-        Ok(())
+        Ok(wip)
     }
 
     /// Deserialize any JSON value into a DynamicValue type.
     ///
     /// This handles all JSON value types: null, bool, number, string, array, and object.
-    fn deserialize_dynamic_value(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    fn deserialize_dynamic_value(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
         let token = self.peek()?;
         log::trace!("deserialize_dynamic_value: token={:?}", token.value);
 
         match token.value {
             Token::Null => {
                 self.next()?; // consume the token
-                wip.set_default()?;
+                wip = wip.set_default()?;
             }
             Token::True => {
                 self.next()?;
-                wip.set(true)?;
+                wip = wip.set(true)?;
             }
             Token::False => {
                 self.next()?;
-                wip.set(false)?;
+                wip = wip.set(false)?;
             }
             Token::I64(n) => {
                 self.next()?;
-                wip.set(n)?;
+                wip = wip.set(n)?;
             }
             Token::U64(n) => {
                 self.next()?;
                 // Store as i64 if it fits, otherwise as u64
                 if n <= i64::MAX as u64 {
-                    wip.set(n as i64)?;
+                    wip = wip.set(n as i64)?;
                 } else {
-                    wip.set(n)?;
+                    wip = wip.set(n)?;
                 }
             }
             Token::F64(n) => {
                 self.next()?;
-                wip.set(n)?;
+                wip = wip.set(n)?;
             }
             Token::I128(n) => {
                 self.next()?;
                 // Try to fit in i64
                 if let Ok(n) = i64::try_from(n) {
-                    wip.set(n)?;
+                    wip = wip.set(n)?;
                 } else {
                     return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
                         message: format!("i128 value {n} doesn't fit in dynamic value"),
@@ -847,9 +847,9 @@ impl<'input> JsonDeserializer<'input> {
                 self.next()?;
                 // Try to fit in i64 or u64
                 if let Ok(n) = i64::try_from(n) {
-                    wip.set(n)?;
+                    wip = wip.set(n)?;
                 } else if let Ok(n) = u64::try_from(n) {
-                    wip.set(n)?;
+                    wip = wip.set(n)?;
                 } else {
                     return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
                         message: format!("u128 value {n} doesn't fit in dynamic value"),
@@ -860,12 +860,12 @@ impl<'input> JsonDeserializer<'input> {
                 // Consume token and get owned string
                 let token = self.next()?;
                 if let Token::String(s) = token.value {
-                    wip.set(s.into_owned())?;
+                    wip = wip.set(s.into_owned())?;
                 }
             }
             Token::LBracket => {
                 self.next()?; // consume '['
-                wip.begin_list()?;
+                wip = wip.begin_list()?;
 
                 loop {
                     let token = self.peek()?;
@@ -874,9 +874,9 @@ impl<'input> JsonDeserializer<'input> {
                         break;
                     }
 
-                    wip.begin_list_item()?;
-                    self.deserialize_dynamic_value(wip)?;
-                    wip.end()?;
+                    wip = wip.begin_list_item()?;
+                    wip = self.deserialize_dynamic_value(wip)?;
+                    wip = wip.end()?;
 
                     let next = self.peek()?;
                     if matches!(next.value, Token::Comma) {
@@ -886,7 +886,7 @@ impl<'input> JsonDeserializer<'input> {
             }
             Token::LBrace => {
                 self.next()?; // consume '{'
-                wip.begin_map()?; // Initialize as object
+                wip = wip.begin_map()?; // Initialize as object
 
                 loop {
                     let token = self.peek()?;
@@ -923,9 +923,9 @@ impl<'input> JsonDeserializer<'input> {
                     }
 
                     // Start object entry and deserialize value
-                    wip.begin_object_entry(&key)?;
-                    self.deserialize_dynamic_value(wip)?;
-                    wip.end()?;
+                    wip = wip.begin_object_entry(&key)?;
+                    wip = self.deserialize_dynamic_value(wip)?;
+                    wip = wip.end()?;
 
                     // Check for comma or end
                     let next = self.peek()?;
@@ -944,11 +944,15 @@ impl<'input> JsonDeserializer<'input> {
                 ));
             }
         }
-        Ok(())
+        Ok(wip)
     }
 
     /// Set a string value, handling `&str`, `Cow<str>`, and `String` appropriately.
-    fn set_string_value(&mut self, wip: &mut Partial<'input>, s: Cow<'input, str>) -> Result<()> {
+    fn set_string_value(
+        &mut self,
+        mut wip: Partial<'input>,
+        s: Cow<'input, str>,
+    ) -> Result<Partial<'input>> {
         let shape = wip.shape();
 
         // Check if target is &str (shared reference to str)
@@ -960,8 +964,8 @@ impl<'input> JsonDeserializer<'input> {
             {
                 match s {
                     Cow::Borrowed(borrowed) => {
-                        wip.set(borrowed)?;
-                        return Ok(());
+                        wip = wip.set(borrowed)?;
+                        return Ok(wip);
                     }
                     Cow::Owned(_) => {
                         return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
@@ -974,17 +978,22 @@ impl<'input> JsonDeserializer<'input> {
 
         // Check if target is Cow<str>
         if shape.type_identifier == "Cow" {
-            wip.set(s)?;
-            return Ok(());
+            wip = wip.set(s)?;
+            return Ok(wip);
         }
 
         // Default: convert to owned String
-        wip.set(s.into_owned())?;
-        Ok(())
+        wip = wip.set(s.into_owned())?;
+        Ok(wip)
     }
 
     /// Set a numeric value, handling type conversions.
-    fn set_number_f64(&mut self, wip: &mut Partial<'input>, n: f64, span: Span) -> Result<()> {
+    fn set_number_f64(
+        &mut self,
+        mut wip: Partial<'input>,
+        n: f64,
+        span: Span,
+    ) -> Result<Partial<'input>> {
         let shape = wip.shape();
         let ty = match &shape.ty {
             Type::Primitive(PrimitiveType::Numeric(ty)) => ty,
@@ -1014,10 +1023,10 @@ impl<'input> JsonDeserializer<'input> {
                 };
                 match size {
                     4 => {
-                        wip.set(n as f32)?;
+                        wip = wip.set(n as f32)?;
                     }
                     8 => {
-                        wip.set(n)?;
+                        wip = wip.set(n)?;
                     }
                     _ => {
                         return Err(JsonError::new(
@@ -1041,16 +1050,21 @@ impl<'input> JsonDeserializer<'input> {
                     ));
                 }
                 if *signed {
-                    self.set_number_i64(wip, n as i64, span)?;
+                    wip = self.set_number_i64(wip, n as i64, span)?;
                 } else {
-                    self.set_number_u64(wip, n as u64, span)?;
+                    wip = self.set_number_u64(wip, n as u64, span)?;
                 }
             }
         }
-        Ok(())
+        Ok(wip)
     }
 
-    fn set_number_i64(&mut self, wip: &mut Partial<'input>, n: i64, span: Span) -> Result<()> {
+    fn set_number_i64(
+        &mut self,
+        mut wip: Partial<'input>,
+        n: i64,
+        span: Span,
+    ) -> Result<Partial<'input>> {
         let shape = wip.shape();
         let size = match shape.layout {
             ShapeLayout::Sized(layout) => layout.size(),
@@ -1078,7 +1092,7 @@ impl<'input> JsonDeserializer<'input> {
                                 span,
                             )
                         })?;
-                        wip.set(v)?;
+                        wip = wip.set(v)?;
                     }
                     2 => {
                         let v = i16::try_from(n).map_err(|_| {
@@ -1090,7 +1104,7 @@ impl<'input> JsonDeserializer<'input> {
                                 span,
                             )
                         })?;
-                        wip.set(v)?;
+                        wip = wip.set(v)?;
                     }
                     4 => {
                         let v = i32::try_from(n).map_err(|_| {
@@ -1102,13 +1116,13 @@ impl<'input> JsonDeserializer<'input> {
                                 span,
                             )
                         })?;
-                        wip.set(v)?;
+                        wip = wip.set(v)?;
                     }
                     8 => {
-                        wip.set(n)?;
+                        wip = wip.set(n)?;
                     }
                     16 => {
-                        wip.set(n as i128)?;
+                        wip = wip.set(n as i128)?;
                     }
                     _ => {
                         return Err(JsonError::new(
@@ -1130,14 +1144,14 @@ impl<'input> JsonDeserializer<'input> {
                         span,
                     ));
                 }
-                self.set_number_u64(wip, n as u64, span)?;
+                wip = self.set_number_u64(wip, n as u64, span)?;
             }
             Type::Primitive(PrimitiveType::Numeric(NumericType::Float)) => match size {
                 4 => {
-                    wip.set(n as f32)?;
+                    wip = wip.set(n as f32)?;
                 }
                 8 => {
-                    wip.set(n as f64)?;
+                    wip = wip.set(n as f64)?;
                 }
                 _ => {
                     return Err(JsonError::new(
@@ -1158,10 +1172,15 @@ impl<'input> JsonDeserializer<'input> {
                 ));
             }
         }
-        Ok(())
+        Ok(wip)
     }
 
-    fn set_number_u64(&mut self, wip: &mut Partial<'input>, n: u64, span: Span) -> Result<()> {
+    fn set_number_u64(
+        &mut self,
+        mut wip: Partial<'input>,
+        n: u64,
+        span: Span,
+    ) -> Result<Partial<'input>> {
         let shape = wip.shape();
         let size = match shape.layout {
             ShapeLayout::Sized(layout) => layout.size(),
@@ -1188,7 +1207,7 @@ impl<'input> JsonDeserializer<'input> {
                                 span,
                             )
                         })?;
-                        wip.set(v)?;
+                        wip = wip.set(v)?;
                     }
                     2 => {
                         let v = u16::try_from(n).map_err(|_| {
@@ -1200,7 +1219,7 @@ impl<'input> JsonDeserializer<'input> {
                                 span,
                             )
                         })?;
-                        wip.set(v)?;
+                        wip = wip.set(v)?;
                     }
                     4 => {
                         let v = u32::try_from(n).map_err(|_| {
@@ -1212,13 +1231,13 @@ impl<'input> JsonDeserializer<'input> {
                                 span,
                             )
                         })?;
-                        wip.set(v)?;
+                        wip = wip.set(v)?;
                     }
                     8 => {
-                        wip.set(n)?;
+                        wip = wip.set(n)?;
                     }
                     16 => {
-                        wip.set(n as u128)?;
+                        wip = wip.set(n as u128)?;
                     }
                     _ => {
                         return Err(JsonError::new(
@@ -1232,14 +1251,14 @@ impl<'input> JsonDeserializer<'input> {
             }
             Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: true })) => {
                 // Convert unsigned to signed if it fits
-                self.set_number_i64(wip, n as i64, span)?;
+                wip = self.set_number_i64(wip, n as i64, span)?;
             }
             Type::Primitive(PrimitiveType::Numeric(NumericType::Float)) => match size {
                 4 => {
-                    wip.set(n as f32)?;
+                    wip = wip.set(n as f32)?;
                 }
                 8 => {
-                    wip.set(n as f64)?;
+                    wip = wip.set(n as f64)?;
                 }
                 _ => {
                     return Err(JsonError::new(
@@ -1260,10 +1279,15 @@ impl<'input> JsonDeserializer<'input> {
                 ));
             }
         }
-        Ok(())
+        Ok(wip)
     }
 
-    fn set_number_i128(&mut self, wip: &mut Partial<'input>, n: i128, span: Span) -> Result<()> {
+    fn set_number_i128(
+        &mut self,
+        mut wip: Partial<'input>,
+        n: i128,
+        span: Span,
+    ) -> Result<Partial<'input>> {
         let shape = wip.shape();
         let size = match shape.layout {
             ShapeLayout::Sized(layout) => layout.size(),
@@ -1278,11 +1302,11 @@ impl<'input> JsonDeserializer<'input> {
         };
 
         if size == 16 {
-            wip.set(n)?;
+            wip = wip.set(n)?;
         } else {
             // Try to fit in smaller type
             if let Ok(n64) = i64::try_from(n) {
-                self.set_number_i64(wip, n64, span)?;
+                wip = self.set_number_i64(wip, n64, span)?;
             } else {
                 return Err(JsonError::new(
                     JsonErrorKind::NumberOutOfRange {
@@ -1293,10 +1317,15 @@ impl<'input> JsonDeserializer<'input> {
                 ));
             }
         }
-        Ok(())
+        Ok(wip)
     }
 
-    fn set_number_u128(&mut self, wip: &mut Partial<'input>, n: u128, span: Span) -> Result<()> {
+    fn set_number_u128(
+        &mut self,
+        mut wip: Partial<'input>,
+        n: u128,
+        span: Span,
+    ) -> Result<Partial<'input>> {
         let shape = wip.shape();
         let size = match shape.layout {
             ShapeLayout::Sized(layout) => layout.size(),
@@ -1311,11 +1340,11 @@ impl<'input> JsonDeserializer<'input> {
         };
 
         if size == 16 {
-            wip.set(n)?;
+            wip = wip.set(n)?;
         } else {
             // Try to fit in smaller type
             if let Ok(n64) = u64::try_from(n) {
-                self.set_number_u64(wip, n64, span)?;
+                wip = self.set_number_u64(wip, n64, span)?;
             } else {
                 return Err(JsonError::new(
                     JsonErrorKind::NumberOutOfRange {
@@ -1326,11 +1355,11 @@ impl<'input> JsonDeserializer<'input> {
                 ));
             }
         }
-        Ok(())
+        Ok(wip)
     }
 
     /// Deserialize a struct from a JSON object.
-    fn deserialize_struct(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    fn deserialize_struct(&mut self, wip: Partial<'input>) -> Result<Partial<'input>> {
         log::trace!("deserialize_struct: {}", wip.shape().type_identifier);
 
         // Get struct fields to check for flatten
@@ -1353,7 +1382,7 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Deserialize a struct without flattened fields (simple case).
-    fn deserialize_struct_simple(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    fn deserialize_struct_simple(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
         // Expect opening brace and track its span
         let open_token = self.next()?;
         let object_start_span = match open_token.value {
@@ -1430,16 +1459,16 @@ impl<'input> JsonDeserializer<'input> {
                         .find(|(_, f)| f.name == key.as_ref());
 
                     if let Some((idx, field)) = field_info {
-                        wip.begin_field(field.name)?;
+                        wip = wip.begin_field(field.name)?;
                         // Check if field has custom deserialization
                         if field.vtable.deserialize_with.is_some() {
-                            wip.begin_custom_deserialization()?;
-                            self.deserialize_into(wip)?;
-                            wip.end()?; // Calls deserialize_with function
+                            wip = wip.begin_custom_deserialization()?;
+                            wip = self.deserialize_into(wip)?;
+                            wip = wip.end()?; // Calls deserialize_with function
                         } else {
-                            self.deserialize_into(wip)?;
+                            wip = self.deserialize_into(wip)?;
                         }
-                        wip.end()?;
+                        wip = wip.end()?;
                         fields_set[idx] = true;
                     } else {
                         // Unknown field
@@ -1495,10 +1524,10 @@ impl<'input> JsonDeserializer<'input> {
 
             if field_has_default_fn || field_has_default_flag {
                 // Use set_nth_field_to_default which handles both default_fn and Default impl
-                wip.set_nth_field_to_default(idx)?;
+                wip = wip.set_nth_field_to_default(idx)?;
             } else if struct_has_default && field_type_has_default {
                 // Struct-level #[facet(default)] - use the field type's Default
-                wip.set_nth_field_to_default(idx)?;
+                wip = wip.set_nth_field_to_default(idx)?;
             } else {
                 // Required field is missing - raise our own error with spans
                 return Err(JsonError {
@@ -1513,7 +1542,7 @@ impl<'input> JsonDeserializer<'input> {
             }
         }
 
-        Ok(())
+        Ok(wip)
     }
 
     /// Deserialize a struct with flattened fields using facet-solver.
@@ -1521,10 +1550,13 @@ impl<'input> JsonDeserializer<'input> {
     /// This uses a two-pass approach:
     /// 1. Peek mode: Scan all keys, feed to solver, record value positions
     /// 2. Deserialize: Use the resolved Configuration to deserialize with proper path handling
-    fn deserialize_struct_with_flatten(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    fn deserialize_struct_with_flatten(
+        &mut self,
+        mut wip: Partial<'input>,
+    ) -> Result<Partial<'input>> {
         log::trace!(
-            "deserialize_struct_with_flatten: {}",
-            wip.shape().type_identifier
+            "deserialize_struct_with_flatten: {wip}",
+            wip = wip.shape().type_identifier
         );
 
         // Build the schema for this type with auto-detection of enum representations
@@ -1663,18 +1695,18 @@ impl<'input> JsonDeserializer<'input> {
             while open_segments.len() > common_len {
                 let (_, is_option) = open_segments.pop().unwrap();
                 if is_option {
-                    wip.end()?; // End the inner Some value
+                    wip = wip.end()?; // End the inner Some value
                 }
-                wip.end()?; // End the field
+                wip = wip.end()?; // End the field
             }
 
             // Open new segments
             for &segment in &field_segments[common_len..] {
-                wip.begin_field(segment)?;
+                wip = wip.begin_field(segment)?;
                 // Check if we just entered an Option field - if so, initialize it as Some
                 let is_option = matches!(wip.shape().def, Def::Option(_));
                 if is_option {
-                    wip.begin_some()?;
+                    wip = wip.begin_some()?;
                 }
                 open_segments.push((segment, is_option));
             }
@@ -1686,7 +1718,7 @@ impl<'input> JsonDeserializer<'input> {
 
             if ends_with_variant {
                 if let Some(PathSegment::Variant(_, variant_name)) = segments.last() {
-                    wip.select_variant_named(variant_name)?;
+                    wip = wip.select_variant_named(variant_name)?;
                 }
             }
 
@@ -1694,19 +1726,19 @@ impl<'input> JsonDeserializer<'input> {
             let mut sub = Self::from_offset(self.input, offset);
 
             if ends_with_variant {
-                sub.deserialize_variant_struct_content(wip)?;
+                wip = sub.deserialize_variant_struct_content(wip)?;
             } else {
                 // Pop the last segment since we're about to deserialize into it
                 // The deserialize_into will set the value directly
                 if !open_segments.is_empty() {
                     let (_, is_option) = open_segments.pop().unwrap();
-                    sub.deserialize_into(wip)?;
-                    wip.end()?;
+                    wip = sub.deserialize_into(wip)?;
+                    wip = wip.end()?;
                     if is_option {
-                        wip.end()?; // End the Option field itself
+                        wip = wip.end()?; // End the Option field itself
                     }
                 } else {
-                    sub.deserialize_into(wip)?;
+                    wip = sub.deserialize_into(wip)?;
                 }
             }
         }
@@ -1714,9 +1746,9 @@ impl<'input> JsonDeserializer<'input> {
         // Close any remaining open segments
         while let Some((_, is_option)) = open_segments.pop() {
             if is_option {
-                wip.end()?; // End the inner Some value
+                wip = wip.end()?; // End the inner Some value
             }
-            wip.end()?; // End the field
+            wip = wip.end()?; // End the field
         }
 
         // Handle missing optional fields - for flattened Option<T> fields,
@@ -1755,21 +1787,21 @@ impl<'input> JsonDeserializer<'input> {
 
             log::trace!("setting default for flattened Option field: {first_field}");
 
-            wip.begin_field(first_field)?;
+            wip = wip.begin_field(first_field)?;
             if matches!(wip.shape().def, Def::Option(_)) {
                 // This is a flattened Option field with ALL inner fields missing, set to None
-                wip.set_default()?;
+                wip = wip.set_default()?;
             }
-            wip.end()?;
+            wip = wip.end()?;
         }
 
-        Ok(())
+        Ok(wip)
     }
 
     /// Deserialize an enum.
     ///
     /// Supports externally tagged representation: `{"VariantName": data}` or `"UnitVariant"`
-    fn deserialize_enum(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    fn deserialize_enum(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
         log::trace!("deserialize_enum: {}", wip.shape().type_identifier);
 
         let token = self.peek()?;
@@ -1780,9 +1812,9 @@ impl<'input> JsonDeserializer<'input> {
                 let variant_name = s.clone();
                 self.next()?; // consume
 
-                wip.select_variant_named(&variant_name)?;
+                wip = wip.select_variant_named(&variant_name)?;
                 // Unit variants don't need further deserialization
-                Ok(())
+                Ok(wip)
             }
             // Object = externally tagged variant with data
             Token::LBrace => {
@@ -1825,7 +1857,7 @@ impl<'input> JsonDeserializer<'input> {
                 }
 
                 // Select the variant
-                wip.select_variant_named(&key)?;
+                wip = wip.select_variant_named(&key)?;
 
                 // Get the selected variant info to determine how to deserialize
                 let variant = wip.selected_variant().ok_or_else(|| {
@@ -1861,16 +1893,16 @@ impl<'input> JsonDeserializer<'input> {
                         } else if num_fields == 1 {
                             // Single-element tuple: value directly (e.g., {"X": 123})
                             let field = &variant.data.fields[0];
-                            wip.begin_nth_field(0)?;
+                            wip = wip.begin_nth_field(0)?;
                             // Check if field has custom deserialization
                             if field.vtable.deserialize_with.is_some() {
-                                wip.begin_custom_deserialization()?;
-                                self.deserialize_into(wip)?;
-                                wip.end()?; // Calls deserialize_with function
+                                wip = wip.begin_custom_deserialization()?;
+                                wip = self.deserialize_into(wip)?;
+                                wip = wip.end()?; // Calls deserialize_with function
                             } else {
-                                self.deserialize_into(wip)?;
+                                wip = self.deserialize_into(wip)?;
                             }
-                            wip.end()?;
+                            wip = wip.end()?;
                         } else {
                             // Multi-element tuple: array (e.g., {"Y": ["hello", true]})
                             let tok = self.next()?;
@@ -1886,16 +1918,16 @@ impl<'input> JsonDeserializer<'input> {
 
                             for i in 0..num_fields {
                                 let field = &variant.data.fields[i];
-                                wip.begin_nth_field(i)?;
+                                wip = wip.begin_nth_field(i)?;
                                 // Check if field has custom deserialization
                                 if field.vtable.deserialize_with.is_some() {
-                                    wip.begin_custom_deserialization()?;
-                                    self.deserialize_into(wip)?;
-                                    wip.end()?; // Calls deserialize_with function
+                                    wip = wip.begin_custom_deserialization()?;
+                                    wip = self.deserialize_into(wip)?;
+                                    wip = wip.end()?; // Calls deserialize_with function
                                 } else {
-                                    self.deserialize_into(wip)?;
+                                    wip = self.deserialize_into(wip)?;
                                 }
-                                wip.end()?;
+                                wip = wip.end()?;
 
                                 // Check for comma or closing bracket
                                 let next = self.peek()?;
@@ -1918,7 +1950,7 @@ impl<'input> JsonDeserializer<'input> {
                     }
                     StructKind::Struct => {
                         // Struct variant: object with named fields
-                        self.deserialize_variant_struct_content(wip)?;
+                        wip = self.deserialize_variant_struct_content(wip)?;
                     }
                 }
 
@@ -1934,7 +1966,7 @@ impl<'input> JsonDeserializer<'input> {
                     ));
                 }
 
-                Ok(())
+                Ok(wip)
             }
             _ => {
                 let span = token.span;
@@ -1951,7 +1983,10 @@ impl<'input> JsonDeserializer<'input> {
 
     /// Deserialize the content of an enum variant in a flattened context.
     /// Handles both struct variants and tuple variants.
-    fn deserialize_variant_struct_content(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    fn deserialize_variant_struct_content(
+        &mut self,
+        mut wip: Partial<'input>,
+    ) -> Result<Partial<'input>> {
         // Check what kind of variant we have
         let variant = wip.selected_variant().ok_or_else(|| {
             JsonError::without_span(JsonErrorKind::InvalidValue {
@@ -1972,17 +2007,17 @@ impl<'input> JsonDeserializer<'input> {
         } else if variant.data.fields.len() == 1 {
             // Single-element tuple variant: just the value (not wrapped)
             let field = &variant.data.fields[0];
-            wip.begin_nth_field(0)?;
+            wip = wip.begin_nth_field(0)?;
             // Check if field has custom deserialization
             if field.vtable.deserialize_with.is_some() {
-                wip.begin_custom_deserialization()?;
-                self.deserialize_into(wip)?;
-                wip.end()?;
+                wip = wip.begin_custom_deserialization()?;
+                wip = self.deserialize_into(wip)?;
+                wip = wip.end()?;
             } else {
-                self.deserialize_into(wip)?;
+                wip = self.deserialize_into(wip)?;
             }
-            wip.end()?;
-            Ok(())
+            wip = wip.end()?;
+            Ok(wip)
         } else {
             // Multi-element tuple variant: [val1, val2, ...]
             self.deserialize_variant_tuple_fields(wip)
@@ -1992,9 +2027,9 @@ impl<'input> JsonDeserializer<'input> {
     /// Deserialize struct fields of a variant.
     fn deserialize_variant_struct_fields(
         &mut self,
-        wip: &mut Partial<'input>,
+        mut wip: Partial<'input>,
         fields: &[facet_core::Field],
-    ) -> Result<()> {
+    ) -> Result<Partial<'input>> {
         let token = self.next()?;
         if !matches!(token.value, Token::LBrace) {
             return Err(JsonError::new(
@@ -2042,16 +2077,16 @@ impl<'input> JsonDeserializer<'input> {
             let field_info = fields.iter().find(|f| f.name == field_name.as_ref());
 
             if let Some(field) = field_info {
-                wip.begin_field(field.name)?;
+                wip = wip.begin_field(field.name)?;
                 // Check if field has custom deserialization
                 if field.vtable.deserialize_with.is_some() {
-                    wip.begin_custom_deserialization()?;
-                    self.deserialize_into(wip)?;
-                    wip.end()?; // Calls deserialize_with function
+                    wip = wip.begin_custom_deserialization()?;
+                    wip = self.deserialize_into(wip)?;
+                    wip = wip.end()?; // Calls deserialize_with function
                 } else {
-                    self.deserialize_into(wip)?;
+                    wip = self.deserialize_into(wip)?;
                 }
-                wip.end()?;
+                wip = wip.end()?;
             } else {
                 // Unknown field, skip its value
                 self.skip_value()?;
@@ -2063,11 +2098,14 @@ impl<'input> JsonDeserializer<'input> {
             }
         }
 
-        Ok(())
+        Ok(wip)
     }
 
     /// Deserialize tuple fields of a variant.
-    fn deserialize_variant_tuple_fields(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    fn deserialize_variant_tuple_fields(
+        &mut self,
+        mut wip: Partial<'input>,
+    ) -> Result<Partial<'input>> {
         let token = self.next()?;
         if !matches!(token.value, Token::LBracket) {
             return Err(JsonError::new(
@@ -2089,9 +2127,9 @@ impl<'input> JsonDeserializer<'input> {
 
             // Deserialize into field "0", "1", "2", etc.
             let field_name = alloc::format!("{idx}");
-            wip.begin_field(&field_name)?;
-            self.deserialize_into(wip)?;
-            wip.end()?;
+            wip = wip.begin_field(&field_name)?;
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end()?;
 
             idx += 1;
             let next = self.peek()?;
@@ -2100,11 +2138,11 @@ impl<'input> JsonDeserializer<'input> {
             }
         }
 
-        Ok(())
+        Ok(wip)
     }
 
     /// Deserialize a list/Vec.
-    fn deserialize_list(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    fn deserialize_list(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
         log::trace!("deserialize_list");
 
         let token = self.next()?;
@@ -2118,7 +2156,7 @@ impl<'input> JsonDeserializer<'input> {
             ));
         }
 
-        wip.begin_list()?;
+        wip = wip.begin_list()?;
 
         loop {
             let token = self.peek()?;
@@ -2127,9 +2165,9 @@ impl<'input> JsonDeserializer<'input> {
                 break;
             }
 
-            wip.begin_list_item()?;
-            self.deserialize_into(wip)?;
-            wip.end()?; // End the list item frame
+            wip = wip.begin_list_item()?;
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end()?; // End the list item frame
 
             let next = self.peek()?;
             if matches!(next.value, Token::Comma) {
@@ -2138,11 +2176,11 @@ impl<'input> JsonDeserializer<'input> {
         }
 
         // Note: begin_list() does not push a frame, so we don't call end() here
-        Ok(())
+        Ok(wip)
     }
 
     /// Deserialize a map.
-    fn deserialize_map(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    fn deserialize_map(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
         log::trace!("deserialize_map");
 
         let token = self.next()?;
@@ -2156,7 +2194,7 @@ impl<'input> JsonDeserializer<'input> {
             ));
         }
 
-        wip.begin_map()?;
+        wip = wip.begin_map()?;
 
         loop {
             let token = self.peek()?;
@@ -2193,22 +2231,22 @@ impl<'input> JsonDeserializer<'input> {
             }
 
             // Set key - begin_key pushes a frame for the key type
-            wip.begin_key()?;
+            wip = wip.begin_key()?;
             // For transparent types (like UserId(String)), we need to use begin_inner
             // to set the inner String value
             if wip.shape().inner.is_some() {
-                wip.begin_inner()?;
-                self.set_string_value(wip, key)?;
-                wip.end()?;
+                wip = wip.begin_inner()?;
+                wip = self.set_string_value(wip, key)?;
+                wip = wip.end()?;
             } else {
-                self.set_string_value(wip, key)?;
+                wip = self.set_string_value(wip, key)?;
             }
-            wip.end()?;
+            wip = wip.end()?;
 
             // Value - begin_value pushes a frame
-            wip.begin_value()?;
-            self.deserialize_into(wip)?;
-            wip.end()?;
+            wip = wip.begin_value()?;
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end()?;
 
             // Comma or end
             let next = self.peek()?;
@@ -2218,31 +2256,31 @@ impl<'input> JsonDeserializer<'input> {
         }
 
         // Note: begin_map() does not push a frame, so we don't call end() here
-        Ok(())
+        Ok(wip)
     }
 
     /// Deserialize an Option.
-    fn deserialize_option(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    fn deserialize_option(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
         log::trace!("deserialize_option");
 
         let token = self.peek()?;
         if matches!(token.value, Token::Null) {
             self.next()?;
-            wip.set_default()?; // None
+            wip = wip.set_default()?; // None
         } else {
             log::trace!("deserialize_option: calling begin_some");
-            wip.begin_some()?;
+            wip = wip.begin_some()?;
             log::trace!("deserialize_option: begin_some succeeded, calling deserialize_into");
-            self.deserialize_into(wip)?;
+            wip = self.deserialize_into(wip)?;
             log::trace!("deserialize_option: deserialize_into succeeded, calling end");
-            wip.end()?;
+            wip = wip.end()?;
             log::trace!("deserialize_option: end succeeded");
         }
-        Ok(())
+        Ok(wip)
     }
 
     /// Deserialize a smart pointer (Box, Arc, Rc) or reference (&str).
-    fn deserialize_pointer(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    fn deserialize_pointer(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
         log::trace!("deserialize_pointer");
 
         // Check what kind of pointer this is BEFORE calling begin_smart_ptr
@@ -2273,8 +2311,8 @@ impl<'input> JsonDeserializer<'input> {
             match token.value {
                 Token::String(Cow::Borrowed(s)) => {
                     // Zero-copy: borrow directly from input
-                    wip.set(s)?;
-                    return Ok(());
+                    wip = wip.set(s)?;
+                    return Ok(wip);
                 }
                 Token::String(Cow::Owned(_)) => {
                     return Err(JsonError::new(
@@ -2301,8 +2339,8 @@ impl<'input> JsonDeserializer<'input> {
         if is_reference {
             return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
                 message: format!(
-                    "cannot deserialize into reference type '{}' - references require borrowing from existing data",
-                    wip.shape().type_identifier
+                    "cannot deserialize into reference type '{wip}' - references require borrowing from existing data",
+                    wip = wip.shape().type_identifier
                 ),
             }));
         }
@@ -2311,7 +2349,7 @@ impl<'input> JsonDeserializer<'input> {
         // - Sized pointees: allocates space for the inner type
         // - str pointee: allocates a String that gets converted to Box<str>/Arc<str>/Rc<str>
         // - [T] pointee: sets up a slice builder for Arc<[T]>/Box<[T]>/Rc<[T]>
-        wip.begin_smart_ptr()?;
+        wip = wip.begin_smart_ptr()?;
 
         if is_slice_pointer {
             // This is a slice pointer like Arc<[T]> - deserialize as array
@@ -2330,15 +2368,15 @@ impl<'input> JsonDeserializer<'input> {
             let first = self.peek()?;
             if matches!(first.value, Token::RBracket) {
                 self.next()?; // consume the RBracket
-                wip.end()?;
-                return Ok(());
+                wip = wip.end()?;
+                return Ok(wip);
             }
 
             // Deserialize elements
             loop {
-                wip.begin_list_item()?;
-                self.deserialize_into(wip)?;
-                wip.end()?;
+                wip = wip.begin_list_item()?;
+                wip = self.deserialize_into(wip)?;
+                wip = wip.end()?;
 
                 let next = self.next()?;
                 match next.value {
@@ -2356,18 +2394,18 @@ impl<'input> JsonDeserializer<'input> {
                 }
             }
 
-            wip.end()?;
-            return Ok(());
+            wip = wip.end()?;
+            return Ok(wip);
         }
 
         // For non-slice pointers, deserialize the inner type directly
-        self.deserialize_into(wip)?;
-        wip.end()?;
-        Ok(())
+        wip = self.deserialize_into(wip)?;
+        wip = wip.end()?;
+        Ok(wip)
     }
 
     /// Deserialize a fixed-size array.
-    fn deserialize_array(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    fn deserialize_array(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
         log::trace!("deserialize_array");
 
         let token = self.next()?;
@@ -2406,9 +2444,9 @@ impl<'input> JsonDeserializer<'input> {
                 }
             }
 
-            wip.begin_nth_field(i)?;
-            self.deserialize_into(wip)?;
-            wip.end()?;
+            wip = wip.begin_nth_field(i)?;
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end()?;
         }
 
         let close = self.next()?;
@@ -2433,11 +2471,11 @@ impl<'input> JsonDeserializer<'input> {
             ));
         }
 
-        Ok(())
+        Ok(wip)
     }
 
     /// Deserialize a set.
-    fn deserialize_set(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    fn deserialize_set(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
         log::trace!("deserialize_set");
 
         let token = self.next()?;
@@ -2451,7 +2489,7 @@ impl<'input> JsonDeserializer<'input> {
             ));
         }
 
-        wip.begin_set()?;
+        wip = wip.begin_set()?;
 
         loop {
             let token = self.peek()?;
@@ -2460,9 +2498,9 @@ impl<'input> JsonDeserializer<'input> {
                 break;
             }
 
-            wip.begin_set_item()?;
-            self.deserialize_into(wip)?;
-            wip.end()?; // End the set item frame
+            wip = wip.begin_set_item()?;
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end()?; // End the set item frame
 
             let next = self.peek()?;
             if matches!(next.value, Token::Comma) {
@@ -2471,11 +2509,11 @@ impl<'input> JsonDeserializer<'input> {
         }
 
         // Note: begin_set() does not push a frame, so we don't call end() here
-        Ok(())
+        Ok(wip)
     }
 
     /// Deserialize a tuple.
-    fn deserialize_tuple(&mut self, wip: &mut Partial<'input>) -> Result<()> {
+    fn deserialize_tuple(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
         log::trace!("deserialize_tuple");
 
         let token = self.next()?;
@@ -2513,9 +2551,9 @@ impl<'input> JsonDeserializer<'input> {
                 }
             }
 
-            wip.begin_nth_field(i)?;
-            self.deserialize_into(wip)?;
-            wip.end()?;
+            wip = wip.begin_nth_field(i)?;
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end()?;
         }
 
         let close = self.next()?;
@@ -2529,7 +2567,7 @@ impl<'input> JsonDeserializer<'input> {
             ));
         }
 
-        Ok(())
+        Ok(wip)
     }
 }
 
@@ -2573,15 +2611,17 @@ where
     'input: 'facet,
 {
     let mut deserializer = JsonDeserializer::new(input);
-    let mut wip = Partial::alloc::<T>()?;
+    let wip = Partial::alloc::<T>()?;
 
-    let result = deserializer.deserialize_into(wip.inner_mut());
-    if let Err(mut e) = result {
-        if let Some(src) = source {
-            e.source_code = Some(src.to_string());
+    let partial = match deserializer.deserialize_into(wip) {
+        Ok(p) => p,
+        Err(mut e) => {
+            if let Some(src) = source {
+                e.source_code = Some(src.to_string());
+            }
+            return Err(e);
         }
-        return Err(e);
-    }
+    };
 
     // Check that we've consumed all input (no trailing data after the root value)
     let trailing = deserializer.peek()?;
@@ -2599,7 +2639,16 @@ where
         return Err(err);
     }
 
-    wip.build().map(|b| *b).map_err(|e| {
+    // Build and materialize the Partial into the target type
+    let heap_value = partial.build().map_err(|e| {
+        let mut err = JsonError::from(e);
+        if let Some(src) = source {
+            err.source_code = Some(src.to_string());
+        }
+        err
+    })?;
+
+    heap_value.materialize::<T>().map_err(|e| {
         let mut err = JsonError::from(e);
         if let Some(src) = source {
             err.source_code = Some(src.to_string());

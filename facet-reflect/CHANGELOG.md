@@ -69,7 +69,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking changes
 
-- Make sure `TypedPartial` and `Partial` expose the same API
 - Improve documentation somewhat
 - Retire `Partial::set_nth_element`, `Partial::set_nth_enum_field`, which are now
   served by `Partial::set_nth_field`.

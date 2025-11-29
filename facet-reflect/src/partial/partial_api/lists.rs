@@ -11,9 +11,8 @@ impl Partial<'_> {
     /// `begin_list` does not clear the list if it was previously initialized.
     /// `begin_list` does not push a new frame to the stack, and thus does not
     /// require `end` to be called afterwards.
-    pub fn begin_list(&mut self) -> Result<&mut Self, ReflectError> {
+    pub fn begin_list(mut self) -> Result<Self, ReflectError> {
         crate::trace!("begin_list()");
-        self.require_active()?;
         let frame = self.frames_mut().last_mut().unwrap();
 
         match &frame.tracker {
@@ -112,9 +111,8 @@ impl Partial<'_> {
 
     /// Pushes an element to the list
     /// The element should be set using `set()` or similar methods, then `pop()` to complete
-    pub fn begin_list_item(&mut self) -> Result<&mut Self, ReflectError> {
+    pub fn begin_list_item(mut self) -> Result<Self, ReflectError> {
         crate::trace!("begin_list_item()");
-        self.require_active()?;
         let frame = self.frames_mut().last_mut().unwrap();
 
         // Check if we're building a smart pointer slice

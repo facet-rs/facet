@@ -11,5 +11,5 @@ val=1
 val=2"#;
 
     let result: Result<Value, _> = facet_toml::from_str(toml);
-    println!("{:?}", result);
+    println!("{result:?}");
 }

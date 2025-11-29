@@ -6,7 +6,7 @@
 //! - Uses facet-solver for variant resolution
 
 use alloc::{
-    borrow::Cow,
+    borrow::{Cow, ToOwned},
     boxed::Box,
     format,
     string::{String, ToString},
@@ -207,8 +207,8 @@ fn parse_local_time(s: &str) -> Option<ParsedDateTime> {
     };
 
     // Parse optional fractional seconds
-    let nanos = if rest.starts_with('.') {
-        parse_nanos(&rest[1..])
+    let nanos = if let Some(stripped) = rest.strip_prefix('.') {
+        parse_nanos(stripped)
     } else {
         0
     };
@@ -226,14 +226,13 @@ fn parse_fractional_and_offset(s: &str) -> (u32, Option<i16>) {
         return (0, None);
     }
 
-    let (nanos, rest) = if s.starts_with('.') {
+    let (nanos, rest) = if let Some(stripped) = s.strip_prefix('.') {
         // Find where fractional part ends
-        let frac_end = s[1..]
+        let frac_end = stripped
             .find(|c: char| !c.is_ascii_digit())
-            .map(|i| i + 1)
-            .unwrap_or(s.len());
-        let nanos = parse_nanos(&s[1..frac_end]);
-        (nanos, &s[frac_end..])
+            .unwrap_or(stripped.len());
+        let nanos = parse_nanos(&stripped[..frac_end]);
+        (nanos, &stripped[frac_end..])
     } else {
         (0, s)
     };
@@ -258,7 +257,7 @@ fn parse_nanos(s: &str) -> u32 {
     if digits.is_empty() {
         return 0;
     }
-    let padded = format!("{:0<9}", digits);
+    let padded = format!("{digits:0<9}");
     padded.parse().unwrap_or(0)
 }
 
@@ -664,23 +663,20 @@ pub fn from_str_with_options<'input, 'facet, T: Facet<'facet>>(
     let root_shape = partial.shape();
 
     // Always use deferred mode for TOML (keys can come in any order)
-    if let Err(e) = partial.begin_deferred(resolution.clone()) {
-        return Err(TomlDeError::new(
-            toml,
-            TomlDeErrorKind::GenericReflect(e),
-            None,
-            partial.path(),
-        ));
-    }
+    let path = partial.path().to_owned();
+    partial = partial
+        .begin_deferred(resolution.clone())
+        .map_err(|e| TomlDeError::new(toml, TomlDeErrorKind::GenericReflect(e), None, path))?;
 
     trace!("Starting streaming deserialization");
 
     // Create deserializer and process events
     let mut deser = StreamingDeserializer::new(toml, &events, root_shape, &resolution);
-    deser.deserialize_document(partial.inner_mut())?;
+    let mut partial = deser.deserialize_document(partial)?;
 
     // Finish deferred mode - this fills defaults for unset fields and validates
-    if let Err(e) = partial.finish_deferred() {
+    let path = partial.path().to_owned();
+    partial = partial.finish_deferred().map_err(|e| {
         trace!("finish_deferred error: {e:?}");
         // Convert UninitializedField errors to ExpectedFieldWithName
         let kind = match &e {
@@ -689,11 +685,11 @@ pub fn from_str_with_options<'input, 'facet, T: Facet<'facet>>(
             }
             _ => TomlDeErrorKind::GenericReflect(e),
         };
-        return Err(TomlDeError::new(toml, kind, None, partial.path()));
-    }
+        TomlDeError::new(toml, kind, None, path)
+    })?;
 
     // Build the result
-    let result = partial.build().map_err(|e| {
+    let heap_value = partial.build().map_err(|e| {
         // Convert UninitializedField errors to ExpectedFieldWithName
         trace!("Build error: {e:?}");
         let kind = match &e {
@@ -707,7 +703,15 @@ pub fn from_str_with_options<'input, 'facet, T: Facet<'facet>>(
 
     trace!("Finished streaming deserialization");
 
-    Ok(*result)
+    // Materialize the HeapValue into the concrete type T
+    heap_value.materialize::<T>().map_err(|e| {
+        TomlDeError::new(
+            toml,
+            TomlDeErrorKind::GenericReflect(e),
+            None,
+            "$".to_string(),
+        )
+    })
 }
 
 /// Collect top-level keys from TOML events for solver disambiguation.
@@ -860,6 +864,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     // ========================================================================
 
     /// Convert a ReflectError to the appropriate TomlDeErrorKind
+    #[allow(dead_code)]
     fn reflect_error_to_kind(e: ReflectError, _partial: &Partial<'_>) -> TomlDeErrorKind {
         match e {
             // For NoSuchField errors, check if the struct has a single field
@@ -894,6 +899,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     }
 
     /// Create an error from a ReflectError
+    #[allow(dead_code)]
     fn reflect_err<'facet>(
         &self,
         e: ReflectError,
@@ -908,6 +914,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     }
 
     /// Create an error from a ReflectError with a specific span
+    #[allow(dead_code)]
     fn reflect_err_at<'facet>(
         &self,
         e: ReflectError,
@@ -922,6 +929,51 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         )
     }
 
+    /// Create an error from a ReflectError with a specific span and pre-computed path
+    /// (for use when partial has been moved by ownership-taking methods)
+    fn reflect_err_at_path(
+        &self,
+        e: ReflectError,
+        span: Range<usize>,
+        path: String,
+    ) -> TomlDeError<'input> {
+        TomlDeError::new(
+            self.source,
+            Self::reflect_error_to_kind_simple(e),
+            Some(span),
+            path,
+        )
+    }
+
+    /// Convert a ReflectError to the appropriate TomlDeErrorKind (without partial reference)
+    fn reflect_error_to_kind_simple(e: ReflectError) -> TomlDeErrorKind {
+        match e {
+            ReflectError::FieldError {
+                shape,
+                field_error: FieldError::NoSuchField,
+            } => {
+                if let Type::User(UserType::Struct(st)) = shape.ty {
+                    if st.fields.len() == 1 {
+                        return TomlDeErrorKind::ExpectedFieldWithName(st.fields[0].name);
+                    }
+                }
+                TomlDeErrorKind::GenericReflect(ReflectError::FieldError {
+                    shape,
+                    field_error: FieldError::NoSuchField,
+                })
+            }
+            ReflectError::OperationFailed { operation, .. }
+                if operation.contains("cannot select a field from") =>
+            {
+                TomlDeErrorKind::ExpectedType {
+                    expected: "value",
+                    got: "table",
+                }
+            }
+            other => TomlDeErrorKind::GenericReflect(other),
+        }
+    }
+
     // ========================================================================
     // Partial helpers - reduce duplication
     // ========================================================================
@@ -933,46 +985,69 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     }
 
     /// Call partial.end() and convert any error
-    fn end_frame<'facet>(&self, partial: &mut Partial<'facet>) -> Result<(), TomlDeError<'input>> {
-        partial
-            .end()
-            .map(|_| ())
-            .map_err(|e| self.reflect_err(e, partial))
+    fn end_frame<'facet>(
+        &self,
+        partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
+        let path = partial.path().to_owned();
+        partial.end().map_err(|e| {
+            TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericReflect(e),
+                self.current_span(),
+                path,
+            )
+        })
     }
 
     /// Call partial.begin_field() and convert any error
     fn begin_field<'facet>(
         &self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         key: &str,
-    ) -> Result<(), TomlDeError<'input>> {
-        partial
-            .begin_field(key)
-            .map(|_| ())
-            .map_err(|e| self.reflect_err(e, partial))
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
+        let path = partial.path().to_owned();
+        partial.begin_field(key).map_err(|e| {
+            TomlDeError::new(
+                self.source,
+                Self::reflect_error_to_kind_simple(e),
+                self.current_span(),
+                path,
+            )
+        })
     }
 
     /// Call partial.select_variant_named() and convert any error
     fn select_variant<'facet>(
         &self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         variant_name: &str,
-    ) -> Result<(), TomlDeError<'input>> {
-        partial
-            .select_variant_named(variant_name)
-            .map(|_| ())
-            .map_err(|e| self.reflect_err(e, partial))
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
+        let path = partial.path().to_owned();
+        partial.select_variant_named(variant_name).map_err(|e| {
+            TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericReflect(e),
+                self.current_span(),
+                path,
+            )
+        })
     }
 
     /// Call partial.begin_list_item() and convert any error
     fn begin_list_item<'facet>(
         &self,
-        partial: &mut Partial<'facet>,
-    ) -> Result<(), TomlDeError<'input>> {
-        partial
-            .begin_list_item()
-            .map(|_| ())
-            .map_err(|e| self.reflect_err(e, partial))
+        partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
+        let path = partial.path().to_owned();
+        partial.begin_list_item().map_err(|e| {
+            TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericReflect(e),
+                self.current_span(),
+                path,
+            )
+        })
     }
 
     // ========================================================================
@@ -980,30 +1055,51 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     // ========================================================================
 
     /// Call partial.begin_map() and convert any error
-    fn begin_map<'facet>(&self, partial: &mut Partial<'facet>) -> Result<(), TomlDeError<'input>> {
-        partial
-            .begin_map()
-            .map(|_| ())
-            .map_err(|e| self.reflect_err(e, partial))
+    fn begin_map<'facet>(
+        &self,
+        partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
+        let path = partial.path().to_owned();
+        partial.begin_map().map_err(|e| {
+            TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericReflect(e),
+                self.current_span(),
+                path,
+            )
+        })
     }
 
     /// Call partial.begin_key() and convert any error
-    fn begin_key<'facet>(&self, partial: &mut Partial<'facet>) -> Result<(), TomlDeError<'input>> {
-        partial
-            .begin_key()
-            .map(|_| ())
-            .map_err(|e| self.reflect_err(e, partial))
+    fn begin_key<'facet>(
+        &self,
+        partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
+        let path = partial.path().to_owned();
+        partial.begin_key().map_err(|e| {
+            TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericReflect(e),
+                self.current_span(),
+                path,
+            )
+        })
     }
 
     /// Call partial.begin_value() and convert any error
     fn begin_value<'facet>(
         &self,
-        partial: &mut Partial<'facet>,
-    ) -> Result<(), TomlDeError<'input>> {
-        partial
-            .begin_value()
-            .map(|_| ())
-            .map_err(|e| self.reflect_err(e, partial))
+        partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
+        let path = partial.path().to_owned();
+        partial.begin_value().map_err(|e| {
+            TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericReflect(e),
+                self.current_span(),
+                path,
+            )
+        })
     }
 
     // ========================================================================
@@ -1014,27 +1110,40 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     /// This records the source span while deserializing the inner value.
     fn deserialize_spanned<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         value_span: Range<usize>,
-    ) -> Result<(), TomlDeError<'input>> {
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         trace!("deserialize_spanned: span={value_span:?}");
 
+        let mut partial = partial;
+
         // Deserialize the inner value into the `value` field
-        self.begin_field(partial, "value")?;
-        self.deserialize_value(partial)?;
-        self.end_frame(partial)?;
+        partial = self.begin_field(partial, "value")?;
+        partial = self.deserialize_value(partial)?;
+        partial = self.end_frame(partial)?;
 
         // Set the span field with offset and len
-        self.begin_field(partial, "span")?;
-        if let Err(e) = partial.set_field("offset", value_span.start) {
-            return Err(self.reflect_err(e, partial));
-        }
-        if let Err(e) = partial.set_field("len", value_span.len()) {
-            return Err(self.reflect_err(e, partial));
-        }
-        self.end_frame(partial)?;
+        partial = self.begin_field(partial, "span")?;
+        let path = partial.path().to_owned();
+        partial = partial.set_field("offset", value_span.start).map_err(|e| {
+            TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericReflect(e),
+                self.current_span(),
+                path.clone(),
+            )
+        })?;
+        partial = partial.set_field("len", value_span.len()).map_err(|e| {
+            TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericReflect(e),
+                self.current_span(),
+                path,
+            )
+        })?;
+        partial = self.end_frame(partial)?;
 
-        Ok(())
+        Ok(partial)
     }
 
     // ========================================================================
@@ -1044,23 +1153,23 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     /// Push a field frame and track it
     fn push_field<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         key: &str,
-    ) -> Result<(), TomlDeError<'input>> {
-        self.begin_field(partial, key)?;
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
+        let partial = self.begin_field(partial, key)?;
         self.open_frames += 1;
-        Ok(())
+        Ok(partial)
     }
 
     /// Pop a tracked frame
     fn pop_frame<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
-    ) -> Result<(), TomlDeError<'input>> {
+        partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         debug_assert!(self.open_frames > 0, "pop_frame called with no open frames");
-        self.end_frame(partial)?;
+        let partial = self.end_frame(partial)?;
         self.open_frames -= 1;
-        Ok(())
+        Ok(partial)
     }
 
     /// Get the span for error reporting
@@ -1098,9 +1207,11 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     /// Deserialize the entire document
     fn deserialize_document<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
-    ) -> Result<(), TomlDeError<'input>> {
+        partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         trace!("deserialize_document");
+
+        let mut partial = partial;
 
         // Process all events
         while let Some(event) = self.iter.peek() {
@@ -1108,16 +1219,16 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 // Standard table header: [foo.bar]
                 EventKind::StdTableOpen => {
                     self.iter.next(); // consume
-                    self.process_table_header(partial, false)?;
+                    partial = self.process_table_header(partial, false)?;
                 }
                 // Array table header: [[foo.bar]]
                 EventKind::ArrayTableOpen => {
                     self.iter.next(); // consume
-                    self.process_table_header(partial, true)?;
+                    partial = self.process_table_header(partial, true)?;
                 }
                 // Key in a key-value pair
                 EventKind::SimpleKey => {
-                    self.process_key_value(partial)?;
+                    partial = self.process_key_value(partial)?;
                 }
                 // Skip structural tokens at document level
                 EventKind::StdTableClose | EventKind::ArrayTableClose => {
@@ -1141,24 +1252,26 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         }
 
         // Close any open flattened field
-        self.close_open_flatten(partial)?;
+        partial = self.close_open_flatten(partial)?;
 
         // Close any remaining open frames
-        self.close_all_frames(partial)?;
+        partial = self.close_all_frames(partial)?;
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Process a table header like [foo.bar] or [[foo.bar]]
     fn process_table_header<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         is_array_table: bool,
-    ) -> Result<(), TomlDeError<'input>> {
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         trace!("process_table_header (array={is_array_table})");
 
+        let mut partial = partial;
+
         // Close any open flattened field first
-        self.close_open_flatten(partial)?;
+        partial = self.close_open_flatten(partial)?;
 
         // Collect the dotted key path first (before closing frames)
         let mut path: Vec<String> = Vec::new();
@@ -1190,21 +1303,19 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 // This is a continuation of an existing array table
                 // Close frames down to the array level (not including the array itself)
                 while self.open_frames > array_frame_count {
-                    self.pop_frame(partial)?;
+                    partial = self.pop_frame(partial)?;
                 }
                 // Add a new list item
-                self.begin_list_item(partial)?;
+                partial = self.begin_list_item(partial)?;
                 self.open_frames += 1;
                 // Initialize the list item as an object
-                if let Err(e) = partial.begin_map() {
-                    return Err(self.reflect_err(e, partial));
-                }
-                return Ok(());
+                partial = self.begin_map(partial)?;
+                return Ok(partial);
             }
         }
 
         // Close any previously open frames
-        self.close_all_frames(partial)?;
+        partial = self.close_all_frames(partial)?;
 
         // Navigate into the path
         for (i, key) in path.iter().enumerate() {
@@ -1212,46 +1323,51 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
 
             if is_last && is_array_table {
                 // For [[array]] tables, we need to begin a list item
-                self.begin_field_or_list_item(partial, key, true, is_last)?;
+                partial = self.begin_field_or_list_item(partial, key, true, is_last)?;
             } else {
-                self.begin_field_or_list_item(partial, key, false, is_last)?;
+                partial = self.begin_field_or_list_item(partial, key, false, is_last)?;
             }
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Navigate into a key, handling Option unwrapping and enum variant selection.
     /// For dotted paths like value.sub where value is `Option<T>`, this unwraps into Some.
     /// For table paths like [foo.VariantName.bar], this properly selects the variant.
-    /// Returns true if a frame was pushed, false if only variant selection occurred.
+    /// Returns (partial, frame_pushed) where frame_pushed is true if a frame was pushed.
     fn navigate_into_key<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         key: &str,
-    ) -> Result<bool, TomlDeError<'input>> {
+    ) -> Result<(Partial<'facet>, bool), TomlDeError<'input>> {
         // Check for Option<T> - if we're navigating into it, unwrap into Some first
         // Option has Def::Option but may also be Type::User(UserType::Enum) due to NPO,
         // so we must check Def::Option BEFORE checking for enum variant selection
         if matches!(partial.shape().def, Def::Option(_)) {
             trace!("Unwrapping Option into Some, then navigating to: {key}");
-            partial
-                .begin_some()
-                .map(|_| ())
-                .map_err(|e| self.reflect_err(e, partial))?;
+            let path = partial.path().to_owned();
+            let partial = partial.begin_some().map_err(|e| {
+                TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::GenericReflect(e),
+                    self.current_span(),
+                    path,
+                )
+            })?;
             self.open_frames += 1;
             // Now we're inside the Some variant, continue to navigate to the key
             return self.navigate_into_key(partial, key);
         }
 
-        if Self::needs_variant_selection(partial) {
+        if Self::needs_variant_selection(&partial) {
             trace!("Selecting enum variant: {key}");
-            self.select_variant(partial, key)?;
-            Ok(false) // No frame pushed
+            let partial = self.select_variant(partial, key)?;
+            Ok((partial, false)) // No frame pushed
         } else {
             trace!("Begin field: {key}");
-            self.push_field(partial, key)?;
-            Ok(true) // Frame pushed
+            let partial = self.push_field(partial, key)?;
+            Ok((partial, true)) // Frame pushed
         }
     }
 
@@ -1259,14 +1375,16 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     /// Used for table header navigation like `[foo.bar]` or `[[items]]`.
     fn begin_field_or_list_item<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         key: &str,
         is_array_item: bool,
         is_last_in_path: bool,
-    ) -> Result<(), TomlDeError<'input>> {
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         trace!(
             "begin_field_or_list_item: {key} (array_item={is_array_item}, is_last={is_last_in_path})"
         );
+
+        let mut partial = partial;
 
         // Check if we're at a map - need special handling
         if let Def::Map(map_def) = &partial.shape().def {
@@ -1292,82 +1410,105 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             }
 
             // Initialize the map
-            self.begin_map(partial)?;
+            partial = self.begin_map(partial)?;
 
             // Start a map entry
-            self.begin_key(partial)?;
-            if let Err(e) = partial.set(key.to_string()) {
-                return Err(self.reflect_err(e, partial));
-            }
-            self.end_frame(partial)?;
+            partial = self.begin_key(partial)?;
+            let path = partial.path().to_owned();
+            partial = partial.set(key.to_string()).map_err(|e| {
+                TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::GenericReflect(e),
+                    self.current_span(),
+                    path,
+                )
+            })?;
+            partial = self.end_frame(partial)?;
 
             // Begin the value
-            self.begin_value(partial)?;
+            partial = self.begin_value(partial)?;
             self.open_frames += 1; // Track that we opened a value frame
 
             // Handle array item within map value
             if is_array_item {
-                partial
-                    .begin_list()
-                    .map(|_| ())
-                    .map_err(|e| self.reflect_err(e, partial))?;
-                self.begin_list_item(partial)?;
+                let path = partial.path().to_owned();
+                partial = partial.begin_list().map_err(|e| {
+                    TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericReflect(e),
+                        self.current_span(),
+                        path,
+                    )
+                })?;
+                partial = self.begin_list_item(partial)?;
                 self.open_frames += 1;
             }
 
-            return Ok(());
+            return Ok(partial);
         }
 
         // Check if we're at a DynamicValue - treat it like a map/object
         if matches!(partial.shape().def, Def::DynamicValue(_)) {
             // Initialize root as object
-            if let Err(e) = partial.begin_map() {
-                return Err(self.reflect_err(e, partial));
-            }
+            partial = self.begin_map(partial)?;
 
             if is_array_item {
                 // Array table [[key]] - create entry with array value
                 // Note: continuations of existing array tables are handled in process_table_header
-                if let Err(e) = partial.begin_object_entry(key) {
-                    return Err(self.reflect_err(e, partial));
-                }
+                let path = partial.path().to_owned();
+                partial = partial.begin_object_entry(key).map_err(|e| {
+                    TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericReflect(e),
+                        self.current_span(),
+                        path,
+                    )
+                })?;
                 self.open_frames += 1;
 
                 // Initialize as array
-                partial
-                    .begin_list()
-                    .map(|_| ())
-                    .map_err(|e| self.reflect_err(e, partial))?;
+                let path = partial.path().to_owned();
+                partial = partial.begin_list().map_err(|e| {
+                    TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericReflect(e),
+                        self.current_span(),
+                        path,
+                    )
+                })?;
 
                 // Track this array table key and the frame count at the array level
                 self.dynamic_array_tables
                     .insert(key.to_string(), self.open_frames);
 
                 // Add the first list item
-                self.begin_list_item(partial)?;
+                partial = self.begin_list_item(partial)?;
                 self.open_frames += 1;
 
                 // Initialize the list item as an object
-                if let Err(e) = partial.begin_map() {
-                    return Err(self.reflect_err(e, partial));
-                }
+                partial = self.begin_map(partial)?;
             } else {
                 // Regular table [key] - create object entry
-                if let Err(e) = partial.begin_object_entry(key) {
-                    return Err(self.reflect_err(e, partial));
-                }
+                let path = partial.path().to_owned();
+                partial = partial.begin_object_entry(key).map_err(|e| {
+                    TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericReflect(e),
+                        self.current_span(),
+                        path,
+                    )
+                })?;
                 self.open_frames += 1;
 
                 // Initialize the entry's value as an object
-                if let Err(e) = partial.begin_map() {
-                    return Err(self.reflect_err(e, partial));
-                }
+                partial = self.begin_map(partial)?;
             }
 
-            return Ok(());
+            return Ok(partial);
         }
 
-        self.navigate_into_key(partial, key)?;
+        let (new_partial, _frame_pushed) = self.navigate_into_key(partial, key)?;
+        partial = new_partial;
 
         // After navigating into the field, check if it's a scalar type
         // Table headers can't point to scalar types (but structs and other compound types are OK)
@@ -1390,40 +1531,46 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         if is_array_item {
             // For array tables [[items]], we need to begin the list first
             // begin_list() is idempotent - returns Ok if already initialized
-            partial
-                .begin_list()
-                .map(|_| ())
-                .map_err(|e| self.reflect_err(e, partial))?;
+            let path = partial.path().to_owned();
+            partial = partial.begin_list().map_err(|e| {
+                TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::GenericReflect(e),
+                    self.current_span(),
+                    path,
+                )
+            })?;
             trace!("Ensured list is initialized");
 
             // Now add the list item
-            self.begin_list_item(partial)?;
+            partial = self.begin_list_item(partial)?;
             self.open_frames += 1;
         } else if matches!(partial.shape().def, Def::Map(_)) {
             // For maps, initialize the map so subsequent key-value pairs are treated as entries
             trace!("Initializing map");
-            self.begin_map(partial)?;
+            partial = self.begin_map(partial)?;
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Close all tracked open frames
     fn close_all_frames<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
-    ) -> Result<(), TomlDeError<'input>> {
+        partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
+        let mut partial = partial;
         while self.open_frames > 0 {
-            self.pop_frame(partial)?;
+            partial = self.pop_frame(partial)?;
         }
-        Ok(())
+        Ok(partial)
     }
 
     /// Process a key-value pair like `foo.bar = value`
     fn process_key_value<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
-    ) -> Result<(), TomlDeError<'input>> {
+        partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         // Collect the dotted key path
         self.current_keys.clear();
         while let Some(event) = self.iter.peek() {
@@ -1450,8 +1597,10 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
 
         let keys_len = self.current_keys.len();
         if keys_len == 0 {
-            return Ok(());
+            return Ok(partial);
         }
+
+        let mut partial = partial;
 
         // For the first key, check if it's a flattened field at the document root
         let first_key = self.current_keys[0];
@@ -1462,14 +1611,19 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 FieldLocation::Direct { field_name } => {
                     // Simple case: navigate directly
                     trace!("Direct field: {field_name}");
-                    self.navigate_and_deserialize_direct(partial, &self.current_keys.clone())?;
+                    partial =
+                        self.navigate_and_deserialize_direct(partial, &self.current_keys.clone())?;
                 }
                 FieldLocation::FlattenedStruct {
                     flatten_field_name,
                     inner_field_name,
                 } => {
                     trace!("Flattened struct field: {flatten_field_name}.{inner_field_name}");
-                    self.navigate_flattened_struct(partial, flatten_field_name, inner_field_name)?;
+                    partial = self.navigate_flattened_struct(
+                        partial,
+                        flatten_field_name,
+                        inner_field_name,
+                    )?;
                 }
                 FieldLocation::FlattenedEnum {
                     flatten_field_name,
@@ -1480,7 +1634,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                         "Flattened enum field: {}.{}.{}",
                         flatten_field_name, variant.variant_name, inner_field_name
                     );
-                    self.navigate_flattened_enum(
+                    partial = self.navigate_flattened_enum(
                         partial,
                         flatten_field_name,
                         variant.variant_name,
@@ -1490,10 +1644,10 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             }
         } else {
             // Fallback: try direct navigation (may fail for unknown fields)
-            self.navigate_and_deserialize_direct(partial, &self.current_keys.clone())?;
+            partial = self.navigate_and_deserialize_direct(partial, &self.current_keys.clone())?;
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Navigate directly to a field path and deserialize.
@@ -1512,12 +1666,14 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     /// because all frames opened here are also closed here.
     fn navigate_and_deserialize_direct<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         keys: &[&str],
-    ) -> Result<(), TomlDeError<'input>> {
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         if keys.is_empty() {
-            return Ok(());
+            return Ok(partial);
         }
+
+        let mut partial = partial;
 
         // Track frames we open locally (so we can close them)
         let mut local_frames: Vec<bool> = Vec::with_capacity(keys.len());
@@ -1527,7 +1683,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             // Check if we're at a map - if so, treat remaining keys as map entries
             if matches!(partial.shape().def, Def::Map(_)) {
                 // Ensure map is initialized
-                self.begin_map(partial)?;
+                partial = self.begin_map(partial)?;
 
                 // The current key is the map key, remaining keys (if any) would be
                 // nested paths into the value - for TOML, we typically just have one key
@@ -1536,88 +1692,101 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 let remaining_keys = &keys[i + 1..];
 
                 // Insert map entry: begin_key, set key, end, begin_value, deserialize, end
-                self.begin_key(partial)?;
-                if let Err(e) = partial.set(map_key.to_string()) {
-                    return Err(self.reflect_err(e, partial));
-                }
-                self.end_frame(partial)?;
+                partial = self.begin_key(partial)?;
+                let path = partial.path().to_owned();
+                partial = partial.set(map_key.to_string()).map_err(|e| {
+                    TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericReflect(e),
+                        self.current_span(),
+                        path,
+                    )
+                })?;
+                partial = self.end_frame(partial)?;
 
-                self.begin_value(partial)?;
+                partial = self.begin_value(partial)?;
                 if remaining_keys.is_empty() {
                     // No more keys, deserialize the value directly
-                    self.deserialize_value(partial)?;
+                    partial = self.deserialize_value(partial)?;
                 } else {
                     // More keys - navigate into the value (recursively)
-                    self.navigate_and_deserialize_direct(partial, remaining_keys)?;
+                    partial = self.navigate_and_deserialize_direct(partial, remaining_keys)?;
                 }
-                self.end_frame(partial)?;
+                partial = self.end_frame(partial)?;
 
                 // Close all frames we opened during navigation
                 for pushed in local_frames.into_iter().rev() {
                     if pushed {
-                        self.pop_frame(partial)?;
+                        partial = self.pop_frame(partial)?;
                     }
                 }
-                return Ok(());
+                return Ok(partial);
             }
 
             // Check if we're at a DynamicValue - treat it like a map/object
             if matches!(partial.shape().def, Def::DynamicValue(_)) {
                 // Initialize as object
-                if let Err(e) = partial.begin_map() {
-                    return Err(self.reflect_err(e, partial));
-                }
+                partial = self.begin_map(partial)?;
 
                 let entry_key = *key;
                 let remaining_keys = &keys[i + 1..];
 
                 // Start object entry with this key
-                if let Err(e) = partial.begin_object_entry(entry_key) {
-                    return Err(self.reflect_err(e, partial));
-                }
+                let path = partial.path().to_owned();
+                partial = partial.begin_object_entry(entry_key).map_err(|e| {
+                    TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericReflect(e),
+                        self.current_span(),
+                        path,
+                    )
+                })?;
 
                 if remaining_keys.is_empty() {
                     // No more keys, deserialize the value directly
-                    self.deserialize_dynamic_value(partial)?;
+                    partial = self.deserialize_dynamic_value(partial)?;
                 } else {
                     // More keys - navigate into the value (recursively)
-                    self.navigate_and_deserialize_direct(partial, remaining_keys)?;
+                    partial = self.navigate_and_deserialize_direct(partial, remaining_keys)?;
                 }
-                self.end_frame(partial)?;
+                partial = self.end_frame(partial)?;
 
                 // Close all frames we opened during navigation
                 for pushed in local_frames.into_iter().rev() {
                     if pushed {
-                        self.pop_frame(partial)?;
+                        partial = self.pop_frame(partial)?;
                     }
                 }
-                return Ok(());
+                return Ok(partial);
             }
 
-            let pushed = self.navigate_into_key(partial, key)?;
+            let (new_partial, pushed) = self.navigate_into_key(partial, key)?;
+            partial = new_partial;
             local_frames.push(pushed);
         }
 
         // Deserialize the value at the final location
-        self.deserialize_value(partial)?;
+        partial = self.deserialize_value(partial)?;
 
         // Close all frames we opened, in reverse order
         for pushed in local_frames.into_iter().rev() {
             if pushed {
-                self.pop_frame(partial)?;
+                partial = self.pop_frame(partial)?;
             }
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Navigate to a field inside a flattened struct and deserialize
     fn navigate_flattened_struct<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         flatten_field_name: &'static str,
         inner_field_name: &'static str,
-    ) -> Result<(), TomlDeError<'input>> {
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
+        let mut partial = partial;
+
         // Check if we need to open/switch flattened field
         let need_open = match &self.open_flatten {
             None => true,
@@ -1627,11 +1796,11 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         if need_open {
             // Close current flattened field if open
             if self.open_flatten.is_some() {
-                self.end_frame(partial)?;
+                partial = self.end_frame(partial)?;
             }
 
             // Open the new flattened field
-            self.begin_field(partial, flatten_field_name)?;
+            partial = self.begin_field(partial, flatten_field_name)?;
 
             self.open_flatten = Some(OpenFlatten {
                 field_name: flatten_field_name,
@@ -1640,21 +1809,23 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         }
 
         // Navigate to the inner field, deserialize, then close
-        self.begin_field(partial, inner_field_name)?;
-        self.deserialize_value(partial)?;
-        self.end_frame(partial)?;
+        partial = self.begin_field(partial, inner_field_name)?;
+        partial = self.deserialize_value(partial)?;
+        partial = self.end_frame(partial)?;
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Navigate to a field inside a flattened enum variant and deserialize
     fn navigate_flattened_enum<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         flatten_field_name: &'static str,
         variant_name: &'static str,
         inner_field_name: &'static str,
-    ) -> Result<(), TomlDeError<'input>> {
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
+        let mut partial = partial;
+
         // Check if we need to open/switch flattened field or variant
         let need_open = match &self.open_flatten {
             None => true,
@@ -1668,20 +1839,20 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             if let Some(open) = &self.open_flatten {
                 if open.variant_name.is_some() {
                     // Close the variant's inner type (the "0" field for newtype)
-                    self.end_frame(partial)?;
+                    partial = self.end_frame(partial)?;
                 }
                 // Close the flattened field
-                self.end_frame(partial)?;
+                partial = self.end_frame(partial)?;
             }
 
             // Open the flattened field
-            self.begin_field(partial, flatten_field_name)?;
+            partial = self.begin_field(partial, flatten_field_name)?;
 
             // Select the variant
-            self.select_variant(partial, variant_name)?;
+            partial = self.select_variant(partial, variant_name)?;
 
             // Open the variant's inner type (field "0" for newtype variants)
-            self.begin_field(partial, "0")?;
+            partial = self.begin_field(partial, "0")?;
 
             self.open_flatten = Some(OpenFlatten {
                 field_name: flatten_field_name,
@@ -1690,34 +1861,35 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         }
 
         // Navigate to the inner field, deserialize, then close
-        self.begin_field(partial, inner_field_name)?;
-        self.deserialize_value(partial)?;
-        self.end_frame(partial)?;
+        partial = self.begin_field(partial, inner_field_name)?;
+        partial = self.deserialize_value(partial)?;
+        partial = self.end_frame(partial)?;
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Close any open flattened field
     fn close_open_flatten<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
-    ) -> Result<(), TomlDeError<'input>> {
+        partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
+        let mut partial = partial;
         if let Some(open) = self.open_flatten.take() {
             if open.variant_name.is_some() {
                 // Close the variant's inner type
-                self.end_frame(partial)?;
+                partial = self.end_frame(partial)?;
             }
             // Close the flattened field
-            self.end_frame(partial)?;
+            partial = self.end_frame(partial)?;
         }
-        Ok(())
+        Ok(partial)
     }
 
     /// Deserialize a value (scalar, array, or inline table)
     fn deserialize_value<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
-    ) -> Result<(), TomlDeError<'input>> {
+        partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         let Some(event) = self.iter.peek() else {
             return Err(TomlDeError::new(
                 self.source,
@@ -1732,16 +1904,20 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             return self.deserialize_spanned(partial, Self::span_range(event));
         }
 
+        let mut partial = partial;
+
         // Handle Option<T> - unwrap into Some and deserialize the inner value
         if matches!(partial.shape().def, Def::Option(_)) {
-            partial
-                .begin_some()
-                .map(|_| ())
-                .map_err(|e| self.reflect_err_at(e, Self::span_range(event), partial))?;
+            let span_range = Self::span_range(event);
+            let path = partial.path();
+            partial = match partial.begin_some() {
+                Ok(p) => p,
+                Err(e) => return Err(self.reflect_err_at_path(e, span_range, path)),
+            };
             // Recursively deserialize the inner value
-            self.deserialize_value(partial)?;
-            self.end_frame(partial)?;
-            return Ok(());
+            partial = self.deserialize_value(partial)?;
+            partial = self.end_frame(partial)?;
+            return Ok(partial);
         }
 
         // Handle DynamicValue types (like facet_value::Value) - can hold any TOML value
@@ -1759,10 +1935,10 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 // Unwrap into the single field and deserialize recursively
                 // (the inner type might also be a tuple struct, e.g. NestedUnit(Unit(i32)))
                 trace!("Unwrapping tuple struct into field 0");
-                self.begin_field(partial, "0")?;
-                self.deserialize_value(partial)?;
-                self.end_frame(partial)?;
-                return Ok(());
+                partial = self.begin_field(partial, "0")?;
+                partial = self.deserialize_value(partial)?;
+                partial = self.end_frame(partial)?;
+                return Ok(partial);
             }
         }
 
@@ -1783,10 +1959,10 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     "Entering tuple variant field 0 for variant: {}",
                     variant.name
                 );
-                self.begin_field(partial, "0")?;
-                self.deserialize_value(partial)?;
-                self.end_frame(partial)?;
-                return Ok(());
+                partial = self.begin_field(partial, "0")?;
+                partial = self.deserialize_value(partial)?;
+                partial = self.end_frame(partial)?;
+                return Ok(partial);
             }
             // For struct variants or multi-element tuple variants, continue to normal handling
             // (they would be deserialized via inline table or table handlers)
@@ -1848,7 +2024,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     ));
                 }
                 let event = self.iter.next().unwrap();
-                self.deserialize_scalar(partial, event)?;
+                partial = self.deserialize_scalar(partial, event)?;
             }
             EventKind::ArrayOpen => {
                 // If expecting a scalar but got an array, return type error
@@ -1864,7 +2040,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     ));
                 }
                 self.iter.next(); // consume [
-                self.deserialize_array(partial)?;
+                partial = self.deserialize_array(partial)?;
             }
             EventKind::InlineTableOpen => {
                 // If expecting a scalar but got an inline table, return type error
@@ -1880,7 +2056,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     ));
                 }
                 self.iter.next(); // consume {
-                self.deserialize_inline_table(partial)?;
+                partial = self.deserialize_inline_table(partial)?;
             }
             _ => {
                 return Err(TomlDeError::new(
@@ -1895,7 +2071,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             }
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Get the expected type name for error messages
@@ -1927,9 +2103,9 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     /// Deserialize a scalar value
     fn deserialize_scalar<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
+        partial: Partial<'facet>,
         event: &Event,
-    ) -> Result<(), TomlDeError<'input>> {
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         let raw = self.raw_from_event(event);
         let event_span = Self::span_range(event);
         let mut decoded: Cow<'input, str> = Cow::Borrowed("");
@@ -1942,46 +2118,59 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             decoded
         );
 
+        let mut partial = partial;
+
         // Match the scalar type to what the Partial expects
         let Some(scalar_type) = ScalarType::try_from_shape(partial.shape()) else {
             // Try from_str for other types (like enums, UUIDs, etc)
             if partial.shape().is_from_str() {
-                if let Err(_e) = partial.parse_from_str(&decoded) {
-                    // Determine the TOML type name based on kind
-                    let toml_type_name = match kind {
-                        ScalarKind::Boolean(_) => "boolean",
-                        ScalarKind::String => "string",
-                        ScalarKind::Integer(_) => "integer",
-                        ScalarKind::Float => "float",
-                        ScalarKind::DateTime => "datetime",
-                    };
-                    return Err(TomlDeError::new(
-                        self.source,
-                        TomlDeErrorKind::FailedTypeConversion {
-                            toml_type_name,
-                            rust_type: partial.shape(),
-                            reason: None,
-                        },
-                        Some(event_span.clone()),
-                        partial.path(),
-                    ));
-                }
-                return Ok(());
+                // Capture path/shape before potential move
+                let path = partial.path();
+                let shape = partial.shape();
+                // Determine the TOML type name based on kind
+                let toml_type_name = match kind {
+                    ScalarKind::Boolean(_) => "boolean",
+                    ScalarKind::String => "string",
+                    ScalarKind::Integer(_) => "integer",
+                    ScalarKind::Float => "float",
+                    ScalarKind::DateTime => "datetime",
+                };
+                partial = match partial.parse_from_str(&decoded) {
+                    Ok(p) => p,
+                    Err(_e) => {
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::FailedTypeConversion {
+                                toml_type_name,
+                                rust_type: shape,
+                                reason: None,
+                            },
+                            Some(event_span.clone()),
+                            path,
+                        ));
+                    }
+                };
+                return Ok(partial);
             }
 
             // For enums with a string value, try to select the variant by name
             if let (ScalarKind::String, Type::User(UserType::Enum(_))) = (kind, &partial.shape().ty)
             {
+                // Capture path before ownership-taking call
+                let path = partial.path();
                 // Select the variant by name from the string value
-                if let Err(e) = partial.select_variant_named(&decoded) {
-                    return Err(TomlDeError::new(
-                        self.source,
-                        TomlDeErrorKind::GenericReflect(e),
-                        Some(event_span.clone()),
-                        partial.path(),
-                    ));
-                }
-                return Ok(());
+                let partial = match partial.select_variant_named(&decoded) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::GenericReflect(e),
+                            Some(event_span.clone()),
+                            path,
+                        ));
+                    }
+                };
+                return Ok(partial);
             }
 
             // Check if this is a struct with multiple fields
@@ -2004,46 +2193,58 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             ));
         };
 
+        // Capture path once before the match for error handling
+        let path = partial.path();
+
         match (kind, scalar_type) {
             // Strings
             (ScalarKind::String, ScalarType::String) => {
-                if let Err(e) = partial.set(decoded.into_owned()) {
-                    return Err(TomlDeError::new(
-                        self.source,
-                        TomlDeErrorKind::GenericReflect(e),
-                        Some(event_span.clone()),
-                        partial.path(),
-                    ));
-                }
+                partial = match partial.set(decoded.into_owned()) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::GenericReflect(e),
+                            Some(event_span.clone()),
+                            path,
+                        ));
+                    }
+                };
             }
             (ScalarKind::String, ScalarType::CowStr) => {
                 // Create an owned Cow<'static, str>
                 let cow: Cow<'static, str> = Cow::Owned(decoded.into_owned());
-                if let Err(e) = partial.set(cow) {
-                    return Err(TomlDeError::new(
-                        self.source,
-                        TomlDeErrorKind::GenericReflect(e),
-                        Some(event_span.clone()),
-                        partial.path(),
-                    ));
-                }
+                partial = match partial.set(cow) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::GenericReflect(e),
+                            Some(event_span.clone()),
+                            path,
+                        ));
+                    }
+                };
             }
 
             // Booleans
             (ScalarKind::Boolean(b), ScalarType::Bool) => {
-                if let Err(e) = partial.set(b) {
-                    return Err(TomlDeError::new(
-                        self.source,
-                        TomlDeErrorKind::GenericReflect(e),
-                        Some(event_span.clone()),
-                        partial.path(),
-                    ));
-                }
+                partial = match partial.set(b) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::GenericReflect(e),
+                            Some(event_span.clone()),
+                            path,
+                        ));
+                    }
+                };
             }
 
             // Integers
             (ScalarKind::Integer(radix), scalar_type) => {
-                self.deserialize_integer(
+                partial = self.deserialize_integer(
                     partial,
                     &decoded,
                     radix.value(),
@@ -2059,17 +2260,20 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                         self.source,
                         TomlDeErrorKind::GenericTomlError(format!("Invalid f32: {decoded}")),
                         Some(event_span.clone()),
-                        partial.path(),
+                        path.clone(),
                     ));
                 };
-                if let Err(e) = partial.set(v) {
-                    return Err(TomlDeError::new(
-                        self.source,
-                        TomlDeErrorKind::GenericReflect(e),
-                        Some(event_span.clone()),
-                        partial.path(),
-                    ));
-                }
+                partial = match partial.set(v) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::GenericReflect(e),
+                            Some(event_span.clone()),
+                            path,
+                        ));
+                    }
+                };
             }
             (ScalarKind::Float, ScalarType::F64) => {
                 let Ok(v) = decoded.parse::<f64>() else {
@@ -2077,17 +2281,20 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                         self.source,
                         TomlDeErrorKind::GenericTomlError(format!("Invalid f64: {decoded}")),
                         Some(event_span.clone()),
-                        partial.path(),
+                        path.clone(),
                     ));
                 };
-                if let Err(e) = partial.set(v) {
-                    return Err(TomlDeError::new(
-                        self.source,
-                        TomlDeErrorKind::GenericReflect(e),
-                        Some(event_span.clone()),
-                        partial.path(),
-                    ));
-                }
+                partial = match partial.set(v) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::GenericReflect(e),
+                            Some(event_span.clone()),
+                            path,
+                        ));
+                    }
+                };
             }
 
             // Float to integer type conversion attempt - this is a failed conversion, not a type mismatch
@@ -2100,7 +2307,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                         reason: None,
                     },
                     Some(event_span.clone()),
-                    partial.path(),
+                    path,
                 ));
             }
 
@@ -2109,14 +2316,17 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 let mut chars = decoded.chars();
                 if let (Some(c), None) = (chars.next(), chars.next()) {
                     // Exactly one character
-                    if let Err(e) = partial.set(c) {
-                        return Err(TomlDeError::new(
-                            self.source,
-                            TomlDeErrorKind::GenericReflect(e),
-                            Some(event_span.clone()),
-                            partial.path(),
-                        ));
-                    }
+                    partial = match partial.set(c) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            return Err(TomlDeError::new(
+                                self.source,
+                                TomlDeErrorKind::GenericReflect(e),
+                                Some(event_span.clone()),
+                                path,
+                            ));
+                        }
+                    };
                 } else {
                     // Zero or more than one character - type mismatch
                     return Err(TomlDeError::new(
@@ -2126,7 +2336,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                             got: "string",
                         },
                         Some(event_span.clone()),
-                        partial.path(),
+                        path,
                     ));
                 }
             }
@@ -2134,18 +2344,22 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             // For string scalars with non-string target types that implement FromStr
             // (e.g., parsing "127.0.0.1" into IpAddr)
             (ScalarKind::String, _) if partial.shape().is_from_str() => {
-                if let Err(_e) = partial.parse_from_str(&decoded) {
-                    return Err(TomlDeError::new(
-                        self.source,
-                        TomlDeErrorKind::FailedTypeConversion {
-                            toml_type_name: "string",
-                            rust_type: partial.shape(),
-                            reason: None,
-                        },
-                        Some(event_span.clone()),
-                        partial.path(),
-                    ));
-                }
+                let shape = partial.shape();
+                partial = match partial.parse_from_str(&decoded) {
+                    Ok(p) => p,
+                    Err(_e) => {
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::FailedTypeConversion {
+                                toml_type_name: "string",
+                                rust_type: shape,
+                                reason: None,
+                            },
+                            Some(event_span.clone()),
+                            path,
+                        ));
+                    }
+                };
             }
 
             _ => {
@@ -2191,28 +2405,29 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     self.source,
                     TomlDeErrorKind::ExpectedType { expected, got },
                     Some(event_span.clone()),
-                    partial.path(),
+                    path,
                 ));
             }
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Deserialize an integer with the given radix
     fn deserialize_integer<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
+        mut partial: Partial<'facet>,
         decoded: &str,
         radix: u32,
         scalar_type: ScalarType,
         event_span: Range<usize>,
-    ) -> Result<(), TomlDeError<'input>> {
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         // Remove underscores from the number (TOML allows them as separators)
         let clean: String = decoded.chars().filter(|&c| c != '_').collect();
 
         macro_rules! parse_int {
             ($ty:ty) => {{
+                let path = partial.path().to_owned();
                 let Ok(v) = <$ty>::from_str_radix(&clean, radix) else {
                     return Err(TomlDeError::new(
                         self.source,
@@ -2222,17 +2437,17 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                             decoded
                         )),
                         Some(event_span.clone()),
-                        partial.path(),
+                        path,
                     ));
                 };
-                if let Err(e) = partial.set(v) {
-                    return Err(TomlDeError::new(
+                partial = partial.set(v).map_err(|e| {
+                    TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericReflect(e),
                         Some(event_span.clone()),
-                        partial.path(),
-                    ));
-                }
+                        path,
+                    )
+                })?;
             }};
         }
 
@@ -2251,40 +2466,42 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             ScalarType::USize => parse_int!(usize),
             // Also handle floats if the scalar was integer-like
             ScalarType::F32 => {
+                let path = partial.path().to_owned();
                 let Ok(v) = clean.parse::<f32>() else {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericTomlError(format!("Invalid f32: {decoded}")),
                         Some(event_span.clone()),
-                        partial.path(),
+                        path,
                     ));
                 };
-                if let Err(e) = partial.set(v) {
-                    return Err(TomlDeError::new(
+                partial = partial.set(v).map_err(|e| {
+                    TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericReflect(e),
                         Some(event_span.clone()),
-                        partial.path(),
-                    ));
-                }
+                        path,
+                    )
+                })?;
             }
             ScalarType::F64 => {
+                let path = partial.path().to_owned();
                 let Ok(v) = clean.parse::<f64>() else {
                     return Err(TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericTomlError(format!("Invalid f64: {decoded}")),
                         Some(event_span.clone()),
-                        partial.path(),
+                        path,
                     ));
                 };
-                if let Err(e) = partial.set(v) {
-                    return Err(TomlDeError::new(
+                partial = partial.set(v).map_err(|e| {
+                    TomlDeError::new(
                         self.source,
                         TomlDeErrorKind::GenericReflect(e),
                         Some(event_span.clone()),
-                        partial.path(),
-                    ));
-                }
+                        path,
+                    )
+                })?;
             }
             _ => {
                 // Determine the expected type based on scalar_type
@@ -2306,7 +2523,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             }
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Deserialize any TOML value into a DynamicValue type (like facet_value::Value).
@@ -2315,8 +2532,8 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     /// Datetime values are not currently supported and will return an error.
     fn deserialize_dynamic_value<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
-    ) -> Result<(), TomlDeError<'input>> {
+        mut partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         let Some(event) = self.iter.peek() else {
             return Err(TomlDeError::new(
                 self.source,
@@ -2328,33 +2545,42 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
 
         let event_span = Self::span_range(event);
 
+        // Capture path once before potentially ownership-transferring operations
+        let path = partial.path();
+
         match event.kind() {
             EventKind::Scalar => {
                 let event = self.iter.next().unwrap();
-                let raw = self.raw_from_event(&event);
+                let raw = self.raw_from_event(event);
                 let mut decoded: Cow<'input, str> = Cow::Borrowed("");
                 let kind = raw.decode_scalar(&mut decoded, &mut ());
 
                 match kind {
                     ScalarKind::Boolean(b) => {
-                        if let Err(e) = partial.set(b) {
-                            return Err(TomlDeError::new(
-                                self.source,
-                                TomlDeErrorKind::GenericReflect(e),
-                                Some(event_span),
-                                partial.path(),
-                            ));
-                        }
+                        partial = match partial.set(b) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                return Err(TomlDeError::new(
+                                    self.source,
+                                    TomlDeErrorKind::GenericReflect(e),
+                                    Some(event_span),
+                                    path,
+                                ));
+                            }
+                        };
                     }
                     ScalarKind::String => {
-                        if let Err(e) = partial.set(decoded.into_owned()) {
-                            return Err(TomlDeError::new(
-                                self.source,
-                                TomlDeErrorKind::GenericReflect(e),
-                                Some(event_span),
-                                partial.path(),
-                            ));
-                        }
+                        partial = match partial.set(decoded.into_owned()) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                return Err(TomlDeError::new(
+                                    self.source,
+                                    TomlDeErrorKind::GenericReflect(e),
+                                    Some(event_span),
+                                    path,
+                                ));
+                            }
+                        };
                     }
                     ScalarKind::Integer(radix) => {
                         // Remove underscores and parse as i64
@@ -2363,42 +2589,46 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                             return Err(TomlDeError::new(
                                 self.source,
                                 TomlDeErrorKind::GenericTomlError(format!(
-                                    "Invalid integer: {}",
-                                    decoded
+                                    "Invalid integer: {decoded}"
                                 )),
                                 Some(event_span),
-                                partial.path(),
+                                path.clone(),
                             ));
                         };
-                        if let Err(e) = partial.set(v) {
-                            return Err(TomlDeError::new(
-                                self.source,
-                                TomlDeErrorKind::GenericReflect(e),
-                                Some(event_span),
-                                partial.path(),
-                            ));
-                        }
+                        partial = match partial.set(v) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                return Err(TomlDeError::new(
+                                    self.source,
+                                    TomlDeErrorKind::GenericReflect(e),
+                                    Some(event_span),
+                                    path,
+                                ));
+                            }
+                        };
                     }
                     ScalarKind::Float => {
                         let Ok(v) = decoded.parse::<f64>() else {
                             return Err(TomlDeError::new(
                                 self.source,
                                 TomlDeErrorKind::GenericTomlError(format!(
-                                    "Invalid float: {}",
-                                    decoded
+                                    "Invalid float: {decoded}"
                                 )),
                                 Some(event_span),
-                                partial.path(),
+                                path.clone(),
                             ));
                         };
-                        if let Err(e) = partial.set(v) {
-                            return Err(TomlDeError::new(
-                                self.source,
-                                TomlDeErrorKind::GenericReflect(e),
-                                Some(event_span),
-                                partial.path(),
-                            ));
-                        }
+                        partial = match partial.set(v) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                return Err(TomlDeError::new(
+                                    self.source,
+                                    TomlDeErrorKind::GenericReflect(e),
+                                    Some(event_span),
+                                    path,
+                                ));
+                            }
+                        };
                     }
                     ScalarKind::DateTime => {
                         // Parse the TOML datetime string
@@ -2406,16 +2636,15 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                             return Err(TomlDeError::new(
                                 self.source,
                                 TomlDeErrorKind::GenericTomlError(format!(
-                                    "Invalid datetime: {}",
-                                    decoded
+                                    "Invalid datetime: {decoded}"
                                 )),
                                 Some(event_span),
-                                partial.path(),
+                                path.clone(),
                             ));
                         };
 
                         // Convert to DynDateTimeKind and call set_datetime
-                        let result = match parsed {
+                        partial = match match parsed {
                             ParsedDateTime::Offset {
                                 year,
                                 month,
@@ -2478,27 +2707,28 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                                 nanos,
                                 DynDateTimeKind::LocalTime,
                             ),
+                        } {
+                            Ok(p) => p,
+                            Err(e) => {
+                                return Err(TomlDeError::new(
+                                    self.source,
+                                    TomlDeErrorKind::GenericReflect(e),
+                                    Some(event_span),
+                                    path,
+                                ));
+                            }
                         };
-
-                        if let Err(e) = result {
-                            return Err(TomlDeError::new(
-                                self.source,
-                                TomlDeErrorKind::GenericReflect(e),
-                                Some(event_span),
-                                partial.path(),
-                            ));
-                        }
                     }
                 }
             }
             EventKind::ArrayOpen => {
                 self.iter.next(); // consume [
                 // Reuse deserialize_dynamic_list - it already handles DynamicValue via begin_list/begin_list_item
-                self.deserialize_dynamic_list(partial)?;
+                partial = self.deserialize_dynamic_list(partial)?;
             }
             EventKind::InlineTableOpen => {
                 self.iter.next(); // consume {
-                self.deserialize_dynamic_inline_table(partial)?;
+                partial = self.deserialize_dynamic_inline_table(partial)?;
             }
             _ => {
                 return Err(TomlDeError::new(
@@ -2508,12 +2738,12 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                         event.kind()
                     )),
                     Some(event_span),
-                    partial.path(),
+                    path,
                 ));
             }
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Deserialize an inline table into a DynamicValue object.
@@ -2522,19 +2752,23 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     /// struct field matching, which doesn't apply to DynamicValue objects.
     fn deserialize_dynamic_inline_table<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
-    ) -> Result<(), TomlDeError<'input>> {
+        mut partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         trace!("deserialize_dynamic_inline_table");
 
         // Initialize as object
-        if let Err(e) = partial.begin_map() {
-            return Err(TomlDeError::new(
-                self.source,
-                TomlDeErrorKind::GenericReflect(e),
-                self.current_span(),
-                partial.path(),
-            ));
-        }
+        let path = partial.path();
+        partial = match partial.begin_map() {
+            Ok(p) => p,
+            Err(e) => {
+                return Err(TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::GenericReflect(e),
+                    self.current_span(),
+                    path,
+                ));
+            }
+        };
 
         loop {
             let Some(event) = self.iter.peek() else { break };
@@ -2549,7 +2783,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 }
                 EventKind::SimpleKey => {
                     let event = self.iter.next().unwrap();
-                    let raw = self.raw_from_event(&event);
+                    let raw = self.raw_from_event(event);
 
                     // Decode the key
                     let mut key: Cow<'input, str> = Cow::Borrowed("");
@@ -2564,27 +2798,35 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     }
 
                     // Start an object entry with this key
-                    if let Err(e) = partial.begin_object_entry(&key_owned) {
-                        return Err(TomlDeError::new(
-                            self.source,
-                            TomlDeErrorKind::GenericReflect(e),
-                            self.current_span(),
-                            partial.path(),
-                        ));
-                    }
+                    let path = partial.path();
+                    partial = match partial.begin_object_entry(&key_owned) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            return Err(TomlDeError::new(
+                                self.source,
+                                TomlDeErrorKind::GenericReflect(e),
+                                self.current_span(),
+                                path,
+                            ));
+                        }
+                    };
 
                     // Recursively deserialize the value
-                    self.deserialize_dynamic_value(partial)?;
+                    partial = self.deserialize_dynamic_value(partial)?;
 
                     // End the entry
-                    if let Err(e) = partial.end() {
-                        return Err(TomlDeError::new(
-                            self.source,
-                            TomlDeErrorKind::GenericReflect(e),
-                            self.current_span(),
-                            partial.path(),
-                        ));
-                    }
+                    let path = partial.path();
+                    partial = match partial.end() {
+                        Ok(p) => p,
+                        Err(e) => {
+                            return Err(TomlDeError::new(
+                                self.source,
+                                TomlDeErrorKind::GenericReflect(e),
+                                self.current_span(),
+                                path,
+                            ));
+                        }
+                    };
                 }
                 _ => {
                     return Err(TomlDeError::new(
@@ -2600,14 +2842,14 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             }
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Deserialize an inline array
     fn deserialize_array<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
-    ) -> Result<(), TomlDeError<'input>> {
+        partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         trace!("deserialize_array");
 
         // Check if we're deserializing into a fixed-size array or tuple vs a dynamic list
@@ -2626,8 +2868,8 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     /// Deserialize into a fixed-size array or tuple using indexed field access
     fn deserialize_fixed_array<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
-    ) -> Result<(), TomlDeError<'input>> {
+        mut partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         trace!("deserialize_fixed_array");
 
         let mut index = 0;
@@ -2645,49 +2887,61 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 }
                 _ => {
                     // Start the nth element
-                    if let Err(e) = partial.begin_nth_field(index) {
-                        return Err(TomlDeError::new(
-                            self.source,
-                            TomlDeErrorKind::GenericReflect(e),
-                            self.current_span(),
-                            partial.path(),
-                        ));
-                    }
+                    let path = partial.path();
+                    partial = match partial.begin_nth_field(index) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            return Err(TomlDeError::new(
+                                self.source,
+                                TomlDeErrorKind::GenericReflect(e),
+                                self.current_span(),
+                                path,
+                            ));
+                        }
+                    };
 
-                    self.deserialize_value(partial)?;
+                    partial = self.deserialize_value(partial)?;
 
-                    if let Err(e) = partial.end() {
-                        return Err(TomlDeError::new(
-                            self.source,
-                            TomlDeErrorKind::GenericReflect(e),
-                            self.current_span(),
-                            partial.path(),
-                        ));
-                    }
+                    let path = partial.path();
+                    partial = match partial.end() {
+                        Ok(p) => p,
+                        Err(e) => {
+                            return Err(TomlDeError::new(
+                                self.source,
+                                TomlDeErrorKind::GenericReflect(e),
+                                self.current_span(),
+                                path,
+                            ));
+                        }
+                    };
 
                     index += 1;
                 }
             }
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Deserialize into a dynamic list (Vec, etc.) using begin_list/begin_list_item
     fn deserialize_dynamic_list<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
-    ) -> Result<(), TomlDeError<'input>> {
+        mut partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         trace!("deserialize_dynamic_list");
 
-        if let Err(e) = partial.begin_list() {
-            return Err(TomlDeError::new(
-                self.source,
-                TomlDeErrorKind::GenericReflect(e),
-                self.current_span(),
-                partial.path(),
-            ));
-        }
+        let path = partial.path();
+        partial = match partial.begin_list() {
+            Ok(p) => p,
+            Err(e) => {
+                return Err(TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::GenericReflect(e),
+                    self.current_span(),
+                    path,
+                ));
+            }
+        };
 
         loop {
             let Some(event) = self.iter.peek() else { break };
@@ -2702,48 +2956,50 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 }
                 _ => {
                     // Start a new list item
-                    if let Err(e) = partial.begin_list_item() {
-                        return Err(TomlDeError::new(
+                    let path = partial.path().to_owned();
+                    partial = partial.begin_list_item().map_err(|e| {
+                        TomlDeError::new(
                             self.source,
                             TomlDeErrorKind::GenericReflect(e),
                             self.current_span(),
-                            partial.path(),
-                        ));
-                    }
+                            path,
+                        )
+                    })?;
 
-                    self.deserialize_value(partial)?;
+                    partial = self.deserialize_value(partial)?;
 
-                    if let Err(e) = partial.end() {
-                        return Err(TomlDeError::new(
+                    let path = partial.path().to_owned();
+                    partial = partial.end().map_err(|e| {
+                        TomlDeError::new(
                             self.source,
                             TomlDeErrorKind::GenericReflect(e),
                             self.current_span(),
-                            partial.path(),
-                        ));
-                    }
+                            path,
+                        )
+                    })?;
                 }
             }
         }
 
-        Ok(())
+        Ok(partial)
     }
 
     /// Deserialize an inline table
     fn deserialize_inline_table<'facet>(
         &mut self,
-        partial: &mut Partial<'facet>,
-    ) -> Result<(), TomlDeError<'input>> {
+        mut partial: Partial<'facet>,
+    ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         trace!("deserialize_inline_table");
 
         // Check if this inline table represents an enum variant like { VariantName = value }
-        let is_enum = Self::needs_variant_selection(partial);
+        let is_enum = Self::needs_variant_selection(&partial);
 
         // Check if this is a map - needs different handling
         let is_map = matches!(partial.shape().def, Def::Map(_));
 
         // For maps, initialize the map before processing entries
         if is_map {
-            self.begin_map(partial)?;
+            partial = self.begin_map(partial)?;
         }
 
         // Track which struct fields we've seen (for applying defaults later)
@@ -2784,19 +3040,25 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     if is_map {
                         // For maps: { key = value, ... }
                         // Each key-value is a map entry
-                        self.begin_key(partial)?;
-                        if let Err(e) = partial.set(key.to_string()) {
-                            return Err(self.reflect_err(e, partial));
-                        }
-                        self.end_frame(partial)?;
+                        partial = self.begin_key(partial)?;
+                        let path = partial.path().to_owned();
+                        partial = partial.set(key.to_string()).map_err(|e| {
+                            TomlDeError::new(
+                                self.source,
+                                TomlDeErrorKind::GenericReflect(e),
+                                self.current_span(),
+                                path,
+                            )
+                        })?;
+                        partial = self.end_frame(partial)?;
 
-                        self.begin_value(partial)?;
-                        self.deserialize_value(partial)?;
-                        self.end_frame(partial)?;
+                        partial = self.begin_value(partial)?;
+                        partial = self.deserialize_value(partial)?;
+                        partial = self.end_frame(partial)?;
                     } else if is_enum {
                         // For enums: { VariantName = value }
                         // The key is the variant name, value is the payload
-                        self.select_variant(partial, &key)?;
+                        partial = self.select_variant(partial, &key)?;
 
                         // Get variant info to determine how to handle the value
                         let variant = partial.selected_variant().ok_or_else(|| {
@@ -2814,18 +3076,18 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                         let num_fields = variant.data.fields.len();
                         if num_fields == 0 {
                             // Unit variant - skip the value (should be null or similar)
-                            self.deserialize_value(partial)?;
+                            partial = self.deserialize_value(partial)?;
                         } else if num_fields == 1 {
                             // Tuple variant with one field - deserialize directly into field "0"
-                            self.begin_field(partial, "0")?;
-                            self.deserialize_value(partial)?;
-                            self.end_frame(partial)?;
+                            partial = self.begin_field(partial, "0")?;
+                            partial = self.deserialize_value(partial)?;
+                            partial = self.end_frame(partial)?;
                         } else {
                             // Multi-field tuple or struct variant - the value should be an array or table
                             // For simplicity, assume it's a single value for field "0"
-                            self.begin_field(partial, "0")?;
-                            self.deserialize_value(partial)?;
-                            self.end_frame(partial)?;
+                            partial = self.begin_field(partial, "0")?;
+                            partial = self.deserialize_value(partial)?;
+                            partial = self.end_frame(partial)?;
                         }
                     } else {
                         // Regular struct field - track which field we're setting
@@ -2834,9 +3096,9 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                                 set[idx] = true;
                             }
                         }
-                        self.begin_field(partial, &key)?;
-                        self.deserialize_value(partial)?;
-                        self.end_frame(partial)?;
+                        partial = self.begin_field(partial, &key)?;
+                        partial = self.deserialize_value(partial)?;
+                        partial = self.end_frame(partial)?;
                     }
                 }
                 _ => {
@@ -2860,16 +3122,22 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
 
                 if has_default_fn || has_default_flag || shape_has_default {
                     // Apply default for this field
-                    if let Err(e) = partial.set_nth_field_to_default(idx) {
-                        return Err(self.reflect_err(e, partial));
-                    }
+                    let path = partial.path().to_owned();
+                    partial = partial.set_nth_field_to_default(idx).map_err(|e| {
+                        TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::GenericReflect(e),
+                            self.current_span(),
+                            path,
+                        )
+                    })?;
                 }
                 // Note: if no default is available and field is required, the build
                 // will fail later with "field not initialized" error
             }
         }
 
-        Ok(())
+        Ok(partial)
     }
 }
 

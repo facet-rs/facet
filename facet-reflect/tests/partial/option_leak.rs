@@ -3,29 +3,37 @@ use facet_testhelpers::test;
 
 #[test]
 fn wip_option_testleak1() {
-    let mut wip = Partial::alloc::<Option<String>>().unwrap();
-    wip.set(Some(String::from("Hello, world!"))).unwrap();
+    let wip = Partial::alloc::<Option<String>>()
+        .unwrap()
+        .set(Some(String::from("Hello, world!")))
+        .unwrap();
     let _ = wip.build().unwrap();
 }
 
 #[test]
 fn wip_option_testleak2() {
-    let mut wip = Partial::alloc::<Option<String>>().unwrap();
-    wip.set(Some(String::from("Hello, world!"))).unwrap();
+    let wip = Partial::alloc::<Option<String>>()
+        .unwrap()
+        .set(Some(String::from("Hello, world!")))
+        .unwrap();
     let _wip = wip.build().unwrap();
 }
 
 #[test]
 fn wip_option_testleak3() {
-    let mut wip = Partial::alloc::<Option<String>>().unwrap();
-    wip.set(Some(String::from("Hello, world!"))).unwrap();
+    let _wip = Partial::alloc::<Option<String>>()
+        .unwrap()
+        .set(Some(String::from("Hello, world!")))
+        .unwrap();
     // Don't call build() to test partial initialization
 }
 
 #[test]
 fn wip_option_testleak4() {
-    let mut wip = Partial::alloc::<Option<String>>().unwrap();
-    wip.set(Some(String::from("Hello, world!"))).unwrap();
+    let _wip = Partial::alloc::<Option<String>>()
+        .unwrap()
+        .set(Some(String::from("Hello, world!")))
+        .unwrap();
     // Don't call build() to test partial initialization
 }
 

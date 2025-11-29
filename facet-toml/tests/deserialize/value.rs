@@ -36,7 +36,9 @@ fn test_deserialize_scalar_float() {
         .unwrap()
         .to_f64()
         .unwrap();
-    assert!((val - 3.14).abs() < 0.001);
+    #[allow(clippy::approx_constant)]
+    let expected = 3.14;
+    assert!((val - expected).abs() < 0.001);
 }
 
 #[test]

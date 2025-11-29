@@ -25,10 +25,13 @@ fn test_option_building_manual() {
     }
 
     // For now, let's use the high-level API to see what works
-    wip.set(Some("hello".to_string())).unwrap();
+    wip = wip.set(Some("hello".to_string())).unwrap();
 
-    let result = wip.build().unwrap();
-    let option_value: Option<String> = *result;
+    let option_value = wip
+        .build()
+        .unwrap()
+        .materialize::<Option<String>>()
+        .unwrap();
     assert_eq!(option_value, Some("hello".to_string()));
 }
 
@@ -37,10 +40,13 @@ fn test_option_building_none() {
     let mut wip = Partial::alloc::<Option<String>>().unwrap();
 
     // Set to None
-    wip.set(None::<String>).unwrap();
+    wip = wip.set(None::<String>).unwrap();
 
-    let result = wip.build().unwrap();
-    let option_value: Option<String> = *result;
+    let option_value = wip
+        .build()
+        .unwrap()
+        .materialize::<Option<String>>()
+        .unwrap();
     assert_eq!(option_value, None);
 }
 
@@ -54,13 +60,17 @@ fn test_option_building_with_begin_some() {
     let result = wip.begin_some();
 
     match result {
-        Ok(_) => {
+        Ok(w) => {
             // If begin_some works, continue building
-            wip.set("hello".to_string()).unwrap();
-            wip.end().unwrap();
+            wip = w;
+            wip = wip.set("hello".to_string()).unwrap();
+            wip = wip.end().unwrap();
 
-            let result = wip.build().unwrap();
-            let option_value: Option<String> = *result;
+            let option_value = wip
+                .build()
+                .unwrap()
+                .materialize::<Option<String>>()
+                .unwrap();
             assert_eq!(option_value, Some("hello".to_string()));
         }
         Err(e) => {
@@ -75,10 +85,13 @@ fn test_option_building_set_default() {
     // Test using set_default to create None
     let mut wip = Partial::alloc::<Option<String>>().unwrap();
 
-    wip.set_default().unwrap();
+    wip = wip.set_default().unwrap();
 
-    let result = wip.build().unwrap();
-    let option_value: Option<String> = *result;
+    let option_value = wip
+        .build()
+        .unwrap()
+        .materialize::<Option<String>>()
+        .unwrap();
     assert_eq!(option_value, None);
 }
 
@@ -88,10 +101,13 @@ fn test_nested_option_building() {
     let mut wip = Partial::alloc::<Option<Option<String>>>().unwrap();
 
     // Build Some(Some("hello"))
-    wip.set(Some(Some("hello".to_string()))).unwrap();
+    wip = wip.set(Some(Some("hello".to_string()))).unwrap();
 
-    let result = wip.build().unwrap();
-    let option_value: Option<Option<String>> = *result;
+    let option_value = wip
+        .build()
+        .unwrap()
+        .materialize::<Option<Option<String>>>()
+        .unwrap();
     assert_eq!(option_value, Some(Some("hello".to_string())));
 }
 
@@ -106,16 +122,15 @@ fn test_option_in_struct() {
     let mut wip = Partial::alloc::<TestStruct>().unwrap();
 
     // Build the struct with option fields
-    wip.begin_nth_field(0).unwrap(); // name field
-    wip.set(Some("Alice".to_string())).unwrap();
-    wip.end().unwrap();
+    wip = wip.begin_nth_field(0).unwrap(); // name field
+    wip = wip.set(Some("Alice".to_string())).unwrap();
+    wip = wip.end().unwrap();
 
-    wip.begin_nth_field(1).unwrap(); // age field
-    wip.set(None::<u32>).unwrap();
-    wip.end().unwrap();
+    wip = wip.begin_nth_field(1).unwrap(); // age field
+    wip = wip.set(None::<u32>).unwrap();
+    wip = wip.end().unwrap();
 
-    let result = wip.build().unwrap();
-    let struct_value: TestStruct = *result;
+    let struct_value = wip.build().unwrap().materialize::<TestStruct>().unwrap();
     assert_eq!(
         struct_value,
         TestStruct {
@@ -136,34 +151,33 @@ fn test_option_field_manual_building() {
     let mut wip = Partial::alloc::<TestStruct>().unwrap();
 
     // Navigate to the option field
-    wip.begin_nth_field(0).unwrap(); // value field
+    wip = wip.begin_nth_field(0).unwrap(); // value field
 
     // Now we're in the Option<String> context
     // This is where we want to test proper option building
 
     // For now, use the high-level API
-    wip.set(Some("test".to_string())).unwrap();
-    wip.end().unwrap();
+    wip = wip.set(Some("test".to_string())).unwrap();
+    wip = wip.end().unwrap();
 
-    let result = wip.build().unwrap();
-    let struct_value: TestStruct = *result;
+    let struct_value = wip.build().unwrap().materialize::<TestStruct>().unwrap();
     assert_eq!(struct_value.value, Some("test".to_string()));
 }
 
 #[test]
 fn explore_option_shape() {
     // Explore the shape of Option<String> to understand its structure
-    let wip = Partial::alloc::<Option<String>>().unwrap();
+    let _wip = Partial::alloc::<Option<String>>().unwrap();
 
-    println!("Option<String> shape: {:?}", wip.shape());
+    println!("Option<String> shape: {:?}", _wip.shape());
 
-    if let facet_core::Def::Option(option_def) = wip.shape().def {
+    if let facet_core::Def::Option(option_def) = _wip.shape().def {
         println!("Inner type: {:?}", option_def.t());
         println!("Option vtable: {:?}", option_def.vtable);
     }
 
     // Also check if it has an inner shape (transparent wrapper)
-    if let Some(inner_shape) = wip.shape().inner {
+    if let Some(inner_shape) = _wip.shape().inner {
         println!("Inner shape: {inner_shape:?}");
     }
 }
@@ -195,7 +209,8 @@ fn option_uninit() -> Result<(), IPanic> {
 fn option_init() -> Result<(), IPanic> {
     let hv = Partial::alloc::<Option<f64>>()?
         .set::<Option<f64>>(Some(6.241))?
-        .build()?;
-    assert_eq!(*hv, Some(6.241));
+        .build()?
+        .materialize::<Option<f64>>()?;
+    assert_eq!(hv, Some(6.241));
     Ok(())
 }

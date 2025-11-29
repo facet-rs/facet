@@ -4,15 +4,12 @@ use super::*;
 // Allocation, constructors etc.
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 impl<'facet> Partial<'facet> {
-    /// Allocates a new [TypedPartial] instance on the heap, with the given shape and type
-    pub fn alloc<T>() -> Result<TypedPartial<'facet, T>, ReflectError>
+    /// Allocates a new [Partial] instance on the heap, with the given shape and type
+    pub fn alloc<T>() -> Result<Self, ReflectError>
     where
         T: Facet<'facet> + ?Sized,
     {
-        Ok(TypedPartial {
-            inner: Self::alloc_shape(T::SHAPE)?,
-            phantom: PhantomData,
-        })
+        Self::alloc_shape(T::SHAPE)
     }
 
     /// Allocates a new [Partial] instance on the heap, with the given shape.

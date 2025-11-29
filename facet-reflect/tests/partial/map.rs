@@ -6,15 +6,19 @@ use std::collections::HashMap;
 #[test]
 fn wip_map_trivial() {
     let mut partial = Partial::alloc::<HashMap<String, String>>().unwrap();
-    partial.begin_map().unwrap();
+    partial = partial.begin_map().unwrap();
 
-    partial.begin_key().unwrap();
-    partial.set::<String>("key".into()).unwrap();
-    partial.end().unwrap();
-    partial.begin_value().unwrap();
-    partial.set::<String>("value".into()).unwrap();
-    partial.end().unwrap();
-    let wip: HashMap<String, String> = *partial.build().unwrap();
+    partial = partial.begin_key().unwrap();
+    partial = partial.set::<String>("key".into()).unwrap();
+    partial = partial.end().unwrap();
+    partial = partial.begin_value().unwrap();
+    partial = partial.set::<String>("value".into()).unwrap();
+    partial = partial.end().unwrap();
+    let wip: HashMap<String, String> = partial
+        .build()
+        .unwrap()
+        .materialize::<HashMap<String, String>>()
+        .unwrap();
 
     assert_eq!(
         wip,
@@ -28,14 +32,14 @@ fn wip_map_trivial() {
 
 #[test]
 fn list_vec_basic() -> Result<(), IPanic> {
-    let hv = Partial::alloc::<Vec<i32>>()?
+    let vec = Partial::alloc::<Vec<i32>>()?
         .begin_list()?
         .push(42)?
         .push(84)?
         .push(126)?
-        .build()?;
-    let vec: &Vec<i32> = hv.as_ref();
-    assert_eq!(vec, &vec![42, 84, 126]);
+        .build()?
+        .materialize::<Vec<i32>>()?;
+    assert_eq!(vec, vec![42, 84, 126]);
     Ok(())
 }
 
@@ -47,7 +51,7 @@ fn list_vec_complex() -> Result<(), IPanic> {
         age: u32,
     }
 
-    let hv = Partial::alloc::<Vec<Person>>()?
+    let vec = Partial::alloc::<Vec<Person>>()?
         .begin_list()?
         .begin_list_item()?
         .set_field("name", "Alice".to_string())?
@@ -57,11 +61,11 @@ fn list_vec_complex() -> Result<(), IPanic> {
         .set_field("name", "Bob".to_string())?
         .set_field("age", 25u32)?
         .end()?
-        .build()?;
-    let vec: &Vec<Person> = hv.as_ref();
+        .build()?
+        .materialize::<Vec<Person>>()?;
     assert_eq!(
         vec,
-        &vec![
+        vec![
             Person {
                 name: "Alice".to_string(),
                 age: 30
@@ -77,15 +81,17 @@ fn list_vec_complex() -> Result<(), IPanic> {
 
 #[test]
 fn list_vec_empty() -> Result<(), IPanic> {
-    let hv = Partial::alloc::<Vec<String>>()?.begin_list()?.build()?;
-    let vec: &Vec<String> = hv.as_ref();
-    assert_eq!(vec, &Vec::<String>::new());
+    let vec = Partial::alloc::<Vec<String>>()?
+        .begin_list()?
+        .build()?
+        .materialize::<Vec<String>>()?;
+    assert_eq!(vec, Vec::<String>::new());
     Ok(())
 }
 
 #[test]
 fn list_vec_nested() -> Result<(), IPanic> {
-    let hv = Partial::alloc::<Vec<Vec<i32>>>()?
+    let vec = Partial::alloc::<Vec<Vec<i32>>>()?
         .begin_list()?
         .begin_list_item()?
         .begin_list()?
@@ -98,24 +104,23 @@ fn list_vec_nested() -> Result<(), IPanic> {
         .push(4)?
         .push(5)?
         .end()?
-        .build()?;
-    let vec: &Vec<Vec<i32>> = hv.as_ref();
-    assert_eq!(vec, &vec![vec![1, 2], vec![3, 4, 5]]);
+        .build()?
+        .materialize::<Vec<Vec<i32>>>()?;
+    assert_eq!(vec, vec![vec![1, 2], vec![3, 4, 5]]);
     Ok(())
 }
 
 #[test]
 fn list_vec_reinit() -> Result<(), IPanic> {
     let mut p = Partial::alloc::<Vec<i32>>()?;
-    p.begin_list()?;
-    p.push(1)?;
-    p.push(2)?;
-    p.begin_list()?;
-    p.push(3)?;
-    p.push(4)?;
-    let hv = p.build()?;
-    let vec: &Vec<i32> = hv.as_ref();
-    assert_eq!(vec, &vec![1, 2, 3, 4]);
+    p = p.begin_list()?;
+    p = p.push(1)?;
+    p = p.push(2)?;
+    p = p.begin_list()?;
+    p = p.push(3)?;
+    p = p.push(4)?;
+    let vec = p.build()?.materialize::<Vec<i32>>()?;
+    assert_eq!(vec, vec![1, 2, 3, 4]);
     Ok(())
 }
 
@@ -127,20 +132,20 @@ fn list_vec_field_reinit() -> Result<(), IPanic> {
     }
 
     let mut p = Partial::alloc::<S>()?;
-    p.begin_field("s")?;
-    p.begin_list()?;
-    p.push(1)?;
-    p.push(2)?;
-    p.end()?;
-    p.begin_field("s")?;
-    p.begin_list()?;
-    p.push(3)?;
-    p.push(4)?;
-    p.end()?;
-    let hv = p.build()?;
+    p = p.begin_field("s")?;
+    p = p.begin_list()?;
+    p = p.push(1)?;
+    p = p.push(2)?;
+    p = p.end()?;
+    p = p.begin_field("s")?;
+    p = p.begin_list()?;
+    p = p.push(3)?;
+    p = p.push(4)?;
+    p = p.end()?;
+    let s = p.build()?.materialize::<S>()?;
     assert_eq!(
-        hv.as_ref(),
-        &S {
+        s,
+        S {
             s: vec![1, 2, 3, 4]
         }
     );
@@ -149,19 +154,18 @@ fn list_vec_field_reinit() -> Result<(), IPanic> {
 
 #[test]
 fn list_wrong_begin_list() -> Result<(), IPanic> {
-    let mut hv = Partial::alloc::<HashMap<String, i32>>()?;
-    assert!(
-        hv.begin_list()
-            .unwrap_err()
-            .to_string()
-            .contains("begin_list can only be called on List or DynamicValue types")
-    );
+    let hv = Partial::alloc::<HashMap<String, i32>>()?;
+    let err_str = match hv.begin_list() {
+        Ok(_) => panic!("expected error"),
+        Err(e) => e.to_string(),
+    };
+    assert!(err_str.contains("begin_list can only be called on List or DynamicValue types"));
     Ok(())
 }
 
 #[test]
 fn map_hashmap_simple() -> Result<(), IPanic> {
-    let hv = Partial::alloc::<HashMap<String, i32>>()?
+    let map = Partial::alloc::<HashMap<String, i32>>()?
         .begin_map()?
         .begin_key()?
         .set("foo".to_string())?
@@ -175,8 +179,8 @@ fn map_hashmap_simple() -> Result<(), IPanic> {
         .begin_value()?
         .set(123)?
         .end()?
-        .build()?;
-    let map: &HashMap<String, i32> = hv.as_ref();
+        .build()?
+        .materialize::<HashMap<String, i32>>()?;
     assert_eq!(map.len(), 2);
     assert_eq!(map.get("foo"), Some(&42));
     assert_eq!(map.get("bar"), Some(&123));
@@ -185,10 +189,10 @@ fn map_hashmap_simple() -> Result<(), IPanic> {
 
 #[test]
 fn map_hashmap_empty() -> Result<(), IPanic> {
-    let hv = Partial::alloc::<HashMap<String, String>>()?
+    let map = Partial::alloc::<HashMap<String, String>>()?
         .begin_map()?
-        .build()?;
-    let map: &HashMap<String, String> = hv.as_ref();
+        .build()?
+        .materialize::<HashMap<String, String>>()?;
     assert_eq!(map.len(), 0);
     Ok(())
 }
@@ -201,7 +205,7 @@ fn map_hashmap_complex_values() -> Result<(), IPanic> {
         age: u32,
     }
 
-    let hv = Partial::alloc::<HashMap<String, Person>>()?
+    let map = Partial::alloc::<HashMap<String, Person>>()?
         .begin_map()?
         .set_key("alice".to_string())?
         .begin_value()?
@@ -213,8 +217,8 @@ fn map_hashmap_complex_values() -> Result<(), IPanic> {
         .set_field("name", "Bob".to_string())?
         .set_field("age", 25u32)?
         .end()?
-        .build()?;
-    let map: &HashMap<String, Person> = hv.as_ref();
+        .build()?
+        .materialize::<HashMap<String, Person>>()?;
     assert_eq!(map.len(), 2);
     assert_eq!(
         map.get("alice"),
@@ -252,8 +256,8 @@ fn map_partial_initialization_drop() -> Result<(), IPanic> {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let mut partial = Partial::alloc::<HashMap<String, DropTracker>>()?;
-        partial
+        let partial = Partial::alloc::<HashMap<String, DropTracker>>()?;
+        let _partial = partial
             .begin_map()?
             .begin_key()?
             .set("first".to_string())?

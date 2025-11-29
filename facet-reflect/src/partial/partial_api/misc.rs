@@ -91,9 +91,7 @@ impl<'facet> Partial<'facet> {
     ///
     /// Returns an error if already in deferred mode.
     #[inline]
-    pub fn begin_deferred(&mut self, resolution: Resolution) -> Result<&mut Self, ReflectError> {
-        self.require_active()?;
-
+    pub fn begin_deferred(mut self, resolution: Resolution) -> Result<Self, ReflectError> {
         // Cannot enable deferred mode if already in deferred mode
         if self.is_deferred() {
             return Err(ReflectError::InvariantViolation {
@@ -131,7 +129,7 @@ impl<'facet> Partial<'facet> {
     ///
     /// Returns an error if any required fields are missing or if the partial is
     /// not in deferred mode.
-    pub fn finish_deferred(&mut self) -> Result<&mut Self, ReflectError> {
+    pub fn finish_deferred(mut self) -> Result<Self, ReflectError> {
         // Check if we're in deferred mode first, before extracting state
         if !self.is_deferred() {
             return Err(ReflectError::InvariantViolation {
@@ -192,7 +190,7 @@ impl<'facet> Partial<'facet> {
                     remaining_frame.deinit();
                 }
 
-                self.poison_and_cleanup();
+                // No need to poison - returning Err consumes self, Drop will handle cleanup
                 return Err(e);
             }
 
@@ -234,7 +232,7 @@ impl<'facet> Partial<'facet> {
 
         // Invariant check: we must have at least one frame after finish_deferred
         if self.frames().is_empty() {
-            self.poison_and_cleanup();
+            // No need to poison - returning Err consumes self, Drop will handle cleanup
             return Err(ReflectError::InvariantViolation {
                 invariant: "finish_deferred() left Partial with no frames",
             });
@@ -243,13 +241,10 @@ impl<'facet> Partial<'facet> {
         // Fill defaults and validate the root frame is fully initialized
         if let Some(frame) = self.frames_mut().last_mut() {
             frame.fill_defaults();
-            if let Err(e) = frame.require_full_initialization() {
-                // Root validation failed. At this point, all stored frames have been
-                // processed and their parent isets updated. We must poison the Partial
-                // to prevent further use, which would leave data in an inconsistent state.
-                self.poison_and_cleanup();
-                return Err(e);
-            }
+            // Root validation failed. At this point, all stored frames have been
+            // processed and their parent isets updated.
+            // No need to poison - returning Err consumes self, Drop will handle cleanup
+            frame.require_full_initialization()?;
         }
 
         Ok(self)
@@ -307,7 +302,7 @@ impl<'facet> Partial<'facet> {
     }
 
     /// Pops the current frame off the stack, indicating we're done initializing the current field
-    pub fn end(&mut self) -> Result<&mut Self, ReflectError> {
+    pub fn end(mut self) -> Result<Self, ReflectError> {
         if let Some(_frame) = self.frames().last() {
             crate::trace!(
                 "end() called: shape={}, tracker={:?}, is_init={}",
@@ -316,7 +311,6 @@ impl<'facet> Partial<'facet> {
                 _frame.is_init
             );
         }
-        self.require_active()?;
 
         // Special handling for SmartPointerSlice - convert builder to Arc
         if self.frames().len() == 1 {
@@ -353,7 +347,7 @@ impl<'facet> Partial<'facet> {
 
         if self.frames().len() <= 1 {
             // Never pop the last/root frame - this indicates a broken state machine
-            self.poison_and_cleanup();
+            // No need to poison - returning Err consumes self, Drop will handle cleanup
             return Err(ReflectError::InvariantViolation {
                 invariant: "Partial::end() called with only one frame on the stack",
             });
@@ -362,7 +356,7 @@ impl<'facet> Partial<'facet> {
         // In deferred mode, cannot pop below the start depth
         if let Some(start_depth) = self.start_depth() {
             if self.frames().len() <= start_depth {
-                self.poison_and_cleanup();
+                // No need to poison - returning Err consumes self, Drop will handle cleanup
                 return Err(ReflectError::InvariantViolation {
                     invariant: "Partial::end() called but would pop below deferred start depth",
                 });
@@ -1036,7 +1030,7 @@ impl<'facet> Partial<'facet> {
                         let shape = parent_frame.shape;
                         popped_frame.dealloc();
                         *building_element = false;
-                        self.poison_and_cleanup();
+                        // No need to poison - returning Err consumes self, Drop will handle cleanup
                         return Err(ReflectError::OperationFailed {
                             shape,
                             operation: "end() called but array element was never initialized",
@@ -1073,7 +1067,7 @@ impl<'facet> Partial<'facet> {
                         let shape = parent_frame.shape;
                         popped_frame.dealloc();
                         *insert_state = DynamicObjectInsertState::Idle;
-                        self.poison_and_cleanup();
+                        // No need to poison - returning Err consumes self, Drop will handle cleanup
                         return Err(ReflectError::OperationFailed {
                             shape,
                             operation: "end() called but object entry value was never initialized",

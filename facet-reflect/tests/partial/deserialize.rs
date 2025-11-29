@@ -19,21 +19,21 @@ fn wip_opaque_custom_deserialize() -> Result<(), IPanic> {
     }
 
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_field("inner")?;
-    partial.set(Opaque(NotDerivingFacet(35)))?;
-    partial.end()?;
-    let result = *partial.build()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.set(Opaque(NotDerivingFacet(35)))?;
+    partial = partial.end()?;
+    let result = partial.build()?.materialize::<Container>()?;
 
     assert_eq!(result.inner, NotDerivingFacet(35));
 
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_field("inner")?;
-    partial.begin_custom_deserialization()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.begin_custom_deserialization()?;
     assert_eq!(partial.shape(), u64::SHAPE);
-    partial.set(35u64)?;
-    partial.end()?;
-    partial.end()?;
-    let result = *partial.build()?;
+    partial = partial.set(35u64)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
+    let result = partial.build()?.materialize::<Container>()?;
 
     assert_eq!(result.inner, NotDerivingFacet(35));
 
@@ -65,44 +65,44 @@ fn wip_shaped_custom_deserialize() -> Result<(), IPanic> {
     }
 
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_field("inner")?;
-    partial.set(Struct1 { val: 10 })?;
-    partial.end()?;
-    let result = *partial.build()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.set(Struct1 { val: 10 })?;
+    partial = partial.end()?;
+    let result = partial.build()?.materialize::<Container>()?;
 
     assert_eq!(result.inner.val, 10);
 
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_field("inner")?;
-    partial.begin_custom_deserialization()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.begin_custom_deserialization()?;
     assert_eq!(partial.shape(), Struct2::SHAPE);
-    partial.set(Struct2 { sum: "10".into() })?;
-    partial.end()?;
-    partial.end()?;
-    let result = *partial.build()?;
+    partial = partial.set(Struct2 { sum: "10".into() })?;
+    partial = partial.end()?;
+    partial = partial.end()?;
+    let result = partial.build()?.materialize::<Container>()?;
 
     assert_eq!(result.inner, Struct1 { val: 10 });
 
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_field("inner")?;
-    partial.begin_custom_deserialization()?;
-    partial.begin_field("sum")?;
-    partial.set::<String>("10".into())?;
-    partial.end()?;
-    partial.end()?;
-    partial.end()?;
-    let result = *partial.build()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.begin_custom_deserialization()?;
+    partial = partial.begin_field("sum")?;
+    partial = partial.set::<String>("10".into())?;
+    partial = partial.end()?;
+    partial = partial.end()?;
+    partial = partial.end()?;
+    let result = partial.build()?.materialize::<Container>()?;
 
     assert_eq!(result.inner, Struct1 { val: 10 });
 
     // skipping using the deserialize_with and bulding the target struct directly instead
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_field("inner")?;
-    partial.begin_field("val")?;
-    partial.set(10u64)?;
-    partial.end()?;
-    partial.end()?;
-    let result = *partial.build()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.begin_field("val")?;
+    partial = partial.set(10u64)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
+    let result = partial.build()?.materialize::<Container>()?;
 
     assert_eq!(result.inner, Struct1 { val: 10 });
 
@@ -126,23 +126,23 @@ fn wip_opaque_custom_deserialize_enum_tuple() -> Result<(), IPanic> {
     }
 
     let mut partial = Partial::alloc::<Choices>()?;
-    partial.select_variant_named("Opaque")?;
-    partial.begin_nth_field(0)?;
-    partial.set(Opaque(NotDerivingFacet(35)))?;
-    partial.end()?;
-    let result = *partial.build()?;
+    partial = partial.select_variant_named("Opaque")?;
+    partial = partial.begin_nth_field(0)?;
+    partial = partial.set(Opaque(NotDerivingFacet(35)))?;
+    partial = partial.end()?;
+    let result = partial.build()?.materialize::<Choices>()?;
 
     assert!(matches!(result, Choices::Opaque(NotDerivingFacet(35))));
 
     let mut partial = Partial::alloc::<Choices>()?;
-    partial.select_variant_named("Opaque")?;
-    partial.begin_nth_field(0)?;
-    partial.begin_custom_deserialization()?;
+    partial = partial.select_variant_named("Opaque")?;
+    partial = partial.begin_nth_field(0)?;
+    partial = partial.begin_custom_deserialization()?;
     assert_eq!(partial.shape(), u64::SHAPE);
-    partial.set(35u64)?;
-    partial.end()?;
-    partial.end()?;
-    let result = *partial.build()?;
+    partial = partial.set(35u64)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
+    let result = partial.build()?.materialize::<Choices>()?;
 
     assert!(matches!(result, Choices::Opaque(NotDerivingFacet(35))));
 
@@ -169,11 +169,11 @@ fn wip_opaque_custom_deserialize_enum_fields() -> Result<(), IPanic> {
     }
 
     let mut partial = Partial::alloc::<Choices>()?;
-    partial.select_variant_named("Opaque")?;
-    partial.begin_field("f1")?;
-    partial.set(Opaque(NotDerivingFacet(35)))?;
-    partial.end()?;
-    let result = *partial.build()?;
+    partial = partial.select_variant_named("Opaque")?;
+    partial = partial.begin_field("f1")?;
+    partial = partial.set(Opaque(NotDerivingFacet(35)))?;
+    partial = partial.end()?;
+    let result = partial.build()?.materialize::<Choices>()?;
 
     assert!(matches!(
         result,
@@ -183,14 +183,14 @@ fn wip_opaque_custom_deserialize_enum_fields() -> Result<(), IPanic> {
     ));
 
     let mut partial = Partial::alloc::<Choices>()?;
-    partial.select_variant_named("Opaque")?;
-    partial.begin_field("f1")?;
-    partial.begin_custom_deserialization()?;
+    partial = partial.select_variant_named("Opaque")?;
+    partial = partial.begin_field("f1")?;
+    partial = partial.begin_custom_deserialization()?;
     assert_eq!(partial.shape(), u64::SHAPE);
-    partial.set(35u64)?;
-    partial.end()?;
-    partial.end()?;
-    let result = *partial.build()?;
+    partial = partial.set(35u64)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
+    let result = partial.build()?.materialize::<Choices>()?;
 
     assert!(matches!(
         result,
@@ -222,10 +222,10 @@ fn wip_custom_deserialize_errors() -> Result<(), IPanic> {
     }
 
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_field("inner")?;
-    partial.begin_custom_deserialization()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.begin_custom_deserialization()?;
     assert_eq!(partial.shape(), u64::SHAPE);
-    partial.set(35u64)?;
+    partial = partial.set(35u64)?;
     let end_result = partial.end();
     if let Err(ReflectError::CustomDeserializationError {
         message,
@@ -277,19 +277,19 @@ fn wip_custom_deserialize_zst() -> Result<(), IPanic> {
     }
 
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_field("inner")?;
-    partial.begin_custom_deserialization()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.begin_custom_deserialization()?;
     assert_eq!(partial.shape(), u64::SHAPE);
-    partial.set(35u64)?;
-    partial.end()?;
-    partial.end()?;
-    let _result = *partial.build()?;
+    partial = partial.set(35u64)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
+    let _result = partial.build()?.materialize::<Container>()?;
 
     let mut partial = Partial::alloc::<Container>()?;
-    partial.begin_field("inner")?;
-    partial.begin_custom_deserialization()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.begin_custom_deserialization()?;
     assert_eq!(partial.shape(), u64::SHAPE);
-    partial.set(20u64)?;
+    partial = partial.set(20u64)?;
     let end_result = partial.end();
     if let Err(ReflectError::CustomDeserializationError {
         message,

@@ -4,11 +4,9 @@ use super::*;
 // Build
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 impl<'facet> Partial<'facet> {
-    /// Builds the value
-    pub fn build(&mut self) -> Result<HeapValue<'facet>, ReflectError> {
-        self.require_active()?;
+    /// Builds the value, consuming the Partial.
+    pub fn build(mut self) -> Result<HeapValue<'facet>, ReflectError> {
         if self.frames().len() != 1 {
-            self.state = PartialState::BuildFailed;
             return Err(ReflectError::InvariantViolation {
                 invariant: "Partial::build() expects a single frame — call end() until that's the case",
             });
@@ -20,7 +18,6 @@ impl<'facet> Partial<'facet> {
         if let Err(e) = frame.require_full_initialization() {
             // Put the frame back so Drop can handle cleanup properly
             self.frames_mut().push(frame);
-            self.state = PartialState::BuildFailed;
             return Err(e);
         }
 
@@ -33,14 +30,13 @@ impl<'facet> Partial<'facet> {
             if !invariants_ok {
                 // Put the frame back so Drop can handle cleanup properly
                 self.frames_mut().push(frame);
-                self.state = PartialState::BuildFailed;
                 return Err(ReflectError::InvariantViolation {
                     invariant: "Type invariants check failed",
                 });
             }
         }
 
-        // Mark as built to prevent reuse
+        // Mark as built to prevent Drop from cleaning up the value
         self.state = PartialState::Built;
 
         match frame
@@ -62,7 +58,6 @@ impl<'facet> Partial<'facet> {
             Err(e) => {
                 // Put the frame back for proper cleanup
                 self.frames_mut().push(frame);
-                self.state = PartialState::BuildFailed;
                 Err(e)
             }
         }
