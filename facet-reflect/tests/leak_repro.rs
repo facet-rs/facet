@@ -1,5 +1,6 @@
 use facet::Facet;
 use facet_reflect::{Partial, Resolution};
+use facet_value::Value;
 use std::collections::HashMap;
 
 /// Helper to safely get shape for debug printing - returns "<inactive>" if poisoned
@@ -1295,4 +1296,33 @@ fn test_leak_092c76fc() {
     let _ = p.end();
     let _ = p.begin_field("name");
     // Drop - should not leak
+}
+
+#[test]
+fn test_crash_dynamic_value_deferred_map() {
+    // Fuzzer crash: crash-da764b00c5ee2a614cd747b6f526fc1f759982b0
+    // Minimized to: BeginDeferred, BeginMap, BeginObjectEntry("bf"), End
+    let mut typed_partial = Partial::alloc::<Value>().unwrap();
+    let p = typed_partial.inner_mut();
+
+    let _ = p.begin_deferred(Resolution::new());
+    let _ = p.begin_map();
+    let _ = p.begin_object_entry("bf");
+    let _ = p.end();
+    // Drop - should not crash
+}
+
+#[test]
+fn test_crash_dynamic_value_duplicate_key() {
+    // Fuzzer crash: crash-885d792d5f35a69718e0bbbaa4206b058e3084e6
+    // Minimized to: BeginMap, BeginObjectEntry("vvv"), BeginMap, End, BeginObjectEntry("vvv")
+    let mut typed_partial = Partial::alloc::<Value>().unwrap();
+    let p = typed_partial.inner_mut();
+
+    let _ = p.begin_map();
+    let _ = p.begin_object_entry("vvv");
+    let _ = p.begin_map(); // nested map as value
+    let _ = p.end(); // completes the entry
+    let _ = p.begin_object_entry("vvv"); // same key again
+    // Drop - should not crash
 }

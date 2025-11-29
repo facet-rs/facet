@@ -1030,6 +1030,19 @@ impl<'facet> Partial<'facet> {
                 state: DynamicValueState::Array { building_element },
             } => {
                 if *building_element {
+                    // Check that the element is initialized before pushing
+                    if !popped_frame.is_init {
+                        // Element was never set - clean up and return error
+                        let shape = parent_frame.shape;
+                        popped_frame.dealloc();
+                        *building_element = false;
+                        self.poison_and_cleanup();
+                        return Err(ReflectError::OperationFailed {
+                            shape,
+                            operation: "end() called but array element was never initialized",
+                        });
+                    }
+
                     // We just popped an element frame, now push it to the dynamic array
                     if let Def::DynamicValue(dyn_def) = parent_frame.shape.def {
                         // Get mutable pointers - both array and element need PtrMut
@@ -1054,6 +1067,19 @@ impl<'facet> Partial<'facet> {
                 state: DynamicValueState::Object { insert_state },
             } => {
                 if let DynamicObjectInsertState::BuildingValue { key } = insert_state {
+                    // Check that the value is initialized before inserting
+                    if !popped_frame.is_init {
+                        // Value was never set - clean up and return error
+                        let shape = parent_frame.shape;
+                        popped_frame.dealloc();
+                        *insert_state = DynamicObjectInsertState::Idle;
+                        self.poison_and_cleanup();
+                        return Err(ReflectError::OperationFailed {
+                            shape,
+                            operation: "end() called but object entry value was never initialized",
+                        });
+                    }
+
                     // We just popped a value frame, now insert it into the dynamic object
                     if let Def::DynamicValue(dyn_def) = parent_frame.shape.def {
                         // Get mutable pointers - both object and value need PtrMut

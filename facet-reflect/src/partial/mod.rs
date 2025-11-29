@@ -496,6 +496,14 @@ impl Frame {
     ///
     /// After this call, `is_init` will be false and `tracker` will be [Tracker::Scalar].
     fn deinit(&mut self) {
+        // For ManagedElsewhere frames, the parent owns the value and is responsible
+        // for dropping it. We should not drop it here to avoid double-free.
+        if matches!(self.ownership, FrameOwnership::ManagedElsewhere) {
+            self.is_init = false;
+            self.tracker = Tracker::Scalar;
+            return;
+        }
+
         match &self.tracker {
             Tracker::Scalar => {
                 // Simple scalar - drop if initialized
