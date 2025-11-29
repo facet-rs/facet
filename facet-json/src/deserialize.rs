@@ -809,10 +809,54 @@ impl<'input> JsonDeserializer<'input> {
                 }
             }
             Token::LBrace => {
-                // TODO: implement object support for DynamicValue
-                return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
-                    message: "DynamicValue object deserialization not yet implemented".into(),
-                }));
+                self.next()?; // consume '{'
+                wip.begin_map()?; // Initialize as object
+
+                loop {
+                    let token = self.peek()?;
+                    if matches!(token.value, Token::RBrace) {
+                        self.next()?;
+                        break;
+                    }
+
+                    // Parse key (must be a string)
+                    let key_token = self.next()?;
+                    let key = match key_token.value {
+                        Token::String(s) => s.into_owned(),
+                        _ => {
+                            return Err(JsonError::new(
+                                JsonErrorKind::UnexpectedToken {
+                                    got: format!("{}", key_token.value),
+                                    expected: "string key",
+                                },
+                                key_token.span,
+                            ));
+                        }
+                    };
+
+                    // Expect colon
+                    let colon = self.next()?;
+                    if !matches!(colon.value, Token::Colon) {
+                        return Err(JsonError::new(
+                            JsonErrorKind::UnexpectedToken {
+                                got: format!("{}", colon.value),
+                                expected: "':'",
+                            },
+                            colon.span,
+                        ));
+                    }
+
+                    // Start object entry and deserialize value
+                    wip.begin_object_entry(&key)?;
+                    self.deserialize_dynamic_value(wip)?;
+                    wip.end()?;
+
+                    // Check for comma or end
+                    let next = self.peek()?;
+                    if matches!(next.value, Token::Comma) {
+                        self.next()?;
+                    }
+                }
             }
             _ => {
                 return Err(JsonError::new(

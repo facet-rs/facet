@@ -684,7 +684,9 @@ dependencies = [
  "ariadne",
  "eyre",
  "facet",
+ "facet-assert",
  "facet-core",
+ "facet-json",
  "facet-reflect",
  "facet-solver",
  "facet-testhelpers",
@@ -693,6 +695,7 @@ dependencies = [
  "num-traits",
  "owo-colors",
  "snapbox",
+ "toml-test-data",
  "toml_parser",
  "toml_writer",
 ]
@@ -963,6 +966,25 @@ name = "impls"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a46645bbd70538861a90d0f26c31537cdf1e44aae99a794fb75a664b70951bc"
+
+[[package]]
+name = "include_dir"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "923d117408f1e49d914f1a379a309cffe4f18c05cf4e3d12e613a15fc81bd0dd"
+dependencies = [
+ "include_dir_macros",
+]
+
+[[package]]
+name = "include_dir_macros"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cab85a7ed0bd5f0e76d93846e0147172bed2e2d3f859bcc33a8d9699cad1a75"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
 
 [[package]]
 name = "indenter"
@@ -1966,6 +1988,15 @@ checksum = "42d3e9c45c09de15d06dd8acf5f4e0e399e85927b7f00711024eb7ae10fa4869"
 dependencies = [
  "displaydoc",
  "zerovec",
+]
+
+[[package]]
+name = "toml-test-data"
+version = "2.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ea600d3ed690c00626705b301d30e25787300d80d9dc0b582097f4d6308599c3"
+dependencies = [
+ "include_dir",
 ]
 
 [[package]]

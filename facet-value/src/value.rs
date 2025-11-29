@@ -575,6 +575,24 @@ impl<T: Into<Value>> From<Option<T>> for Value {
     }
 }
 
+// === FromIterator implementations ===
+
+#[cfg(feature = "alloc")]
+impl<T: Into<Value>> core::iter::FromIterator<T> for Value {
+    /// Collect into an array Value.
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        VArray::from_iter(iter).into()
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl<K: Into<VString>, V: Into<Value>> core::iter::FromIterator<(K, V)> for Value {
+    /// Collect key-value pairs into an object Value.
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        VObject::from_iter(iter).into()
+    }
+}
+
 /// Enum for destructuring a `Value` by ownership.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Destructured {

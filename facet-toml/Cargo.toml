@@ -40,6 +40,9 @@ owo-colors = "4.2.2"
 [dev-dependencies]
 eyre = "0.6.12"
 facet = { path = "../facet" }
+facet-assert = { path = "../facet-assert" }
+facet-json = { path = "../facet-json" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-value = { path = "../facet-value" }
 snapbox = "0.6.21"
+toml-test-data = "2.3"
