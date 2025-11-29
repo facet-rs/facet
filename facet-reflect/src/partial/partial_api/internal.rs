@@ -353,6 +353,37 @@ impl<'facet> Partial<'facet> {
         }
     }
 
+    /// Poisons the Partial and cleans up all frames.
+    ///
+    /// This is called when an unrecoverable error occurs (e.g., finish_deferred fails).
+    /// After poisoning:
+    /// - All frames are deinitialized and deallocated
+    /// - The Partial's state is set to BuildFailed
+    /// - All subsequent operations will fail with an error
+    ///
+    /// This prevents use-after-error bugs where continuing to use a Partial after
+    /// a failed operation could lead to memory leaks or double-frees.
+    pub(crate) fn poison_and_cleanup(&mut self) {
+        // First, clean up any stored frames (if we were in deferred mode)
+        if let FrameMode::Deferred { stored_frames, .. } = &mut self.mode {
+            for (_, mut frame) in core::mem::take(stored_frames) {
+                frame.deinit();
+                // Don't deallocate - Field ownership means parent owns the memory
+            }
+        }
+
+        // Then clean up all stack frames
+        while let Some(mut frame) = self.mode.stack_mut().pop() {
+            frame.deinit();
+            if let FrameOwnership::Owned = frame.ownership {
+                frame.dealloc();
+            }
+        }
+
+        // Mark as poisoned
+        self.state = PartialState::BuildFailed;
+    }
+
     /// Prepares the current frame for re-initialization by dropping any existing
     /// value and unmarking it in the parent's iset.
     ///
@@ -363,28 +394,37 @@ impl<'facet> Partial<'facet> {
     /// `false` if the frame was not initialized.
     pub(crate) fn prepare_for_reinitialization(&mut self) -> bool {
         let frame = self.frames().last().unwrap();
-        if !frame.is_init {
+
+        // Check if there's anything to reinitialize:
+        // - For Scalar tracker: check is_init flag
+        // - For Struct/Array/Enum trackers: these may have initialized fields even if is_init is false
+        //   (is_init tracks the whole value, iset/data tracks individual fields)
+        let needs_cleanup = match &frame.tracker {
+            Tracker::Scalar => frame.is_init,
+            // Non-Scalar trackers indicate fields were accessed, so deinit() will handle them
+            Tracker::Struct { .. }
+            | Tracker::Array { .. }
+            | Tracker::Enum { .. }
+            | Tracker::SmartPointer
+            | Tracker::SmartPointerSlice { .. }
+            | Tracker::List { .. }
+            | Tracker::Map { .. }
+            | Tracker::Set { .. }
+            | Tracker::Option { .. }
+            | Tracker::DynamicValue { .. } => true,
+        };
+        if !needs_cleanup {
             return false;
         }
 
-        // Clean up any partial state (e.g., map key/value buffers mid-insert)
-        // before dropping the main value
+        // Use deinit() to properly handle:
+        // - Scalar frames: drops the whole value if is_init
+        // - Struct frames: only drops fields marked in iset (avoiding double-free)
+        // - Array frames: only drops elements marked in iset
+        // - Enum frames: only drops fields marked in data
+        // - Map/Set frames: also cleans up partial insert state (key/value buffers)
         let frame = self.frames_mut().last_mut().unwrap();
-        frame.cleanup_partial_state();
-        let frame = self.frames().last().unwrap();
-
-        // Drop the existing value
-        if let Some(drop_fn) = frame.shape.vtable.drop_in_place {
-            unsafe { drop_fn(frame.data.assume_init()) };
-        }
-
-        // Note: With the ownership transfer model, parent's iset was already cleared
-        // when we entered this field, so no need to unmark here.
-
-        // Reset the frame's state
-        let frame = self.frames_mut().last_mut().unwrap();
-        frame.is_init = false;
-        frame.tracker = Tracker::Scalar;
+        frame.deinit();
 
         true
     }
