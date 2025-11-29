@@ -10,6 +10,7 @@ categories = ["development-tools::testing", "development-tools"]
 description = "A collection of testing helpers and utilities for facet"
 
 [dependencies]
+boxen = "0.1"
 color-backtrace = { version = "0.7.0", default-features = false, features = [
     "use-btparse-crate",
 ] }

@@ -663,6 +663,7 @@ dependencies = [
 name = "facet-testhelpers"
 version = "0.31.8"
 dependencies = [
+ "boxen",
  "color-backtrace",
  "facet-testhelpers-macros",
  "log",
