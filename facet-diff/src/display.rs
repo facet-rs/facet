@@ -230,24 +230,26 @@ impl<'mem, 'facet> Updates<'mem, 'facet> {
 
 impl<'mem, 'facet> Display for Updates<'mem, 'facet> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let printer = PrettyPrinter::default()
-            .with_colors(false)
-            .with_minimal_option_names(true);
-
         if let Some(update) = &self.0.first {
             update.fmt(f)?;
         }
 
         for (values, update) in &self.0.values {
-            for value in values {
-                writeln!(f, "{}", printer.format_peek(*value))?;
+            // Collapse kept values into ".. N unchanged items"
+            let count = values.len();
+            if count > 0 {
+                let label = if count == 1 { "item" } else { "items" };
+                writeln!(f, "{}", muted(&format!(".. {count} unchanged {label}")))?;
             }
             update.fmt(f)?;
         }
 
         if let Some(values) = &self.0.last {
-            for value in values {
-                writeln!(f, "{}", printer.format_peek(*value))?;
+            // Collapse trailing kept values
+            let count = values.len();
+            if count > 0 {
+                let label = if count == 1 { "item" } else { "items" };
+                writeln!(f, "{}", muted(&format!(".. {count} unchanged {label}")))?;
             }
         }
 
@@ -304,6 +306,41 @@ impl<'mem, 'facet> Display for ReplaceGroup<'mem, 'facet> {
     }
 }
 
+/// Write a sequence of diffs, collapsing Equal diffs into ".. N unchanged items"
+fn write_diff_sequence(
+    f: &mut std::fmt::Formatter<'_>,
+    diffs: &[Diff<'_, '_>],
+) -> std::fmt::Result {
+    let mut i = 0;
+    while i < diffs.len() {
+        // Count consecutive Equal diffs
+        let mut equal_count = 0;
+        while i + equal_count < diffs.len() {
+            if matches!(diffs[i + equal_count], Diff::Equal { .. }) {
+                equal_count += 1;
+            } else {
+                break;
+            }
+        }
+
+        if equal_count > 0 {
+            // Collapse Equal diffs
+            let label = if equal_count == 1 { "item" } else { "items" };
+            writeln!(
+                f,
+                "{}",
+                muted(&format!(".. {equal_count} unchanged {label}"))
+            )?;
+            i += equal_count;
+        } else {
+            // Show the non-Equal diff
+            writeln!(f, "{}", diffs[i])?;
+            i += 1;
+        }
+    }
+    Ok(())
+}
+
 impl<'mem, 'facet> Display for UpdatesGroup<'mem, 'facet> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(update) = &self.0.first {
@@ -311,16 +348,12 @@ impl<'mem, 'facet> Display for UpdatesGroup<'mem, 'facet> {
         }
 
         for (values, update) in &self.0.values {
-            for value in values {
-                writeln!(f, "{value}")?;
-            }
+            write_diff_sequence(f, values)?;
             update.fmt(f)?;
         }
 
         if let Some(values) = &self.0.last {
-            for value in values {
-                writeln!(f, "{value}")?;
-            }
+            write_diff_sequence(f, values)?;
         }
 
         Ok(())
