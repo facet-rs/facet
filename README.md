@@ -46,29 +46,32 @@ Crates are in various states of progress, buyer beware!
 
 In terms of data formats, we have:
 
-- [facet-json](https://github.com/facet-rs/facet-json): JSON format support
-- [facet-toml](https://github.com/facet-rs/facet-toml): TOML format support
-- [facet-yaml](https://github.com/facet-rs/facet-yaml): YAML format support
-- [facet-msgpack](https://github.com/facet-rs/facet-msgpack): MessagePack deserialization
-- [facet-asn1](https://github.com/facet-rs/facet-asn1): ASN.1 format support
-- [facet-xdr](https://github.com/facet-rs/facet-xdr): XDR format support
-- [facet-kdl](https://github.com/facet-rs/facet-kdl): KDL format support (non-functional so far)
+- [facet-json](https://github.com/facet-rs/facet/tree/main/facet-json): JSON format support
+- [facet-toml](https://github.com/facet-rs/facet/tree/main/facet-toml): TOML format support
+- [facet-yaml](https://github.com/facet-rs/facet/tree/main/facet-yaml): YAML format support
+- [facet-msgpack](https://github.com/facet-rs/facet/tree/main/facet-msgpack): MessagePack deserialization
+- [facet-asn1](https://github.com/facet-rs/facet/tree/main/facet-asn1): ASN.1 format support
+- [facet-xdr](https://github.com/facet-rs/facet/tree/main/facet-xdr): XDR format support
+- [facet-kdl](https://github.com/facet-rs/facet/tree/main/facet-kdl): KDL format support
+- [facet-csv](https://github.com/facet-rs/facet/tree/main/facet-csv): CSV format support
 
 Still adjacent to serialization/deserialization, we have:
 
-- [facet-urlencoded](https://github.com/facet-rs/facet-urlencoded): URL-encoded form data deserialization
-- [facet-args](https://github.com/facet-rs/facet-args): CLI arguments (a-la clap)
+- [facet-urlencoded](https://github.com/facet-rs/facet/tree/main/facet-urlencoded): URL-encoded form data deserialization
+- [facet-args](https://github.com/facet-rs/facet/tree/main/facet-args): CLI arguments (a-la clap)
 
 As far as utilities go:
 
-- [facet-pretty](https://github.com/facet-rs/facet-pretty) is able to pretty-print Facet types.
-- [facet-serialize](https://github.com/facet-rs/facet-serialize) provides generic iterative serialization facilities
-- [facet-deserialize](https://github.com/facet-rs/facet-deserialize) provides generic iterative deserialization facilities
+- [facet-value](https://github.com/facet-rs/facet/tree/main/facet-value): Memory-efficient dynamic value type, supporting JSON-like data plus bytes
+- [facet-pretty](https://github.com/facet-rs/facet/tree/main/facet-pretty): Pretty-print Facet types
+- [facet-diff](https://github.com/facet-rs/facet/tree/main/facet-diff): Diffing capabilities for Facet types
+- [facet-assert](https://github.com/facet-rs/facet/tree/main/facet-assert): Pretty assertions for Facet types (no PartialEq required)
+- [facet-serialize](https://github.com/facet-rs/facet-serialize): Generic iterative serialization facilities
+- [facet-deserialize](https://github.com/facet-rs/facet-deserialize): Generic iterative deserialization facilities
 
 And the less developed:
 
-- [facet-inspect](https://github.com/facet-rs/facet-inspect): Provide utilities to inspect the content of a Facet object.
-- [facet-diff](https://github.com/facet-rs/facet-diff): Provides diffing capabilities for Facet types.
+- [facet-inspect](https://github.com/facet-rs/facet-inspect): Utilities to inspect the content of a Facet object
 
 ## Extended cinematic universe
 
