@@ -1,6 +1,7 @@
 //! Proc-macros for the proto-attr grammar system.
 //!
 //! This crate provides:
+//! - `#[derive(Faket)]` - derive macro that processes `#[faket(...)]` attributes
 //! - `__make_parse_attr!` - generates types and parsing macros from a grammar
 //! - `__attr_error!` - produces helpful errors for unknown attributes
 //! - `__field_error!` - produces helpful errors for unknown fields
@@ -8,8 +9,29 @@
 use proc_macro::TokenStream;
 
 mod attr_error;
+mod derive_faket;
 mod field_error;
 mod make_parse_attr;
+
+/// Derive macro that processes `#[faket(...)]` attributes.
+///
+/// Supports namespaced attributes like `#[faket(ns::attr(...))]` which
+/// are dispatched to `ns::__parse_attr!(attr(...))`.
+///
+/// # Example
+///
+/// ```ignore
+/// #[derive(Faket)]
+/// #[faket(proto_ext::skip)]
+/// struct Foo {
+///     #[faket(proto_ext::column(name = "id", primary_key))]
+///     id: i64,
+/// }
+/// ```
+#[proc_macro_derive(Faket, attributes(faket))]
+pub fn derive_faket(input: TokenStream) -> TokenStream {
+    derive_faket::derive_faket(input)
+}
 
 /// Generates attribute types and parsing macros from a grammar definition.
 ///

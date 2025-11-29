@@ -8,3 +8,10 @@ description = "Example extension crate using proto-attr grammar"
 [dependencies]
 proto-attr.workspace = true
 proto-attr-macros.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = []
+slow-tests = []

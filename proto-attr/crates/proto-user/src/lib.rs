@@ -2,9 +2,26 @@
 //!
 //! This simulates a user crate that depends on proto-ext and uses its attributes.
 
+use proto_attr::Faket;
 use proto_ext::Attr;
 #[cfg(test)]
 use proto_ext::Column;
+
+// Test the full derive pipeline
+#[derive(Faket)]
+#[faket(proto_ext::skip)]
+pub struct SkippedStruct {
+    pub x: i32,
+}
+
+#[derive(Faket)]
+pub struct User {
+    #[faket(proto_ext::column(name = "user_id", primary_key))]
+    pub id: i64,
+
+    #[faket(proto_ext::rename("user_name"))]
+    pub name: String,
+}
 
 /// Demonstrates cross-crate attribute parsing.
 pub fn demo() -> Vec<Attr> {
