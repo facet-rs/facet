@@ -59,6 +59,8 @@ impl<'facet> Partial<'facet> {
     /// Returns an error if already in deferred mode.
     #[inline]
     pub fn begin_deferred(&mut self, resolution: Resolution) -> Result<&mut Self, ReflectError> {
+        self.require_active()?;
+
         // Cannot enable deferred mode if already in deferred mode
         if self.is_deferred() {
             return Err(ReflectError::InvariantViolation {
@@ -156,6 +158,8 @@ impl<'facet> Partial<'facet> {
                 for (_, mut remaining_frame) in stored_frames {
                     remaining_frame.deinit();
                 }
+
+                self.poison_and_cleanup();
                 return Err(e);
             }
 
@@ -198,7 +202,13 @@ impl<'facet> Partial<'facet> {
         // Fill defaults and validate the root frame is fully initialized
         if let Some(frame) = self.frames_mut().last_mut() {
             frame.fill_defaults();
-            frame.require_full_initialization()?;
+            if let Err(e) = frame.require_full_initialization() {
+                // Root validation failed. At this point, all stored frames have been
+                // processed and their parent isets updated. We must poison the Partial
+                // to prevent further use, which would leave data in an inconsistent state.
+                self.poison_and_cleanup();
+                return Err(e);
+            }
         }
 
         Ok(self)
@@ -551,20 +561,33 @@ impl<'facet> Partial<'facet> {
         }
 
         // For Field-owned frames, reclaim responsibility in parent's tracker
+        // Only mark as initialized if the child frame was actually initialized.
+        // This prevents double-free when begin_inner/begin_some drops a value via
+        // prepare_for_reinitialization but then fails, leaving the child uninitialized.
+        //
+        // We use require_full_initialization() rather than just is_init because:
+        // - Scalar frames use is_init as the source of truth
+        // - Struct/Array/Enum frames use their iset/data as the source of truth
+        //   (is_init may never be set to true for these tracker types)
         if let FrameOwnership::Field { field_idx } = popped_frame.ownership {
+            let child_is_initialized = popped_frame.require_full_initialization().is_ok();
             match &mut parent_frame.tracker {
                 Tracker::Struct {
                     iset,
                     current_child,
                 } => {
-                    iset.set(field_idx); // Parent reclaims responsibility
+                    if child_is_initialized {
+                        iset.set(field_idx); // Parent reclaims responsibility only if child was init
+                    }
                     *current_child = None;
                 }
                 Tracker::Array {
                     iset,
                     current_child,
                 } => {
-                    iset.set(field_idx); // Parent reclaims responsibility
+                    if child_is_initialized {
+                        iset.set(field_idx); // Parent reclaims responsibility only if child was init
+                    }
                     *current_child = None;
                 }
                 Tracker::Enum {
@@ -572,7 +595,9 @@ impl<'facet> Partial<'facet> {
                     current_child,
                     ..
                 } => {
-                    data.set(field_idx); // Parent reclaims responsibility
+                    if child_is_initialized {
+                        data.set(field_idx); // Parent reclaims responsibility only if child was init
+                    }
                     *current_child = None;
                 }
                 _ => {}
