@@ -4,6 +4,8 @@ use facet_core::{Def, Facet, Field, PointerType, ShapeAttribute, StructKind, Typ
 use facet_reflect::{HasFields, Peek, ScalarType};
 use log::trace;
 
+use crate::RawJson;
+
 /// Serializes a value implementing `Facet` to a JSON string.
 pub fn to_string<'facet, T: Facet<'facet> + ?Sized>(value: &T) -> String {
     peek_to_string(Peek::new(value))
@@ -126,6 +128,13 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
         let new_shape = inner_peek.shape();
         trace!("{old_shape} is transparent, let's serialize the inner {new_shape} instead");
         return serialize_value(inner_peek, Some(field), writer, indent, depth);
+    }
+
+    // Handle RawJson - write raw content directly
+    if peek.shape() == RawJson::SHAPE {
+        let raw = peek.get::<RawJson<'_>>().unwrap();
+        writer.write(raw.as_str().as_bytes());
+        return Ok(());
     }
 
     trace!(

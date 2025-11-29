@@ -18,6 +18,7 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 default = ["std"]
 
 [dependencies]
+facet = { path = "../facet", default-features = false }
 facet-core = { path = "../facet-core", default-features = false }
 facet-reflect = { path = "../facet-reflect", default-features = false }
 facet-solver = { path = "../facet-solver" }

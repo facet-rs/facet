@@ -17,6 +17,9 @@ pub use serialize::*;
 
 mod tokenizer;
 
+mod raw_json;
+pub use raw_json::RawJson;
+
 /// `no_std` compatible Write trait used by the json serializer.
 pub trait JsonWrite {
     /// Write all these bytes to the writer.
