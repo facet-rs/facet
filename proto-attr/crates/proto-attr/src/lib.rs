@@ -17,7 +17,7 @@
 //! ```
 
 pub use proto_attr_core::*;
-pub use proto_attr_macros::{__attr_error, __field_error, __make_parse_attr};
+pub use proto_attr_macros::{__attr_error, __field_error, __make_parse_attr, Faket};
 
 /// Define an attribute grammar with type-safe parsing.
 ///
