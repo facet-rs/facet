@@ -45,7 +45,7 @@ where
     B: facet::Facet<'a>,
 {
     let printer = PrettyPrinter::default()
-        .with_colors(false)
+        .with_colors(true)
         .with_minimal_option_names(true);
 
     let before_str = printer.format_peek(Peek::new(before));
@@ -53,14 +53,17 @@ where
     let diff = before.diff(after);
     // Keep colors in diff output
     let diff_str = format!("{diff}");
-    // For width calculation, strip ANSI codes
+
+    // For width calculation, strip ANSI codes from all strings
+    let before_str_plain = strip_ansi(&before_str);
+    let after_str_plain = strip_ansi(&after_str);
     let diff_str_plain = strip_ansi(&diff_str);
 
     // Calculate minimum width to fit titles and content
     let min_width = 12;
-    let content_width = before_str
+    let content_width = before_str_plain
         .lines()
-        .chain(after_str.lines())
+        .chain(after_str_plain.lines())
         .chain(diff_str_plain.lines())
         .map(|l| l.len())
         .max()
