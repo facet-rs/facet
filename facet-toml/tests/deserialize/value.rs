@@ -93,27 +93,26 @@ fn test_deserialize_inline_table() {
     assert_eq!(result, expected);
 }
 
-// TODO: array_of_tables result differs from expected, investigate
-// #[test]
-// fn test_deserialize_array_of_tables() {
-//     let toml = r#"
-//         [[users]]
-//         name = "Alice"
-//         age = 30
-//
-//         [[users]]
-//         name = "Bob"
-//         age = 25
-//     "#;
-//     let result: Value = facet_toml::from_str(toml).unwrap();
-//     let expected = value!({
-//         "users": [
-//             { "name": "Alice", "age": 30 },
-//             { "name": "Bob", "age": 25 }
-//         ]
-//     });
-//     assert_eq!(result, expected);
-// }
+#[test]
+fn test_deserialize_array_of_tables() {
+    let toml = r#"
+        [[users]]
+        name = "Alice"
+        age = 30
+
+        [[users]]
+        name = "Bob"
+        age = 25
+    "#;
+    let result: Value = facet_toml::from_str(toml).unwrap();
+    let expected = value!({
+        "users": [
+            { "name": "Alice", "age": 30 },
+            { "name": "Bob", "age": 25 }
+        ]
+    });
+    assert_eq!(result, expected);
+}
 
 #[test]
 fn test_deserialize_mixed_types_in_array() {
@@ -127,18 +126,17 @@ fn test_deserialize_mixed_types_in_array() {
     assert_eq!(result, expected);
 }
 
-// TODO: empty table causes crash, investigate
-// #[test]
-// fn test_deserialize_empty_table() {
-//     let toml = r#"
-//         [empty]
-//     "#;
-//     let result: Value = facet_toml::from_str(toml).unwrap();
-//     let expected = value!({
-//         "empty": {}
-//     });
-//     assert_eq!(result, expected);
-// }
+#[test]
+fn test_deserialize_empty_table() {
+    let toml = r#"
+        [empty]
+    "#;
+    let result: Value = facet_toml::from_str(toml).unwrap();
+    let expected = value!({
+        "empty": {}
+    });
+    assert_eq!(result, expected);
+}
 
 #[test]
 fn test_deserialize_deeply_nested() {

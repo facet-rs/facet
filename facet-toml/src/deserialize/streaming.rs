@@ -598,6 +598,9 @@ struct StreamingDeserializer<'input, 'events, 'res> {
     resolution: &'res Resolution,
     /// Currently open flattened field (and variant if applicable)
     open_flatten: Option<OpenFlatten>,
+    /// Tracks array table keys for DynamicValue types, mapping key -> frame count at array level.
+    /// This allows subsequent [[key]] headers to add to the existing array instead of replacing.
+    dynamic_array_tables: std::collections::HashMap<String, usize>,
 }
 
 /// Tracks which flattened field is currently open
@@ -623,6 +626,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             root_shape,
             resolution,
             open_flatten: None,
+            dynamic_array_tables: std::collections::HashMap::new(),
         }
     }
 
@@ -931,10 +935,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         // Close any open flattened field first
         self.close_open_flatten(partial)?;
 
-        // Close any previously open frames
-        self.close_all_frames(partial)?;
-
-        // Collect the dotted key path
+        // Collect the dotted key path first (before closing frames)
         let mut path: Vec<String> = Vec::new();
         while let Some(event) = self.iter.peek() {
             match event.kind() {
@@ -955,6 +956,30 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         }
 
         trace!("Table path: {path:?}");
+
+        // For DynamicValue array tables, check if this is a continuation
+        // If so, we only close the list item frame and add a new item
+        if is_array_table && path.len() == 1 {
+            let key = &path[0];
+            if let Some(&array_frame_count) = self.dynamic_array_tables.get(key.as_str()) {
+                // This is a continuation of an existing array table
+                // Close frames down to the array level (not including the array itself)
+                while self.open_frames > array_frame_count {
+                    self.pop_frame(partial)?;
+                }
+                // Add a new list item
+                self.begin_list_item(partial)?;
+                self.open_frames += 1;
+                // Initialize the list item as an object
+                if let Err(e) = partial.begin_map() {
+                    return Err(self.reflect_err(e, partial));
+                }
+                return Ok(());
+            }
+        }
+
+        // Close any previously open frames
+        self.close_all_frames(partial)?;
 
         // Navigate into the path
         for (i, key) in path.iter().enumerate() {
@@ -1070,25 +1095,48 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
 
         // Check if we're at a DynamicValue - treat it like a map/object
         if matches!(partial.shape().def, Def::DynamicValue(_)) {
-            // Initialize as object
+            // Initialize root as object
             if let Err(e) = partial.begin_map() {
                 return Err(self.reflect_err(e, partial));
             }
 
-            // Start an object entry with this key
-            if let Err(e) = partial.begin_object_entry(key) {
-                return Err(self.reflect_err(e, partial));
-            }
-            self.open_frames += 1; // Track that we opened a frame
-
-            // Handle array item within object value
             if is_array_item {
+                // Array table [[key]] - create entry with array value
+                // Note: continuations of existing array tables are handled in process_table_header
+                if let Err(e) = partial.begin_object_entry(key) {
+                    return Err(self.reflect_err(e, partial));
+                }
+                self.open_frames += 1;
+
+                // Initialize as array
                 partial
                     .begin_list()
                     .map(|_| ())
                     .map_err(|e| self.reflect_err(e, partial))?;
+
+                // Track this array table key and the frame count at the array level
+                self.dynamic_array_tables
+                    .insert(key.to_string(), self.open_frames);
+
+                // Add the first list item
                 self.begin_list_item(partial)?;
                 self.open_frames += 1;
+
+                // Initialize the list item as an object
+                if let Err(e) = partial.begin_map() {
+                    return Err(self.reflect_err(e, partial));
+                }
+            } else {
+                // Regular table [key] - create object entry
+                if let Err(e) = partial.begin_object_entry(key) {
+                    return Err(self.reflect_err(e, partial));
+                }
+                self.open_frames += 1;
+
+                // Initialize the entry's value as an object
+                if let Err(e) = partial.begin_map() {
+                    return Err(self.reflect_err(e, partial));
+                }
             }
 
             return Ok(());
