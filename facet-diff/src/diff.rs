@@ -1,3 +1,7 @@
+// TODO: Consider using an approach similar to `morph` (bearcove's fork of difftastic)
+// to compute and display the optimal diff path for complex structural changes.
+
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use facet::{Def, DynValueKind, Shape, StructKind, Type, UserType};
@@ -61,16 +65,16 @@ pub enum Value<'mem, 'facet> {
 
     Struct {
         /// The fields that are updated between the structs
-        updates: HashMap<&'static str, Diff<'mem, 'facet>>,
+        updates: HashMap<Cow<'static, str>, Diff<'mem, 'facet>>,
 
         /// The fields that are in `from` but not in `to`.
-        deletions: HashMap<&'static str, Peek<'mem, 'facet>>,
+        deletions: HashMap<Cow<'static, str>, Peek<'mem, 'facet>>,
 
         /// The fields that are in `to` but not in `from`.
-        insertions: HashMap<&'static str, Peek<'mem, 'facet>>,
+        insertions: HashMap<Cow<'static, str>, Peek<'mem, 'facet>>,
 
         /// The fields that are unchanged
-        unchanged: HashSet<&'static str>,
+        unchanged: HashSet<Cow<'static, str>>,
     },
 }
 
@@ -140,18 +144,18 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                             if let Ok(to) = to_ty.field_by_name(field.name) {
                                 let diff = Diff::new_peek(from, to);
                                 if diff.is_equal() {
-                                    unchanged.insert(field.name);
+                                    unchanged.insert(Cow::Borrowed(field.name));
                                 } else {
-                                    updates.insert(field.name, diff);
+                                    updates.insert(Cow::Borrowed(field.name), diff);
                                 }
                             } else {
-                                deletions.insert(field.name, from);
+                                deletions.insert(Cow::Borrowed(field.name), from);
                             }
                         }
 
                         for (field, to) in to_ty.fields() {
                             if from_ty.field_by_name(field.name).is_err() {
-                                insertions.insert(field.name, to);
+                                insertions.insert(Cow::Borrowed(field.name), to);
                             }
                         }
                         Value::Struct {
@@ -201,12 +205,12 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                         if let Ok(Some(to)) = to_enum.field_by_name(field.name) {
                             let diff = Diff::new_peek(from, to);
                             if diff.is_equal() {
-                                unchanged.insert(field.name);
+                                unchanged.insert(Cow::Borrowed(field.name));
                             } else {
-                                updates.insert(field.name, diff);
+                                updates.insert(Cow::Borrowed(field.name), diff);
                             }
                         } else {
-                            deletions.insert(field.name, from);
+                            deletions.insert(Cow::Borrowed(field.name), from);
                         }
                     }
 
@@ -215,7 +219,7 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                             .field_by_name(field.name)
                             .is_ok_and(|x| x.is_some())
                         {
-                            insertions.insert(field.name, to);
+                            insertions.insert(Cow::Borrowed(field.name), to);
                         }
                     }
 
@@ -384,31 +388,20 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     if let Some(to_value) = to_keys.get(key) {
                         let diff = Self::new_peek(*from_value, *to_value);
                         if diff.is_equal() {
-                            unchanged.insert(key.as_str());
+                            unchanged.insert(Cow::Owned(key.clone()));
                         } else {
-                            // We need to leak the key to get a static lifetime
-                            // This is a limitation of the current API
-                            let key_static: &'static str = Box::leak(key.clone().into_boxed_str());
-                            updates.insert(key_static, diff);
+                            updates.insert(Cow::Owned(key.clone()), diff);
                         }
                     } else {
-                        let key_static: &'static str = Box::leak(key.clone().into_boxed_str());
-                        deletions.insert(key_static, *from_value);
+                        deletions.insert(Cow::Owned(key.clone()), *from_value);
                     }
                 }
 
                 for (key, to_value) in &to_keys {
                     if !from_keys.contains_key(key) {
-                        let key_static: &'static str = Box::leak(key.clone().into_boxed_str());
-                        insertions.insert(key_static, *to_value);
+                        insertions.insert(Cow::Owned(key.clone()), *to_value);
                     }
                 }
-
-                // Convert unchanged HashSet<&str> to HashSet<&'static str>
-                let unchanged_static: HashSet<&'static str> = unchanged
-                    .into_iter()
-                    .map(|s| -> &'static str { Box::leak(s.to_owned().into_boxed_str()) })
-                    .collect();
 
                 Diff::User {
                     from: from.shape(),
@@ -418,8 +411,16 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                         updates,
                         deletions,
                         insertions,
-                        unchanged: unchanged_static,
+                        unchanged,
                     },
+                }
+            }
+            DynValueKind::DateTime => {
+                // Compare datetime by their components
+                if from_dyn.as_datetime() == to_dyn.as_datetime() {
+                    Diff::Equal
+                } else {
+                    Diff::Replace { from, to }
                 }
             }
         }
