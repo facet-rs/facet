@@ -5,11 +5,89 @@
 
 #![allow(dead_code)]
 
+use boxen::{BorderStyle, builder};
 use facet::Facet;
 use facet_diff::FacetDiff;
+use facet_pretty::PrettyPrinter;
+use facet_reflect::Peek;
 use facet_testhelpers::test;
 use facet_value::value;
 use insta::assert_snapshot;
+
+/// Strip ANSI escape codes from a string
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' {
+            // Skip escape sequence
+            if chars.peek() == Some(&'[') {
+                chars.next(); // consume '['
+                // Skip until we hit a letter (end of sequence)
+                while let Some(&next) = chars.peek() {
+                    chars.next();
+                    if next.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Format a diff comparison showing before, after, and the resulting diff
+fn format_diff_comparison<'a, A, B>(before: &A, after: &B) -> String
+where
+    A: facet::Facet<'a>,
+    B: facet::Facet<'a>,
+{
+    let printer = PrettyPrinter::default()
+        .with_colors(false)
+        .with_minimal_option_names(true);
+
+    let before_str = printer.format_peek(Peek::new(before));
+    let after_str = printer.format_peek(Peek::new(after));
+    let diff = before.diff(after);
+    // Strip ANSI codes for clean snapshots
+    let diff_str = strip_ansi(&format!("{diff}"));
+
+    // Calculate minimum width to fit titles
+    let min_width = 12;
+    let content_width = before_str
+        .lines()
+        .chain(after_str.lines())
+        .chain(diff_str.lines())
+        .map(|l| l.len())
+        .max()
+        .unwrap_or(0)
+        .max(min_width);
+
+    let before_box = builder()
+        .border_style(BorderStyle::Round)
+        .title("Before")
+        .width(content_width + 2)
+        .render(&before_str)
+        .unwrap_or_else(|_| before_str.clone());
+
+    let after_box = builder()
+        .border_style(BorderStyle::Round)
+        .title("After")
+        .width(content_width + 2)
+        .render(&after_str)
+        .unwrap_or_else(|_| after_str.clone());
+
+    let diff_box = builder()
+        .border_style(BorderStyle::Double)
+        .title("Diff")
+        .width(content_width + 2)
+        .render(diff_str.trim_end())
+        .unwrap_or_else(|_| diff_str.clone());
+
+    format!("{before_box}\n{after_box}\n{diff_box}")
+}
 
 // ============================================================================
 // Scalar diff tests
@@ -19,63 +97,63 @@ use insta::assert_snapshot;
 fn diff_integers_equal() {
     let a = 42i32;
     let b = 42i32;
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_integers_different() {
     let a = 42i32;
     let b = 100i32;
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_integers_different_types() {
     let a = 42i32;
     let b = 42i64;
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_strings_equal() {
     let a = "hello";
     let b = "hello";
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_strings_different() {
     let a = "hello";
     let b = "world";
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_bools_equal() {
     let a = true;
     let b = true;
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_bools_different() {
     let a = true;
     let b = false;
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_floats_equal() {
     let a = 3.14f64;
     let b = 3.14f64;
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_floats_different() {
     let a = 3.14f64;
     let b = 2.71f64;
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 // ============================================================================
@@ -124,7 +202,7 @@ fn diff_structs_equal() {
         name: "Alice",
         age: 30,
     };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -137,7 +215,7 @@ fn diff_structs_one_field_different() {
         name: "Bob",
         age: 30,
     };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -150,7 +228,7 @@ fn diff_structs_all_fields_different() {
         name: "Bob",
         age: 25,
     };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -163,7 +241,7 @@ fn diff_structs_different_types_same_shape() {
         name: "Alice".to_string(),
         age: 30,
     };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -177,7 +255,7 @@ fn diff_structs_field_added() {
         age: 30,
         email: "alice@example.com",
     };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -191,7 +269,7 @@ fn diff_structs_field_removed() {
         name: "Alice",
         age: 30,
     };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -212,7 +290,7 @@ fn diff_structs_nested() {
             city: "Wonderland".to_string(),
         },
     };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -233,7 +311,7 @@ fn diff_structs_nested_multiple_changes() {
             city: "Elsewhere".to_string(),
         },
     };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 // ============================================================================
@@ -267,70 +345,70 @@ enum DetailedStatus {
 fn diff_enums_same_unit_variant() {
     let a = Status::Active;
     let b = Status::Active;
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_enums_different_unit_variants() {
     let a = Status::Active;
     let b = Status::Inactive;
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_enums_same_tuple_variant_equal() {
     let a = Status::Pending(5);
     let b = Status::Pending(5);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_enums_same_tuple_variant_different() {
     let a = Status::Pending(5);
     let b = Status::Pending(10);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_enums_unit_to_tuple_variant() {
     let a = Status::Active;
     let b = Status::Pending(5);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_enums_tuple_variants_same_content() {
     let a = Message::Text("hello".to_string());
     let b = Message::Text("hello".to_string());
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_enums_tuple_variants_different_content() {
     let a = Message::Text("hello".to_string());
     let b = Message::Text("world".to_string());
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_enums_different_tuple_variants() {
     let a = Message::Text("hello".to_string());
     let b = Message::Number(42);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_enums_struct_variant_same() {
     let a = DetailedStatus::Active { since: 2020 };
     let b = DetailedStatus::Active { since: 2020 };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_enums_struct_variant_different_field() {
     let a = DetailedStatus::Active { since: 2020 };
     let b = DetailedStatus::Active { since: 2024 };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -339,7 +417,7 @@ fn diff_enums_different_struct_variants() {
     let b = DetailedStatus::Inactive {
         reason: "maintenance".to_string(),
     };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 // ============================================================================
@@ -350,63 +428,63 @@ fn diff_enums_different_struct_variants() {
 fn diff_vecs_equal() {
     let a = vec![1, 2, 3];
     let b = vec![1, 2, 3];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_vecs_one_element_different() {
     let a = vec![1, 2, 3];
     let b = vec![1, 2, 4];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_vecs_element_added() {
     let a = vec![1, 2, 3];
     let b = vec![1, 2, 3, 4];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_vecs_element_removed() {
     let a = vec![1, 2, 3, 4];
     let b = vec![1, 2, 3];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_vecs_element_inserted_middle() {
     let a = vec![1, 2, 4];
     let b = vec![1, 2, 3, 4];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_vecs_completely_different() {
     let a = vec![1, 2, 3];
     let b = vec![4, 5, 6];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_vecs_reordered() {
     let a = vec![1, 2, 3];
     let b = vec![3, 1, 2];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_arrays_equal() {
     let a = [1, 2, 3];
     let b = [1, 2, 3];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_arrays_different() {
     let a = [1, 2, 3];
     let b = [1, 5, 3];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -415,14 +493,14 @@ fn diff_slices() {
     let b = [1, 2, 4];
     let a_slice: &[i32] = &a;
     let b_slice: &[i32] = &b;
-    assert_snapshot!(a_slice.diff(&b_slice).to_string());
+    assert_snapshot!(format_diff_comparison(&a_slice, &b_slice));
 }
 
 #[test]
 fn diff_vec_vs_array() {
     let a = vec![1, 2, 3];
     let b = [1, 2, 3];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -447,7 +525,7 @@ fn diff_vec_of_structs() {
             age: 25,
         },
     ];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 // ============================================================================
@@ -458,35 +536,35 @@ fn diff_vec_of_structs() {
 fn diff_tuples_equal() {
     let a = (1, 2, 3);
     let b = (1, 2, 3);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_tuples_one_element_different() {
     let a = (1, 2, 3);
     let b = (1, 5, 3);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_tuples_different_sizes() {
     let a = (1, 2, 3);
     let b = (1, 2, 3, 4);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_tuples_nested() {
     let a = ((1, 2), (3, 4));
     let b = ((1, 2), (3, 5));
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_tuples_nested_different_sizes() {
     let a = ((1, 2), (3, 4));
     let b = ((1, 2, 3), (4, 5));
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 // ============================================================================
@@ -497,35 +575,35 @@ fn diff_tuples_nested_different_sizes() {
 fn diff_options_both_some_equal() {
     let a = Some(42);
     let b = Some(42);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_options_both_some_different() {
     let a = Some(42);
     let b = Some(100);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_options_some_vs_none() {
     let a = Some(42);
     let b: Option<i32> = None;
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_options_none_vs_some() {
     let a: Option<i32> = None;
     let b = Some(42);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_options_both_none() {
     let a: Option<i32> = None;
     let b: Option<i32> = None;
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -538,7 +616,7 @@ fn diff_options_nested_structs() {
         name: "Alice",
         age: 31,
     });
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 // ============================================================================
@@ -549,98 +627,98 @@ fn diff_options_nested_structs() {
 fn diff_value_null_equal() {
     let a = value!(null);
     let b = value!(null);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_bool_equal() {
     let a = value!(true);
     let b = value!(true);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_bool_different() {
     let a = value!(true);
     let b = value!(false);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_number_equal() {
     let a = value!(42);
     let b = value!(42);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_number_different() {
     let a = value!(42);
     let b = value!(100);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_string_equal() {
     let a = value!("hello");
     let b = value!("hello");
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_string_different() {
     let a = value!("hello");
     let b = value!("world");
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_array_equal() {
     let a = value!([1, 2, 3]);
     let b = value!([1, 2, 3]);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_array_different() {
     let a = value!([1, 2, 3]);
     let b = value!([1, 2, 4]);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_array_element_added() {
     let a = value!([1, 2, 3]);
     let b = value!([1, 2, 3, 4]);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_object_equal() {
     let a = value!({"name": "Alice", "age": 30});
     let b = value!({"name": "Alice", "age": 30});
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_object_field_different() {
     let a = value!({"name": "Alice", "age": 30});
     let b = value!({"name": "Bob", "age": 30});
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_object_field_added() {
     let a = value!({"name": "Alice"});
     let b = value!({"name": "Alice", "age": 30});
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_object_field_removed() {
     let a = value!({"name": "Alice", "age": 30});
     let b = value!({"name": "Alice"});
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -661,21 +739,21 @@ fn diff_value_nested_object() {
             }
         }
     });
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_different_types() {
     let a = value!(42);
     let b = value!("42");
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_null_vs_value() {
     let a = value!(null);
     let b = value!(42);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 // ============================================================================
@@ -686,70 +764,70 @@ fn diff_value_null_vs_value() {
 fn diff_value_number_vs_i32() {
     let a = value!(42);
     let b: i32 = 42;
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_i32_vs_value_number() {
     let a: i32 = 42;
     let b = value!(42);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_string_vs_string() {
     let a = value!("hello");
     let b = String::from("hello");
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_string_vs_value_string() {
     let a = String::from("hello");
     let b = value!("hello");
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_array_vs_vec() {
     let a = value!([1, 2, 3]);
     let b: Vec<i64> = vec![1, 2, 3];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_vec_vs_value_array() {
     let a: Vec<i64> = vec![1, 2, 3];
     let b = value!([1, 2, 3]);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_array_vs_vec_different() {
     let a = value!([1, 2, 3]);
     let b: Vec<i64> = vec![1, 2, 4];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_bool_vs_bool() {
     let a = value!(true);
     let b = true;
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_bool_vs_value_bool() {
     let a = true;
     let b = value!(true);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_bool_vs_bool_different() {
     let a = value!(true);
     let b = false;
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 // ============================================================================
@@ -760,35 +838,35 @@ fn diff_value_bool_vs_bool_different() {
 fn diff_empty_vecs() {
     let a: Vec<i32> = vec![];
     let b: Vec<i32> = vec![];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_empty_to_nonempty_vec() {
     let a: Vec<i32> = vec![];
     let b = vec![1, 2, 3];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_nonempty_to_empty_vec() {
     let a = vec![1, 2, 3];
     let b: Vec<i32> = vec![];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_empty_array() {
     let a = value!([]);
     let b = value!([]);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_empty_object() {
     let a = value!({});
     let b = value!({});
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -818,14 +896,14 @@ fn diff_deeply_nested_structs() {
             inner: Level3 { value: 2 },
         },
     };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_vec_with_many_changes() {
     let a = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
     let b = vec![1, 20, 3, 40, 5, 60, 7, 80, 9, 100];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -841,7 +919,7 @@ fn diff_struct_with_vec_field() {
     let b = Container {
         items: vec![1, 2, 4],
     };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -860,7 +938,7 @@ fn diff_struct_with_option_field() {
         name: "Alice",
         nickname: None,
     };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 // ============================================================================
@@ -875,7 +953,7 @@ fn diff_value_object_vs_value_object_nested_change() {
     // Dynamic/Dynamic with nested field change
     let a = value!({"user": {"name": "Alice", "age": 30}});
     let b = value!({"user": {"name": "Alice", "age": 31}});
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -883,7 +961,7 @@ fn diff_value_object_vs_value_object_field_type_change() {
     // Dynamic/Dynamic with type change in field
     let a = value!({"count": 42});
     let b = value!({"count": "forty-two"});
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 // --- Sequences with nested diffs ---
@@ -893,7 +971,7 @@ fn diff_value_array_nested_objects() {
     // Dynamic/Dynamic - array of objects with changes
     let a = value!([{"id": 1, "name": "Alice"}, {"id": 2, "name": "Bob"}]);
     let b = value!([{"id": 1, "name": "Alicia"}, {"id": 2, "name": "Bob"}]);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -901,7 +979,7 @@ fn diff_vec_of_values() {
     // T/Dynamic - Vec containing Value items
     let a: Vec<facet_value::Value> = vec![value!(1), value!(2), value!(3)];
     let b: Vec<facet_value::Value> = vec![value!(1), value!(20), value!(3)];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 // --- Mixed scalar comparisons ---
@@ -911,7 +989,7 @@ fn diff_value_number_vs_i32_different() {
     // Dynamic/T with different values
     let a = value!(42);
     let b: i32 = 100;
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -919,7 +997,7 @@ fn diff_i32_vs_value_number_different() {
     // T/Dynamic with different values
     let a: i32 = 42;
     let b = value!(100);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -927,7 +1005,7 @@ fn diff_value_string_vs_str_different() {
     // Dynamic/T with different strings
     let a = value!("hello");
     let b = "world";
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -935,7 +1013,7 @@ fn diff_str_vs_value_string_different() {
     // T/Dynamic with different strings
     let a = "hello";
     let b = value!("world");
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 // --- Type mismatches ---
@@ -945,7 +1023,7 @@ fn diff_value_number_vs_string() {
     // Dynamic/T type mismatch
     let a = value!(42);
     let b = "42";
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -953,7 +1031,7 @@ fn diff_string_vs_value_number() {
     // T/Dynamic type mismatch
     let a = "42";
     let b = value!(42);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 // --- Sequences cross-type ---
@@ -963,7 +1041,7 @@ fn diff_value_array_vs_vec_element_change() {
     // Dynamic/T with element changes
     let a = value!([1, 2, 3, 4, 5]);
     let b: Vec<i64> = vec![1, 2, 30, 4, 5];
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -971,7 +1049,7 @@ fn diff_vec_vs_value_array_element_added() {
     // T/Dynamic with additions
     let a: Vec<i64> = vec![1, 2, 3];
     let b = value!([1, 2, 3, 4, 5]);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -979,7 +1057,7 @@ fn diff_vec_vs_value_array_element_removed() {
     // T/Dynamic with removals
     let a: Vec<i64> = vec![1, 2, 3, 4, 5];
     let b = value!([1, 2, 3]);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 // ============================================================================
@@ -1026,7 +1104,7 @@ fn diff_big_struct_multiple_changes() {
         cache_size: 1024,
         description: "An even cooler service".to_string(), // changed
     };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[derive(Facet, Debug, PartialEq)]
@@ -1081,7 +1159,7 @@ fn diff_four_level_nesting() {
         },
         label: "root".to_string(),
     };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -1091,7 +1169,7 @@ fn diff_large_vec_scattered_changes() {
     b[3] = 300; // change at index 3
     b[7] = 700; // change at index 7
     b[15] = 1500; // change at index 15
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -1100,7 +1178,7 @@ fn diff_large_vec_with_insertions_and_deletions() {
     let b: Vec<i32> = vec![1, 2, 100, 101, 5, 6, 8, 9, 10, 11, 12];
     // removed: 3, 4, 7
     // added: 100, 101, 11, 12
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[derive(Facet, Debug, PartialEq)]
@@ -1179,7 +1257,7 @@ fn diff_struct_with_vec_of_structs_complex() {
             },
         ],
     };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[derive(Facet, Debug, PartialEq)]
@@ -1195,7 +1273,7 @@ fn diff_triple_nested_option() {
     let b = NestedOptions {
         outer: Some(Some(Some(100))),
     };
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -1224,7 +1302,7 @@ fn diff_value_deeply_nested_object() {
             }
         }
     });
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
@@ -1239,5 +1317,5 @@ fn diff_value_array_of_objects_complex() {
         {"id": 2, "name": "Bob", "active": false},
         {"id": 4, "name": "Diana", "active": true},
     ]);
-    assert_snapshot!(a.diff(&b).to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
 }
