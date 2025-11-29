@@ -37,18 +37,26 @@ fn compile_snippet(code: &str) -> String {
     // Create project structure
     fs::create_dir_all(&src_dir).unwrap();
 
-    // Write Cargo.toml
+    // Write Cargo.toml with paths relative to this crate's location
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let facet_path = Path::new(manifest_dir).join("../facet");
+    let facet_kdl_path = Path::new(manifest_dir);
+
     fs::write(
         test_dir.join("Cargo.toml"),
-        r#"[package]
+        format!(
+            r#"[package]
 name = "test"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-facet = { path = "/Users/amos/bearcove/facet/facet" }
-facet-kdl = { path = "/Users/amos/bearcove/facet/facet-kdl" }
+facet = {{ path = "{}" }}
+facet-kdl = {{ path = "{}" }}
 "#,
+            facet_path.display(),
+            facet_kdl_path.display()
+        ),
     )
     .unwrap();
 
