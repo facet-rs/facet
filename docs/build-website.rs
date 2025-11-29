@@ -5,6 +5,7 @@
 edition = "2024"
 
 [dependencies]
+cargo_metadata = "0.19"
 ---
 
 use std::env;
@@ -12,6 +13,19 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread;
+
+/// A discovered showcase example
+#[derive(Clone, Debug)]
+struct Showcase {
+    /// Package name (e.g., "facet-kdl")
+    package: String,
+    /// Example name (e.g., "kdl_showcase")
+    example: String,
+    /// Output filename without extension (e.g., "kdl")
+    output_name: String,
+    /// Display name for nav (e.g., "KDL")
+    display_name: String,
+}
 
 fn main() {
     // Find the repo root by looking for Cargo.toml
@@ -25,7 +39,10 @@ fn main() {
     println!("  docs dir: {}", docs_dir.display());
     println!("  repo root: {}", repo_root.display());
 
-    // Step 1: Build highlight.js bundle
+    // Step 1: Discover showcases
+    let showcases = step_result("Discovering showcases", || discover_showcases(&repo_root));
+
+    // Step 2: Build highlight.js bundle
     step("Building highlight.js bundle", || {
         run_in(&meta_dir, "pnpm", &["install"])?;
         run_in(&meta_dir, "pnpm", &["run", "build"])?;
@@ -47,41 +64,40 @@ fn main() {
         Ok(())
     });
 
-    // Step 2: Build showcase Markdown files (in parallel)
+    // Step 3: Build showcase Markdown files (in parallel)
     step("Building showcase Markdown files", || {
         let showcases_dir = docs_dir.join("content/showcases");
         fs::create_dir_all(&showcases_dir)?;
 
-        // (package, example_name, output_filename)
-        let showcases = [
-            ("facet-kdl", "kdl_showcase", "kdl"),
-            ("facet-json", "json_showcase", "json"),
-            ("facet-yaml", "yaml_showcase", "yaml"),
-            ("facet-assert", "assert_showcase", "assert"),
-        ];
-
         let handles: Vec<_> = showcases
-            .into_iter()
-            .map(|(package, example, output_name)| {
+            .iter()
+            .map(|showcase| {
                 let repo_root = repo_root.clone();
                 let showcases_dir = showcases_dir.clone();
-                thread::spawn(move || -> Result<&str, String> {
+                let showcase = showcase.clone();
+                thread::spawn(move || -> Result<String, String> {
                     let output = Command::new("cargo")
                         .current_dir(&repo_root)
-                        .args(["run", "--example", example, "-p", package])
+                        .args([
+                            "run",
+                            "--example",
+                            &showcase.example,
+                            "-p",
+                            &showcase.package,
+                        ])
                         .env("FACET_SHOWCASE_OUTPUT", "markdown")
                         .stderr(Stdio::null())
                         .output()
-                        .map_err(|e| format!("{}: {}", example, e))?;
+                        .map_err(|e| format!("{}: {}", showcase.example, e))?;
 
                     if !output.status.success() {
-                        return Err(format!("{}: build failed", example));
+                        return Err(format!("{}: build failed", showcase.example));
                     }
 
-                    let md_path = showcases_dir.join(format!("{}.md", output_name));
+                    let md_path = showcases_dir.join(format!("{}.md", showcase.output_name));
                     fs::write(&md_path, &output.stdout)
-                        .map_err(|e| format!("{}: {}", example, e))?;
-                    Ok(example)
+                        .map_err(|e| format!("{}: {}", showcase.example, e))?;
+                    Ok(showcase.example)
                 })
             })
             .collect();
@@ -109,19 +125,24 @@ fn main() {
         Ok(())
     });
 
-    // Step 3: Build with Zola
+    // Step 4: Update showcase nav in template
+    step("Updating showcase navigation", || {
+        update_showcase_nav(&docs_dir, &showcases)
+    });
+
+    // Step 5: Build with Zola
     step("Building site with Zola", || {
         run_in(&docs_dir, "zola", &["build"])?;
         Ok(())
     });
 
-    // Step 4: Build search index with Pagefind
+    // Step 6: Build search index with Pagefind
     step("Building search index with Pagefind", || {
         run_in(&docs_dir, "npx", &["-y", "pagefind", "--site", "public"])?;
         Ok(())
     });
 
-    // Step 5: Check for dead links with lychee
+    // Step 7: Check for dead links with lychee
     step("Checking for dead links", || {
         // Try to install lychee with cargo binstall first (faster), fallback to cargo install
         let lychee_available = Command::new("lychee")
@@ -165,6 +186,129 @@ fn main() {
     println!("Run `zola serve` in the docs/ directory to preview it.");
 }
 
+/// Discover showcase examples using cargo metadata
+fn discover_showcases(repo_root: &PathBuf) -> Result<Vec<Showcase>, Box<dyn std::error::Error>> {
+    let metadata = cargo_metadata::MetadataCommand::new()
+        .manifest_path(repo_root.join("Cargo.toml"))
+        .no_deps()
+        .exec()?;
+
+    let mut showcases = Vec::new();
+
+    for package in &metadata.packages {
+        for target in &package.targets {
+            if target.kind.contains(&cargo_metadata::TargetKind::Example)
+                && target.name.ends_with("_showcase")
+            {
+                let (output_name, display_name) = showcase_names(&target.name);
+                showcases.push(Showcase {
+                    package: package.name.clone(),
+                    example: target.name.clone(),
+                    output_name,
+                    display_name,
+                });
+            }
+        }
+    }
+
+    // Sort by display name for consistent ordering
+    showcases.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+
+    println!("  Found {} showcases:", showcases.len());
+    for s in &showcases {
+        println!("    {} ({}) -> {}.md", s.example, s.package, s.output_name);
+    }
+
+    Ok(showcases)
+}
+
+/// Derive output filename and display name from example name
+fn showcase_names(example: &str) -> (String, String) {
+    // Strip _showcase suffix
+    let base = example.strip_suffix("_showcase").unwrap_or(example);
+
+    // Special cases for better naming
+    let (output_name, display_name) = match base {
+        "compile_errors" => ("diagnostics", "Diagnostics"),
+        "kdl" => ("kdl", "KDL"),
+        "json" => ("json", "JSON"),
+        "yaml" => ("yaml", "YAML"),
+        "assert" => ("assert", "Assert"),
+        other => {
+            // Default: use base name and title case it
+            let display = title_case(other);
+            return (other.to_string(), display);
+        }
+    };
+
+    (output_name.to_string(), display_name.to_string())
+}
+
+/// Convert snake_case to Title Case
+fn title_case(s: &str) -> String {
+    s.split('_')
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Update the showcase navigation in page.html
+fn update_showcase_nav(
+    docs_dir: &PathBuf,
+    showcases: &[Showcase],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let template_path = docs_dir.join("templates/page.html");
+    let content = fs::read_to_string(&template_path)?;
+
+    // Build the new nav links
+    let nav_links: Vec<String> = showcases
+        .iter()
+        .map(|s| {
+            format!(
+                r#"            <a href="/showcases/{output}/" {{% if page.path == "/showcases/{output}/" %}}class="active"{{% endif %}}>{display}</a>"#,
+                output = s.output_name,
+                display = s.display_name
+            )
+        })
+        .collect();
+
+    let new_nav = nav_links.join("\n");
+
+    // Find and replace the nav section
+    // Look for the pattern between <nav class="format-nav"> and </nav>
+    let start_marker = r#"<nav class="format-nav">"#;
+    let end_marker = "</nav>";
+
+    let start = content
+        .find(start_marker)
+        .ok_or("Could not find format-nav start")?;
+    let nav_content_start = start + start_marker.len();
+    let end = content[nav_content_start..]
+        .find(end_marker)
+        .ok_or("Could not find format-nav end")?
+        + nav_content_start;
+
+    let new_content = format!(
+        "{}{}\n{}\n        {}{}",
+        &content[..start],
+        start_marker,
+        new_nav,
+        end_marker,
+        &content[end + end_marker.len()..]
+    );
+
+    fs::write(&template_path, new_content)?;
+    println!("  Updated {}", template_path.display());
+
+    Ok(())
+}
+
 fn step<F>(name: &str, f: F)
 where
     F: FnOnce() -> Result<(), Box<dyn std::error::Error>>,
@@ -173,6 +317,20 @@ where
     if let Err(e) = f() {
         eprintln!("Error: {}", e);
         std::process::exit(1);
+    }
+}
+
+fn step_result<T, F>(name: &str, f: F) -> T
+where
+    F: FnOnce() -> Result<T, Box<dyn std::error::Error>>,
+{
+    println!("\n==> {}", name);
+    match f() {
+        Ok(result) => result,
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
+        }
     }
 }
 
