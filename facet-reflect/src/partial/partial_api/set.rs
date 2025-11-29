@@ -235,6 +235,7 @@ impl<'facet> Partial<'facet> {
     ///
     /// This is used for format-specific datetime types (like TOML datetime).
     /// Returns an error if the target doesn't support datetime values.
+    #[allow(clippy::too_many_arguments)]
     pub fn set_datetime(
         &mut self,
         year: i32,

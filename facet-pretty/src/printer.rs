@@ -640,6 +640,7 @@ impl PrettyPrinter {
                     }
                     DynValueKind::DateTime => {
                         // Format datetime using the vtable's get_datetime
+                        #[allow(clippy::uninlined_format_args)]
                         if let Some((year, month, day, hour, minute, second, nanos, kind)) =
                             dyn_val.as_datetime()
                         {
