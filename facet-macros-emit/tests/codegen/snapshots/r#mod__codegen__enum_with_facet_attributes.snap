@@ -1,5 +1,6 @@
 ---
 source: facet-macros-emit/tests/codegen/mod.rs
+assertion_line: 653
 expression: "expand(r#\"\n        #[derive(Facet)]\n        #[facet(type_tag = \"rs.facet.EnumWithAttributes\", myns::name = \"MyCoolEnum\")]\n        #[repr(u16)]\n        enum EnumWithAttributes {\n            #[facet(myns::name = \"FirstVariant\", myns::discriminant = 10)]\n            VariantA,\n\n            #[facet(skip)]\n            InternalVariant(i32),\n\n            #[facet(myns::deprecated = \"Use VariantD instead\")]\n            VariantC {\n                #[facet(sensitive)]\n                secret: String\n            },\n\n            VariantD {\n                 #[facet(default = forty_two())]\n                 value: i32\n            },\n        }\n        \"#)"
 ---
 static ENUM_WITH_ATTRIBUTES_SHAPE: &'static ::facet::Shape =
@@ -35,10 +36,10 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     .name("VariantA")
                     .attributes(&[
                         ::facet::VariantAttribute::Extension(
-                            myns :: __attr ! (name { | = "FirstVariant" }),
+                            :: facet :: __ext ! (myns :: name { | "FirstVariant" }),
                         ),
                         ::facet::VariantAttribute::Extension(
-                            myns :: __attr ! (discriminant { | = 10 }),
+                            :: facet :: __ext ! (myns :: discriminant { | 10 }),
                         ),
                     ])
                     .discriminant(0i64 as i64)
@@ -76,7 +77,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
                     ::facet::Variant::builder()
                         .name("VariantC")
                         .attributes(&[::facet::VariantAttribute::Extension(
-                            myns :: __attr ! (deprecated { | = "Use VariantD instead" }),
+                            :: facet :: __ext ! (myns :: deprecated { | "Use VariantD instead" }),
                         )])
                         .discriminant(2i64 as i64)
                         .data(
@@ -126,7 +127,7 @@ unsafe impl<'__facet> ::facet::Facet<'__facet> for EnumWithAttributes {
             .attributes(
                 &const {
                     [::facet::ShapeAttribute::Extension(
-                        myns :: __attr ! (name { | = "MyCoolEnum" }),
+                        :: facet :: __ext ! (myns :: name { | "MyCoolEnum" }),
                     )]
                 },
             )

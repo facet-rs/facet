@@ -69,7 +69,7 @@ macro_rules! __positional {
 #[doc(hidden)]
 macro_rules! __short {
     // Field with short char literal: #[facet(args::short = 'v')]
-    { $field:ident : $ty:ty | = $ch:literal } => {
+    { $field:ident : $ty:ty | $ch:literal } => {
         $crate::__short_impl!($ch)
     };
     // Field without short character (will use default): #[facet(args::short)]
@@ -82,7 +82,7 @@ macro_rules! __short {
         static __VAL: ::core::option::Option<char> = ::core::option::Option::None;
         ::facet::ExtensionAttr::new("args", "short", &__VAL)
     }};
-    { | = $ch:literal } => {
+    { | $ch:literal } => {
         $crate::__short_impl!($ch)
     };
     // Invalid syntax
