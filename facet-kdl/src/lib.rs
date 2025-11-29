@@ -40,13 +40,18 @@ macro_rules! __attr {
     (arguments { $($tt:tt)* }) => { $crate::__arguments!{ $($tt)* } };
     (node_name { $($tt:tt)* }) => { $crate::__node_name!{ $($tt)* } };
 
-    // Unknown attribute: emit a clear compile error with suggestions
+    // Unknown attribute: use path resolution to get the error span on the unknown identifier.
+    // The module name contains the valid options as a hint.
     ($unknown:ident $($tt:tt)*) => {
-        ::core::compile_error!(::core::concat!(
-            "unknown kdl attribute `", ::core::stringify!($unknown), "`. ",
-            "expected one of: child, children, property, argument, arguments, node_name"
-        ))
+        $crate::valid_kdl_attrs_are::child_or_children_or_property_or_argument_or_arguments_or_node_name::$unknown
     };
+}
+
+/// This module exists only to produce helpful error messages for unknown kdl attributes.
+#[doc(hidden)]
+pub mod valid_kdl_attrs_are {
+    #[doc(hidden)]
+    pub mod child_or_children_or_property_or_argument_or_arguments_or_node_name {}
 }
 
 /// Marks a field as a KDL child node.

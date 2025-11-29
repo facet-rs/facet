@@ -22,9 +22,9 @@ title = "facet-yaml Comprehensive Showcase"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">Person</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">Alice</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">Alice</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Option&lt;String&gt;</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(188,224,81)">alice@example.com</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Option&lt;String&gt;</span><span style="opacity:0.7">Some(</span><span style="color:rgb(98,224,81)">alice@example.com</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -62,15 +62,15 @@ title = "facet-yaml Comprehensive Showcase"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">Company</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">Acme Corp</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">Acme Corp</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">address</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Address</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">street</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">123 Main St</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">city</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">Springfield</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">street</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">123 Main St</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">city</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">Springfield</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">employees</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
-    <span style="color:rgb(188,224,81)">Bob</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(188,224,81)">Carol</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(188,224,81)">Dave</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(98,224,81)">Bob</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(98,224,81)">Carol</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(98,224,81)">Dave</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -104,11 +104,9 @@ title = "facet-yaml Comprehensive Showcase"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">[Message; 3]</span><span style="opacity:0.7"> [</span>
-  <span style="font-weight:bold">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Text</span><span style="opacity:0.7">(</span>
-    <span style="color:rgb(188,224,81)">Hello, world!</span><span style="opacity:0.7">,</span>
-  <span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Text</span><span style="opacity:0.7">(</span><span style="color:rgb(98,224,81)">Hello, world!</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="font-weight:bold">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Image</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">url</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">https://example.com/cat.jpg</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">url</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">https://example.com/cat.jpg</span><span style="opacity:0.7">,</span>
     <span style="color:#56b6c2">width</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">800</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="font-weight:bold">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Ping</span><span style="opacity:0.7">,</span>
@@ -137,11 +135,11 @@ title = "facet-yaml Comprehensive Showcase"
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">[ApiResponse; 2]</span><span style="opacity:0.7"> [</span>
   <span style="font-weight:bold">ApiResponse</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Success</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">data</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">Operation completed</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">data</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">Operation completed</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="font-weight:bold">ApiResponse</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Error</span><span style="opacity:0.7"> {</span>
     <span style="color:#56b6c2">code</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">404</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">message</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">Not found</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">message</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">Not found</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
@@ -171,9 +169,7 @@ title = "facet-yaml Comprehensive Showcase"
     <span style="color:#56b6c2">x</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">100</span><span style="opacity:0.7">,</span>
     <span style="color:#56b6c2">y</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">200</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">KeyPress</span><span style="opacity:0.7">(</span>
-    <span style="color:rgb(81,224,91)">A</span><span style="opacity:0.7">,</span>
-  <span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">KeyPress</span><span style="opacity:0.7">(</span><span style="color:rgb(81,224,91)">A</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="font-weight:bold">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Resize</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
@@ -199,12 +195,8 @@ title = "facet-yaml Comprehensive Showcase"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">[StringOrNumber; 2]</span><span style="opacity:0.7"> [</span>
-  <span style="font-weight:bold">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Str</span><span style="opacity:0.7">(</span>
-    <span style="color:rgb(188,224,81)">hello</span><span style="opacity:0.7">,</span>
-  <span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Num</span><span style="opacity:0.7">(</span>
-    <span style="color:rgb(222,81,224)">42</span><span style="opacity:0.7">,</span>
-  <span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Str</span><span style="opacity:0.7">(</span><span style="color:rgb(98,224,81)">hello</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Num</span><span style="opacity:0.7">(</span><span style="color:rgb(222,81,224)">42</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -228,17 +220,17 @@ title = "facet-yaml Comprehensive Showcase"
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(188,224,81)">one</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(188,224,81)">two</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<pre><code><span style="font-weight:bold">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
+  <span style="color:rgb(98,224,81)">two</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(98,224,81)">one</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">,</span>
+<span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
 <h4>YAML Output</h4>
 <pre style="background-color:#1a1b26;">
 <span style="color:#c0caf5;">---
-</span><span style="color:#f7768e;">one</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">1
-</span><span style="color:#f7768e;">two</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">2</span></pre>
+</span><span style="color:#f7768e;">two</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">2
+</span><span style="color:#f7768e;">one</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">1</span></pre>
 
 </div>
 </section>
@@ -255,17 +247,17 @@ title = "facet-yaml Comprehensive Showcase"
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">HashMap&lt;i32, &amp;str&gt;</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">: </span><span style="color:#e5c07b">one</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7">: </span><span style="color:#e5c07b">two</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<pre><code><span style="font-weight:bold">HashMap&lt;i32, &amp;str&gt;</span><span style="opacity:0.7"> [</span>
+  <span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7"> =&gt; </span>"<span style="color:#e5c07b">two</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7"> =&gt; </span>"<span style="color:#e5c07b">one</span>"<span style="opacity:0.7">,</span>
+<span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
 <h4>YAML Output</h4>
 <pre style="background-color:#1a1b26;">
 <span style="color:#c0caf5;">---
-</span><span style="color:#ff9e64;">1</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">one
-</span><span style="color:#ff9e64;">2</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">two</span></pre>
+</span><span style="color:#ff9e64;">2</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">two
+</span><span style="color:#ff9e64;">1</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">one</span></pre>
 
 </div>
 </section>
@@ -283,11 +275,11 @@ title = "facet-yaml Comprehensive Showcase"
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Point</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">0</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">10</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">1</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">20</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">2</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">30</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<pre><code><span style="font-weight:bold">Point</span><span style="opacity:0.7">(</span>
+  <span style="color:rgb(224,81,93)">10</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">20</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">30</span><span style="opacity:0.7">,</span>
+<span style="opacity:0.7">)</span></code></pre>
 </div>
 <div class="serialized-output">
 <h4>YAML Output</h4>
@@ -317,8 +309,8 @@ title = "facet-yaml Comprehensive Showcase"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">Document</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">title</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">My Document</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">content</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">This is a longer piece of text
+  <span style="color:#56b6c2">title</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">My Document</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">content</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">This is a longer piece of text
 that spans multiple lines
 and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
@@ -374,22 +366,22 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 <pre><code><span style="font-weight:bold">AppConfig</span><span style="opacity:0.7"> {</span>
   <span style="color:#56b6c2">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">server</span><span style="opacity:0.7">: </span><span style="font-weight:bold">ServerConfig</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">host</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">localhost</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">host</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">localhost</span><span style="opacity:0.7">,</span>
     <span style="color:#56b6c2">port</span><span style="opacity:0.7">: </span><span style="color:rgb(224,186,81)">8080</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">tls</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Option&lt;TlsConfig&gt;</span><span style="opacity:0.7">::Some(</span><span style="font-weight:bold">TlsConfig</span><span style="opacity:0.7"> {</span>
-      <span style="color:#56b6c2">cert_path</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">/etc/ssl/cert.pem</span><span style="opacity:0.7">,</span>
-      <span style="color:#56b6c2">key_path</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">/etc/ssl/key.pem</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">tls</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Option&lt;TlsConfig&gt;</span><span style="opacity:0.7">Some(</span><span style="font-weight:bold">TlsConfig</span><span style="opacity:0.7"> {</span>
+      <span style="color:#56b6c2">cert_path</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">/etc/ssl/cert.pem</span><span style="opacity:0.7">,</span>
+      <span style="color:#56b6c2">key_path</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">/etc/ssl/key.pem</span><span style="opacity:0.7">,</span>
     <span style="opacity:0.7">}</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">database</span><span style="opacity:0.7">: </span><span style="font-weight:bold">DatabaseConfig</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">url</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">postgres://localhost/mydb</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">url</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">postgres://localhost/mydb</span><span style="opacity:0.7">,</span>
     <span style="color:#56b6c2">pool_size</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">10</span><span style="opacity:0.7">,</span>
     <span style="color:#56b6c2">timeout_secs</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">features</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
-    <span style="color:rgb(188,224,81)">auth</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(188,224,81)">logging</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(188,224,81)">metrics</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(98,224,81)">auth</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(98,224,81)">logging</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(98,224,81)">metrics</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -438,8 +430,8 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
   <span style="color:#56b6c2">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">100</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">endpoints</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
-    <span style="color:rgb(188,224,81)">https://api1.example.com</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(188,224,81)">https://api2.example.com</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(98,224,81)">https://api1.example.com</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(98,224,81)">https://api2.example.com</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -461,8 +453,8 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
   <span style="color:#56b6c2">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">100</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">endpoints</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
-    <span style="color:rgb(188,224,81)">https://api1.example.com</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(188,224,81)">https://api2.example.com</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(98,224,81)">https://api1.example.com</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(98,224,81)">https://api2.example.com</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -654,7 +646,7 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">Item</span><span style="opacity:0.7"> {</span>
   <span style="color:#56b6c2">id</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,179)">42</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">123</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">123</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -923,7 +915,7 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">Config</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">second</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">second</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">value</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">42</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -1006,10 +998,10 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">TextContent</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">literal</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">This is a literal block.
+  <span style="color:#56b6c2">literal</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">This is a literal block.
 Newlines are preserved.
 </span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">folded</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">This is a folded block. Lines get folded into a single paragraph.
+  <span style="color:#56b6c2">folded</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">This is a folded block. Lines get folded into a single paragraph.
 </span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -1066,7 +1058,7 @@ Newlines are preserved.
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">Item</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">~</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">~</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">count</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">42</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>

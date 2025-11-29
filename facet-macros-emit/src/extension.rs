@@ -1,20 +1,21 @@
 //! Code generation for extension attributes.
 
-use facet_macros_parse::{Ident, TokenStream};
+use facet_macros_parse::{Delimiter, Group, Ident, Punct, Spacing, TokenStream, TokenTree};
 use quote::{ToTokens, quote};
 
 /// Emits the code for an `ExtensionAttr` on a field.
 ///
-/// This generates code that calls the extension crate's dispatcher macro:
+/// This generates code that calls our `__ext!` proc macro, which then
+/// forwards to the extension crate's dispatcher macro with proper spans.
 ///
 /// For `#[facet(kdl::child)]` on field `server: Server`:
 /// ```ignore
-/// kdl::__attr!(child { server : Server })
+/// ::facet::__ext!(kdl::child { server : Server })
 /// ```
 ///
 /// For `#[facet(args::short = 'v')]` on field `verbose: bool`:
 /// ```ignore
-/// args::__attr!(short { verbose : bool | = 'v' })
+/// ::facet::__ext!(args::short { verbose : bool | = 'v' })
 /// ```
 pub fn emit_extension_attr_for_field(
     ns_ident: &Ident,
@@ -24,14 +25,14 @@ pub fn emit_extension_attr_for_field(
     field_type: &TokenStream,
 ) -> TokenStream {
     if args.is_empty() {
-        // No args: ns::__attr!(key { field : Type })
+        // No args: ::facet::__ext!(ns::key { field : Type })
         quote! {
-            #ns_ident::__attr!(#key_ident { #field_name : #field_type })
+            ::facet::__ext!(#ns_ident::#key_ident { #field_name : #field_type })
         }
     } else {
-        // With args: ns::__attr!(key { field : Type | args })
+        // With args: ::facet::__ext!(ns::key { field : Type | args })
         quote! {
-            #ns_ident::__attr!(#key_ident { #field_name : #field_type | #args })
+            ::facet::__ext!(#ns_ident::#key_ident { #field_name : #field_type | #args })
         }
     }
 }
@@ -42,23 +43,102 @@ pub fn emit_extension_attr_for_field(
 ///
 /// For `#[facet(ns::attr)]` at container level:
 /// ```ignore
-/// ns::__attr!(attr { })
+/// ::facet::__ext!(ns::attr { })
 /// ```
 ///
 /// For `#[facet(ns::attr = "value")]` at container level:
 /// ```ignore
-/// ns::__attr!(attr { | = "value" })
+/// ::facet::__ext!(ns::attr { | = "value" })
 /// ```
 pub fn emit_extension_attr(ns_ident: &Ident, key_ident: &Ident, args: &TokenStream) -> TokenStream {
     if args.is_empty() {
-        // No args: ns::__attr!(key { })
+        // No args: ::facet::__ext!(ns::key { })
         quote! {
-            #ns_ident::__attr!(#key_ident { })
+            ::facet::__ext!(#ns_ident::#key_ident { })
         }
     } else {
-        // With args: ns::__attr!(key { | args })
+        // With args: ::facet::__ext!(ns::key { | args })
         quote! {
-            #ns_ident::__attr!(#key_ident { | #args })
+            ::facet::__ext!(#ns_ident::#key_ident { | #args })
         }
     }
+}
+
+/// Implementation of the `__ext!` proc macro.
+///
+/// This proc macro receives extension attribute invocations and forwards them
+/// to the extension crate's dispatcher macro while preserving spans for better
+/// error messages.
+///
+/// Input format: `ns::attr_name { field : Type }` or `ns::attr_name { field : Type | args }`
+/// Output: `ns::__attr!(attr_name { field : Type })` or `ns::__attr!(attr_name { field : Type | args })`
+pub fn ext_attr(input: TokenStream) -> TokenStream {
+    let mut tokens = input.into_iter().peekable();
+
+    // Parse: ns :: attr_name { ... }
+    let ns_ident = match tokens.next() {
+        Some(TokenTree::Ident(ident)) => ident,
+        _ => {
+            return quote! {
+                ::core::compile_error!("__ext!: expected namespace identifier")
+            };
+        }
+    };
+
+    // Expect ::
+    match (tokens.next(), tokens.next()) {
+        (Some(TokenTree::Punct(p1)), Some(TokenTree::Punct(p2)))
+            if p1.as_char() == ':' && p2.as_char() == ':' => {}
+        _ => {
+            return quote! {
+                ::core::compile_error!("__ext!: expected '::'")
+            };
+        }
+    }
+
+    // Get the attribute name (this has the span we want to preserve!)
+    let attr_ident = match tokens.next() {
+        Some(TokenTree::Ident(ident)) => ident,
+        _ => {
+            return quote! {
+                ::core::compile_error!("__ext!: expected attribute name")
+            };
+        }
+    };
+
+    // Get the braced content { ... }
+    let body = match tokens.next() {
+        Some(TokenTree::Group(g)) if g.delimiter() == Delimiter::Brace => g,
+        _ => {
+            return quote! {
+                ::core::compile_error!("__ext!: expected braced body")
+            };
+        }
+    };
+
+    // Build the output: ns::__attr!(attr_name { ... })
+    // The attr_ident preserves its original span!
+    let __attr = Ident::new("__attr", attr_ident.span());
+
+    let colon1 = Punct::new(':', Spacing::Joint);
+    let colon2 = Punct::new(':', Spacing::Alone);
+    let bang = Punct::new('!', Spacing::Alone);
+
+    // Build the macro invocation tokens manually to preserve spans
+    let mut output = TokenStream::new();
+    output.extend([TokenTree::Ident(ns_ident)]);
+    output.extend([TokenTree::Punct(colon1.clone())]);
+    output.extend([TokenTree::Punct(colon2.clone())]);
+    output.extend([TokenTree::Ident(__attr)]);
+    output.extend([TokenTree::Punct(bang)]);
+
+    // Build the macro arguments: (attr_name { ... })
+    let mut macro_args = TokenStream::new();
+    macro_args.extend([TokenTree::Ident(attr_ident)]);
+    macro_args.extend([TokenTree::Group(body)]);
+
+    let args_group = Group::new(Delimiter::Parenthesis, macro_args);
+    output.extend([TokenTree::Group(args_group)]);
+
+    output
 }

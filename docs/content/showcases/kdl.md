@@ -11,7 +11,7 @@ title = "facet-kdl showcase"
 <div class="input">
 <h4>KDL Input</h4>
 <pre style="background-color:#1a1b26;">
-<span style="color:#f7768e;">person </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">=&quot;</span><span style="color:#9ece6a;">Alice</span><span style="color:#89ddff;">&quot; </span><span style="color:#7dcfff;">age</span><span style="color:#89ddff;">=</span><span style="color:#ff9e64;">30 </span><span style="color:#7dcfff;">email</span><span style="color:#89ddff;">=&quot;</span><span style="color:#9ece6a;">alice@example.com</span><span style="color:#89ddff;">&quot;
+<span style="color:#f7768e;">person
 </span></pre>
 
 </div>
@@ -31,15 +31,12 @@ title = "facet-kdl showcase"
 </span><span style="color:#9abdf5;">}</span></pre>
 
 </div>
-<div class="success">
-<h4>Success</h4>
-<pre><code><span style="font-weight:bold">PersonDoc</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">person</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Person</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">Alice</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Option&lt;String&gt;</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(188,224,81)">alice@example.com</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-  <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<div class="error">
+<h4>Error</h4>
+<pre><code><span style="color:#e06c75">kdl::reflect</span>
+
+  <span style="color:#e06c75">×</span> Value 'Person' was not initialized
+</code></pre>
 </div>
 </section>
 
@@ -50,7 +47,7 @@ title = "facet-kdl showcase"
 <div class="input">
 <h4>KDL Input</h4>
 <pre style="background-color:#1a1b26;">
-<span style="color:#f7768e;">server </span><span style="color:#89ddff;">&quot;</span><span style="color:#9ece6a;">web-01</span><span style="color:#89ddff;">&quot; </span><span style="color:#7dcfff;">host</span><span style="color:#89ddff;">=&quot;</span><span style="color:#9ece6a;">localhost</span><span style="color:#89ddff;">&quot; </span><span style="color:#7dcfff;">port</span><span style="color:#89ddff;">=</span><span style="color:#ff9e64;">8080
+<span style="color:#f7768e;">server
 </span></pre>
 
 </div>
@@ -70,15 +67,12 @@ title = "facet-kdl showcase"
 </span><span style="color:#9abdf5;">}</span></pre>
 
 </div>
-<div class="success">
-<h4>Success</h4>
-<pre><code><span style="font-weight:bold">ServerDoc</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">server</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Server</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">web-01</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">host</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">localhost</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">port</span><span style="opacity:0.7">: </span><span style="color:rgb(224,186,81)">8080</span><span style="opacity:0.7">,</span>
-  <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<div class="error">
+<h4>Error</h4>
+<pre><code><span style="color:#e06c75">kdl::reflect</span>
+
+  <span style="color:#e06c75">×</span> Value 'Server' was not initialized
+</code></pre>
 </div>
 </section>
 
@@ -89,8 +83,8 @@ title = "facet-kdl showcase"
 <div class="input">
 <h4>KDL Input</h4>
 <pre style="background-color:#1a1b26;">
-<span style="color:#f7768e;">company </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">=&quot;</span><span style="color:#9ece6a;">Acme Corp</span><span style="color:#89ddff;">&quot; </span><span style="color:#9abdf5;">{
-</span><span style="color:#c0caf5;">    </span><span style="color:#f7768e;">address </span><span style="color:#7dcfff;">street</span><span style="color:#89ddff;">=&quot;</span><span style="color:#9ece6a;">123 Main St</span><span style="color:#89ddff;">&quot; </span><span style="color:#7dcfff;">city</span><span style="color:#89ddff;">=&quot;</span><span style="color:#9ece6a;">Springfield</span><span style="color:#89ddff;">&quot;
+<span style="color:#f7768e;">company </span><span style="color:#9abdf5;">{
+</span><span style="color:#c0caf5;">    </span><span style="color:#f7768e;">address
 </span><span style="color:#9abdf5;">}
 </span></pre>
 
@@ -116,17 +110,12 @@ title = "facet-kdl showcase"
 </span><span style="color:#9abdf5;">}</span></pre>
 
 </div>
-<div class="success">
-<h4>Success</h4>
-<pre><code><span style="font-weight:bold">CompanyDoc</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">company</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Company</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">Acme Corp</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">address</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Address</span><span style="opacity:0.7"> {</span>
-      <span style="color:#56b6c2">street</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">123 Main St</span><span style="opacity:0.7">,</span>
-      <span style="color:#56b6c2">city</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">Springfield</span><span style="opacity:0.7">,</span>
-    <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<div class="error">
+<h4>Error</h4>
+<pre><code><span style="color:#e06c75">kdl::reflect</span>
+
+  <span style="color:#e06c75">×</span> Value 'Address' was not initialized
+</code></pre>
 </div>
 </section>
 
@@ -137,10 +126,7 @@ title = "facet-kdl showcase"
 <div class="input">
 <h4>KDL Input</h4>
 <pre style="background-color:#1a1b26;">
-<span style="color:#f7768e;">member </span><span style="color:#89ddff;">&quot;</span><span style="color:#9ece6a;">Bob</span><span style="color:#89ddff;">&quot; </span><span style="color:#7dcfff;">role</span><span style="color:#89ddff;">=&quot;</span><span style="color:#9ece6a;">Engineer</span><span style="color:#89ddff;">&quot;
-</span><span style="color:#f7768e;">member </span><span style="color:#89ddff;">&quot;</span><span style="color:#9ece6a;">Carol</span><span style="color:#89ddff;">&quot; </span><span style="color:#7dcfff;">role</span><span style="color:#89ddff;">=&quot;</span><span style="color:#9ece6a;">Designer</span><span style="color:#89ddff;">&quot;
-</span><span style="color:#f7768e;">member </span><span style="color:#89ddff;">&quot;</span><span style="color:#9ece6a;">Dave</span><span style="color:#89ddff;">&quot; </span><span style="color:#7dcfff;">role</span><span style="color:#89ddff;">=&quot;</span><span style="color:#9ece6a;">Manager</span><span style="color:#89ddff;">&quot;
-</span></pre>
+</pre>
 
 </div>
 <div class="target-type">
@@ -158,24 +144,12 @@ title = "facet-kdl showcase"
 </span><span style="color:#9abdf5;">}</span></pre>
 
 </div>
-<div class="success">
-<h4>Success</h4>
-<pre><code><span style="font-weight:bold">TeamDoc</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">member</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Vec&lt;Member&gt;</span><span style="opacity:0.7"> [</span>
-    <span style="font-weight:bold">Member</span><span style="opacity:0.7"> {</span>
-      <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">Bob</span><span style="opacity:0.7">,</span>
-      <span style="color:#56b6c2">role</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">Engineer</span><span style="opacity:0.7">,</span>
-    <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-    <span style="font-weight:bold">Member</span><span style="opacity:0.7"> {</span>
-      <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">Carol</span><span style="opacity:0.7">,</span>
-      <span style="color:#56b6c2">role</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">Designer</span><span style="opacity:0.7">,</span>
-    <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-    <span style="font-weight:bold">Member</span><span style="opacity:0.7"> {</span>
-      <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">Dave</span><span style="opacity:0.7">,</span>
-      <span style="color:#56b6c2">role</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">Manager</span><span style="opacity:0.7">,</span>
-    <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<div class="error">
+<h4>Error</h4>
+<pre><code><span style="color:#e06c75">kdl::invalid_document_shape</span>
+
+  <span style="color:#e06c75">×</span> invalid shape Undefined — needed struct with child/children fields
+</code></pre>
 </div>
 </section>
 
@@ -186,10 +160,10 @@ title = "facet-kdl showcase"
 <div class="input">
 <h4>KDL Input</h4>
 <pre style="background-color:#1a1b26;">
-<span style="color:#f7768e;">server </span><span style="color:#89ddff;">&quot;</span><span style="color:#9ece6a;">api-gateway</span><span style="color:#89ddff;">&quot; </span><span style="color:#7dcfff;">host</span><span style="color:#89ddff;">=&quot;</span><span style="color:#9ece6a;">0.0.0.0</span><span style="color:#89ddff;">&quot; </span><span style="color:#7dcfff;">port</span><span style="color:#89ddff;">=</span><span style="color:#ff9e64;">443 </span><span style="color:#9abdf5;">{
-</span><span style="color:#c0caf5;">    </span><span style="color:#f7768e;">tls </span><span style="color:#7dcfff;">cert_path</span><span style="color:#89ddff;">=&quot;</span><span style="color:#9ece6a;">/etc/ssl/cert.pem</span><span style="color:#89ddff;">&quot; </span><span style="color:#7dcfff;">key_path</span><span style="color:#89ddff;">=&quot;</span><span style="color:#9ece6a;">/etc/ssl/key.pem</span><span style="color:#89ddff;">&quot;
+<span style="color:#f7768e;">server </span><span style="color:#9abdf5;">{
+</span><span style="color:#c0caf5;">    </span><span style="color:#f7768e;">tls
 </span><span style="color:#9abdf5;">}
-</span><span style="color:#f7768e;">database </span><span style="color:#89ddff;">&quot;</span><span style="color:#9ece6a;">primary</span><span style="color:#89ddff;">&quot; </span><span style="color:#7dcfff;">url</span><span style="color:#89ddff;">=&quot;</span><span style="color:#9ece6a;">postgres://localhost/mydb</span><span style="color:#89ddff;">&quot; </span><span style="color:#7dcfff;">pool_size</span><span style="color:#89ddff;">=</span><span style="color:#ff9e64;">10
+</span><span style="color:#f7768e;">database
 </span></pre>
 
 </div>
@@ -242,7 +216,7 @@ title = "facet-kdl showcase"
 <div class="input">
 <h4>KDL Input</h4>
 <pre style="background-color:#1a1b26;">
-<span style="color:#f7768e;">config </span><span style="color:#7dcfff;">debug</span><span style="color:#89ddff;">=</span><span style="color:#c0caf5;">#</span><span style="color:#ff9e64;">true </span><span style="color:#7dcfff;">max_connections</span><span style="color:#89ddff;">=</span><span style="color:#ff9e64;">100 </span><span style="color:#7dcfff;">timeout_ms</span><span style="color:#89ddff;">=</span><span style="color:#ff9e64;">5000
+<span style="color:#f7768e;">config
 </span></pre>
 
 </div>
@@ -262,15 +236,12 @@ title = "facet-kdl showcase"
 </span><span style="color:#9abdf5;">}</span></pre>
 
 </div>
-<div class="success">
-<h4>Success</h4>
-<pre><code><span style="font-weight:bold">ConfigDoc</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">config</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Config</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">100</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">timeout_ms</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">5000</span><span style="opacity:0.7">,</span>
-  <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">}</span></code></pre>
+<div class="error">
+<h4>Error</h4>
+<pre><code><span style="color:#e06c75">kdl::reflect</span>
+
+  <span style="color:#e06c75">×</span> Value 'Config' was not initialized
+</code></pre>
 </div>
 </section>
 
@@ -316,9 +287,15 @@ title = "facet-kdl showcase"
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">kdl::solver</span>
 
-  <span style="color:#e06c75">×</span> Ambiguous: multiple resolutions match: ["AmbiguousKind::TypeA", "AmbiguousKind::TypeB"]
-<span style="color:#56b6c2">  help: </span>multiple variants match: AmbiguousKind::TypeA, AmbiguousKind::TypeB
-        use a KDL type annotation to specify the variant, e.g.: (VariantName)node-name ...
+  <span style="color:#e06c75">×</span> No matching configuration for fields ["priority", "value"]
+  <span style="color:#e06c75">│</span> 
+  <span style="color:#e06c75">│</span> No variant matched:
+  <span style="color:#e06c75">│</span>   - AmbiguousKind::TypeA: missing field 'name'
+  <span style="color:#e06c75">│</span>   - AmbiguousKind::TypeB: missing field 'name'
+<span style="color:#56b6c2">  help: </span>no variant matched:
+          - AmbiguousKind::TypeA: missing name
+          - AmbiguousKind::TypeB: missing name
+        
 </code></pre>
 </div>
 </section>
@@ -379,12 +356,12 @@ title = "facet-kdl showcase"
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">kdl::solver</span>
 
-  <span style="color:#e06c75">×</span> No matching configuration for fields ["conn_str", "hst", "name"]
+  <span style="color:#e06c75">×</span> No matching configuration for fields ["conn_str", "hst"]
   <span style="color:#e06c75">│</span> 
   <span style="color:#e06c75">│</span> No variant matched:
-  <span style="color:#e06c75">│</span>   - NoMatchKind::Redis: missing fields ["host", "port"], unknown fields ["conn_str", "hst"]
-  <span style="color:#e06c75">│</span>   - NoMatchKind::Postgres: missing fields ["connection_string", "pool_size"], unknown fields ["conn_str", "hst"]
-  <span style="color:#e06c75">│</span>   - NoMatchKind::Sqlite: missing fields ["database_path", "journal_mode"], unknown fields ["conn_str", "hst"]
+  <span style="color:#e06c75">│</span>   - NoMatchKind::Redis: missing fields ["host", "name", "port"], unknown fields ["conn_str", "hst"]
+  <span style="color:#e06c75">│</span>   - NoMatchKind::Postgres: missing fields ["connection_string", "name", "pool_size"], unknown fields ["conn_str", "hst"]
+  <span style="color:#e06c75">│</span>   - NoMatchKind::Sqlite: missing fields ["database_path", "journal_mode", "name"], unknown fields ["conn_str", "hst"]
   <span style="color:#e06c75">│</span> 
   <span style="color:#e06c75">│</span> Unknown fields: ["conn_str", "hst"]
   <span style="color:#e06c75">│</span>   Did you mean 'connection_string' instead of 'conn_str'?
@@ -398,9 +375,9 @@ title = "facet-kdl showcase"
 <span style="color:#56b6c2">  help: </span>did you mean NoMatchKind::Redis?
         
         all variants checked:
-          - NoMatchKind::Redis: missing host, port, unexpected conn_str, hst
-          - NoMatchKind::Postgres: missing connection_string, pool_size, unexpected conn_str, hst
-          - NoMatchKind::Sqlite: missing database_path, journal_mode, unexpected conn_str, hst
+          - NoMatchKind::Redis: missing host, name, port, unexpected conn_str, hst
+          - NoMatchKind::Postgres: missing connection_string, name, pool_size, unexpected conn_str, hst
+          - NoMatchKind::Sqlite: missing database_path, journal_mode, name, unexpected conn_str, hst
         
           conn_str -&gt; connection_string (did you mean connection_string?)
           hst -&gt; host (did you mean host?)
@@ -459,11 +436,11 @@ title = "facet-kdl showcase"
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">kdl::solver</span>
 
-  <span style="color:#e06c75">×</span> No matching configuration for fields ["hostnam", "name", "prot"]
+  <span style="color:#e06c75">×</span> No matching configuration for fields ["hostnam", "prot"]
   <span style="color:#e06c75">│</span> 
   <span style="color:#e06c75">│</span> No variant matched:
-  <span style="color:#e06c75">│</span>   - TypoKind::Web: missing fields ["hostname", "port", "ssl_enabled"], unknown fields ["hostnam", "prot"]
-  <span style="color:#e06c75">│</span>   - TypoKind::Api: missing fields ["endpoint", "retry_count", "timeout_ms"], unknown fields ["hostnam", "prot"]
+  <span style="color:#e06c75">│</span>   - TypoKind::Web: missing fields ["hostname", "name", "port", "ssl_enabled"], unknown fields ["hostnam", "prot"]
+  <span style="color:#e06c75">│</span>   - TypoKind::Api: missing fields ["endpoint", "name", "retry_count", "timeout_ms"], unknown fields ["hostnam", "prot"]
   <span style="color:#e06c75">│</span> 
   <span style="color:#e06c75">│</span> Unknown fields: ["hostnam", "prot"]
   <span style="color:#e06c75">│</span>   Did you mean 'hostname' instead of 'hostnam'?
@@ -477,8 +454,8 @@ title = "facet-kdl showcase"
 <span style="color:#56b6c2">  help: </span>did you mean TypoKind::Web?
         
         all variants checked:
-          - TypoKind::Web: missing hostname, port, ssl_enabled, unexpected hostnam, prot
-          - TypoKind::Api: missing endpoint, retry_count, timeout_ms, unexpected hostnam, prot
+          - TypoKind::Web: missing hostname, name, port, ssl_enabled, unexpected hostnam, prot
+          - TypoKind::Api: missing endpoint, name, retry_count, timeout_ms, unexpected hostnam, prot
         
           hostnam -&gt; hostname (did you mean hostname?)
           prot -&gt; port (did you mean port?)
@@ -601,12 +578,12 @@ title = "facet-kdl showcase"
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">kdl::solver</span>
 
-  <span style="color:#e06c75">×</span> No matching configuration for fields ["hots", "name", "pasword", "prot", "usernme"]
+  <span style="color:#e06c75">×</span> No matching configuration for fields ["hots", "pasword", "prot", "usernme"]
   <span style="color:#e06c75">│</span> 
   <span style="color:#e06c75">│</span> No variant matched:
-  <span style="color:#e06c75">│</span>   - MultiLineDbKind::MySql: missing fields ["host", "password", "port", "username"], unknown fields ["hots", "pasword", "prot", "usernme"]
-  <span style="color:#e06c75">│</span>   - MultiLineDbKind::Postgres: missing fields ["database", "host", "port", "ssl_mode"], unknown fields ["hots", "pasword", "prot", "usernme"]
-  <span style="color:#e06c75">│</span>   - MultiLineDbKind::Mongo: missing field 'uri', unknown fields ["hots", "pasword", "prot", "usernme"]
+  <span style="color:#e06c75">│</span>   - MultiLineDbKind::MySql: missing fields ["host", "name", "password", "port", "username"], unknown fields ["hots", "pasword", "prot", "usernme"]
+  <span style="color:#e06c75">│</span>   - MultiLineDbKind::Postgres: missing fields ["database", "host", "name", "port", "ssl_mode"], unknown fields ["hots", "pasword", "prot", "usernme"]
+  <span style="color:#e06c75">│</span>   - MultiLineDbKind::Mongo: missing fields ["name", "uri"], unknown fields ["hots", "pasword", "prot", "usernme"]
   <span style="color:#e06c75">│</span> 
   <span style="color:#e06c75">│</span> Unknown fields: ["hots", "pasword", "prot", "usernme"]
   <span style="color:#e06c75">│</span>   Did you mean 'host' instead of 'hots'?
@@ -631,9 +608,9 @@ title = "facet-kdl showcase"
 <span style="color:#56b6c2">  help: </span>did you mean MultiLineDbKind::MySql?
         
         all variants checked:
-          - MultiLineDbKind::MySql: missing host, password, port, username, unexpected hots, pasword, prot, usernme
-          - MultiLineDbKind::Postgres: missing database, host, port, ssl_mode, unexpected hots, pasword, prot, usernme
-          - MultiLineDbKind::Mongo: missing uri, unexpected hots, pasword, prot, usernme
+          - MultiLineDbKind::MySql: missing host, name, password, port, username, unexpected hots, pasword, prot, usernme
+          - MultiLineDbKind::Postgres: missing database, host, name, port, ssl_mode, unexpected hots, pasword, prot, usernme
+          - MultiLineDbKind::Mongo: missing name, uri, unexpected hots, pasword, prot, usernme
         
           hots -&gt; host (did you mean host?)
           pasword -&gt; password (did you mean password?)
@@ -675,13 +652,13 @@ title = "facet-kdl showcase"
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">kdl::unknown_property</span>
 
-  <span style="color:#e06c75">×</span> unknown property 'prot', expected one of: host, port
+  <span style="color:#e06c75">×</span> unknown property 'host', expected one of:
    ╭────
  <span style="opacity:0.7">1</span> │ server host="localhost" prot=8080
-   · <span style="color:#c678dd;font-weight:bold">                        ──┬─</span>
-   ·                           <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown property `prot`</span>
+   · <span style="color:#c678dd;font-weight:bold">       ──┬─</span>
+   ·          <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown property `host`</span>
    ╰────
-<span style="color:#56b6c2">  help: </span>expected one of: host, port
+<span style="color:#56b6c2">  help: </span>expected one of:
 </code></pre>
 </div>
 </section>
@@ -715,9 +692,15 @@ title = "facet-kdl showcase"
 </div>
 <div class="error">
 <h4>Error</h4>
-<pre><code><span style="color:#e06c75">kdl::reflect</span>
+<pre><code><span style="color:#e06c75">kdl::unknown_property</span>
 
-  <span style="color:#e06c75">×</span> Field 'SimpleServer::port' was not initialized
+  <span style="color:#e06c75">×</span> unknown property 'host', expected one of:
+   ╭────
+ <span style="opacity:0.7">1</span> │ server host="localhost"
+   · <span style="color:#c678dd;font-weight:bold">       ──┬─</span>
+   ·          <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown property `host`</span>
+   ╰────
+<span style="color:#56b6c2">  help: </span>expected one of:
 </code></pre>
 </div>
 </section>

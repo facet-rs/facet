@@ -31,13 +31,17 @@ macro_rules! __attr {
     (short { $($tt:tt)* }) => { $crate::__short!{ $($tt)* } };
     (named { $($tt:tt)* }) => { $crate::__named!{ $($tt)* } };
 
-    // Unknown attribute: emit a clear compile error with suggestions
+    // Unknown attribute: use path resolution to get the error span on the unknown identifier.
     ($unknown:ident $($tt:tt)*) => {
-        ::core::compile_error!(::core::concat!(
-            "unknown args attribute `", ::core::stringify!($unknown), "`. ",
-            "expected one of: positional, short, named"
-        ))
+        $crate::valid_args_attrs_are::positional_or_short_or_named::$unknown
     };
+}
+
+/// This module exists only to produce helpful error messages for unknown args attributes.
+#[doc(hidden)]
+pub mod valid_args_attrs_are {
+    #[doc(hidden)]
+    pub mod positional_or_short_or_named {}
 }
 
 /// Marks a field as a positional argument.

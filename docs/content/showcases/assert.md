@@ -23,12 +23,12 @@ title = "facet-assert: Structural Assertions"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">Config</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">host</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">localhost</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">host</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">localhost</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">port</span><span style="opacity:0.7">: </span><span style="color:rgb(224,186,81)">8080</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">tags</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
-    <span style="color:rgb(188,224,81)">prod</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(188,224,81)">api</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(98,224,81)">prod</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(98,224,81)">api</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -53,11 +53,11 @@ title = "facet-assert: Structural Assertions"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">Config</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">host</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">localhost</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">host</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">localhost</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">port</span><span style="opacity:0.7">: </span><span style="color:rgb(224,186,81)">8080</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">tags</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
-    <span style="color:rgb(188,224,81)">prod</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(98,224,81)">prod</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -87,11 +87,11 @@ title = "facet-assert: Structural Assertions"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold">Person</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">Alice</span><span style="opacity:0.7">,</span>
+  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">Alice</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="opacity:0.7">,</span>
   <span style="color:#56b6c2">address</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Address</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">street</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">123 Main St</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">city</span><span style="opacity:0.7">: </span><span style="color:rgb(188,224,81)">Springfield</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">street</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">123 Main St</span><span style="opacity:0.7">,</span>
+    <span style="color:#56b6c2">city</span><span style="opacity:0.7">: </span><span style="color:rgb(98,224,81)">Springfield</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>

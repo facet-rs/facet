@@ -5,6 +5,17 @@ pub fn facet_macros(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     facet_macros_emit::facet_macros(input.into()).into()
 }
 
+/// Internal proc macro for extension attribute resolution.
+///
+/// This is called by the `Facet` derive macro to forward extension attributes
+/// to their respective crate's dispatcher macro while preserving spans for
+/// better error messages.
+#[doc(hidden)]
+#[proc_macro]
+pub fn __ext(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    facet_macros_emit::ext_attr(input.into()).into()
+}
+
 #[cfg(feature = "function")]
 #[proc_macro_attribute]
 pub fn facet_fn(
