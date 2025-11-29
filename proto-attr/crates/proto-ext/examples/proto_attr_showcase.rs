@@ -31,6 +31,14 @@ fn main() {
     // OnDelete attribute errors (ident field type)
     scenario_on_delete_string_instead_of_ident(&mut runner);
 
+    // Advanced errors
+    scenario_duplicate_field(&mut runner);
+    scenario_mixed_types_in_list(&mut runner);
+    scenario_wrong_bracket_type(&mut runner);
+    scenario_integer_overflow(&mut runner);
+    scenario_bool_as_string(&mut runner);
+    scenario_integer_used_as_flag(&mut runner);
+
     // Valid usage showcasing all field types
     scenario_valid_usage(&mut runner);
 
@@ -377,6 +385,168 @@ fn main() {}
         .description(
             "The `action` field expects a bare identifier like `cascade`, not a string.\n\
              Using `\"cascade\"` instead of `cascade` produces an error.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error)
+        .finish();
+}
+
+// ============================================================================
+// ADVANCED ERROR SCENARIOS
+// ============================================================================
+
+fn scenario_duplicate_field(runner: &mut ShowcaseRunner) {
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+struct User {
+    #[faket(proto_ext::column(name = "user_id", name = "id"))]
+    id: i64,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error = extract_error(&output);
+
+    runner
+        .scenario("Duplicate Field")
+        .description(
+            "Specifying the same field twice in an attribute is an error.\n\
+             Each field can only appear once in an attribute.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error)
+        .finish();
+}
+
+fn scenario_mixed_types_in_list(runner: &mut ShowcaseRunner) {
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+#[faket(proto_ext::index(columns = ["email", 123]))]
+struct UserIndex {
+    id: i64,
+    email: String,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error = extract_error(&output);
+
+    runner
+        .scenario("Mixed Types in List")
+        .description(
+            "List fields require all elements to be the same type.\n\
+             A string list like `columns` cannot contain integers.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error)
+        .finish();
+}
+
+fn scenario_wrong_bracket_type(runner: &mut ShowcaseRunner) {
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+#[faket(proto_ext::index(columns = {"email"}))]
+struct UserIndex {
+    id: i64,
+    email: String,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error = extract_error(&output);
+
+    runner
+        .scenario("Wrong Bracket Type for List")
+        .description(
+            "Lists use square brackets `[...]`, not curly braces `{...}`.\n\
+             Using the wrong delimiter produces a helpful error.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error)
+        .finish();
+}
+
+fn scenario_integer_overflow(runner: &mut ShowcaseRunner) {
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+struct User {
+    #[faket(proto_ext::range(min = 99999999999999999999999))]
+    score: i32,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error = extract_error(&output);
+
+    runner
+        .scenario("Integer Overflow")
+        .description(
+            "Integer values must fit within i64 range.\n\
+             Numbers that overflow produce an error at compile time.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error)
+        .finish();
+}
+
+fn scenario_bool_as_string(runner: &mut ShowcaseRunner) {
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+struct User {
+    #[faket(proto_ext::column(primary_key = "true"))]
+    id: i64,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error = extract_error(&output);
+
+    runner
+        .scenario("Bool Field with String Value")
+        .description(
+            "Boolean fields expect `true` or `false` literals, not strings.\n\
+             Using `\"true\"` instead of `true` produces an error.",
+        )
+        .input(Language::Rust, code)
+        .compiler_error(&error)
+        .finish();
+}
+
+fn scenario_integer_used_as_flag(runner: &mut ShowcaseRunner) {
+    let code = r#"use proto_attr::Faket;
+
+#[derive(Faket)]
+struct User {
+    #[faket(proto_ext::range(min, max = 100))]
+    age: i32,
+}
+
+fn main() {}
+"#;
+
+    let output = compile_snippet(code);
+    let error = extract_error(&output);
+
+    runner
+        .scenario("Integer Field Used as Flag")
+        .description(
+            "Integer fields require a value; they cannot be used as flags.\n\
+             Using `min` without `= value` produces an error.",
         )
         .input(Language::Rust, code)
         .compiler_error(&error)
