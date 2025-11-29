@@ -38,7 +38,8 @@
 //! | 2   | False            | Bytes          |
 //! | 3   | True             | Array          |
 //! | 4   | (invalid)        | Object         |
-//! | 5-7 | reserved         | reserved       |
+//! | 5   | (invalid)        | DateTime       |
+//! | 6-7 | reserved         | reserved       |
 
 use core::fmt::{self, Debug, Formatter};
 use core::hash::{Hash, Hasher};
@@ -47,6 +48,7 @@ use core::ptr::NonNull;
 
 use crate::array::VArray;
 use crate::bytes::VBytes;
+use crate::datetime::VDateTime;
 use crate::number::VNumber;
 use crate::object::VObject;
 use crate::string::VString;
@@ -68,41 +70,46 @@ pub(crate) enum TypeTag {
     ArrayOrTrue = 3,
     /// Object type
     Object = 4,
-    // Tags 5, 6, 7 reserved for future use
+    /// DateTime type
+    DateTime = 5,
+    // Tags 6, 7 reserved for future use
 }
 
 impl From<usize> for TypeTag {
     fn from(other: usize) -> Self {
-        // Safety: We mask to 3 bits, and only use valid values 0-4
+        // Safety: We mask to 3 bits, and only use valid values 0-5
         match other & 0b111 {
             0 => TypeTag::Number,
             1 => TypeTag::StringOrNull,
             2 => TypeTag::BytesOrFalse,
             3 => TypeTag::ArrayOrTrue,
             4 => TypeTag::Object,
+            5 => TypeTag::DateTime,
             // Invalid tags shouldn't occur if we maintain invariants
             _ => TypeTag::Number, // fallback
         }
     }
 }
 
-/// Enum distinguishing the seven value types.
+/// Enum distinguishing the eight value types.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ValueType {
-    /// JSON null
+    /// Null value
     Null,
-    /// JSON boolean
+    /// Boolean value
     Bool,
-    /// JSON number (integers and floats)
+    /// Number (integers and floats)
     Number,
-    /// JSON string (UTF-8)
+    /// String (UTF-8)
     String,
-    /// Binary data (not in JSON, but useful for binary formats)
+    /// Binary data (useful for binary formats)
     Bytes,
-    /// JSON array
+    /// Array
     Array,
-    /// JSON object
+    /// Object (key-value map)
     Object,
+    /// DateTime (offset, local datetime, local date, or local time)
+    DateTime,
 }
 
 /// A dynamic value that can represent null, booleans, numbers, strings, bytes, arrays, or objects.
@@ -178,9 +185,9 @@ impl Value {
 
     /// Get the actual heap pointer (strips the tag bits).
     /// Safety: Must only be called on non-inline values.
-    pub(crate) unsafe fn heap_ptr(&self) -> *mut u8 {
-        let tagged = self.ptr.as_ptr() as usize;
-        (tagged & !(ALIGNMENT - 1)) as *mut u8
+    pub(crate) fn heap_ptr(&self) -> *const u8 {
+        // Use map_addr to preserve provenance (strict provenance safe)
+        self.ptr.as_ptr().map_addr(|a| a & !(ALIGNMENT - 1)) as *const u8
     }
 
     /// Get the actual heap pointer with mutable provenance (strips the tag bits).
@@ -223,6 +230,7 @@ impl Value {
             (TypeTag::BytesOrFalse, false) => ValueType::Bytes,
             (TypeTag::ArrayOrTrue, false) => ValueType::Array,
             (TypeTag::Object, false) => ValueType::Object,
+            (TypeTag::DateTime, false) => ValueType::DateTime,
 
             // Inline values
             (TypeTag::StringOrNull, true) => ValueType::Null,
@@ -230,9 +238,9 @@ impl Value {
             (TypeTag::ArrayOrTrue, true) => ValueType::Bool,  // true
 
             // Invalid states (shouldn't happen)
-            (TypeTag::Number, true) | (TypeTag::Object, true) => {
+            (TypeTag::Number, true) | (TypeTag::Object, true) | (TypeTag::DateTime, true) => {
                 // These tags require heap pointers
-                unreachable!("invalid inline value with Number or Object tag")
+                unreachable!("invalid inline value with Number, Object, or DateTime tag")
             }
         }
     }
@@ -289,6 +297,12 @@ impl Value {
     #[must_use]
     pub fn is_object(&self) -> bool {
         self.type_tag() == TypeTag::Object && !self.is_inline()
+    }
+
+    /// Returns `true` if this is a datetime.
+    #[must_use]
+    pub fn is_datetime(&self) -> bool {
+        self.type_tag() == TypeTag::DateTime && !self.is_inline()
     }
 
     // === Conversions to concrete types ===
@@ -399,6 +413,25 @@ impl Value {
         }
     }
 
+    /// Gets a reference to this value as a `VDateTime`. Returns `None` if not a datetime.
+    #[must_use]
+    pub fn as_datetime(&self) -> Option<&VDateTime> {
+        if self.is_datetime() {
+            Some(unsafe { &*(self as *const Value as *const VDateTime) })
+        } else {
+            None
+        }
+    }
+
+    /// Gets a mutable reference to this value as a `VDateTime`.
+    pub fn as_datetime_mut(&mut self) -> Option<&mut VDateTime> {
+        if self.is_datetime() {
+            Some(unsafe { &mut *(self as *mut Value as *mut VDateTime) })
+        } else {
+            None
+        }
+    }
+
     /// Takes this value, replacing it with `Value::NULL`.
     pub fn take(&mut self) -> Value {
         mem::replace(self, Value::NULL)
@@ -419,6 +452,7 @@ impl Clone for Value {
             ValueType::Bytes => unsafe { self.as_bytes().unwrap_unchecked() }.clone_impl(),
             ValueType::Array => unsafe { self.as_array().unwrap_unchecked() }.clone_impl(),
             ValueType::Object => unsafe { self.as_object().unwrap_unchecked() }.clone_impl(),
+            ValueType::DateTime => unsafe { self.as_datetime().unwrap_unchecked() }.clone_impl(),
         }
     }
 }
@@ -436,6 +470,7 @@ impl Drop for Value {
             ValueType::Bytes => unsafe { self.as_bytes_mut().unwrap_unchecked() }.drop_impl(),
             ValueType::Array => unsafe { self.as_array_mut().unwrap_unchecked() }.drop_impl(),
             ValueType::Object => unsafe { self.as_object_mut().unwrap_unchecked() }.drop_impl(),
+            ValueType::DateTime => unsafe { self.as_datetime_mut().unwrap_unchecked() }.drop_impl(),
         }
     }
 }
@@ -465,6 +500,9 @@ impl PartialEq for Value {
             },
             ValueType::Object => unsafe {
                 self.as_object().unwrap_unchecked() == other.as_object().unwrap_unchecked()
+            },
+            ValueType::DateTime => unsafe {
+                self.as_datetime().unwrap_unchecked() == other.as_datetime().unwrap_unchecked()
             },
         }
     }
@@ -511,6 +549,12 @@ impl PartialOrd for Value {
             },
             // Objects don't have a natural ordering
             ValueType::Object => None,
+            // DateTime comparison (returns None for different kinds)
+            ValueType::DateTime => unsafe {
+                self.as_datetime()
+                    .unwrap_unchecked()
+                    .partial_cmp(other.as_datetime().unwrap_unchecked())
+            },
         }
     }
 }
@@ -530,6 +574,7 @@ impl Hash for Value {
             ValueType::Bytes => unsafe { self.as_bytes().unwrap_unchecked() }.hash(state),
             ValueType::Array => unsafe { self.as_array().unwrap_unchecked() }.hash(state),
             ValueType::Object => unsafe { self.as_object().unwrap_unchecked() }.hash(state),
+            ValueType::DateTime => unsafe { self.as_datetime().unwrap_unchecked() }.hash(state),
         }
     }
 }
@@ -546,6 +591,7 @@ impl Debug for Value {
             ValueType::Bytes => Debug::fmt(unsafe { self.as_bytes().unwrap_unchecked() }, f),
             ValueType::Array => Debug::fmt(unsafe { self.as_array().unwrap_unchecked() }, f),
             ValueType::Object => Debug::fmt(unsafe { self.as_object().unwrap_unchecked() }, f),
+            ValueType::DateTime => Debug::fmt(unsafe { self.as_datetime().unwrap_unchecked() }, f),
         }
     }
 }
@@ -610,6 +656,8 @@ pub enum Destructured {
     Array(VArray),
     /// Object value
     Object(VObject),
+    /// DateTime value
+    DateTime(VDateTime),
 }
 
 /// Enum for destructuring a `Value` by reference.
@@ -629,6 +677,8 @@ pub enum DestructuredRef<'a> {
     Array(&'a VArray),
     /// Object value
     Object(&'a VObject),
+    /// DateTime value
+    DateTime(&'a VDateTime),
 }
 
 /// Enum for destructuring a `Value` by mutable reference.
@@ -648,6 +698,8 @@ pub enum DestructuredMut<'a> {
     Array(&'a mut VArray),
     /// Object value
     Object(&'a mut VObject),
+    /// DateTime value
+    DateTime(&'a mut VDateTime),
 }
 
 impl Value {
@@ -662,6 +714,7 @@ impl Value {
             ValueType::Bytes => Destructured::Bytes(VBytes(self)),
             ValueType::Array => Destructured::Array(VArray(self)),
             ValueType::Object => Destructured::Object(VObject(self)),
+            ValueType::DateTime => Destructured::DateTime(VDateTime(self)),
         }
     }
 
@@ -686,6 +739,9 @@ impl Value {
             ValueType::Object => {
                 DestructuredRef::Object(unsafe { self.as_object().unwrap_unchecked() })
             }
+            ValueType::DateTime => {
+                DestructuredRef::DateTime(unsafe { self.as_datetime().unwrap_unchecked() })
+            }
         }
     }
 
@@ -708,6 +764,9 @@ impl Value {
             }
             ValueType::Object => {
                 DestructuredMut::Object(unsafe { self.as_object_mut().unwrap_unchecked() })
+            }
+            ValueType::DateTime => {
+                DestructuredMut::DateTime(unsafe { self.as_datetime_mut().unwrap_unchecked() })
             }
         }
     }
