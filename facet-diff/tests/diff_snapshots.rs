@@ -5,14 +5,19 @@
 
 #![allow(dead_code)]
 
-use boxen::{BorderStyle, builder};
+use boxen::{BorderStyle, Color, builder};
 use facet::Facet;
 use facet_diff::FacetDiff;
-use facet_pretty::PrettyPrinter;
+use facet_pretty::{PrettyPrinter, tokyo_night};
 use facet_reflect::Peek;
 use facet_testhelpers::test;
 use facet_value::value;
 use insta::assert_snapshot;
+
+// Convert Tokyo Night Rgb to boxen Color
+fn to_boxen(c: owo_colors::Rgb) -> Color {
+    Color::Rgb(c.0, c.1, c.2)
+}
 
 /// Strip ANSI escape codes from a string
 fn strip_ansi(s: &str) -> String {
@@ -72,7 +77,7 @@ where
 
     let before_box = builder()
         .border_style(BorderStyle::Round)
-        .border_color("cyan")
+        .border_color(to_boxen(tokyo_night::BORDER))
         .title("Before")
         .width(content_width + 2)
         .render(&before_str)
@@ -80,7 +85,7 @@ where
 
     let after_box = builder()
         .border_style(BorderStyle::Round)
-        .border_color("green")
+        .border_color(to_boxen(tokyo_night::BORDER))
         .title("After")
         .width(content_width + 2)
         .render(&after_str)
@@ -88,7 +93,7 @@ where
 
     let diff_box = builder()
         .border_style(BorderStyle::Double)
-        .border_color("yellow")
+        .border_color(to_boxen(tokyo_night::YELLOW))
         .title("Diff")
         .width(content_width + 2)
         .render(diff_str.trim_end())
