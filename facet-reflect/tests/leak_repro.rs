@@ -2,6 +2,14 @@ use facet::Facet;
 use facet_reflect::{Partial, Resolution};
 use std::collections::HashMap;
 
+/// Helper to safely get shape for debug printing - returns "<inactive>" if poisoned
+fn shape_str(partial: &Partial<'_>) -> String {
+    partial
+        .try_shape()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "<inactive>".to_string())
+}
+
 #[derive(Facet, Debug)]
 struct FuzzTarget {
     name: String,
@@ -442,11 +450,16 @@ fn test_double_free_crash_6711629e() {
         partial.finish_deferred().err()
     );
     eprintln!(
-        "After first finish: frames={}, deferred={}",
+        "After first finish: frames={}, deferred={}, active={}",
         partial.frame_count(),
-        partial.is_deferred()
+        partial.is_deferred(),
+        partial.is_active()
     );
-    eprintln!("Current shape: {}", partial.shape());
+    if partial.is_active() {
+        eprintln!("Current shape: {}", shape_str(partial));
+    } else {
+        eprintln!("Partial is no longer active (poisoned or built)");
+    }
 
     // End
     eprintln!("About to call end() after first finish_deferred");
@@ -880,7 +893,7 @@ fn test_double_free_simple_repro() {
     eprintln!(
         "After init: frames={}, shape={}",
         partial.frame_count(),
-        partial.shape()
+        shape_str(partial)
     );
 
     // Re-enter the label field
@@ -899,7 +912,7 @@ fn test_double_free_simple_repro() {
     eprintln!(
         "After end: frames={}, shape={}",
         partial.frame_count(),
-        partial.shape()
+        shape_str(partial)
     );
 
     // Now Outer has is_init=true, tracker=Struct{iset: all set}
@@ -1002,11 +1015,16 @@ fn test_double_free_truncated() {
         partial.finish_deferred().err()
     );
     eprintln!(
-        "After first finish: frames={}, deferred={}",
+        "After first finish: frames={}, deferred={}, active={}",
         partial.frame_count(),
-        partial.is_deferred()
+        partial.is_deferred(),
+        partial.is_active()
     );
-    eprintln!("Current shape: {}", partial.shape());
+    if partial.is_active() {
+        eprintln!("Current shape: {}", shape_str(partial));
+    } else {
+        eprintln!("Partial is no longer active (poisoned or built)");
+    }
 
     // Operations after first finish_deferred - add one by one to find crash
     eprintln!("end()");
@@ -1085,40 +1103,40 @@ fn test_double_free_truncated() {
     let _ = partial.begin_field("label");
     eprintln!("frames={}", partial.frame_count());
 
-    eprintln!("sd2-4 shape={}", partial.shape());
+    eprintln!("sd2-4 shape={}", shape_str(partial));
     let _ = partial.set_default();
     eprintln!(
         "after sd2-4: frames={}, shape={}",
         partial.frame_count(),
-        partial.shape()
+        shape_str(partial)
     );
 
     eprintln!("bs x 2");
     let _ = partial.begin_set();
     let _ = partial.begin_set();
 
-    eprintln!("bi on {}", partial.shape());
+    eprintln!("bi on {}", shape_str(partial));
     let r = partial.begin_inner();
     eprintln!(
         "bi result: {:?}, frames={}, shape={}",
         r.err(),
         partial.frame_count(),
-        partial.shape()
+        shape_str(partial)
     );
 
-    eprintln!("sd on {}", partial.shape());
+    eprintln!("sd on {}", shape_str(partial));
     let _ = partial.set_default();
     eprintln!(
         "after sd: frames={}, shape={}",
         partial.frame_count(),
-        partial.shape()
+        shape_str(partial)
     );
 
     eprintln!("bs2-2");
     let _ = partial.begin_set();
     let _ = partial.begin_set();
 
-    eprintln!("set string 'blbbbbbbddrrzrr' on {}", partial.shape());
+    eprintln!("set string 'blbbbbbbddrrzrr' on {}", shape_str(partial));
     let r = partial.set(String::from("blbbbbbbddrrzrr"));
     eprintln!(
         "set result: {:?}, frames={}",
@@ -1126,32 +1144,32 @@ fn test_double_free_truncated() {
         partial.frame_count()
     );
 
-    eprintln!("sntfd-35 on {}", partial.shape());
+    eprintln!("sntfd-35 on {}", shape_str(partial));
     let _ = partial.set_nth_field_to_default(35);
 
-    eprintln!("bv on {}", partial.shape());
+    eprintln!("bv on {}", shape_str(partial));
     let _ = partial.begin_value();
 
-    eprintln!("set i32 66977534 on {}", partial.shape());
+    eprintln!("set i32 66977534 on {}", shape_str(partial));
     let _ = partial.set(66977534i32);
 
-    eprintln!("set u32 on {}", partial.shape());
+    eprintln!("set u32 on {}", shape_str(partial));
     let _ = partial.set(3076480863u32);
 
-    eprintln!("bi on {}", partial.shape());
+    eprintln!("bi on {}", shape_str(partial));
     let r = partial.begin_inner();
     eprintln!("bi result: {:?}, frames={}", r.err(), partial.frame_count());
 
-    eprintln!("end on {}", partial.shape());
+    eprintln!("end on {}", shape_str(partial));
     let r = partial.end();
     eprintln!(
         "end result: {:?}, frames={}, shape={}",
         r.err(),
         partial.frame_count(),
-        partial.shape()
+        shape_str(partial)
     );
 
-    eprintln!("sd x 2 on {}", partial.shape());
+    eprintln!("sd x 2 on {}", shape_str(partial));
     let r = partial.set_default();
     eprintln!("sd1 result: {:?}", r.err());
     let r = partial.set_default();
@@ -1165,7 +1183,7 @@ fn test_double_free_truncated() {
     let _ = partial.begin_smart_ptr();
     let _ = partial.begin_smart_ptr();
 
-    eprintln!("bf items on {}", partial.shape());
+    eprintln!("bf items on {}", shape_str(partial));
     let r = partial.begin_field("items");
     eprintln!(
         "bf items result: {:?}, frames={}",
@@ -1173,15 +1191,15 @@ fn test_double_free_truncated() {
         partial.frame_count()
     );
 
-    eprintln!("bli on {}", partial.shape());
+    eprintln!("bli on {}", shape_str(partial));
     let r = partial.begin_list_item();
     eprintln!("bli result: {:?}", r.err());
 
-    eprintln!("sd on {}", partial.shape());
+    eprintln!("sd on {}", shape_str(partial));
     let r = partial.set_default();
     eprintln!("sd result: {:?}", r.err());
 
-    eprintln!("bi (crash?) on {}", partial.shape());
+    eprintln!("bi (crash?) on {}", shape_str(partial));
     let r = partial.begin_inner();
     eprintln!("bi result: {:?}", r.err());
 

@@ -4,6 +4,15 @@ use super::*;
 // Misc.
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 impl<'facet> Partial<'facet> {
+    /// Returns true if the Partial is in an active state (not built or poisoned).
+    ///
+    /// After `build()` succeeds or after an error causes poisoning, the Partial
+    /// becomes inactive and most operations will fail.
+    #[inline]
+    pub fn is_active(&self) -> bool {
+        self.state == PartialState::Active
+    }
+
     /// Returns the current frame count (depth of nesting)
     ///
     /// The initial frame count is 1 — `begin_field` would push a new frame,
@@ -18,12 +27,36 @@ impl<'facet> Partial<'facet> {
     }
 
     /// Returns the shape of the current frame.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the Partial has been poisoned or built, or if there are no frames
+    /// (which indicates a bug in the Partial implementation).
     #[inline]
     pub fn shape(&self) -> &'static Shape {
+        if self.state != PartialState::Active {
+            panic!(
+                "Partial::shape() called on non-active Partial (state: {:?})",
+                self.state
+            );
+        }
         self.frames()
             .last()
-            .expect("Partial always has at least one frame")
+            .expect("Partial::shape() called but no frames exist - this is a bug")
             .shape
+    }
+
+    /// Returns the shape of the current frame, or `None` if the Partial is
+    /// inactive (poisoned or built) or has no frames.
+    ///
+    /// This is useful for debugging/logging where you want to inspect the state
+    /// without risking a panic.
+    #[inline]
+    pub fn try_shape(&self) -> Option<&'static Shape> {
+        if self.state != PartialState::Active {
+            return None;
+        }
+        self.frames().last().map(|f| f.shape)
     }
 
     /// Returns the current deferred resolution, if in deferred mode.
@@ -199,6 +232,14 @@ impl<'facet> Partial<'facet> {
             drop(frame);
         }
 
+        // Invariant check: we must have at least one frame after finish_deferred
+        if self.frames().is_empty() {
+            self.poison_and_cleanup();
+            return Err(ReflectError::InvariantViolation {
+                invariant: "finish_deferred() left Partial with no frames",
+            });
+        }
+
         // Fill defaults and validate the root frame is fully initialized
         if let Some(frame) = self.frames_mut().last_mut() {
             frame.fill_defaults();
@@ -311,7 +352,8 @@ impl<'facet> Partial<'facet> {
         }
 
         if self.frames().len() <= 1 {
-            // Never pop the last/root frame.
+            // Never pop the last/root frame - this indicates a broken state machine
+            self.poison_and_cleanup();
             return Err(ReflectError::InvariantViolation {
                 invariant: "Partial::end() called with only one frame on the stack",
             });
@@ -320,6 +362,7 @@ impl<'facet> Partial<'facet> {
         // In deferred mode, cannot pop below the start depth
         if let Some(start_depth) = self.start_depth() {
             if self.frames().len() <= start_depth {
+                self.poison_and_cleanup();
                 return Err(ReflectError::InvariantViolation {
                     invariant: "Partial::end() called but would pop below deferred start depth",
                 });
