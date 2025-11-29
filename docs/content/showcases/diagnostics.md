@@ -26,11 +26,11 @@ title = "facet-kdl Compile Error Showcase"
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error[E0425]</span><span style="font-weight:bold">: cannot find value `nonexistent` in module `$crate::valid_kdl_attrs_are::child_or_children_or_property_or_argument_or_arguments_or_node_name`</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error[E0425]</span><span style="font-weight:bold">: cannot find value `nonexistent` in module `$crate::__unknown`</span>
  <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:6:18
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
 <span style="font-weight:bold"></span><span style="color:#61afef">6</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span>     #[facet(kdl::nonexistent)]
-  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>                  <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^^^^^</span> <span style="font-weight:bold"></span><span style="color:#e06c75">not found in `$crate::valid_kdl_attrs_are::child_or_children_or_property_or_argument_or_arguments_or_node_name`</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>                  <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^^^^^</span> <span style="font-weight:bold"></span><span style="color:#e06c75">not found in `$crate::__unknown`</span>
 
 <span style="font-weight:bold">For more information about this error, try `rustc --explain E0425`.</span>
 <span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile `test` (bin "test") due to 1 previous error</code></pre>
@@ -65,17 +65,17 @@ title = "facet-kdl Compile Error Showcase"
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error[E0425]</span><span style="font-weight:bold">: cannot find value `chld` in module `$crate::valid_kdl_attrs_are::child_or_children_or_property_or_argument_or_arguments_or_node_name`</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error[E0425]</span><span style="font-weight:bold">: cannot find value `chld` in module `$crate::__unknown`</span>
  <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:6:18
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
 <span style="font-weight:bold"></span><span style="color:#61afef">6</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span>     #[facet(kdl::chld)]
-  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>                  <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^</span> <span style="font-weight:bold"></span><span style="color:#e06c75">not found in `$crate::valid_kdl_attrs_are::child_or_children_or_property_or_argument_or_arguments_or_node_name`</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>                  <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^</span> <span style="font-weight:bold"></span><span style="color:#e06c75">not found in `$crate::__unknown`</span>
 
-<span style="font-weight:bold"></span><span style="color:#e06c75">error[E0425]</span><span style="font-weight:bold">: cannot find value `proprty` in module `$crate::valid_kdl_attrs_are::child_or_children_or_property_or_argument_or_arguments_or_node_name`</span>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error[E0425]</span><span style="font-weight:bold">: cannot find value `proprty` in module `$crate::__unknown`</span>
   <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:12:18
    <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
 <span style="font-weight:bold"></span><span style="color:#61afef">12</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span>     #[facet(kdl::proprty)]
-   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>                  <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^</span> <span style="font-weight:bold"></span><span style="color:#e06c75">not found in `$crate::valid_kdl_attrs_are::child_or_children_or_property_or_argument_or_arguments_or_node_name`</span>
+   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>                  <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^</span> <span style="font-weight:bold"></span><span style="color:#e06c75">not found in `$crate::__unknown`</span>
 
 <span style="font-weight:bold">For more information about this error, try `rustc --explain E0425`.</span>
 <span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile `test` (bin "test") due to 2 previous errors</code></pre>

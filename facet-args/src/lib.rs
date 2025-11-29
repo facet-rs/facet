@@ -33,15 +33,13 @@ macro_rules! __attr {
 
     // Unknown attribute: use path resolution to get the error span on the unknown identifier.
     ($unknown:ident $($tt:tt)*) => {
-        $crate::valid_args_attrs_are::positional_or_short_or_named::$unknown
+        $crate::__unknown::$unknown
     };
 }
 
-/// This module exists only to produce helpful error messages for unknown args attributes.
 #[doc(hidden)]
-pub mod valid_args_attrs_are {
-    #[doc(hidden)]
-    pub mod positional_or_short_or_named {}
+pub mod __unknown {
+    //! Valid args attributes: positional, short, named
 }
 
 /// Marks a field as a positional argument.
