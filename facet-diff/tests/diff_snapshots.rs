@@ -51,15 +51,17 @@ where
     let before_str = printer.format_peek(Peek::new(before));
     let after_str = printer.format_peek(Peek::new(after));
     let diff = before.diff(after);
-    // Strip ANSI codes for clean snapshots
-    let diff_str = strip_ansi(&format!("{diff}"));
+    // Keep colors in diff output
+    let diff_str = format!("{diff}");
+    // For width calculation, strip ANSI codes
+    let diff_str_plain = strip_ansi(&diff_str);
 
-    // Calculate minimum width to fit titles
+    // Calculate minimum width to fit titles and content
     let min_width = 12;
     let content_width = before_str
         .lines()
         .chain(after_str.lines())
-        .chain(diff_str.lines())
+        .chain(diff_str_plain.lines())
         .map(|l| l.len())
         .max()
         .unwrap_or(0)
@@ -67,6 +69,7 @@ where
 
     let before_box = builder()
         .border_style(BorderStyle::Round)
+        .border_color("cyan")
         .title("Before")
         .width(content_width + 2)
         .render(&before_str)
@@ -74,6 +77,7 @@ where
 
     let after_box = builder()
         .border_style(BorderStyle::Round)
+        .border_color("green")
         .title("After")
         .width(content_width + 2)
         .render(&after_str)
@@ -81,6 +85,7 @@ where
 
     let diff_box = builder()
         .border_style(BorderStyle::Double)
+        .border_color("yellow")
         .title("Diff")
         .width(content_width + 2)
         .render(diff_str.trim_end())
