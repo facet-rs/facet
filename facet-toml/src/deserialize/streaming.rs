@@ -1068,6 +1068,32 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             return Ok(());
         }
 
+        // Check if we're at a DynamicValue - treat it like a map/object
+        if matches!(partial.shape().def, Def::DynamicValue(_)) {
+            // Initialize as object
+            if let Err(e) = partial.begin_map() {
+                return Err(self.reflect_err(e, partial));
+            }
+
+            // Start an object entry with this key
+            if let Err(e) = partial.begin_object_entry(key) {
+                return Err(self.reflect_err(e, partial));
+            }
+            self.open_frames += 1; // Track that we opened a frame
+
+            // Handle array item within object value
+            if is_array_item {
+                partial
+                    .begin_list()
+                    .map(|_| ())
+                    .map_err(|e| self.reflect_err(e, partial))?;
+                self.begin_list_item(partial)?;
+                self.open_frames += 1;
+            }
+
+            return Ok(());
+        }
+
         self.navigate_into_key(partial, key)?;
 
         // After navigating into the field, check if it's a scalar type
@@ -1262,6 +1288,39 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 return Ok(());
             }
 
+            // Check if we're at a DynamicValue - treat it like a map/object
+            if matches!(partial.shape().def, Def::DynamicValue(_)) {
+                // Initialize as object
+                if let Err(e) = partial.begin_map() {
+                    return Err(self.reflect_err(e, partial));
+                }
+
+                let entry_key = *key;
+                let remaining_keys = &keys[i + 1..];
+
+                // Start object entry with this key
+                if let Err(e) = partial.begin_object_entry(entry_key) {
+                    return Err(self.reflect_err(e, partial));
+                }
+
+                if remaining_keys.is_empty() {
+                    // No more keys, deserialize the value directly
+                    self.deserialize_dynamic_value(partial)?;
+                } else {
+                    // More keys - navigate into the value (recursively)
+                    self.navigate_and_deserialize_direct(partial, remaining_keys)?;
+                }
+                self.end_frame(partial)?;
+
+                // Close all frames we opened during navigation
+                for pushed in local_frames.into_iter().rev() {
+                    if pushed {
+                        self.pop_frame(partial)?;
+                    }
+                }
+                return Ok(());
+            }
+
             let pushed = self.navigate_into_key(partial, key)?;
             local_frames.push(pushed);
         }
@@ -1410,6 +1469,11 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             self.deserialize_value(partial)?;
             self.end_frame(partial)?;
             return Ok(());
+        }
+
+        // Handle DynamicValue types (like facet_value::Value) - can hold any TOML value
+        if matches!(partial.shape().def, Def::DynamicValue(_)) {
+            return self.deserialize_dynamic_value(partial);
         }
 
         // Handle tuple structs (newtype wrappers) - unwrap into field "0"
@@ -1966,6 +2030,222 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     Some(event_span.clone()),
                     partial.path(),
                 ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Deserialize any TOML value into a DynamicValue type (like facet_value::Value).
+    ///
+    /// This handles all TOML value types: booleans, integers, floats, strings, arrays, and tables.
+    /// Datetime values are not currently supported and will return an error.
+    fn deserialize_dynamic_value<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+    ) -> Result<(), TomlDeError<'input>> {
+        let Some(event) = self.iter.peek() else {
+            return Err(TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericTomlError("Unexpected end of input".to_string()),
+                None,
+                partial.path(),
+            ));
+        };
+
+        let event_span = Self::span_range(event);
+
+        match event.kind() {
+            EventKind::Scalar => {
+                let event = self.iter.next().unwrap();
+                let raw = self.raw_from_event(&event);
+                let mut decoded: Cow<'input, str> = Cow::Borrowed("");
+                let kind = raw.decode_scalar(&mut decoded, &mut ());
+
+                match kind {
+                    ScalarKind::Boolean(b) => {
+                        if let Err(e) = partial.set(b) {
+                            return Err(TomlDeError::new(
+                                self.source,
+                                TomlDeErrorKind::GenericReflect(e),
+                                Some(event_span),
+                                partial.path(),
+                            ));
+                        }
+                    }
+                    ScalarKind::String => {
+                        if let Err(e) = partial.set(decoded.into_owned()) {
+                            return Err(TomlDeError::new(
+                                self.source,
+                                TomlDeErrorKind::GenericReflect(e),
+                                Some(event_span),
+                                partial.path(),
+                            ));
+                        }
+                    }
+                    ScalarKind::Integer(radix) => {
+                        // Remove underscores and parse as i64
+                        let clean: String = decoded.chars().filter(|&c| c != '_').collect();
+                        let Ok(v) = i64::from_str_radix(&clean, radix.value()) else {
+                            return Err(TomlDeError::new(
+                                self.source,
+                                TomlDeErrorKind::GenericTomlError(format!(
+                                    "Invalid integer: {}",
+                                    decoded
+                                )),
+                                Some(event_span),
+                                partial.path(),
+                            ));
+                        };
+                        if let Err(e) = partial.set(v) {
+                            return Err(TomlDeError::new(
+                                self.source,
+                                TomlDeErrorKind::GenericReflect(e),
+                                Some(event_span),
+                                partial.path(),
+                            ));
+                        }
+                    }
+                    ScalarKind::Float => {
+                        let Ok(v) = decoded.parse::<f64>() else {
+                            return Err(TomlDeError::new(
+                                self.source,
+                                TomlDeErrorKind::GenericTomlError(format!(
+                                    "Invalid float: {}",
+                                    decoded
+                                )),
+                                Some(event_span),
+                                partial.path(),
+                            ));
+                        };
+                        if let Err(e) = partial.set(v) {
+                            return Err(TomlDeError::new(
+                                self.source,
+                                TomlDeErrorKind::GenericReflect(e),
+                                Some(event_span),
+                                partial.path(),
+                            ));
+                        }
+                    }
+                    ScalarKind::DateTime => {
+                        // DateTime is not currently supported for DynamicValue
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::GenericTomlError(
+                                "DateTime values cannot be deserialized into dynamic Value (use a typed datetime field instead)".to_string()
+                            ),
+                            Some(event_span),
+                            partial.path(),
+                        ));
+                    }
+                }
+            }
+            EventKind::ArrayOpen => {
+                self.iter.next(); // consume [
+                // Reuse deserialize_dynamic_list - it already handles DynamicValue via begin_list/begin_list_item
+                self.deserialize_dynamic_list(partial)?;
+            }
+            EventKind::InlineTableOpen => {
+                self.iter.next(); // consume {
+                self.deserialize_dynamic_inline_table(partial)?;
+            }
+            _ => {
+                return Err(TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::GenericTomlError(format!(
+                        "Expected value, got {:?}",
+                        event.kind()
+                    )),
+                    Some(event_span),
+                    partial.path(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Deserialize an inline table into a DynamicValue object.
+    ///
+    /// This is separate from `deserialize_inline_table` because that function does
+    /// struct field matching, which doesn't apply to DynamicValue objects.
+    fn deserialize_dynamic_inline_table<'facet>(
+        &mut self,
+        partial: &mut Partial<'facet>,
+    ) -> Result<(), TomlDeError<'input>> {
+        trace!("deserialize_dynamic_inline_table");
+
+        // Initialize as object
+        if let Err(e) = partial.begin_map() {
+            return Err(TomlDeError::new(
+                self.source,
+                TomlDeErrorKind::GenericReflect(e),
+                self.current_span(),
+                partial.path(),
+            ));
+        }
+
+        loop {
+            let Some(event) = self.iter.peek() else { break };
+
+            match event.kind() {
+                EventKind::InlineTableClose => {
+                    self.iter.next();
+                    break;
+                }
+                EventKind::ValueSep => {
+                    self.iter.next(); // skip comma
+                }
+                EventKind::SimpleKey => {
+                    let event = self.iter.next().unwrap();
+                    let raw = self.raw_from_event(&event);
+
+                    // Decode the key
+                    let mut key: Cow<'input, str> = Cow::Borrowed("");
+                    let _ = raw.decode_scalar(&mut key, &mut ());
+                    let key_owned = key.into_owned();
+
+                    // Consume the KeyValSep (=)
+                    if let Some(sep_event) = self.iter.peek() {
+                        if matches!(sep_event.kind(), EventKind::KeyValSep) {
+                            self.iter.next();
+                        }
+                    }
+
+                    // Start an object entry with this key
+                    if let Err(e) = partial.begin_object_entry(&key_owned) {
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::GenericReflect(e),
+                            self.current_span(),
+                            partial.path(),
+                        ));
+                    }
+
+                    // Recursively deserialize the value
+                    self.deserialize_dynamic_value(partial)?;
+
+                    // End the entry
+                    if let Err(e) = partial.end() {
+                        return Err(TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::GenericReflect(e),
+                            self.current_span(),
+                            partial.path(),
+                        ));
+                    }
+                }
+                _ => {
+                    return Err(TomlDeError::new(
+                        self.source,
+                        TomlDeErrorKind::GenericTomlError(format!(
+                            "Expected key or }}, got {:?}",
+                            event.kind()
+                        )),
+                        self.current_span(),
+                        partial.path(),
+                    ));
+                }
             }
         }
 

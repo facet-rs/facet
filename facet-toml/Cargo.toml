@@ -41,4 +41,5 @@ owo-colors = "4.2.2"
 eyre = "0.6.12"
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
+facet-value = { path = "../facet-value" }
 snapbox = "0.6.21"

@@ -8,6 +8,8 @@ impl Partial<'_> {
     ///
     /// This initializes the map with default capacity and allows inserting key-value pairs
     /// It does _not_ push a new frame onto the stack.
+    ///
+    /// For `Def::DynamicValue` types, this initializes as an object instead of a map.
     pub fn begin_map(&mut self) -> Result<&mut Self, ReflectError> {
         self.require_active()?;
         let frame = self.frames_mut().last_mut().unwrap();
@@ -19,16 +21,28 @@ impl Partial<'_> {
             }
             Tracker::Scalar => {
                 // is_init is true - already initialized (from a previous round), just update tracker
-                if !matches!(frame.shape.def, Def::Map(_)) {
-                    return Err(ReflectError::OperationFailed {
-                        shape: frame.shape,
-                        operation: "begin_map can only be called on Map types",
-                    });
+                match frame.shape.def {
+                    Def::Map(_) => {
+                        frame.tracker = Tracker::Map {
+                            insert_state: MapInsertState::Idle,
+                        };
+                        return Ok(self);
+                    }
+                    Def::DynamicValue(_) => {
+                        frame.tracker = Tracker::DynamicValue {
+                            state: DynamicValueState::Object {
+                                insert_state: DynamicObjectInsertState::Idle,
+                            },
+                        };
+                        return Ok(self);
+                    }
+                    _ => {
+                        return Err(ReflectError::OperationFailed {
+                            shape: frame.shape,
+                            operation: "begin_map can only be called on Map or DynamicValue types",
+                        });
+                    }
                 }
-                frame.tracker = Tracker::Map {
-                    insert_state: MapInsertState::Idle,
-                };
-                return Ok(self);
             }
             Tracker::Map { .. } => {
                 if frame.is_init {
@@ -36,37 +50,59 @@ impl Partial<'_> {
                     return Ok(self);
                 }
             }
+            Tracker::DynamicValue { state } => {
+                // Already initialized as a dynamic object
+                if matches!(state, DynamicValueState::Object { .. }) {
+                    return Ok(self);
+                }
+                // Otherwise (Scalar or Array state), we need to deinit before reinitializing
+                frame.deinit();
+            }
             _ => {
                 return Err(ReflectError::UnexpectedTracker {
-                    message: "begin_map called but tracker isn't Scalar or Map",
+                    message: "begin_map called but tracker isn't Scalar, Map, or DynamicValue",
                     current_tracker: frame.tracker.kind(),
                 });
             }
         }
 
-        // Check that we have a Map
-        let map_def = match &frame.shape.def {
-            Def::Map(map_def) => map_def,
+        // Check that we have a Map or DynamicValue
+        match &frame.shape.def {
+            Def::Map(map_def) => {
+                let init_fn = map_def.vtable.init_in_place_with_capacity_fn;
+
+                // Initialize the map with default capacity (0)
+                unsafe {
+                    init_fn(frame.data, 0);
+                }
+
+                // Update tracker to Map state and mark as initialized
+                frame.tracker = Tracker::Map {
+                    insert_state: MapInsertState::Idle,
+                };
+                frame.is_init = true;
+            }
+            Def::DynamicValue(dyn_def) => {
+                // Initialize as a dynamic object
+                unsafe {
+                    (dyn_def.vtable.begin_object)(frame.data);
+                }
+
+                // Update tracker to DynamicValue object state and mark as initialized
+                frame.tracker = Tracker::DynamicValue {
+                    state: DynamicValueState::Object {
+                        insert_state: DynamicObjectInsertState::Idle,
+                    },
+                };
+                frame.is_init = true;
+            }
             _ => {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,
-                    operation: "begin_map can only be called on Map types",
+                    operation: "begin_map can only be called on Map or DynamicValue types",
                 });
             }
-        };
-
-        let init_fn = map_def.vtable.init_in_place_with_capacity_fn;
-
-        // Initialize the map with default capacity (0)
-        unsafe {
-            init_fn(frame.data, 0);
         }
-
-        // Update tracker to Map state and mark as initialized
-        frame.tracker = Tracker::Map {
-            insert_state: MapInsertState::Idle,
-        };
-        frame.is_init = true;
 
         Ok(self)
     }
@@ -245,6 +281,102 @@ impl Partial<'_> {
             value_ptr,
             value_shape,
             FrameOwnership::ManagedElsewhere, // Ownership tracked in MapInsertState
+        ));
+
+        Ok(self)
+    }
+
+    /// Begins an object entry for a DynamicValue object.
+    ///
+    /// This is a simpler API than begin_key/begin_value for DynamicValue objects,
+    /// where keys are always strings. The key is stored and a frame is pushed for
+    /// the value. After setting the value and calling `end()`, the key-value pair
+    /// will be inserted into the object.
+    ///
+    /// For `Def::Map` types, use `begin_key()` / `begin_value()` instead.
+    pub fn begin_object_entry(&mut self, key: &str) -> Result<&mut Self, ReflectError> {
+        crate::trace!("begin_object_entry({key:?})");
+        self.require_active()?;
+        let frame = self.frames_mut().last_mut().unwrap();
+
+        // Check that we have a DynamicValue in Object state with Idle insert_state
+        match (&frame.shape.def, &frame.tracker) {
+            (
+                Def::DynamicValue(_),
+                Tracker::DynamicValue {
+                    state:
+                        DynamicValueState::Object {
+                            insert_state: DynamicObjectInsertState::Idle,
+                        },
+                },
+            ) if frame.is_init => {
+                // Good, proceed
+            }
+            (
+                Def::DynamicValue(_),
+                Tracker::DynamicValue {
+                    state:
+                        DynamicValueState::Object {
+                            insert_state: DynamicObjectInsertState::BuildingValue { .. },
+                        },
+                },
+            ) => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "already building a value, call end() first",
+                });
+            }
+            (Def::DynamicValue(_), _) => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "must call begin_map() before begin_object_entry()",
+                });
+            }
+            _ => {
+                return Err(ReflectError::OperationFailed {
+                    shape: frame.shape,
+                    operation: "begin_object_entry can only be called on DynamicValue types",
+                });
+            }
+        }
+
+        // For DynamicValue objects, the value shape is the same DynamicValue shape
+        let value_shape = frame.shape;
+        let value_layout = match value_shape.layout.sized_layout() {
+            Ok(layout) => layout,
+            Err(_) => {
+                return Err(ReflectError::Unsized {
+                    shape: value_shape,
+                    operation: "begin_object_entry: calculating value layout",
+                });
+            }
+        };
+
+        let value_ptr: *mut u8 = unsafe { ::alloc::alloc::alloc(value_layout) };
+        let Some(value_ptr) = NonNull::new(value_ptr) else {
+            return Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "failed to allocate memory for object value",
+            });
+        };
+
+        // Update the insert state with the key
+        match &mut frame.tracker {
+            Tracker::DynamicValue {
+                state: DynamicValueState::Object { insert_state },
+            } => {
+                *insert_state = DynamicObjectInsertState::BuildingValue {
+                    key: String::from(key),
+                };
+            }
+            _ => unreachable!(),
+        }
+
+        // Push a new frame for the value
+        self.frames_mut().push(Frame::new(
+            PtrUninit::new(value_ptr),
+            value_shape,
+            FrameOwnership::Owned,
         ));
 
         Ok(self)
