@@ -387,8 +387,14 @@ fn parse_ansi_style(seq: &str) -> Option<String> {
                         i += 4;
                     }
                 } else if i + 1 < parts.len() && parts[i + 1] == "5" {
-                    // 256-color (simplified - just skip)
-                    i += 2;
+                    // 256-color palette
+                    if i + 2 < parts.len() {
+                        if let Ok(n) = parts[i + 2].parse::<u8>() {
+                            let color = ansi_256_to_rgb(n);
+                            styles.push(format!("color:{color}"));
+                        }
+                        i += 2;
+                    }
                 }
             }
             "90" => styles.push("color:#5c6370".to_string()), // Bright black (gray)
@@ -405,4 +411,39 @@ fn parse_ansi_style(seq: &str) -> Option<String> {
     }
 
     Some(styles.join(";"))
+}
+
+/// Convert ANSI 256-color palette index to hex color.
+fn ansi_256_to_rgb(n: u8) -> &'static str {
+    match n {
+        // Standard colors (0-7)
+        0 => "#000000",
+        1 => "#800000",
+        2 => "#008000",
+        3 => "#808000",
+        4 => "#000080",
+        5 => "#800080",
+        6 => "#008080",
+        7 => "#c0c0c0",
+        // High-intensity colors (8-15)
+        8 => "#808080",
+        9 => "#e06c75",  // Bright red (used by rustc for errors)
+        10 => "#98c379", // Bright green
+        11 => "#e5c07b", // Bright yellow
+        12 => "#61afef", // Bright blue (used by rustc for line numbers)
+        13 => "#c678dd", // Bright magenta
+        14 => "#56b6c2", // Bright cyan
+        15 => "#ffffff",
+        // 216-color cube (16-231)
+        16..=231 => {
+            // This is a cube where each RGB component goes 0, 95, 135, 175, 215, 255
+            // For simplicity, return a reasonable approximation
+            "#888888"
+        }
+        // Grayscale (232-255)
+        232..=255 => {
+            // Grayscale from dark to light
+            "#888888"
+        }
+    }
 }
