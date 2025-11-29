@@ -7,20 +7,35 @@ use proto_ext::Attr;
 #[cfg(test)]
 use proto_ext::Column;
 
-// Test the full derive pipeline
+/// Internal cache struct we want to skip from ORM generation
 #[derive(Faket)]
 #[faket(proto_ext::skip)]
-pub struct SkippedStruct {
-    pub x: i32,
+pub struct InternalCache {
+    pub data: Vec<u8>,
 }
 
+/// User model with full ORM attribute configuration
 #[derive(Faket)]
 pub struct User {
-    #[faket(proto_ext::column(name = "user_id", primary_key))]
+    /// Primary key with auto-increment
+    #[faket(proto_ext::column(name = "id", primary_key, auto_increment))]
     pub id: i64,
 
-    #[faket(proto_ext::rename("user_name"))]
+    /// Custom column name mapping
+    #[faket(proto_ext::column(name = "user_name"))]
     pub name: String,
+
+    /// Nullable TEXT field
+    #[faket(proto_ext::column(nullable, sql_type = "TEXT"))]
+    pub bio: Option<String>,
+
+    /// Skip sensitive field from serialization
+    #[faket(proto_ext::skip)]
+    pub password_hash: String,
+
+    /// Rename for API compatibility
+    #[faket(proto_ext::rename("email_address"))]
+    pub email: String,
 }
 
 /// Demonstrates cross-crate attribute parsing.
@@ -45,6 +60,10 @@ pub fn demo() -> Vec<Attr> {
 mod tests {
     use super::*;
 
+    fn default_column() -> Column {
+        Column::default()
+    }
+
     #[test]
     fn test_cross_crate_parsing() {
         let attrs = demo();
@@ -52,46 +71,36 @@ mod tests {
         assert_eq!(attrs[0], Attr::Skip);
         assert_eq!(attrs[1], Attr::Rename("user_name"));
         assert_eq!(attrs[2], Attr::Rename("user_name"));
-        assert_eq!(
-            attrs[3],
-            Attr::Column(Column {
-                name: None,
-                primary_key: false
-            })
-        );
-        assert_eq!(
-            attrs[4],
-            Attr::Column(Column {
-                name: None,
-                primary_key: false
-            })
-        );
+        assert_eq!(attrs[3], Attr::Column(default_column()));
+        assert_eq!(attrs[4], Attr::Column(default_column()));
         assert_eq!(
             attrs[5],
             Attr::Column(Column {
                 name: Some("id"),
-                primary_key: false
+                ..default_column()
             })
         );
         assert_eq!(
             attrs[6],
             Attr::Column(Column {
-                name: None,
-                primary_key: true
+                primary_key: true,
+                ..default_column()
             })
         );
         assert_eq!(
             attrs[7],
             Attr::Column(Column {
                 name: Some("id"),
-                primary_key: true
+                primary_key: true,
+                ..default_column()
             })
         );
         assert_eq!(
             attrs[8],
             Attr::Column(Column {
                 name: Some("id"),
-                primary_key: true
+                primary_key: true,
+                ..default_column()
             })
         );
     }

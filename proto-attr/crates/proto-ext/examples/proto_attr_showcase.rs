@@ -111,9 +111,9 @@ fn scenario_unknown_attribute(runner: &mut ShowcaseRunner) {
     let code = r#"use proto_attr::Faket;
 
 #[derive(Faket)]
-struct Config {
-    #[faket(proto_ext::foobar)]
-    field: String,
+struct User {
+    #[faket(proto_ext::indexed)]
+    id: i64,
 }
 
 fn main() {}
@@ -125,8 +125,8 @@ fn main() {}
     runner
         .scenario("Unknown Extension Attribute")
         .description(
-            "Using an unknown attribute like `proto_ext::foobar` produces a clear error\n\
-             listing all available attributes.",
+            "Using an unknown ORM attribute like `indexed` produces a clear error\n\
+             listing all available attributes (skip, rename, column).",
         )
         .input(Language::Rust, code)
         .compiler_error(&error)
@@ -137,9 +137,9 @@ fn scenario_typo_skip(runner: &mut ShowcaseRunner) {
     let code = r#"use proto_attr::Faket;
 
 #[derive(Faket)]
-#[faket(proto_ext::skp)]
-struct Config {
-    field: String,
+struct User {
+    #[faket(proto_ext::skp)]
+    password_hash: String,
 }
 
 fn main() {}
@@ -163,9 +163,9 @@ fn scenario_skip_with_args(runner: &mut ShowcaseRunner) {
     let code = r#"use proto_attr::Faket;
 
 #[derive(Faket)]
-#[faket(proto_ext::skip("unexpected"))]
-struct Config {
-    field: String,
+struct User {
+    #[faket(proto_ext::skip("serialization"))]
+    password_hash: String,
 }
 
 fn main() {}
@@ -190,8 +190,8 @@ fn scenario_rename_missing_value(runner: &mut ShowcaseRunner) {
 
 #[derive(Faket)]
 #[faket(proto_ext::rename)]
-struct Config {
-    field: String,
+struct UserProfile {
+    email: String,
 }
 
 fn main() {}
@@ -203,7 +203,7 @@ fn main() {}
     runner
         .scenario("Newtype Attribute Missing Value")
         .description(
-            "The `rename` attribute requires a string value.\n\
+            "The `rename` attribute requires a string value to specify the new name.\n\
              Omitting the value produces an error showing the expected syntax.",
         )
         .input(Language::Rust, code)
@@ -216,7 +216,7 @@ fn scenario_column_unknown_field(runner: &mut ShowcaseRunner) {
 
 #[derive(Faket)]
 struct User {
-    #[faket(proto_ext::column(nam = "user_id"))]
+    #[faket(proto_ext::column(nam = "user_id", primary_key))]
     id: i64,
 }
 
@@ -230,7 +230,8 @@ fn main() {}
         .scenario("Unknown Field in Struct Attribute")
         .description(
             "Typos in field names like `nam` instead of `name` are caught\n\
-             with a \"did you mean?\" suggestion and list of valid fields.",
+             with a \"did you mean?\" suggestion and list of valid fields\n\
+             (name, nullable, sql_type, primary_key, auto_increment).",
         )
         .input(Language::Rust, code)
         .compiler_error(&error)
@@ -266,26 +267,44 @@ fn main() {}
 fn scenario_valid_usage(runner: &mut ShowcaseRunner) {
     let code = r#"use proto_attr::Faket;
 
+/// A table we want to exclude from ORM generation
 #[derive(Faket)]
 #[faket(proto_ext::skip)]
-struct SkippedStruct {
-    field: String,
+struct InternalCache {
+    data: Vec<u8>,
 }
 
+/// Map to a different table name
 #[derive(Faket)]
-#[faket(proto_ext::rename("NewName"))]
-struct RenamedStruct {
-    field: String,
+#[faket(proto_ext::rename("user_profiles"))]
+struct UserProfile {
+    email: String,
 }
 
+/// Full ORM column configuration example
 #[derive(Faket)]
 struct User {
-    #[faket(proto_ext::column(name = "user_id", primary_key))]
+    /// Primary key with auto-increment
+    #[faket(proto_ext::column(name = "id", primary_key, auto_increment))]
     id: i64,
 
+    /// Custom column name
     #[faket(proto_ext::column(name = "user_name"))]
     name: String,
 
+    /// Nullable TEXT field for bio
+    #[faket(proto_ext::column(nullable, sql_type = "TEXT"))]
+    bio: Option<String>,
+
+    /// Non-nullable timestamp
+    #[faket(proto_ext::column(nullable = false, sql_type = "TIMESTAMP"))]
+    created_at: i64,
+
+    /// Skip sensitive field from serialization
+    #[faket(proto_ext::skip)]
+    password_hash: String,
+
+    /// Rename field for API compatibility
     #[faket(proto_ext::rename("email_address"))]
     email: String,
 }
@@ -307,8 +326,11 @@ fn main() {
     runner
         .scenario("Valid Usage")
         .description(
-            "When extension attributes are used correctly, everything compiles smoothly.\n\
-             This shows the intended usage patterns for proto-ext attributes.",
+            "When ORM attributes are used correctly, everything compiles smoothly.\n\
+             This shows realistic usage patterns:\n\
+             • skip - exclude structs/fields from generation\n\
+             • rename - map to different table/column names\n\
+             • column - full control: name, nullable, sql_type, primary_key, auto_increment",
         )
         .input(Language::Rust, code)
         .compiler_error(&error_output)
