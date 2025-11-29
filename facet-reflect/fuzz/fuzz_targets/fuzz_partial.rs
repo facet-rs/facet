@@ -56,6 +56,8 @@ enum PartialOp {
     BeginDeferred,
     FinishDeferred,
     Build,
+    // DynamicValue-specific operations
+    BeginObjectEntry(SmallString),
 }
 
 #[derive(Arbitrary, Debug, Clone)]
@@ -183,6 +185,9 @@ fn apply_op(partial: &mut Partial<'_>, op: &PartialOp) {
         }
         PartialOp::Build => {
             let _ = partial.build();
+        }
+        PartialOp::BeginObjectEntry(key) => {
+            let _ = partial.begin_object_entry(&key.0);
         }
     }
 }

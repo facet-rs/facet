@@ -190,6 +190,7 @@ fn test_valid_fixtures() {
         };
 
         // Parse TOML into Value
+        eprintln!("Testing: {}", name);
         let actual: Result<Value, _> = facet_toml::from_str(fixture);
 
         // Parse expected JSON and convert from tagged format
