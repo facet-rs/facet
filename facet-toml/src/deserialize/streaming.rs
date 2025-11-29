@@ -829,7 +829,7 @@ struct StreamingDeserializer<'input, 'events, 'res> {
     open_flatten: Option<OpenFlatten>,
     /// Tracks array table keys for DynamicValue types, mapping key -> frame count at array level.
     /// This allows subsequent `[[key]]` headers to add to the existing array instead of replacing.
-    dynamic_array_tables: std::collections::HashMap<String, usize>,
+    dynamic_array_tables: hashbrown::HashMap<String, usize>,
 }
 
 /// Tracks which flattened field is currently open
@@ -855,7 +855,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             root_shape,
             resolution,
             open_flatten: None,
-            dynamic_array_tables: std::collections::HashMap::new(),
+            dynamic_array_tables: Default::default(),
         }
     }
 

@@ -83,6 +83,7 @@ doc-tests-ci *args:
     cmd_group "cargo test --doc {{args}}"
 
 miri *args:
+    #!/usr/bin/env -S bash -euo pipefail
     export RUSTUP_TOOLCHAIN=nightly-2025-06-29
     export MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-env-forward=NEXTEST"
     rustup toolchain install nightly-2025-06-29
