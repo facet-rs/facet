@@ -1,6 +1,6 @@
 use crate::db::{
-    Db, Page, ParsedData, RenderedHtml, SassFile, SassRegistry, Section, SiteTree, SourceFile,
-    SourceRegistry, TemplateFile, TemplateRegistry,
+    Db, Heading, Page, ParsedData, RenderedHtml, SassFile, SassRegistry, Section, SiteTree,
+    SourceFile, SourceRegistry, TemplateFile, TemplateRegistry,
 };
 use crate::types::{HtmlBody, Route, SassContent, TemplateContent, Title};
 use facet::Facet;
@@ -81,8 +81,9 @@ pub fn parse_file(db: &dyn Db, source: SourceFile) -> ParsedData {
         facet_toml::from_str(&frontmatter_str).unwrap_or_default()
     };
 
-    // Convert markdown to HTML
-    let body_html = HtmlBody::new(render_markdown(&markdown));
+    // Convert markdown to HTML and extract headings
+    let (html, headings) = render_markdown(&markdown);
+    let body_html = HtmlBody::new(html);
 
     // Determine if this is a section (_index.md)
     let is_section = path.is_section_index();
@@ -97,6 +98,7 @@ pub fn parse_file(db: &dyn Db, source: SourceFile) -> ParsedData {
         weight: frontmatter.weight,
         body_html,
         is_section,
+        headings,
     }
 }
 
@@ -123,6 +125,7 @@ pub fn build_tree<'db>(db: &'db dyn Db, sources: SourceRegistry<'db>) -> SiteTre
                 title: data.title.clone(),
                 weight: data.weight,
                 body_html: data.body_html.clone(),
+                headings: data.headings.clone(),
             },
         );
     }
@@ -136,6 +139,7 @@ pub fn build_tree<'db>(db: &'db dyn Db, sources: SourceRegistry<'db>) -> SiteTre
                 title: Title::from_static("Home"),
                 weight: 0,
                 body_html: HtmlBody::from_static(""),
+                headings: Vec::new(),
             },
         );
     }
@@ -151,6 +155,7 @@ pub fn build_tree<'db>(db: &'db dyn Db, sources: SourceRegistry<'db>) -> SiteTre
                 weight: data.weight,
                 body_html: data.body_html.clone(),
                 section_route,
+                headings: data.headings.clone(),
             },
         );
     }
@@ -248,8 +253,10 @@ fn split_frontmatter(content: &str) -> (String, String) {
     (String::new(), content.to_string())
 }
 
-/// Render markdown to HTML, resolving internal links
-fn render_markdown(markdown: &str) -> String {
+/// Render markdown to HTML, resolving internal links and extracting headings
+fn render_markdown(markdown: &str) -> (String, Vec<Heading>) {
+    use pulldown_cmark::{Event, HeadingLevel, Tag};
+
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH
@@ -257,28 +264,118 @@ fn render_markdown(markdown: &str) -> String {
 
     let parser = Parser::new_ext(markdown, options);
 
-    // Transform events to resolve @/ links
-    let parser = parser.map(|event| match event {
-        pulldown_cmark::Event::Start(pulldown_cmark::Tag::Link {
-            link_type,
-            dest_url,
-            title,
-            id,
-        }) => {
-            let resolved = resolve_internal_link(&dest_url);
-            pulldown_cmark::Event::Start(pulldown_cmark::Tag::Link {
+    // Collect headings while processing
+    let mut headings = Vec::new();
+    let mut current_heading: Option<(u8, String, String)> = None; // (level, id, text)
+
+    // Transform events to resolve @/ links and extract headings
+    let events: Vec<Event> = parser
+        .map(|event| match event {
+            Event::Start(Tag::Heading { level, ref id, .. }) => {
+                let level_num = match level {
+                    HeadingLevel::H1 => 1,
+                    HeadingLevel::H2 => 2,
+                    HeadingLevel::H3 => 3,
+                    HeadingLevel::H4 => 4,
+                    HeadingLevel::H5 => 5,
+                    HeadingLevel::H6 => 6,
+                };
+                current_heading = Some((
+                    level_num,
+                    id.as_ref().map(|s| s.to_string()).unwrap_or_default(),
+                    String::new(),
+                ));
+                event
+            }
+            Event::End(pulldown_cmark::TagEnd::Heading(_)) => {
+                if let Some((level, id, text)) = current_heading.take() {
+                    // Generate ID from text if not provided
+                    let id = if id.is_empty() { slugify(&text) } else { id };
+                    headings.push(Heading {
+                        title: text,
+                        id,
+                        level,
+                    });
+                }
+                event
+            }
+            Event::Text(ref text) | Event::Code(ref text) => {
+                if let Some((_, _, ref mut heading_text)) = current_heading {
+                    heading_text.push_str(text);
+                }
+                event
+            }
+            Event::Start(Tag::Link {
                 link_type,
-                dest_url: resolved.into(),
+                dest_url,
                 title,
                 id,
-            })
-        }
-        other => other,
-    });
+            }) => {
+                let resolved = resolve_internal_link(&dest_url);
+                Event::Start(Tag::Link {
+                    link_type,
+                    dest_url: resolved.into(),
+                    title,
+                    id,
+                })
+            }
+            other => other,
+        })
+        .collect();
 
     let mut html_output = String::new();
-    html::push_html(&mut html_output, parser);
-    html_output
+    html::push_html(&mut html_output, events.into_iter());
+
+    // Also extract headings from any inline HTML in the output
+    let html_headings = extract_html_headings(&html_output);
+
+    // Merge: add HTML headings that aren't duplicates (by id)
+    for h in html_headings {
+        if !headings.iter().any(|existing| existing.id == h.id) {
+            headings.push(h);
+        }
+    }
+
+    (html_output, headings)
+}
+
+/// Convert text to a URL-safe slug for heading IDs
+fn slugify(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '-' })
+        .collect::<String>()
+        .split('-')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+/// Extract headings from HTML content (for inline HTML headings)
+fn extract_html_headings(html: &str) -> Vec<Heading> {
+    use regex::Regex;
+
+    let mut headings = Vec::new();
+
+    // Match <h1> through <h6> tags with optional id attribute
+    // Pattern: <h[1-6](?:\s+id="([^"]*)")?>([^<]*)</h[1-6]>
+    let re = Regex::new(r#"<h([1-6])(?:\s[^>]*?id="([^"]*)"[^>]*)?>([^<]*)</h[1-6]>"#).unwrap();
+
+    for cap in re.captures_iter(html) {
+        let level: u8 = cap[1].parse().unwrap_or(1);
+        let id = cap
+            .get(2)
+            .map(|m| m.as_str().to_string())
+            .unwrap_or_default();
+        let title = cap[3].trim().to_string();
+
+        if !title.is_empty() {
+            let id = if id.is_empty() { slugify(&title) } else { id };
+            headings.push(Heading { title, id, level });
+        }
+    }
+
+    headings
 }
 
 /// Resolve Zola-style @/ internal links to URL paths

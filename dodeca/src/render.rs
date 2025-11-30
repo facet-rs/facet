@@ -1,4 +1,6 @@
-use crate::db::{Database, Page, SassFile, SassRegistry, Section, TemplateFile, TemplateRegistry};
+use crate::db::{
+    Database, Heading, Page, SassFile, SassRegistry, Section, TemplateFile, TemplateRegistry,
+};
 use crate::queries::{load_all_sass, load_all_templates};
 use crate::template::{Context, Engine, InMemoryLoader, Value};
 use crate::types::{HtmlBody, Route, RouteRef, SassPath, TemplatePath, Title};
@@ -37,6 +39,8 @@ pub fn load_templates_tracked(
 pub struct RenderOptions {
     /// Whether to inject live reload script
     pub livereload: bool,
+    /// Development mode - show error pages instead of failing
+    pub dev_mode: bool,
 }
 
 /// Stats from rendering
@@ -1067,11 +1071,12 @@ fn route_to_path(route: &str) -> String {
 use crate::db::SiteTree;
 
 /// Pure function to render a page to HTML (for Salsa tracking)
-pub fn render_page_to_html(
+/// Returns Result - caller decides whether to show error page (dev) or fail (prod)
+pub fn try_render_page_to_html(
     page: &Page,
     site_tree: &SiteTree,
     templates: &HashMap<String, String>,
-) -> String {
+) -> std::result::Result<String, String> {
     let mut loader = InMemoryLoader::new();
     for (path, content) in templates {
         loader.add(path.clone(), content.clone());
@@ -1087,15 +1092,25 @@ pub fn render_page_to_html(
 
     engine
         .render("page.html", &ctx)
-        .unwrap_or_else(|e| format!("<!-- Render error: {:?} -->", e))
+        .map_err(|e| format!("{:?}", e))
 }
 
-/// Pure function to render a section to HTML (for Salsa tracking)
-pub fn render_section_to_html(
-    section: &Section,
+/// Render page - development mode (shows error page on failure)
+pub fn render_page_to_html(
+    page: &Page,
     site_tree: &SiteTree,
     templates: &HashMap<String, String>,
 ) -> String {
+    try_render_page_to_html(page, site_tree, templates).unwrap_or_else(|e| render_error_page(&e))
+}
+
+/// Pure function to render a section to HTML (for Salsa tracking)
+/// Returns Result - caller decides whether to show error page (dev) or fail (prod)
+pub fn try_render_section_to_html(
+    section: &Section,
+    site_tree: &SiteTree,
+    templates: &HashMap<String, String>,
+) -> std::result::Result<String, String> {
     let mut loader = InMemoryLoader::new();
     for (path, content) in templates {
         loader.add(path.clone(), content.clone());
@@ -1117,7 +1132,81 @@ pub fn render_section_to_html(
 
     engine
         .render(template_name, &ctx)
-        .unwrap_or_else(|e| format!("<!-- Render error: {:?} -->", e))
+        .map_err(|e| format!("{:?}", e))
+}
+
+/// Render section - development mode (shows error page on failure)
+pub fn render_section_to_html(
+    section: &Section,
+    site_tree: &SiteTree,
+    templates: &HashMap<String, String>,
+) -> String {
+    try_render_section_to_html(section, site_tree, templates)
+        .unwrap_or_else(|e| render_error_page(&e))
+}
+
+/// Marker that indicates a page contains a render error (for build mode detection)
+pub const RENDER_ERROR_MARKER: &str = "<!-- DODECA_RENDER_ERROR -->";
+
+/// Render a visible error page for development
+fn render_error_page(error: &str) -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+{marker}
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Template Error - dodeca</title>
+    <style>
+        body {{
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            margin: 0;
+            padding: 2rem;
+        }}
+        .error-container {{
+            max-width: 900px;
+            margin: 0 auto;
+        }}
+        h1 {{
+            color: #ff6b6b;
+            border-bottom: 2px solid #ff6b6b;
+            padding-bottom: 0.5rem;
+        }}
+        pre {{
+            background: #0f0f1a;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 1rem;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-size: 14px;
+            line-height: 1.5;
+        }}
+        .hint {{
+            background: #2d2d44;
+            border-left: 4px solid #4ecdc4;
+            padding: 1rem;
+            margin-top: 1rem;
+        }}
+    </style>
+</head>
+<body>
+    <div class="error-container">
+        <h1>Template Render Error</h1>
+        <pre>{error}</pre>
+        <div class="hint">
+            <strong>Hint:</strong> Check your template syntax and ensure all referenced variables exist.
+        </div>
+    </div>
+</body>
+</html>"#,
+        marker = RENDER_ERROR_MARKER,
+        error = error
+    )
 }
 
 /// Build the render context with config and global functions
@@ -1184,6 +1273,7 @@ fn build_render_context(site_tree: &SiteTree) -> Context {
                     "content".to_string(),
                     Value::String(section.body_html.as_str().to_string()),
                 );
+                section_map.insert("toc".to_string(), headings_to_toc(&section.headings));
 
                 let section_pages: Vec<Value> = pages
                     .values()
@@ -1203,6 +1293,7 @@ fn build_render_context(site_tree: &SiteTree) -> Context {
                             Value::String(route_to_path(p.route.as_str())),
                         );
                         page_map.insert("weight".to_string(), Value::Int(p.weight as i64));
+                        page_map.insert("toc".to_string(), headings_to_toc(&p.headings));
                         Value::Dict(page_map)
                     })
                     .collect();
@@ -1234,6 +1325,71 @@ fn build_render_context(site_tree: &SiteTree) -> Context {
     ctx
 }
 
+/// Convert a heading to a Value dict with children field
+fn heading_to_value(h: &Heading, children: Vec<Value>) -> Value {
+    let mut map = HashMap::new();
+    map.insert("title".to_string(), Value::String(h.title.clone()));
+    map.insert("id".to_string(), Value::String(h.id.clone()));
+    map.insert("level".to_string(), Value::Int(h.level as i64));
+    map.insert("permalink".to_string(), Value::String(format!("#{}", h.id)));
+    map.insert("children".to_string(), Value::List(children));
+    Value::Dict(map)
+}
+
+/// Convert headings to a hierarchical TOC Value (Zola-style nested structure)
+/// Groups h2 headings under h1 headings, h3 under h2, etc.
+fn headings_to_toc(headings: &[Heading]) -> Value {
+    build_toc_tree(headings)
+}
+
+/// Convert headings to hierarchical Value list for template context
+fn headings_to_value(headings: &[Heading]) -> Value {
+    build_toc_tree(headings)
+}
+
+/// Build a hierarchical tree from a flat list of headings
+/// Each heading contains its children (headings of higher level numbers that follow it)
+fn build_toc_tree(headings: &[Heading]) -> Value {
+    if headings.is_empty() {
+        return Value::List(vec![]);
+    }
+
+    // Find the minimum level to use as the "top level"
+    let min_level = headings.iter().map(|h| h.level).min().unwrap_or(1);
+
+    // Build tree recursively
+    let (result, _) = build_toc_subtree(headings, 0, min_level);
+    Value::List(result)
+}
+
+/// Recursively build TOC subtree, returns (list of Value nodes, next index to process)
+fn build_toc_subtree(headings: &[Heading], start: usize, parent_level: u8) -> (Vec<Value>, usize) {
+    let mut result = Vec::new();
+    let mut i = start;
+
+    while i < headings.len() {
+        let h = &headings[i];
+
+        // If we hit a heading at or above parent level (lower number), we're done with this subtree
+        if h.level < parent_level {
+            break;
+        }
+
+        // If this heading is at the expected level, add it with its children
+        if h.level == parent_level {
+            // Collect children (headings with level > parent_level until we hit another at parent_level)
+            let (children, next_i) = build_toc_subtree(headings, i + 1, parent_level + 1);
+            result.push(heading_to_value(h, children));
+            i = next_i;
+        } else {
+            // Heading is deeper than expected - just move on
+            i += 1;
+        }
+    }
+
+    (result, i)
+}
+
 /// Convert a Page to a Value for template context
 fn page_to_value(page: &Page) -> Value {
     let mut map = HashMap::new();
@@ -1254,7 +1410,7 @@ fn page_to_value(page: &Page) -> Value {
         Value::String(route_to_path(page.route.as_str())),
     );
     map.insert("weight".to_string(), Value::Int(page.weight as i64));
-    map.insert("toc".to_string(), Value::List(vec![]));
+    map.insert("toc".to_string(), headings_to_value(&page.headings));
     Value::Dict(map)
 }
 
@@ -1279,7 +1435,7 @@ fn section_to_value(section: &Section, site_tree: &SiteTree) -> Value {
     );
     map.insert("weight".to_string(), Value::Int(section.weight as i64));
 
-    // Add pages in this section
+    // Add pages in this section (including their headings)
     let section_pages: Vec<Value> = site_tree
         .pages
         .values()
@@ -1299,6 +1455,7 @@ fn section_to_value(section: &Section, site_tree: &SiteTree) -> Value {
                 Value::String(route_to_path(p.route.as_str())),
             );
             page_map.insert("weight".to_string(), Value::Int(p.weight as i64));
+            page_map.insert("toc".to_string(), headings_to_value(&p.headings));
             Value::Dict(page_map)
         })
         .collect();
@@ -1321,7 +1478,7 @@ fn section_to_value(section: &Section, site_tree: &SiteTree) -> Value {
         .map(|s| Value::String(route_to_path(s.route.as_str())))
         .collect();
     map.insert("subsections".to_string(), Value::List(subsections));
-    map.insert("toc".to_string(), Value::List(vec![]));
+    map.insert("toc".to_string(), headings_to_value(&section.headings));
 
     Value::Dict(map)
 }

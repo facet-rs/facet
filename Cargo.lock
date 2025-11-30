@@ -847,11 +847,14 @@ dependencies = [
  "pulldown-cmark",
  "ratatui",
  "rayon",
+ "regex",
  "salsa",
  "syntect",
  "thiserror 2.0.17",
  "tokio",
  "tower-http",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

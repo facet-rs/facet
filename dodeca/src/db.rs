@@ -2,25 +2,7 @@ use crate::types::{
     HtmlBody, Route, SassContent, SassPath, SourceContent, SourcePath, TemplateContent,
     TemplatePath, Title,
 };
-use std::sync::mpsc::Sender;
-use std::sync::{Mutex, OnceLock};
-
-/// Global event sender for Salsa debug events
-static SALSA_EVENT_TX: OnceLock<Mutex<Sender<String>>> = OnceLock::new();
-
-/// Set the global Salsa event sender (for TUI Activity feed)
-pub fn set_salsa_event_sender(tx: Sender<String>) {
-    let _ = SALSA_EVENT_TX.set(Mutex::new(tx));
-}
-
-/// Send a Salsa event to the TUI (if configured)
-fn send_salsa_event(msg: String) {
-    if let Some(tx) = SALSA_EVENT_TX.get() {
-        if let Ok(tx) = tx.lock() {
-            let _ = tx.send(msg);
-        }
-    }
-}
+use tracing::debug;
 
 /// The Salsa database trait for dodeca
 #[salsa::db]
@@ -38,30 +20,16 @@ impl salsa::Database for Database {
     fn salsa_event(&self, event: &dyn Fn() -> salsa::Event) {
         use salsa::EventKind;
 
-        // Check if we should output debug info
-        let debug_enabled = std::env::var("SALSA_DEBUG").is_ok();
-        let has_tui_sender = SALSA_EVENT_TX.get().is_some();
-
-        if !debug_enabled && !has_tui_sender {
-            return;
-        }
-
+        // Use tracing for Salsa events - filtering handled by subscriber
         let event = event();
-        let msg = match event.kind {
-            EventKind::WillExecute { database_key } => Some(format!("execute: {:?}", database_key)),
+        match event.kind {
+            EventKind::WillExecute { database_key } => {
+                debug!(target: "salsa", "execute: {:?}", database_key);
+            }
             EventKind::DidValidateMemoizedValue { database_key } => {
-                Some(format!("reuse: {:?}", database_key))
+                debug!(target: "salsa", "reuse: {:?}", database_key);
             }
-            _ => None,
-        };
-
-        if let Some(msg) = msg {
-            if debug_enabled {
-                eprintln!("[salsa] {}", msg);
-            }
-            if has_tui_sender {
-                send_salsa_event(msg);
-            }
+            _ => {}
         }
     }
 }
@@ -133,6 +101,17 @@ pub struct SourceRegistry<'db> {
     pub sources: Vec<SourceFile>,
 }
 
+/// A heading extracted from page/section content
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Heading {
+    /// The heading text
+    pub title: String,
+    /// The anchor ID (for linking)
+    pub id: String,
+    /// The heading level (1-6)
+    pub level: u8,
+}
+
 /// A section in the site tree (corresponds to _index.md files)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Section {
@@ -140,6 +119,8 @@ pub struct Section {
     pub title: Title,
     pub weight: i32,
     pub body_html: HtmlBody,
+    /// Headings extracted from content
+    pub headings: Vec<Heading>,
 }
 
 /// A page in the site tree (non-index .md files)
@@ -150,6 +131,8 @@ pub struct Page {
     pub weight: i32,
     pub body_html: HtmlBody,
     pub section_route: Route,
+    /// Headings extracted from content
+    pub headings: Vec<Heading>,
 }
 
 /// The complete site tree - sections and pages
@@ -178,4 +161,6 @@ pub struct ParsedData {
     pub body_html: HtmlBody,
     /// Is this a section index (_index.md)?
     pub is_section: bool,
+    /// Headings extracted from content
+    pub headings: Vec<Heading>,
 }

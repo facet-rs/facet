@@ -408,6 +408,10 @@ pub struct ServeApp {
     /// Local buffer for events (since mpsc drains)
     event_buffer: VecDeque<String>,
     command_tx: tokio::sync::mpsc::UnboundedSender<ServerCommand>,
+    /// Handle for dynamically updating log filters
+    filter_handle: crate::logging::FilterHandle,
+    /// Whether salsa debug logging is enabled
+    salsa_debug: bool,
     show_help: bool,
     should_quit: bool,
 }
@@ -421,13 +425,17 @@ impl ServeApp {
         server_rx: ServerStatusRx,
         event_rx: EventRx,
         command_tx: tokio::sync::mpsc::UnboundedSender<ServerCommand>,
+        filter_handle: crate::logging::FilterHandle,
     ) -> Self {
+        let salsa_debug = filter_handle.is_salsa_debug_enabled();
         Self {
             progress_rx,
             server_rx,
             event_rx,
             event_buffer: VecDeque::with_capacity(MAX_EVENTS),
             command_tx,
+            filter_handle,
+            salsa_debug,
             show_help: false,
             should_quit: false,
         }
@@ -468,6 +476,16 @@ impl ServeApp {
                                     BindMode::Lan => ServerCommand::GoLocal,
                                 };
                                 let _ = self.command_tx.send(cmd);
+                            }
+                            KeyCode::Char('d') => {
+                                self.salsa_debug = self.filter_handle.toggle_salsa_debug();
+                                let status = if self.salsa_debug {
+                                    "enabled"
+                                } else {
+                                    "disabled"
+                                };
+                                self.event_buffer
+                                    .push_back(format!("Salsa debug {}", status));
                             }
                             _ => {}
                         }
@@ -588,11 +606,21 @@ impl ServeApp {
         frame.render_widget(events_widget, chunks[2]);
 
         // Footer
+        let debug_indicator = if self.salsa_debug { "●" } else { "○" };
+        let debug_color = if self.salsa_debug {
+            Color::Green
+        } else {
+            Color::DarkGray
+        };
         let footer = Paragraph::new(Line::from(vec![
             Span::styled("?", Style::default().fg(Color::Yellow)),
             Span::raw(" help  "),
             Span::styled("p", Style::default().fg(Color::Yellow)),
             Span::raw(" public  "),
+            Span::styled("d", Style::default().fg(Color::Yellow)),
+            Span::raw(" debug "),
+            Span::styled(debug_indicator, Style::default().fg(debug_color)),
+            Span::raw("  "),
             Span::styled("q", Style::default().fg(Color::Yellow)),
             Span::raw(" quit"),
         ]))
@@ -610,7 +638,7 @@ impl ServeApp {
 
         // Center the help panel
         let help_width = 40u16;
-        let help_height = 10u16;
+        let help_height = 13u16;
         let x = area.width.saturating_sub(help_width) / 2;
         let y = area.height.saturating_sub(help_height) / 2;
         let help_area = ratatui::layout::Rect::new(
@@ -632,6 +660,10 @@ impl ServeApp {
             Line::from(vec![
                 Span::styled("  p", Style::default().fg(Color::Yellow)),
                 Span::raw("      Toggle public/local mode"),
+            ]),
+            Line::from(vec![
+                Span::styled("  d", Style::default().fg(Color::Yellow)),
+                Span::raw("      Toggle salsa debug logs"),
             ]),
             Line::from(vec![
                 Span::styled("  q", Style::default().fg(Color::Yellow)),

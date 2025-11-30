@@ -1,5 +1,6 @@
 mod config;
 mod db;
+mod logging;
 mod queries;
 mod render;
 mod serve;
@@ -130,7 +131,10 @@ async fn main() -> Result<()> {
                     &output_dir,
                     BuildMode::Full,
                     None,
-                    Default::default(),
+                    render::RenderOptions {
+                        livereload: false,
+                        dev_mode: false, // Production: fail on errors
+                    },
                 )?;
             }
         }
@@ -158,7 +162,10 @@ async fn main() -> Result<()> {
                     &output_dir,
                     BuildMode::Quick,
                     None,
-                    Default::default(),
+                    render::RenderOptions {
+                        livereload: false,
+                        dev_mode: true, // Development: show error pages
+                    },
                 )?;
 
                 print_server_urls(&address, port);
@@ -475,7 +482,25 @@ fn inject_livereload(html: &str, options: render::RenderOptions) -> String {
 }
 
 /// Write HTML output to the appropriate file path
-fn write_html_output(output_dir: &Utf8Path, route: &Route, html: &str) -> Result<()> {
+fn write_html_output(
+    output_dir: &Utf8Path,
+    route: &Route,
+    html: &str,
+    dev_mode: bool,
+) -> Result<()> {
+    // In production mode, fail on render errors
+    if !dev_mode && html.contains(render::RENDER_ERROR_MARKER) {
+        // Extract error message from the HTML for the error output
+        let error_start = html.find("<pre>").map(|i| i + 5).unwrap_or(0);
+        let error_end = html.find("</pre>").unwrap_or(html.len());
+        let error_msg = &html[error_start..error_end];
+        return Err(eyre!(
+            "Template error rendering {}: {}",
+            route.as_str(),
+            error_msg
+        ));
+    }
+
     let route_str = route.as_str().trim_matches('/');
     let out_path = if route_str.is_empty() {
         output_dir.join("index.html")
@@ -526,14 +551,14 @@ pub fn build(
     for route in sections.keys() {
         let rendered = render_section(&ctx.db, route.clone(), source_registry, template_registry);
         let html = inject_livereload(&rendered.0, render_options);
-        write_html_output(output_dir, route, &html)?;
+        write_html_output(output_dir, route, &html, render_options.dev_mode)?;
     }
 
     // Render pages using tracked queries
     for route in pages.keys() {
         let rendered = render_page(&ctx.db, route.clone(), source_registry, template_registry);
         let html = inject_livereload(&rendered.0, render_options);
-        write_html_output(output_dir, route, &html)?;
+        write_html_output(output_dir, route, &html, render_options.dev_mode)?;
     }
 
     if let Some(ref p) = progress {
@@ -630,7 +655,7 @@ pub fn rebuild(
     for route in sections.keys() {
         let rendered = render_section(&ctx.db, route.clone(), source_registry, template_registry);
         let html = inject_livereload(&rendered.0, render_options);
-        write_html_output(&ctx.output_dir, route, &html)?;
+        write_html_output(&ctx.output_dir, route, &html, render_options.dev_mode)?;
         written += 1;
     }
 
@@ -638,7 +663,7 @@ pub fn rebuild(
     for route in pages.keys() {
         let rendered = render_page(&ctx.db, route.clone(), source_registry, template_registry);
         let html = inject_livereload(&rendered.0, render_options);
-        write_html_output(&ctx.output_dir, route, &html)?;
+        write_html_output(&ctx.output_dir, route, &html, render_options.dev_mode)?;
         written += 1;
     }
 
@@ -732,8 +757,8 @@ async fn serve_with_tui(
     let (server_tx, server_rx) = tui::server_status_channel();
     let (event_tx, event_rx) = tui::event_channel();
 
-    // Wire up Salsa events to TUI Activity feed
-    crate::db::set_salsa_event_sender(event_tx.clone());
+    // Initialize tracing with TUI layer - routes log events to Activity panel
+    let filter_handle = logging::init_tui_tracing(event_tx.clone());
 
     // Live reload state (shared across server restarts)
     let livereload = Arc::new(serve::LiveReloadState::new());
@@ -772,8 +797,11 @@ async fn serve_with_tui(
         bind_mode: initial_mode,
     });
 
-    // Render options with live reload enabled
-    let render_options = render::RenderOptions { livereload: true };
+    // Render options with live reload enabled (development mode)
+    let render_options = render::RenderOptions {
+        livereload: true,
+        dev_mode: true,
+    };
 
     // Initial build - keep context for incremental rebuilds
     let _ = event_tx.send("Starting initial build...".to_string());
@@ -938,7 +966,10 @@ async fn serve_with_tui(
                                 Some(tui::ProgressReporter::Channel(
                                     progress_tx_for_watcher.clone(),
                                 )),
-                                render::RenderOptions { livereload: true },
+                                render::RenderOptions {
+                                    livereload: true,
+                                    dev_mode: true, // Development: show error pages
+                                },
                             ) {
                                 Ok(stats) => {
                                     let _ = event_tx_for_watcher.send(format!(
@@ -1017,7 +1048,7 @@ async fn serve_with_tui(
 
     // Run TUI on main thread
     let mut terminal = tui::init_terminal()?;
-    let mut app = tui::ServeApp::new(progress_rx, server_rx, event_rx, cmd_tx);
+    let mut app = tui::ServeApp::new(progress_rx, server_rx, event_rx, cmd_tx, filter_handle);
     let _ = app.run(&mut terminal);
     tui::restore_terminal()?;
 
