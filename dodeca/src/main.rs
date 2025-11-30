@@ -11,6 +11,7 @@ mod types;
 use crate::config::ResolvedConfig;
 use crate::db::{Database, SassFile, SourceFile, SourceRegistry, TemplateFile, TemplateRegistry};
 use crate::queries::{build_tree, render_page, render_section};
+use crate::tui::LogEvent;
 use crate::types::{
     HtmlBody, Route, SassContent, SassPath, SassPathRef, SourceContent, SourcePath, SourcePathRef,
     TemplateContent, TemplatePath, TemplatePathRef, Title,
@@ -804,7 +805,7 @@ async fn serve_with_tui(
     };
 
     // Initial build - keep context for incremental rebuilds
-    let _ = event_tx.send("Starting initial build...".to_string());
+    let _ = event_tx.send(LogEvent::info("Starting initial build..."));
 
     let ctx = build(
         content_dir,
@@ -817,7 +818,7 @@ async fn serve_with_tui(
     // Wrap context for sharing with watcher thread
     let ctx = std::sync::Arc::new(std::sync::Mutex::new(ctx));
 
-    let _ = event_tx.send("Build complete".to_string());
+    let _ = event_tx.send(LogEvent::info("Build complete"));
 
     // Set up file watcher for content and templates
     let (watch_tx, watch_rx) = mpsc::channel();
@@ -840,7 +841,10 @@ async fn serve_with_tui(
         watched_dirs.push("sass".to_string());
     }
 
-    let _ = event_tx.send(format!("Watching: {}", watched_dirs.join(", ")));
+    let _ = event_tx.send(LogEvent::info(format!(
+        "Watching: {}",
+        watched_dirs.join(", ")
+    )));
 
     // Command channel for TUI -> server communication (async-compatible)
     let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<tui::ServerCommand>();
@@ -876,15 +880,19 @@ async fn serve_with_tui(
                 tui::BindMode::Local => "localhost only",
                 tui::BindMode::Lan => "LAN",
             };
-            let _ = event_tx.send(format!("Binding to {} IPs ({})", ips.len(), mode_str));
+            let _ = event_tx.send(LogEvent::info(format!(
+                "Binding to {} IPs ({})",
+                ips.len(),
+                mode_str
+            )));
             for ip in &ips {
-                let _ = event_tx.send(format!("  → {}", ip));
+                let _ = event_tx.send(LogEvent::info(format!("  → {}", ip)));
             }
 
             if let Err(e) =
                 serve::run_on_ips(&output, &ips, port, shutdown_rx, Some(livereload)).await
             {
-                let _ = event_tx.send(format!("Server error: {}", e));
+                let _ = event_tx.send(LogEvent::error(format!("Server error: {}", e)));
             }
         })
     };
@@ -903,7 +911,7 @@ async fn serve_with_tui(
     if open {
         let url = format!("http://127.0.0.1:{}", port);
         if let Err(e) = open::that(&url) {
-            let _ = event_tx.send(format!("Failed to open browser: {}", e));
+            let _ = event_tx.send(LogEvent::warn(format!("Failed to open browser: {}", e)));
         }
     }
 
@@ -947,8 +955,10 @@ async fn serve_with_tui(
                             }
 
                             for path in &paths {
-                                let _ = event_tx_for_watcher
-                                    .send(format!("Changed: {}", path.file_name().unwrap_or("?")));
+                                let _ = event_tx_for_watcher.send(LogEvent::info(format!(
+                                    "Changed: {}",
+                                    path.file_name().unwrap_or("?")
+                                )));
                             }
 
                             // Reset progress for rebuild
@@ -972,16 +982,16 @@ async fn serve_with_tui(
                                 },
                             ) {
                                 Ok(stats) => {
-                                    let _ = event_tx_for_watcher.send(format!(
+                                    let _ = event_tx_for_watcher.send(LogEvent::info(format!(
                                         "Rebuilt: {} written, {} unchanged",
                                         stats.written, stats.skipped
-                                    ));
+                                    )));
                                     // Trigger live reload in connected browsers
                                     livereload_for_watcher.trigger_reload();
                                 }
                                 Err(e) => {
-                                    let _ =
-                                        event_tx_for_watcher.send(format!("Build error: {}", e));
+                                    let _ = event_tx_for_watcher
+                                        .send(LogEvent::error(format!("Build error: {}", e)));
                                 }
                             }
 
@@ -991,7 +1001,8 @@ async fn serve_with_tui(
                     }
                 }
                 Err(e) => {
-                    let _ = event_tx_for_watcher.send(format!("Watch error: {}", e));
+                    let _ =
+                        event_tx_for_watcher.send(LogEvent::error(format!("Watch error: {}", e)));
                 }
             }
         }
@@ -1031,7 +1042,7 @@ async fn serve_with_tui(
                 *shutdown = new_shutdown_tx;
             }
 
-            let _ = event_tx_for_cmd.send("Restarting server...".to_string());
+            let _ = event_tx_for_cmd.send(LogEvent::info("Restarting server..."));
 
             // Start new server
             server_handle = start_server(

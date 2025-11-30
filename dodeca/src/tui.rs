@@ -135,10 +135,58 @@ pub fn server_status_channel() -> (ServerStatusTx, ServerStatusRx) {
     watch::channel(ServerStatus::default())
 }
 
+/// Log level for activity events
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    #[default]
+    Info,
+    Warn,
+    Error,
+}
+
+/// A log event with level and message
+#[derive(Debug, Clone)]
+pub struct LogEvent {
+    pub level: LogLevel,
+    pub message: String,
+}
+
+impl LogEvent {
+    pub fn info(message: impl Into<String>) -> Self {
+        Self {
+            level: LogLevel::Info,
+            message: message.into(),
+        }
+    }
+
+    pub fn debug(message: impl Into<String>) -> Self {
+        Self {
+            level: LogLevel::Debug,
+            message: message.into(),
+        }
+    }
+
+    pub fn warn(message: impl Into<String>) -> Self {
+        Self {
+            level: LogLevel::Warn,
+            message: message.into(),
+        }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            level: LogLevel::Error,
+            message: message.into(),
+        }
+    }
+}
+
 /// Event sender - multiple producers can clone and send
-pub type EventTx = mpsc::Sender<String>;
+pub type EventTx = mpsc::Sender<LogEvent>;
 /// Event receiver - TUI drains events
-pub type EventRx = mpsc::Receiver<String>;
+pub type EventRx = mpsc::Receiver<LogEvent>;
 
 /// Create a new event channel
 pub fn event_channel() -> (EventTx, EventRx) {
@@ -406,7 +454,7 @@ pub struct ServeApp {
     server_rx: ServerStatusRx,
     event_rx: EventRx,
     /// Local buffer for events (since mpsc drains)
-    event_buffer: VecDeque<String>,
+    event_buffer: VecDeque<LogEvent>,
     command_tx: tokio::sync::mpsc::UnboundedSender<ServerCommand>,
     /// Handle for dynamically updating log filters
     filter_handle: crate::logging::FilterHandle,
@@ -485,7 +533,7 @@ impl ServeApp {
                                     "disabled"
                                 };
                                 self.event_buffer
-                                    .push_back(format!("Salsa debug {}", status));
+                                    .push_back(LogEvent::info(format!("Salsa debug {}", status)));
                             }
                             _ => {}
                         }
@@ -595,10 +643,14 @@ impl ServeApp {
             .take(max_events)
             .rev()
             .map(|e| {
-                Line::from(Span::styled(
-                    e.clone(),
-                    Style::default().fg(Color::DarkGray),
-                ))
+                let color = match e.level {
+                    LogLevel::Error => Color::Red,
+                    LogLevel::Warn => Color::Yellow,
+                    LogLevel::Info => Color::Blue,
+                    LogLevel::Debug => Color::DarkGray,
+                    LogLevel::Trace => Color::DarkGray,
+                };
+                Line::from(Span::styled(e.message.clone(), Style::default().fg(color)))
             })
             .collect();
         let events_widget = Paragraph::new(recent_events)

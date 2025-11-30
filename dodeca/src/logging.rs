@@ -5,10 +5,11 @@
 //! - Dynamic filtering with salsa debug toggle
 //! - Standard env filter for non-TUI mode
 
+use crate::tui::{LogEvent, LogLevel};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use tracing::{Event, Subscriber};
+use tracing::{Event, Level, Subscriber};
 use tracing_subscriber::{
     Layer,
     filter::{EnvFilter, LevelFilter},
@@ -19,12 +20,12 @@ use tracing_subscriber::{
 
 /// A tracing layer that sends formatted events to a channel (for TUI Activity panel)
 pub struct TuiLayer {
-    tx: Sender<String>,
+    tx: Sender<LogEvent>,
     salsa_debug: Arc<AtomicBool>,
 }
 
 impl TuiLayer {
-    pub fn new(tx: Sender<String>) -> Self {
+    pub fn new(tx: Sender<LogEvent>) -> Self {
         Self {
             tx,
             salsa_debug: Arc::new(AtomicBool::new(false)),
@@ -68,7 +69,19 @@ where
             format!("{}: {}", target, metadata.name())
         };
 
-        let _ = self.tx.send(msg);
+        // Convert tracing Level to our LogLevel
+        let log_level = match level {
+            Level::ERROR => LogLevel::Error,
+            Level::WARN => LogLevel::Warn,
+            Level::INFO => LogLevel::Info,
+            Level::DEBUG => LogLevel::Debug,
+            Level::TRACE => LogLevel::Trace,
+        };
+
+        let _ = self.tx.send(LogEvent {
+            level: log_level,
+            message: msg,
+        });
     }
 }
 
@@ -114,7 +127,7 @@ impl tracing::field::Visit for MessageVisitor {
 /// Initialize tracing for TUI mode
 /// Returns a FilterHandle for dynamic filter updates
 /// Starts with salsa debug disabled - use 'd' key to toggle
-pub fn init_tui_tracing(event_tx: Sender<String>) -> FilterHandle {
+pub fn init_tui_tracing(event_tx: Sender<LogEvent>) -> FilterHandle {
     let tui_layer = TuiLayer::new(event_tx);
     let handle = tui_layer.filter_handle();
 
