@@ -48,7 +48,7 @@ digraph attribute_usage {
     // __parse_attr! definition (in orm crate)
     parse_attr_def [label=<
 <table border="0" cellspacing="0" cellpadding="2">
-<tr><td align="left" bgcolor="#f4e8e8"><b>4. orm::__parse_attr! (from define_attr_grammar!)</b></td></tr>
+<tr><td align="left" bgcolor="#f4e8e8"><b>4. orm::__parse_attr! (from define_attributes!)</b></td></tr>
 <tr><td align="left"><font face="Monaco" color="#6e7781">// Generated macro contains variant list:</font></td></tr>
 <tr><td align="left"><font face="Monaco"><font color="#8250df">macro_rules!</font> __parse_attr {</font></td></tr>
 <tr><td align="left"><font face="Monaco">    ($(<font color="#cf222e">$</font>input:tt)*) =&gt; {</font></td></tr>
@@ -96,8 +96,8 @@ digraph attribute_usage {
     // Final constructed value
     final_value [label=<
 <table border="0" cellspacing="0" cellpadding="2">
-<tr><td align="left" bgcolor="#d4edda"><b>7. Final ExtensionAttr value</b></td></tr>
-<tr><td align="left"><font face="Monaco">::facet_core::<font color="#0550ae">ExtensionAttr</font> {</font></td></tr>
+<tr><td align="left" bgcolor="#d4edda"><b>7. Final Attribute value</b></td></tr>
+<tr><td align="left"><font face="Monaco">::facet_core::<font color="#0550ae">Attribute</font> {</font></td></tr>
 <tr><td align="left"><font face="Monaco">    ns: <font color="#0a3069">"orm"</font>,</font></td></tr>
 <tr><td align="left"><font face="Monaco">    key: <font color="#0a3069">"column"</font>,</font></td></tr>
 <tr><td align="left"><font face="Monaco">    data: <font color="#cf222e">&amp;</font>::orm::<font color="#0550ae">Column</font> {</font></td></tr>

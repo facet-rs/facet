@@ -45,7 +45,7 @@
 <polygon fill="#e8f4e8" stroke="black" points="879,-973 581,-973 581,-840.5 879,-840.5 879,-973"/>
 <text xml:space="preserve" text-anchor="start" x="595" y="-953.55" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="11.00">facet&#45;core</text>
 <text xml:space="preserve" text-anchor="start" x="595" y="-928.55" font-family="Helvetica,sans-Serif" font-size="11.00">────────────────────────</text>
-<text xml:space="preserve" text-anchor="start" x="595" y="-905.5" font-family="Monaco" font-size="10.00">Shape, Field, ExtensionAttr</text>
+<text xml:space="preserve" text-anchor="start" x="595" y="-905.5" font-family="Monaco" font-size="10.00">Shape, Field, Attr</text>
 <text xml:space="preserve" text-anchor="start" x="595" y="-880" font-family="Monaco" font-size="10.00">FieldFlags, ShapeAttribute</text>
 <text xml:space="preserve" text-anchor="start" x="595" y="-854.5" font-family="Monaco" font-size="10.00">Facet trait</text>
 </g>
@@ -87,8 +87,8 @@
 <text xml:space="preserve" text-anchor="start" x="595" y="-290.55" font-family="Helvetica,sans-Serif" font-weight="bold" font-size="11.00">facet</text>
 <text xml:space="preserve" text-anchor="start" x="595" y="-265.55" font-family="Helvetica,sans-Serif" font-size="11.00">────────────────────────</text>
 <text xml:space="preserve" text-anchor="start" x="595" y="-241.55" font-family="Helvetica,sans-Serif" font-size="11.00">Re&#45;exports everything</text>
-<text xml:space="preserve" text-anchor="start" x="595" y="-218.55" font-family="Monaco" font-size="10.00">define_attr_grammar!</text>
-<text xml:space="preserve" text-anchor="start" x="715" y="-218.55" font-family="Helvetica,sans-Serif" font-size="11.00"> public API</text>
+<text xml:space="preserve" text-anchor="start" x="595" y="-218.55" font-family="Monaco" font-size="10.00">define_attributes!</text>
+<text xml:space="preserve" text-anchor="start" x="703" y="-218.55" font-family="Helvetica,sans-Serif" font-size="11.00"> public API</text>
 </g>
 <!-- macros&#45;&gt;facet -->
 <!-- ext -->
@@ -99,12 +99,11 @@
 <text xml:space="preserve" text-anchor="start" x="640" y="-113.05" font-family="Helvetica,sans-Serif" font-size="11.00"> (example extension)</text>
 <text xml:space="preserve" text-anchor="start" x="595" y="-88.05" font-family="Helvetica,sans-Serif" font-size="11.00">────────────────────────</text>
 <text xml:space="preserve" text-anchor="start" x="595" y="-65.05" font-family="Helvetica,sans-Serif" font-size="11.00">Calls </text>
-<text xml:space="preserve" text-anchor="start" x="622" y="-65.05" font-family="Monaco" font-size="10.00">define_attr_grammar!</text>
+<text xml:space="preserve" text-anchor="start" x="622" y="-65.05" font-family="Monaco" font-size="10.00">define_attributes!</text>
 <text xml:space="preserve" text-anchor="start" x="595" y="-39.55" font-family="Helvetica,sans-Serif" font-size="11.00">Gets generated </text>
 <text xml:space="preserve" text-anchor="start" x="672.25" y="-39.55" font-family="Monaco" font-size="10.00">__parse_attr!</text>
-<text xml:space="preserve" text-anchor="start" x="595" y="-14.05" font-family="Helvetica,sans-Serif" font-size="11.00">Gets generated </text>
-<text xml:space="preserve" text-anchor="start" x="672.25" y="-14.05" font-family="Monaco" font-size="10.00">Attr</text>
-<text xml:space="preserve" text-anchor="start" x="696.25" y="-14.05" font-family="Helvetica,sans-Serif" font-size="11.00"> enum</text>
+<text xml:space="preserve" text-anchor="start" x="595" y="-14.05" font-family="Helvetica,sans-Serif" font-size="11.00">Gets </text>
+<text xml:space="preserve" text-anchor="start" x="620.5" y="-14.05" font-family="Monaco" font-size="10.00">mod attrs { Attribute }</text>
 </g>
 <!-- facet&#45;&gt;ext -->
 </g>

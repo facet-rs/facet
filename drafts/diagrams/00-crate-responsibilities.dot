@@ -30,7 +30,7 @@ digraph crate_responsibilities {
 <table border="0" cellspacing="0" cellpadding="6">
 <tr><td align="left"><b>facet-core</b></td></tr>
 <tr><td align="left">────────────────────────</td></tr>
-<tr><td align="left"><font face="Monaco" point-size="10">Shape, Field, ExtensionAttr</font></td></tr>
+<tr><td align="left"><font face="Monaco" point-size="10">Shape, Field, Attr</font></td></tr>
 <tr><td align="left"><font face="Monaco" point-size="10">FieldFlags, ShapeAttribute</font></td></tr>
 <tr><td align="left"><font face="Monaco" point-size="10">Facet trait</font></td></tr>
 </table>
@@ -66,7 +66,7 @@ digraph crate_responsibilities {
 <tr><td align="left"><b>facet</b></td></tr>
 <tr><td align="left">────────────────────────</td></tr>
 <tr><td align="left">Re-exports everything</td></tr>
-<tr><td align="left"><font face="Monaco" point-size="10">define_attr_grammar!</font> public API</td></tr>
+<tr><td align="left"><font face="Monaco" point-size="10">define_attributes!</font> public API</td></tr>
 </table>
     >, style=filled, fillcolor="#e8f4e8"];
 
@@ -75,9 +75,9 @@ digraph crate_responsibilities {
 <table border="0" cellspacing="0" cellpadding="6">
 <tr><td align="left"><b>facet-kdl</b> (example extension)</td></tr>
 <tr><td align="left">────────────────────────</td></tr>
-<tr><td align="left">Calls <font face="Monaco" point-size="10">define_attr_grammar!</font></td></tr>
+<tr><td align="left">Calls <font face="Monaco" point-size="10">define_attributes!</font></td></tr>
 <tr><td align="left">Gets generated <font face="Monaco" point-size="10">__parse_attr!</font></td></tr>
-<tr><td align="left">Gets generated <font face="Monaco" point-size="10">Attr</font> enum</td></tr>
+<tr><td align="left">Gets <font face="Monaco" point-size="10">mod attrs { Attribute }</font></td></tr>
 </table>
     >, style=filled, fillcolor="#f4e8e8"];
 

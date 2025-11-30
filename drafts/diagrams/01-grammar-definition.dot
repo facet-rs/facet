@@ -18,11 +18,18 @@ digraph grammar_definition {
     grammar [label=<
 <table border="0" cellspacing="0" cellpadding="2">
 <tr><td align="left" bgcolor="#ffe4c4"><b>Input: facet-kdl/src/lib.rs</b></td></tr>
-<tr><td align="left"><font face="Monaco">::facet::<font color="#8250df">define_attr_grammar!</font> {</font></td></tr>
-<tr><td align="left"><font face="Monaco">    <font color="#cf222e">pub enum</font> <font color="#0550ae">Attr</font> {</font></td></tr>
-<tr><td align="left"><font face="Monaco">        Child,                <font color="#6e7781">// unit</font></font></td></tr>
-<tr><td align="left"><font face="Monaco">        Rename(<font color="#0550ae">&amp;'static str</font>), <font color="#6e7781">// newtype</font></font></td></tr>
-<tr><td align="left"><font face="Monaco">        Column(<font color="#0550ae">Column</font>),       <font color="#6e7781">// struct</font></font></td></tr>
+<tr><td align="left"><font face="Monaco">::facet::<font color="#8250df">define_attributes!</font> {</font></td></tr>
+<tr><td align="left"><font face="Monaco">    <font color="#cf222e">mod</font> <font color="#0550ae">attrs</font>;  <font color="#6e7781">// generated submodule</font></font></td></tr>
+<tr><td align="left"><font face="Monaco">    <font color="#cf222e">pub enum</font> <font color="#0550ae">Attribute</font> {</font></td></tr>
+<tr><td align="left"><font face="Monaco">        <font color="#6e7781">// target = field | container | both (default)</font></font></td></tr>
+<tr><td align="left"><font face="Monaco">        #[<font color="#8250df">target</font>(both)]</font></td></tr>
+<tr><td align="left"><font face="Monaco">        Child,                 <font color="#6e7781">// unit variant</font></font></td></tr>
+<tr><td align="left"><font face="Monaco">        #[<font color="#8250df">target</font>(field)]</font></td></tr>
+<tr><td align="left"><font face="Monaco">        Rename(<font color="#0550ae">&amp;'static str</font>),  <font color="#6e7781">// newtype</font></font></td></tr>
+<tr><td align="left"><font face="Monaco">        #[<font color="#8250df">target</font>(field)]</font></td></tr>
+<tr><td align="left"><font face="Monaco">        Column(<font color="#0550ae">Column</font>),        <font color="#6e7781">// struct</font></font></td></tr>
+<tr><td align="left"><font face="Monaco">        #[<font color="#8250df">target</font>(container)]</font></td></tr>
+<tr><td align="left"><font face="Monaco">        Transparent,           <font color="#6e7781">// container-only</font></font></td></tr>
 <tr><td align="left"><font face="Monaco">    }</font></td></tr>
 <tr><td align="left"><font face="Monaco">    <font color="#cf222e">pub struct</font> <font color="#0550ae">Column</font> {</font></td></tr>
 <tr><td align="left"><font face="Monaco">        <font color="#cf222e">pub</font> primary_key: <font color="#0550ae">bool</font>,</font></td></tr>
@@ -45,21 +52,26 @@ digraph grammar_definition {
     generated [label=<
 <table border="0" cellspacing="0" cellpadding="2">
 <tr><td align="left" bgcolor="#d4edda"><b>Generated in facet-kdl</b></td></tr>
-<tr><td align="left" bgcolor="#e8f5e9"><b>1. Runtime types</b></td></tr>
-<tr><td align="left"><font face="Monaco"><font color="#cf222e">pub enum</font> <font color="#0550ae">Attr</font> { Child, Rename(<font color="#0550ae">...</font>), Column(<font color="#0550ae">Column</font>) }</font></td></tr>
-<tr><td align="left"><font face="Monaco"><font color="#cf222e">pub struct</font> <font color="#0550ae">Column</font> { primary_key: <font color="#0550ae">bool</font>, name: <font color="#0550ae">Option</font>&lt;...&gt; }</font></td></tr>
+<tr><td align="left" bgcolor="#e8f5e9"><b>1. Runtime types (in submodule)</b></td></tr>
+<tr><td align="left"><font face="Monaco"><font color="#cf222e">pub mod</font> <font color="#0550ae">attrs</font> {</font></td></tr>
+<tr><td align="left"><font face="Monaco">    <font color="#cf222e">pub enum</font> <font color="#0550ae">Attribute</font> { Child, Rename(<font color="#0550ae">...</font>), Column(<font color="#0550ae">...</font>) }</font></td></tr>
+<tr><td align="left"><font face="Monaco">    <font color="#cf222e">pub struct</font> <font color="#0550ae">Column</font> { primary_key: <font color="#0550ae">bool</font>, ... }</font></td></tr>
+<tr><td align="left"><font face="Monaco">}</font></td></tr>
 <tr><td align="left" bgcolor="#fff3cd"><b>2. THE COMPILED GRAMMAR (declarative macro)</b></td></tr>
 <tr><td align="left"><font face="Monaco"><font color="#cf222e">macro_rules!</font> <font color="#8250df">__parse_attr</font> {</font></td></tr>
-<tr><td align="left"><font face="Monaco">    (child) =&gt; { <font color="#0550ae">ExtensionAttr</font> { ns:<font color="#0a3069">"kdl"</font>, key:<font color="#0a3069">"child"</font>, data:<font color="#cf222e">&amp;</font>() } };</font></td></tr>
-<tr><td align="left"><font face="Monaco">    (rename = <font color="#953800">$v</font>:literal) =&gt; { <font color="#0550ae">ExtensionAttr</font> { ... data:<font color="#cf222e">&amp;</font><font color="#953800">$v</font> } };</font></td></tr>
-<tr><td align="left"><font face="Monaco">    (column($(<font color="#953800">$f</font>:tt)*)) =&gt; {</font></td></tr>
-<tr><td align="left"><font face="Monaco">        <font color="#953800">$crate</font>::<font color="#8250df">__dispatch_attr!</font> {</font></td></tr>
-<tr><td align="left"><font face="Monaco">            <font color="#8250df">@struct</font> { <font color="#0550ae">Column</font> }</font></td></tr>
-<tr><td align="left"><font face="Monaco">            <font color="#8250df">@schema</font> { primary_key:<font color="#0550ae">bool</font>=<font color="#0550ae">false</font>, name:<font color="#0550ae">opt_str</font>=<font color="#0550ae">None</font> }</font></td></tr>
-<tr><td align="left"><font face="Monaco">            <font color="#8250df">@input</font> { $(<font color="#953800">$f</font>)* }  <font color="#6e7781">// &lt;-- user's tokens</font></font></td></tr>
+<tr><td align="left"><font face="Monaco">    (<font color="#8250df">@context</font>{<font color="#953800">$ctx</font>:ident} <font color="#953800">$name</font>:ident $(<font color="#953800">$rest</font>:tt)*) =&gt; {</font></td></tr>
+<tr><td align="left"><font face="Monaco">        ::facet::<font color="#8250df">__dispatch_attr!</font> {</font></td></tr>
+<tr><td align="left"><font face="Monaco">            <font color="#8250df">@ns</font> { <font color="#0a3069">"kdl"</font> }</font></td></tr>
+<tr><td align="left"><font face="Monaco">            <font color="#8250df">@context</font> { <font color="#953800">$ctx</font> } <font color="#6e7781">// field | container</font></font></td></tr>
+<tr><td align="left"><font face="Monaco">            <font color="#8250df">@variants</font> {</font></td></tr>
+<tr><td align="left"><font face="Monaco">                child: unit <font color="#8250df">@target</font>(both),</font></td></tr>
+<tr><td align="left"><font face="Monaco">                rename: newtype <font color="#8250df">@target</font>(field),</font></td></tr>
+<tr><td align="left"><font face="Monaco">                column: rec { pk:<font color="#0550ae">bool</font>, name:<font color="#0550ae">opt_str</font> } <font color="#8250df">@target</font>(field),</font></td></tr>
+<tr><td align="left"><font face="Monaco">                transparent: unit <font color="#8250df">@target</font>(container),</font></td></tr>
+<tr><td align="left"><font face="Monaco">            }</font></td></tr>
+<tr><td align="left"><font face="Monaco">            <font color="#8250df">@name</font> { <font color="#953800">$name</font> } <font color="#8250df">@rest</font> { $(<font color="#953800">$rest</font>)* }</font></td></tr>
 <tr><td align="left"><font face="Monaco">        }</font></td></tr>
 <tr><td align="left"><font face="Monaco">    };</font></td></tr>
-<tr><td align="left"><font face="Monaco">    (<font color="#953800">$unk</font>:ident $(<font color="#953800">$r</font>:tt)*) =&gt; { <font color="#8250df">__attr_error!</font>(<font color="#8250df">@known</font>{...} <font color="#8250df">@got</font>{<font color="#953800">$unk</font>}) };</font></td></tr>
 <tr><td align="left"><font face="Monaco">}</font></td></tr>
 <tr><td align="left" bgcolor="#e8f5e9"><b>3. Re-exports (macro hygiene)</b></td></tr>
 <tr><td align="left"><font face="Monaco"><font color="#cf222e">pub use</font> ::facet::{<font color="#8250df">__dispatch_attr</font>, <font color="#8250df">__attr_error</font>, ...};</font></td></tr>
