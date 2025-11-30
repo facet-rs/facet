@@ -117,6 +117,10 @@ async fn main() -> Result<()> {
         } => {
             let (content_dir, output_dir) = resolve_dirs(content, output)?;
 
+            // Build first, then show URLs
+            println!("{}", "Building...".dimmed());
+            build(&content_dir, &output_dir, BuildMode::Quick)?;
+
             // Print where the server is available
             print_server_urls(&address, port);
 
@@ -128,7 +132,8 @@ async fn main() -> Result<()> {
                 }
             }
 
-            serve::run(&content_dir, &output_dir, &address, port).await?;
+            // Start serving (blocks forever)
+            serve::run(&output_dir, &address, port).await?;
         }
     }
 
