@@ -7,11 +7,19 @@ use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::fs;
 
+/// Options for rendering
+#[derive(Default, Clone, Copy)]
+pub struct RenderOptions {
+    /// Whether to inject live reload script
+    pub livereload: bool,
+}
+
 /// Render all sections and pages to the output directory
 pub fn render_all(
     sections: &BTreeMap<Route, Section>,
     pages: &BTreeMap<Route, Page>,
     output_dir: &Utf8Path,
+    options: RenderOptions,
 ) -> Result<()> {
     // Ensure output directory exists
     fs::create_dir_all(output_dir)?;
@@ -63,12 +71,12 @@ pub fn render_all(
     // Render sections in parallel
     section_data
         .par_iter()
-        .try_for_each(|data| render_item(data, &sidebar_info, output_dir))?;
+        .try_for_each(|data| render_item(data, &sidebar_info, output_dir, options))?;
 
     // Render pages in parallel
     page_data
         .par_iter()
-        .try_for_each(|data| render_item(data, &sidebar_info, output_dir))?;
+        .try_for_each(|data| render_item(data, &sidebar_info, output_dir, options))?;
 
     Ok(())
 }
@@ -161,8 +169,13 @@ impl SidebarInfo {
 }
 
 /// Render a single item (section or page)
-fn render_item(data: &RenderData, sidebar: &SidebarInfo, output_dir: &Utf8Path) -> Result<()> {
-    let html = render_full_page(sidebar, &data.route, &data.title, &data.body_html);
+fn render_item(
+    data: &RenderData,
+    sidebar: &SidebarInfo,
+    output_dir: &Utf8Path,
+    options: RenderOptions,
+) -> Result<()> {
+    let html = render_full_page(sidebar, &data.route, &data.title, &data.body_html, options);
 
     let out_path = output_path(output_dir, &data.route);
     fs::create_dir_all(out_path.parent().unwrap_or(output_dir))?;
@@ -187,6 +200,7 @@ fn render_full_page(
     route: &Route,
     title: &Title,
     body_html: &HtmlBody,
+    options: RenderOptions,
 ) -> Markup {
     let has_sidebar = route.is_in_section("learn")
         || route.is_in_section("extend")
@@ -228,6 +242,9 @@ fn render_full_page(
 
                 script src="/pagefind/pagefind-ui.js" {}
                 (render_scripts())
+                @if options.livereload {
+                    (render_livereload_script())
+                }
             }
         }
     }
@@ -374,4 +391,48 @@ pub fn compile_sass(content_dir: &Utf8Path, output_dir: &Utf8Path) -> Result<()>
     }
 
     Ok(())
+}
+
+/// Render the live reload script (injected in serve mode)
+fn render_livereload_script() -> Markup {
+    let script_content = r##"
+(function() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = protocol + '//' + window.location.host + '/__livereload';
+    let ws;
+    let reconnectTimer;
+
+    function connect() {
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = function() {
+            console.log('[livereload] connected');
+        };
+
+        ws.onmessage = function(event) {
+            if (event.data === 'reload') {
+                console.log('[livereload] reloading...');
+                window.location.reload();
+            }
+        };
+
+        ws.onclose = function() {
+            console.log('[livereload] disconnected, reconnecting...');
+            clearTimeout(reconnectTimer);
+            reconnectTimer = setTimeout(connect, 1000);
+        };
+
+        ws.onerror = function() {
+            ws.close();
+        };
+    }
+
+    connect();
+})();
+"##;
+    html! {
+        script {
+            (PreEscaped(script_content))
+        }
+    }
 }

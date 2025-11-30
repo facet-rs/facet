@@ -30,8 +30,9 @@ ratatui = "0.30.0-beta.0"
 crossterm = "0.29"
 
 # HTTP server (for serve mode)
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
 tower-http = { version = "0.6", features = ["fs"] }
+futures-util = "0.3"  # For stream handling in WebSocket
 
 # Parallel processing
 rayon = "1"
