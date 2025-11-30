@@ -53,6 +53,7 @@ open = "5"
 
 # Network interfaces
 if-addrs = "0.14"
+cidr = "0.3"
 
 # Incremental computation
 salsa = "0.19"

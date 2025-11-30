@@ -64,6 +64,10 @@ enum Command {
         /// Open browser after starting server
         #[arg(long)]
         open: bool,
+
+        /// Disable TUI (show plain output instead)
+        #[arg(long)]
+        no_tui: bool,
     },
 }
 
@@ -127,26 +131,32 @@ async fn main() -> Result<()> {
             address,
             port,
             open,
+            no_tui,
         } => {
             let (content_dir, output_dir) = resolve_dirs(content, output)?;
 
-            // Build first, then show URLs
-            println!("{}", "Building...".dimmed());
-            build(&content_dir, &output_dir, BuildMode::Quick, None)?;
+            // Check if we should use TUI
+            use std::io::IsTerminal;
+            let use_tui = !no_tui && std::io::stdout().is_terminal();
 
-            // Print where the server is available
-            print_server_urls(&address, port);
+            if use_tui {
+                serve_with_tui(&content_dir, &output_dir, &address, port, open).await?;
+            } else {
+                // Plain mode - no TUI
+                println!("{}", "Building...".dimmed());
+                build(&content_dir, &output_dir, BuildMode::Quick, None)?;
 
-            // Open browser if requested
-            if open {
-                let url = format!("http://127.0.0.1:{}", port);
-                if let Err(e) = open::that(&url) {
-                    eprintln!("{} Failed to open browser: {}", "warning:".yellow(), e);
+                print_server_urls(&address, port);
+
+                if open {
+                    let url = format!("http://127.0.0.1:{}", port);
+                    if let Err(e) = open::that(&url) {
+                        eprintln!("{} Failed to open browser: {}", "warning:".yellow(), e);
+                    }
                 }
-            }
 
-            // Start serving (blocks forever)
-            serve::run(&output_dir, &address, port).await?;
+                serve::run(&output_dir, &address, port).await?;
+            }
         }
     }
 
@@ -450,6 +460,296 @@ fn build_with_tui(content_dir: &Utf8PathBuf, output_dir: &Utf8PathBuf) -> Result
     build_handle
         .join()
         .map_err(|_| color_eyre::eyre::eyre!("Build thread panicked"))??;
+
+    Ok(())
+}
+
+/// Serve with TUI progress display and file watching
+async fn serve_with_tui(
+    content_dir: &Utf8PathBuf,
+    output_dir: &Utf8PathBuf,
+    address: &str,
+    port: u16,
+    open: bool,
+) -> Result<()> {
+    use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+    use std::sync::mpsc;
+    use tokio::sync::watch;
+
+    let progress = tui::new_shared_progress();
+    let server_status = std::sync::Arc::new(std::sync::Mutex::new(tui::ServerStatus::default()));
+    let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+
+    // Determine initial bind mode
+    let initial_mode = if address == "0.0.0.0" {
+        tui::BindMode::Lan
+    } else {
+        tui::BindMode::Local
+    };
+
+    // Get the IPs to bind to for a given mode
+    fn get_bind_ips(mode: tui::BindMode) -> Vec<std::net::Ipv4Addr> {
+        match mode {
+            tui::BindMode::Local => vec![std::net::Ipv4Addr::LOCALHOST],
+            tui::BindMode::Lan => {
+                let mut ips = vec![std::net::Ipv4Addr::LOCALHOST];
+                ips.extend(tui::get_lan_ips());
+                ips
+            }
+        }
+    }
+
+    // Build URLs from IPs
+    fn build_urls(ips: &[std::net::Ipv4Addr], port: u16) -> Vec<String> {
+        ips.iter()
+            .map(|ip| format!("http://{}:{}", ip, port))
+            .collect()
+    }
+
+    // Set initial server status
+    let initial_ips = get_bind_ips(initial_mode);
+    {
+        let mut status = server_status.lock().unwrap();
+        status.urls = build_urls(&initial_ips, port);
+        status.bind_mode = initial_mode;
+    }
+
+    // Initial build
+    {
+        let mut evts = events.lock().unwrap();
+        evts.push("Starting initial build...".to_string());
+    }
+
+    let _ctx = build(
+        content_dir,
+        output_dir,
+        BuildMode::Quick,
+        Some(progress.clone()),
+    )?;
+
+    {
+        let mut evts = events.lock().unwrap();
+        evts.push("Build complete".to_string());
+    }
+
+    // Set up file watcher
+    let (watch_tx, watch_rx) = mpsc::channel();
+    let mut watcher = RecommendedWatcher::new(watch_tx, notify::Config::default())?;
+    watcher.watch(content_dir.as_std_path(), RecursiveMode::Recursive)?;
+
+    {
+        let mut evts = events.lock().unwrap();
+        evts.push(format!("Watching {}", content_dir));
+    }
+
+    // Command channel for TUI -> server communication
+    let (cmd_tx, cmd_rx) = mpsc::channel::<tui::ServerCommand>();
+
+    // Shutdown signal for the server
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    // Start server in background
+    let output_for_server = output_dir.clone();
+    let server_status_clone = server_status.clone();
+    let events_clone = events.clone();
+
+    let start_server =
+        |output: Utf8PathBuf,
+         mode: tui::BindMode,
+         port: u16,
+         shutdown_rx: watch::Receiver<bool>,
+         server_status: std::sync::Arc<std::sync::Mutex<tui::ServerStatus>>,
+         events: std::sync::Arc<std::sync::Mutex<Vec<String>>>| {
+            tokio::spawn(async move {
+                let ips = get_bind_ips(mode);
+                {
+                    let mut status = server_status.lock().unwrap();
+                    status.is_running = true;
+                    status.bind_mode = mode;
+                    status.urls = build_urls(&ips, port);
+                }
+                {
+                    let mut evts = events.lock().unwrap();
+                    let mode_str = match mode {
+                        tui::BindMode::Local => "localhost only",
+                        tui::BindMode::Lan => "LAN",
+                    };
+                    evts.push(format!("Binding to {} IPs ({})", ips.len(), mode_str));
+                    for ip in &ips {
+                        evts.push(format!("  → {}", ip));
+                    }
+                }
+
+                if let Err(e) = serve::run_on_ips(&output, &ips, port, shutdown_rx).await {
+                    let mut evts = events.lock().unwrap();
+                    evts.push(format!("Server error: {}", e));
+                }
+            })
+        };
+
+    let mut server_handle = start_server(
+        output_for_server.clone(),
+        initial_mode,
+        port,
+        shutdown_rx.clone(),
+        server_status_clone.clone(),
+        events_clone.clone(),
+    );
+
+    // Open browser if requested
+    if open {
+        let url = format!("http://127.0.0.1:{}", port);
+        if let Err(e) = open::that(&url) {
+            let mut evts = events.lock().unwrap();
+            evts.push(format!("Failed to open browser: {}", e));
+        }
+    }
+
+    // Spawn file watcher handler
+    let content_for_watcher = content_dir.clone();
+    let output_for_watcher = output_dir.clone();
+    let progress_for_watcher = progress.clone();
+    let events_for_watcher = events.clone();
+
+    std::thread::spawn(move || {
+        use std::time::Instant;
+        let mut last_rebuild = Instant::now();
+        let debounce = std::time::Duration::from_millis(100);
+
+        while let Ok(res) = watch_rx.recv() {
+            match res {
+                Ok(event) => {
+                    // Debounce rapid events
+                    if last_rebuild.elapsed() < debounce {
+                        continue;
+                    }
+
+                    // Only rebuild on modify/create events
+                    use notify::EventKind;
+                    match event.kind {
+                        EventKind::Modify(_) | EventKind::Create(_) => {
+                            let paths: Vec<_> = event
+                                .paths
+                                .iter()
+                                .filter(|p| {
+                                    p.extension()
+                                        .map(|e| e == "md" || e == "scss")
+                                        .unwrap_or(false)
+                                })
+                                .collect();
+
+                            if paths.is_empty() {
+                                continue;
+                            }
+
+                            {
+                                let mut evts = events_for_watcher.lock().unwrap();
+                                for path in &paths {
+                                    if let Ok(rel) = path.strip_prefix(&content_for_watcher) {
+                                        evts.push(format!("Changed: {}", rel.display()));
+                                    }
+                                }
+                            }
+
+                            // Reset progress for rebuild
+                            {
+                                let mut prog = progress_for_watcher.lock().unwrap();
+                                prog.parse = tui::TaskProgress::new("Parsing");
+                                prog.render = tui::TaskProgress::new("Rendering");
+                                prog.sass = tui::TaskProgress::new("Sass");
+                            }
+
+                            // Rebuild
+                            match build(
+                                &content_for_watcher,
+                                &output_for_watcher,
+                                BuildMode::Quick,
+                                Some(progress_for_watcher.clone()),
+                            ) {
+                                Ok(_) => {
+                                    let mut evts = events_for_watcher.lock().unwrap();
+                                    evts.push("Rebuild complete".to_string());
+                                }
+                                Err(e) => {
+                                    let mut evts = events_for_watcher.lock().unwrap();
+                                    evts.push(format!("Build error: {}", e));
+                                }
+                            }
+
+                            last_rebuild = Instant::now();
+                        }
+                        _ => {}
+                    }
+                }
+                Err(e) => {
+                    let mut evts = events_for_watcher.lock().unwrap();
+                    evts.push(format!("Watch error: {}", e));
+                }
+            }
+        }
+    });
+
+    // Spawn command handler for rebinding
+    let output_for_cmd = output_dir.clone();
+    let server_status_for_cmd = server_status.clone();
+    let events_for_cmd = events.clone();
+    // Use Arc<Mutex> for the shutdown sender so we can update it for each rebind
+    let current_shutdown = std::sync::Arc::new(std::sync::Mutex::new(shutdown_tx.clone()));
+    let current_shutdown_for_handler = current_shutdown.clone();
+
+    tokio::spawn(async move {
+        while let Ok(cmd) = cmd_rx.recv() {
+            let new_mode = match cmd {
+                tui::ServerCommand::GoPublic => tui::BindMode::Lan,
+                tui::ServerCommand::GoLocal => tui::BindMode::Local,
+            };
+
+            // Signal current server to shutdown
+            {
+                let shutdown = current_shutdown_for_handler.lock().unwrap();
+                let _ = shutdown.send(true);
+            }
+
+            // Wait for server to stop
+            let _ = server_handle.await;
+
+            // Create new shutdown channel
+            let (new_shutdown_tx, new_shutdown_rx) = watch::channel(false);
+
+            // Update the current shutdown sender for next time
+            {
+                let mut shutdown = current_shutdown_for_handler.lock().unwrap();
+                *shutdown = new_shutdown_tx;
+            }
+
+            {
+                let mut evts = events_for_cmd.lock().unwrap();
+                evts.push("Restarting server...".to_string());
+            }
+
+            // Start new server
+            server_handle = start_server(
+                output_for_cmd.clone(),
+                new_mode,
+                port,
+                new_shutdown_rx,
+                server_status_for_cmd.clone(),
+                events_for_cmd.clone(),
+            );
+        }
+    });
+
+    // Run TUI on main thread
+    let mut terminal = tui::init_terminal()?;
+    let mut app = tui::ServeApp::new(progress, server_status, events, cmd_tx);
+    let _ = app.run(&mut terminal);
+    tui::restore_terminal()?;
+
+    // Signal server to shutdown (use current_shutdown in case it was swapped)
+    {
+        let shutdown = current_shutdown.lock().unwrap();
+        let _ = shutdown.send(true);
+    }
 
     Ok(())
 }
