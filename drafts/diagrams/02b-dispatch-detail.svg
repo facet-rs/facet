@@ -173,8 +173,8 @@
 <polygon fill="#d4edda" stroke="none" points="18.12,-168.25 18.12,-186.5 251.62,-186.5 251.62,-168.25 18.12,-168.25"/>
 <text xml:space="preserve" text-anchor="start" x="20.12" y="-175.05" font-family="Monaco, Consolas, Courier" font-weight="bold" font-size="11.00">Final Output</text>
 <text xml:space="preserve" text-anchor="start" x="20.12" y="-156.8" font-family="Monaco" font-size="11.00">::facet_core::</text>
-<text xml:space="preserve" text-anchor="start" x="114.62" y="-156.8" font-family="Monaco" font-size="11.00" fill="#0550ae">ExtensionAttr</text>
-<text xml:space="preserve" text-anchor="start" x="202.38" y="-156.8" font-family="Monaco" font-size="11.00"> {</text>
+<text xml:space="preserve" text-anchor="start" x="114.62" y="-156.8" font-family="Monaco" font-size="11.00" fill="#0550ae">Attribute</text>
+<text xml:space="preserve" text-anchor="start" x="175.38" y="-156.8" font-family="Monaco" font-size="11.00"> {</text>
 <text xml:space="preserve" text-anchor="start" x="20.12" y="-138.55" font-family="Monaco" font-size="11.00"> &#160;&#160;&#160;ns: </text>
 <text xml:space="preserve" text-anchor="start" x="74.12" y="-138.55" font-family="Monaco" font-size="11.00" fill="#0a3069">&quot;orm&quot;</text>
 <text xml:space="preserve" text-anchor="start" x="107.88" y="-138.55" font-family="Monaco" font-size="11.00">,</text>

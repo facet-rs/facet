@@ -84,42 +84,42 @@
 <!-- parse_attr_def -->
 <g id="node4" class="node">
 <title>parse_attr_def</title>
-<polygon fill="#f4e8e8" stroke="black" points="323,-888.75 9,-888.75 9,-618.25 323,-618.25 323,-888.75"/>
-<polygon fill="#f4e8e8" stroke="none" points="17,-867.25 17,-884.75 315,-884.75 315,-867.25 17,-867.25"/>
-<text xml:space="preserve" text-anchor="start" x="19" y="-874.25" font-family="Monaco, Consolas, Courier" font-weight="bold" font-size="10.00">4. orm::__parse_attr! (from define_attr_grammar!)</text>
-<text xml:space="preserve" text-anchor="start" x="19" y="-855.75" font-family="Monaco" font-size="10.00" fill="#6e7781">// Generated macro contains variant list:</text>
-<text xml:space="preserve" text-anchor="start" x="19" y="-839.25" font-family="Monaco" font-size="10.00" fill="#8250df">macro_rules!</text>
-<text xml:space="preserve" text-anchor="start" x="91" y="-839.25" font-family="Monaco" font-size="10.00"> __parse_attr {</text>
-<text xml:space="preserve" text-anchor="start" x="19" y="-821.75" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;($(</text>
-<text xml:space="preserve" text-anchor="start" x="61" y="-821.75" font-family="Monaco" font-size="10.00" fill="#cf222e">$</text>
-<text xml:space="preserve" text-anchor="start" x="67" y="-821.75" font-family="Monaco" font-size="10.00">input:tt)*) =&gt; {</text>
-<text xml:space="preserve" text-anchor="start" x="19" y="-804.25" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;::</text>
-<text xml:space="preserve" text-anchor="start" x="79" y="-804.25" font-family="Monaco" font-size="10.00" fill="#0550ae">facet</text>
-<text xml:space="preserve" text-anchor="start" x="109" y="-804.25" font-family="Monaco" font-size="10.00">::</text>
-<text xml:space="preserve" text-anchor="start" x="121" y="-804.25" font-family="Monaco" font-size="10.00" fill="#8250df">__dispatch_attr!</text>
-<text xml:space="preserve" text-anchor="start" x="217" y="-804.25" font-family="Monaco" font-size="10.00"> {</text>
-<text xml:space="preserve" text-anchor="start" x="19" y="-786.75" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
-<text xml:space="preserve" text-anchor="start" x="91" y="-786.75" font-family="Monaco" font-size="10.00" fill="#8250df">@variants</text>
-<text xml:space="preserve" text-anchor="start" x="145" y="-786.75" font-family="Monaco" font-size="10.00"> {</text>
-<text xml:space="preserve" text-anchor="start" x="19" y="-769.25" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;skip =&gt; </text>
-<text xml:space="preserve" text-anchor="start" x="163" y="-769.25" font-family="Monaco" font-size="10.00" fill="#0550ae">unit</text>
-<text xml:space="preserve" text-anchor="start" x="187" y="-769.25" font-family="Monaco" font-size="10.00">,</text>
-<text xml:space="preserve" text-anchor="start" x="19" y="-751.75" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;rename =&gt; </text>
-<text xml:space="preserve" text-anchor="start" x="175" y="-751.75" font-family="Monaco" font-size="10.00" fill="#0550ae">newtype</text>
-<text xml:space="preserve" text-anchor="start" x="217" y="-751.75" font-family="Monaco" font-size="10.00">(</text>
-<text xml:space="preserve" text-anchor="start" x="223" y="-751.75" font-family="Monaco" font-size="10.00" fill="#0550ae">String</text>
-<text xml:space="preserve" text-anchor="start" x="259" y="-751.75" font-family="Monaco" font-size="10.00">),</text>
-<text xml:space="preserve" text-anchor="start" x="19" y="-734.25" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;column =&gt; </text>
-<text xml:space="preserve" text-anchor="start" x="175" y="-734.25" font-family="Monaco" font-size="10.00" fill="#0550ae">struct</text>
-<text xml:space="preserve" text-anchor="start" x="211" y="-734.25" font-family="Monaco" font-size="10.00"> { ... },</text>
-<text xml:space="preserve" text-anchor="start" x="19" y="-715.75" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;}</text>
-<text xml:space="preserve" text-anchor="start" x="19" y="-699.25" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
-<text xml:space="preserve" text-anchor="start" x="91" y="-699.25" font-family="Monaco" font-size="10.00" fill="#8250df">@input</text>
-<text xml:space="preserve" text-anchor="start" x="127" y="-699.25" font-family="Monaco" font-size="10.00"> { $($input)* }</text>
-<text xml:space="preserve" text-anchor="start" x="19" y="-680.75" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;...</text>
-<text xml:space="preserve" text-anchor="start" x="19" y="-663.25" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;}</text>
-<text xml:space="preserve" text-anchor="start" x="19" y="-645.75" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;}</text>
-<text xml:space="preserve" text-anchor="start" x="19" y="-628.25" font-family="Monaco" font-size="10.00">}</text>
+<polygon fill="#f4e8e8" stroke="black" points="317,-888.75 15,-888.75 15,-618.25 317,-618.25 317,-888.75"/>
+<polygon fill="#f4e8e8" stroke="none" points="23,-867.25 23,-884.75 309,-884.75 309,-867.25 23,-867.25"/>
+<text xml:space="preserve" text-anchor="start" x="25" y="-874.25" font-family="Monaco, Consolas, Courier" font-weight="bold" font-size="10.00">4. orm::__parse_attr! (from define_attributes!)</text>
+<text xml:space="preserve" text-anchor="start" x="25" y="-855.75" font-family="Monaco" font-size="10.00" fill="#6e7781">// Generated macro contains variant list:</text>
+<text xml:space="preserve" text-anchor="start" x="25" y="-839.25" font-family="Monaco" font-size="10.00" fill="#8250df">macro_rules!</text>
+<text xml:space="preserve" text-anchor="start" x="97" y="-839.25" font-family="Monaco" font-size="10.00"> __parse_attr {</text>
+<text xml:space="preserve" text-anchor="start" x="25" y="-821.75" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;($(</text>
+<text xml:space="preserve" text-anchor="start" x="67" y="-821.75" font-family="Monaco" font-size="10.00" fill="#cf222e">$</text>
+<text xml:space="preserve" text-anchor="start" x="73" y="-821.75" font-family="Monaco" font-size="10.00">input:tt)*) =&gt; {</text>
+<text xml:space="preserve" text-anchor="start" x="25" y="-804.25" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;::</text>
+<text xml:space="preserve" text-anchor="start" x="85" y="-804.25" font-family="Monaco" font-size="10.00" fill="#0550ae">facet</text>
+<text xml:space="preserve" text-anchor="start" x="115" y="-804.25" font-family="Monaco" font-size="10.00">::</text>
+<text xml:space="preserve" text-anchor="start" x="127" y="-804.25" font-family="Monaco" font-size="10.00" fill="#8250df">__dispatch_attr!</text>
+<text xml:space="preserve" text-anchor="start" x="223" y="-804.25" font-family="Monaco" font-size="10.00"> {</text>
+<text xml:space="preserve" text-anchor="start" x="25" y="-786.75" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<text xml:space="preserve" text-anchor="start" x="97" y="-786.75" font-family="Monaco" font-size="10.00" fill="#8250df">@variants</text>
+<text xml:space="preserve" text-anchor="start" x="151" y="-786.75" font-family="Monaco" font-size="10.00"> {</text>
+<text xml:space="preserve" text-anchor="start" x="25" y="-769.25" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;skip =&gt; </text>
+<text xml:space="preserve" text-anchor="start" x="169" y="-769.25" font-family="Monaco" font-size="10.00" fill="#0550ae">unit</text>
+<text xml:space="preserve" text-anchor="start" x="193" y="-769.25" font-family="Monaco" font-size="10.00">,</text>
+<text xml:space="preserve" text-anchor="start" x="25" y="-751.75" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;rename =&gt; </text>
+<text xml:space="preserve" text-anchor="start" x="181" y="-751.75" font-family="Monaco" font-size="10.00" fill="#0550ae">newtype</text>
+<text xml:space="preserve" text-anchor="start" x="223" y="-751.75" font-family="Monaco" font-size="10.00">(</text>
+<text xml:space="preserve" text-anchor="start" x="229" y="-751.75" font-family="Monaco" font-size="10.00" fill="#0550ae">String</text>
+<text xml:space="preserve" text-anchor="start" x="265" y="-751.75" font-family="Monaco" font-size="10.00">),</text>
+<text xml:space="preserve" text-anchor="start" x="25" y="-734.25" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;column =&gt; </text>
+<text xml:space="preserve" text-anchor="start" x="181" y="-734.25" font-family="Monaco" font-size="10.00" fill="#0550ae">struct</text>
+<text xml:space="preserve" text-anchor="start" x="217" y="-734.25" font-family="Monaco" font-size="10.00"> { ... },</text>
+<text xml:space="preserve" text-anchor="start" x="25" y="-715.75" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;}</text>
+<text xml:space="preserve" text-anchor="start" x="25" y="-699.25" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;</text>
+<text xml:space="preserve" text-anchor="start" x="97" y="-699.25" font-family="Monaco" font-size="10.00" fill="#8250df">@input</text>
+<text xml:space="preserve" text-anchor="start" x="133" y="-699.25" font-family="Monaco" font-size="10.00"> { $($input)* }</text>
+<text xml:space="preserve" text-anchor="start" x="25" y="-680.75" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;&#160;...</text>
+<text xml:space="preserve" text-anchor="start" x="25" y="-663.25" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;&#160;&#160;&#160;&#160;}</text>
+<text xml:space="preserve" text-anchor="start" x="25" y="-645.75" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;}</text>
+<text xml:space="preserve" text-anchor="start" x="25" y="-628.25" font-family="Monaco" font-size="10.00">}</text>
 </g>
 <!-- gen_call&#45;&gt;parse_attr_def -->
 <g id="edge3" class="edge">
@@ -196,10 +196,10 @@
 <title>final_value</title>
 <polygon fill="#e8f5e9" stroke="black" points="278,-183 54,-183 54,0 278,0 278,-183"/>
 <polygon fill="#d4edda" stroke="none" points="62,-161.5 62,-179 270,-179 270,-161.5 62,-161.5"/>
-<text xml:space="preserve" text-anchor="start" x="64" y="-168.5" font-family="Monaco, Consolas, Courier" font-weight="bold" font-size="10.00">7. Final ExtensionAttr value</text>
+<text xml:space="preserve" text-anchor="start" x="64" y="-168.5" font-family="Monaco, Consolas, Courier" font-weight="bold" font-size="10.00">7. Final Attribute value</text>
 <text xml:space="preserve" text-anchor="start" x="64" y="-151" font-family="Monaco" font-size="10.00">::facet_core::</text>
-<text xml:space="preserve" text-anchor="start" x="148" y="-151" font-family="Monaco" font-size="10.00" fill="#0550ae">ExtensionAttr</text>
-<text xml:space="preserve" text-anchor="start" x="226" y="-151" font-family="Monaco" font-size="10.00"> {</text>
+<text xml:space="preserve" text-anchor="start" x="148" y="-151" font-family="Monaco" font-size="10.00" fill="#0550ae">Attribute</text>
+<text xml:space="preserve" text-anchor="start" x="202" y="-151" font-family="Monaco" font-size="10.00"> {</text>
 <text xml:space="preserve" text-anchor="start" x="64" y="-133.5" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;ns: </text>
 <text xml:space="preserve" text-anchor="start" x="112" y="-133.5" font-family="Monaco" font-size="10.00" fill="#0a3069">&quot;orm&quot;</text>
 <text xml:space="preserve" text-anchor="start" x="142" y="-133.5" font-family="Monaco" font-size="10.00">,</text>

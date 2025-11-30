@@ -1,8 +1,8 @@
-// Storage Model: Everything becomes ExtensionAttr
+// Storage Model: Unified Attr type
 // Render: dot -Tsvg 04-storage-model.dot -o 04-storage-model.svg
 
 digraph storage_model {
-    label="Storage Model: Everything becomes ExtensionAttr";
+    label="Storage Model: Unified Attr type";
     labelloc="t";
     fontsize=20;
     fontname="Helvetica-Bold";
@@ -28,7 +28,7 @@ digraph storage_model {
 
         extension [label=<
 <table border="0" cellspacing="0" cellpadding="2">
-<tr><td align="left" bgcolor="#f4e8e8"><b>Extension attrs (with namespace)</b></td></tr>
+<tr><td align="left" bgcolor="#f4e8e8"><b>Namespaced attrs</b></td></tr>
 <tr><td align="left"><font face="Monaco">#[<font color="#8250df">facet</font>(kdl::child)]</font></td></tr>
 <tr><td align="left"><font face="Monaco">#[<font color="#8250df">facet</font>(orm::column(pk))]</font></td></tr>
 </table>
@@ -37,13 +37,13 @@ digraph storage_model {
 
     // Output
     subgraph cluster_output {
-        label="All become ::facet_core::ExtensionAttr";
+        label="All become ::facet_core::Attribute";
         fontname="Helvetica";
         style=dashed;
 
         ext1 [label=<
 <table border="0" cellspacing="0" cellpadding="2">
-<tr><td align="left"><font face="Monaco">::facet_core::<font color="#0550ae">ExtensionAttr</font> {</font></td></tr>
+<tr><td align="left"><font face="Monaco">::facet_core::<font color="#0550ae">Attribute</font> {</font></td></tr>
 <tr><td align="left"><font face="Monaco">    ns: <font color="#0a3069">""</font>,  <font color="#6e7781">// empty = built-in</font></font></td></tr>
 <tr><td align="left"><font face="Monaco">    key: <font color="#0a3069">"skip"</font>,</font></td></tr>
 <tr><td align="left"><font face="Monaco">    data: <font color="#cf222e">&amp;</font>() <font color="#cf222e">as</font> *<font color="#cf222e">const</font> (),</font></td></tr>
@@ -54,7 +54,7 @@ digraph storage_model {
 
         ext2 [label=<
 <table border="0" cellspacing="0" cellpadding="2">
-<tr><td align="left"><font face="Monaco">::facet_core::<font color="#0550ae">ExtensionAttr</font> {</font></td></tr>
+<tr><td align="left"><font face="Monaco">::facet_core::<font color="#0550ae">Attribute</font> {</font></td></tr>
 <tr><td align="left"><font face="Monaco">    ns: <font color="#0a3069">"kdl"</font>,</font></td></tr>
 <tr><td align="left"><font face="Monaco">    key: <font color="#0a3069">"child"</font>,</font></td></tr>
 <tr><td align="left"><font face="Monaco">    data: <font color="#cf222e">&amp;</font>() <font color="#cf222e">as</font> *<font color="#cf222e">const</font> (),</font></td></tr>
@@ -64,24 +64,40 @@ digraph storage_model {
         >, style=filled, fillcolor="#e8f5e9"];
     }
 
-    // Final storage
-    field [label=<
+    // Final storage - show both Field and container
+    subgraph cluster_storage {
+        label="Stored in Shape metadata";
+        fontname="Helvetica";
+        style=dashed;
+
+        field [label=<
 <table border="0" cellspacing="0" cellpadding="2">
-<tr><td align="left" bgcolor="#d4edda"><b>Stored in ::facet_core::Field</b></td></tr>
+<tr><td align="left" bgcolor="#d4edda"><b>::facet_core::Field</b></td></tr>
 <tr><td align="left"><font face="Monaco">::facet_core::<font color="#0550ae">Field</font> {</font></td></tr>
-<tr><td align="left"><font face="Monaco">    name: <font color="#0a3069">"..."</font>,</font></td></tr>
-<tr><td align="left"><font face="Monaco">    attributes: <font color="#cf222e">&amp;</font><font color="#0550ae">'static</font> [</font></td></tr>
-<tr><td align="left"><font face="Monaco">        <font color="#0550ae">ExtensionAttr</font> {...},</font></td></tr>
-<tr><td align="left"><font face="Monaco">        <font color="#0550ae">ExtensionAttr</font> {...},</font></td></tr>
-<tr><td align="left"><font face="Monaco">    ],</font></td></tr>
+<tr><td align="left"><font face="Monaco">    name: <font color="#0a3069">"id"</font>,</font></td></tr>
+<tr><td align="left"><font face="Monaco">    attributes: <font color="#cf222e">&amp;</font>[<font color="#0550ae">Attribute</font> {...}],</font></td></tr>
 <tr><td align="left"><font face="Monaco">    ...</font></td></tr>
 <tr><td align="left"><font face="Monaco">}</font></td></tr>
 </table>
-    >, style=filled, fillcolor="#e8f5e9"];
+        >, style=filled, fillcolor="#e8f5e9"];
+
+        container [label=<
+<table border="0" cellspacing="0" cellpadding="2">
+<tr><td align="left" bgcolor="#d4edda"><b>::facet_core::StructType (etc)</b></td></tr>
+<tr><td align="left"><font face="Monaco">::facet_core::<font color="#0550ae">StructType</font> {</font></td></tr>
+<tr><td align="left"><font face="Monaco">    attributes: <font color="#cf222e">&amp;</font>[<font color="#0550ae">Attribute</font> {...}],</font></td></tr>
+<tr><td align="left"><font face="Monaco">    fields: <font color="#cf222e">&amp;</font>[<font color="#0550ae">Field</font> {...}],</font></td></tr>
+<tr><td align="left"><font face="Monaco">    ...</font></td></tr>
+<tr><td align="left"><font face="Monaco">}</font></td></tr>
+</table>
+        >, style=filled, fillcolor="#e8f5e9"];
+    }
 
     // Edges
     builtin -> ext1 [color="#228b22", penwidth=2];
     extension -> ext2 [color="#228b22", penwidth=2];
     ext1 -> field [color="#228b22", penwidth=2];
+    ext1 -> container [color="#228b22", penwidth=2, style=dashed];
     ext2 -> field [color="#228b22", penwidth=2];
+    ext2 -> container [color="#228b22", penwidth=2, style=dashed];
 }
