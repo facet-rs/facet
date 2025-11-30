@@ -384,14 +384,17 @@ fn find_field_index_with_short(fields: &'static [Field], short: &str) -> Option<
     let short_char = short.chars().next()?;
     fields.iter().position(|f| {
         if let Some(ext) = f.get_extension_attr("args", "short") {
-            // The short attribute returns Option<char>
-            if let Some(opt_char) = ext.get_as::<Option<char>>() {
-                match opt_char {
-                    Some(c) => *c == short_char,
-                    None => {
-                        // No explicit short specified, use first char of field name
-                        f.name.starts_with(short_char)
-                    }
+            // The attribute stores the full Attr enum
+            if let Some(attr) = ext.get_as::<crate::Attr>() {
+                match attr {
+                    crate::Attr::Short(opt_char) => match opt_char {
+                        Some(c) => *c == short_char,
+                        None => {
+                            // No explicit short specified, use first char of field name
+                            f.name.starts_with(short_char)
+                        }
+                    },
+                    _ => false,
                 }
             } else {
                 false

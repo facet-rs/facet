@@ -22,117 +22,28 @@ pub use format::from_std_args;
 //   #[facet(args::short = 'v')]
 //   #[facet(args::named)]
 
-/// Dispatcher macro for args extension attributes.
-/// This is called by the derive macro to resolve attribute names.
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __attr {
-    (positional { $($tt:tt)* }) => { $crate::__positional!{ $($tt)* } };
-    (short { $($tt:tt)* }) => { $crate::__short!{ $($tt)* } };
-    (named { $($tt:tt)* }) => { $crate::__named!{ $($tt)* } };
+// Generate args attribute grammar using the grammar DSL.
+// This generates:
+// - `Attr` enum with all args attribute variants
+// - `__attr!` macro that dispatches to attribute handlers and returns ExtensionAttr
+// - `__parse_attr!` macro for parsing (internal use)
+facet::define_attr_grammar! {
+    ns "args";
+    crate_path ::facet_args;
 
-    // Unknown attribute: use __attr_error! for typo suggestions
-    ($unknown:ident $($tt:tt)*) => {
-        ::facet::__attr_error!(
-            @known_attrs { positional, short, named }
-            @got_name { $unknown }
-            @got_rest { $($tt)* }
-        )
-    };
-}
-
-/// Marks a field as a positional argument.
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __positional {
-    { $field:ident : $ty:ty } => {{
-        static __UNIT: () = ();
-        ::facet::ExtensionAttr::new("args", "positional", &__UNIT)
-    }};
-    { $field:ident : $ty:ty | $($args:tt)+ } => {{
-        ::core::compile_error!("args::positional does not accept arguments")
-    }};
-    { } => {{
-        static __UNIT: () = ();
-        ::facet::ExtensionAttr::new("args", "positional", &__UNIT)
-    }};
-    { | $($args:tt)+ } => {{
-        ::core::compile_error!("args::positional does not accept arguments")
-    }};
-}
-
-/// Specifies a short flag character for the field.
-///
-/// Usage: `#[facet(args::short = 'v')]`
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __short {
-    // Field with short char literal: #[facet(args::short = 'v')]
-    { $field:ident : $ty:ty | $ch:literal } => {
-        $crate::__short_impl!($ch)
-    };
-    // Field without short character (will use default): #[facet(args::short)]
-    { $field:ident : $ty:ty } => {{
-        static __VAL: ::core::option::Option<char> = ::core::option::Option::None;
-        ::facet::ExtensionAttr::new("args", "short", &__VAL)
-    }};
-    // Container level (no field)
-    { } => {{
-        static __VAL: ::core::option::Option<char> = ::core::option::Option::None;
-        ::facet::ExtensionAttr::new("args", "short", &__VAL)
-    }};
-    { | $ch:literal } => {
-        $crate::__short_impl!($ch)
-    };
-    // Invalid syntax
-    { $($tt:tt)* } => {{
-        ::core::compile_error!("args::short expects `= 'c'` syntax, e.g., #[facet(args::short = 'v')]")
-    }};
-}
-
-/// Helper macro that extracts first char and creates the ExtensionAttr.
-/// Works with both char literals and string literals.
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __short_impl {
-    ($ch:literal) => {{
-        // For char literals, this is just the char.
-        // For string literals, we take the first byte as ASCII.
-        const __CHAR: char = {
-            // Try to use it as a char first, then as a string
-            let bytes: &[u8] = {
-                // This trick: if $ch is a char, .as_bytes() won't exist, but we can
-                // convert it to a string first. If it's a string, use it directly.
-                // Actually, we can use the stringify! trick to handle both.
-                const S: &str = ::core::concat!($ch);
-                S.as_bytes()
-            };
-            match bytes {
-                [b, ..] => *b as char,
-                [] => panic!("args::short value cannot be empty"),
-            }
-        };
-        static __VAL: ::core::option::Option<char> = ::core::option::Option::Some(__CHAR);
-        ::facet::ExtensionAttr::new("args", "short", &__VAL)
-    }};
-}
-
-/// Marks a field as a named argument.
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __named {
-    { $field:ident : $ty:ty } => {{
-        static __UNIT: () = ();
-        ::facet::ExtensionAttr::new("args", "named", &__UNIT)
-    }};
-    { $field:ident : $ty:ty | $($args:tt)+ } => {{
-        ::core::compile_error!("args::named does not accept arguments")
-    }};
-    { } => {{
-        static __UNIT: () = ();
-        ::facet::ExtensionAttr::new("args", "named", &__UNIT)
-    }};
-    { | $($args:tt)+ } => {{
-        ::core::compile_error!("args::named does not accept arguments")
-    }};
+    /// Args attribute types for field configuration.
+    pub enum Attr {
+        /// Marks a field as a positional argument.
+        ///
+        /// Usage: `#[facet(args::positional)]`
+        Positional,
+        /// Marks a field as a named argument.
+        ///
+        /// Usage: `#[facet(args::named)]`
+        Named,
+        /// Specifies a short flag character for the field.
+        ///
+        /// Usage: `#[facet(args::short = 'v')]` or just `#[facet(args::short)]`
+        Short(Option<char>),
+    }
 }

@@ -14,6 +14,7 @@ categories = ["command-line-interface"]
 rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
 
 [dependencies]
+facet = { path = "../facet" }
 facet-reflect = { path = "../facet-reflect" }
 facet-core = { path = "../facet-core" }
 log = "0.4.28"

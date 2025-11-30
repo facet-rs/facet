@@ -43,7 +43,7 @@ fn test_arg_parse_nums() {
         #[facet(args::named, args::short)]
         y: u64,
 
-        #[facet(args::named, args::short = "z")]
+        #[facet(args::named, args::short = 'z')]
         zzz: f64,
     }
 

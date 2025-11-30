@@ -23,6 +23,8 @@ keyword! {
     KOption = "Option";
     KStatic = "static";
     KNs = "ns";
+    KCratePath = "crate_path";
+    KChar = "char";
 }
 
 operator! {
@@ -36,6 +38,10 @@ operator! {
     Apos = "'";
     /// Path separator ::
     PathSep = "::";
+    /// Less than <
+    Lt = "<";
+    /// Greater than >
+    Gt = ">";
 }
 
 unsynn! {
@@ -44,11 +50,13 @@ unsynn! {
     /// Format:
     /// ```ignore
     /// ns "kdl";
+    /// crate_path ::facet_kdl;
     /// pub enum Attr { ... }
     /// pub struct Column { ... }
     /// ```
     struct Grammar {
         ns_decl: Option<NsDecl>,
+        crate_path_decl: Option<CratePathDecl>,
         items: Vec<GrammarItem>,
     }
 
@@ -56,6 +64,14 @@ unsynn! {
     struct NsDecl {
         _kw: KNs,
         ns_literal: Literal,
+        _semi: Semicolon,
+    }
+
+    /// Crate path declaration: `crate_path ::facet_kdl;`
+    /// The path is captured as raw tokens until the semicolon.
+    struct CratePathDecl {
+        _kw: KCratePath,
+        path_tokens: Any<Cons<Except<Semicolon>, TokenTree>>,
         _semi: Semicolon,
     }
 
@@ -90,6 +106,8 @@ unsynn! {
     enum VariantPayload {
         /// Reference type like `&'static str`
         RefType(RefType),
+        /// Option<char> type
+        OptionChar(OptionCharType),
         /// Just an identifier (struct reference)
         Ident(Ident),
     }
@@ -100,6 +118,14 @@ unsynn! {
         _apos: Apos,
         _static: KStatic,
         typ: Ident,
+    }
+
+    /// Option<char> type
+    struct OptionCharType {
+        _option: KOption,
+        _lt: Lt,
+        _char: KChar,
+        _gt: Gt,
     }
 
     /// A struct definition: `pub struct Column { ... }`
@@ -140,6 +166,8 @@ unsynn! {
 struct ParsedGrammar {
     /// Namespace string (e.g., "kdl"), or None for built-in attrs
     ns: Option<String>,
+    /// Crate path tokens (e.g., `::facet_kdl`), required for non-unit variants
+    crate_path: Option<TokenStream2>,
     attr_enum: ParsedEnum,
     structs: Vec<ParsedStruct>,
 }
@@ -160,6 +188,7 @@ struct ParsedVariant {
 enum VariantKind {
     Unit,
     Newtype(TokenStream2),
+    NewtypeOptionChar,
     Struct(proc_macro2::Ident),
 }
 
@@ -183,6 +212,7 @@ enum FieldType {
     StaticStr,
     OptionStaticStr,
     OptionBool,
+    OptionChar,
 }
 
 // ============================================================================
@@ -196,6 +226,15 @@ impl Grammar {
             // Strip quotes from the literal
             let s = decl.ns_literal.to_string();
             s.trim_matches('"').to_string()
+        });
+
+        // Extract crate path from `crate_path ::facet_kdl;` declaration
+        let crate_path = self.crate_path_decl.as_ref().map(|decl| {
+            let mut tokens = TokenStream2::new();
+            for item in decl.path_tokens.iter() {
+                tokens.extend(std::iter::once(item.value.second.clone()));
+            }
+            tokens
         });
 
         let mut attr_enum: Option<ParsedEnum> = None;
@@ -219,6 +258,7 @@ impl Grammar {
 
         Ok(ParsedGrammar {
             ns,
+            crate_path,
             attr_enum,
             structs,
         })
@@ -269,6 +309,7 @@ impl EnumVariant {
                         let typ = convert_ident(&ref_type.typ);
                         VariantKind::Newtype(quote! { &'static #typ })
                     }
+                    VariantPayload::OptionChar(_) => VariantKind::NewtypeOptionChar,
                 }
             }
         };
@@ -325,8 +366,9 @@ fn parse_field_type(ty: &FieldTypeTokens) -> std::result::Result<FieldType, Stri
         "&'staticstr" => Ok(FieldType::StaticStr),
         "Option<&'staticstr>" => Ok(FieldType::OptionStaticStr),
         "Option<bool>" => Ok(FieldType::OptionBool),
+        "Option<char>" => Ok(FieldType::OptionChar),
         _ => Err(format!(
-            "unsupported field type: {ty_str}. Supported types: bool, &'static str, Option<&'static str>, Option<bool>"
+            "unsupported field type: {ty_str}. Supported types: bool, &'static str, Option<&'static str>, Option<bool>, Option<char>"
         )),
     }
 }
@@ -395,6 +437,7 @@ impl ParsedGrammar {
                 match kind {
                     VariantKind::Unit => quote! { #(#attrs)* #name },
                     VariantKind::Newtype(ty) => quote! { #(#attrs)* #name(#ty) },
+                    VariantKind::NewtypeOptionChar => quote! { #(#attrs)* #name(Option<char>) },
                     VariantKind::Struct(struct_name) => {
                         quote! { #(#attrs)* #name(#struct_name) }
                     }
@@ -449,6 +492,7 @@ impl ParsedGrammar {
                 match &v.kind {
                     VariantKind::Unit => quote! { #name: unit },
                     VariantKind::Newtype(_) => quote! { #name: newtype },
+                    VariantKind::NewtypeOptionChar => quote! { #name: newtype_opt_char },
                     VariantKind::Struct(struct_name) => {
                         // Find the struct definition
                         let struct_def = struct_map
@@ -466,6 +510,7 @@ impl ParsedGrammar {
                                     FieldType::StaticStr => quote! { string },
                                     FieldType::OptionStaticStr => quote! { opt_string },
                                     FieldType::OptionBool => quote! { opt_bool },
+                                    FieldType::OptionChar => quote! { opt_char },
                                 };
                                 quote! { #field_name: #kind }
                             })
@@ -489,35 +534,42 @@ impl ParsedGrammar {
 
                 // For unit variants, use () as data (simple and avoids $crate issues)
                 // For complex variants, use the dispatch system
+                // All arms now accept @ns { $ns:path } prefix from __ext!
+                // The $ns path is used to import Attr from the correct crate at the call site
                 match &v.kind {
                     VariantKind::Unit => {
                         quote! {
-                            // Field-level: attr { field : Type }
-                            (#key_ident { $field:ident : $ty:ty }) => {{
+                            // Field-level: @ns { path } attr { field : Type }
+                            (@ns { $ns:path } #key_ident { $field:ident : $ty:ty }) => {{
                                 static __UNIT: () = ();
                                 ::facet::ExtensionAttr::new(#ns_str, #key_str, &__UNIT)
                             }};
                             // Field-level with args: not expected for unit variants
-                            (#key_ident { $field:ident : $ty:ty | $first:tt $($rest:tt)* }) => {{
+                            (@ns { $ns:path } #key_ident { $field:ident : $ty:ty | $first:tt $($rest:tt)* }) => {{
                                 ::facet::__no_args!(concat!(#ns_str, "::", #key_str), $first)
                             }};
-                            // Container-level: attr { }
-                            (#key_ident { }) => {{
+                            // Container-level: @ns { path } attr { }
+                            (@ns { $ns:path } #key_ident { }) => {{
                                 static __UNIT: () = ();
                                 ::facet::ExtensionAttr::new(#ns_str, #key_str, &__UNIT)
                             }};
                             // Container-level with args: not expected for unit variants
-                            (#key_ident { | $first:tt $($rest:tt)* }) => {{
+                            (@ns { $ns:path } #key_ident { | $first:tt $($rest:tt)* }) => {{
                                 ::facet::__no_args!(concat!(#ns_str, "::", #key_str), $first)
                             }};
                         }
                     }
-                    VariantKind::Newtype(_) | VariantKind::Struct(_) => {
+                    VariantKind::Newtype(_) | VariantKind::NewtypeOptionChar | VariantKind::Struct(_) => {
+                        // For non-unit variants, we need the crate_path to generate proper type references.
+                        // The crate_path is passed to the proc macro so it can output e.g. `::facet_args::Attr::Short(...)`
+                        let crate_path = self.crate_path.as_ref().expect(
+                            "crate_path is required for non-unit variants; add `crate_path ::your_crate;` to the grammar"
+                        );
                         quote! {
-                            // Field-level: attr { field : Type } or attr { field : Type | args }
-                            (#key_ident { $field:ident : $ty:ty }) => {{
-                                static __ATTR_DATA: $crate::#enum_name = $crate::__dispatch_attr!{
-                                    @namespace { $crate }
+                            // Field-level: @ns { path } attr { field : Type } or with args
+                            (@ns { $ns:path } #key_ident { $field:ident : $ty:ty }) => {{
+                                static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
+                                    @crate_path { #crate_path }
                                     @enum_name { #enum_name }
                                     @variants { #(#variants_meta),* }
                                     @name { #key_ident }
@@ -525,9 +577,9 @@ impl ParsedGrammar {
                                 };
                                 ::facet::ExtensionAttr::new(#ns_str, #key_str, &__ATTR_DATA)
                             }};
-                            (#key_ident { $field:ident : $ty:ty | $($args:tt)* }) => {{
-                                static __ATTR_DATA: $crate::#enum_name = $crate::__dispatch_attr!{
-                                    @namespace { $crate }
+                            (@ns { $ns:path } #key_ident { $field:ident : $ty:ty | $($args:tt)* }) => {{
+                                static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
+                                    @crate_path { #crate_path }
                                     @enum_name { #enum_name }
                                     @variants { #(#variants_meta),* }
                                     @name { #key_ident }
@@ -535,10 +587,10 @@ impl ParsedGrammar {
                                 };
                                 ::facet::ExtensionAttr::new(#ns_str, #key_str, &__ATTR_DATA)
                             }};
-                            // Container-level: attr { } or attr { | args }
-                            (#key_ident { }) => {{
-                                static __ATTR_DATA: $crate::#enum_name = $crate::__dispatch_attr!{
-                                    @namespace { $crate }
+                            // Container-level: @ns { path } attr { } or with args
+                            (@ns { $ns:path } #key_ident { }) => {{
+                                static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
+                                    @crate_path { #crate_path }
                                     @enum_name { #enum_name }
                                     @variants { #(#variants_meta),* }
                                     @name { #key_ident }
@@ -546,9 +598,9 @@ impl ParsedGrammar {
                                 };
                                 ::facet::ExtensionAttr::new(#ns_str, #key_str, &__ATTR_DATA)
                             }};
-                            (#key_ident { | $($args:tt)* }) => {{
-                                static __ATTR_DATA: $crate::#enum_name = $crate::__dispatch_attr!{
-                                    @namespace { $crate }
+                            (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
+                                static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
+                                    @crate_path { #crate_path }
                                     @enum_name { #enum_name }
                                     @variants { #(#variants_meta),* }
                                     @name { #key_ident }
@@ -576,13 +628,14 @@ impl ParsedGrammar {
             /// Dispatcher macro for extension attributes.
             ///
             /// Called by the derive macro via `__ext!`. Returns `ExtensionAttr` values.
+            /// Input format: `@ns { namespace_path } attr_name { ... }`
             #[macro_export]
             #[doc(hidden)]
             macro_rules! __attr {
                 #(#variant_arms)*
 
                 // Unknown attribute: use __attr_error! for typo suggestions
-                ($unknown:ident $($tt:tt)*) => {
+                (@ns { $ns:path } $unknown:ident $($tt:tt)*) => {
                     ::facet::__attr_error!(
                         @known_attrs { #(#known_attrs),* }
                         @got_name { $unknown }
@@ -660,6 +713,7 @@ impl FieldType {
             FieldType::StaticStr => quote! { &'static str },
             FieldType::OptionStaticStr => quote! { Option<&'static str> },
             FieldType::OptionBool => quote! { Option<bool> },
+            FieldType::OptionChar => quote! { Option<char> },
         }
     }
 }

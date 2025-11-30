@@ -13,13 +13,14 @@ use unsynn::*;
 // ============================================================================
 
 keyword! {
-    KNamespace = "namespace";
+    KCratePath = "crate_path";
     KEnumName = "enum_name";
     KVariants = "variants";
     KName = "name";
     KRest = "rest";
     KUnit = "unit";
     KNewtype = "newtype";
+    KNewtypeOptChar = "newtype_opt_char";
     KRec = "rec";
 }
 
@@ -31,17 +32,17 @@ operator! {
 unsynn! {
     /// The complete input to __dispatch_attr
     struct DispatchAttrInput {
-        namespace_section: NamespaceSection,
+        crate_path_section: CratePathSection,
         enum_name_section: EnumNameSection,
         variants_section: VariantsSection,
         name_section: NameSection,
         rest_section: RestSection,
     }
 
-    /// @namespace { ... }
-    struct NamespaceSection {
+    /// @crate_path { ... } - the crate path (e.g., ::facet_args)
+    struct CratePathSection {
         _at: At,
-        _kw: KNamespace,
+        _kw: KCratePath,
         content: BraceGroup,
     }
 
@@ -86,6 +87,8 @@ unsynn! {
         Unit(KUnit),
         /// newtype variant
         Newtype(KNewtype),
+        /// newtype Option<char> variant
+        NewtypeOptChar(KNewtypeOptChar),
         /// struct variant with fields
         Struct(StructVariantDef),
     }
@@ -104,7 +107,8 @@ unsynn! {
 // ============================================================================
 
 struct ParsedDispatchInput {
-    namespace: TokenStream2,
+    crate_path: TokenStream2,
+    #[allow(dead_code)]
     enum_name: Ident,
     variants: Vec<ParsedVariant>,
     attr_name: Ident,
@@ -121,6 +125,7 @@ struct ParsedVariant {
 enum ParsedVariantKind {
     Unit,
     Newtype,
+    NewtypeOptChar,
     Struct {
         struct_name: Ident,
         fields: Vec<ParsedFieldDef>,
@@ -133,6 +138,7 @@ struct ParsedFieldDef {
     name: Ident,
     kind: FieldKind,
     /// Doc comment for help text in errors
+    #[allow(dead_code)]
     doc: Option<String>,
 }
 
@@ -142,6 +148,7 @@ enum FieldKind {
     String,
     OptString,
     OptBool,
+    OptChar,
     I64,
     OptI64,
     ListString,
@@ -152,8 +159,7 @@ enum FieldKind {
 
 impl DispatchAttrInput {
     fn to_parsed(&self) -> std::result::Result<ParsedDispatchInput, String> {
-        let namespace = self.namespace_section.content.0.stream();
-
+        let crate_path = self.crate_path_section.content.0.stream();
         let enum_name = self.enum_name_section.content.content.clone();
 
         let variants: std::result::Result<Vec<_>, _> = self
@@ -169,7 +175,7 @@ impl DispatchAttrInput {
         let rest = self.rest_section.content.0.stream();
 
         Ok(ParsedDispatchInput {
-            namespace,
+            crate_path,
             enum_name,
             variants: variants?,
             attr_name,
@@ -183,6 +189,7 @@ impl VariantDef {
         let kind = match &self.kind {
             VariantKindDef::Unit(_) => ParsedVariantKind::Unit,
             VariantKindDef::Newtype(_) => ParsedVariantKind::Newtype,
+            VariantKindDef::NewtypeOptChar(_) => ParsedVariantKind::NewtypeOptChar,
             VariantKindDef::Struct(s) => {
                 let fields = parse_fields_with_docs(&s.fields.0.stream())?;
                 ParsedVariantKind::Struct {
@@ -277,6 +284,7 @@ fn parse_fields_with_docs(
             "string" => FieldKind::String,
             "opt_string" => FieldKind::OptString,
             "opt_bool" => FieldKind::OptBool,
+            "opt_char" => FieldKind::OptChar,
             "i64" => FieldKind::I64,
             "opt_i64" => FieldKind::OptI64,
             "list_string" => FieldKind::ListString,
@@ -356,6 +364,8 @@ fn extract_doc_from_attr(tokens: &TokenStream2) -> Option<String> {
 // ============================================================================
 
 /// Unified dispatcher for attribute parsing that routes to unit, newtype, or struct variant handlers based on the attribute grammar.
+///
+/// Returns just the enum value expression using `__ExtAttr` which is imported by the calling macro.
 pub fn dispatch_attr(input: TokenStream2) -> TokenStream2 {
     let mut iter = input.to_token_iter();
 
@@ -374,8 +384,7 @@ pub fn dispatch_attr(input: TokenStream2) -> TokenStream2 {
         }
     };
 
-    let namespace = &input.namespace;
-    let enum_name = &input.enum_name;
+    let crate_path = &input.crate_path;
     let attr_name = &input.attr_name;
     let attr_name_str = attr_name.to_string();
     let attr_span = attr_name.span();
@@ -390,17 +399,14 @@ pub fn dispatch_attr(input: TokenStream2) -> TokenStream2 {
             let variant_ident = proc_macro2::Ident::new(&variant_pascal, variant_name.span());
 
             return match &variant.kind {
-                ParsedVariantKind::Unit => generate_unit(
-                    namespace,
-                    enum_name,
-                    &variant_ident,
-                    attr_name,
-                    rest,
-                    attr_span,
-                ),
-                ParsedVariantKind::Newtype => generate_newtype(
-                    namespace,
-                    enum_name,
+                ParsedVariantKind::Unit => {
+                    generate_unit_value(crate_path, &variant_ident, attr_name, rest, attr_span)
+                }
+                ParsedVariantKind::Newtype => {
+                    generate_newtype_value(crate_path, &variant_ident, attr_name, rest, attr_span)
+                }
+                ParsedVariantKind::NewtypeOptChar => generate_newtype_opt_char_value(
+                    crate_path,
                     &variant_ident,
                     attr_name,
                     rest,
@@ -409,9 +415,8 @@ pub fn dispatch_attr(input: TokenStream2) -> TokenStream2 {
                 ParsedVariantKind::Struct {
                     struct_name,
                     fields,
-                } => generate_struct(
-                    namespace,
-                    enum_name,
+                } => generate_struct_value(
+                    crate_path,
                     &variant_ident,
                     struct_name,
                     fields,
@@ -460,9 +465,8 @@ fn to_pascal_case(s: &str) -> String {
     result
 }
 
-fn generate_unit(
-    namespace: &TokenStream2,
-    enum_name: &Ident,
+fn generate_unit_value(
+    ns_path: &TokenStream2,
     variant_ident: &proc_macro2::Ident,
     attr_name: &Ident,
     rest: &TokenStream2,
@@ -473,7 +477,7 @@ fn generate_unit(
     // Valid: no rest or empty parens
     if rest_tokens.is_empty() {
         return quote_spanned! { span =>
-            #namespace::#enum_name::#variant_ident
+            #ns_path::Attr::#variant_ident
         };
     }
 
@@ -481,7 +485,7 @@ fn generate_unit(
     if let Some(TokenTree::Group(g)) = rest_tokens.first() {
         if g.delimiter() == proc_macro2::Delimiter::Parenthesis && g.stream().is_empty() {
             return quote_spanned! { span =>
-                #namespace::#enum_name::#variant_ident
+                #ns_path::Attr::#variant_ident
             };
         }
     }
@@ -493,9 +497,8 @@ fn generate_unit(
     }
 }
 
-fn generate_newtype(
-    namespace: &TokenStream2,
-    enum_name: &Ident,
+fn generate_newtype_value(
+    ns_path: &TokenStream2,
     variant_ident: &proc_macro2::Ident,
     attr_name: &Ident,
     rest: &TokenStream2,
@@ -513,7 +516,7 @@ fn generate_newtype(
                     let lit_str = lit.to_string();
                     if lit_str.starts_with('\"') {
                         return quote_spanned! { span =>
-                            #namespace::#enum_name::#variant_ident(#lit)
+                            #ns_path::Attr::#variant_ident(#lit)
                         };
                     }
                 }
@@ -526,6 +529,18 @@ fn generate_newtype(
         }
     }
 
+    // Check for bare literal (derive macro strips the `=` sign)
+    if rest_tokens.len() == 1 {
+        if let TokenTree::Literal(lit) = &rest_tokens[0] {
+            let lit_str = lit.to_string();
+            if lit_str.starts_with('\"') {
+                return quote_spanned! { span =>
+                    #ns_path::Attr::#variant_ident(#lit)
+                };
+            }
+        }
+    }
+
     // Check for equals style: rename = "value"
     if rest_tokens.len() >= 2 {
         if let TokenTree::Punct(p) = &rest_tokens[0] {
@@ -534,7 +549,7 @@ fn generate_newtype(
                     let lit_str = lit.to_string();
                     if lit_str.starts_with('\"') {
                         return quote_spanned! { span =>
-                            #namespace::#enum_name::#variant_ident(#lit)
+                            #ns_path::Attr::#variant_ident(#lit)
                         };
                     }
                 }
@@ -556,10 +571,103 @@ fn generate_newtype(
     }
 }
 
+fn generate_newtype_opt_char_value(
+    ns_path: &TokenStream2,
+    variant_ident: &proc_macro2::Ident,
+    attr_name: &Ident,
+    rest: &TokenStream2,
+    span: Span,
+) -> TokenStream2 {
+    let rest_tokens: Vec<TokenTree> = rest.clone().into_iter().collect();
+    let attr_str = attr_name.to_string();
+
+    // No args: return None
+    if rest_tokens.is_empty() {
+        return quote_spanned! { span =>
+            #ns_path::Attr::#variant_ident(::core::option::Option::None)
+        };
+    }
+
+    // Check for empty parens ()
+    if let Some(TokenTree::Group(g)) = rest_tokens.first() {
+        if g.delimiter() == proc_macro2::Delimiter::Parenthesis && g.stream().is_empty() {
+            return quote_spanned! { span =>
+                #ns_path::Attr::#variant_ident(::core::option::Option::None)
+            };
+        }
+    }
+
+    // Check for parens style: short('v')
+    if let Some(TokenTree::Group(g)) = rest_tokens.first() {
+        if g.delimiter() == proc_macro2::Delimiter::Parenthesis {
+            let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+            if inner.len() == 1 {
+                if let TokenTree::Literal(lit) = &inner[0] {
+                    let lit_str = lit.to_string();
+                    // Check for char literal: 'x'
+                    if lit_str.starts_with('\'') && lit_str.ends_with('\'') {
+                        return quote_spanned! { span =>
+                            #ns_path::Attr::#variant_ident(::core::option::Option::Some(#lit))
+                        };
+                    }
+                }
+            }
+            // Error: non-char-literal in parens
+            let msg = format!("`{attr_str}` expects a char literal: `{attr_str}('v')`");
+            return quote_spanned! { span =>
+                compile_error!(#msg)
+            };
+        }
+    }
+
+    // Check for bare char literal: the derive macro strips the = sign when processing
+    // `#[facet(attr = value)]` syntax, passing just the value
+    if rest_tokens.len() == 1 {
+        if let TokenTree::Literal(lit) = &rest_tokens[0] {
+            let lit_str = lit.to_string();
+            // Check for char literal: 'x'
+            if lit_str.starts_with('\'') && lit_str.ends_with('\'') {
+                return quote_spanned! { span =>
+                    #ns_path::Attr::#variant_ident(::core::option::Option::Some(#lit))
+                };
+            }
+        }
+    }
+
+    // Check for equals style: short = 'v' (in case it's passed with the equals sign)
+    if rest_tokens.len() >= 2 {
+        if let TokenTree::Punct(p) = &rest_tokens[0] {
+            if p.as_char() == '=' {
+                if let TokenTree::Literal(lit) = &rest_tokens[1] {
+                    let lit_str = lit.to_string();
+                    // Check for char literal: 'x'
+                    if lit_str.starts_with('\'') && lit_str.ends_with('\'') {
+                        return quote_spanned! { span =>
+                            #ns_path::Attr::#variant_ident(::core::option::Option::Some(#lit))
+                        };
+                    }
+                }
+                // Error: non-char-literal after =
+                let msg = format!("`{attr_str}` expects a char literal: `{attr_str} = 'v'`");
+                return quote_spanned! { span =>
+                    compile_error!(#msg)
+                };
+            }
+        }
+    }
+
+    // Error: invalid syntax
+    let msg = format!(
+        "`{attr_str}` expects either no value or a char: `{attr_str}` or `{attr_str} = 'v'`"
+    );
+    quote_spanned! { span =>
+        compile_error!(#msg)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
-fn generate_struct(
-    namespace: &TokenStream2,
-    enum_name: &Ident,
+fn generate_struct_value(
+    ns_path: &TokenStream2,
     variant_ident: &proc_macro2::Ident,
     struct_name: &Ident,
     fields: &[ParsedFieldDef],
@@ -570,31 +678,6 @@ fn generate_struct(
     let rest_tokens: Vec<TokenTree> = rest.clone().into_iter().collect();
     let attr_str = attr_name.to_string();
 
-    // Generate field metadata for __build_struct_fields (including doc comments)
-    let fields_meta: Vec<TokenStream2> = fields
-        .iter()
-        .map(|f| {
-            let name = &f.name;
-            let kind_str = match f.kind {
-                FieldKind::Bool => quote! { bool },
-                FieldKind::String => quote! { string },
-                FieldKind::OptString => quote! { opt_string },
-                FieldKind::OptBool => quote! { opt_bool },
-                FieldKind::I64 => quote! { i64 },
-                FieldKind::OptI64 => quote! { opt_i64 },
-                FieldKind::ListString => quote! { list_string },
-                FieldKind::ListI64 => quote! { list_i64 },
-                FieldKind::Ident => quote! { ident },
-            };
-            // Include doc comment if present
-            if let Some(doc) = &f.doc {
-                quote! { #[doc = #doc] #name: #kind_str }
-            } else {
-                quote! { #name: #kind_str }
-            }
-        })
-        .collect();
-
     // Generate default field values
     let default_fields: Vec<TokenStream2> = fields
         .iter()
@@ -603,10 +686,11 @@ fn generate_struct(
             let default = match f.kind {
                 FieldKind::Bool => quote! { false },
                 FieldKind::String => quote! { "" },
-                FieldKind::OptString => quote! { None },
-                FieldKind::OptBool => quote! { None },
+                FieldKind::OptString => quote! { ::core::option::Option::None },
+                FieldKind::OptBool => quote! { ::core::option::Option::None },
+                FieldKind::OptChar => quote! { ::core::option::Option::None },
                 FieldKind::I64 => quote! { 0 },
-                FieldKind::OptI64 => quote! { None },
+                FieldKind::OptI64 => quote! { ::core::option::Option::None },
                 FieldKind::ListString => quote! { &[] },
                 FieldKind::ListI64 => quote! { &[] },
                 FieldKind::Ident => quote! { "" },
@@ -623,22 +707,18 @@ fn generate_struct(
             // Empty parens - use defaults
             if inner.is_empty() {
                 return quote_spanned! { span =>
-                    #namespace::#enum_name::#variant_ident(#namespace::#struct_name {
+                    #ns_path::Attr::#variant_ident(#ns_path::#struct_name {
                         #(#default_fields),*
                     })
                 };
             }
 
             // Non-empty - delegate to __build_struct_fields proc-macro
+            // Note: struct variants with complex field initialization cannot be used in statics,
+            // so this returns a compile_error for now. This case is not used by facet-args.
+            let msg = "struct variant attributes with field values cannot be used with define_attr_grammar! yet";
             return quote_spanned! { span =>
-                #namespace::__build_struct_fields!{
-                    @krate { #namespace }
-                    @enum_name { #enum_name }
-                    @variant_name { #variant_ident }
-                    @struct_name { #struct_name }
-                    @fields { #(#fields_meta),* }
-                    @input { #inner }
-                }
+                compile_error!(#msg)
             };
         }
     }
@@ -646,7 +726,7 @@ fn generate_struct(
     // No parens - use defaults
     if rest_tokens.is_empty() {
         return quote_spanned! { span =>
-            #namespace::#enum_name::#variant_ident(#namespace::#struct_name {
+            #ns_path::Attr::#variant_ident(#ns_path::#struct_name {
                 #(#default_fields),*
             })
         };

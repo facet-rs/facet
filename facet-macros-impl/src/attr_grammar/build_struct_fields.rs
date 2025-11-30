@@ -117,6 +117,7 @@ enum FieldKind {
     String,
     OptString,
     OptBool,
+    OptChar,
     I64,
     OptI64,
     ListString,
@@ -138,6 +139,8 @@ enum FieldValue {
     String(String),
     /// Bool literal: `primary_key = true`
     Bool(bool),
+    /// Char literal: `short = 'v'`
+    Char(char),
     /// Integer literal: `min = 0`
     I64(i64),
     /// List of strings: `columns = ["id", "name"]`
@@ -251,6 +254,7 @@ fn parse_field_defs_with_docs(
             "string" => FieldKind::String,
             "opt_string" => FieldKind::OptString,
             "opt_bool" => FieldKind::OptBool,
+            "opt_char" => FieldKind::OptChar,
             "i64" => FieldKind::I64,
             "opt_i64" => FieldKind::OptI64,
             "list_string" => FieldKind::ListString,
@@ -407,6 +411,10 @@ fn build_struct_fields_impl(
                     FieldValue::Flag => quote! { Some(true) },
                     _ => quote! { None },
                 },
+                (Some(p), FieldKind::OptChar) => match &p.value {
+                    FieldValue::Char(c) => quote! { Some(#c) },
+                    _ => quote! { None },
+                },
                 (Some(p), FieldKind::I64) => match &p.value {
                     FieldValue::I64(n) => quote! { #n },
                     _ => quote! { 0 }, // Will error elsewhere
@@ -431,6 +439,7 @@ fn build_struct_fields_impl(
                 (None, FieldKind::OptString) => quote! { None },
                 (None, FieldKind::Bool) => quote! { false },
                 (None, FieldKind::OptBool) => quote! { None },
+                (None, FieldKind::OptChar) => quote! { None },
                 (None, FieldKind::I64) => quote! { 0 },
                 (None, FieldKind::OptI64) => quote! { None },
                 (None, FieldKind::ListString) => quote! { &[] },
@@ -538,6 +547,15 @@ fn parse_input_fields(
                     return Err(SpannedError {
                         message: format!(
                             "`{field_name_str}` requires a string value: `{field_name_str} = \"value\"`"
+                        ),
+                        span: field_span,
+                        help: field_def.doc.clone(),
+                    });
+                }
+                FieldKind::OptChar => {
+                    return Err(SpannedError {
+                        message: format!(
+                            "`{field_name_str}` requires a char value: `{field_name_str} = 'v'`"
                         ),
                         span: field_span,
                         help: field_def.doc.clone(),
@@ -701,6 +719,74 @@ fn parse_input_fields(
                             return Err(SpannedError {
                                 message: format!(
                                     "`{field_name_str}` expects `true` or `false`: `{field_name_str} = true`"
+                                ),
+                                span: value_token.span(),
+                                help: field_def.doc.clone(),
+                            });
+                        }
+                    }
+                    FieldKind::OptChar => {
+                        // Expect char literal: 'v'
+                        if let TokenTree::Literal(lit) = value_token {
+                            let lit_str = lit.to_string();
+                            // Check for char literal format: 'x'
+                            if lit_str.starts_with('\'')
+                                && lit_str.ends_with('\'')
+                                && lit_str.len() >= 3
+                            {
+                                // Parse the char (handling escape sequences)
+                                let inner = &lit_str[1..lit_str.len() - 1];
+                                let c = if inner.starts_with('\\') {
+                                    // Handle escape sequences
+                                    match inner.chars().nth(1) {
+                                        Some('n') => '\n',
+                                        Some('r') => '\r',
+                                        Some('t') => '\t',
+                                        Some('\\') => '\\',
+                                        Some('\'') => '\'',
+                                        Some('0') => '\0',
+                                        Some(c) => c,
+                                        None => {
+                                            return Err(SpannedError {
+                                                message: format!(
+                                                    "`{field_name_str}` has invalid escape sequence in char literal"
+                                                ),
+                                                span: value_token.span(),
+                                                help: field_def.doc.clone(),
+                                            });
+                                        }
+                                    }
+                                } else {
+                                    inner.chars().next().unwrap_or(' ')
+                                };
+                                parsed.push(ParsedField {
+                                    name: field_name_str,
+                                    name_span: field_span,
+                                    value: FieldValue::Char(c),
+                                });
+                            } else {
+                                return Err(SpannedError {
+                                    message: format!(
+                                        "`{field_name_str}` expects a char literal: `{field_name_str} = 'v'`"
+                                    ),
+                                    span: value_token.span(),
+                                    help: field_def.doc.clone(),
+                                });
+                            }
+                        } else if let TokenTree::Ident(ident) = value_token {
+                            // Common mistake: using an identifier instead of char
+                            return Err(SpannedError {
+                                message: format!(
+                                    "`{field_name_str}` expects a char literal, not an identifier; \
+                                     try `{field_name_str} = '{ident}'` (with single quotes)"
+                                ),
+                                span: value_token.span(),
+                                help: field_def.doc.clone(),
+                            });
+                        } else {
+                            return Err(SpannedError {
+                                message: format!(
+                                    "`{field_name_str}` expects a char literal: `{field_name_str} = 'v'`"
                                 ),
                                 span: value_token.span(),
                                 help: field_def.doc.clone(),
@@ -891,6 +977,15 @@ fn parse_input_fields(
                             help: field_def.doc.clone(),
                         });
                     }
+                    FieldKind::OptChar => {
+                        return Err(SpannedError {
+                            message: format!(
+                                "`{field_name_str}` requires a char value: `{field_name_str} = 'v'`"
+                            ),
+                            span: field_span,
+                            help: field_def.doc.clone(),
+                        });
+                    }
                     FieldKind::I64 | FieldKind::OptI64 => {
                         return Err(SpannedError {
                             message: format!(
@@ -951,6 +1046,15 @@ fn parse_input_fields(
                     return Err(SpannedError {
                         message: format!(
                             "`{field_name_str}` requires a string value: `{field_name_str} = \"value\"`"
+                        ),
+                        span: field_span,
+                        help: field_def.doc.clone(),
+                    });
+                }
+                FieldKind::OptChar => {
+                    return Err(SpannedError {
+                        message: format!(
+                            "`{field_name_str}` requires a char value: `{field_name_str} = 'v'`"
                         ),
                         span: field_span,
                         help: field_def.doc.clone(),

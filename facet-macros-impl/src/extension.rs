@@ -116,9 +116,12 @@ pub fn ext_attr(input: TokenStream) -> TokenStream {
         }
     };
 
-    // Build the output: ns::__attr!(attr_name { ... })
+    // Build the output: ns::__attr!(@ns { ns } attr_name { ... })
     // The attr_ident preserves its original span!
+    // We pass the namespace so __attr! can do `use $ns::Attr as __ExtAttr;`
     let __attr = Ident::new("__attr", attr_ident.span());
+    let at = Punct::new('@', Spacing::Alone);
+    let ns_keyword = Ident::new("ns", attr_ident.span());
 
     let colon1 = Punct::new(':', Spacing::Joint);
     let colon2 = Punct::new(':', Spacing::Alone);
@@ -126,14 +129,24 @@ pub fn ext_attr(input: TokenStream) -> TokenStream {
 
     // Build the macro invocation tokens manually to preserve spans
     let mut output = TokenStream::new();
-    output.extend([TokenTree::Ident(ns_ident)]);
+    output.extend([TokenTree::Ident(ns_ident.clone())]);
     output.extend([TokenTree::Punct(colon1.clone())]);
     output.extend([TokenTree::Punct(colon2.clone())]);
     output.extend([TokenTree::Ident(__attr)]);
     output.extend([TokenTree::Punct(bang)]);
 
-    // Build the macro arguments: (attr_name { ... })
+    // Build the macro arguments: (@ns { ns_ident } attr_name { ... })
     let mut macro_args = TokenStream::new();
+    // @ns { ns_ident }
+    macro_args.extend([TokenTree::Punct(at)]);
+    macro_args.extend([TokenTree::Ident(ns_keyword)]);
+    let mut ns_group_content = TokenStream::new();
+    ns_group_content.extend([TokenTree::Ident(ns_ident)]);
+    macro_args.extend([TokenTree::Group(Group::new(
+        Delimiter::Brace,
+        ns_group_content,
+    ))]);
+    // attr_name { ... }
     macro_args.extend([TokenTree::Ident(attr_ident)]);
     macro_args.extend([TokenTree::Group(body)]);
 

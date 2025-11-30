@@ -48,53 +48,21 @@ pub use facet_reflect::{Span, Spanned};
 ///
 /// Users import `use facet_yaml::serde;` to use these attributes.
 pub mod serde {
-    pub use crate::__serde_attr as __attr;
-    pub use crate::__serde_rename as __rename;
-}
+    // Generate serde attribute grammar using the grammar DSL.
+    // This generates:
+    // - `Attr` enum with all serde attribute variants
+    // - `__attr!` macro that dispatches to attribute handlers and returns ExtensionAttr
+    // - `__parse_attr!` macro for parsing (internal use)
+    facet::define_attr_grammar! {
+        ns "serde";
+        crate_path ::facet_yaml::serde;
 
-/// Dispatcher macro for serde extension attributes.
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __serde_attr {
-    (rename { $($tt:tt)* }) => { $crate::__serde_rename!{ $($tt)* } };
-
-    // Unknown attribute: use __attr_error! for typo suggestions
-    ($unknown:ident $($tt:tt)*) => {
-        ::facet::__attr_error!(
-            @known_attrs { rename }
-            @got_name { $unknown }
-            @got_rest { $($tt)* }
-        )
-    };
-}
-
-/// The rename attribute for serde compatibility.
-///
-/// Usage: `#[facet(serde::rename = "name")]`
-#[macro_export]
-#[doc(hidden)]
-macro_rules! __serde_rename {
-    // Field with rename value: #[facet(serde::rename = "new_name")]
-    { $field:ident : $ty:ty | = $name:literal } => {{
-        static __VAL: ::core::option::Option<&'static str> = ::core::option::Option::Some($name);
-        ::facet::ExtensionAttr::new("serde", "rename", &__VAL)
-    }};
-    // Field without rename value (shouldn't happen, but handle)
-    { $field:ident : $ty:ty } => {{
-        static __VAL: ::core::option::Option<&'static str> = ::core::option::Option::None;
-        ::facet::ExtensionAttr::new("serde", "rename", &__VAL)
-    }};
-    // Container level
-    { } => {{
-        static __VAL: ::core::option::Option<&'static str> = ::core::option::Option::None;
-        ::facet::ExtensionAttr::new("serde", "rename", &__VAL)
-    }};
-    { | = $name:literal } => {{
-        static __VAL: ::core::option::Option<&'static str> = ::core::option::Option::Some($name);
-        ::facet::ExtensionAttr::new("serde", "rename", &__VAL)
-    }};
-    // Invalid syntax
-    { $($tt:tt)* } => {{
-        ::core::compile_error!("serde::rename expects `= \"name\"` syntax, e.g., #[facet(serde::rename = \"new_name\")]")
-    }};
+        /// Serde-compatible attribute types for field and container configuration.
+        pub enum Attr {
+            /// Rename a field during serialization/deserialization.
+            ///
+            /// Usage: `#[facet(serde::rename = "new_name")]`
+            Rename(&'static str),
+        }
+    }
 }

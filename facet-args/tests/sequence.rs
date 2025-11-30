@@ -7,7 +7,7 @@ mod common;
 fn test_simplest_value_singleton_list_named() {
     #[derive(Facet, Debug, PartialEq)]
     struct Args {
-        #[facet(args::named, args::short = "s")]
+        #[facet(args::named, args::short = 's')]
         strings: Vec<String>,
     }
 

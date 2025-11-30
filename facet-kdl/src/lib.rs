@@ -35,6 +35,7 @@ pub use serialize::{to_string, to_writer};
 // - `__parse_attr!` macro for parsing (internal use)
 facet::define_attr_grammar! {
     ns "kdl";
+    crate_path ::facet_kdl;
 
     /// KDL attribute types for field and container configuration.
     pub enum Attr {
