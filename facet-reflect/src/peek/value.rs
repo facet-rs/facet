@@ -1,9 +1,9 @@
 use core::{cmp::Ordering, marker::PhantomData, ptr::NonNull};
+#[cfg(feature = "alloc")]
+use facet_core::Field;
 use facet_core::{
     Def, Facet, PointerType, PtrConst, Shape, StructKind, Type, TypeNameOpts, UserType, ValueVTable,
 };
-#[cfg(feature = "alloc")]
-use facet_core::{Field, FieldAttribute};
 
 use crate::{PeekNdArray, PeekSet, ReflectError, ScalarType};
 
@@ -482,13 +482,10 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// of the current peek.
     #[cfg(feature = "alloc")]
     pub fn custom_serialization(&self, field: Field) -> Result<OwnedPeek<'mem>, ReflectError> {
-        if let Some(serialize_with) = field.vtable.serialize_with {
-            let Some(&FieldAttribute::SerializeInto(target_shape)) = field
-                .attributes
-                .iter()
-                .find(|&p| matches!(p, FieldAttribute::SerializeInto(_)))
-            else {
-                panic!("expected field attribute to be present with deserialize_with");
+        if let Some(serialize_with) = field.proxy_convert_out_fn() {
+            // Get the target shape from the proxy attribute
+            let Some(target_shape) = field.proxy_shape() else {
+                panic!("expected proxy attribute to be present with serialize_with");
             };
             let tptr = target_shape.allocate().map_err(|_| ReflectError::Unsized {
                 shape: target_shape,

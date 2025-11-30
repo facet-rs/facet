@@ -13,7 +13,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
-use facet_core::{Field, FieldFlags, Shape};
+use facet_core::{Field, Shape};
 
 /// A path of serialized key names for probing.
 /// Unlike FieldPath which tracks the internal type structure (including variant selections),
@@ -414,19 +414,15 @@ impl Resolution {
     /// This is useful for KDL deserialization where child nodes need to be
     /// processed separately from properties.
     pub fn child_fields(&self) -> impl Iterator<Item = &FieldInfo> {
-        self.fields
-            .values()
-            .filter(|f| f.field.flags.contains(FieldFlags::CHILD))
+        self.fields.values().filter(|f| f.field.is_child())
     }
 
-    /// Get all property fields (fields without the CHILD flag).
+    /// Get all property fields (fields without the child attribute).
     ///
     /// This is useful for KDL deserialization where properties are processed
     /// separately from child nodes.
     pub fn property_fields(&self) -> impl Iterator<Item = &FieldInfo> {
-        self.fields
-            .values()
-            .filter(|f| !f.field.flags.contains(FieldFlags::CHILD))
+        self.fields.values().filter(|f| !f.field.is_child())
     }
 
     /// Get all known key paths (for depth-aware probing).

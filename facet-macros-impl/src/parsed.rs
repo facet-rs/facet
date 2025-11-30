@@ -24,234 +24,69 @@ impl quote::ToTokens for IdentOrLiteral {
     }
 }
 
-/// All the supported facet attributes, e.g. `#[facet(sensitive)]` `#[facet(rename_all)]`, etc.
+/// A parsed facet attribute.
 ///
-/// Stands for `parsed facet attr`
+/// All attributes are now stored uniformly - either with a namespace (`kdl::child`)
+/// or without (`sensitive`). The grammar system handles validation and semantics.
 #[derive(Clone)]
-pub enum PFacetAttr {
-    /// Valid in field
-    /// `#[facet(sensitive)]` — must be censored in debug outputs
-    Sensitive,
-
-    /// Valid in container
-    /// `#[facet(opaque)]` — the inner field does not have to implement
-    /// `Facet`
-    Opaque,
-
-    /// Valid in container
-    /// `#[facet(transparent)]` — applied on things like `NonZero<T>`, `Utf8PathBuf`,
-    /// etc. — when you're doing the newtype pattern. `de/ser` is forwarded.
-    Transparent,
-
-    /// Valid in field
-    /// `#[facet(flatten)]` — flattens a field's contents
-    /// into the parent structure.
-    Flatten,
-
-    /// Valid in field
-    /// `#[facet(child)]` — marks a field as child node in a hierarchy
-    Child,
-
-    /// Valid in container
-    /// `#[facet(invariants = "Self::invariants_func")]` — returns a bool, is called
-    /// when doing `Partial::build`
-    Invariants {
-        /// The invariant check expression
-        expr: TokenStream,
-    },
-
-    /// Valid in container
-    /// `#[facet(deny_unknown_fields)]`
-    DenyUnknownFields,
-
-    /// Valid in field
-    /// `#[facet(default = expr)]` — when deserializing and missing, use `fn_name` to provide a default value
-    DefaultEquals {
-        /// The default value expression
-        expr: TokenStream,
-    },
-
-    /// Valid in field
-    /// `#[facet(default)]` — when deserializing and missing, use the field's value from
-    /// the container's `Default::default()`
-    Default,
-
-    /// Valid in field, enum variant, container
-    /// An extension attribute from a third-party crate, e.g., `#[facet(orm::primary_key)]`
-    Extension {
-        /// The namespace identifier (e.g., "orm") - keeps original span for diagnostics
-        ns: Ident,
-        /// The key identifier (e.g., "primary_key") - keeps original span for diagnostics
-        key: Ident,
-        /// The arguments as a TokenStream (for code generation)
-        args: TokenStream,
-    },
-
-    /// Valid in container
-    /// `#[facet(rename_all = "rule")]` — rename all fields following a rule
-    RenameAll {
-        /// The rename rule to apply
-        rule: RenameRule,
-    },
-
-    /// Valid in field, enum variant, or container
-    /// `#[facet(skip)]` — skip both serializing and deserializing this field.
-    Skip,
-
-    /// Valid in field, enum variant, or container
-    /// `#[facet(skip_serializing)]` — skip serializing this field. Like serde.
-    SkipSerializing,
-
-    /// Valid in field, enum variant, or container
-    /// `#[facet(skip_deserializing)]` — skip deserializing this field (use default value).
-    SkipDeserializing,
-
-    /// Valid in field, enum variant, or container
-    /// `#[facet(skip_serializing_if = "func")]` — skip serializing if the function returns true.
-    SkipSerializingIf {
-        /// The predicate function expression
-        expr: TokenStream,
-    },
-
-    /// Valid in container
-    /// `#[facet(type_tag = "com.example.MyType")]` — identify type by tag and serialize with this tag
-    TypeTag {
-        /// The type tag string
-        content: String,
-    },
-
-    /// Valid in field, enum variant, or container
-    /// `#[facet(deserialize_with = func)]` — support deserialization of the field using the specified function. takes the form `fn(&input_shape) -> output_type. where output_type can be any type, including opaque types.
-    DeserializeWith {
-        /// The custom deserialize function expression
-        expr: TokenStream,
-    },
-
-    /// Valid in field, enum variant, or container
-    /// `#[facet(serialize_with = func)]` — support serialization of the field using the specified function. takes the form `fn(&input_type) -> output_shape. where input_type can be any type, including opaque types.
-    SerializeWith {
-        /// The custom serialize function expression
-        expr: TokenStream,
-    },
-
-    /// Valid in container (enums only)
-    /// `#[facet(untagged)]` — for enums, variants are serialized without a tag
-    Untagged,
-
-    /// Valid in container (enums only)
-    /// `#[facet(tag = "type")]` — internally tagged enum (tag is inside the content)
-    /// or adjacently tagged when combined with `content`
-    Tag {
-        /// The tag field name
-        name: String,
-    },
-
-    /// Valid in container (enums only)
-    /// `#[facet(content = "data")]` — used with `tag` for adjacently tagged enums
-    Content {
-        /// The content field name
-        name: String,
-    },
+pub struct PFacetAttr {
+    /// The namespace (e.g., "kdl", "args"). None for builtin attributes.
+    pub ns: Option<Ident>,
+    /// The key (e.g., "child", "sensitive", "rename")
+    pub key: Ident,
+    /// The arguments as a TokenStream
+    pub args: TokenStream,
 }
 
 impl PFacetAttr {
-    /// Parse a `FacetAttr` attribute into a `PFacetAttr`.
-    /// Pushes to `dest` for each parsed attribute.
-    pub fn parse(
-        facet_attr: &crate::FacetAttr,
-        display_name: &mut String,
-        dest: &mut Vec<PFacetAttr>,
-    ) {
-        use crate::FacetInner;
+    /// Parse a `FacetAttr` attribute into `PFacetAttr` entries.
+    ///
+    /// All attributes are captured uniformly as ns/key/args.
+    /// The grammar system handles validation - we just capture the tokens.
+    pub fn parse(facet_attr: &crate::FacetAttr, dest: &mut Vec<PFacetAttr>) {
+        use crate::{AttrArgs, FacetInner, ToTokens};
 
         for attr in facet_attr.inner.content.iter().map(|d| &d.value) {
             match attr {
-                FacetInner::Sensitive(_) => dest.push(PFacetAttr::Sensitive),
-                FacetInner::Opaque(_) => dest.push(PFacetAttr::Opaque),
-                FacetInner::Flatten(_) => dest.push(PFacetAttr::Flatten),
-                FacetInner::Child(_) => dest.push(PFacetAttr::Child),
-                FacetInner::Transparent(_) => dest.push(PFacetAttr::Transparent),
-
-                FacetInner::Invariants(invariant) => {
-                    let expr = invariant.expr.to_token_stream();
-                    dest.push(PFacetAttr::Invariants { expr });
-                }
-                FacetInner::DenyUnknownFields(_) => dest.push(PFacetAttr::DenyUnknownFields),
-                FacetInner::DefaultEquals(default_equals) => dest.push(PFacetAttr::DefaultEquals {
-                    expr: default_equals.expr.to_token_stream(),
-                }),
-                FacetInner::Default(_) => dest.push(PFacetAttr::Default),
-                FacetInner::Rename(rename) => {
-                    *display_name = rename.value.as_str().to_string();
-                }
-                FacetInner::RenameAll(rename_all) => {
-                    let rule_str = rename_all.value.as_str();
-                    if let Some(rule) = RenameRule::from_str(rule_str) {
-                        dest.push(PFacetAttr::RenameAll { rule });
-                    } else {
-                        panic!("Unknown #[facet(rename_all = ...)] rule: {rule_str}");
-                    }
-                }
-                FacetInner::Extension(ext) => {
-                    use crate::{ExtensionArgs, ToTokens};
+                // Namespaced attributes like `kdl::child` or `args::short = 'v'`
+                FacetInner::Namespaced(ext) => {
                     let args = match &ext.args {
-                        Some(ExtensionArgs::Parens(p)) => p.content.to_token_stream(),
-                        Some(ExtensionArgs::Equals(e)) => {
-                            // Just use value - _eq is zero-sized and creates new token with default span
-                            e.value.to_token_stream()
-                        }
+                        Some(AttrArgs::Parens(p)) => p.content.to_token_stream(),
+                        Some(AttrArgs::Equals(e)) => e.value.to_token_stream(),
                         None => TokenStream::new(),
                     };
-                    dest.push(PFacetAttr::Extension {
-                        ns: ext.ns.clone(),
+                    dest.push(PFacetAttr {
+                        ns: Some(ext.ns.clone()),
                         key: ext.key.clone(),
                         args,
                     });
                 }
-                FacetInner::Skip(_) => {
-                    dest.push(PFacetAttr::Skip);
-                }
-                FacetInner::SkipSerializing(_) => {
-                    dest.push(PFacetAttr::SkipSerializing);
-                }
-                FacetInner::SkipDeserializing(_) => {
-                    dest.push(PFacetAttr::SkipDeserializing);
-                }
-                FacetInner::SkipSerializingIf(skip_if) => {
-                    dest.push(PFacetAttr::SkipSerializingIf {
-                        expr: skip_if.expr.to_token_stream(),
-                    });
-                }
-                FacetInner::TypeTag(type_tag) => {
-                    dest.push(PFacetAttr::TypeTag {
-                        content: type_tag.expr.as_str().to_string(),
-                    });
-                }
-                FacetInner::DeserializeWith(deserialize_with) => {
-                    dest.push(PFacetAttr::DeserializeWith {
-                        expr: deserialize_with.expr.to_token_stream(),
-                    });
-                }
-                FacetInner::SerializeWith(serialize_with) => {
-                    dest.push(PFacetAttr::SerializeWith {
-                        expr: serialize_with.expr.to_token_stream(),
-                    });
-                }
-                FacetInner::Untagged(_) => {
-                    dest.push(PFacetAttr::Untagged);
-                }
-                FacetInner::Tag(tag) => {
-                    dest.push(PFacetAttr::Tag {
-                        name: tag.value.as_str().to_string(),
-                    });
-                }
-                FacetInner::Content(content) => {
-                    dest.push(PFacetAttr::Content {
-                        name: content.value.as_str().to_string(),
+
+                // Simple (builtin) attributes like `sensitive` or `rename = "foo"`
+                FacetInner::Simple(simple) => {
+                    let args = match &simple.args {
+                        Some(AttrArgs::Parens(p)) => p.content.to_token_stream(),
+                        Some(AttrArgs::Equals(e)) => e.value.to_token_stream(),
+                        None => TokenStream::new(),
+                    };
+                    dest.push(PFacetAttr {
+                        ns: None,
+                        key: simple.key.clone(),
+                        args,
                     });
                 }
             }
         }
+    }
+
+    /// Returns true if this is a builtin attribute (no namespace)
+    pub fn is_builtin(&self) -> bool {
+        self.ns.is_none()
+    }
+
+    /// Returns the key as a string
+    pub fn key_str(&self) -> String {
+        self.key.to_string()
     }
 }
 
@@ -535,13 +370,6 @@ impl PAttrs {
                         panic!("Multiple #[repr] attributes found");
                     }
 
-                    // Parse repr attribute, e.g. #[repr(C)], #[repr(transparent)], #[repr(u8)]
-                    // repr_attr.attr.content is a Vec<Delimited<Ident, Operator<','>>>
-                    // which represents something like ["C"], or ["u8"], or ["transparent"]
-                    //
-                    // We should parse each possible repr kind. But usually there's only one item.
-                    //
-                    // We'll take the first one and parse it, ignoring the rest.
                     repr = match PRepr::parse(repr_attr) {
                         Some(parsed) => Some(parsed),
                         None => {
@@ -553,7 +381,7 @@ impl PAttrs {
                     };
                 }
                 crate::AttributeInner::Facet(facet_attr) => {
-                    PFacetAttr::parse(facet_attr, display_name, &mut facet_attrs);
+                    PFacetAttr::parse(facet_attr, &mut facet_attrs);
                 }
                 _ => {
                     // Ignore unknown AttributeInner types
@@ -561,9 +389,26 @@ impl PAttrs {
             }
         }
 
+        // Extract rename and rename_all from parsed attrs
         for attr in &facet_attrs {
-            if let PFacetAttr::RenameAll { rule } = attr {
-                rename_all = Some(*rule);
+            if attr.is_builtin() {
+                match attr.key_str().as_str() {
+                    "rename" => {
+                        let s = attr.args.to_string();
+                        let trimmed = s.trim().trim_matches('"');
+                        *display_name = trimmed.to_string();
+                    }
+                    "rename_all" => {
+                        let s = attr.args.to_string();
+                        let rule_str = s.trim().trim_matches('"');
+                        if let Some(rule) = RenameRule::from_str(rule_str) {
+                            rename_all = Some(rule);
+                        } else {
+                            panic!("Unknown #[facet(rename_all = ...)] rule: {rule_str}");
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -575,25 +420,19 @@ impl PAttrs {
         }
     }
 
-    pub(crate) fn is_transparent(&self) -> bool {
+    /// Check if a builtin attribute with the given key exists
+    pub fn has_builtin(&self, key: &str) -> bool {
         self.facet
             .iter()
-            .any(|attr| matches!(attr, PFacetAttr::Transparent))
+            .any(|a| a.is_builtin() && a.key_str() == key)
     }
 
-    pub(crate) fn is_opaque(&self) -> bool {
+    /// Get the args of a builtin attribute with the given key (if present)
+    pub fn get_builtin_args(&self, key: &str) -> Option<String> {
         self.facet
             .iter()
-            .any(|attr| matches!(attr, PFacetAttr::Opaque))
-    }
-
-    pub(crate) fn type_tag(&self) -> Option<&str> {
-        for attr in &self.facet {
-            if let PFacetAttr::TypeTag { content } = attr {
-                return Some(content);
-            }
-        }
-        None
+            .find(|a| a.is_builtin() && a.key_str() == key)
+            .map(|a| a.args.to_string().trim().trim_matches('"').to_string())
     }
 }
 

@@ -1,20 +1,21 @@
 ---
 source: facet-json/tests/tenant-config.rs
+assertion_line: 81
 expression: result
 ---
 Err(
     JsonError {
         kind: MissingField {
-            field: "cookie_sauce",
+            field: "domain_aliases",
             object_start: Some(
                 Span {
-                    offset: 211,
+                    offset: 13,
                     len: 1,
                 },
             ),
             object_end: Some(
                 Span {
-                    offset: 598,
+                    offset: 606,
                     len: 1,
                 },
             ),

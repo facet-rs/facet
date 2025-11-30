@@ -225,7 +225,6 @@ macro_rules! impl_facet_for_integer {
                                 // fact, store $type::NonZeroInner.
                                 .shape(|| <$type>::SHAPE)
                                 .offset(0)
-                                .flags(FieldFlags::EMPTY)
                                 .build()]
                         },
                     })))

@@ -2,9 +2,10 @@
 
 use std::io::Write;
 
-use facet_core::{Facet, Field, FieldFlags};
+use facet_core::{Facet, Field};
 use facet_reflect::{HasFields, Peek, is_spanned_shape};
 
+use crate::deserialize::KdlFieldExt;
 use crate::error::{KdlError, KdlErrorKind};
 
 pub(crate) type Result<T> = std::result::Result<T, KdlError>;
@@ -151,9 +152,9 @@ impl<W: Write> KdlSerializer<W> {
             .map_err(|_| KdlErrorKind::SerializeNotStruct)?;
 
         for (field, field_peek) in struct_peek.fields() {
-            if field.flags.contains(FieldFlags::CHILD) {
+            if field.is_kdl_child() {
                 self.serialize_child_field(&field, field_peek)?;
-            } else if field.has_extension_attr("kdl", "children") {
+            } else if field.has_attr(Some("kdl"), "children") {
                 self.serialize_children_field(&field, field_peek)?;
             }
         }
@@ -287,23 +288,21 @@ impl<W: Write> KdlSerializer<W> {
 
         // First pass: serialize arguments and properties inline
         for (field, field_peek) in enum_peek.fields() {
-            if field.has_extension_attr("kdl", "node_name") {
+            if field.has_attr(Some("kdl"), "node_name") {
                 // Skip node_name field - it's used for the node name itself
                 continue;
             }
 
-            if field.has_extension_attr("kdl", "argument") {
+            if field.has_attr(Some("kdl"), "argument") {
                 self.serialize_argument(field_peek)?;
-            } else if field.has_extension_attr("kdl", "arguments") {
+            } else if field.has_attr(Some("kdl"), "arguments") {
                 self.serialize_arguments(field_peek)?;
-            } else if field.has_extension_attr("kdl", "property") {
+            } else if field.has_attr(Some("kdl"), "property") {
                 self.serialize_property(field.name, field_peek)?;
-            } else if field.flags.contains(FieldFlags::CHILD)
-                || field.has_extension_attr("kdl", "children")
-            {
+            } else if field.is_kdl_child() || field.has_attr(Some("kdl"), "children") {
                 has_children = true;
                 children_to_serialize.push((field, field_peek));
-            } else if field.flags.contains(FieldFlags::FLATTEN) {
+            } else if field.is_flattened() {
                 // Flattened fields in enum variants: serialize their contents inline
                 self.serialize_flattened_field(
                     field_peek,
@@ -319,7 +318,7 @@ impl<W: Write> KdlSerializer<W> {
             self.indent += 1;
 
             for (field, field_peek) in children_to_serialize {
-                if field.flags.contains(FieldFlags::CHILD) {
+                if field.is_kdl_child() {
                     self.serialize_child_field(&field, field_peek)?;
                 } else {
                     self.serialize_children_field(&field, field_peek)?;
@@ -343,23 +342,21 @@ impl<W: Write> KdlSerializer<W> {
 
         // First pass: serialize arguments and properties inline
         for (field, field_peek) in struct_peek.fields() {
-            if field.has_extension_attr("kdl", "node_name") {
+            if field.has_attr(Some("kdl"), "node_name") {
                 // Skip node_name field - it's used for the node name itself
                 continue;
             }
 
-            if field.has_extension_attr("kdl", "argument") {
+            if field.has_attr(Some("kdl"), "argument") {
                 self.serialize_argument(field_peek)?;
-            } else if field.has_extension_attr("kdl", "arguments") {
+            } else if field.has_attr(Some("kdl"), "arguments") {
                 self.serialize_arguments(field_peek)?;
-            } else if field.has_extension_attr("kdl", "property") {
+            } else if field.has_attr(Some("kdl"), "property") {
                 self.serialize_property(field.name, field_peek)?;
-            } else if field.flags.contains(FieldFlags::CHILD)
-                || field.has_extension_attr("kdl", "children")
-            {
+            } else if field.is_kdl_child() || field.has_attr(Some("kdl"), "children") {
                 has_children = true;
                 children_to_serialize.push((field, field_peek));
-            } else if field.flags.contains(FieldFlags::FLATTEN) {
+            } else if field.is_flattened() {
                 // Flattened fields: serialize their contents inline (not as a nested node)
                 self.serialize_flattened_field(
                     field_peek,
@@ -375,7 +372,7 @@ impl<W: Write> KdlSerializer<W> {
             self.indent += 1;
 
             for (field, field_peek) in children_to_serialize {
-                if field.flags.contains(FieldFlags::CHILD) {
+                if field.is_kdl_child() {
                     self.serialize_child_field(&field, field_peek)?;
                 } else {
                     self.serialize_children_field(&field, field_peek)?;
@@ -462,18 +459,16 @@ impl<W: Write> KdlSerializer<W> {
         has_children: &mut bool,
         children_to_serialize: &mut Vec<(Field, Peek<'mem, 'facet>)>,
     ) -> Result<()> {
-        if field.has_extension_attr("kdl", "argument") {
+        if field.has_attr(Some("kdl"), "argument") {
             self.serialize_argument(field_peek)?;
-        } else if field.has_extension_attr("kdl", "arguments") {
+        } else if field.has_attr(Some("kdl"), "arguments") {
             self.serialize_arguments(field_peek)?;
-        } else if field.has_extension_attr("kdl", "property") {
+        } else if field.has_attr(Some("kdl"), "property") {
             self.serialize_property(field.name, field_peek)?;
-        } else if field.flags.contains(FieldFlags::CHILD)
-            || field.has_extension_attr("kdl", "children")
-        {
+        } else if field.is_kdl_child() || field.has_attr(Some("kdl"), "children") {
             *has_children = true;
             children_to_serialize.push((*field, field_peek));
-        } else if field.flags.contains(FieldFlags::FLATTEN) {
+        } else if field.is_flattened() {
             // Nested flatten - recurse
             self.serialize_flattened_field(field_peek, has_children, children_to_serialize)?;
         }
@@ -611,7 +606,7 @@ impl<W: Write> KdlSerializer<W> {
         type_name: Option<&'static str>,
     ) -> Result<String> {
         for (field, field_peek) in struct_peek.fields() {
-            if field.has_extension_attr("kdl", "node_name") {
+            if field.has_attr(Some("kdl"), "node_name") {
                 // Try direct string first
                 if let Some(s) = field_peek.as_str() {
                     return Ok(s.to_string());

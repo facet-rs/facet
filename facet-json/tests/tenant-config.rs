@@ -25,7 +25,7 @@ pub struct TenantSecrets {
     pub patreon: Option<PatreonSecrets>,
     pub github: Option<GitHubSecrets>,
     /// Derived cookie sauce for this tenant (derived from global secret)
-    #[facet(optional)]
+    #[facet(default)]
     pub cookie_sauce: Option<String>,
 }
 

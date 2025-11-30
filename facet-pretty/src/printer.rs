@@ -9,8 +9,8 @@ use core::{
 use std::hash::DefaultHasher;
 
 use facet_core::{
-    Def, DynDateTimeKind, DynValueKind, Facet, Field, FieldFlags, PointerType, PrimitiveType,
-    SequenceType, Shape, StructKind, StructType, TextualType, Type, TypeNameOpts, UserType,
+    Def, DynDateTimeKind, DynValueKind, Facet, Field, PointerType, PrimitiveType, SequenceType,
+    Shape, StructKind, StructType, TextualType, Type, TypeNameOpts, UserType,
 };
 use facet_reflect::{Peek, ValueId};
 
@@ -857,7 +857,7 @@ impl PrettyPrinter {
                     }
                 }
 
-                if fields[idx].flags.contains(FieldFlags::SENSITIVE) {
+                if fields[idx].is_sensitive() {
                     self.write_redacted(f, "[REDACTED]")?;
                 } else {
                     self.format_peek_internal_(
@@ -912,7 +912,7 @@ impl PrettyPrinter {
 
                 self.write_field_name(f, fields[idx].name)?;
                 self.write_punctuation(f, ": ")?;
-                if fields[idx].flags.contains(FieldFlags::SENSITIVE) {
+                if fields[idx].is_sensitive() {
                     self.write_redacted(f, "[REDACTED]")?;
                 } else {
                     self.format_peek_internal_(

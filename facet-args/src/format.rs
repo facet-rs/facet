@@ -3,7 +3,7 @@ use crate::{
     error::{ArgsError, ArgsErrorKind, ArgsErrorWithInput},
     span::Span,
 };
-use facet_core::{Def, Facet, Field, FieldFlags, Shape, Type, UserType};
+use facet_core::{Def, Facet, Field, Shape, Type, UserType};
 use facet_reflect::{HeapValue, Partial};
 use heck::ToSnakeCase;
 
@@ -250,7 +250,7 @@ impl<'input> Context<'input> {
                     let mut chosen_field_index: Option<usize> = None;
 
                     for (field_index, field) in fields.iter().enumerate() {
-                        let is_positional = field.has_extension_attr("args", "positional");
+                        let is_positional = field.has_attr(Some("args"), "positional");
                         if !is_positional {
                             continue;
                         }
@@ -293,7 +293,7 @@ impl<'input> Context<'input> {
                     continue;
                 }
 
-                if field.flags.contains(FieldFlags::DEFAULT) {
+                if field.has_default() {
                     log::trace!("Setting #{field_index} field to default: {field:?}");
                     p = p.set_nth_field_to_default(field_index)?;
                 } else if (field.shape)().is_shape(bool::SHAPE) {
@@ -383,18 +383,15 @@ fn test_split() {
 fn find_field_index_with_short(fields: &'static [Field], short: &str) -> Option<usize> {
     let short_char = short.chars().next()?;
     fields.iter().position(|f| {
-        if let Some(ext) = f.get_extension_attr("args", "short") {
+        if let Some(ext) = f.get_attr(Some("args"), "short") {
             // The attribute stores the full Attr enum
-            if let Some(attr) = ext.get_as::<crate::Attr>() {
-                match attr {
-                    crate::Attr::Short(opt_char) => match opt_char {
-                        Some(c) => *c == short_char,
-                        None => {
-                            // No explicit short specified, use first char of field name
-                            f.name.starts_with(short_char)
-                        }
-                    },
-                    _ => false,
+            if let Some(crate::Attr::Short(opt_char)) = ext.get_as::<crate::Attr>() {
+                match opt_char {
+                    Some(c) => *c == short_char,
+                    None => {
+                        // No explicit short specified, use first char of field name
+                        f.name.starts_with(short_char)
+                    }
                 }
             } else {
                 false

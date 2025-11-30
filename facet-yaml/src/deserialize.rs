@@ -9,8 +9,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use facet_core::{
-    Characteristic, Def, Facet, Field, FieldFlags, NumericType, PrimitiveType, ShapeLayout,
-    StructKind, Type, UserType,
+    Characteristic, Def, Facet, Field, NumericType, PrimitiveType, ShapeLayout, StructKind, Type,
+    UserType,
 };
 use facet_reflect::Partial;
 use saphyr_parser::{Event, Parser, ScalarStyle, Span as SaphyrSpan, SpannedEventReceiver};
@@ -963,8 +963,8 @@ impl<'input> YamlDeserializer<'input> {
                 continue;
             }
 
-            let field_has_default_flag = field.flags.contains(FieldFlags::DEFAULT);
-            let field_has_default_fn = field.vtable.default_fn.is_some();
+            let field_has_default_flag = field.has_default();
+            let field_has_default_fn = field.default_fn().is_some();
             let field_type_has_default = field.shape().is(Characteristic::Default);
 
             if field_has_default_fn
@@ -1506,7 +1506,7 @@ fn is_yaml_null(value: &str) -> bool {
 /// Get the serialized name of a field (respecting rename attributes).
 fn get_serialized_name(field: &Field) -> &'static str {
     // Look for rename attribute using extension syntax: #[facet(serde::rename = "value")]
-    if let Some(ext) = field.get_extension_attr("serde", "rename") {
+    if let Some(ext) = field.get_attr(Some("serde"), "rename") {
         if let Some(Some(name)) = ext.get_as::<Option<&'static str>>() {
             return name;
         }

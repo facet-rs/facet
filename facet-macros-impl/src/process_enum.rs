@@ -1,7 +1,6 @@
 use super::*;
-// Import PRepr, PrimitiveRepr, PStructField, etc. from parsed module
 use crate::{
-    parsed::{IdentOrLiteral, PFacetAttr, PRepr, PVariantKind, PrimitiveRepr},
+    parsed::{IdentOrLiteral, PRepr, PVariantKind, PrimitiveRepr},
     process_struct::gen_field_from_pfield,
 };
 use quote::{format_ident, quote};
@@ -19,7 +18,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         .attrs
         .facet
         .iter()
-        .any(|a| matches!(a, PFacetAttr::Opaque));
+        .any(|a| a.is_builtin() && a.key_str() == "opaque");
 
     let type_name_fn = generate_type_name_fn(enum_name, parsed.generics.as_ref(), opaque);
 
@@ -38,36 +37,9 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     let container_attributes_tokens = {
         let mut attribute_tokens: Vec<TokenStream> = Vec::new();
         for attr in &pe.container.attrs.facet {
-            match attr {
-                PFacetAttr::DenyUnknownFields => {
-                    attribute_tokens.push(quote! { ::facet::ShapeAttribute::DenyUnknownFields });
-                }
-                PFacetAttr::Extension { ns, key, args } => {
-                    let ext_attr = emit_extension_attr(ns, key, args);
-                    attribute_tokens.push(quote! { ::facet::ShapeAttribute::Extension(#ext_attr) });
-                }
-                PFacetAttr::RenameAll { rule } => {
-                    // RenameAll is handled by PName logic, but add it as ShapeAttribute too
-                    let rule_str = rule.apply(""); // Hack to get str - improve RenameRule display
-                    attribute_tokens.push(quote! { ::facet::ShapeAttribute::RenameAll(#rule_str) });
-                }
-                PFacetAttr::Invariants { .. } => {
-                    // Note: Facet vtable does not currently support invariants directly on enums
-                    // Maybe panic or warn here? For now, ignoring.
-                    panic!("Invariants are not supported on enums")
-                }
-                PFacetAttr::Untagged => {
-                    attribute_tokens.push(quote! { ::facet::ShapeAttribute::Untagged });
-                }
-                PFacetAttr::Tag { name } => {
-                    attribute_tokens.push(quote! { ::facet::ShapeAttribute::Tag(#name) });
-                }
-                PFacetAttr::Content { name } => {
-                    attribute_tokens.push(quote! { ::facet::ShapeAttribute::Content(#name) });
-                }
-                // Opaque, Transparent, SkipSerializing/If, Default/Equals are not relevant/valid for enum containers.
-                _ => {}
-            }
+            // All attributes go through grammar dispatch
+            let ext_attr = emit_attr(attr);
+            attribute_tokens.push(quote! { #ext_attr });
         }
 
         if attribute_tokens.is_empty() {
@@ -78,7 +50,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     };
 
     let type_tag_maybe = {
-        if let Some(type_tag) = pe.container.attrs.type_tag() {
+        if let Some(type_tag) = pe.container.attrs.get_builtin_args("type_tag") {
             quote! { .type_tag(#type_tag) }
         } else {
             quote! {}
@@ -191,30 +163,22 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
 
                 let display_name = pv.name.effective.clone();
                 let variant_attrs_tokens = {
-                    let mut tokens = Vec::new();
                     let name_token = TokenTree::Literal(Literal::string(&display_name));
-                    // Attributes from PAttrs
+                    // All attributes go through grammar dispatch
                     if pv.attrs.facet.is_empty() {
-                        tokens.push(quote! { .name(#name_token) });
+                        quote! { .name(#name_token) }
                     } else {
-                        let mut attrs_list = Vec::new();
-                        for attr in &pv.attrs.facet {
-                            if let PFacetAttr::Extension { ns, key, args } = attr {
-                                let ext_attr = emit_extension_attr(ns, key, args);
-                                attrs_list.push(
-                                    quote! { ::facet::VariantAttribute::Extension(#ext_attr) },
-                                );
-                            }
-                        }
-                        if attrs_list.is_empty() {
-                            tokens.push(quote! { .name(#name_token) });
-                        } else {
-                            tokens.push(
-                                quote! { .name(#name_token).attributes(&[#(#attrs_list),*]) },
-                            );
-                        }
+                        let attrs_list: Vec<TokenStream> = pv
+                            .attrs
+                            .facet
+                            .iter()
+                            .map(|attr| {
+                                let ext_attr = emit_attr(attr);
+                                quote! { #ext_attr }
+                            })
+                            .collect();
+                        quote! { .name(#name_token).attributes(&const { [#(#attrs_list),*] }) }
                     }
-                    quote! { #(#tokens)* }
                 };
 
                 let maybe_doc = match &pv.attrs.doc[..] {
@@ -409,29 +373,22 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
 
                 let display_name = pv.name.effective.clone();
                 let variant_attrs_tokens = {
-                    let mut tokens = Vec::new();
                     let name_token = TokenTree::Literal(Literal::string(&display_name));
+                    // All attributes go through grammar dispatch
                     if pv.attrs.facet.is_empty() {
-                        tokens.push(quote! { .name(#name_token) });
+                        quote! { .name(#name_token) }
                     } else {
-                        let mut attrs_list = Vec::new();
-                        for attr in &pv.attrs.facet {
-                            if let PFacetAttr::Extension { ns, key, args } = attr {
-                                let ext_attr = emit_extension_attr(ns, key, args);
-                                attrs_list.push(
-                                    quote! { ::facet::VariantAttribute::Extension(#ext_attr) },
-                                );
-                            }
-                        }
-                        if attrs_list.is_empty() {
-                            tokens.push(quote! { .name(#name_token) });
-                        } else {
-                            tokens.push(
-                                quote! { .name(#name_token).attributes(&[#(#attrs_list),*]) },
-                            );
-                        }
+                        let attrs_list: Vec<TokenStream> = pv
+                            .attrs
+                            .facet
+                            .iter()
+                            .map(|attr| {
+                                let ext_attr = emit_attr(attr);
+                                quote! { #ext_attr }
+                            })
+                            .collect();
+                        quote! { .name(#name_token).attributes(&const { [#(#attrs_list),*] }) }
                     }
-                    quote! { #(#tokens)* }
                 };
 
                 let maybe_doc = match &pv.attrs.doc[..] {

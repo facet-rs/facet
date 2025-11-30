@@ -95,26 +95,36 @@ impl Variant {
         VariantBuilder::new()
     }
 
-    /// Checks whether the `Variant` has an extension attribute with the given namespace and key.
+    /// Checks whether the `Variant` has an attribute with the given namespace and key.
+    ///
+    /// Use `None` for builtin attributes, `Some("ns")` for namespaced attributes.
     #[inline]
-    pub fn has_extension_attr(&self, ns: &str, key: &str) -> bool {
-        self.attributes.iter().any(|attr| {
-            let VariantAttribute::Extension(ext) = attr;
-            ext.ns == ns && ext.key == key
-        })
+    pub fn has_attr(&self, ns: Option<&str>, key: &str) -> bool {
+        self.attributes
+            .iter()
+            .any(|attr| attr.ns == ns && attr.key == key)
     }
 
-    /// Gets an extension attribute by namespace and key.
+    /// Gets an attribute by namespace and key.
+    ///
+    /// Use `None` for builtin attributes, `Some("ns")` for namespaced attributes.
     #[inline]
-    pub fn get_extension_attr(&self, ns: &str, key: &str) -> Option<&super::ExtensionAttr> {
-        self.attributes.iter().find_map(|attr| {
-            let VariantAttribute::Extension(ext) = attr;
-            if ext.ns == ns && ext.key == key {
-                Some(ext)
-            } else {
-                None
-            }
-        })
+    pub fn get_attr(&self, ns: Option<&str>, key: &str) -> Option<&super::ExtensionAttr> {
+        self.attributes
+            .iter()
+            .find(|attr| attr.ns == ns && attr.key == key)
+    }
+
+    /// Checks whether the `Variant` has a builtin attribute with the given key.
+    #[inline]
+    pub fn has_builtin_attr(&self, key: &str) -> bool {
+        self.has_attr(None, key)
+    }
+
+    /// Gets a builtin attribute by key.
+    #[inline]
+    pub fn get_builtin_attr(&self, key: &str) -> Option<&super::ExtensionAttr> {
+        self.get_attr(None, key)
     }
 }
 
@@ -182,14 +192,9 @@ impl VariantBuilder {
     }
 }
 
-/// An attribute that can be set on an enum variant
-#[derive(Debug, PartialEq)]
-#[repr(C)]
-pub enum VariantAttribute {
-    /// An extension attribute from a third-party crate
-    /// e.g., `#[facet(serde::rename = "other_name")]`
-    Extension(super::ExtensionAttr),
-}
+/// An attribute that can be set on an enum variant.
+/// This is now just an alias for `ExtensionAttr` - all attributes use the same representation.
+pub type VariantAttribute = super::ExtensionAttr;
 
 /// All possible representations for Rust enums — ie. the type/size of the discriminant
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]

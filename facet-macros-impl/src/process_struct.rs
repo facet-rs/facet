@@ -11,173 +11,92 @@ pub(crate) fn gen_field_from_pfield(
 ) -> TokenStream {
     let field_name_effective = &field.name.effective;
     let field_name_raw = &field.name.raw;
-    let field_type = &field.ty; // TokenStream of the type
-
-    let tts: crate::TokenStream = field_type.clone();
-    let field_type_static = tts
-        .to_token_iter()
-        .parse::<Vec<LifetimeOrTt>>()
-        .unwrap()
-        .into_iter()
-        .map(|lott| match lott {
-            LifetimeOrTt::TokenTree(tt) => quote! { #tt },
-            LifetimeOrTt::Lifetime(_) => quote! { 'static },
-        })
-        .collect::<TokenStream>();
+    let field_type = &field.ty;
 
     let bgp_without_bounds = bgp.display_without_bounds();
 
-    // Determine field flags and other attributes from field.attrs
-    let mut flags = quote! {};
-    let mut flags_empty = true;
-
-    let mut vtable_items: Vec<TokenStream> = vec![];
-    let mut attribute_list: Vec<TokenStream> = vec![];
     let doc_lines: Vec<String> = field
         .attrs
         .doc
         .iter()
         .map(|doc| doc.as_str().replace("\\\"", "\""))
         .collect();
-    let mut shape_of = quote! { shape_of };
-    let mut asserts: Vec<TokenStream> = vec![];
 
-    // Process attributes other than rename rules, which are handled by PName
-    for attr in &field.attrs.facet {
-        match attr {
-            PFacetAttr::Sensitive => {
-                if flags_empty {
-                    flags_empty = false;
-                    flags = quote! { ::facet::FieldFlags::SENSITIVE };
-                } else {
-                    flags = quote! { #flags.union(::facet::FieldFlags::SENSITIVE) };
-                }
-            }
-            PFacetAttr::Default => {
-                if flags_empty {
-                    flags_empty = false;
-                    flags = quote! { ::facet::FieldFlags::DEFAULT };
-                } else {
-                    flags = quote! { #flags.union(::facet::FieldFlags::DEFAULT) };
-                }
-                asserts.push(quote! {
-                    ::facet::static_assertions::assert_impl_all!(#field_type_static: ::core::default::Default);
-                })
-            }
-            PFacetAttr::DefaultEquals { expr } => {
-                if flags_empty {
-                    flags_empty = false;
-                    flags = quote! { ::facet::FieldFlags::DEFAULT };
-                } else {
-                    flags = quote! { #flags.union(::facet::FieldFlags::DEFAULT) };
-                }
+    // Check for opaque attribute to determine shape_of variant
+    // (Required at compile time - shape_of requires Facet, shape_of_opaque wraps in Opaque)
+    let shape_of = if field.attrs.has_builtin("opaque") {
+        quote! { shape_of_opaque }
+    } else {
+        quote! { shape_of }
+    };
 
-                vtable_items.push(quote! {
-                    .default_fn(|ptr| {
-                        unsafe { ptr.put::<#field_type>(#expr) }
-                    })
-                });
-            }
-            PFacetAttr::Child => {
-                if flags_empty {
-                    flags_empty = false;
-                    flags = quote! { ::facet::FieldFlags::CHILD };
-                } else {
-                    flags = quote! { #flags.union(::facet::FieldFlags::CHILD) };
-                }
-            }
-            PFacetAttr::Flatten => {
-                if flags_empty {
-                    flags_empty = false;
-                    flags = quote! { ::facet::FieldFlags::FLATTEN };
-                } else {
-                    flags = quote! { #flags.union(::facet::FieldFlags::FLATTEN) };
-                }
-            }
-            PFacetAttr::Opaque => {
-                shape_of = quote! { shape_of_opaque };
-            }
-            PFacetAttr::Extension { ns, key, args } => {
-                let ext_attr =
-                    emit_extension_attr_for_field(ns, key, args, field_name_raw, field_type);
-                attribute_list.push(quote! { ::facet::FieldAttribute::Extension(#ext_attr) });
+    // All attributes go through grammar dispatch
+    // Note: deserialize_with and serialize_with have been REMOVED from the grammar.
+    // Use #[facet(proxy = Type)] for custom serialization instead.
+    let mut attribute_list: Vec<TokenStream> = field
+        .attrs
+        .facet
+        .iter()
+        .map(|attr| {
+            let ext_attr = emit_attr_for_field(attr, field_name_raw, field_type);
+            quote! { #ext_attr }
+        })
+        .collect();
 
-                // Set CHILD flag for kdl::child extension attribute
-                if *ns == "kdl" && *key == "child" {
-                    if flags_empty {
-                        flags_empty = false;
-                        flags = quote! { ::facet::FieldFlags::CHILD };
-                    } else {
-                        flags = quote! { #flags.union(::facet::FieldFlags::CHILD) };
+    // Generate proxy conversion function pointers when proxy attribute is present
+    if let Some(attr) = field
+        .attrs
+        .facet
+        .iter()
+        .find(|a| a.is_builtin() && a.key_str() == "proxy")
+    {
+        let proxy_type = &attr.args;
+
+        // Generate __proxy_in: converts proxy -> field type via TryFrom
+        attribute_list.push(quote! {
+            ::facet::ExtensionAttr {
+                ns: ::core::option::Option::None,
+                key: "__proxy_in",
+                data: &const {
+                    extern crate alloc as __alloc;
+                    unsafe fn __proxy_convert_in<'mem>(
+                        proxy_ptr: ::facet::PtrConst<'mem>,
+                        field_ptr: ::facet::PtrUninit<'mem>,
+                    ) -> ::core::result::Result<::facet::PtrMut<'mem>, __alloc::string::String> {
+                        let proxy: #proxy_type = proxy_ptr.read();
+                        match <#field_type as ::core::convert::TryFrom<#proxy_type>>::try_from(proxy) {
+                            ::core::result::Result::Ok(value) => ::core::result::Result::Ok(field_ptr.put(value)),
+                            ::core::result::Result::Err(e) => ::core::result::Result::Err(__alloc::string::ToString::to_string(&e)),
+                        }
                     }
-                }
+                    __proxy_convert_in as ::facet::ProxyConvertInFn
+                } as *const ::facet::ProxyConvertInFn as *const (),
+                shape: <() as ::facet::Facet>::SHAPE,
             }
-            PFacetAttr::Skip => {
-                // Skip both serialization and deserialization
-                if flags_empty {
-                    flags_empty = false;
-                    flags = quote! { ::facet::FieldFlags::SKIP_SERIALIZING.union(::facet::FieldFlags::SKIP_DESERIALIZING) };
-                } else {
-                    flags = quote! { #flags.union(::facet::FieldFlags::SKIP_SERIALIZING).union(::facet::FieldFlags::SKIP_DESERIALIZING) };
-                }
+        });
+
+        // Generate __proxy_out: converts &field type -> proxy via TryFrom
+        attribute_list.push(quote! {
+            ::facet::ExtensionAttr {
+                ns: ::core::option::Option::None,
+                key: "__proxy_out",
+                data: &const {
+                    extern crate alloc as __alloc;
+                    unsafe fn __proxy_convert_out<'mem>(
+                        field_ptr: ::facet::PtrConst<'mem>,
+                        proxy_ptr: ::facet::PtrUninit<'mem>,
+                    ) -> ::core::result::Result<::facet::PtrMut<'mem>, __alloc::string::String> {
+                        let field_ref: &#field_type = field_ptr.get();
+                        match <#proxy_type as ::core::convert::TryFrom<&#field_type>>::try_from(field_ref) {
+                            ::core::result::Result::Ok(proxy) => ::core::result::Result::Ok(proxy_ptr.put(proxy)),
+                            ::core::result::Result::Err(e) => ::core::result::Result::Err(__alloc::string::ToString::to_string(&e)),
+                        }
+                    }
+                    __proxy_convert_out as ::facet::ProxyConvertOutFn
+                } as *const ::facet::ProxyConvertOutFn as *const (),
+                shape: <() as ::facet::Facet>::SHAPE,
             }
-            PFacetAttr::SkipSerializing => {
-                if flags_empty {
-                    flags_empty = false;
-                    flags = quote! { ::facet::FieldFlags::SKIP_SERIALIZING };
-                } else {
-                    flags = quote! { #flags.union(::facet::FieldFlags::SKIP_SERIALIZING) };
-                }
-            }
-            PFacetAttr::SkipDeserializing => {
-                if flags_empty {
-                    flags_empty = false;
-                    flags = quote! { ::facet::FieldFlags::SKIP_DESERIALIZING };
-                } else {
-                    flags = quote! { #flags.union(::facet::FieldFlags::SKIP_DESERIALIZING) };
-                }
-            }
-            PFacetAttr::SkipSerializingIf { expr } => {
-                let predicate = expr;
-                let field_ty = field_type;
-                vtable_items.push(quote! {
-                    .skip_serializing_if(unsafe { ::core::mem::transmute((#predicate) as fn(&#field_ty) -> bool) })
-                });
-            }
-            PFacetAttr::DeserializeWith { expr } => {
-                let deserialize_with_fn = expr;
-                vtable_items.push(quote! {
-                    .deserialize_with(|sptr, tptr| -> Result<::facet::PtrMut<'_>, _> {
-                        let sval = unsafe { sptr.get() };
-                        let res: Result<#field_type, _> = #deserialize_with_fn(sval);
-                        let tval = res.map_err(|e| format!("{e}"))?;
-                        Ok(unsafe { tptr.put(tval) })
-                    })
-                });
-                attribute_list.push(quote! { ::facet::FieldAttribute::DeserializeFrom(::facet::shape_of_deserialize_with_source(&#deserialize_with_fn)) });
-            }
-            PFacetAttr::SerializeWith { expr } => {
-                let serialize_with_fn = expr;
-                vtable_items.push(quote! {
-                    .serialize_with(|sptr, tptr| -> Result<::facet::PtrMut<'_>, _> {
-                        let sval: &#field_type = unsafe { sptr.get::<#field_type>() };
-                        let res: Result<_, _> = #serialize_with_fn(sval);
-                        let tval = res.map_err(|e| format!("{e}"))?;
-                        Ok(unsafe { tptr.put(tval) })
-                    })
-                });
-                attribute_list.push(quote! { ::facet::FieldAttribute::SerializeInto(::facet::shape_of_serialize_with_target(&#serialize_with_fn)) });
-            }
-            // These are handled by PName or are container-level, so ignore them for field attributes.
-            PFacetAttr::RenameAll { .. } => {} // Explicitly ignore rename attributes here
-            PFacetAttr::Transparent
-            | PFacetAttr::Invariants { .. }
-            | PFacetAttr::DenyUnknownFields
-            | PFacetAttr::TypeTag { .. }
-            | PFacetAttr::Untagged
-            | PFacetAttr::Tag { .. }
-            | PFacetAttr::Content { .. } => {}
-        }
+        });
     }
 
     let maybe_attributes = if attribute_list.is_empty() {
@@ -192,24 +111,6 @@ pub(crate) fn gen_field_from_pfield(
         quote! { .doc(&[#(#doc_lines),*]) }
     };
 
-    let maybe_vtable = if vtable_items.is_empty() {
-        quote! {}
-    } else {
-        quote! {
-            .vtable(&const {
-                ::facet::FieldVTable::builder()
-                    #(#vtable_items)*
-                    .build()
-            })
-        }
-    };
-
-    let maybe_flags = if flags_empty {
-        quote! {}
-    } else {
-        quote! { .flags(#flags) }
-    };
-
     // Calculate the final offset, incorporating the base_offset if present
     let final_offset = match base_offset {
         Some(base) => {
@@ -222,17 +123,14 @@ pub(crate) fn gen_field_from_pfield(
 
     quote! {
         {
-            #(#asserts)*;
             ::facet::Field::builder()
                 // Use the effective name (after rename rules) for metadata
                 .name(#field_name_effective)
                 // Use the raw field name/index TokenStream for shape_of and offset_of
                 .shape(|| ::facet::#shape_of(&|s: &#struct_name #bgp_without_bounds| &s.#field_name_raw))
                 .offset(#final_offset)
-                #maybe_flags
                 #maybe_attributes
                 #maybe_field_doc
-                #maybe_vtable
                 .build()
         }
     }
@@ -254,12 +152,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let struct_name = &ps.container.name;
     let struct_name_str = struct_name.to_string();
 
-    let opaque = ps
-        .container
-        .attrs
-        .facet
-        .iter()
-        .any(|a| matches!(a, PFacetAttr::Opaque));
+    let opaque = ps.container.attrs.has_builtin("opaque");
 
     let type_name_fn = generate_type_name_fn(struct_name, parsed.generics.as_ref(), opaque);
 
@@ -318,71 +211,53 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         quote! { .doc(&[#(#doc_lines),*]) }
     };
 
-    // Container attributes from PStruct
+    // Container attributes - most go through grammar dispatch
+    // Filter out `invariants` since it's handled specially for vtable.invariants
     let container_attributes_tokens = {
-        let mut items = Vec::new();
-        for attr in &ps.container.attrs.facet {
-            match attr {
-                PFacetAttr::DenyUnknownFields => {
-                    items.push(quote! { ::facet::ShapeAttribute::DenyUnknownFields });
-                }
-                PFacetAttr::Default | PFacetAttr::DefaultEquals { .. } => {
-                    // Corresponds to `#[facet(default)]` on container
-                    items.push(quote! { ::facet::ShapeAttribute::Default });
-                }
-                PFacetAttr::Transparent => {
-                    items.push(quote! { ::facet::ShapeAttribute::Transparent });
-                }
-                PFacetAttr::RenameAll { .. } => {}
-                PFacetAttr::Extension { ns, key, args } => {
-                    let ext_attr = emit_extension_attr(ns, key, args);
-                    items.push(quote! { ::facet::ShapeAttribute::Extension(#ext_attr) });
-                }
-                // Others not applicable at container level or handled elsewhere
-                PFacetAttr::Sensitive
-                | PFacetAttr::Opaque
-                | PFacetAttr::Invariants { .. }
-                | PFacetAttr::Skip
-                | PFacetAttr::SkipSerializing
-                | PFacetAttr::SkipDeserializing
-                | PFacetAttr::SkipSerializingIf { .. }
-                | PFacetAttr::DeserializeWith { .. }
-                | PFacetAttr::SerializeWith { .. }
-                | PFacetAttr::Flatten
-                | PFacetAttr::Child
-                | PFacetAttr::TypeTag { .. }
-                | PFacetAttr::Untagged
-                | PFacetAttr::Tag { .. }
-                | PFacetAttr::Content { .. } => {}
-            }
-        }
+        let items: Vec<TokenStream> = ps
+            .container
+            .attrs
+            .facet
+            .iter()
+            .filter(|attr| {
+                // invariants is handled specially - it populates vtable.invariants
+                !(attr.is_builtin() && attr.key_str() == "invariants")
+            })
+            .map(|attr| {
+                let ext_attr = emit_attr(attr);
+                quote! { #ext_attr }
+            })
+            .collect();
+
         if items.is_empty() {
             quote! {}
         } else {
-            quote! { .attributes(&[#(#items),*]) }
+            quote! { .attributes(&const { [#(#items),*] }) }
         }
     };
 
     // Type tag from PStruct
     let type_tag_maybe = {
-        if let Some(type_tag) = ps.container.attrs.type_tag() {
+        if let Some(type_tag) = ps.container.attrs.get_builtin_args("type_tag") {
             quote! { .type_tag(#type_tag) }
         } else {
             quote! {}
         }
     };
 
-    // Invariants from PStruct
+    // Invariants from PStruct - extract invariant function expressions
     let invariant_maybe = {
-        let mut invariant_fns = Vec::new();
-        for attr in &ps.container.attrs.facet {
-            if let PFacetAttr::Invariants { expr } = attr {
-                invariant_fns.push(expr);
-            }
-        }
+        let invariant_exprs: Vec<&TokenStream> = ps
+            .container
+            .attrs
+            .facet
+            .iter()
+            .filter(|attr| attr.is_builtin() && attr.key_str() == "invariants")
+            .map(|attr| &attr.args)
+            .collect();
 
-        if !invariant_fns.is_empty() {
-            let tests = invariant_fns.iter().map(|expr| {
+        if !invariant_exprs.is_empty() {
+            let tests = invariant_exprs.iter().map(|expr| {
                 quote! {
                     if !#expr(value) {
                         return false;
@@ -390,7 +265,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 }
             });
 
-            let bgp_display = ps.container.bgp.display_without_bounds(); // Use the BGP from PStruct
+            let bgp_display = ps.container.bgp.display_without_bounds();
             quote! {
                 unsafe fn invariants<'mem>(value: ::facet::PtrConst<'mem>) -> bool {
                     let value = value.get::<#struct_name_ident #bgp_display>();
@@ -408,7 +283,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     };
 
     // Transparent logic using PStruct
-    let inner_field = if ps.container.attrs.is_transparent() {
+    let inner_field = if ps.container.attrs.has_builtin("transparent") {
         match &ps.kind {
             PStructKind::TupleStruct { fields } => {
                 if fields.len() > 1 {
@@ -429,9 +304,9 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     };
 
     // Add try_from_inner implementation for transparent types
-    let try_from_inner_code = if ps.container.attrs.is_transparent() {
+    let try_from_inner_code = if ps.container.attrs.has_builtin("transparent") {
         if let Some(inner_field) = &inner_field {
-            if !inner_field.attrs.is_opaque() {
+            if !inner_field.attrs.has_builtin("opaque") {
                 // Transparent struct with one field
                 let inner_field_type = &inner_field.ty;
                 let bgp_without_bounds = ps.container.bgp.display_without_bounds();
@@ -528,10 +403,10 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     };
 
     // Generate the inner shape function for transparent types
-    let inner_setter = if ps.container.attrs.is_transparent() {
+    let inner_setter = if ps.container.attrs.has_builtin("transparent") {
         let inner_shape_val = if let Some(inner_field) = &inner_field {
             let ty = &inner_field.ty;
-            if inner_field.attrs.is_opaque() {
+            if inner_field.attrs.has_builtin("opaque") {
                 quote! { <::facet::Opaque<#ty> as ::facet::Facet>::SHAPE }
             } else {
                 quote! { <#ty as ::facet::Facet>::SHAPE }

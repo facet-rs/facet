@@ -64,6 +64,66 @@ pub fn emit_extension_attr(ns_ident: &Ident, key_ident: &Ident, args: &TokenStre
     }
 }
 
+/// Emits an attribute through grammar dispatch.
+///
+/// - Builtin attrs (no namespace) → `::facet::__attr!(...)`
+/// - Namespaced attrs → `::facet::__ext!(ns::key ...)`
+pub fn emit_attr(attr: &crate::parsed::PFacetAttr) -> TokenStream {
+    let key = &attr.key;
+    let args = &attr.args;
+
+    match &attr.ns {
+        Some(ns) => {
+            // Namespaced: use __ext! which routes to ns::__attr!
+            emit_extension_attr(ns, key, args)
+        }
+        None => {
+            // Builtin: route directly to ::facet::__attr! (macro_export puts it at crate root)
+            if args.is_empty() {
+                quote! {
+                    ::facet::__attr!(@ns { ::facet::builtin } #key { })
+                }
+            } else {
+                quote! {
+                    ::facet::__attr!(@ns { ::facet::builtin } #key { | #args })
+                }
+            }
+        }
+    }
+}
+
+/// Emits an attribute through grammar dispatch, with field context.
+///
+/// - Builtin attrs (no namespace) → `::facet::__attr!(...)`
+/// - Namespaced attrs → `::facet::__ext!(ns::key ...)`
+pub fn emit_attr_for_field(
+    attr: &crate::parsed::PFacetAttr,
+    field_name: &impl ToTokens,
+    field_type: &TokenStream,
+) -> TokenStream {
+    let key = &attr.key;
+    let args = &attr.args;
+
+    match &attr.ns {
+        Some(ns) => {
+            // Namespaced: use existing helper
+            emit_extension_attr_for_field(ns, key, args, field_name, field_type)
+        }
+        None => {
+            // Builtin: route directly to ::facet::__attr! (macro_export puts it at crate root)
+            if args.is_empty() {
+                quote! {
+                    ::facet::__attr!(@ns { ::facet::builtin } #key { #field_name : #field_type })
+                }
+            } else {
+                quote! {
+                    ::facet::__attr!(@ns { ::facet::builtin } #key { #field_name : #field_type | #args })
+                }
+            }
+        }
+    }
+}
+
 /// Implementation of the `__ext!` proc macro.
 ///
 /// This proc macro receives extension attribute invocations and forwards them

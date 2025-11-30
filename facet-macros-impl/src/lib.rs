@@ -40,46 +40,6 @@ keyword! {
     pub KMut = "mut";
     /// The "facet" keyword.
     pub KFacet = "facet";
-    /// The "sensitive" keyword.
-    pub KSensitive = "sensitive";
-    /// The "invariants" keyword.
-    pub KInvariants = "invariants";
-    /// The "opaque" keyword.
-    pub KOpaque = "opaque";
-    /// The "deny_unknown_fields" keyword.
-    pub KDenyUnknownFields = "deny_unknown_fields";
-    /// The "default" keyword.
-    pub KDefault = "default";
-    /// The "transparent" keyword.
-    pub KTransparent = "transparent";
-    /// The "rename" keyword.
-    pub KRename = "rename";
-    /// The "rename_all" keyword.
-    pub KRenameAll = "rename_all";
-    /// The "flatten" keyword
-    pub KFlatten = "flatten";
-    /// The "child" keyword
-    pub KChild = "child";
-    /// The "skip" keyword (skip both serialization and deserialization).
-    pub KSkip = "skip";
-    /// The "skip_serializing" keyword.
-    pub KSkipSerializing = "skip_serializing";
-    /// The "skip_deserializing" keyword.
-    pub KSkipDeserializing = "skip_deserializing";
-    /// The "skip_serializing_if" keyword.
-    pub KSkipSerializingIf = "skip_serializing_if";
-    /// The "type_tag" keyword.
-    pub KTypeTag = "type_tag";
-    /// The "deserialize_with" keyword.
-    pub KDeserializeWith = "deserialize_with";
-    /// The "serialize_with" keyword.
-    pub KSerializeWith = "serialize_with";
-    /// The "untagged" keyword.
-    pub KUntagged = "untagged";
-    /// The "tag" keyword.
-    pub KTag = "tag";
-    /// The "content" keyword.
-    pub KContent = "content";
 }
 
 operator! {
@@ -158,198 +118,51 @@ unsynn! {
     }
 
     /// Represents the inner content of a facet attribute.
+    ///
+    /// All attributes are now parsed uniformly - either namespaced (`kdl::child`)
+    /// or simple (`sensitive`, `rename = "foo"`). The grammar system determines
+    /// what's valid, not hardcoded keywords.
     pub enum FacetInner {
-        /// A sensitive attribute that specifies sensitivity information.
-        Sensitive(KSensitive),
-        /// An invariants attribute that specifies invariants for the type.
-        Invariants(InvariantInner),
-        /// An opaque attribute that specifies opaque information.
-        Opaque(KOpaque),
-        /// A deny_unknown_fields attribute that specifies whether unknown fields are allowed.
-        DenyUnknownFields(KDenyUnknownFields),
-        /// A default attribute with an explicit value (#[facet(default = "myfunc")])
-        DefaultEquals(DefaultEqualsInner),
-        /// A default attribute with no explicit value (#[facet(default)])
-        Default(KDefault),
-        /// A transparent attribute for containers
-        Transparent(KTransparent),
-        /// A rename_all attribute that specifies a case conversion for all fields/variants (#[facet(rename_all = "camelCase")])
-        RenameAll(RenameAllInner),
-        /// A rename attribute that specifies a custom name for a field/variant (#[facet(rename = "custom_name")])
-        Rename(RenameInner),
-        /// A flatten attribute that marks a field to be flattened into the parent structure
-        Flatten(FlattenInner),
-        /// A child attribute that marks a field as a child node
-        Child(ChildInner),
-        /// A skip attribute that specifies whether a field should be skipped during both serialization and deserialization.
-        Skip(KSkip),
-        /// A skip_serializing attribute that specifies whether a field should be skipped during serialization.
-        SkipSerializing(SkipSerializingInner),
-        /// A skip_deserializing attribute that specifies whether a field should be skipped during deserialization.
-        SkipDeserializing(KSkipDeserializing),
-        /// A skip_serializing_if attribute that specifies a condition for skipping serialization.
-        SkipSerializingIf(SkipSerializingIfInner),
-        /// A type_tag attribute that specifies the identifying tag for self describing formats
-        TypeTag(TypeTagInner),
-        /// A function to define how to deserializize the target
-        DeserializeWith(DeserializeWithInner),
-        /// A function to define how to serializize the target
-        SerializeWith(SerializeWithInner),
-        /// An untagged attribute for enums (variants are not tagged with their name)
-        Untagged(KUntagged),
-        /// A tag attribute for internally/adjacently tagged enums (#[facet(tag = "type")])
-        Tag(TagInner),
-        /// A content attribute for adjacently tagged enums (#[facet(content = "data")])
-        Content(ContentInner),
-        /// An extension attribute from a third-party crate, e.g., #[facet(orm::primary_key(auto_increment))]
-        Extension(ExtensionInner),
+        /// A namespaced attribute like `kdl::child` or `args::short = 'v'`
+        Namespaced(NamespacedAttr),
+        /// A non-namespaced (builtin) attribute like `sensitive` or `rename = "foo"`
+        Simple(SimpleAttr),
     }
 
-    /// Inner value for extension attributes like #[facet(orm::primary_key(auto_increment))]
-    /// or #[facet(args::short = 'v')]
-    pub struct ExtensionInner {
-        /// The namespace (e.g., "orm")
+    /// A namespaced attribute like `kdl::child` or `args::short = 'v'`
+    pub struct NamespacedAttr {
+        /// The namespace (e.g., "kdl", "args")
         pub ns: Ident,
         /// The path separator ::
         pub _sep: PathSep,
-        /// The key (e.g., "primary_key")
+        /// The key (e.g., "child", "short")
         pub key: Ident,
         /// Optional arguments - either in parentheses like `(args)` or with equals like `= value`
-        pub args: Option<ExtensionArgs>,
+        pub args: Option<AttrArgs>,
     }
 
-    /// Arguments for extension attributes - either parenthesized `(args)` or with equals `= value`
-    pub enum ExtensionArgs {
+    /// A simple (builtin) attribute like `sensitive` or `rename = "foo"`
+    pub struct SimpleAttr {
+        /// The key (e.g., "sensitive", "rename")
+        pub key: Ident,
+        /// Optional arguments - either in parentheses like `(args)` or with equals like `= value`
+        pub args: Option<AttrArgs>,
+    }
+
+    /// Arguments for attributes - either parenthesized `(args)` or with equals `= value`
+    pub enum AttrArgs {
         /// Parenthesized arguments like `(auto_increment)`
         Parens(ParenthesisGroupContaining<Vec<TokenTree>>),
         /// Equals-style arguments like `= 'v'`
-        Equals(ExtensionEqualsArgs),
+        Equals(AttrEqualsArgs),
     }
 
-    /// Equals-style arguments for extensions like `= 'v'` or `= "value"`
-    pub struct ExtensionEqualsArgs {
+    /// Equals-style arguments like `= 'v'` or `= "value"`
+    pub struct AttrEqualsArgs {
         /// The equals sign
         pub _eq: Eq,
         /// The value (tokens until comma or end)
         pub value: VerbatimUntil<Comma>,
-    }
-
-    /// Inner value for #[facet(tag = ...)]
-    pub struct TagInner {
-        /// The "tag" keyword.
-        pub _kw_tag: KTag,
-        /// The equals sign '='.
-        pub _eq: Eq,
-        /// The value assigned, as a literal string.
-        pub value: LiteralString,
-    }
-
-    /// Inner value for #[facet(content = ...)]
-    pub struct ContentInner {
-        /// The "content" keyword.
-        pub _kw_content: KContent,
-        /// The equals sign '='.
-        pub _eq: Eq,
-        /// The value assigned, as a literal string.
-        pub value: LiteralString,
-    }
-
-    /// Inner value for #[facet(flatten)]
-    pub struct FlattenInner {
-        /// The "flatten" keyword.
-        pub _kw_flatten: KFlatten,
-    }
-
-    /// Inner value for #[facet(child)]
-    pub struct ChildInner {
-        /// The "child" keyword.
-        pub _kw_child: KChild,
-    }
-
-    /// Inner value for #[facet(skip_serializing)]
-    pub struct SkipSerializingInner {
-        /// The "skip_serializing" keyword.
-        pub _kw_skip_serializing: KSkipSerializing,
-    }
-
-    /// Inner value for #[facet(skip_serializing_if = ...)]
-    pub struct SkipSerializingIfInner {
-        /// The "skip_serializing_if" keyword.
-        pub _kw_skip_serializing_if: KSkipSerializingIf,
-        /// The equals sign '='.
-        pub _eq: Eq,
-        /// The conditional expression as verbatim until comma.
-        pub expr: VerbatimUntil<Comma>,
-    }
-
-    /// Inner value for #[facet(type_tag = ...)]
-    pub struct TypeTagInner {
-        /// The "type_tag" keyword.
-        pub _kw_type_tag: KTypeTag,
-        /// The equals sign '='.
-        pub _eq: Eq,
-        /// The value assigned, as a literal string.
-        pub expr: LiteralString,
-    }
-
-    /// Inner value for #[facet(deserialize_with = ...)]
-    pub struct DeserializeWithInner {
-        /// The "deserialize_with" keyword.
-        pub _kw_deserialize_with: KDeserializeWith,
-        /// The equals sign '='.
-        pub _eq: Eq,
-        /// The conditional expression as verbatim until comma.
-        pub expr: VerbatimUntil<Comma>,
-    }
-
-    /// Inner value for #[facet(serialize_with = ...)]
-    pub struct SerializeWithInner {
-        /// The "serialize_with" keyword.
-        pub _kw_serialize_with: KSerializeWith,
-        /// The equals sign '='.
-        pub _eq: Eq,
-        /// The conditional expression as verbatim until comma.
-        pub expr: VerbatimUntil<Comma>,
-    }
-
-    /// Inner value for #[facet(default = ...)]
-    pub struct DefaultEqualsInner {
-        /// The "default" keyword.
-        pub _kw_default: KDefault,
-        /// The equals sign '='.
-        pub _eq: Eq,
-        /// The value assigned, as verbatim until comma.
-        pub expr: VerbatimUntil<Comma>,
-    }
-
-    /// Inner value for #[facet(rename = ...)]
-    pub struct RenameInner {
-        /// The "rename" keyword.
-        pub _kw_rename: KRename,
-        /// The equals sign '='.
-        pub _eq: Eq,
-        /// The value assigned, as a literal string.
-        pub value: LiteralString,
-    }
-
-    /// Inner value for #[facet(rename_all = ...)]
-    pub struct RenameAllInner {
-        /// The "rename_all" keyword.
-        pub _kw_rename_all: KRenameAll,
-        /// The equals sign '='.
-        pub _eq: Eq,
-        /// The value assigned, as a literal string.
-        pub value: LiteralString,
-    }
-
-    /// Represents invariants for a type.
-    pub struct InvariantInner {
-        /// The "invariants" keyword.
-        pub _kw_invariants: KInvariants,
-        /// The equality operator.
-        pub _eq: Eq,
-        /// The invariant value
-        pub expr: VerbatimUntil<Comma>,
     }
 
     /// Represents documentation for an item.
@@ -693,12 +506,6 @@ impl Struct {
             })
             .flatten()
             .map(|d| &d.value)
-    }
-
-    /// Returns `true` if the struct is marked `#[facet(transparent)]`.
-    pub fn is_transparent(&self) -> bool {
-        self.facet_attributes()
-            .any(|inner| matches!(inner, FacetInner::Transparent(_)))
     }
 }
 

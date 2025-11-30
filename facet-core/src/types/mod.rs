@@ -138,19 +138,20 @@ impl core::error::Error for UnsizedError {}
 
 /// An extension attribute for third-party crates to attach metadata.
 ///
-/// Extension attributes use namespaced syntax like `#[facet(orm::primary_key)]`
-/// to avoid conflicts with official Facet attributes.
+/// Attributes use syntax like `#[facet(sensitive)]` for builtins or
+/// `#[facet(orm::primary_key)]` for namespaced extension attributes.
 ///
-/// The derive macro expands extension attributes to macro invocations in the
-/// extension crate, which return `ExtensionAttr` values with typed data.
+/// The derive macro expands attributes to macro invocations that
+/// return `ExtensionAttr` values with typed data.
 pub struct ExtensionAttr {
-    /// The namespace (e.g., "orm" in `#[facet(orm::primary_key)]`)
-    pub ns: &'static str,
+    /// The namespace (e.g., Some("orm") in `#[facet(orm::primary_key)]`).
+    /// None for builtin attributes like `#[facet(sensitive)]`.
+    pub ns: Option<&'static str>,
 
     /// The key (e.g., "primary_key" in `#[facet(orm::primary_key)]`)
     pub key: &'static str,
 
-    /// Pointer to the static data stored by the extension attribute.
+    /// Pointer to the static data stored by the attribute.
     pub data: *const (),
 
     /// Shape of the data, enabling full introspection via facet's reflection.
@@ -162,12 +163,12 @@ unsafe impl Send for ExtensionAttr {}
 unsafe impl Sync for ExtensionAttr {}
 
 impl ExtensionAttr {
-    /// Create a new extension attribute from static data.
+    /// Create a new attribute from static data.
     ///
     /// The type must implement `Facet` so we can store its shape for introspection.
     #[inline]
     pub const fn new<'a, T: Facet<'a>>(
-        ns: &'static str,
+        ns: Option<&'static str>,
         key: &'static str,
         data: &'static T,
     ) -> Self {
@@ -177,6 +178,33 @@ impl ExtensionAttr {
             data: data as *const T as *const (),
             shape: T::SHAPE,
         }
+    }
+
+    /// Create a new attribute storing a Shape reference.
+    ///
+    /// This is used for `shape_type` variants (like `proxy = ProxyType`) where
+    /// the attribute data is a Shape reference. Since `Shape` doesn't implement
+    /// `Facet`, we use this specialized constructor.
+    #[inline]
+    pub const fn new_shape(
+        ns: Option<&'static str>,
+        key: &'static str,
+        shape_data: &'static Shape,
+    ) -> Self {
+        Self {
+            ns,
+            key,
+            data: shape_data as *const Shape as *const (),
+            // Use the shape of the stored data for introspection
+            // (the Shape's own shape - which is itself)
+            shape: shape_data,
+        }
+    }
+
+    /// Returns true if this is a builtin attribute (no namespace).
+    #[inline]
+    pub const fn is_builtin(&self) -> bool {
+        self.ns.is_none()
     }
 
     /// Get the typed data if the shape matches.
@@ -197,9 +225,10 @@ impl ExtensionAttr {
     #[inline]
     pub fn must_get_as<'a, T: Facet<'a>>(&self) -> &'static T {
         self.get_as().unwrap_or_else(|| {
+            let ns_str = self.ns.unwrap_or("<builtin>");
             panic!(
                 "ExtensionAttr {}::{} - expected shape {}, got {}",
-                self.ns,
+                ns_str,
                 self.key,
                 T::SHAPE,
                 self.shape
@@ -218,20 +247,51 @@ impl ExtensionAttr {
     pub const fn data_and_shape(&self) -> (*const (), &'static Shape) {
         (self.data, self.shape)
     }
+
+    /// Get the data as a raw pointer to a specific type.
+    ///
+    /// This is useful for types that don't implement `Facet` (like `Shape` itself).
+    /// No type checking is performed - use with care.
+    ///
+    /// # Safety
+    /// The caller must ensure that `T` is the correct type for this attribute's data.
+    #[inline]
+    pub const unsafe fn data_ptr<T>(&self) -> *const T {
+        self.data as *const T
+    }
+
+    /// Get the data as a reference to a specific type.
+    ///
+    /// This is useful for types that don't implement `Facet` (like `Shape` itself).
+    /// No type checking is performed - use with care.
+    ///
+    /// # Safety
+    /// The caller must ensure that `T` is the correct type for this attribute's data.
+    #[inline]
+    pub unsafe fn data_ref<T>(&self) -> &'static T {
+        // SAFETY: caller guarantees T is the correct type
+        unsafe { &*self.data_ptr::<T>() }
+    }
 }
 
 impl core::fmt::Debug for ExtensionAttr {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Write the attribute name (with or without namespace)
+        match self.ns {
+            Some(ns) => write!(f, "{}::{}", ns, self.key)?,
+            None => write!(f, "{}", self.key)?,
+        };
+
         // Try to use the shape's debug function if available
         if let Some(debug_fn) = self.shape.vtable.debug {
-            write!(f, "{}::{} = ", self.ns, self.key)?;
+            write!(f, " = ")?;
             // SAFETY: self.data is a valid pointer to static data of the correct shape
             unsafe {
                 let ptr = core::ptr::NonNull::new_unchecked(self.data as *mut ());
                 debug_fn(PtrConst::new(ptr), f)
             }
         } else {
-            write!(f, "{}::{}", self.ns, self.key)
+            Ok(())
         }
     }
 }
@@ -243,34 +303,9 @@ impl PartialEq for ExtensionAttr {
     }
 }
 
-/// An attribute that can be applied to a shape
-#[derive(Debug, PartialEq)]
-pub enum ShapeAttribute {
-    /// Reject deserialization upon encountering an unknown key.
-    DenyUnknownFields,
-    /// Indicates that, when deserializing, fields from this shape that are
-    /// missing in the input should be filled with corresponding field values from
-    /// a `T::default()` (where T is this shape)
-    Default,
-    /// Indicates that this is a transparent wrapper type, like `NewType(T)`
-    /// it should not be treated like a struct, but like something that can be built
-    /// from `T` and converted back to `T`
-    Transparent,
-    /// Specifies a case conversion rule for all fields or variants
-    RenameAll(&'static str),
-    /// Indicates that this enum should be serialized/deserialized without a tag
-    /// (untagged enum representation)
-    Untagged,
-    /// Specifies the tag field name for internally or adjacently tagged enums
-    /// e.g., `#[facet(tag = "type")]`
-    Tag(&'static str),
-    /// Specifies the content field name for adjacently tagged enums
-    /// e.g., `#[facet(content = "data")]` (used together with `tag`)
-    Content(&'static str),
-    /// An extension attribute from a third-party crate
-    /// e.g., `#[facet(orm::primary_key)]`
-    Extension(ExtensionAttr),
-}
+/// An attribute that can be applied to a shape.
+/// This is now just an alias for `ExtensionAttr` - all attributes use the same representation.
+pub type ShapeAttribute = ExtensionAttr;
 
 impl Shape {
     /// Returns a builder for a shape for some type `T`.
@@ -301,54 +336,68 @@ impl Shape {
         );
     }
 
-    /// See [`ShapeAttribute::DenyUnknownFields`]
+    /// Returns true if this shape has the `deny_unknown_fields` builtin attribute.
     #[inline]
     pub fn has_deny_unknown_fields_attr(&self) -> bool {
-        self.attributes.contains(&ShapeAttribute::DenyUnknownFields)
+        self.has_builtin_attr("deny_unknown_fields")
     }
 
-    /// See [`ShapeAttribute::Default`]
+    /// Returns true if this shape has the `default` builtin attribute.
     #[inline]
     pub fn has_default_attr(&self) -> bool {
-        self.attributes.contains(&ShapeAttribute::Default)
+        self.has_builtin_attr("default")
     }
 
-    /// See [`ShapeAttribute::RenameAll`]
+    /// Returns the `rename_all` case conversion rule if present.
     #[inline]
-    pub fn get_rename_all_attr(&self) -> Option<&str> {
-        self.attributes.iter().find_map(|attr| {
-            if let ShapeAttribute::RenameAll(rule) = attr {
-                Some(*rule)
-            } else {
-                None
-            }
-        })
+    pub fn get_rename_all_attr(&self) -> Option<&'static str> {
+        self.get_builtin_attr_value::<&'static str>("rename_all")
     }
 
-    /// See [`ShapeAttribute::Untagged`]
+    /// Returns true if this enum is untagged.
     #[inline]
     pub fn is_untagged(&self) -> bool {
-        self.attributes.contains(&ShapeAttribute::Untagged)
+        self.has_builtin_attr("untagged")
     }
 
-    /// See [`ShapeAttribute::Tag`]
+    /// Returns the tag field name for internally/adjacently tagged enums.
     #[inline]
-    pub fn get_tag_attr(&self) -> Option<&str> {
-        self.attributes.iter().find_map(|attr| {
-            if let ShapeAttribute::Tag(name) = attr {
-                Some(*name)
-            } else {
-                None
-            }
-        })
+    pub fn get_tag_attr(&self) -> Option<&'static str> {
+        self.get_builtin_attr_value::<&'static str>("tag")
     }
 
-    /// See [`ShapeAttribute::Content`]
+    /// Returns the content field name for adjacently tagged enums.
     #[inline]
-    pub fn get_content_attr(&self) -> Option<&str> {
+    pub fn get_content_attr(&self) -> Option<&'static str> {
+        self.get_builtin_attr_value::<&'static str>("content")
+    }
+
+    /// Returns true if this shape has a builtin attribute with the given key.
+    #[inline]
+    pub fn has_builtin_attr(&self, key: &str) -> bool {
+        self.attributes
+            .iter()
+            .any(|attr| attr.ns.is_none() && attr.key == key)
+    }
+
+    /// Returns true if this shape has a transparent attribute.
+    #[inline]
+    pub fn is_transparent(&self) -> bool {
+        self.has_builtin_attr("transparent")
+    }
+
+    /// Gets the value of a builtin attribute, if the attribute data can be interpreted as type T.
+    ///
+    /// This is a helper for attributes with simple payload types like `&'static str`.
+    #[inline]
+    pub fn get_builtin_attr_value<'a, T: Facet<'a> + Copy + 'static>(
+        &self,
+        key: &str,
+    ) -> Option<T> {
         self.attributes.iter().find_map(|attr| {
-            if let ShapeAttribute::Content(name) = attr {
-                Some(*name)
+            if attr.ns.is_none() && attr.key == key {
+                // Try to get the data as the requested type
+                attr.get_as::<T>().copied()
             } else {
                 None
             }

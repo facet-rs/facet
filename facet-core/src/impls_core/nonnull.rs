@@ -1,8 +1,8 @@
 use core::ptr::NonNull;
 
 use crate::{
-    Def, Facet, Field, FieldFlags, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst,
-    Repr, StructKind, StructType, Type, UserType, value_vtable,
+    Def, Facet, Field, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst, Repr,
+    StructKind, StructType, Type, UserType, value_vtable,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
@@ -26,7 +26,6 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for core::ptr::NonNull<T> {
                         .name("pointer")
                         .shape(|| <*mut T>::SHAPE)
                         .offset(0)
-                        .flags(FieldFlags::EMPTY)
                         .build()]
                 },
             })))

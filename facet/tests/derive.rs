@@ -1,5 +1,5 @@
 use core::{fmt::Debug, mem::offset_of};
-use facet::{Facet, FieldFlags, SequenceType, Shape, StructKind, StructType, Type, UserType};
+use facet::{Facet, SequenceType, Shape, StructKind, StructType, Type, UserType};
 
 #[test]
 fn unit_struct() {
@@ -84,8 +84,8 @@ fn struct_with_sensitive_field() {
             assert_eq!(bar_field.name, "bar");
             match shape.ty {
                 Type::User(UserType::Struct(struct_kind)) => {
-                    assert!(!struct_kind.fields[0].flags.contains(FieldFlags::SENSITIVE));
-                    assert!(struct_kind.fields[1].flags.contains(FieldFlags::SENSITIVE));
+                    assert!(!struct_kind.fields[0].is_sensitive());
+                    assert!(struct_kind.fields[1].is_sensitive());
                 }
                 _ => panic!("Expected struct"),
             }

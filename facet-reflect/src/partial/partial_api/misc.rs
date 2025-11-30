@@ -456,7 +456,7 @@ impl<'facet> Partial<'facet> {
         if popped_frame.using_custom_deserialization {
             if let Some(deserialize_with) = self
                 .parent_field()
-                .and_then(|field| field.vtable.deserialize_with)
+                .and_then(|field| field.proxy_convert_in_fn())
             {
                 let parent_frame = self.frames_mut().last_mut().unwrap();
 
@@ -472,8 +472,11 @@ impl<'facet> Partial<'facet> {
                     };
                     let popped_frame_shape = popped_frame.shape;
 
-                    // we need to do this before any error handling to avoid leaks
-                    popped_frame.deinit();
+                    // Note: We do NOT call deinit() here because deserialize_with uses
+                    // ptr::read to take ownership of the source value. Calling deinit()
+                    // would cause a double-free. We mark is_init as false to satisfy
+                    // dealloc()'s assertion, then deallocate the memory.
+                    popped_frame.is_init = false;
                     popped_frame.dealloc();
                     let rptr = res.map_err(|message| ReflectError::CustomDeserializationError {
                         message,

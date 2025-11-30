@@ -20,8 +20,14 @@ keyword! {
     KRest = "rest";
     KUnit = "unit";
     KNewtype = "newtype";
+    KNewtypeStr = "newtype_str";
     KNewtypeOptChar = "newtype_opt_char";
     KRec = "rec";
+    KArbitrary = "arbitrary";
+    KMakeT = "make_t";
+    KPredicate = "predicate";
+    KFnPtr = "fn_ptr";
+    KShapeType = "shape_type";
 }
 
 operator! {
@@ -87,10 +93,22 @@ unsynn! {
         Unit(KUnit),
         /// newtype variant
         Newtype(KNewtype),
-        /// newtype Option<char> variant
+        /// newtype &'static str - stored directly for facet-core access
+        NewtypeStr(KNewtypeStr),
+        /// newtype `Option<char>` variant
         NewtypeOptChar(KNewtypeOptChar),
         /// struct variant with fields
         Struct(StructVariantDef),
+        /// arbitrary type variant (e.g., function pointers)
+        Arbitrary(KArbitrary),
+        /// make_t - expression that "makes a T", wrapped in closure
+        MakeT(KMakeT),
+        /// predicate - user provides fn(&T) -> bool, wrapped in type-erased closure
+        Predicate(KPredicate),
+        /// function pointer - stored directly as a function pointer
+        FnPtr(KFnPtr),
+        /// shape type - converts a type to `<T as Facet>::SHAPE`
+        ShapeType(KShapeType),
     }
 
     /// rec Column { name: opt_string, primary_key: bool }
@@ -125,11 +143,22 @@ struct ParsedVariant {
 enum ParsedVariantKind {
     Unit,
     Newtype,
+    NewtypeStr,
     NewtypeOptChar,
     Struct {
         struct_name: Ident,
         fields: Vec<ParsedFieldDef>,
     },
+    /// Arbitrary type - pass through value tokens as-is
+    Arbitrary,
+    /// MakeT - expression that "makes a T", wrapped in closure
+    MakeT,
+    /// Predicate - user provides fn(&T) -> bool, wrapped in type-erased closure
+    Predicate,
+    /// Function pointer - stored directly as a function pointer
+    FnPtr,
+    /// Shape type - converts a type to `<T as Facet>::SHAPE`
+    ShapeType,
 }
 
 /// A parsed field definition with doc comment
@@ -189,7 +218,13 @@ impl VariantDef {
         let kind = match &self.kind {
             VariantKindDef::Unit(_) => ParsedVariantKind::Unit,
             VariantKindDef::Newtype(_) => ParsedVariantKind::Newtype,
+            VariantKindDef::NewtypeStr(_) => ParsedVariantKind::NewtypeStr,
             VariantKindDef::NewtypeOptChar(_) => ParsedVariantKind::NewtypeOptChar,
+            VariantKindDef::Arbitrary(_) => ParsedVariantKind::Arbitrary,
+            VariantKindDef::MakeT(_) => ParsedVariantKind::MakeT,
+            VariantKindDef::Predicate(_) => ParsedVariantKind::Predicate,
+            VariantKindDef::FnPtr(_) => ParsedVariantKind::FnPtr,
+            VariantKindDef::ShapeType(_) => ParsedVariantKind::ShapeType,
             VariantKindDef::Struct(s) => {
                 let fields = parse_fields_with_docs(&s.fields.0.stream())?;
                 ParsedVariantKind::Struct {
@@ -391,8 +426,11 @@ pub fn dispatch_attr(input: TokenStream2) -> TokenStream2 {
     let rest = &input.rest;
 
     // Find matching variant
+    // Variant names in the grammar are PascalCase (e.g., SkipSerializingIf)
+    // Attribute names from user code are snake_case (e.g., skip_serializing_if)
     for variant in &input.variants {
-        if variant.name == attr_name_str {
+        let variant_snake = to_snake_case(&variant.name.to_string());
+        if variant_snake == attr_name_str {
             let variant_name = &variant.name;
             // Convert to PascalCase for enum variant
             let variant_pascal = to_pascal_case(&variant_name.to_string());
@@ -405,7 +443,39 @@ pub fn dispatch_attr(input: TokenStream2) -> TokenStream2 {
                 ParsedVariantKind::Newtype => {
                     generate_newtype_value(crate_path, &variant_ident, attr_name, rest, attr_span)
                 }
+                ParsedVariantKind::NewtypeStr => {
+                    // NewtypeStr variants are handled directly in the __attr macro, not through __dispatch_attr.
+                    // This is because newtype_str stores &'static str directly for facet-core access.
+                    // If we get here, something is wrong with the generated __attr macro.
+                    quote_spanned!(attr_span =>
+                        compile_error!("Internal error: newtype_str attributes should be handled directly in __attr, not through __dispatch_attr")
+                    )
+                }
                 ParsedVariantKind::NewtypeOptChar => generate_newtype_opt_char_value(
+                    crate_path,
+                    &variant_ident,
+                    attr_name,
+                    rest,
+                    attr_span,
+                ),
+                ParsedVariantKind::Arbitrary => {
+                    generate_arbitrary_value(crate_path, &variant_ident, attr_name, rest, attr_span)
+                }
+                ParsedVariantKind::MakeT => {
+                    generate_make_t_value(crate_path, &variant_ident, attr_name, rest, attr_span)
+                }
+                ParsedVariantKind::FnPtr => {
+                    generate_fn_ptr_value(crate_path, &variant_ident, attr_name, rest, attr_span)
+                }
+                ParsedVariantKind::Predicate => {
+                    // Predicate variants are handled directly in the __attr macro, not through __dispatch_attr.
+                    // This is because predicate needs access to $ty for the transmute.
+                    // If we get here, something is wrong with the generated __attr macro.
+                    quote_spanned!(attr_span =>
+                        compile_error!("Internal error: predicate attributes should be handled directly in __attr, not through __dispatch_attr")
+                    )
+                }
+                ParsedVariantKind::ShapeType => generate_shape_type_value(
                     crate_path,
                     &variant_ident,
                     attr_name,
@@ -429,7 +499,12 @@ pub fn dispatch_attr(input: TokenStream2) -> TokenStream2 {
     }
 
     // Unknown attribute - generate error
-    let known_names: Vec<_> = input.variants.iter().map(|v| v.name.to_string()).collect();
+    // Convert variant names to snake_case for display (they're PascalCase in the grammar)
+    let known_names: Vec<_> = input
+        .variants
+        .iter()
+        .map(|v| to_snake_case(&v.name.to_string()))
+        .collect();
     let suggestion = find_closest(&attr_name_str, &known_names);
 
     let msg = if let Some(s) = suggestion {
@@ -458,6 +533,22 @@ fn to_pascal_case(s: &str) -> String {
         } else if capitalize_next {
             result.push(c.to_ascii_uppercase());
             capitalize_next = false;
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// Convert PascalCase to snake_case
+fn to_snake_case(s: &str) -> String {
+    let mut result = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() {
+            if i > 0 {
+                result.push('_');
+            }
+            result.push(c.to_ascii_lowercase());
         } else {
             result.push(c);
         }
@@ -566,6 +657,258 @@ fn generate_newtype_value(
     let msg = format!(
         "`{attr_str}` requires a string value: `{attr_str}(\"name\")` or `{attr_str} = \"name\"`"
     );
+    quote_spanned! { span =>
+        compile_error!(#msg)
+    }
+}
+
+/// Generate code for an arbitrary type variant (e.g., function pointers).
+/// Handles: `attr(value)` or `attr = value` where value is any expression/path.
+///
+/// For `Option<T>` types:
+/// - No value → `Attr::Variant(None)`
+/// - With value → `Attr::Variant(Some(value))`
+fn generate_arbitrary_value(
+    ns_path: &TokenStream2,
+    variant_ident: &proc_macro2::Ident,
+    _attr_name: &Ident,
+    rest: &TokenStream2,
+    span: Span,
+) -> TokenStream2 {
+    let rest_tokens: Vec<TokenTree> = rest.clone().into_iter().collect();
+
+    // Check for parens style: default(my_func)
+    if let Some(TokenTree::Group(g)) = rest_tokens.first() {
+        if g.delimiter() == proc_macro2::Delimiter::Parenthesis {
+            let inner = g.stream();
+            if !inner.is_empty() {
+                // Wrap in Some() for Option<T> types
+                return quote_spanned! { span =>
+                    #ns_path::Attr::#variant_ident(::core::option::Option::Some(#inner))
+                };
+            }
+            // Empty parens - treat as None for Option types
+            return quote_spanned! { span =>
+                #ns_path::Attr::#variant_ident(::core::option::Option::None)
+            };
+        }
+    }
+
+    // Check for bare tokens (derive macro strips the `=` sign)
+    if !rest_tokens.is_empty() {
+        // Check if first token is `=`, if so skip it
+        let value_tokens: TokenStream2 = if let Some(TokenTree::Punct(p)) = rest_tokens.first() {
+            if p.as_char() == '=' {
+                rest_tokens[1..].iter().cloned().collect()
+            } else {
+                rest.clone()
+            }
+        } else {
+            rest.clone()
+        };
+
+        if !value_tokens.is_empty() {
+            // Wrap in Some() for Option<T> types
+            return quote_spanned! { span =>
+                #ns_path::Attr::#variant_ident(::core::option::Option::Some(#value_tokens))
+            };
+        }
+    }
+
+    // No value: for Option types, return None; otherwise error
+    // We generate None and let the type system catch mismatches
+    quote_spanned! { span =>
+        #ns_path::Attr::#variant_ident(::core::option::Option::None)
+    }
+}
+
+/// Generate code for make_t variants.
+/// The user's expression is wrapped in a closure: `|ptr| unsafe { ptr.put(expr) }`
+/// "make_t" because the expression "makes a value of type T".
+///
+/// Handles:
+/// - `default` (no value) → `Attr::Default(None)` - uses Default trait
+/// - `default = expr` → `Attr::Default(Some(|ptr| unsafe { ptr.put(expr) }))`
+/// - `default(expr)` → same as above
+fn generate_make_t_value(
+    ns_path: &TokenStream2,
+    variant_ident: &proc_macro2::Ident,
+    _attr_name: &Ident,
+    rest: &TokenStream2,
+    span: Span,
+) -> TokenStream2 {
+    let rest_tokens: Vec<TokenTree> = rest.clone().into_iter().collect();
+
+    // Check for parens style: default(42) or default(my_fn())
+    if let Some(TokenTree::Group(g)) = rest_tokens.first() {
+        if g.delimiter() == proc_macro2::Delimiter::Parenthesis {
+            let inner = g.stream();
+            if !inner.is_empty() {
+                // Wrap expression in a closure that puts the value
+                return quote_spanned! { span =>
+                    #ns_path::Attr::#variant_ident(::core::option::Option::Some(
+                        |__ptr| unsafe { __ptr.put(#inner) }
+                    ))
+                };
+            }
+            // Empty parens - use None (will use Default trait)
+            return quote_spanned! { span =>
+                #ns_path::Attr::#variant_ident(::core::option::Option::None)
+            };
+        }
+    }
+
+    // Check for `= expr` style
+    if !rest_tokens.is_empty() {
+        // Check if first token is `=`, if so skip it
+        let value_tokens: TokenStream2 = if let Some(TokenTree::Punct(p)) = rest_tokens.first() {
+            if p.as_char() == '=' {
+                rest_tokens[1..].iter().cloned().collect()
+            } else {
+                rest.clone()
+            }
+        } else {
+            rest.clone()
+        };
+
+        if !value_tokens.is_empty() {
+            // Wrap expression in a closure that puts the value
+            return quote_spanned! { span =>
+                #ns_path::Attr::#variant_ident(::core::option::Option::Some(
+                    |__ptr| unsafe { __ptr.put(#value_tokens) }
+                ))
+            };
+        }
+    }
+
+    // No value: use None (will use Default trait at runtime)
+    quote_spanned! { span =>
+        #ns_path::Attr::#variant_ident(::core::option::Option::None)
+    }
+}
+
+/// Generate code for fn_ptr variants.
+/// The expression is stored directly as a function pointer (not wrapped).
+///
+/// Handles:
+/// - `invariants` (no value) → `Attr::Invariants(None)`
+/// - `invariants = my_fn` → `Attr::Invariants(Some(my_fn))`
+/// - `invariants(my_fn)` → same as above
+fn generate_fn_ptr_value(
+    ns_path: &TokenStream2,
+    variant_ident: &proc_macro2::Ident,
+    _attr_name: &Ident,
+    rest: &TokenStream2,
+    span: Span,
+) -> TokenStream2 {
+    let rest_tokens: Vec<TokenTree> = rest.clone().into_iter().collect();
+
+    // Check for parens style: invariants(my_fn)
+    if let Some(TokenTree::Group(g)) = rest_tokens.first() {
+        if g.delimiter() == proc_macro2::Delimiter::Parenthesis {
+            let inner = g.stream();
+            if !inner.is_empty() {
+                // Store the function pointer directly
+                return quote_spanned! { span =>
+                    #ns_path::Attr::#variant_ident(::core::option::Option::Some(#inner))
+                };
+            }
+            // Empty parens - use None
+            return quote_spanned! { span =>
+                #ns_path::Attr::#variant_ident(::core::option::Option::None)
+            };
+        }
+    }
+
+    // Check for `= expr` style
+    if !rest_tokens.is_empty() {
+        // Check if first token is `=`, if so skip it
+        let value_tokens: TokenStream2 = if let Some(TokenTree::Punct(p)) = rest_tokens.first() {
+            if p.as_char() == '=' {
+                rest_tokens[1..].iter().cloned().collect()
+            } else {
+                rest.clone()
+            }
+        } else {
+            rest.clone()
+        };
+
+        if !value_tokens.is_empty() {
+            // Store the function pointer directly
+            return quote_spanned! { span =>
+                #ns_path::Attr::#variant_ident(::core::option::Option::Some(#value_tokens))
+            };
+        }
+    }
+
+    // No value: use None
+    quote_spanned! { span =>
+        #ns_path::Attr::#variant_ident(::core::option::Option::None)
+    }
+}
+
+/// Generate code for shape_type variants.
+/// The type is converted to its Shape reference using `<Type as Facet>::SHAPE`.
+///
+/// NOTE: Unlike other variant kinds, this returns JUST the shape expression,
+/// not wrapped in an Attr enum. This is because shape_type data is stored
+/// as `&'static Shape` directly for efficient runtime access.
+///
+/// Handles:
+/// - `proxy = MyType` → `<MyType as Facet>::SHAPE`
+/// - `proxy(MyType)` → same as above
+fn generate_shape_type_value(
+    _ns_path: &TokenStream2,
+    _variant_ident: &proc_macro2::Ident,
+    attr_name: &Ident,
+    rest: &TokenStream2,
+    span: Span,
+) -> TokenStream2 {
+    let rest_tokens: Vec<TokenTree> = rest.clone().into_iter().collect();
+    let attr_str = attr_name.to_string();
+
+    // Check for parens style: proxy(MyType)
+    if let Some(TokenTree::Group(g)) = rest_tokens.first() {
+        if g.delimiter() == proc_macro2::Delimiter::Parenthesis {
+            let inner = g.stream();
+            if !inner.is_empty() {
+                // Convert type to Shape reference (NOT wrapped in Attr)
+                return quote_spanned! { span =>
+                    <#inner as ::facet::Facet>::SHAPE
+                };
+            }
+            // Empty parens - error
+            let msg = format!("`{attr_str}` requires a type: `{attr_str}(MyType)`");
+            return quote_spanned! { span =>
+                compile_error!(#msg)
+            };
+        }
+    }
+
+    // Check for `= Type` style or bare type (derive macro strips the `=` sign)
+    if !rest_tokens.is_empty() {
+        // Check if first token is `=`, if so skip it
+        let type_tokens: TokenStream2 = if let Some(TokenTree::Punct(p)) = rest_tokens.first() {
+            if p.as_char() == '=' {
+                rest_tokens[1..].iter().cloned().collect()
+            } else {
+                rest.clone()
+            }
+        } else {
+            rest.clone()
+        };
+
+        if !type_tokens.is_empty() {
+            // Convert type to Shape reference (NOT wrapped in Attr)
+            return quote_spanned! { span =>
+                <#type_tokens as ::facet::Facet>::SHAPE
+            };
+        }
+    }
+
+    // Error: no type provided
+    let msg =
+        format!("`{attr_str}` requires a type: `{attr_str}(MyType)` or `{attr_str} = MyType`");
     quote_spanned! { span =>
         compile_error!(#msg)
     }

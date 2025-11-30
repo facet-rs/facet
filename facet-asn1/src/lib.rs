@@ -10,8 +10,7 @@ use alloc::{borrow::ToOwned, vec::Vec};
 use core::{f64, num::FpCategory, str::FromStr};
 
 use facet_core::{
-    Def, Facet, NumericType, PrimitiveType, Shape, ShapeAttribute, StructKind, TextualType, Type,
-    UserType,
+    Def, Facet, NumericType, PrimitiveType, Shape, StructKind, TextualType, Type, UserType,
 };
 use facet_reflect::{HasFields, HeapValue, Partial, Peek};
 
@@ -105,10 +104,7 @@ fn ber_tag_for_shape(shape: &Shape) -> Result<Option<u8>, Asn1TagForShapeError> 
         (_, Type::User(ut)) => match ut {
             UserType::Struct(st) => match st.kind {
                 StructKind::Unit => Ok(Some(type_tag.unwrap_or(ASN1_TYPE_TAG_NULL))),
-                StructKind::TupleStruct
-                    if st.fields.len() == 1
-                        && shape.attributes.contains(&ShapeAttribute::Transparent) =>
-                {
+                StructKind::TupleStruct if st.fields.len() == 1 && shape.is_transparent() => {
                     Ok(type_tag.or(ber_tag_for_shape((st.fields[0].shape)())?))
                 }
                 StructKind::TupleStruct | StructKind::Struct | StructKind::Tuple => Ok(Some(
@@ -369,10 +365,7 @@ fn serialize_der_recursive<'w, W: Asn1Write>(
                     serializer.serialize_unit(tag.unwrap());
                     Ok(())
                 }
-                StructKind::TupleStruct
-                    if st.fields.len() == 1
-                        && shape.attributes.contains(&ShapeAttribute::Transparent) =>
-                {
+                StructKind::TupleStruct if st.fields.len() == 1 && shape.is_transparent() => {
                     let inner = pv.into_struct().unwrap().field(0).unwrap();
                     serialize_der_recursive(inner, serializer, tag)
                 }
@@ -848,10 +841,7 @@ impl<'input> Asn1DeserializerStack<'input> {
                             Ok(wip)
                         }
                     }
-                    StructKind::TupleStruct
-                        if st.fields.len() == 1
-                            && shape.attributes.contains(&ShapeAttribute::Transparent) =>
-                    {
+                    StructKind::TupleStruct if st.fields.len() == 1 && shape.is_transparent() => {
                         let wip = wip.begin_nth_field(0).unwrap();
                         self.stack.push(DeserializeTask::Pop(PopReason::ObjectVal));
                         self.stack.push(DeserializeTask::Value {

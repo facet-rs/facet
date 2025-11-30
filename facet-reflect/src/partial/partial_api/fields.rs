@@ -230,7 +230,7 @@ impl Partial<'_> {
         let field = fields[idx];
 
         // Check for field-level default function first, then type-level default
-        if let Some(field_default_fn) = field.vtable.default_fn {
+        if let Some(field_default_fn) = field.default_fn() {
             self = self.begin_nth_field(idx)?;
             // the field default fn should be well-behaved
             self = unsafe {

@@ -6,6 +6,7 @@
 //! Run with: cargo run --example kdl_showcase
 
 use facet::Facet;
+use facet_kdl as kdl;
 use facet_kdl::{from_str, to_string};
 use facet_showcase::{Language, ShowcaseRunner};
 
@@ -58,132 +59,132 @@ fn main() {
 // --- Basic Node with Properties ---
 #[derive(Facet, Debug)]
 struct Person {
-    #[facet(property)]
+    #[facet(kdl::property)]
     name: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     age: u32,
-    #[facet(property)]
+    #[facet(kdl::property)]
     email: Option<String>,
 }
 
 #[derive(Facet, Debug)]
 struct PersonDoc {
-    #[facet(child)]
+    #[facet(kdl::child)]
     person: Person,
 }
 
 // --- Node with Argument ---
 #[derive(Facet, Debug)]
 struct Server {
-    #[facet(argument)]
+    #[facet(kdl::argument)]
     name: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     host: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     port: u16,
 }
 
 #[derive(Facet, Debug)]
 struct ServerDoc {
-    #[facet(child)]
+    #[facet(kdl::child)]
     server: Server,
 }
 
 // --- Nested Nodes ---
 #[derive(Facet, Debug)]
 struct Address {
-    #[facet(property)]
+    #[facet(kdl::property)]
     street: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     city: String,
 }
 
 #[derive(Facet, Debug)]
 struct Company {
-    #[facet(property)]
+    #[facet(kdl::property)]
     name: String,
-    #[facet(child)]
+    #[facet(kdl::child)]
     address: Address,
 }
 
 #[derive(Facet, Debug)]
 struct CompanyDoc {
-    #[facet(child)]
+    #[facet(kdl::child)]
     company: Company,
 }
 
 // --- Vec as Repeated Children ---
 #[derive(Facet, Debug)]
 struct Member {
-    #[facet(argument)]
+    #[facet(kdl::argument)]
     name: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     role: String,
 }
 
 #[derive(Facet, Debug)]
 struct TeamDoc {
-    #[facet(children)]
+    #[facet(kdl::children)]
     member: Vec<Member>,
 }
 
 // --- Simple Config for Roundtrip ---
 #[derive(Facet, Debug)]
 struct Config {
-    #[facet(property)]
+    #[facet(kdl::property)]
     debug: bool,
-    #[facet(property)]
+    #[facet(kdl::property)]
     max_connections: u32,
-    #[facet(property)]
+    #[facet(kdl::property)]
     timeout_ms: u32,
 }
 
 #[derive(Facet, Debug)]
 struct ConfigDoc {
-    #[facet(child)]
+    #[facet(kdl::child)]
     config: Config,
 }
 
 // --- Complex Nested Config ---
 #[derive(Facet, Debug)]
 struct TlsConfig {
-    #[facet(property)]
+    #[facet(kdl::property)]
     cert_path: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     key_path: String,
 }
 
 #[derive(Facet, Debug)]
 struct ServerConfig {
-    #[facet(argument)]
+    #[facet(kdl::argument)]
     name: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     host: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     port: u16,
-    #[facet(child)]
+    #[facet(kdl::child)]
     tls: Option<TlsConfig>,
 }
 
 #[derive(Facet, Debug)]
 struct DatabaseConfig {
-    #[facet(argument)]
+    #[facet(kdl::argument)]
     name: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     url: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     pool_size: u32,
 }
 
 #[derive(Facet, Debug)]
 struct AppConfig {
-    #[facet(property)]
+    #[facet(kdl::property)]
     debug: bool,
-    #[facet(child)]
+    #[facet(kdl::child)]
     server: ServerConfig,
-    #[facet(child)]
+    #[facet(kdl::child)]
     database: DatabaseConfig,
-    #[facet(property)]
+    #[facet(kdl::property)]
     features: Vec<String>,
 }
 
@@ -205,7 +206,7 @@ fn scenario_basic_properties(runner: &mut ShowcaseRunner) {
 
     runner
         .scenario("Basic Node with Properties")
-        .description("Simple struct with `#[facet(property)]` fields becomes KDL properties.")
+        .description("Simple struct with `#[facet(kdl::property)]` fields becomes KDL properties.")
         .input(Language::Kdl, &kdl)
         .target_type::<PersonDoc>()
         .result(&result)
@@ -227,7 +228,7 @@ fn scenario_node_with_argument(runner: &mut ShowcaseRunner) {
     runner
         .scenario("Node with Argument")
         .description(
-            "`#[facet(argument)]` field becomes a positional argument after the node name.\n\
+            "`#[facet(kdl::argument)]` field becomes a positional argument after the node name.\n\
              Result: `server \"web-01\" host=\"localhost\" port=8080`",
         )
         .input(Language::Kdl, &kdl)
@@ -253,7 +254,7 @@ fn scenario_nested_nodes(runner: &mut ShowcaseRunner) {
     runner
         .scenario("Nested Nodes (Children)")
         .description(
-            "`#[facet(child)]` fields become nested child nodes in braces.\n\
+            "`#[facet(kdl::child)]` fields become nested child nodes in braces.\n\
              The address struct becomes a child node of company.",
         )
         .input(Language::Kdl, &kdl)
@@ -286,7 +287,7 @@ fn scenario_vec_children(runner: &mut ShowcaseRunner) {
     runner
         .scenario("Vec as Repeated Children")
         .description(
-            "`#[facet(children)]` on a `Vec` field creates repeated child nodes.\n\
+            "`#[facet(kdl::children)]` on a `Vec` field creates repeated child nodes.\n\
              Each `Member` becomes a separate `member` node.",
         )
         .input(Language::Kdl, &kdl)
@@ -369,13 +370,13 @@ fn scenario_roundtrip(runner: &mut ShowcaseRunner) {
 
 #[derive(Facet, Debug)]
 struct AmbiguousConfig {
-    #[facet(child)]
+    #[facet(kdl::child)]
     resource: AmbiguousResource,
 }
 
 #[derive(Facet, Debug)]
 struct AmbiguousResource {
-    #[facet(argument)]
+    #[facet(kdl::argument)]
     name: String,
     #[facet(flatten)]
     kind: AmbiguousKind,
@@ -392,9 +393,9 @@ enum AmbiguousKind {
 
 #[derive(Facet, Debug)]
 struct CommonFields {
-    #[facet(property)]
+    #[facet(kdl::property)]
     value: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     priority: u32,
 }
 
@@ -402,13 +403,13 @@ struct CommonFields {
 
 #[derive(Facet, Debug)]
 struct NoMatchConfig {
-    #[facet(child)]
+    #[facet(kdl::child)]
     backend: NoMatchBackend,
 }
 
 #[derive(Facet, Debug)]
 struct NoMatchBackend {
-    #[facet(argument)]
+    #[facet(kdl::argument)]
     name: String,
     #[facet(flatten)]
     kind: NoMatchKind,
@@ -425,27 +426,27 @@ enum NoMatchKind {
 
 #[derive(Facet, Debug)]
 struct SqliteBackend {
-    #[facet(property)]
+    #[facet(kdl::property)]
     database_path: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     journal_mode: String,
 }
 
 #[derive(Facet, Debug)]
 struct PostgresBackend {
-    #[facet(property)]
+    #[facet(kdl::property)]
     connection_string: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     pool_size: u32,
 }
 
 #[derive(Facet, Debug)]
 struct RedisBackend {
-    #[facet(property)]
+    #[facet(kdl::property)]
     host: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     port: u16,
-    #[facet(property)]
+    #[facet(kdl::property)]
     password: Option<String>,
 }
 
@@ -453,13 +454,13 @@ struct RedisBackend {
 
 #[derive(Facet, Debug)]
 struct TypoConfig {
-    #[facet(child)]
+    #[facet(kdl::child)]
     server: TypoServer,
 }
 
 #[derive(Facet, Debug)]
 struct TypoServer {
-    #[facet(argument)]
+    #[facet(kdl::argument)]
     name: String,
     #[facet(flatten)]
     kind: TypoKind,
@@ -475,21 +476,21 @@ enum TypoKind {
 
 #[derive(Facet, Debug)]
 struct WebServer {
-    #[facet(property)]
+    #[facet(kdl::property)]
     hostname: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     port: u16,
-    #[facet(property)]
+    #[facet(kdl::property)]
     ssl_enabled: bool,
 }
 
 #[derive(Facet, Debug)]
 struct ApiServer {
-    #[facet(property)]
+    #[facet(kdl::property)]
     endpoint: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     timeout_ms: u32,
-    #[facet(property)]
+    #[facet(kdl::property)]
     retry_count: u8,
 }
 
@@ -497,7 +498,7 @@ struct ApiServer {
 
 #[derive(Facet, Debug)]
 struct ValueConfig {
-    #[facet(child)]
+    #[facet(kdl::child)]
     data: ValueData,
 }
 
@@ -517,13 +518,13 @@ enum ValuePayload {
 
 #[derive(Facet, Debug)]
 struct SmallValue {
-    #[facet(property)]
+    #[facet(kdl::property)]
     count: u8,
 }
 
 #[derive(Facet, Debug)]
 struct LargeValue {
-    #[facet(property)]
+    #[facet(kdl::property)]
     count: u32,
 }
 
@@ -531,13 +532,13 @@ struct LargeValue {
 
 #[derive(Facet, Debug)]
 struct MultiLineConfig {
-    #[facet(child)]
+    #[facet(kdl::child)]
     database: MultiLineDatabase,
 }
 
 #[derive(Facet, Debug)]
 struct MultiLineDatabase {
-    #[facet(argument)]
+    #[facet(kdl::argument)]
     name: String,
     #[facet(flatten)]
     kind: MultiLineDbKind,
@@ -554,33 +555,33 @@ enum MultiLineDbKind {
 
 #[derive(Facet, Debug)]
 struct MySqlConfig {
-    #[facet(property)]
+    #[facet(kdl::property)]
     host: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     port: u16,
-    #[facet(property)]
+    #[facet(kdl::property)]
     username: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     password: String,
 }
 
 #[derive(Facet, Debug)]
 struct PgConfig {
-    #[facet(property)]
+    #[facet(kdl::property)]
     host: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     port: u16,
-    #[facet(property)]
+    #[facet(kdl::property)]
     database: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     ssl_mode: String,
 }
 
 #[derive(Facet, Debug)]
 struct MongoConfig {
-    #[facet(property)]
+    #[facet(kdl::property)]
     uri: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     replica_set: Option<String>,
 }
 
@@ -589,16 +590,16 @@ struct MongoConfig {
 #[derive(Facet, Debug)]
 #[facet(deny_unknown_fields)]
 struct SimpleConfig {
-    #[facet(child)]
+    #[facet(kdl::child)]
     server: SimpleServer,
 }
 
 #[derive(Facet, Debug)]
 #[facet(deny_unknown_fields)]
 struct SimpleServer {
-    #[facet(property)]
+    #[facet(kdl::property)]
     host: String,
-    #[facet(property)]
+    #[facet(kdl::property)]
     port: u16,
 }
 

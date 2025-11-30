@@ -149,35 +149,15 @@ const fn complex_fields<'facet, T: Facet<'facet>>() -> &'static [Field; 2] {
             name: "re",
             shape: || T::SHAPE,
             offset: offset_of!(Complex<T>, re),
-            flags: FieldFlags::EMPTY,
             attributes: &[],
             doc: &["Real portion of the complex number"],
-            vtable: &crate::FieldVTable {
-                skip_serializing_if: None,
-                default_fn: None,
-                #[cfg(feature = "alloc")]
-                deserialize_with: None,
-                #[cfg(feature = "alloc")]
-                serialize_with: None,
-            },
-            flattened: false,
         },
         Field {
             name: "im",
             shape: || T::SHAPE,
             offset: offset_of!(Complex<T>, im),
-            flags: FieldFlags::EMPTY,
             attributes: &[],
             doc: &["Imaginary portion of the complex number"],
-            vtable: &crate::FieldVTable {
-                skip_serializing_if: None,
-                default_fn: None,
-                #[cfg(feature = "alloc")]
-                deserialize_with: None,
-                #[cfg(feature = "alloc")]
-                serialize_with: None,
-            },
-            flattened: false,
         },
     ]
 }

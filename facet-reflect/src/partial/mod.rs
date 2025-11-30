@@ -123,8 +123,7 @@ mod heap_value;
 pub use heap_value::*;
 
 use facet_core::{
-    Def, EnumType, Field, FieldFlags, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType,
-    Variant,
+    Def, EnumType, Field, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
 };
 use iset::ISet;
 
@@ -816,12 +815,12 @@ impl Frame {
     /// 3. Special cases: `Option<T>` (defaults to None), () (unit type)
     fn get_field_default_fn(field: &Field) -> Option<facet_core::DefaultInPlaceFn> {
         // First check for explicit field-level default
-        if let Some(default_fn) = field.vtable.default_fn {
+        if let Some(default_fn) = field.default_fn() {
             return Some(default_fn);
         }
 
-        // Check if field is marked with DEFAULT flag and type has default_in_place
-        if field.flags.contains(FieldFlags::DEFAULT) {
+        // Check if field has default attribute and type has default_in_place
+        if field.has_default() {
             if let Some(default_fn) = field.shape().vtable.default_in_place {
                 return Some(default_fn);
             }

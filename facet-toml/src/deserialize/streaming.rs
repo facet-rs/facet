@@ -15,8 +15,7 @@ use alloc::{
 };
 use core::ops::Range;
 use facet_core::{
-    Def, DynDateTimeKind, Facet, FieldError, FieldFlags, Shape, StructKind, StructType, Type,
-    UserType,
+    Def, DynDateTimeKind, Facet, FieldError, Shape, StructKind, StructType, Type, UserType,
 };
 use facet_reflect::{Partial, ReflectError, Resolution, ScalarType, VariantSelection};
 use facet_solver::{KeyResult, Schema, Solver};
@@ -354,7 +353,7 @@ fn find_field_location<'a>(
 
     // Then check flattened fields
     for field in fields {
-        if !field.flags.contains(FieldFlags::FLATTEN) {
+        if !field.is_flattened() {
             continue;
         }
 
@@ -3116,8 +3115,8 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 }
 
                 // Check if field has a default available
-                let has_default_fn = field.vtable.default_fn.is_some();
-                let has_default_flag = field.flags.contains(FieldFlags::DEFAULT);
+                let has_default_fn = field.default_fn().is_some();
+                let has_default_flag = field.has_default();
                 let shape_has_default = field.shape().vtable.default_in_place.is_some();
 
                 if has_default_fn || has_default_flag || shape_has_default {
