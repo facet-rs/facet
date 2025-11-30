@@ -10,7 +10,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
 
-use facet_core::{Def, Field, FieldFlags, Shape, StructType, Type, UserType, Variant};
+use facet_core::{Def, Field, Shape, StructType, Type, UserType, Variant};
 
 // Re-export resolution types from facet-reflect
 pub use facet_reflect::{
@@ -1606,7 +1606,7 @@ impl SchemaBuilder {
         key_prefix: &KeyPath,
         mut configs: Vec<Resolution>,
     ) -> Result<Vec<Resolution>, SchemaError> {
-        let is_flatten = field.flags.contains(FieldFlags::FLATTEN);
+        let is_flatten = field.is_flattened();
 
         if is_flatten {
             // Flattened: inner keys bubble up to current level (same key_prefix)
@@ -1614,8 +1614,7 @@ impl SchemaBuilder {
         } else {
             // Regular field: add to ALL current configs
             let field_path = parent_path.push_field(field.name);
-            let required =
-                !field.flags.contains(FieldFlags::DEFAULT) && !is_option_type(field.shape());
+            let required = !field.has_default() && !is_option_type(field.shape());
 
             // Build the key path for this field
             let mut field_key_path = key_prefix.clone();
@@ -1670,7 +1669,7 @@ impl SchemaBuilder {
         mut configs: Vec<Resolution>,
     ) -> Result<Vec<Resolution>, SchemaError> {
         for field in struct_type.fields {
-            let is_flatten = field.flags.contains(FieldFlags::FLATTEN);
+            let is_flatten = field.is_flattened();
             let mut field_key_path = key_prefix.clone();
 
             if is_flatten {
@@ -1777,7 +1776,7 @@ impl SchemaBuilder {
 
         // Named fields - process each
         for variant_field in variant.data.fields {
-            let is_flatten = variant_field.flags.contains(FieldFlags::FLATTEN);
+            let is_flatten = variant_field.is_flattened();
 
             if is_flatten {
                 let configs = self.collect_nested_key_paths_for_flattened(
@@ -1844,7 +1843,7 @@ impl SchemaBuilder {
         config: &mut Resolution,
     ) {
         for field in struct_type.fields {
-            let is_flatten = field.flags.contains(FieldFlags::FLATTEN);
+            let is_flatten = field.is_flattened();
 
             if is_flatten {
                 // Flattened field: keys bubble up to current level
@@ -2080,9 +2079,8 @@ impl SchemaBuilder {
             _ => {
                 // Can't flatten other types - treat as regular field
                 // For Option<T> flatten, also consider optionality from the wrapper
-                let required = !field.flags.contains(FieldFlags::DEFAULT)
-                    && !is_option_type(shape)
-                    && !is_optional_flatten;
+                let required =
+                    !field.has_default() && !is_option_type(shape) && !is_optional_flatten;
 
                 // For non-flattenable types, add the field with its key path
                 let mut field_key_path = key_prefix.clone();

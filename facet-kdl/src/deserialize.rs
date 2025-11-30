@@ -3,8 +3,8 @@
 use std::mem;
 
 use facet_core::{
-    Def, EnumType, Facet, Field, FieldFlags, NumericType, PrimitiveType, Shape, ShapeLayout,
-    StructType, Type, UserType,
+    Def, EnumType, Facet, Field, NumericType, PrimitiveType, Shape, ShapeLayout, StructType, Type,
+    UserType,
 };
 use facet_reflect::{Partial, is_spanned_shape};
 use facet_solver::{
@@ -17,6 +17,21 @@ use crate::error::{KdlError, KdlErrorKind};
 use crate::serialize::kebab_to_pascal;
 
 pub(crate) type Result<T> = std::result::Result<T, KdlError>;
+
+/// Extension trait for Field to check KDL-specific child attributes.
+///
+/// KDL supports both the builtin `#[facet(child)]` attribute and the
+/// KDL-specific `#[facet(kdl::child)]` attribute for marking child fields.
+pub(crate) trait KdlFieldExt {
+    /// Returns true if this field is a child field (either via builtin or kdl::child).
+    fn is_kdl_child(&self) -> bool;
+}
+
+impl KdlFieldExt for Field {
+    fn is_kdl_child(&self) -> bool {
+        self.is_child() || self.has_attr(Some("kdl"), "child")
+    }
+}
 
 /// Check if a shape is an enum type and return its definition if so.
 fn get_enum_type(shape: &Shape) -> Option<EnumType> {
@@ -58,7 +73,7 @@ fn find_property_field(
 ) -> Option<PropertyFieldMatch> {
     // First check direct fields
     for field in fields {
-        if field.has_extension_attr("kdl", "property") && field.name == property_name {
+        if field.has_attr(Some("kdl"), "property") && field.name == property_name {
             return Some(PropertyFieldMatch::Direct {
                 field_name: field.name,
                 field,
@@ -68,11 +83,11 @@ fn find_property_field(
 
     // Then check flattened struct fields
     for field in fields {
-        if field.flags.contains(FieldFlags::FLATTEN) {
+        if field.is_flattened() {
             let field_shape = (field.shape)();
             if let Type::User(UserType::Struct(struct_def)) = &field_shape.ty {
                 for inner_field in struct_def.fields {
-                    if inner_field.has_extension_attr("kdl", "property")
+                    if inner_field.has_attr(Some("kdl"), "property")
                         && inner_field.name == property_name
                     {
                         return Some(PropertyFieldMatch::Flattened {
@@ -93,7 +108,7 @@ fn find_property_field(
 /// When flattened fields exist, we use the solver for proper path resolution and
 /// to handle missing optional fields via `missing_optional_fields()`.
 fn has_flatten(fields: &[Field]) -> bool {
-    fields.iter().any(|f| f.flags.contains(FieldFlags::FLATTEN))
+    fields.iter().any(|f| f.is_flattened())
 }
 
 /// An entry in the open paths stack, tracking both the path segment and
@@ -183,10 +198,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         // Check that the target type is a struct with child/children fields
         if let Type::User(UserType::Struct(struct_def)) = &partial.shape().ty {
             log::trace!("Document `Partial` is a struct: {struct_def:#?}");
-            let is_valid_toplevel = struct_def.fields.iter().all(|field| {
-                field.flags.contains(FieldFlags::CHILD)
-                    || field.has_extension_attr("kdl", "children")
-            });
+            let is_valid_toplevel = struct_def
+                .fields
+                .iter()
+                .all(|field| field.is_kdl_child() || field.has_attr(Some("kdl"), "children"));
             log::trace!("WIP represents a valid top-level: {is_valid_toplevel}");
 
             if is_valid_toplevel {
@@ -272,16 +287,17 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         // Helper closure to find and process matching fields
         let find_matching_field = |fields: &[Field]| -> Option<FieldMatchResult> {
             // First, try to match by exact field name with CHILD flag
-            if let Some(child_field) = fields.iter().find(|field| {
-                field.flags.contains(FieldFlags::CHILD) && field.name == node.name().value()
-            }) {
+            if let Some(child_field) = fields
+                .iter()
+                .find(|field| field.is_kdl_child() && field.name == node.name().value())
+            {
                 return Some(FieldMatchResult::ExactChild(child_field.name));
             }
 
             // Second, try to match by enum variant name
             if let Some((child_field, variant)) = fields
                 .iter()
-                .filter(|field| field.flags.contains(FieldFlags::CHILD))
+                .filter(|field| field.is_kdl_child())
                 .find_map(|field| {
                     let field_shape = (field.shape)();
                     if let Some(enum_type) = get_enum_type(field_shape) {
@@ -304,7 +320,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             if let Some((idx, children_field)) = fields
                 .iter()
                 .enumerate()
-                .find(|(_, field)| field.has_extension_attr("kdl", "children"))
+                .find(|(_, field)| field.has_attr(Some("kdl"), "children"))
             {
                 return Some(FieldMatchResult::ChildrenContainer {
                     field_name: children_field.name,
@@ -469,12 +485,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 if document_shape.has_deny_unknown_fields_attr() {
                     log::debug!("No fields for child {} (deny_unknown_fields)", node.name());
                     for field in fields {
-                        log::debug!(
-                            "field {}\tflags {:?}\tattributes {:?}",
-                            field.name,
-                            field.flags,
-                            field.attributes
-                        );
+                        log::debug!("field {}\tattributes {:?}", field.name, field.attributes);
                     }
                     return Err(
                         KdlErrorKind::NoMatchingField(node.name().value().to_string()).into(),
@@ -539,7 +550,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         // Handle node_name attribute
         if let Some(node_name_field) = fields_for_matching
             .iter()
-            .find(|field| field.has_extension_attr("kdl", "node_name"))
+            .find(|field| field.has_attr(Some("kdl"), "node_name"))
         {
             let field_shape = (node_name_field.shape)();
             if is_spanned_shape(field_shape) {
@@ -642,12 +653,11 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         // Note: Option<T> fields are NOT implicitly optional - they require an explicit
         // value (use #null in KDL for None). Use #[facet(default)] to make a field optional.
         for (idx, field) in fields_for_matching.iter().enumerate() {
-            if !partial.is_field_set(idx)? {
-                let has_skip = field.flags.contains(FieldFlags::SKIP_DESERIALIZING);
-                if field.flags.contains(FieldFlags::DEFAULT) || has_skip {
-                    log::trace!("Setting default for unset field: {}", field.name);
-                    partial = partial.set_nth_field_to_default(idx)?;
-                }
+            if !partial.is_field_set(idx)?
+                && (field.has_default() || field.should_skip_deserializing())
+            {
+                log::trace!("Setting default for unset field: {}", field.name);
+                partial = partial.set_nth_field_to_default(idx)?;
             }
         }
 
@@ -716,7 +726,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                     // Check for custom deserialization
                     let entry_span = entry.span();
                     let value = mem::replace(entry.value_mut(), KdlValue::Null);
-                    if field.vtable.deserialize_with.is_some() {
+                    if field.proxy_convert_in_fn().is_some() {
                         partial = partial.begin_custom_deserialization()?;
                         partial = self.deserialize_value(partial, value, Some(entry_span))?;
                         partial = partial.end()?; // Calls deserialize_with function
@@ -754,7 +764,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                     let entry_span = entry.span();
                     let value = mem::replace(entry.value_mut(), KdlValue::Null);
                     // Check for custom deserialization on the inner field
-                    if inner_field.vtable.deserialize_with.is_some() {
+                    if inner_field.proxy_convert_in_fn().is_some() {
                         partial = partial.begin_custom_deserialization()?;
                         partial = self.deserialize_value(partial, value, Some(entry_span))?;
                         partial = partial.end()?; // Calls deserialize_with function
@@ -770,7 +780,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                     if deny_unknown_fields {
                         let expected: Vec<&'static str> = fields
                             .iter()
-                            .filter(|f| f.has_extension_attr("kdl", "property"))
+                            .filter(|f| f.has_attr(Some("kdl"), "property"))
                             .map(|f| f.name)
                             .collect();
                         let name_span = name.span();
@@ -793,7 +803,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             let argument_field: Option<&Field>;
 
             if let Some((_, next_arg_field)) = fields.iter().enumerate().find(|(index, field)| {
-                field.has_extension_attr("kdl", "argument")
+                field.has_attr(Some("kdl"), "argument")
                     && partial.is_field_set(*index).ok() == Some(false)
             }) {
                 if *in_entry_arguments_list {
@@ -804,7 +814,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             } else if let Some((args_field_index, args_field)) = fields
                 .iter()
                 .enumerate()
-                .find(|(_, field)| field.has_extension_attr("kdl", "arguments"))
+                .find(|(_, field)| field.has_attr(Some("kdl"), "arguments"))
             {
                 if !*in_entry_arguments_list {
                     if partial.is_field_set(args_field_index)? {
@@ -839,7 +849,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
             // Check for custom deserialization on the argument field
             if let Some(field) = argument_field {
-                if field.vtable.deserialize_with.is_some() {
+                if field.proxy_convert_in_fn().is_some() {
                     partial = partial.begin_custom_deserialization()?;
                     partial = self.deserialize_value(partial, value, Some(entry_span))?;
                     partial = partial.end()?; // Calls deserialize_with function
@@ -966,9 +976,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         // Pre-register argument fields with the solver (they're always present)
         // This is important because the solver's finish() method checks required fields
         for field in fields {
-            if field.has_extension_attr("kdl", "argument")
-                || field.has_extension_attr("kdl", "arguments")
-            {
+            if field.has_attr(Some("kdl"), "argument") || field.has_attr(Some("kdl"), "arguments") {
                 let _ = solver.see_key(field.name); // Inform solver about argument fields
             }
         }
@@ -980,13 +988,11 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         let mut argument_index = 0;
         let argument_fields: Vec<_> = fields
             .iter()
-            .filter(|f| f.has_extension_attr("kdl", "argument"))
+            .filter(|f| f.has_attr(Some("kdl"), "argument"))
             .collect();
 
         let mut in_arguments_list = false;
-        let arguments_field = fields
-            .iter()
-            .find(|f| f.has_extension_attr("kdl", "arguments"));
+        let arguments_field = fields.iter().find(|f| f.has_attr(Some("kdl"), "arguments"));
 
         // Separate arguments from properties
         let mut arguments: Vec<KdlEntry> = Vec::new();
@@ -1118,7 +1124,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         // Collect expected property fields for the error message
                         let expected: Vec<&'static str> = fields
                             .iter()
-                            .filter(|f| f.has_extension_attr("kdl", "property"))
+                            .filter(|f| f.has_attr(Some("kdl"), "property"))
                             .map(|f| f.name)
                             .collect();
                         // Get span from the property entry
@@ -1280,8 +1286,8 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             let mut seen_props: std::collections::BTreeSet<&str> =
                 property_names.iter().map(|s| s.as_str()).collect();
             for field in fields {
-                if field.has_extension_attr("kdl", "argument")
-                    || field.has_extension_attr("kdl", "arguments")
+                if field.has_attr(Some("kdl"), "argument")
+                    || field.has_attr(Some("kdl"), "arguments")
                 {
                     seen_props.insert(field.name);
                 }
@@ -1360,7 +1366,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             // Check for custom deserialization via partial.parent_field()
             let has_custom_deser = partial
                 .parent_field()
-                .map(|f| f.vtable.deserialize_with.is_some())
+                .map(|f| f.proxy_convert_in_fn().is_some())
                 .unwrap_or(false);
 
             if has_custom_deser {
@@ -1389,11 +1395,11 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             log::trace!(
                 "DEBUG: Missing optional field: {} (CHILD={})",
                 field_info.serialized_name,
-                field_info.field.flags.contains(FieldFlags::CHILD)
+                field_info.field.is_kdl_child()
             );
             // Skip child fields - they are handled later in child node processing
             // We only want to set defaults for property fields here
-            if field_info.field.flags.contains(FieldFlags::CHILD) {
+            if field_info.field.is_kdl_child() {
                 log::trace!(
                     "Skipping child field '{}' - will be handled in child node processing",
                     field_info.serialized_name
@@ -1475,7 +1481,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
                 // Look up the child field in the solver's resolution
                 if let Some(field_info) = final_resolution.field(&child_name) {
-                    if field_info.field.flags.contains(FieldFlags::CHILD) {
+                    if field_info.field.is_kdl_child() {
                         log::trace!(
                             "Processing child node '{}' via solver path {:?}",
                             child_name,
@@ -1534,12 +1540,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
                             // Set defaults for unset fields
                             for (idx, field) in struct_def.fields.iter().enumerate() {
-                                if !partial.is_field_set(idx)? {
-                                    let has_skip =
-                                        field.flags.contains(FieldFlags::SKIP_DESERIALIZING);
-                                    if field.flags.contains(FieldFlags::DEFAULT) || has_skip {
-                                        partial = partial.set_nth_field_to_default(idx)?;
-                                    }
+                                if !partial.is_field_set(idx)?
+                                    && (field.has_default() || field.should_skip_deserializing())
+                                {
+                                    partial = partial.set_nth_field_to_default(idx)?;
                                 }
                             }
                         }
@@ -1563,9 +1567,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 );
 
                 // Find matching field in the original fields
-                if let Some(child_field) = fields.iter().find(|field| {
-                    field.flags.contains(FieldFlags::CHILD) && field.name == child_name.as_str()
-                }) {
+                if let Some(child_field) = fields
+                    .iter()
+                    .find(|field| field.is_kdl_child() && field.name == child_name.as_str())
+                {
                     partial = partial.begin_field(child_field.name)?;
                     let _field_shape = (child_field.shape)();
 
@@ -1598,11 +1603,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         }
 
                         for (idx, field) in struct_def.fields.iter().enumerate() {
-                            if !partial.is_field_set(idx)? {
-                                let has_skip = field.flags.contains(FieldFlags::SKIP_DESERIALIZING);
-                                if field.flags.contains(FieldFlags::DEFAULT) || has_skip {
-                                    partial = partial.set_nth_field_to_default(idx)?;
-                                }
+                            if !partial.is_field_set(idx)?
+                                && (field.has_default() || field.should_skip_deserializing())
+                            {
+                                partial = partial.set_nth_field_to_default(idx)?;
                             }
                         }
                     }
@@ -1615,7 +1619,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                     // Check for enum variant matching
                     if let Some((child_field, variant)) = fields
                         .iter()
-                        .filter(|field| field.flags.contains(FieldFlags::CHILD))
+                        .filter(|field| field.is_kdl_child())
                         .find_map(|field| {
                             let field_shape = (field.shape)();
                             if let Some(enum_type) = get_enum_type(field_shape) {
@@ -1652,12 +1656,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                             }
 
                             for (idx, field) in struct_def.fields.iter().enumerate() {
-                                if !partial.is_field_set(idx)? {
-                                    let has_skip =
-                                        field.flags.contains(FieldFlags::SKIP_DESERIALIZING);
-                                    if field.flags.contains(FieldFlags::DEFAULT) || has_skip {
-                                        partial = partial.set_nth_field_to_default(idx)?;
-                                    }
+                                if !partial.is_field_set(idx)?
+                                    && (field.has_default() || field.should_skip_deserializing())
+                                {
+                                    partial = partial.set_nth_field_to_default(idx)?;
                                 }
                             }
                         }
@@ -1879,12 +1881,11 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
         // Set defaults for unset fields
         for (idx, field) in fields.iter().enumerate() {
-            if !partial.is_field_set(idx)? {
-                let has_skip = field.flags.contains(FieldFlags::SKIP_DESERIALIZING);
-                if field.flags.contains(FieldFlags::DEFAULT) || has_skip {
-                    log::trace!("Setting default for unset field: {}", field.name);
-                    partial = partial.set_nth_field_to_default(idx)?;
-                }
+            if !partial.is_field_set(idx)?
+                && (field.has_default() || field.should_skip_deserializing())
+            {
+                log::trace!("Setting default for unset field: {}", field.name);
+                partial = partial.set_nth_field_to_default(idx)?;
             }
         }
 

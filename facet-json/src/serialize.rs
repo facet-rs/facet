@@ -1,7 +1,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
-use facet_core::{Def, Facet, Field, PointerType, ShapeAttribute, StructKind, Type, UserType};
-use facet_reflect::{HasFields, Peek, ScalarType};
+use facet_core::{Def, Facet, PointerType, StructKind, Type, UserType};
+use facet_reflect::{FieldItem, HasFields, Peek, ScalarType};
 use log::trace;
 
 use crate::RawJson;
@@ -97,7 +97,7 @@ fn write_colon<W: crate::JsonWrite>(writer: &mut W, indent: Option<&str>) {
 
 fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
     peek: Peek<'mem, 'facet>,
-    maybe_field: Option<Field>,
+    maybe_field_item: Option<FieldItem>,
     writer: &mut W,
     indent: Option<&str>,
     depth: usize,
@@ -106,9 +106,9 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
 
     // Handle custom serialization
     #[cfg(feature = "alloc")]
-    if let Some(f) = maybe_field {
-        if f.vtable.serialize_with.is_some() {
-            let owned_peek = peek.custom_serialization(f).unwrap();
+    if let Some(fi) = maybe_field_item {
+        if fi.field.proxy_convert_out_fn().is_some() {
+            let owned_peek = peek.custom_serialization(fi.field).unwrap();
             let old_shape = peek.shape();
             let new_shape = owned_peek.shape();
             trace!("{old_shape} has custom serialization, serializing as {new_shape} instead");
@@ -117,17 +117,19 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
     }
 
     // Handle transparent types
-    if peek
-        .shape()
-        .attributes
-        .contains(&ShapeAttribute::Transparent)
-    {
+    if peek.shape().is_transparent() {
         let old_shape = peek.shape();
         let ps = peek.into_struct().unwrap();
         let (field, inner_peek) = ps.fields().next().unwrap();
         let new_shape = inner_peek.shape();
         trace!("{old_shape} is transparent, let's serialize the inner {new_shape} instead");
-        return serialize_value(inner_peek, Some(field), writer, indent, depth);
+        return serialize_value(
+            inner_peek,
+            Some(FieldItem::new(field)),
+            writer,
+            indent,
+            depth,
+        );
     }
 
     // Handle RawJson - write raw content directly
@@ -263,7 +265,13 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
                         first = false;
                         write_newline(writer, indent);
                         write_indent(writer, indent, depth + 1);
-                        serialize_value(value, Some(field), writer, indent, depth + 1)?;
+                        serialize_value(
+                            value,
+                            Some(FieldItem::new(field)),
+                            writer,
+                            indent,
+                            depth + 1,
+                        )?;
                     }
                     if !first {
                         write_newline(writer, indent);
@@ -275,14 +283,14 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
                     let peek_struct = peek.into_struct().unwrap();
                     writer.write(b"[");
                     let mut first = true;
-                    for (field, value) in peek_struct.fields_for_serialize() {
+                    for (field_item, value) in peek_struct.fields_for_serialize() {
                         if !first {
                             writer.write(b",");
                         }
                         first = false;
                         write_newline(writer, indent);
                         write_indent(writer, indent, depth + 1);
-                        serialize_value(value, Some(field), writer, indent, depth + 1)?;
+                        serialize_value(value, Some(field_item), writer, indent, depth + 1)?;
                     }
                     if !first {
                         write_newline(writer, indent);
@@ -294,16 +302,16 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
                     let peek_struct = peek.into_struct().unwrap();
                     writer.write(b"{");
                     let mut first = true;
-                    for (field, value) in peek_struct.fields_for_serialize() {
+                    for (field_item, value) in peek_struct.fields_for_serialize() {
                         if !first {
                             writer.write(b",");
                         }
                         first = false;
                         write_newline(writer, indent);
                         write_indent(writer, indent, depth + 1);
-                        crate::write_json_string(writer, field.name);
+                        crate::write_json_string(writer, field_item.name);
                         write_colon(writer, indent);
-                        serialize_value(value, Some(field), writer, indent, depth + 1)?;
+                        serialize_value(value, Some(field_item), writer, indent, depth + 1)?;
                     }
                     if !first {
                         write_newline(writer, indent);
@@ -365,13 +373,13 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
                     crate::write_json_string(writer, variant.name);
 
                     // Add struct fields at same level as tag
-                    for (field, field_peek) in peek_enum.fields_for_serialize() {
+                    for (field_item, field_peek) in peek_enum.fields_for_serialize() {
                         writer.write(b",");
                         write_newline(writer, indent);
                         write_indent(writer, indent, depth + 1);
-                        crate::write_json_string(writer, field.name);
+                        crate::write_json_string(writer, field_item.name);
                         write_colon(writer, indent);
-                        serialize_value(field_peek, Some(field), writer, indent, depth + 1)?;
+                        serialize_value(field_peek, Some(field_item), writer, indent, depth + 1)?;
                     }
 
                     write_newline(writer, indent);
@@ -380,7 +388,7 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
                 }
             } else {
                 // Externally tagged (default): {"Variant": content} or "Variant" for unit
-                let flattened = maybe_field.map(|f| f.flattened).unwrap_or_default();
+                let flattened = maybe_field_item.map(|fi| fi.flattened).unwrap_or_default();
 
                 if variant.data.fields.is_empty() {
                     // Unit variant - just the name as a string
@@ -695,21 +703,21 @@ fn serialize_enum_content<'mem, 'facet, W: crate::JsonWrite>(
     } else if variant_is_newtype_like(variant) {
         // Newtype variant - serialize the inner value directly
         let fields: Vec<_> = peek_enum.fields_for_serialize().collect();
-        let (field, field_peek) = fields[0];
-        serialize_value(field_peek, Some(field), writer, indent, depth)?;
+        let (field_item, field_peek) = fields[0];
+        serialize_value(field_peek, Some(field_item), writer, indent, depth)?;
     } else if variant.data.kind == StructKind::Tuple || variant.data.kind == StructKind::TupleStruct
     {
         // Tuple variant - serialize as array
         writer.write(b"[");
         let mut first = true;
-        for (field, field_peek) in peek_enum.fields_for_serialize() {
+        for (field_item, field_peek) in peek_enum.fields_for_serialize() {
             if !first {
                 writer.write(b",");
             }
             first = false;
             write_newline(writer, indent);
             write_indent(writer, indent, depth + 1);
-            serialize_value(field_peek, Some(field), writer, indent, depth + 1)?;
+            serialize_value(field_peek, Some(field_item), writer, indent, depth + 1)?;
         }
         if !first {
             write_newline(writer, indent);
@@ -720,16 +728,16 @@ fn serialize_enum_content<'mem, 'facet, W: crate::JsonWrite>(
         // Struct variant - serialize as object
         writer.write(b"{");
         let mut first = true;
-        for (field, field_peek) in peek_enum.fields_for_serialize() {
+        for (field_item, field_peek) in peek_enum.fields_for_serialize() {
             if !first {
                 writer.write(b",");
             }
             first = false;
             write_newline(writer, indent);
             write_indent(writer, indent, depth + 1);
-            crate::write_json_string(writer, field.name);
+            crate::write_json_string(writer, field_item.name);
             write_colon(writer, indent);
-            serialize_value(field_peek, Some(field), writer, indent, depth + 1)?;
+            serialize_value(field_peek, Some(field_item), writer, indent, depth + 1)?;
         }
         if !first {
             write_newline(writer, indent);

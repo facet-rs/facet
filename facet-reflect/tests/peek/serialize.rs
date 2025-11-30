@@ -8,13 +8,27 @@ fn peek_opaque_custom_serialize() -> Result<(), IPanic> {
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub struct NotDerivingFacet(u64);
 
-    fn serialize_with(val: &NotDerivingFacet) -> Result<u64, &'static str> {
-        Ok(val.0)
+    // Proxy type that derives Facet
+    #[derive(Facet, Copy, Clone)]
+    pub struct NotDerivingFacetProxy(u64);
+
+    impl TryFrom<NotDerivingFacetProxy> for NotDerivingFacet {
+        type Error = &'static str;
+        fn try_from(val: NotDerivingFacetProxy) -> Result<Self, Self::Error> {
+            Ok(NotDerivingFacet(val.0))
+        }
+    }
+
+    impl TryFrom<&NotDerivingFacet> for NotDerivingFacetProxy {
+        type Error = &'static str;
+        fn try_from(val: &NotDerivingFacet) -> Result<Self, Self::Error> {
+            Ok(NotDerivingFacetProxy(val.0))
+        }
     }
 
     #[derive(Facet)]
     pub struct Container {
-        #[facet(opaque, serialize_with=serialize_with)]
+        #[facet(opaque, proxy = NotDerivingFacetProxy)]
         inner: NotDerivingFacet,
     }
 
@@ -36,14 +50,14 @@ fn peek_opaque_custom_serialize() -> Result<(), IPanic> {
     if let Some((field, peek)) = peek_struct.fields_for_serialize().next() {
         tested = true;
         assert_eq!(inner_field, peek);
-        assert!(field.vtable.serialize_with.is_some());
+        assert!(field.field.proxy_convert_out_fn().is_some());
         let owned = peek
-            .custom_serialization(field)
+            .custom_serialization(field.field)
             .expect("should return owned peek");
         // Test field values
         let peek = owned.as_peek();
-        let proxy_value = peek.get::<u64>().unwrap();
-        assert_eq!(*proxy_value, 35);
+        let proxy_value = peek.get::<NotDerivingFacetProxy>().unwrap();
+        assert_eq!(proxy_value.0, 35);
     }
     assert!(tested);
     Ok(())
@@ -56,20 +70,33 @@ fn peek_shaped_custom_serialize() -> Result<(), IPanic> {
         val: u64,
     }
 
+    // Proxy type for serialization
     #[derive(Facet)]
-    pub struct Struct2 {
+    pub struct Struct1Proxy {
         sum: String,
     }
 
-    fn serialize_with(val: &Struct1) -> Result<Struct2, &'static str> {
-        Ok(Struct2 {
-            sum: format!("0x{:x}", val.val),
-        })
+    impl TryFrom<Struct1Proxy> for Struct1 {
+        type Error = &'static str;
+        fn try_from(val: Struct1Proxy) -> Result<Self, Self::Error> {
+            Ok(Struct1 {
+                val: val.sum.parse().unwrap(),
+            })
+        }
+    }
+
+    impl TryFrom<&Struct1> for Struct1Proxy {
+        type Error = &'static str;
+        fn try_from(val: &Struct1) -> Result<Self, Self::Error> {
+            Ok(Struct1Proxy {
+                sum: format!("0x{:x}", val.val),
+            })
+        }
     }
 
     #[derive(Facet)]
     pub struct Container {
-        #[facet(opaque, serialize_with=serialize_with)]
+        #[facet(opaque, proxy = Struct1Proxy)]
         inner: Struct1,
     }
 
@@ -91,13 +118,13 @@ fn peek_shaped_custom_serialize() -> Result<(), IPanic> {
     if let Some((field, peek)) = peek_struct.fields_for_serialize().next() {
         tested = true;
         assert_eq!(inner_field, peek);
-        assert!(field.vtable.serialize_with.is_some());
+        assert!(field.field.proxy_convert_out_fn().is_some());
         let owned = peek
-            .custom_serialization(field)
+            .custom_serialization(field.field)
             .expect("should return owned peek");
         // Test field values
         let peek = owned.as_peek();
-        let proxy_value = peek.get::<Struct2>().unwrap();
+        let proxy_value = peek.get::<Struct1Proxy>().unwrap();
         assert_eq!(proxy_value.sum, "0x23");
     }
     assert!(tested);
@@ -109,15 +136,29 @@ fn peek_opaque_custom_serialize_enum_tuple() -> Result<(), IPanic> {
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub struct NotDerivingFacet(u64);
 
-    fn serialize_with(val: &NotDerivingFacet) -> Result<u64, &'static str> {
-        Ok(val.0)
+    // Proxy type that derives Facet
+    #[derive(Facet, Copy, Clone)]
+    pub struct NotDerivingFacetProxy(u64);
+
+    impl TryFrom<NotDerivingFacetProxy> for NotDerivingFacet {
+        type Error = &'static str;
+        fn try_from(val: NotDerivingFacetProxy) -> Result<Self, Self::Error> {
+            Ok(NotDerivingFacet(val.0))
+        }
+    }
+
+    impl TryFrom<&NotDerivingFacet> for NotDerivingFacetProxy {
+        type Error = &'static str;
+        fn try_from(val: &NotDerivingFacet) -> Result<Self, Self::Error> {
+            Ok(NotDerivingFacetProxy(val.0))
+        }
     }
 
     #[allow(dead_code)]
     #[derive(Facet)]
     #[repr(u8)]
     pub enum Choices {
-        Opaque(#[facet(opaque, serialize_with=serialize_with)] NotDerivingFacet),
+        Opaque(#[facet(opaque, proxy = NotDerivingFacetProxy)] NotDerivingFacet),
     }
 
     let container = Choices::Opaque(NotDerivingFacet(35));
@@ -145,14 +186,14 @@ fn peek_opaque_custom_serialize_enum_tuple() -> Result<(), IPanic> {
     if let Some((field, peek)) = peek_enum.fields_for_serialize().next() {
         tested = true;
         assert_eq!(inner_field, peek);
-        assert!(field.vtable.serialize_with.is_some());
+        assert!(field.field.proxy_convert_out_fn().is_some());
         let owned = peek
-            .custom_serialization(field)
+            .custom_serialization(field.field)
             .expect("should return owned peek");
         // Test field values
         let peek = owned.as_peek();
-        let proxy_value = peek.get::<u64>().unwrap();
-        assert_eq!(*proxy_value, 35);
+        let proxy_value = peek.get::<NotDerivingFacetProxy>().unwrap();
+        assert_eq!(proxy_value.0, 35);
     }
     assert!(tested);
     Ok(())
@@ -163,8 +204,22 @@ fn peek_opaque_custom_serialize_enum_feels() -> Result<(), IPanic> {
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub struct NotDerivingFacet(u64);
 
-    fn serialize_with(val: &NotDerivingFacet) -> Result<u64, &'static str> {
-        Ok(val.0)
+    // Proxy type that derives Facet
+    #[derive(Facet, Copy, Clone)]
+    pub struct NotDerivingFacetProxy(u64);
+
+    impl TryFrom<NotDerivingFacetProxy> for NotDerivingFacet {
+        type Error = &'static str;
+        fn try_from(val: NotDerivingFacetProxy) -> Result<Self, Self::Error> {
+            Ok(NotDerivingFacet(val.0))
+        }
+    }
+
+    impl TryFrom<&NotDerivingFacet> for NotDerivingFacetProxy {
+        type Error = &'static str;
+        fn try_from(val: &NotDerivingFacet) -> Result<Self, Self::Error> {
+            Ok(NotDerivingFacetProxy(val.0))
+        }
     }
 
     #[allow(dead_code)]
@@ -172,7 +227,7 @@ fn peek_opaque_custom_serialize_enum_feels() -> Result<(), IPanic> {
     #[repr(u8)]
     pub enum Choices {
         Opaque {
-            #[facet(opaque, serialize_with=serialize_with)]
+            #[facet(opaque, proxy = NotDerivingFacetProxy)]
             f1: NotDerivingFacet,
         },
     }
@@ -204,14 +259,14 @@ fn peek_opaque_custom_serialize_enum_feels() -> Result<(), IPanic> {
     if let Some((field, peek)) = peek_enum.fields_for_serialize().next() {
         tested = true;
         assert_eq!(inner_field, peek);
-        assert!(field.vtable.serialize_with.is_some());
+        assert!(field.field.proxy_convert_out_fn().is_some());
         let owned = peek
-            .custom_serialization(field)
+            .custom_serialization(field.field)
             .expect("should return owned peek");
         // Test field values
         let peek = owned.as_peek();
-        let proxy_value = peek.get::<u64>().unwrap();
-        assert_eq!(*proxy_value, 35);
+        let proxy_value = peek.get::<NotDerivingFacetProxy>().unwrap();
+        assert_eq!(proxy_value.0, 35);
     }
     assert!(tested);
     Ok(())
@@ -224,20 +279,33 @@ fn peek_shaped_custom_serialize_pointers() -> Result<(), IPanic> {
         val: u64,
     }
 
+    // Proxy type for serialization
     #[derive(Facet)]
-    pub struct Struct2 {
+    pub struct ArcStruct1Proxy {
         sum: String,
     }
 
-    fn serialize_with(val: &std::sync::Arc<Struct1>) -> Result<Struct2, &'static str> {
-        Ok(Struct2 {
-            sum: format!("0x{:x}", val.val),
-        })
+    impl TryFrom<ArcStruct1Proxy> for std::sync::Arc<Struct1> {
+        type Error = &'static str;
+        fn try_from(val: ArcStruct1Proxy) -> Result<Self, Self::Error> {
+            Ok(std::sync::Arc::new(Struct1 {
+                val: val.sum.parse().unwrap(),
+            }))
+        }
+    }
+
+    impl TryFrom<&std::sync::Arc<Struct1>> for ArcStruct1Proxy {
+        type Error = &'static str;
+        fn try_from(val: &std::sync::Arc<Struct1>) -> Result<Self, Self::Error> {
+            Ok(ArcStruct1Proxy {
+                sum: format!("0x{:x}", val.val),
+            })
+        }
     }
 
     #[derive(Facet)]
     pub struct Container {
-        #[facet(opaque, serialize_with=serialize_with)]
+        #[facet(opaque, proxy = ArcStruct1Proxy)]
         inner: std::sync::Arc<Struct1>,
     }
 
@@ -259,13 +327,13 @@ fn peek_shaped_custom_serialize_pointers() -> Result<(), IPanic> {
     if let Some((field, peek)) = peek_struct.fields_for_serialize().next() {
         tested = true;
         assert_eq!(inner_field, peek);
-        assert!(field.vtable.serialize_with.is_some());
+        assert!(field.field.proxy_convert_out_fn().is_some());
         let owned = peek
-            .custom_serialization(field)
+            .custom_serialization(field.field)
             .expect("should return owned peek");
         // Test field values
         let peek = owned.as_peek();
-        let proxy_value = peek.get::<Struct2>().unwrap();
+        let proxy_value = peek.get::<ArcStruct1Proxy>().unwrap();
         assert_eq!(proxy_value.sum, "0x23");
     }
     assert!(tested);
@@ -277,17 +345,31 @@ fn peek_custom_serialize_errors() -> Result<(), IPanic> {
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub struct NotDerivingFacet(u64);
 
-    fn serialize_with(val: &NotDerivingFacet) -> Result<u64, &'static str> {
-        if val.0 == 35 {
-            Err("35 is not allowed!")
-        } else {
-            Ok(val.0)
+    // Proxy type that derives Facet
+    #[derive(Facet, Copy, Clone)]
+    pub struct NotDerivingFacetProxy(u64);
+
+    impl TryFrom<NotDerivingFacetProxy> for NotDerivingFacet {
+        type Error = &'static str;
+        fn try_from(val: NotDerivingFacetProxy) -> Result<Self, Self::Error> {
+            Ok(NotDerivingFacet(val.0))
+        }
+    }
+
+    impl TryFrom<&NotDerivingFacet> for NotDerivingFacetProxy {
+        type Error = &'static str;
+        fn try_from(val: &NotDerivingFacet) -> Result<Self, Self::Error> {
+            if val.0 == 35 {
+                Err("35 is not allowed!")
+            } else {
+                Ok(NotDerivingFacetProxy(val.0))
+            }
         }
     }
 
     #[derive(Facet)]
     pub struct Container {
-        #[facet(opaque, serialize_with=serialize_with)]
+        #[facet(opaque, proxy = NotDerivingFacetProxy)]
         inner: NotDerivingFacet,
     }
 
@@ -309,8 +391,8 @@ fn peek_custom_serialize_errors() -> Result<(), IPanic> {
     if let Some((field, peek)) = peek_struct.fields_for_serialize().next() {
         tested = true;
         assert_eq!(inner_field, peek);
-        assert!(field.vtable.serialize_with.is_some());
-        let cust_ser_result = peek.custom_serialization(field);
+        assert!(field.field.proxy_convert_out_fn().is_some());
+        let cust_ser_result = peek.custom_serialization(field.field);
         if let Err(ReflectError::CustomSerializationError {
             message,
             src_shape,
@@ -319,7 +401,7 @@ fn peek_custom_serialize_errors() -> Result<(), IPanic> {
         {
             assert_eq!(message, "35 is not allowed!");
             assert_eq!(src_shape, Opaque::<NotDerivingFacet>::SHAPE);
-            assert_eq!(dst_shape, u64::SHAPE);
+            assert_eq!(dst_shape, NotDerivingFacetProxy::SHAPE);
         } else {
             panic!("expected custom deserialization error");
         }
@@ -330,13 +412,27 @@ fn peek_custom_serialize_errors() -> Result<(), IPanic> {
 
 #[test]
 fn peek_custom_serialize_zst() -> Result<(), IPanic> {
-    fn serialize_with(_: &()) -> Result<u64, &'static str> {
-        Ok(35)
+    // Proxy type for () (ZST)
+    #[derive(Facet)]
+    pub struct UnitProxy(u64);
+
+    impl TryFrom<UnitProxy> for () {
+        type Error = &'static str;
+        fn try_from(_: UnitProxy) -> Result<Self, Self::Error> {
+            Ok(())
+        }
+    }
+
+    impl TryFrom<&()> for UnitProxy {
+        type Error = &'static str;
+        fn try_from(_: &()) -> Result<Self, Self::Error> {
+            Ok(UnitProxy(35))
+        }
     }
 
     #[derive(Facet)]
     pub struct Container {
-        #[facet(serialize_with=serialize_with)]
+        #[facet(proxy = UnitProxy)]
         inner: (),
     }
 
@@ -356,14 +452,14 @@ fn peek_custom_serialize_zst() -> Result<(), IPanic> {
     if let Some((field, peek)) = peek_struct.fields_for_serialize().next() {
         tested = true;
         assert_eq!(inner_field, peek);
-        assert!(field.vtable.serialize_with.is_some());
+        assert!(field.field.proxy_convert_out_fn().is_some());
         let owned = peek
-            .custom_serialization(field)
+            .custom_serialization(field.field)
             .expect("should return owned peek");
         // Test field values
         let peek = owned.as_peek();
-        let proxy_value = peek.get::<u64>().unwrap();
-        assert_eq!(*proxy_value, 35);
+        let proxy_value = peek.get::<UnitProxy>().unwrap();
+        assert_eq!(proxy_value.0, 35);
     }
     assert!(tested);
 

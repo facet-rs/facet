@@ -8,13 +8,27 @@ fn wip_opaque_custom_deserialize() -> Result<(), IPanic> {
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub struct NotDerivingFacet(u64);
 
-    fn deserialize_with(val: &u64) -> Result<NotDerivingFacet, &'static str> {
-        Ok(NotDerivingFacet(*val))
+    // Proxy type that derives Facet
+    #[derive(Facet, Copy, Clone)]
+    pub struct NotDerivingFacetProxy(u64);
+
+    impl TryFrom<NotDerivingFacetProxy> for NotDerivingFacet {
+        type Error = &'static str;
+        fn try_from(val: NotDerivingFacetProxy) -> Result<Self, Self::Error> {
+            Ok(NotDerivingFacet(val.0))
+        }
+    }
+
+    impl TryFrom<&NotDerivingFacet> for NotDerivingFacetProxy {
+        type Error = &'static str;
+        fn try_from(val: &NotDerivingFacet) -> Result<Self, Self::Error> {
+            Ok(NotDerivingFacetProxy(val.0))
+        }
     }
 
     #[derive(Facet)]
     pub struct Container {
-        #[facet(opaque, deserialize_with=deserialize_with)]
+        #[facet(opaque, proxy = NotDerivingFacetProxy)]
         inner: NotDerivingFacet,
     }
 
@@ -29,8 +43,8 @@ fn wip_opaque_custom_deserialize() -> Result<(), IPanic> {
     let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_field("inner")?;
     partial = partial.begin_custom_deserialization()?;
-    assert_eq!(partial.shape(), u64::SHAPE);
-    partial = partial.set(35u64)?;
+    assert_eq!(partial.shape(), NotDerivingFacetProxy::SHAPE);
+    partial = partial.set(NotDerivingFacetProxy(35))?;
     partial = partial.end()?;
     partial = partial.end()?;
     let result = partial.build()?.materialize::<Container>()?;
@@ -47,20 +61,33 @@ fn wip_shaped_custom_deserialize() -> Result<(), IPanic> {
         val: u64,
     }
 
+    // Proxy type for Struct1
     #[derive(Facet)]
-    pub struct Struct2 {
+    pub struct Struct1Proxy {
         sum: String,
     }
 
-    fn deserialize_with(val: &Struct2) -> Result<Struct1, &'static str> {
-        Ok(Struct1 {
-            val: val.sum.parse().unwrap(),
-        })
+    impl TryFrom<Struct1Proxy> for Struct1 {
+        type Error = &'static str;
+        fn try_from(val: Struct1Proxy) -> Result<Self, Self::Error> {
+            Ok(Struct1 {
+                val: val.sum.parse().unwrap(),
+            })
+        }
+    }
+
+    impl TryFrom<&Struct1> for Struct1Proxy {
+        type Error = &'static str;
+        fn try_from(val: &Struct1) -> Result<Self, Self::Error> {
+            Ok(Struct1Proxy {
+                sum: val.val.to_string(),
+            })
+        }
     }
 
     #[derive(Facet)]
     pub struct Container {
-        #[facet(deserialize_with=deserialize_with)]
+        #[facet(proxy = Struct1Proxy)]
         inner: Struct1,
     }
 
@@ -75,8 +102,8 @@ fn wip_shaped_custom_deserialize() -> Result<(), IPanic> {
     let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_field("inner")?;
     partial = partial.begin_custom_deserialization()?;
-    assert_eq!(partial.shape(), Struct2::SHAPE);
-    partial = partial.set(Struct2 { sum: "10".into() })?;
+    assert_eq!(partial.shape(), Struct1Proxy::SHAPE);
+    partial = partial.set(Struct1Proxy { sum: "10".into() })?;
     partial = partial.end()?;
     partial = partial.end()?;
     let result = partial.build()?.materialize::<Container>()?;
@@ -95,7 +122,7 @@ fn wip_shaped_custom_deserialize() -> Result<(), IPanic> {
 
     assert_eq!(result.inner, Struct1 { val: 10 });
 
-    // skipping using the deserialize_with and bulding the target struct directly instead
+    // skipping using the proxy and building the target struct directly instead
     let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_field("inner")?;
     partial = partial.begin_field("val")?;
@@ -114,15 +141,29 @@ fn wip_opaque_custom_deserialize_enum_tuple() -> Result<(), IPanic> {
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub struct NotDerivingFacet(u64);
 
-    fn deserialize_with(val: &u64) -> Result<NotDerivingFacet, &'static str> {
-        Ok(NotDerivingFacet(*val))
+    // Proxy type that derives Facet
+    #[derive(Facet, Copy, Clone)]
+    pub struct NotDerivingFacetProxy(u64);
+
+    impl TryFrom<NotDerivingFacetProxy> for NotDerivingFacet {
+        type Error = &'static str;
+        fn try_from(val: NotDerivingFacetProxy) -> Result<Self, Self::Error> {
+            Ok(NotDerivingFacet(val.0))
+        }
+    }
+
+    impl TryFrom<&NotDerivingFacet> for NotDerivingFacetProxy {
+        type Error = &'static str;
+        fn try_from(val: &NotDerivingFacet) -> Result<Self, Self::Error> {
+            Ok(NotDerivingFacetProxy(val.0))
+        }
     }
 
     #[allow(dead_code)]
     #[derive(Facet)]
     #[repr(u8)]
     pub enum Choices {
-        Opaque(#[facet(opaque, deserialize_with=deserialize_with)] NotDerivingFacet),
+        Opaque(#[facet(opaque, proxy = NotDerivingFacetProxy)] NotDerivingFacet),
     }
 
     let mut partial = Partial::alloc::<Choices>()?;
@@ -138,8 +179,8 @@ fn wip_opaque_custom_deserialize_enum_tuple() -> Result<(), IPanic> {
     partial = partial.select_variant_named("Opaque")?;
     partial = partial.begin_nth_field(0)?;
     partial = partial.begin_custom_deserialization()?;
-    assert_eq!(partial.shape(), u64::SHAPE);
-    partial = partial.set(35u64)?;
+    assert_eq!(partial.shape(), NotDerivingFacetProxy::SHAPE);
+    partial = partial.set(NotDerivingFacetProxy(35))?;
     partial = partial.end()?;
     partial = partial.end()?;
     let result = partial.build()?.materialize::<Choices>()?;
@@ -154,8 +195,22 @@ fn wip_opaque_custom_deserialize_enum_fields() -> Result<(), IPanic> {
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub struct NotDerivingFacet(u64);
 
-    fn deserialize_with(val: &u64) -> Result<NotDerivingFacet, &'static str> {
-        Ok(NotDerivingFacet(*val))
+    // Proxy type that derives Facet
+    #[derive(Facet, Copy, Clone)]
+    pub struct NotDerivingFacetProxy(u64);
+
+    impl TryFrom<NotDerivingFacetProxy> for NotDerivingFacet {
+        type Error = &'static str;
+        fn try_from(val: NotDerivingFacetProxy) -> Result<Self, Self::Error> {
+            Ok(NotDerivingFacet(val.0))
+        }
+    }
+
+    impl TryFrom<&NotDerivingFacet> for NotDerivingFacetProxy {
+        type Error = &'static str;
+        fn try_from(val: &NotDerivingFacet) -> Result<Self, Self::Error> {
+            Ok(NotDerivingFacetProxy(val.0))
+        }
     }
 
     #[allow(dead_code)]
@@ -163,7 +218,7 @@ fn wip_opaque_custom_deserialize_enum_fields() -> Result<(), IPanic> {
     #[repr(u8)]
     pub enum Choices {
         Opaque {
-            #[facet(opaque, deserialize_with=deserialize_with)]
+            #[facet(opaque, proxy = NotDerivingFacetProxy)]
             f1: NotDerivingFacet,
         },
     }
@@ -186,8 +241,8 @@ fn wip_opaque_custom_deserialize_enum_fields() -> Result<(), IPanic> {
     partial = partial.select_variant_named("Opaque")?;
     partial = partial.begin_field("f1")?;
     partial = partial.begin_custom_deserialization()?;
-    assert_eq!(partial.shape(), u64::SHAPE);
-    partial = partial.set(35u64)?;
+    assert_eq!(partial.shape(), NotDerivingFacetProxy::SHAPE);
+    partial = partial.set(NotDerivingFacetProxy(35))?;
     partial = partial.end()?;
     partial = partial.end()?;
     let result = partial.build()?.materialize::<Choices>()?;
@@ -207,25 +262,39 @@ fn wip_custom_deserialize_errors() -> Result<(), IPanic> {
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub struct NotDerivingFacet(u64);
 
-    fn deserialize_with(val: &u64) -> Result<NotDerivingFacet, &'static str> {
-        if *val == 35 {
-            Err("35 is not allowed!")
-        } else {
-            Ok(NotDerivingFacet(*val))
+    // Proxy type that derives Facet
+    #[derive(Facet, Copy, Clone)]
+    pub struct NotDerivingFacetProxy(u64);
+
+    impl TryFrom<NotDerivingFacetProxy> for NotDerivingFacet {
+        type Error = &'static str;
+        fn try_from(val: NotDerivingFacetProxy) -> Result<Self, Self::Error> {
+            if val.0 == 35 {
+                Err("35 is not allowed!")
+            } else {
+                Ok(NotDerivingFacet(val.0))
+            }
+        }
+    }
+
+    impl TryFrom<&NotDerivingFacet> for NotDerivingFacetProxy {
+        type Error = &'static str;
+        fn try_from(val: &NotDerivingFacet) -> Result<Self, Self::Error> {
+            Ok(NotDerivingFacetProxy(val.0))
         }
     }
 
     #[derive(Facet)]
     pub struct Container {
-        #[facet(opaque, deserialize_with=deserialize_with)]
+        #[facet(opaque, proxy = NotDerivingFacetProxy)]
         inner: NotDerivingFacet,
     }
 
     let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_field("inner")?;
     partial = partial.begin_custom_deserialization()?;
-    assert_eq!(partial.shape(), u64::SHAPE);
-    partial = partial.set(35u64)?;
+    assert_eq!(partial.shape(), NotDerivingFacetProxy::SHAPE);
+    partial = partial.set(NotDerivingFacetProxy(35))?;
     let end_result = partial.end();
     if let Err(ReflectError::CustomDeserializationError {
         message,
@@ -234,7 +303,7 @@ fn wip_custom_deserialize_errors() -> Result<(), IPanic> {
     }) = end_result
     {
         assert_eq!(message, "35 is not allowed!");
-        assert_eq!(src_shape, u64::SHAPE);
+        assert_eq!(src_shape, NotDerivingFacetProxy::SHAPE);
         assert_eq!(dst_shape, Opaque::<NotDerivingFacet>::SHAPE);
     } else {
         panic!("expected custom deserialization error");
@@ -245,42 +314,56 @@ fn wip_custom_deserialize_errors() -> Result<(), IPanic> {
 
 #[test]
 fn wip_custom_deserialize_zst() -> Result<(), IPanic> {
-    enum DeserializeWithError {
+    pub enum ProxyError {
         MustBeThirtyFive,
         MustNeverBeTwenty,
     }
 
-    impl std::fmt::Display for DeserializeWithError {
+    impl std::fmt::Display for ProxyError {
         fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
             let s = match self {
-                DeserializeWithError::MustBeThirtyFive => "must be 35!",
-                DeserializeWithError::MustNeverBeTwenty => "must never be 20!",
+                ProxyError::MustBeThirtyFive => "must be 35!",
+                ProxyError::MustNeverBeTwenty => "must never be 20!",
             };
             write!(f, "{s}")
         }
     }
 
-    fn deserialize_with(val: &u64) -> Result<(), DeserializeWithError> {
-        if *val == 20 {
-            Err(DeserializeWithError::MustNeverBeTwenty)
-        } else if *val != 35 {
-            Err(DeserializeWithError::MustBeThirtyFive)
-        } else {
-            Ok(())
+    // Proxy type for () (ZST)
+    #[derive(Facet)]
+    pub struct UnitProxy(u64);
+
+    impl TryFrom<UnitProxy> for () {
+        type Error = ProxyError;
+        fn try_from(val: UnitProxy) -> Result<Self, Self::Error> {
+            if val.0 == 20 {
+                Err(ProxyError::MustNeverBeTwenty)
+            } else if val.0 != 35 {
+                Err(ProxyError::MustBeThirtyFive)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    impl TryFrom<&()> for UnitProxy {
+        type Error = std::convert::Infallible;
+        fn try_from(_: &()) -> Result<Self, Self::Error> {
+            Ok(UnitProxy(35))
         }
     }
 
     #[derive(Facet)]
     pub struct Container {
-        #[facet(deserialize_with=deserialize_with)]
+        #[facet(proxy = UnitProxy)]
         inner: (),
     }
 
     let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_field("inner")?;
     partial = partial.begin_custom_deserialization()?;
-    assert_eq!(partial.shape(), u64::SHAPE);
-    partial = partial.set(35u64)?;
+    assert_eq!(partial.shape(), UnitProxy::SHAPE);
+    partial = partial.set(UnitProxy(35))?;
     partial = partial.end()?;
     partial = partial.end()?;
     let _result = partial.build()?.materialize::<Container>()?;
@@ -288,8 +371,8 @@ fn wip_custom_deserialize_zst() -> Result<(), IPanic> {
     let mut partial = Partial::alloc::<Container>()?;
     partial = partial.begin_field("inner")?;
     partial = partial.begin_custom_deserialization()?;
-    assert_eq!(partial.shape(), u64::SHAPE);
-    partial = partial.set(20u64)?;
+    assert_eq!(partial.shape(), UnitProxy::SHAPE);
+    partial = partial.set(UnitProxy(20))?;
     let end_result = partial.end();
     if let Err(ReflectError::CustomDeserializationError {
         message,
@@ -298,7 +381,7 @@ fn wip_custom_deserialize_zst() -> Result<(), IPanic> {
     }) = end_result
     {
         assert_eq!(message, "must never be 20!");
-        assert_eq!(src_shape, u64::SHAPE);
+        assert_eq!(src_shape, UnitProxy::SHAPE);
         assert_eq!(dst_shape, <() as Facet>::SHAPE);
     } else {
         panic!("expected custom deserialization error");

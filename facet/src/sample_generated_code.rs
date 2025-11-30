@@ -419,7 +419,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkStruct {
                         .offset({
                             builtin # offset_of(KitchenSinkStruct, sensitive_field)
                         })
-                        .flags(crate::FieldFlags::SENSITIVE)
+                        .flags(crate::::SENSITIVE)
                         .doc(&[" A field marked as sensitive."])
                         .build()
                 },
@@ -898,7 +898,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for Point {
                         .offset({
                             builtin # offset_of(Point, metadata)
                         })
-                        .flags(crate::FieldFlags::SENSITIVE)
+                        .flags(crate::::SENSITIVE)
                         .doc(&[" Nested sensitive data within the struct."])
                         .build()
                 },
@@ -1557,7 +1557,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                                                                                                             &s.checksum))).offset({
                                                                                                 builtin # offset_of(__Shadow_RustRepr_Struct_for_KitchenSinkEnum_StructVariantWithSensitiveField<'__facet>,
                                                                                                     checksum)
-                                                                                            }).flags(crate::FieldFlags::SENSITIVE).doc(&[" The sensitive checksum for integrity verification."]).build()
+                                                                                            }).flags(crate::::SENSITIVE).doc(&[" The sensitive checksum for integrity verification."]).build()
                             },
                         ]
                     };
@@ -1585,7 +1585,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for KitchenSinkEnum {
                                                                                     }).build()
                         }]
                     };
-                    crate::Variant::builder().name("ArbitraryVariant").attributes(&[crate::VariantAttribute::Extension(crate::ExtensionAttr { ns: "sample", key: "arbitrary", args: &[] })]).discriminant(6i64
+                    crate::Variant::builder().name("ArbitraryVariant").attributes(&[]).discriminant(6i64
                                                                     as
                                                                     i64).data(crate::StructType::builder().repr(crate::Repr::c()).tuple().fields(fields).build()).doc(&[" A variant marked as arbitrary, potentially skipped during processing."]).build()
                 },
@@ -2116,11 +2116,7 @@ unsafe impl<'__facet> crate::Facet<'__facet> for SubEnum {
                     };
                     crate::Variant::builder()
                         .name("ArbitraryOption")
-                        .attributes(&[crate::VariantAttribute::Extension(crate::ExtensionAttr {
-                            ns: "sample",
-                            key: "arbitrary",
-                            args: &[],
-                        })])
+                        .attributes(&[])
                         .discriminant(3i64 as i64)
                         .data(
                             crate::StructType::builder()

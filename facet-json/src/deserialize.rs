@@ -9,8 +9,8 @@ use core::fmt::{self, Display};
 use alloc::collections::BTreeSet;
 
 use facet_core::{
-    Characteristic, Def, Facet, FieldFlags, KnownPointer, NumericType, PrimitiveType, SequenceType,
-    Shape, ShapeLayout, StructKind, Type, UserType,
+    Characteristic, Def, Facet, KnownPointer, NumericType, PrimitiveType, SequenceType, Shape,
+    ShapeLayout, StructKind, Type, UserType,
 };
 use facet_reflect::{Partial, ReflectError};
 use facet_solver::{PathSegment, Schema, Solver};
@@ -629,10 +629,7 @@ impl<'input> JsonDeserializer<'input> {
 
     /// Check if a struct has any flattened fields.
     fn has_flatten_fields(struct_def: &facet_core::StructType) -> bool {
-        struct_def
-            .fields
-            .iter()
-            .any(|f| f.flags.contains(FieldFlags::FLATTEN))
+        struct_def.fields.iter().any(|f| f.is_flattened())
     }
 
     /// Main deserialization entry point - deserialize into a Partial.
@@ -677,7 +674,7 @@ impl<'input> JsonDeserializer<'input> {
             // Check if field has custom deserialization
             if wip
                 .parent_field()
-                .and_then(|field| field.vtable.deserialize_with)
+                .and_then(|field| field.proxy_convert_in_fn())
                 .is_some()
             {
                 wip = wip.begin_custom_deserialization()?;
@@ -1461,7 +1458,7 @@ impl<'input> JsonDeserializer<'input> {
                     if let Some((idx, field)) = field_info {
                         wip = wip.begin_field(field.name)?;
                         // Check if field has custom deserialization
-                        if field.vtable.deserialize_with.is_some() {
+                        if field.proxy_convert_in_fn().is_some() {
                             wip = wip.begin_custom_deserialization()?;
                             wip = self.deserialize_into(wip)?;
                             wip = wip.end()?; // Calls deserialize_with function
@@ -1515,11 +1512,11 @@ impl<'input> JsonDeserializer<'input> {
             }
 
             // Check if the field has a default available:
-            // 1. Field has FieldFlags::DEFAULT (explicit #[facet(default)] on field)
+            // 1. Field has ::DEFAULT (explicit #[facet(default)] on field)
             // 2. Field has a default_fn in vtable
             // 3. Struct has #[facet(default)] and field type implements Default
-            let field_has_default_flag = field.flags.contains(FieldFlags::DEFAULT);
-            let field_has_default_fn = field.vtable.default_fn.is_some();
+            let field_has_default_flag = field.has_default();
+            let field_has_default_fn = field.default_fn().is_some();
             let field_type_has_default = field.shape().is(Characteristic::Default);
 
             if field_has_default_fn || field_has_default_flag {
@@ -1895,7 +1892,7 @@ impl<'input> JsonDeserializer<'input> {
                             let field = &variant.data.fields[0];
                             wip = wip.begin_nth_field(0)?;
                             // Check if field has custom deserialization
-                            if field.vtable.deserialize_with.is_some() {
+                            if field.proxy_convert_in_fn().is_some() {
                                 wip = wip.begin_custom_deserialization()?;
                                 wip = self.deserialize_into(wip)?;
                                 wip = wip.end()?; // Calls deserialize_with function
@@ -1920,7 +1917,7 @@ impl<'input> JsonDeserializer<'input> {
                                 let field = &variant.data.fields[i];
                                 wip = wip.begin_nth_field(i)?;
                                 // Check if field has custom deserialization
-                                if field.vtable.deserialize_with.is_some() {
+                                if field.proxy_convert_in_fn().is_some() {
                                     wip = wip.begin_custom_deserialization()?;
                                     wip = self.deserialize_into(wip)?;
                                     wip = wip.end()?; // Calls deserialize_with function
@@ -2009,7 +2006,7 @@ impl<'input> JsonDeserializer<'input> {
             let field = &variant.data.fields[0];
             wip = wip.begin_nth_field(0)?;
             // Check if field has custom deserialization
-            if field.vtable.deserialize_with.is_some() {
+            if field.proxy_convert_in_fn().is_some() {
                 wip = wip.begin_custom_deserialization()?;
                 wip = self.deserialize_into(wip)?;
                 wip = wip.end()?;
@@ -2079,7 +2076,7 @@ impl<'input> JsonDeserializer<'input> {
             if let Some(field) = field_info {
                 wip = wip.begin_field(field.name)?;
                 // Check if field has custom deserialization
-                if field.vtable.deserialize_with.is_some() {
+                if field.proxy_convert_in_fn().is_some() {
                     wip = wip.begin_custom_deserialization()?;
                     wip = self.deserialize_into(wip)?;
                     wip = wip.end()?; // Calls deserialize_with function

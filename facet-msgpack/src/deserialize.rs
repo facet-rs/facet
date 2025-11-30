@@ -461,7 +461,7 @@ impl<'input> Decoder<'input> {
                 for (i, &seen) in seen_fields.iter().enumerate() {
                     if !seen {
                         let field = &struct_type.fields[i];
-                        if field.flags.contains(facet_core::FieldFlags::DEFAULT) {
+                        if field.has_default() {
                             partial = partial.set_nth_field_to_default(i)?;
                         } else {
                             // Non-default field was missing

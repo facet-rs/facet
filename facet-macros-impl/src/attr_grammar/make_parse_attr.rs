@@ -25,6 +25,8 @@ keyword! {
     KNs = "ns";
     KCratePath = "crate_path";
     KChar = "char";
+    KBuiltin = "builtin";
+    // Note: KIgnoredExpr removed - IgnoredExpr is dead
 }
 
 operator! {
@@ -54,10 +56,28 @@ unsynn! {
     /// pub enum Attr { ... }
     /// pub struct Column { ... }
     /// ```
+    ///
+    /// For built-in attrs defined inside the facet crate itself:
+    /// ```ignore
+    /// builtin;
+    /// ns "";
+    /// crate_path ::facet::builtin;
+    /// pub enum Attr { ... }
+    /// ```
     struct Grammar {
+        builtin_decl: Option<BuiltinDecl>,
         ns_decl: Option<NsDecl>,
         crate_path_decl: Option<CratePathDecl>,
         items: Vec<GrammarItem>,
+    }
+
+    /// Builtin declaration: `builtin;`
+    /// Indicates this grammar is defined inside the facet crate itself.
+    /// This changes code generation to use `crate::` for definition-time
+    /// references instead of `::facet::`.
+    struct BuiltinDecl {
+        _kw: KBuiltin,
+        _semi: Semicolon,
     }
 
     /// Namespace declaration: `ns "kdl";`
@@ -102,14 +122,10 @@ unsynn! {
         payload: Option<ParenthesisGroupContaining<VariantPayload>>,
     }
 
-    /// What's inside the variant parens - either a type or just an ident (struct ref)
-    enum VariantPayload {
-        /// Reference type like `&'static str`
-        RefType(RefType),
-        /// Option<char> type
-        OptionChar(OptionCharType),
-        /// Just an identifier (struct reference)
-        Ident(Ident),
+    /// What's inside the variant parens - captures all tokens for analysis
+    struct VariantPayload {
+        /// All tokens in the payload - we analyze these in to_parsed()
+        tokens: Vec<TokenTree>,
     }
 
     /// A reference type: `&'static str`
@@ -164,7 +180,10 @@ unsynn! {
 
 /// The parsed grammar for code generation
 struct ParsedGrammar {
-    /// Namespace string (e.g., "kdl"), or None for built-in attrs
+    /// Whether this grammar is for built-in attrs defined inside the facet crate.
+    /// When true, definition-time code uses `crate::` instead of `::facet::`.
+    builtin: bool,
+    /// Namespace string (e.g., "kdl"), or empty string for built-in attrs
     ns: Option<String>,
     /// Crate path tokens (e.g., `::facet_kdl`), required for non-unit variants
     crate_path: Option<TokenStream2>,
@@ -188,8 +207,29 @@ struct ParsedVariant {
 enum VariantKind {
     Unit,
     Newtype(TokenStream2),
+    /// Newtype holding `&'static str` - stored directly for facet-core access.
+    /// Used for attributes like `tag`, `content`, `rename`, `rename_all`.
+    NewtypeStr,
     NewtypeOptionChar,
     Struct(proc_macro2::Ident),
+    /// Arbitrary type like `Option<DefaultInPlaceFn>` - the tokens are passed through as-is
+    ArbitraryType(TokenStream2),
+    /// Expression that "makes a T" - wrapped in `|ptr| unsafe { ptr.put(#expr) }`.
+    /// Generic mechanism for any attribute that needs to produce a value.
+    /// Grammar syntax: `Default(make_t)`
+    MakeT,
+    /// Predicate function - user provides `fn(&T) -> bool`, wrapped in type-erased closure.
+    /// The expression is wrapped in `|ptr| unsafe { expr(ptr.get::<T>()) }`.
+    /// Grammar syntax: `SkipSerializingIf(predicate SkipSerializingIfFn)`
+    Predicate(TokenStream2),
+    /// Expression that is stored directly as a function pointer.
+    /// Used for attributes where the expression is already the correct type-erased signature.
+    /// Grammar syntax: `Foo(fn_ptr FooFn)`
+    FnPtr(TokenStream2),
+    /// Type that is converted to a Shape reference.
+    /// The user's type is converted to `<Type as Facet>::SHAPE`.
+    /// Grammar syntax: `Proxy(shape_type)`
+    ShapeType,
 }
 
 struct ParsedStruct {
@@ -221,6 +261,9 @@ enum FieldType {
 
 impl Grammar {
     fn to_parsed(&self) -> std::result::Result<ParsedGrammar, String> {
+        // Check for `builtin;` declaration
+        let builtin = self.builtin_decl.is_some();
+
         // Extract namespace from `ns "kdl";` declaration
         let ns = self.ns_decl.as_ref().map(|decl| {
             // Strip quotes from the literal
@@ -257,6 +300,7 @@ impl Grammar {
         let attr_enum = attr_enum.ok_or_else(|| "expected an enum definition".to_string())?;
 
         Ok(ParsedGrammar {
+            builtin,
             ns,
             crate_path,
             attr_enum,
@@ -302,15 +346,8 @@ impl EnumVariant {
         let kind = match &self.payload {
             None => VariantKind::Unit,
             Some(paren_group) => {
-                match &paren_group.content {
-                    VariantPayload::Ident(ident) => VariantKind::Struct(convert_ident(ident)),
-                    VariantPayload::RefType(ref_type) => {
-                        // Reconstruct the type tokens
-                        let typ = convert_ident(&ref_type.typ);
-                        VariantKind::Newtype(quote! { &'static #typ })
-                    }
-                    VariantPayload::OptionChar(_) => VariantKind::NewtypeOptionChar,
-                }
+                let tokens = &paren_group.content.tokens;
+                analyze_variant_payload(tokens)?
             }
         };
 
@@ -320,6 +357,113 @@ impl EnumVariant {
             kind,
         })
     }
+}
+
+/// Analyze variant payload tokens to determine the variant kind.
+/// This handles:
+/// - `&'static str` → Newtype
+/// - `Option<char>` → NewtypeOptionChar
+/// - Single identifier like `Column` → Struct reference
+/// - Everything else like `Option<DefaultInPlaceFn>` → ArbitraryType
+fn analyze_variant_payload(tokens: &[TokenTree]) -> std::result::Result<VariantKind, String> {
+    // Convert tokens to strings for pattern matching
+    let token_strs: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+
+    // Check for &'static str pattern: ["&", "'", "static", "str"]
+    if token_strs.len() >= 4
+        && token_strs[0] == "&"
+        && token_strs[1] == "'"
+        && token_strs[2] == "static"
+    {
+        let typ_str = &token_strs[3];
+        // For &'static str, use NewtypeStr which stores directly for facet-core access
+        if typ_str == "str" {
+            return Ok(VariantKind::NewtypeStr);
+        }
+        let typ = proc_macro2::Ident::new(typ_str, Span::call_site());
+        return Ok(VariantKind::Newtype(quote! { &'static #typ }));
+    }
+
+    // Check for Option<char> pattern: ["Option", "<", "char", ">"]
+    if token_strs.len() == 4
+        && token_strs[0] == "Option"
+        && token_strs[1] == "<"
+        && token_strs[2] == "char"
+        && token_strs[3] == ">"
+    {
+        return Ok(VariantKind::NewtypeOptionChar);
+    }
+
+    // Check for make_t - expression that "makes a T", wrapped in closure
+    // Syntax: `Default(make_t)`
+    if token_strs.len() == 1 && token_strs[0] == "make_t" {
+        return Ok(VariantKind::MakeT);
+    }
+
+    // Check for predicate TypeName - predicate function wrapped in type-erased closure
+    // User provides fn(&T) -> bool, wrapped in |ptr| unsafe { expr(ptr.get::<T>()) }
+    // Syntax: `SkipSerializingIf(predicate SkipSerializingIfFn)`
+    if token_strs.len() >= 2 && token_strs[0] == "predicate" {
+        // Collect the remaining tokens as the type
+        let type_tokens: TokenStream2 = tokens[1..]
+            .iter()
+            .map(|tt| {
+                let s = tt.to_string();
+                s.parse::<TokenStream2>().unwrap_or_default()
+            })
+            .collect();
+        return Ok(VariantKind::Predicate(type_tokens));
+    }
+
+    // Check for fn_ptr TypeName - function pointer stored directly
+    // Syntax: `Foo(fn_ptr FooFn)`
+    if token_strs.len() >= 2 && token_strs[0] == "fn_ptr" {
+        // Collect the remaining tokens as the type
+        let type_tokens: TokenStream2 = tokens[1..]
+            .iter()
+            .map(|tt| {
+                let s = tt.to_string();
+                s.parse::<TokenStream2>().unwrap_or_default()
+            })
+            .collect();
+        return Ok(VariantKind::FnPtr(type_tokens));
+    }
+
+    // Check for shape_type - type converted to Shape reference
+    // Syntax: `Proxy(shape_type)`
+    if token_strs.len() == 1 && token_strs[0] == "shape_type" {
+        return Ok(VariantKind::ShapeType);
+    }
+
+    // Check for single identifier (struct reference)
+    if tokens.len() == 1 {
+        if let Some(ident_str) = tokens[0]
+            .to_string()
+            .strip_prefix("")
+            .map(|s| s.to_string())
+        {
+            // Check if it's a valid identifier (not a keyword, starts with letter/underscore)
+            if ident_str
+                .chars()
+                .next()
+                .map(|c| c.is_alphabetic() || c == '_')
+                .unwrap_or(false)
+            {
+                let ident = proc_macro2::Ident::new(&ident_str, Span::call_site());
+                return Ok(VariantKind::Struct(ident));
+            }
+        }
+    }
+
+    // Everything else is an arbitrary type
+    let type_tokens: TokenStream2 = tokens
+        .iter()
+        .map(|tt| {
+            let s = tt.to_string();
+            s.parse::<TokenStream2>().unwrap_or_default()
+        })
+        .collect();
+    Ok(VariantKind::ArbitraryType(type_tokens))
 }
 
 impl StructDef {
@@ -412,7 +556,11 @@ impl ParsedGrammar {
 
     fn generate_types(&self) -> TokenStream2 {
         let enum_def = self.generate_enum();
-        let struct_defs: Vec<_> = self.structs.iter().map(|s| s.generate()).collect();
+        let struct_defs: Vec<_> = self
+            .structs
+            .iter()
+            .map(|s| s.generate(self.builtin))
+            .collect();
 
         quote! {
             #enum_def
@@ -437,17 +585,47 @@ impl ParsedGrammar {
                 match kind {
                     VariantKind::Unit => quote! { #(#attrs)* #name },
                     VariantKind::Newtype(ty) => quote! { #(#attrs)* #name(#ty) },
+                    VariantKind::NewtypeStr => quote! { #(#attrs)* #name(&'static str) },
                     VariantKind::NewtypeOptionChar => quote! { #(#attrs)* #name(Option<char>) },
                     VariantKind::Struct(struct_name) => {
                         quote! { #(#attrs)* #name(#struct_name) }
+                    }
+                    VariantKind::ArbitraryType(ty) => quote! { #(#attrs)* #name(#ty) },
+                    VariantKind::MakeT => {
+                        quote! { #(#attrs)* #name(Option<DefaultInPlaceFn>) }
+                    }
+                    VariantKind::Predicate(ty) => {
+                        quote! { #(#attrs)* #name(Option<#ty>) }
+                    }
+                    VariantKind::FnPtr(ty) => {
+                        quote! { #(#attrs)* #name(Option<#ty>) }
+                    }
+                    VariantKind::ShapeType => {
+                        // Generates a newtype variant holding a Shape reference
+                        // Use crate:: path in builtin mode, ::facet:: otherwise
+                        let shape_path = if self.builtin {
+                            quote! { crate::Shape }
+                        } else {
+                            quote! { ::facet::Shape }
+                        };
+                        quote! { #(#attrs)* #name(&'static #shape_path) }
                     }
                 }
             })
             .collect();
 
+        // For builtin mode, skip deriving Facet entirely because the derive macro
+        // generates ::facet:: paths which don't work inside the facet crate.
+        // Builtin attrs will have Facet implemented manually via a blanket impl.
+        let derive_attr = if self.builtin {
+            quote! { #[derive(Debug, Clone, PartialEq)] }
+        } else {
+            quote! { #[derive(Debug, Clone, PartialEq, ::facet::Facet)] }
+        };
+
         quote! {
             #(#attrs)*
-            #[derive(Debug, Clone, PartialEq, ::facet::Facet)]
+            #derive_attr
             #[repr(u8)]
             #vis_tokens enum #name {
                 #(#variant_defs),*
@@ -456,23 +634,36 @@ impl ParsedGrammar {
     }
 
     fn generate_reexports(&self) -> TokenStream2 {
+        // Definition-time: use crate:: when builtin, ::facet:: otherwise
+        let facet_path: TokenStream2 = if self.builtin {
+            quote! { crate }
+        } else {
+            quote! { ::facet }
+        };
+
         quote! {
             #[doc(hidden)]
-            pub use ::facet::__attr_error as __attr_error_proc_macro;
+            pub use #facet_path::__attr_error as __attr_error_proc_macro;
             #[doc(hidden)]
-            pub use ::facet::__build_struct_fields;
+            pub use #facet_path::__build_struct_fields;
             #[doc(hidden)]
-            pub use ::facet::__dispatch_attr;
+            pub use #facet_path::__dispatch_attr;
             #[doc(hidden)]
-            pub use ::facet::__field_error as __field_error_proc_macro;
+            pub use #facet_path::__field_error as __field_error_proc_macro;
             #[doc(hidden)]
-            pub use ::facet::__spanned_error;
+            pub use #facet_path::__spanned_error;
         }
     }
 
     fn generate_attr_macro(&self) -> TokenStream2 {
         let enum_name = &self.attr_enum.name;
         let ns_str = self.ns.as_deref().unwrap_or("");
+        // Generate the namespace expression: None for builtins, Some("ns") for namespaced
+        let ns_expr = if ns_str.is_empty() {
+            quote! { ::core::option::Option::None }
+        } else {
+            quote! { ::core::option::Option::Some(#ns_str) }
+        };
 
         // Build a map from struct name to struct definition for O(1) lookup
         let struct_map: HashMap<String, &ParsedStruct> = self
@@ -492,7 +683,10 @@ impl ParsedGrammar {
                 match &v.kind {
                     VariantKind::Unit => quote! { #name: unit },
                     VariantKind::Newtype(_) => quote! { #name: newtype },
+                    VariantKind::NewtypeStr => quote! { #name: newtype_str },
                     VariantKind::NewtypeOptionChar => quote! { #name: newtype_opt_char },
+                    VariantKind::ArbitraryType(_) => quote! { #name: arbitrary },
+                    VariantKind::MakeT => quote! { #name: make_t },
                     VariantKind::Struct(struct_name) => {
                         // Find the struct definition
                         let struct_def = struct_map
@@ -519,6 +713,9 @@ impl ParsedGrammar {
                         // Use "rec" (record) instead of "struct" since "struct" is a keyword
                         quote! { #name: rec #struct_name { #(#fields_meta),* } }
                     }
+                    VariantKind::Predicate(_) => quote! { #name: predicate },
+                    VariantKind::FnPtr(_) => quote! { #name: fn_ptr },
+                    VariantKind::ShapeType => quote! { #name: shape_type },
                 }
             })
             .collect();
@@ -538,28 +735,253 @@ impl ParsedGrammar {
                 // The $ns path is used to import Attr from the correct crate at the call site
                 match &v.kind {
                     VariantKind::Unit => {
+                        // Pre-compute the full attribute name for error messages
+                        let full_attr_name = if ns_str.is_empty() {
+                            key_str.clone()
+                        } else {
+                            format!("{ns_str}::{key_str}")
+                        };
                         quote! {
                             // Field-level: @ns { path } attr { field : Type }
-                            (@ns { $ns:path } #key_ident { $field:ident : $ty:ty }) => {{
+                            // Note: $field is tt not ident because tuple struct fields are literals (0, 1, etc.)
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
                                 static __UNIT: () = ();
-                                ::facet::ExtensionAttr::new(#ns_str, #key_str, &__UNIT)
+                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__UNIT)
                             }};
                             // Field-level with args: not expected for unit variants
-                            (@ns { $ns:path } #key_ident { $field:ident : $ty:ty | $first:tt $($rest:tt)* }) => {{
-                                ::facet::__no_args!(concat!(#ns_str, "::", #key_str), $first)
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $first:tt $($rest:tt)* }) => {{
+                                ::facet::__no_args!(#full_attr_name, $first)
                             }};
                             // Container-level: @ns { path } attr { }
                             (@ns { $ns:path } #key_ident { }) => {{
                                 static __UNIT: () = ();
-                                ::facet::ExtensionAttr::new(#ns_str, #key_str, &__UNIT)
+                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__UNIT)
                             }};
                             // Container-level with args: not expected for unit variants
                             (@ns { $ns:path } #key_ident { | $first:tt $($rest:tt)* }) => {{
-                                ::facet::__no_args!(concat!(#ns_str, "::", #key_str), $first)
+                                ::facet::__no_args!(#full_attr_name, $first)
                             }};
                         }
                     }
-                    VariantKind::Newtype(_) | VariantKind::NewtypeOptionChar | VariantKind::Struct(_) => {
+                    VariantKind::ShapeType => {
+                        // ShapeType variants store just &'static Shape, not wrapped in Attr enum.
+                        // This allows efficient runtime access via proxy_shape() method.
+                        // We use new_shape() which bypasses the T: Facet bound since Shape
+                        // doesn't implement Facet.
+                        let crate_path = self.crate_path.as_ref().expect(
+                            "crate_path is required for shape_type variants; add `crate_path ::your_crate;` to the grammar"
+                        );
+                        quote! {
+                            // Field-level: @ns { path } attr { field : Type } - no args is an error for shape_type
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
+                                compile_error!(concat!("`", stringify!(#key_ident), "` requires a type argument"))
+                            }};
+                            // Field-level with args: parse type and store just the Shape
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
+                                ::facet::ExtensionAttr::new_shape(
+                                    #ns_expr,
+                                    #key_str,
+                                    ::facet::__dispatch_attr!{
+                                        @crate_path { #crate_path }
+                                        @enum_name { #enum_name }
+                                        @variants { #(#variants_meta),* }
+                                        @name { #key_ident }
+                                        @rest { $($args)* }
+                                    }
+                                )
+                            }};
+                            // Container-level: @ns { path } attr { } - no args is an error for shape_type
+                            (@ns { $ns:path } #key_ident { }) => {{
+                                compile_error!(concat!("`", stringify!(#key_ident), "` requires a type argument"))
+                            }};
+                            // Container-level with args: parse type and store just the Shape
+                            (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
+                                ::facet::ExtensionAttr::new_shape(
+                                    #ns_expr,
+                                    #key_str,
+                                    ::facet::__dispatch_attr!{
+                                        @crate_path { #crate_path }
+                                        @enum_name { #enum_name }
+                                        @variants { #(#variants_meta),* }
+                                        @name { #key_ident }
+                                        @rest { $($args)* }
+                                    }
+                                )
+                            }};
+                        }
+                    }
+                    VariantKind::Predicate(target_ty) => {
+                        // For predicate variants, we generate the transmute directly in the attribute macro
+                        // because we need access to $ty which __dispatch_attr doesn't have.
+                        //
+                        // IMPORTANT: We store the function pointer directly, NOT wrapped in an Attr enum.
+                        // This is because the retrieval code (e.g., skip_serializing_if_fn()) uses data_ref
+                        // to read the raw function pointer.
+                        let _crate_path = self.crate_path.as_ref().expect(
+                            "crate_path is required for predicate variants; add `crate_path ::your_crate;` to the grammar"
+                        );
+                        // Qualify the target type - use ::facet:: since these types are re-exported there
+                        let qualified_target_ty = quote! { ::facet::#target_ty };
+                        quote! {
+                            // Field-level with args: wrap the user's fn(&T) -> bool in a transmute
+                            // Store the function pointer directly (not wrapped in Attr enum)
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
+                                ::facet::ExtensionAttr {
+                                    ns: #ns_expr,
+                                    key: #key_str,
+                                    data: &const {
+                                        unsafe {
+                                            ::core::mem::transmute::<fn(& $ty) -> bool, #qualified_target_ty>(($($args)*))
+                                        }
+                                    } as *const #qualified_target_ty as *const (),
+                                    shape: <() as ::facet::Facet>::SHAPE,
+                                }
+                            }};
+                            // Field-level: @ns { path } attr { field : Type } - no args is an error for predicate
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
+                                compile_error!(concat!(
+                                    "Attribute `",
+                                    stringify!(#key_ident),
+                                    "` requires a function argument: `",
+                                    stringify!(#key_ident),
+                                    " = your_fn`"
+                                ))
+                            }};
+                            // Container-level: not supported for predicate (no $ty available)
+                            (@ns { $ns:path } #key_ident { }) => {{
+                                compile_error!(concat!(
+                                    "Container-level predicate attributes like `",
+                                    stringify!(#key_ident),
+                                    "` are not supported"
+                                ))
+                            }};
+                            (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
+                                compile_error!(concat!(
+                                    "Container-level predicate attributes like `",
+                                    stringify!(#key_ident),
+                                    "` are not supported"
+                                ))
+                            }};
+                        }
+                    }
+                    VariantKind::MakeT => {
+                        // MakeT variants store Option<DefaultInPlaceFn> directly (not wrapped in Attr).
+                        // This is necessary because facet-core needs to access default_fn() but can't
+                        // import the Attr enum (dependency direction: facet depends on facet-core).
+                        //
+                        // - `default` (no args) → None (use Default trait at runtime)
+                        // - `default = expr` → Some(|ptr| ptr.put(expr))
+                        let _crate_path = self.crate_path.as_ref().expect(
+                            "crate_path is required for make_t variants; add `crate_path ::your_crate;` to the grammar"
+                        );
+                        quote! {
+                            // Field-level: no args means use Default trait
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
+                                ::facet::ExtensionAttr {
+                                    ns: #ns_expr,
+                                    key: #key_str,
+                                    data: &const {
+                                        ::core::option::Option::<::facet::DefaultInPlaceFn>::None
+                                    } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
+                                    shape: <() as ::facet::Facet>::SHAPE,
+                                }
+                            }};
+                            // Field-level with `= expr`: wrap in closure
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $expr:expr }) => {{
+                                ::facet::ExtensionAttr {
+                                    ns: #ns_expr,
+                                    key: #key_str,
+                                    data: &const {
+                                        ::core::option::Option::Some(
+                                            (|__ptr: ::facet::PtrUninit<'_>| unsafe { __ptr.put($expr) })
+                                                as ::facet::DefaultInPlaceFn
+                                        )
+                                    } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
+                                    shape: <() as ::facet::Facet>::SHAPE,
+                                }
+                            }};
+                            // Field-level with just expr (no =): also wrap in closure
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $expr:expr }) => {{
+                                ::facet::ExtensionAttr {
+                                    ns: #ns_expr,
+                                    key: #key_str,
+                                    data: &const {
+                                        ::core::option::Option::Some(
+                                            (|__ptr: ::facet::PtrUninit<'_>| unsafe { __ptr.put($expr) })
+                                                as ::facet::DefaultInPlaceFn
+                                        )
+                                    } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
+                                    shape: <() as ::facet::Facet>::SHAPE,
+                                }
+                            }};
+                            // Container-level: no args means use Default trait
+                            (@ns { $ns:path } #key_ident { }) => {{
+                                ::facet::ExtensionAttr {
+                                    ns: #ns_expr,
+                                    key: #key_str,
+                                    data: &const {
+                                        ::core::option::Option::<::facet::DefaultInPlaceFn>::None
+                                    } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
+                                    shape: <() as ::facet::Facet>::SHAPE,
+                                }
+                            }};
+                            // Container-level with args: not typical, error
+                            (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
+                                compile_error!(concat!(
+                                    "Container-level `",
+                                    stringify!(#key_ident),
+                                    "` with arguments is not supported"
+                                ))
+                            }};
+                        }
+                    }
+                    VariantKind::NewtypeStr => {
+                        // NewtypeStr stores &'static str directly (not wrapped in Attr).
+                        // This is necessary because facet-core needs to access tag/content/rename
+                        // via get_builtin_attr_value but can't import the Attr enum.
+                        let _crate_path = self.crate_path.as_ref().expect(
+                            "crate_path is required for newtype_str variants; add `crate_path ::your_crate;` to the grammar"
+                        );
+                        quote! {
+                            // Field-level: no args is an error
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
+                                compile_error!(concat!(
+                                    "Attribute `",
+                                    stringify!(#key_ident),
+                                    "` requires a string value: `",
+                                    stringify!(#key_ident),
+                                    " = \"value\"`"
+                                ))
+                            }};
+                            // Field-level with `= "value"`: store string directly
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $val:expr }) => {{
+                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &$val)
+                            }};
+                            // Field-level with just expr
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $val:expr }) => {{
+                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &$val)
+                            }};
+                            // Container-level: no args is an error
+                            (@ns { $ns:path } #key_ident { }) => {{
+                                compile_error!(concat!(
+                                    "Attribute `",
+                                    stringify!(#key_ident),
+                                    "` requires a string value: `",
+                                    stringify!(#key_ident),
+                                    " = \"value\"`"
+                                ))
+                            }};
+                            // Container-level with `= "value"`: store string directly
+                            (@ns { $ns:path } #key_ident { | = $val:expr }) => {{
+                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &$val)
+                            }};
+                            // Container-level with just expr
+                            (@ns { $ns:path } #key_ident { | $val:expr }) => {{
+                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &$val)
+                            }};
+                        }
+                    }
+                    VariantKind::Newtype(_) | VariantKind::NewtypeOptionChar | VariantKind::ArbitraryType(_) | VariantKind::Struct(_) | VariantKind::FnPtr(_) => {
                         // For non-unit variants, we need the crate_path to generate proper type references.
                         // The crate_path is passed to the proc macro so it can output e.g. `::facet_args::Attr::Short(...)`
                         let crate_path = self.crate_path.as_ref().expect(
@@ -567,7 +989,8 @@ impl ParsedGrammar {
                         );
                         quote! {
                             // Field-level: @ns { path } attr { field : Type } or with args
-                            (@ns { $ns:path } #key_ident { $field:ident : $ty:ty }) => {{
+                            // Note: $field is tt not ident because tuple struct fields are literals (0, 1, etc.)
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
                                     @crate_path { #crate_path }
                                     @enum_name { #enum_name }
@@ -575,9 +998,9 @@ impl ParsedGrammar {
                                     @name { #key_ident }
                                     @rest { }
                                 };
-                                ::facet::ExtensionAttr::new(#ns_str, #key_str, &__ATTR_DATA)
+                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
-                            (@ns { $ns:path } #key_ident { $field:ident : $ty:ty | $($args:tt)* }) => {{
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
                                     @crate_path { #crate_path }
                                     @enum_name { #enum_name }
@@ -585,7 +1008,7 @@ impl ParsedGrammar {
                                     @name { #key_ident }
                                     @rest { $($args)* }
                                 };
-                                ::facet::ExtensionAttr::new(#ns_str, #key_str, &__ATTR_DATA)
+                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Container-level: @ns { path } attr { } or with args
                             (@ns { $ns:path } #key_ident { }) => {{
@@ -596,7 +1019,7 @@ impl ParsedGrammar {
                                     @name { #key_ident }
                                     @rest { }
                                 };
-                                ::facet::ExtensionAttr::new(#ns_str, #key_str, &__ATTR_DATA)
+                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
@@ -606,7 +1029,7 @@ impl ParsedGrammar {
                                     @name { #key_ident }
                                     @rest { $($args)* }
                                 };
-                                ::facet::ExtensionAttr::new(#ns_str, #key_str, &__ATTR_DATA)
+                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                         }
                     }
@@ -671,7 +1094,7 @@ impl ParsedGrammar {
 }
 
 impl ParsedStruct {
-    fn generate(&self) -> TokenStream2 {
+    fn generate(&self, builtin: bool) -> TokenStream2 {
         let ParsedStruct {
             attrs,
             is_pub,
@@ -696,9 +1119,18 @@ impl ParsedStruct {
             })
             .collect();
 
+        // For builtin mode, skip deriving Facet entirely because the derive macro
+        // generates ::facet:: paths which don't work inside the facet crate.
+        // Builtin attrs will have Facet implemented manually via a blanket impl.
+        let derive_attr = if builtin {
+            quote! { #[derive(Debug, Clone, PartialEq, Default)] }
+        } else {
+            quote! { #[derive(Debug, Clone, PartialEq, Default, ::facet::Facet)] }
+        };
+
         quote! {
             #(#attrs)*
-            #[derive(Debug, Clone, PartialEq, Default, ::facet::Facet)]
+            #derive_attr
             #vis_tokens struct #name {
                 #(#field_defs),*
             }

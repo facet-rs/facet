@@ -19,8 +19,8 @@ use crate::{
     trace,
 };
 use facet_core::{
-    ArrayType, Characteristic, Def, EnumRepr, EnumType, Facet, Field, FieldAttribute, KnownPointer,
-    PtrConst, PtrMut, PtrUninit, SequenceType, Shape, StructType, Type, UserType, Variant,
+    ArrayType, Characteristic, Def, EnumRepr, EnumType, Facet, Field, KnownPointer, PtrConst,
+    PtrMut, PtrUninit, SequenceType, Shape, StructType, Type, UserType, Variant,
 };
 
 mod alloc;

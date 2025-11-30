@@ -1560,35 +1560,49 @@ fn duplicate_field_detection() {
 }
 
 // ============================================================================
-// Custom deserialization with deserialize_with
+// Custom deserialization with proxy attribute
 // ============================================================================
 
-/// Test custom deserialization for property fields
+/// Test custom deserialization for property fields using proxy
 #[test]
-fn deserialize_with_property() {
+fn proxy_property() {
     use std::num::IntErrorKind;
 
     // Opaque type that doesn't implement Facet for its inner value directly
     #[derive(Debug, PartialEq)]
     struct HexValue(u64);
 
-    // Conversion function: String -> HexValue
-    #[allow(clippy::ptr_arg)]
-    fn hex_from_str(s: &String) -> Result<HexValue, &'static str> {
-        if let Some(hex) = s.strip_prefix("0x") {
-            u64::from_str_radix(hex, 16)
-        } else {
-            s.parse()
+    // Proxy type for deserializing HexValue from String
+    #[derive(Facet, Clone)]
+    #[facet(transparent)]
+    struct HexValueProxy(String);
+
+    impl TryFrom<HexValueProxy> for HexValue {
+        type Error = &'static str;
+        fn try_from(proxy: HexValueProxy) -> Result<Self, Self::Error> {
+            let s = &proxy.0;
+            if let Some(hex) = s.strip_prefix("0x") {
+                u64::from_str_radix(hex, 16)
+            } else {
+                s.parse()
+            }
+            .map(HexValue)
+            .map_err(|e| match e.kind() {
+                IntErrorKind::Empty => "cannot parse integer from empty string",
+                IntErrorKind::InvalidDigit => "invalid digit found in string",
+                IntErrorKind::PosOverflow => "number too large to fit in target type",
+                IntErrorKind::NegOverflow => "number too small to fit in target type",
+                IntErrorKind::Zero => "number would be zero for non-zero type",
+                _ => "unknown error",
+            })
         }
-        .map(HexValue)
-        .map_err(|e| match e.kind() {
-            IntErrorKind::Empty => "cannot parse integer from empty string",
-            IntErrorKind::InvalidDigit => "invalid digit found in string",
-            IntErrorKind::PosOverflow => "number too large to fit in target type",
-            IntErrorKind::NegOverflow => "number too small to fit in target type",
-            IntErrorKind::Zero => "number would be zero for non-zero type",
-            _ => "unknown error",
-        })
+    }
+
+    impl TryFrom<&HexValue> for HexValueProxy {
+        type Error = std::convert::Infallible;
+        fn try_from(v: &HexValue) -> Result<Self, Self::Error> {
+            Ok(HexValueProxy(format!("0x{:x}", v.0)))
+        }
     }
 
     #[derive(Facet, Debug, PartialEq)]
@@ -1601,7 +1615,7 @@ fn deserialize_with_property() {
     struct Item {
         #[facet(kdl::argument)]
         name: String,
-        #[facet(kdl::property, opaque, deserialize_with = hex_from_str)]
+        #[facet(kdl::property, opaque, proxy = HexValueProxy)]
         value: HexValue,
     }
 
@@ -1609,32 +1623,46 @@ fn deserialize_with_property() {
         item "test" value="0xff"
     "#};
 
-    let config: Config = facet_kdl::from_str(kdl).expect("should parse with deserialize_with");
+    let config: Config = facet_kdl::from_str(kdl).expect("should parse with proxy");
     assert_eq!(config.item.name, "test");
     assert_eq!(config.item.value, HexValue(255));
 }
 
-/// Test custom deserialization for argument fields
+/// Test custom deserialization for argument fields using proxy
 #[test]
-fn deserialize_with_argument() {
+fn proxy_argument() {
     use std::num::IntErrorKind;
 
     #[derive(Debug, PartialEq)]
     struct HexValue(u64);
 
-    #[allow(clippy::ptr_arg)]
-    fn hex_from_str(s: &String) -> Result<HexValue, &'static str> {
-        if let Some(hex) = s.strip_prefix("0x") {
-            u64::from_str_radix(hex, 16)
-        } else {
-            s.parse()
+    #[derive(Facet, Clone)]
+    #[facet(transparent)]
+    struct HexValueProxy(String);
+
+    impl TryFrom<HexValueProxy> for HexValue {
+        type Error = &'static str;
+        fn try_from(proxy: HexValueProxy) -> Result<Self, Self::Error> {
+            let s = &proxy.0;
+            if let Some(hex) = s.strip_prefix("0x") {
+                u64::from_str_radix(hex, 16)
+            } else {
+                s.parse()
+            }
+            .map(HexValue)
+            .map_err(|e| match e.kind() {
+                IntErrorKind::Empty => "cannot parse integer from empty string",
+                IntErrorKind::InvalidDigit => "invalid digit found in string",
+                _ => "unknown error",
+            })
         }
-        .map(HexValue)
-        .map_err(|e| match e.kind() {
-            IntErrorKind::Empty => "cannot parse integer from empty string",
-            IntErrorKind::InvalidDigit => "invalid digit found in string",
-            _ => "unknown error",
-        })
+    }
+
+    impl TryFrom<&HexValue> for HexValueProxy {
+        type Error = std::convert::Infallible;
+        fn try_from(v: &HexValue) -> Result<Self, Self::Error> {
+            Ok(HexValueProxy(format!("0x{:x}", v.0)))
+        }
     }
 
     #[derive(Facet, Debug, PartialEq)]
@@ -1645,7 +1673,7 @@ fn deserialize_with_argument() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Item {
-        #[facet(kdl::argument, opaque, deserialize_with = hex_from_str)]
+        #[facet(kdl::argument, opaque, proxy = HexValueProxy)]
         code: HexValue,
     }
 
@@ -1653,32 +1681,45 @@ fn deserialize_with_argument() {
         item "0xabc"
     "#};
 
-    let config: Config =
-        facet_kdl::from_str(kdl).expect("should parse with deserialize_with on argument");
+    let config: Config = facet_kdl::from_str(kdl).expect("should parse with proxy on argument");
     assert_eq!(config.item.code, HexValue(0xabc));
 }
 
-/// Test custom deserialization with flattened struct (solver path)
+/// Test custom deserialization with flattened struct (solver path) using proxy
 #[test]
-fn deserialize_with_flattened() {
+fn proxy_flattened() {
     use std::num::IntErrorKind;
 
     #[derive(Debug, PartialEq)]
     struct HexValue(u64);
 
-    #[allow(clippy::ptr_arg)]
-    fn hex_from_str(s: &String) -> Result<HexValue, &'static str> {
-        if let Some(hex) = s.strip_prefix("0x") {
-            u64::from_str_radix(hex, 16)
-        } else {
-            s.parse()
+    #[derive(Facet, Clone)]
+    #[facet(transparent)]
+    struct HexValueProxy(String);
+
+    impl TryFrom<HexValueProxy> for HexValue {
+        type Error = &'static str;
+        fn try_from(proxy: HexValueProxy) -> Result<Self, Self::Error> {
+            let s = &proxy.0;
+            if let Some(hex) = s.strip_prefix("0x") {
+                u64::from_str_radix(hex, 16)
+            } else {
+                s.parse()
+            }
+            .map(HexValue)
+            .map_err(|e| match e.kind() {
+                IntErrorKind::Empty => "cannot parse integer from empty string",
+                IntErrorKind::InvalidDigit => "invalid digit found in string",
+                _ => "unknown error",
+            })
         }
-        .map(HexValue)
-        .map_err(|e| match e.kind() {
-            IntErrorKind::Empty => "cannot parse integer from empty string",
-            IntErrorKind::InvalidDigit => "invalid digit found in string",
-            _ => "unknown error",
-        })
+    }
+
+    impl TryFrom<&HexValue> for HexValueProxy {
+        type Error = std::convert::Infallible;
+        fn try_from(v: &HexValue) -> Result<Self, Self::Error> {
+            Ok(HexValueProxy(format!("0x{:x}", v.0)))
+        }
     }
 
     #[derive(Facet, Debug, PartialEq)]
@@ -1697,7 +1738,7 @@ fn deserialize_with_flattened() {
 
     #[derive(Facet, Debug, PartialEq)]
     struct Settings {
-        #[facet(kdl::property, opaque, deserialize_with = hex_from_str)]
+        #[facet(kdl::property, opaque, proxy = HexValueProxy)]
         code: HexValue,
         #[facet(kdl::property, default)]
         extra: Option<String>,
@@ -1708,7 +1749,7 @@ fn deserialize_with_flattened() {
     "#};
 
     let config: Config =
-        facet_kdl::from_str(kdl).expect("should parse with deserialize_with in flattened struct");
+        facet_kdl::from_str(kdl).expect("should parse with proxy in flattened struct");
     assert_eq!(config.item.name, "test");
     assert_eq!(config.item.settings.code, HexValue(0xdead));
     assert_eq!(config.item.settings.extra, None);

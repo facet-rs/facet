@@ -156,16 +156,13 @@ impl Partial<'_> {
     pub fn begin_custom_deserialization(mut self) -> Result<Self, ReflectError> {
         let current_frame = self.frames().last().unwrap();
         let target_shape = current_frame.shape;
+        trace!("begin_custom_deserialization: target_shape={target_shape}");
         if let Some(field) = self.parent_field() {
-            if field.vtable.deserialize_with.is_some() {
-                // TODO: can we assume that this is set if the vtable element is set?
-                // TODO: can we get the shape some other way?
-                let Some(FieldAttribute::DeserializeFrom(source_shape)) = field
-                    .attributes
-                    .iter()
-                    .find(|&p| matches!(p, FieldAttribute::DeserializeFrom(_)))
-                else {
-                    panic!("expected field attribute to be present with deserialize_with");
+            trace!("begin_custom_deserialization: field name={}", field.name);
+            if field.proxy_convert_in_fn().is_some() {
+                // Get the source shape from the proxy attribute
+                let Some(source_shape) = field.proxy_shape() else {
+                    panic!("expected proxy attribute to be present with deserialize_with");
                 };
                 let source_data = source_shape.allocate().map_err(|_| ReflectError::Unsized {
                     shape: target_shape,

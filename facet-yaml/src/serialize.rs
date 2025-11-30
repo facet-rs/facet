@@ -5,7 +5,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use std::io::Write;
 
-use facet_core::{Facet, Field, FieldFlags};
+use facet_core::{Facet, Field};
 use facet_reflect::{HasFields, Peek};
 
 use crate::error::{YamlError, YamlErrorKind};
@@ -13,7 +13,7 @@ use crate::error::{YamlError, YamlErrorKind};
 /// Get the serialized name of a field (respecting rename attributes).
 fn get_serialized_field_name(field: &Field) -> &'static str {
     // Look for rename attribute using extension syntax: #[facet(serde::rename = "value")]
-    if let Some(ext) = field.get_extension_attr("serde", "rename") {
+    if let Some(ext) = field.get_attr(Some("serde"), "rename") {
         if let Some(Some(name)) = ext.get_as::<Option<&'static str>>() {
             return name;
         }
@@ -327,13 +327,13 @@ impl<W: Write> YamlSerializer<W> {
         let mut first = true;
 
         for (field, field_peek) in struct_peek.fields() {
-            // Skip fields with skip_serializing
-            if field.flags.contains(FieldFlags::SKIP_SERIALIZING) {
+            // Skip fields with skip_serializing attribute (no value check here)
+            if field.has_builtin_attr("skip") || field.has_builtin_attr("skip_serializing") {
                 continue;
             }
 
             // Check skip_serializing_if
-            if let Some(_skip_fn) = field.vtable.skip_serializing_if {
+            if let Some(_skip_fn) = field.skip_serializing_if_fn() {
                 // Get the raw pointer to the field value
                 // This is tricky - for now, skip this optimization
                 // TODO: implement skip_serializing_if properly

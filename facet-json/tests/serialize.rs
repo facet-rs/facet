@@ -2,55 +2,103 @@ use facet::Facet;
 use facet_testhelpers::test;
 
 #[test]
-fn test_custom_serialization_struct() {
+fn test_proxy_serialization_struct() {
+    // Target type that doesn't implement Facet
     struct OpaqueType(u64);
 
-    #[derive(Facet)]
+    // Proxy type that serializes OpaqueType to a hex string
+    #[derive(Facet, Clone)]
     #[facet(transparent)]
-    struct Wrapper(String);
+    struct OpaqueTypeStrProxy(String);
 
-    #[derive(Facet)]
-    struct OtherStruct {
+    impl TryFrom<OpaqueTypeStrProxy> for OpaqueType {
+        type Error = &'static str;
+        fn try_from(_proxy: OpaqueTypeStrProxy) -> Result<Self, Self::Error> {
+            // Not needed for serialization tests
+            Err("not implemented for this test")
+        }
+    }
+
+    impl TryFrom<&OpaqueType> for OpaqueTypeStrProxy {
+        type Error = std::convert::Infallible;
+        fn try_from(v: &OpaqueType) -> Result<Self, Self::Error> {
+            Ok(OpaqueTypeStrProxy(format!("0x{:x}", v.0)))
+        }
+    }
+
+    // Proxy type that serializes OpaqueType to a nested struct
+    #[derive(Facet, Clone)]
+    struct OpaqueTypeNestedProxy {
         val: u64,
     }
 
-    fn u64_into_str(val: &u64) -> Result<String, &'static str> {
-        Ok(format!("0x{val:x}"))
+    impl TryFrom<OpaqueTypeNestedProxy> for OpaqueType {
+        type Error = &'static str;
+        fn try_from(_proxy: OpaqueTypeNestedProxy) -> Result<Self, Self::Error> {
+            Err("not implemented for this test")
+        }
     }
 
-    fn opaque_type_into_str(o: &OpaqueType) -> Result<String, &'static str> {
-        u64_into_str(&o.0)
+    impl TryFrom<&OpaqueType> for OpaqueTypeNestedProxy {
+        type Error = std::convert::Infallible;
+        fn try_from(v: &OpaqueType) -> Result<Self, Self::Error> {
+            Ok(OpaqueTypeNestedProxy { val: v.0 })
+        }
     }
 
-    fn opaque_type_into_wrapper(o: &OpaqueType) -> Result<Wrapper, &'static str> {
-        Ok(Wrapper(opaque_type_into_str(o)?))
+    // Proxy for u64 -> hex string
+    #[derive(Facet, Clone)]
+    #[facet(transparent)]
+    struct U64ToStrProxy(String);
+
+    impl TryFrom<U64ToStrProxy> for u64 {
+        type Error = &'static str;
+        fn try_from(_proxy: U64ToStrProxy) -> Result<Self, Self::Error> {
+            Err("not implemented for this test")
+        }
     }
 
-    fn opaque_type_into_nested(o: &OpaqueType) -> Result<OtherStruct, &'static str> {
-        Ok(OtherStruct { val: o.0 })
+    impl TryFrom<&u64> for U64ToStrProxy {
+        type Error = std::convert::Infallible;
+        fn try_from(v: &u64) -> Result<Self, Self::Error> {
+            Ok(U64ToStrProxy(format!("0x{v:x}")))
+        }
     }
 
-    fn arc_u64_into_nested(val: &std::sync::Arc<u64>) -> Result<OtherStruct, &'static str> {
-        Ok(OtherStruct { val: **val })
+    // Proxy for Arc<u64> -> nested struct
+    #[derive(Facet, Clone)]
+    struct ArcU64Proxy {
+        val: u64,
+    }
+
+    impl TryFrom<ArcU64Proxy> for std::sync::Arc<u64> {
+        type Error = &'static str;
+        fn try_from(_proxy: ArcU64Proxy) -> Result<Self, Self::Error> {
+            Err("not implemented for this test")
+        }
+    }
+
+    impl TryFrom<&std::sync::Arc<u64>> for ArcU64Proxy {
+        type Error = std::convert::Infallible;
+        fn try_from(v: &std::sync::Arc<u64>) -> Result<Self, Self::Error> {
+            Ok(ArcU64Proxy { val: **v })
+        }
     }
 
     #[derive(Facet)]
     struct MyType {
-        #[facet(opaque, serialize_with = opaque_type_into_str)]
+        #[facet(opaque, proxy = OpaqueTypeStrProxy)]
         str: OpaqueType,
-        #[facet(opaque, serialize_with = opaque_type_into_wrapper)]
-        wrap: OpaqueType,
-        #[facet(opaque, serialize_with = opaque_type_into_nested)]
+        #[facet(opaque, proxy = OpaqueTypeNestedProxy)]
         nest: OpaqueType,
-        #[facet(serialize_with = u64_into_str)]
+        #[facet(proxy = U64ToStrProxy)]
         cust: u64,
-        #[facet(serialize_with = arc_u64_into_nested)]
+        #[facet(opaque, proxy = ArcU64Proxy)]
         arc: std::sync::Arc<u64>,
     }
 
     let data = MyType {
         str: OpaqueType(2748),
-        wrap: OpaqueType(2748),
         nest: OpaqueType(8472),
         cust: 2748,
         arc: std::sync::Arc::new(3342),
@@ -58,31 +106,42 @@ fn test_custom_serialization_struct() {
 
     let ser = facet_json::to_string(&data);
 
-    let expected =
-        r#"{"str":"0xabc","wrap":"0xabc","nest":{"val":8472},"cust":"0xabc","arc":{"val":3342}}"#;
+    let expected = r#"{"str":"0xabc","nest":{"val":8472},"cust":"0xabc","arc":{"val":3342}}"#;
 
     assert_eq!(ser, expected);
 }
 
 #[test]
-fn test_custom_serialization_enum() {
+fn test_proxy_serialization_enum() {
+    // Target type that doesn't implement Facet
     struct OpaqueType(u64);
 
-    fn u64_into_str(val: &u64) -> Result<String, &'static str> {
-        Ok(format!("0x{val:x}"))
+    // Proxy type for serializing to hex string
+    #[derive(Facet, Clone)]
+    #[facet(transparent)]
+    struct OpaqueTypeProxy(String);
+
+    impl TryFrom<OpaqueTypeProxy> for OpaqueType {
+        type Error = &'static str;
+        fn try_from(_proxy: OpaqueTypeProxy) -> Result<Self, Self::Error> {
+            Err("not implemented for this test")
+        }
     }
 
-    fn opaque_type_into_str(o: &OpaqueType) -> Result<String, &'static str> {
-        u64_into_str(&o.0)
+    impl TryFrom<&OpaqueType> for OpaqueTypeProxy {
+        type Error = std::convert::Infallible;
+        fn try_from(v: &OpaqueType) -> Result<Self, Self::Error> {
+            Ok(OpaqueTypeProxy(format!("0x{:x}", v.0)))
+        }
     }
 
     #[allow(dead_code)]
     #[derive(Facet)]
     #[repr(u8)]
     enum MyEnum {
-        OpStrTuple(#[facet(opaque, serialize_with = opaque_type_into_str)] OpaqueType),
+        OpStrTuple(#[facet(opaque, proxy = OpaqueTypeProxy)] OpaqueType),
         OpStrField {
-            #[facet(opaque, serialize_with = opaque_type_into_str)]
+            #[facet(opaque, proxy = OpaqueTypeProxy)]
             field: OpaqueType,
         },
     }
@@ -101,23 +160,33 @@ fn test_custom_serialization_enum() {
 }
 
 #[test]
-fn test_custom_serialize_transparent_struct() {
+fn test_proxy_serialize_transparent_struct() {
+    // Target type that doesn't implement Facet
     #[derive(Clone)]
     struct MyUrl(String);
 
-    fn custom_serializer(u: &MyUrl) -> Result<String, &'static str> {
-        Ok(u.0.clone())
+    // Proxy type
+    #[derive(Facet, Clone)]
+    #[facet(transparent)]
+    struct MyUrlProxy(String);
+
+    impl TryFrom<MyUrlProxy> for MyUrl {
+        type Error = &'static str;
+        fn try_from(_proxy: MyUrlProxy) -> Result<Self, Self::Error> {
+            Err("not implemented for this test")
+        }
+    }
+
+    impl TryFrom<&MyUrl> for MyUrlProxy {
+        type Error = std::convert::Infallible;
+        fn try_from(v: &MyUrl) -> Result<Self, Self::Error> {
+            Ok(MyUrlProxy(v.0.clone()))
+        }
     }
 
     #[derive(Facet)]
     #[facet(transparent)]
-    struct UrlWrapper(
-        #[facet(
-            opaque,
-            serialize_with = custom_serializer,
-        )]
-        MyUrl,
-    );
+    struct UrlWrapper(#[facet(opaque, proxy = MyUrlProxy)] MyUrl);
 
     let data = r#""http://thing""#;
 
