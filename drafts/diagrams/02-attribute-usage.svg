@@ -201,8 +201,10 @@
 <text xml:space="preserve" text-anchor="start" x="148" y="-151" font-family="Monaco" font-size="10.00" fill="#0550ae">Attribute</text>
 <text xml:space="preserve" text-anchor="start" x="202" y="-151" font-family="Monaco" font-size="10.00"> {</text>
 <text xml:space="preserve" text-anchor="start" x="64" y="-133.5" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;ns: </text>
-<text xml:space="preserve" text-anchor="start" x="112" y="-133.5" font-family="Monaco" font-size="10.00" fill="#0a3069">&quot;orm&quot;</text>
-<text xml:space="preserve" text-anchor="start" x="142" y="-133.5" font-family="Monaco" font-size="10.00">,</text>
+<text xml:space="preserve" text-anchor="start" x="112" y="-133.5" font-family="Monaco" font-size="10.00" fill="#0550ae">Some</text>
+<text xml:space="preserve" text-anchor="start" x="136" y="-133.5" font-family="Monaco" font-size="10.00">(</text>
+<text xml:space="preserve" text-anchor="start" x="142" y="-133.5" font-family="Monaco" font-size="10.00" fill="#0a3069">&quot;orm&quot;</text>
+<text xml:space="preserve" text-anchor="start" x="172" y="-133.5" font-family="Monaco" font-size="10.00">),</text>
 <text xml:space="preserve" text-anchor="start" x="64" y="-116" font-family="Monaco" font-size="10.00"> &#160;&#160;&#160;key: </text>
 <text xml:space="preserve" text-anchor="start" x="118" y="-116" font-family="Monaco" font-size="10.00" fill="#0a3069">&quot;column&quot;</text>
 <text xml:space="preserve" text-anchor="start" x="166" y="-116" font-family="Monaco" font-size="10.00">,</text>

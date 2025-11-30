@@ -99,7 +99,9 @@ where
         .render(diff_str.trim_end())
         .unwrap_or_else(|_| diff_str.clone());
 
-    format!("{before_box}\n{after_box}\n{diff_box}")
+    // Strip ANSI codes from final output to ensure consistent snapshots across platforms
+    // (boxen's border coloring behaves differently on macOS vs Linux)
+    strip_ansi(&format!("{before_box}\n{after_box}\n{diff_box}"))
 }
 
 // ============================================================================
@@ -157,14 +159,14 @@ fn diff_bools_different() {
 
 #[test]
 fn diff_floats_equal() {
-    let a = 3.14f64;
-    let b = 3.14f64;
+    let a = 2.14f64;
+    let b = 2.14f64;
     assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_floats_different() {
-    let a = 3.14f64;
+    let a = 2.14f64;
     let b = 2.71f64;
     assert_snapshot!(format_diff_comparison(&a, &b));
 }
@@ -1491,14 +1493,14 @@ fn diff_value_mixed_array_vs_tuple_different() {
 
 #[test]
 fn diff_value_number_vs_float() {
-    let a = value!(3.14);
-    let b: f64 = 3.14;
+    let a = value!(2.14);
+    let b: f64 = 2.14;
     assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_value_number_vs_float_different() {
-    let a = value!(3.14);
+    let a = value!(2.14);
     let b: f64 = 2.71;
     assert_snapshot!(format_diff_comparison(&a, &b));
 }

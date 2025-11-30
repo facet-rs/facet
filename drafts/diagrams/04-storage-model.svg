@@ -43,32 +43,32 @@
 <!-- ext1 -->
 <g id="node3" class="node">
 <title>ext1</title>
-<polygon fill="#e8f5e9" stroke="black" points="531.5,-133.75 295.5,-133.75 295.5,-16.25 531.5,-16.25 531.5,-133.75"/>
-<text xml:space="preserve" text-anchor="start" x="305.5" y="-118.3" font-family="Monaco" font-size="11.00">::facet_core::</text>
-<text xml:space="preserve" text-anchor="start" x="400" y="-118.3" font-family="Monaco" font-size="11.00" fill="#0550ae">Attribute</text>
-<text xml:space="preserve" text-anchor="start" x="460.75" y="-118.3" font-family="Monaco" font-size="11.00"> {</text>
-<text xml:space="preserve" text-anchor="start" x="305.5" y="-100.05" font-family="Monaco" font-size="11.00"> &#160;&#160;&#160;ns: </text>
-<text xml:space="preserve" text-anchor="start" x="359.5" y="-100.05" font-family="Monaco" font-size="11.00" fill="#0a3069">&quot;&quot;</text>
-<text xml:space="preserve" text-anchor="start" x="373" y="-100.05" font-family="Monaco" font-size="11.00">, &#160;</text>
-<text xml:space="preserve" text-anchor="start" x="393.25" y="-100.05" font-family="Monaco" font-size="11.00" fill="#6e7781">// empty = built&#45;in</text>
-<text xml:space="preserve" text-anchor="start" x="305.5" y="-81.8" font-family="Monaco" font-size="11.00"> &#160;&#160;&#160;key: </text>
-<text xml:space="preserve" text-anchor="start" x="366.25" y="-81.8" font-family="Monaco" font-size="11.00" fill="#0a3069">&quot;skip&quot;</text>
-<text xml:space="preserve" text-anchor="start" x="406.75" y="-81.8" font-family="Monaco" font-size="11.00">,</text>
-<text xml:space="preserve" text-anchor="start" x="305.5" y="-63.55" font-family="Monaco" font-size="11.00"> &#160;&#160;&#160;data: </text>
-<text xml:space="preserve" text-anchor="start" x="373" y="-63.55" font-family="Monaco" font-size="11.00" fill="#cf222e">&amp;</text>
-<text xml:space="preserve" text-anchor="start" x="379.75" y="-63.55" font-family="Monaco" font-size="11.00">() </text>
-<text xml:space="preserve" text-anchor="start" x="400" y="-63.55" font-family="Monaco" font-size="11.00" fill="#cf222e">as</text>
-<text xml:space="preserve" text-anchor="start" x="413.5" y="-63.55" font-family="Monaco" font-size="11.00"> *</text>
-<text xml:space="preserve" text-anchor="start" x="427" y="-63.55" font-family="Monaco" font-size="11.00" fill="#cf222e">const</text>
-<text xml:space="preserve" text-anchor="start" x="460.75" y="-63.55" font-family="Monaco" font-size="11.00"> (),</text>
-<text xml:space="preserve" text-anchor="start" x="305.5" y="-44.3" font-family="Monaco" font-size="11.00"> &#160;&#160;&#160;shape: &lt;()&gt;::SHAPE,</text>
-<text xml:space="preserve" text-anchor="start" x="305.5" y="-26.05" font-family="Monaco" font-size="11.00">}</text>
+<polygon fill="#e8f5e9" stroke="black" points="534.88,-133.75 292.12,-133.75 292.12,-16.25 534.88,-16.25 534.88,-133.75"/>
+<text xml:space="preserve" text-anchor="start" x="302.12" y="-118.3" font-family="Monaco" font-size="11.00">::facet_core::</text>
+<text xml:space="preserve" text-anchor="start" x="396.62" y="-118.3" font-family="Monaco" font-size="11.00" fill="#0550ae">Attribute</text>
+<text xml:space="preserve" text-anchor="start" x="457.38" y="-118.3" font-family="Monaco" font-size="11.00"> {</text>
+<text xml:space="preserve" text-anchor="start" x="302.12" y="-100.05" font-family="Monaco" font-size="11.00"> &#160;&#160;&#160;ns: </text>
+<text xml:space="preserve" text-anchor="start" x="356.12" y="-100.05" font-family="Monaco" font-size="11.00" fill="#0550ae">None</text>
+<text xml:space="preserve" text-anchor="start" x="383.12" y="-100.05" font-family="Monaco" font-size="11.00">, &#160;</text>
+<text xml:space="preserve" text-anchor="start" x="403.38" y="-100.05" font-family="Monaco" font-size="11.00" fill="#6e7781">// None = built&#45;in</text>
+<text xml:space="preserve" text-anchor="start" x="302.12" y="-81.8" font-family="Monaco" font-size="11.00"> &#160;&#160;&#160;key: </text>
+<text xml:space="preserve" text-anchor="start" x="362.88" y="-81.8" font-family="Monaco" font-size="11.00" fill="#0a3069">&quot;skip&quot;</text>
+<text xml:space="preserve" text-anchor="start" x="403.38" y="-81.8" font-family="Monaco" font-size="11.00">,</text>
+<text xml:space="preserve" text-anchor="start" x="302.12" y="-63.55" font-family="Monaco" font-size="11.00"> &#160;&#160;&#160;data: </text>
+<text xml:space="preserve" text-anchor="start" x="369.62" y="-63.55" font-family="Monaco" font-size="11.00" fill="#cf222e">&amp;</text>
+<text xml:space="preserve" text-anchor="start" x="376.38" y="-63.55" font-family="Monaco" font-size="11.00">() </text>
+<text xml:space="preserve" text-anchor="start" x="396.62" y="-63.55" font-family="Monaco" font-size="11.00" fill="#cf222e">as</text>
+<text xml:space="preserve" text-anchor="start" x="410.12" y="-63.55" font-family="Monaco" font-size="11.00"> *</text>
+<text xml:space="preserve" text-anchor="start" x="423.62" y="-63.55" font-family="Monaco" font-size="11.00" fill="#cf222e">const</text>
+<text xml:space="preserve" text-anchor="start" x="457.38" y="-63.55" font-family="Monaco" font-size="11.00"> (),</text>
+<text xml:space="preserve" text-anchor="start" x="302.12" y="-44.3" font-family="Monaco" font-size="11.00"> &#160;&#160;&#160;shape: &lt;()&gt;::SHAPE,</text>
+<text xml:space="preserve" text-anchor="start" x="302.12" y="-26.05" font-family="Monaco" font-size="11.00">}</text>
 </g>
 <!-- builtin&#45;&gt;ext1 -->
 <g id="edge1" class="edge">
 <title>builtin&#45;&gt;ext1</title>
-<path fill="none" stroke="#228b22" stroke-width="2" d="M231.98,-91.95C248.39,-90.4 265.5,-88.8 282.35,-87.22"/>
-<polygon fill="#228b22" stroke="#228b22" stroke-width="2" points="282.53,-90.72 292.15,-86.3 281.87,-83.75 282.53,-90.72"/>
+<path fill="none" stroke="#228b22" stroke-width="2" d="M231.98,-91.95C247.35,-90.5 263.33,-89 279.13,-87.52"/>
+<polygon fill="#228b22" stroke="#228b22" stroke-width="2" points="279.12,-91.04 288.74,-86.62 278.46,-84.07 279.12,-91.04"/>
 </g>
 <!-- extension -->
 <g id="node2" class="node">
@@ -91,8 +91,10 @@
 <text xml:space="preserve" text-anchor="start" x="416.88" y="-254.3" font-family="Monaco" font-size="11.00" fill="#0550ae">Attribute</text>
 <text xml:space="preserve" text-anchor="start" x="477.62" y="-254.3" font-family="Monaco" font-size="11.00"> {</text>
 <text xml:space="preserve" text-anchor="start" x="322.38" y="-236.05" font-family="Monaco" font-size="11.00"> &#160;&#160;&#160;ns: </text>
-<text xml:space="preserve" text-anchor="start" x="376.38" y="-236.05" font-family="Monaco" font-size="11.00" fill="#0a3069">&quot;kdl&quot;</text>
-<text xml:space="preserve" text-anchor="start" x="410.12" y="-236.05" font-family="Monaco" font-size="11.00">,</text>
+<text xml:space="preserve" text-anchor="start" x="376.38" y="-236.05" font-family="Monaco" font-size="11.00" fill="#0550ae">Some</text>
+<text xml:space="preserve" text-anchor="start" x="403.38" y="-236.05" font-family="Monaco" font-size="11.00">(</text>
+<text xml:space="preserve" text-anchor="start" x="410.12" y="-236.05" font-family="Monaco" font-size="11.00" fill="#0a3069">&quot;kdl&quot;</text>
+<text xml:space="preserve" text-anchor="start" x="443.88" y="-236.05" font-family="Monaco" font-size="11.00">),</text>
 <text xml:space="preserve" text-anchor="start" x="322.38" y="-217.8" font-family="Monaco" font-size="11.00"> &#160;&#160;&#160;key: </text>
 <text xml:space="preserve" text-anchor="start" x="383.12" y="-217.8" font-family="Monaco" font-size="11.00" fill="#0a3069">&quot;child&quot;</text>
 <text xml:space="preserve" text-anchor="start" x="430.38" y="-217.8" font-family="Monaco" font-size="11.00">,</text>
@@ -135,8 +137,8 @@
 <!-- ext1&#45;&gt;field -->
 <g id="edge3" class="edge">
 <title>ext1&#45;&gt;field</title>
-<path fill="none" stroke="#228b22" stroke-width="2" d="M531.71,-75C548.52,-75 565.96,-75 583.16,-75"/>
-<polygon fill="#228b22" stroke="#228b22" stroke-width="2" points="582.91,-78.5 592.91,-75 582.91,-71.5 582.91,-78.5"/>
+<path fill="none" stroke="#228b22" stroke-width="2" d="M535.25,-75C550.93,-75 567.11,-75 583.08,-75"/>
+<polygon fill="#228b22" stroke="#228b22" stroke-width="2" points="582.8,-78.5 592.8,-75 582.8,-71.5 582.8,-78.5"/>
 </g>
 <!-- container -->
 <g id="node6" class="node">
@@ -163,8 +165,8 @@
 <!-- ext1&#45;&gt;container -->
 <g id="edge4" class="edge">
 <title>ext1&#45;&gt;container</title>
-<path fill="none" stroke="#228b22" stroke-width="2" stroke-dasharray="5,2" d="M531.71,-126.61C548.85,-134.16 566.64,-141.99 584.16,-149.7"/>
-<polygon fill="#228b22" stroke="#228b22" stroke-width="2" points="582.6,-152.84 593.16,-153.67 585.42,-146.43 582.6,-152.84"/>
+<path fill="none" stroke="#228b22" stroke-width="2" stroke-dasharray="5,2" d="M535.25,-128.17C551.24,-135.21 567.75,-142.48 584.03,-149.64"/>
+<polygon fill="#228b22" stroke="#228b22" stroke-width="2" points="582.5,-152.8 593.06,-153.62 585.32,-146.39 582.5,-152.8"/>
 </g>
 <!-- ext2&#45;&gt;field -->
 <g id="edge5" class="edge">
