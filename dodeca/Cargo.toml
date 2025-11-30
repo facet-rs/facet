@@ -1,0 +1,53 @@
+[package]
+name = "dodeca"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Facet (dogfooding!)
+facet = { path = "../facet" }
+facet-toml = { path = "../facet-toml" }
+
+# Markdown & syntax highlighting
+pulldown-cmark = "0.13"
+syntect = "5"
+
+# HTML generation
+maud = "0.26"
+
+# File system
+ignore = "0.4"
+notify = "7"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# TUI
+ratatui = "0.30.0-beta.0"
+crossterm = "0.29"
+
+# HTTP server (for serve mode)
+axum = "0.8"
+tower-http = { version = "0.6", features = ["fs"] }
+
+# Parallel processing
+rayon = "1"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Sass
+grass = "0.13"
+
+# Error handling & diagnostics
+color-eyre = "0.6"
+miette = { version = "7", features = ["fancy"] }
+thiserror = "2"
+
+# Incremental computation
+salsa = "0.19"
+
+# Misc
+camino = "1"  # UTF-8 paths
+aliri_braid = "0.4"  # Strongly-typed string wrappers
