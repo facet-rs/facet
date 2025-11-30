@@ -102,12 +102,15 @@ impl Parser {
             TokenKind::Block => self.parse_block(start),
             TokenKind::Extends => self.parse_extends(start),
             TokenKind::Include => self.parse_include(start),
+            TokenKind::Import => self.parse_import(start),
+            TokenKind::Macro => self.parse_macro(start),
+            TokenKind::Set => self.parse_set(start),
             _ => {
                 let span = self.current.span;
                 let found = format!("{:?}", self.current.kind);
                 Err(SyntaxError {
                     found,
-                    expected: "if, for, block, extends, or include".to_string(),
+                    expected: "if, for, block, extends, include, import, macro, or set".to_string(),
                     span,
                     src: self.source.named_source(),
                 })?
@@ -166,12 +169,15 @@ impl Parser {
             TokenKind::Block => self.parse_block(start)?,
             TokenKind::Extends => self.parse_extends(start)?,
             TokenKind::Include => self.parse_include(start)?,
+            TokenKind::Import => self.parse_import(start)?,
+            TokenKind::Macro => self.parse_macro(start)?,
+            TokenKind::Set => self.parse_set(start)?,
             _ => {
                 let span = self.current.span;
                 let found = format!("{:?}", self.current.kind);
                 return Err(SyntaxError {
                     found,
-                    expected: "if, for, block, extends, or include".to_string(),
+                    expected: "if, for, block, extends, include, import, macro, or set".to_string(),
                     span,
                     src: self.source.named_source(),
                 })?;
@@ -334,6 +340,10 @@ impl Parser {
 
         self.expect(&TokenKind::TagOpen)?;
         self.expect(&TokenKind::Endblock)?;
+        // Optional block name after endblock (e.g., {% endblock title %})
+        if matches!(&self.current.kind, TokenKind::Ident(_)) {
+            self.advance();
+        }
         self.expect(&TokenKind::TagClose)?;
 
         let end = self.previous.span;
@@ -374,6 +384,100 @@ impl Parser {
             context: None,
             span: span(start.offset(), end.offset() + end.len() - start.offset()),
         }))
+    }
+
+    /// Parse set statement: {% set var = expr %}
+    fn parse_set(&mut self, start: Span) -> Result<Node> {
+        self.expect(&TokenKind::Set)?;
+
+        let name = self.expect_ident()?;
+        self.expect(&TokenKind::Assign)?;
+        let value = self.parse_expr()?;
+        self.expect(&TokenKind::TagClose)?;
+
+        let end = self.previous.span;
+
+        Ok(Node::Set(SetNode {
+            name,
+            value,
+            span: span(start.offset(), end.offset() + end.len() - start.offset()),
+        }))
+    }
+
+    /// Parse import statement: {% import "path" as name %}
+    fn parse_import(&mut self, start: Span) -> Result<Node> {
+        self.expect(&TokenKind::Import)?;
+
+        let path = self.expect_string()?;
+        self.expect(&TokenKind::As)?;
+        let alias = self.expect_ident()?;
+        self.expect(&TokenKind::TagClose)?;
+
+        let end = self.previous.span;
+
+        Ok(Node::Import(ImportNode {
+            path,
+            alias,
+            span: span(start.offset(), end.offset() + end.len() - start.offset()),
+        }))
+    }
+
+    /// Parse macro definition: {% macro name(args) %}...{% endmacro %}
+    fn parse_macro(&mut self, start: Span) -> Result<Node> {
+        self.expect(&TokenKind::Macro)?;
+
+        let name = self.expect_ident()?;
+
+        // Parse parameters
+        self.expect(&TokenKind::LParen)?;
+        let params = self.parse_macro_params()?;
+        self.expect(&TokenKind::RParen)?;
+        self.expect(&TokenKind::TagClose)?;
+
+        // Parse body
+        let body = self.parse_body(&[TokenKind::Endmacro])?;
+
+        // Expect {% endmacro %}
+        self.expect(&TokenKind::TagOpen)?;
+        self.expect(&TokenKind::Endmacro)?;
+        self.expect(&TokenKind::TagClose)?;
+
+        let end = self.previous.span;
+
+        Ok(Node::Macro(MacroNode {
+            name,
+            params,
+            body,
+            span: span(start.offset(), end.offset() + end.len() - start.offset()),
+        }))
+    }
+
+    /// Parse macro parameters with optional defaults
+    fn parse_macro_params(&mut self) -> Result<Vec<MacroParam>> {
+        let mut params = Vec::new();
+
+        if !self.check(&TokenKind::RParen) {
+            loop {
+                let name = self.expect_ident()?;
+                let default = if self.check(&TokenKind::Assign) {
+                    self.advance();
+                    Some(self.parse_expr()?)
+                } else {
+                    None
+                };
+                params.push(MacroParam { name, default });
+
+                if !self.check(&TokenKind::Comma) {
+                    break;
+                }
+                self.advance();
+                if self.check(&TokenKind::RParen) {
+                    break;
+                }
+            }
+        }
+
+        Ok(params)
     }
 
     // ========================================================================
@@ -474,6 +578,49 @@ impl Parser {
         let mut left = self.parse_add()?;
 
         loop {
+            // Check for "is" test expressions
+            if self.check(&TokenKind::Is) {
+                self.advance();
+                // Check for "is not"
+                let negated = if self.check(&TokenKind::Not) {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+                // Parse test name
+                let test_name = self.expect_ident()?;
+                // Parse optional args: test_name(arg1, arg2)
+                let args = if self.check(&TokenKind::LParen) {
+                    self.advance();
+                    let mut args = Vec::new();
+                    if !self.check(&TokenKind::RParen) {
+                        args.push(self.parse_expr()?);
+                        while self.check(&TokenKind::Comma) {
+                            self.advance();
+                            args.push(self.parse_expr()?);
+                        }
+                    }
+                    self.expect(&TokenKind::RParen)?;
+                    args
+                } else {
+                    Vec::new()
+                };
+                let end = self.previous.span;
+                let expr_span = span(
+                    left.span().offset(),
+                    end.offset() + end.len() - left.span().offset(),
+                );
+                left = Expr::Test(TestExpr {
+                    expr: Box::new(left),
+                    test_name,
+                    args,
+                    negated,
+                    span: expr_span,
+                });
+                continue;
+            }
+
             let op = match &self.current.kind {
                 TokenKind::Eq => Some(BinaryOp::Eq),
                 TokenKind::Ne => Some(BinaryOp::Ne),
@@ -654,14 +801,14 @@ impl Parser {
             self.advance();
             let filter = self.expect_ident()?;
 
-            // Optional filter arguments
-            let args = if self.check(&TokenKind::LParen) {
+            // Optional filter arguments (with kwargs support)
+            let (args, kwargs) = if self.check(&TokenKind::LParen) {
                 self.advance();
-                let args = self.parse_args()?;
+                let result = self.parse_call_args()?;
                 self.expect(&TokenKind::RParen)?;
-                args
+                result
             } else {
-                Vec::new()
+                (Vec::new(), Vec::new())
             };
 
             let span = span(
@@ -673,6 +820,7 @@ impl Parser {
                 expr: Box::new(expr),
                 filter,
                 args,
+                kwargs,
                 span,
             });
         }
@@ -779,11 +927,37 @@ impl Parser {
             }
             TokenKind::Ident(name) => {
                 let name = name.clone();
+                let start_span = token.span;
                 self.advance();
-                Ok(Expr::Var(Ident {
-                    name,
-                    span: token.span,
-                }))
+
+                // Check for macro call: namespace::macro_name(args)
+                if self.check(&TokenKind::DoubleColon) {
+                    self.advance(); // consume ::
+                    let macro_name = self.expect_ident()?;
+                    self.expect(&TokenKind::LParen)?;
+                    let (args, kwargs) = self.parse_call_args()?;
+                    self.expect(&TokenKind::RParen)?;
+
+                    let end = self.previous.span;
+                    Ok(Expr::MacroCall(MacroCallExpr {
+                        namespace: Ident {
+                            name,
+                            span: start_span,
+                        },
+                        macro_name,
+                        args,
+                        kwargs,
+                        span: span(
+                            start_span.offset(),
+                            end.offset() + end.len() - start_span.offset(),
+                        ),
+                    }))
+                } else {
+                    Ok(Expr::Var(Ident {
+                        name,
+                        span: token.span,
+                    }))
+                }
             }
             TokenKind::LParen => {
                 self.advance();
@@ -1044,6 +1218,73 @@ mod tests {
         let template = parse("{{ name | upper }}").unwrap();
         if let Node::Print(print) = &template.body[0] {
             assert!(matches!(&print.expr, Expr::Filter(_)));
+        } else {
+            panic!("Expected print node");
+        }
+    }
+
+    #[test]
+    fn test_parse_import() {
+        let template = parse(r#"{% import "macros.html" as macros %}"#).unwrap();
+        assert_eq!(template.body.len(), 1);
+        if let Node::Import(import) = &template.body[0] {
+            assert_eq!(import.path.value, "macros.html");
+            assert_eq!(import.alias.name, "macros");
+        } else {
+            panic!("Expected import node");
+        }
+    }
+
+    #[test]
+    fn test_parse_macro() {
+        let template = parse(
+            r#"{% macro button(text, class="btn") %}
+<button class="{{ class }}">{{ text }}</button>
+{% endmacro %}"#,
+        )
+        .unwrap();
+        assert_eq!(template.body.len(), 1);
+        if let Node::Macro(m) = &template.body[0] {
+            assert_eq!(m.name.name, "button");
+            assert_eq!(m.params.len(), 2);
+            assert_eq!(m.params[0].name.name, "text");
+            assert!(m.params[0].default.is_none());
+            assert_eq!(m.params[1].name.name, "class");
+            assert!(m.params[1].default.is_some());
+        } else {
+            panic!("Expected macro node");
+        }
+    }
+
+    #[test]
+    fn test_parse_macro_call() {
+        let template = parse(r#"{{ macros::button(text="Click me") }}"#).unwrap();
+        assert_eq!(template.body.len(), 1);
+        if let Node::Print(print) = &template.body[0] {
+            if let Expr::MacroCall(call) = &print.expr {
+                assert_eq!(call.namespace.name, "macros");
+                assert_eq!(call.macro_name.name, "button");
+                assert_eq!(call.kwargs.len(), 1);
+                assert_eq!(call.kwargs[0].0.name, "text");
+            } else {
+                panic!("Expected macro call expression");
+            }
+        } else {
+            panic!("Expected print node");
+        }
+    }
+
+    #[test]
+    fn test_parse_self_macro_call() {
+        let template = parse(r#"{{ self::helper() }}"#).unwrap();
+        assert_eq!(template.body.len(), 1);
+        if let Node::Print(print) = &template.body[0] {
+            if let Expr::MacroCall(call) = &print.expr {
+                assert_eq!(call.namespace.name, "self");
+                assert_eq!(call.macro_name.name, "helper");
+            } else {
+                panic!("Expected macro call expression");
+            }
         } else {
             panic!("Expected print node");
         }

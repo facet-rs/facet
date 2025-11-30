@@ -41,6 +41,12 @@ pub enum Node {
     Extends(ExtendsNode),
     /// Comment: {# comment #}
     Comment(CommentNode),
+    /// Set statement: {% set var = expr %}
+    Set(SetNode),
+    /// Import: {% import "path" as name %}
+    Import(ImportNode),
+    /// Macro definition: {% macro name(args) %}...{% endmacro %}
+    Macro(MacroNode),
 }
 
 impl Node {
@@ -54,6 +60,9 @@ impl Node {
             Node::Block(n) => n.span,
             Node::Extends(n) => n.span,
             Node::Comment(n) => n.span,
+            Node::Set(n) => n.span,
+            Node::Import(n) => n.span,
+            Node::Macro(n) => n.span,
         }
     }
 }
@@ -162,6 +171,38 @@ pub struct CommentNode {
     pub span: Span,
 }
 
+/// Set statement: {% set var = expr %}
+#[derive(Debug, Clone)]
+pub struct SetNode {
+    pub name: Ident,
+    pub value: Expr,
+    pub span: Span,
+}
+
+/// Import statement: {% import "path" as name %}
+#[derive(Debug, Clone)]
+pub struct ImportNode {
+    pub path: StringLit,
+    pub alias: Ident,
+    pub span: Span,
+}
+
+/// Macro definition: {% macro name(args) %}...{% endmacro %}
+#[derive(Debug, Clone)]
+pub struct MacroNode {
+    pub name: Ident,
+    pub params: Vec<MacroParam>,
+    pub body: Vec<Node>,
+    pub span: Span,
+}
+
+/// A macro parameter with optional default value
+#[derive(Debug, Clone)]
+pub struct MacroParam {
+    pub name: Ident,
+    pub default: Option<Expr>,
+}
+
 // ============================================================================
 // Expressions
 // ============================================================================
@@ -187,6 +228,10 @@ pub enum Expr {
     Call(CallExpr),
     /// Ternary: expr if cond else expr
     Ternary(TernaryExpr),
+    /// Test expression: expr is test_name or expr is not test_name
+    Test(TestExpr),
+    /// Macro call: namespace::macro(args) or self::macro(args)
+    MacroCall(MacroCallExpr),
 }
 
 impl Expr {
@@ -201,6 +246,8 @@ impl Expr {
             Expr::Unary(u) => u.span,
             Expr::Call(c) => c.span,
             Expr::Ternary(t) => t.span,
+            Expr::Test(t) => t.span,
+            Expr::MacroCall(m) => m.span,
         }
     }
 }
@@ -302,12 +349,13 @@ pub struct IndexExpr {
     pub span: Span,
 }
 
-/// Filter application: expr | filter or expr | filter(args)
+/// Filter application: expr | filter or expr | filter(args, key=value)
 #[derive(Debug, Clone)]
 pub struct FilterExpr {
     pub expr: Box<Expr>,
     pub filter: Ident,
     pub args: Vec<Expr>,
+    pub kwargs: Vec<(Ident, Expr)>,
     pub span: Span,
 }
 
@@ -379,5 +427,29 @@ pub struct TernaryExpr {
     pub value: Box<Expr>,
     pub condition: Box<Expr>,
     pub otherwise: Box<Expr>,
+    pub span: Span,
+}
+
+/// Test expression: expr is test_name or expr is not test_name(args)
+#[derive(Debug, Clone)]
+pub struct TestExpr {
+    pub expr: Box<Expr>,
+    pub test_name: Ident,
+    pub args: Vec<Expr>,
+    pub negated: bool,
+    pub span: Span,
+}
+
+/// Macro call expression: namespace::macro_name(args) or self::macro_name(args)
+#[derive(Debug, Clone)]
+pub struct MacroCallExpr {
+    /// The namespace (e.g., "macros" or "self")
+    pub namespace: Ident,
+    /// The macro name
+    pub macro_name: Ident,
+    /// Positional arguments
+    pub args: Vec<Expr>,
+    /// Keyword arguments
+    pub kwargs: Vec<(Ident, Expr)>,
     pub span: Span,
 }

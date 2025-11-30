@@ -84,6 +84,24 @@ pub struct HtmlBody;
 #[braid]
 pub struct SourceContent;
 
+/// Relative path to a template file from the templates directory.
+/// Example: "base.html", "page.html"
+#[braid]
+pub struct TemplatePath;
+
+/// Raw template file content.
+#[braid]
+pub struct TemplateContent;
+
+/// Relative path to a Sass/SCSS file from the sass directory.
+/// Example: "main.scss", "_variables.scss"
+#[braid]
+pub struct SassPath;
+
+/// Raw Sass/SCSS file content.
+#[braid]
+pub struct SassContent;
+
 impl Route {
     /// Create the root route "/"
     pub fn root() -> Self {

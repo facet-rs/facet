@@ -6,6 +6,7 @@
 use super::ast::*;
 use super::error::{
     TemplateSource, TypeError, UndefinedError, UnknownFieldError, UnknownFilterError,
+    UnknownTestError,
 };
 use miette::{NamedSource, Result};
 use std::collections::HashMap;
@@ -22,6 +23,8 @@ pub enum Value {
     Dict(HashMap<String, Value>),
     /// A Facet value (opaque, accessed via reflection)
     Facet(FacetValue),
+    /// A "safe" value that should not be HTML-escaped when rendered
+    Safe(Box<Value>),
 }
 
 /// A wrapped Facet value for template evaluation
@@ -43,6 +46,7 @@ impl Value {
             Value::List(l) => !l.is_empty(),
             Value::Dict(d) => !d.is_empty(),
             Value::Facet(_) => true,
+            Value::Safe(inner) => inner.is_truthy(),
         }
     }
 
@@ -56,6 +60,7 @@ impl Value {
             Value::List(_) => "list",
             Value::Dict(_) => "dict",
             Value::Facet(_) => "object",
+            Value::Safe(inner) => inner.type_name(),
         }
     }
 
@@ -72,22 +77,62 @@ impl Value {
             }
             Value::Dict(_) => "[object]".to_string(),
             Value::Facet(_) => "[object]".to_string(),
+            Value::Safe(inner) => inner.to_string(),
         }
+    }
+
+    /// Check if this value is marked as safe (should not be HTML-escaped)
+    pub fn is_safe(&self) -> bool {
+        matches!(self, Value::Safe(_))
     }
 }
 
+/// A global function that can be called from templates
+pub type GlobalFn = Box<dyn Fn(&[Value], &[(String, Value)]) -> Result<Value> + Send + Sync>;
+
 /// Evaluation context (variables in scope)
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Context {
     /// Variable scopes (innermost last)
     scopes: Vec<HashMap<String, Value>>,
+    /// Global functions available in this context (shared via Arc)
+    global_fns: std::sync::Arc<HashMap<String, std::sync::Arc<GlobalFn>>>,
+}
+
+impl std::fmt::Debug for Context {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Context")
+            .field("scopes", &self.scopes)
+            .field(
+                "global_fns",
+                &format!("<{} functions>", self.global_fns.len()),
+            )
+            .finish()
+    }
 }
 
 impl Context {
     pub fn new() -> Self {
         Self {
             scopes: vec![HashMap::new()],
+            global_fns: std::sync::Arc::new(HashMap::new()),
         }
+    }
+
+    /// Register a global function
+    pub fn register_fn(&mut self, name: impl Into<String>, f: GlobalFn) {
+        let fns = std::sync::Arc::make_mut(&mut self.global_fns);
+        fns.insert(name.into(), std::sync::Arc::new(f));
+    }
+
+    /// Call a global function by name
+    pub fn call_fn(
+        &self,
+        name: &str,
+        args: &[Value],
+        kwargs: &[(String, Value)],
+    ) -> Option<Result<Value>> {
+        self.global_fns.get(name).map(|f| f(args, kwargs))
     }
 
     /// Set a variable in the current scope
@@ -157,6 +202,12 @@ impl<'a> Evaluator<'a> {
             Expr::Unary(unary) => self.eval_unary(unary),
             Expr::Call(call) => self.eval_call(call),
             Expr::Ternary(ternary) => self.eval_ternary(ternary),
+            Expr::Test(test) => self.eval_test(test),
+            Expr::MacroCall(_macro_call) => {
+                // Macro calls are evaluated during rendering, not expression evaluation
+                // Return None for now - the renderer will handle macro expansion
+                Ok(Value::None)
+            }
         }
     }
 
@@ -287,10 +338,18 @@ impl<'a> Evaluator<'a> {
         let args: Result<Vec<_>> = filter.args.iter().map(|a| self.eval(a)).collect();
         let args = args?;
 
+        let kwargs: Result<Vec<(String, Value)>> = filter
+            .kwargs
+            .iter()
+            .map(|(ident, expr)| Ok((ident.name.clone(), self.eval(expr)?)))
+            .collect();
+        let kwargs = kwargs?;
+
         apply_filter(
             &filter.filter.name,
             value,
             &args,
+            &kwargs,
             filter.filter.span,
             self.source,
         )
@@ -419,8 +478,28 @@ impl<'a> Evaluator<'a> {
         })
     }
 
-    fn eval_call(&self, _call: &CallExpr) -> Result<Value> {
-        // TODO: Implement function calls
+    fn eval_call(&self, call: &CallExpr) -> Result<Value> {
+        // Evaluate arguments
+        let args: Vec<Value> = call
+            .args
+            .iter()
+            .map(|a| self.eval(a))
+            .collect::<Result<Vec<_>>>()?;
+
+        let kwargs: Vec<(String, Value)> = call
+            .kwargs
+            .iter()
+            .map(|(ident, expr)| Ok((ident.name.clone(), self.eval(expr)?)))
+            .collect::<Result<Vec<_>>>()?;
+
+        // Check if this is a global function call
+        if let Expr::Var(ident) = &*call.func {
+            if let Some(result) = self.ctx.call_fn(&ident.name, &args, &kwargs) {
+                return result;
+            }
+        }
+
+        // Method calls on values (like .items(), etc.) - not implemented yet
         Ok(Value::None)
     }
 
@@ -431,6 +510,115 @@ impl<'a> Evaluator<'a> {
         } else {
             self.eval(&ternary.otherwise)
         }
+    }
+
+    fn eval_test(&self, test: &TestExpr) -> Result<Value> {
+        let value = self.eval(&test.expr)?;
+        let args: Vec<Value> = test
+            .args
+            .iter()
+            .map(|a| self.eval(a))
+            .collect::<Result<Vec<_>>>()?;
+
+        let result = match test.test_name.name.as_str() {
+            // String tests
+            "starting_with" | "startswith" => {
+                if let (Value::String(s), Some(Value::String(prefix))) = (&value, args.first()) {
+                    s.starts_with(prefix)
+                } else {
+                    false
+                }
+            }
+            "ending_with" | "endswith" => {
+                if let (Value::String(s), Some(Value::String(suffix))) = (&value, args.first()) {
+                    s.ends_with(suffix)
+                } else {
+                    false
+                }
+            }
+            "containing" | "contains" => {
+                if let (Value::String(s), Some(Value::String(needle))) = (&value, args.first()) {
+                    s.contains(needle)
+                } else if let Value::List(list) = &value {
+                    args.first()
+                        .map(|needle| list.iter().any(|item| values_equal(item, needle)))
+                        .unwrap_or(false)
+                } else {
+                    false
+                }
+            }
+            // Type tests
+            "defined" => !matches!(value, Value::None),
+            "undefined" => matches!(value, Value::None),
+            "none" => matches!(value, Value::None),
+            "string" => matches!(value, Value::String(_)),
+            "number" => matches!(value, Value::Int(_) | Value::Float(_)),
+            "integer" => matches!(value, Value::Int(_)),
+            "float" => matches!(value, Value::Float(_)),
+            "mapping" | "dict" => matches!(value, Value::Dict(_)),
+            "iterable" | "sequence" => {
+                matches!(value, Value::List(_) | Value::String(_) | Value::Dict(_))
+            }
+            // Value tests
+            "odd" => {
+                if let Value::Int(n) = value {
+                    n % 2 != 0
+                } else {
+                    false
+                }
+            }
+            "even" => {
+                if let Value::Int(n) = value {
+                    n % 2 == 0
+                } else {
+                    false
+                }
+            }
+            "truthy" => value.is_truthy(),
+            "falsy" => !value.is_truthy(),
+            "empty" => match &value {
+                Value::String(s) => s.is_empty(),
+                Value::List(l) => l.is_empty(),
+                Value::Dict(d) => d.is_empty(),
+                _ => false,
+            },
+            // Comparison tests
+            "eq" | "equalto" | "sameas" => args
+                .first()
+                .map(|other| values_equal(&value, other))
+                .unwrap_or(false),
+            "ne" => args
+                .first()
+                .map(|other| !values_equal(&value, other))
+                .unwrap_or(false),
+            "lt" | "lessthan" => {
+                if let (Value::Int(a), Some(Value::Int(b))) = (&value, args.first()) {
+                    a < b
+                } else if let (Value::Float(a), Some(Value::Float(b))) = (&value, args.first()) {
+                    a < b
+                } else {
+                    false
+                }
+            }
+            "gt" | "greaterthan" => {
+                if let (Value::Int(a), Some(Value::Int(b))) = (&value, args.first()) {
+                    a > b
+                } else if let (Value::Float(a), Some(Value::Float(b))) = (&value, args.first()) {
+                    a > b
+                } else {
+                    false
+                }
+            }
+            other => {
+                return Err(UnknownTestError {
+                    name: other.to_string(),
+                    span: test.test_name.span,
+                    src: self.source.named_source(),
+                })?;
+            }
+        };
+
+        Ok(Value::Bool(if test.negated { !result } else { result }))
     }
 }
 
@@ -487,6 +675,7 @@ fn apply_filter(
     name: &str,
     value: Value,
     args: &[Value],
+    kwargs: &[(String, Value)],
     span: Span,
     source: &TemplateSource,
 ) -> Result<Value> {
@@ -506,6 +695,10 @@ fn apply_filter(
         "escape",
         "safe",
     ];
+
+    // Helper to get kwarg value
+    let get_kwarg =
+        |key: &str| -> Option<&Value> { kwargs.iter().find(|(k, _)| k == key).map(|(_, v)| v) };
 
     Ok(match name {
         "upper" => Value::String(value.to_string().to_uppercase()),
@@ -568,7 +761,31 @@ fn apply_filter(
         },
         "sort" => match value {
             Value::List(mut l) => {
-                l.sort_by(|a, b| compare_values(a, b).unwrap_or(std::cmp::Ordering::Equal));
+                // Check for attribute= kwarg for sorting dicts by field
+                if let Some(Value::String(attr)) = get_kwarg("attribute") {
+                    l.sort_by(|a, b| {
+                        let a_val = if let Value::Dict(d) = a {
+                            d.get(attr)
+                        } else {
+                            None
+                        };
+                        let b_val = if let Value::Dict(d) = b {
+                            d.get(attr)
+                        } else {
+                            None
+                        };
+                        match (a_val, b_val) {
+                            (Some(a), Some(b)) => {
+                                compare_values(a, b).unwrap_or(std::cmp::Ordering::Equal)
+                            }
+                            (Some(_), None) => std::cmp::Ordering::Less,
+                            (None, Some(_)) => std::cmp::Ordering::Greater,
+                            (None, None) => std::cmp::Ordering::Equal,
+                        }
+                    });
+                } else {
+                    l.sort_by(|a, b| compare_values(a, b).unwrap_or(std::cmp::Ordering::Equal));
+                }
                 Value::List(l)
             }
             _ => value,
@@ -584,9 +801,15 @@ fn apply_filter(
             }
         }
         "default" => {
+            // Support both positional: default("fallback") and kwarg: default(value="fallback")
+            let default_val = get_kwarg("value")
+                .cloned()
+                .or_else(|| args.first().cloned())
+                .unwrap_or(Value::None);
+
             if matches!(value, Value::None) || (matches!(&value, Value::String(s) if s.is_empty()))
             {
-                args.first().cloned().unwrap_or(Value::None)
+                default_val
             } else {
                 value
             }
@@ -601,7 +824,7 @@ fn apply_filter(
                     .replace('\'', "&#x27;"),
             )
         }
-        "safe" => value, // Mark as safe (no escaping) - handled at render time
+        "safe" => Value::Safe(Box::new(value)),
         _ => {
             return Err(UnknownFilterError {
                 name: name.to_string(),

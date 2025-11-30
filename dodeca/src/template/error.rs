@@ -55,6 +55,10 @@ pub enum TemplateError {
     #[error("Unknown filter")]
     #[diagnostic(code(template::unknown_filter))]
     UnknownFilter(#[from] UnknownFilterError),
+
+    #[error("Unknown test")]
+    #[diagnostic(code(template::unknown_test))]
+    UnknownTest(#[from] UnknownTestError),
 }
 
 /// Syntax error during parsing
@@ -149,6 +153,26 @@ pub struct UnknownFilterError {
     pub known_filters: Vec<String>,
     /// Location
     #[label("this filter doesn't exist")]
+    pub span: SourceSpan,
+    /// The source code
+    #[source_code]
+    pub src: NamedSource<String>,
+}
+
+/// Unknown test function
+#[derive(Error, Debug, Diagnostic)]
+#[error("Unknown test `{name}`")]
+#[diagnostic(
+    code(template::unknown_test),
+    help(
+        "Available tests: starting_with, ending_with, containing, defined, undefined, none, string, number, odd, even, empty"
+    )
+)]
+pub struct UnknownTestError {
+    /// The test that doesn't exist
+    pub name: String,
+    /// Location
+    #[label("this test doesn't exist")]
     pub span: SourceSpan,
     /// The source code
     #[source_code]

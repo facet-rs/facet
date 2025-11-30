@@ -1,7 +1,51 @@
-use crate::db::{Db, ParsedData, SourceFile};
-use crate::types::{HtmlBody, Title};
+use crate::db::{
+    Db, ParsedData, SassFile, SassRegistry, SourceFile, TemplateFile, TemplateRegistry,
+};
+use crate::types::{HtmlBody, SassContent, TemplateContent, Title};
 use facet::Facet;
 use pulldown_cmark::{Options, Parser, html};
+use std::collections::HashMap;
+
+/// Load a template file's content - tracked by Salsa for dependency tracking
+#[salsa::tracked]
+pub fn load_template(db: &dyn Db, template: TemplateFile) -> TemplateContent {
+    template.content(db).clone()
+}
+
+/// Load all templates and return a map of path -> content
+/// This tracked query records dependencies on all template files
+#[salsa::tracked]
+pub fn load_all_templates<'db>(
+    db: &'db dyn Db,
+    registry: TemplateRegistry<'db>,
+) -> HashMap<String, String> {
+    let mut result = HashMap::new();
+    for template in registry.templates(db) {
+        let path = template.path(db).as_str().to_string();
+        let content = load_template(db, *template);
+        result.insert(path, content.as_str().to_string());
+    }
+    result
+}
+
+/// Load a sass file's content - tracked by Salsa for dependency tracking
+#[salsa::tracked]
+pub fn load_sass(db: &dyn Db, sass: SassFile) -> SassContent {
+    sass.content(db).clone()
+}
+
+/// Load all sass files and return a map of path -> content
+/// This tracked query records dependencies on all sass files
+#[salsa::tracked]
+pub fn load_all_sass<'db>(db: &'db dyn Db, registry: SassRegistry<'db>) -> HashMap<String, String> {
+    let mut result = HashMap::new();
+    for sass in registry.files(db) {
+        let path = sass.path(db).as_str().to_string();
+        let content = load_sass(db, *sass);
+        result.insert(path, content.as_str().to_string());
+    }
+    result
+}
 
 /// Frontmatter parsed via facet-toml
 #[derive(Debug, Clone, Facet, Default)]

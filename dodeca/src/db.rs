@@ -1,4 +1,7 @@
-use crate::types::{HtmlBody, Route, SourceContent, SourcePath, Title};
+use crate::types::{
+    HtmlBody, Route, SassContent, SassPath, SourceContent, SourcePath, TemplateContent,
+    TemplatePath, Title,
+};
 
 /// The Salsa database trait for dodeca
 #[salsa::db]
@@ -13,8 +16,20 @@ pub struct Database {
 
 #[salsa::db]
 impl salsa::Database for Database {
-    fn salsa_event(&self, _event: &dyn Fn() -> salsa::Event) {
-        // Optional: log events for debugging
+    fn salsa_event(&self, event: &dyn Fn() -> salsa::Event) {
+        use salsa::EventKind;
+        if std::env::var("SALSA_DEBUG").is_ok() {
+            let event = event();
+            match event.kind {
+                EventKind::WillExecute { database_key } => {
+                    eprintln!("[salsa] execute: {:?}", database_key);
+                }
+                EventKind::DidValidateMemoizedValue { database_key } => {
+                    eprintln!("[salsa] reuse: {:?}", database_key);
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -38,6 +53,44 @@ pub struct SourceFile {
     /// The raw content of the file
     #[return_ref]
     pub content: SourceContent,
+}
+
+/// Input: A template file with its content
+#[salsa::input]
+pub struct TemplateFile {
+    /// The path to this file (relative to templates dir)
+    #[return_ref]
+    pub path: TemplatePath,
+
+    /// The raw content of the template
+    #[return_ref]
+    pub content: TemplateContent,
+}
+
+/// Input: A Sass/SCSS file with its content
+#[salsa::input]
+pub struct SassFile {
+    /// The path to this file (relative to sass dir)
+    #[return_ref]
+    pub path: SassPath,
+
+    /// The raw content of the Sass file
+    #[return_ref]
+    pub content: SassContent,
+}
+
+/// Interned template registry - allows Salsa to track template set as a whole
+#[salsa::interned]
+pub struct TemplateRegistry<'db> {
+    #[return_ref]
+    pub templates: Vec<TemplateFile>,
+}
+
+/// Interned sass registry - allows Salsa to track sass file set as a whole
+#[salsa::interned]
+pub struct SassRegistry<'db> {
+    #[return_ref]
+    pub files: Vec<SassFile>,
 }
 
 /// Output of parsing: contains all the data needed for tree building

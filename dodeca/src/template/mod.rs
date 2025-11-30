@@ -36,4 +36,5 @@ mod render;
 
 pub use ast::Span;
 pub use error::*;
-pub use render::Template;
+pub use eval::{Context, Value};
+pub use render::{Engine, FileLoader, InMemoryLoader, Template, TemplateLoader};

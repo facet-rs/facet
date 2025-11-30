@@ -407,7 +407,7 @@ pub struct ServeApp {
     event_rx: EventRx,
     /// Local buffer for events (since mpsc drains)
     event_buffer: VecDeque<String>,
-    command_tx: mpsc::Sender<ServerCommand>,
+    command_tx: tokio::sync::mpsc::UnboundedSender<ServerCommand>,
     show_help: bool,
     should_quit: bool,
 }
@@ -420,7 +420,7 @@ impl ServeApp {
         progress_rx: ProgressRx,
         server_rx: ServerStatusRx,
         event_rx: EventRx,
-        command_tx: mpsc::Sender<ServerCommand>,
+        command_tx: tokio::sync::mpsc::UnboundedSender<ServerCommand>,
     ) -> Self {
         Self {
             progress_rx,

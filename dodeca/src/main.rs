@@ -8,9 +8,12 @@ mod tui;
 mod types;
 
 use crate::config::ResolvedConfig;
-use crate::db::{Database, ParsedData, SourceFile};
+use crate::db::{Database, ParsedData, SassFile, SourceFile, TemplateFile};
 use crate::queries::parse_file;
-use crate::types::{HtmlBody, Route, SourceContent, SourcePath, SourcePathRef, Title};
+use crate::types::{
+    HtmlBody, Route, SassContent, SassPath, SassPathRef, SourceContent, SourcePath, SourcePathRef,
+    TemplateContent, TemplatePath, TemplatePathRef, Title,
+};
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Parser, Subcommand};
 use color_eyre::{Result, eyre::eyre};
@@ -221,6 +224,10 @@ pub struct BuildContext {
     pub output_dir: Utf8PathBuf,
     /// Source files keyed by source path
     pub sources: BTreeMap<SourcePath, SourceFile>,
+    /// Template files keyed by template path
+    pub templates: BTreeMap<TemplatePath, TemplateFile>,
+    /// Sass/SCSS files keyed by sass path
+    pub sass_files: BTreeMap<SassPath, SassFile>,
 }
 
 impl BuildContext {
@@ -230,7 +237,25 @@ impl BuildContext {
             content_dir: content_dir.to_owned(),
             output_dir: output_dir.to_owned(),
             sources: BTreeMap::new(),
+            templates: BTreeMap::new(),
+            sass_files: BTreeMap::new(),
         }
+    }
+
+    /// Get the templates directory (sibling to content dir)
+    pub fn templates_dir(&self) -> Utf8PathBuf {
+        self.content_dir
+            .parent()
+            .unwrap_or(&self.content_dir)
+            .join("templates")
+    }
+
+    /// Get the sass directory (sibling to content dir)
+    pub fn sass_dir(&self) -> Utf8PathBuf {
+        self.content_dir
+            .parent()
+            .unwrap_or(&self.content_dir)
+            .join("sass")
     }
 
     /// Load all source files into the database
@@ -259,6 +284,78 @@ impl BuildContext {
         Ok(())
     }
 
+    /// Load all template files into the database
+    pub fn load_templates(&mut self) -> Result<()> {
+        let templates_dir = self.templates_dir();
+        if !templates_dir.exists() {
+            return Ok(()); // No templates directory is fine
+        }
+
+        let template_files: Vec<Utf8PathBuf> = WalkBuilder::new(&templates_dir)
+            .build()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "html")
+                    .unwrap_or(false)
+            })
+            .filter_map(|e| Utf8PathBuf::from_path_buf(e.into_path()).ok())
+            .collect();
+
+        for path in template_files {
+            let content = fs::read_to_string(&path)?;
+            let relative = path
+                .strip_prefix(&templates_dir)
+                .map(|p| p.to_string())
+                .unwrap_or_else(|_| path.to_string());
+
+            let template_path = TemplatePath::new(relative);
+            let template_content = TemplateContent::new(content);
+            let template = TemplateFile::new(&self.db, template_path.clone(), template_content);
+            self.templates.insert(template_path, template);
+        }
+
+        Ok(())
+    }
+
+    /// Load all Sass/SCSS files into the database
+    pub fn load_sass(&mut self) -> Result<()> {
+        let sass_dir = self.sass_dir();
+        if !sass_dir.exists() {
+            return Ok(()); // No sass directory is fine
+        }
+
+        let sass_files: Vec<Utf8PathBuf> = WalkBuilder::new(&sass_dir)
+            .build()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "scss" || ext == "sass")
+                    .unwrap_or(false)
+            })
+            .filter_map(|e| Utf8PathBuf::from_path_buf(e.into_path()).ok())
+            .collect();
+
+        for path in sass_files {
+            let content = fs::read_to_string(&path)?;
+            let relative = path
+                .strip_prefix(&sass_dir)
+                .map(|p| p.to_string())
+                .unwrap_or_else(|_| path.to_string());
+
+            let sass_path = SassPath::new(relative);
+            let sass_content = SassContent::new(content);
+            let sass_file = SassFile::new(&self.db, sass_path.clone(), sass_content);
+            self.sass_files.insert(sass_path, sass_file);
+        }
+
+        Ok(())
+    }
+
     /// Update a single source file (for incremental rebuilds)
     pub fn update_source(&mut self, relative_path: &SourcePathRef) -> Result<bool> {
         let full_path = self.content_dir.join(relative_path.as_str());
@@ -281,6 +378,62 @@ impl BuildContext {
             let source_path = SourcePath::new(relative_path.to_string());
             let source = SourceFile::new(&self.db, source_path.clone(), source_content);
             self.sources.insert(source_path, source);
+        }
+
+        Ok(true)
+    }
+
+    /// Update a single template file (for incremental rebuilds)
+    pub fn update_template(&mut self, relative_path: &TemplatePathRef) -> Result<bool> {
+        let templates_dir = self.templates_dir();
+        let full_path = templates_dir.join(relative_path.as_str());
+        if !full_path.exists() {
+            // File was deleted
+            self.templates.remove(relative_path);
+            return Ok(true);
+        }
+
+        let content = fs::read_to_string(&full_path)?;
+        let template_content = TemplateContent::new(content);
+
+        // Check if we already have this template
+        if let Some(existing) = self.templates.get(relative_path) {
+            // Update the content - Salsa will detect if it changed
+            use salsa::Setter;
+            existing.set_content(&mut self.db).to(template_content);
+        } else {
+            // New file
+            let template_path = TemplatePath::new(relative_path.to_string());
+            let template = TemplateFile::new(&self.db, template_path.clone(), template_content);
+            self.templates.insert(template_path, template);
+        }
+
+        Ok(true)
+    }
+
+    /// Update a single Sass file (for incremental rebuilds)
+    pub fn update_sass(&mut self, relative_path: &SassPathRef) -> Result<bool> {
+        let sass_dir = self.sass_dir();
+        let full_path = sass_dir.join(relative_path.as_str());
+        if !full_path.exists() {
+            // File was deleted
+            self.sass_files.remove(relative_path);
+            return Ok(true);
+        }
+
+        let content = fs::read_to_string(&full_path)?;
+        let sass_content = SassContent::new(content);
+
+        // Check if we already have this sass file
+        if let Some(existing) = self.sass_files.get(relative_path) {
+            // Update the content - Salsa will detect if it changed
+            use salsa::Setter;
+            existing.set_content(&mut self.db).to(sass_content);
+        } else {
+            // New file
+            let sass_path = SassPath::new(relative_path.to_string());
+            let sass_file = SassFile::new(&self.db, sass_path.clone(), sass_content);
+            self.sass_files.insert(sass_path, sass_file);
         }
 
         Ok(true)
@@ -388,8 +541,10 @@ pub fn build(
 ) -> Result<BuildContext> {
     let mut ctx = BuildContext::new(content_dir, output_dir);
 
-    // Phase 1: Load all source files
+    // Phase 1: Load all source files, templates, and sass
     ctx.load_sources()?;
+    ctx.load_templates()?;
+    ctx.load_sass()?;
 
     // Phase 2: Parse all files (memoized by Salsa)
     if let Some(ref p) = progress {
@@ -403,11 +558,19 @@ pub fn build(
     // Phase 3: Build the site tree
     let (sections, pages) = build_tree(&parsed);
 
-    // Phase 4: Render all pages
+    // Phase 4: Render all pages using templates (via Salsa for dependency tracking)
     if let Some(ref p) = progress {
         p.update(|prog| prog.render.start(sections.len() + pages.len()));
     }
-    render::render_all(&sections, &pages, output_dir, render_options)?;
+    let site_config = render::SiteConfig::default();
+    let mut renderer = render::TemplateRenderer::new(
+        &ctx.db,
+        &ctx.templates,
+        site_config,
+        sections.clone(),
+        pages.clone(),
+    );
+    let _render_stats = renderer.render_all(output_dir, render_options)?;
     if let Some(ref p) = progress {
         p.update(|prog| prog.render.finish());
     }
@@ -416,7 +579,7 @@ pub fn build(
     if let Some(ref p) = progress {
         p.update(|prog| prog.sass.start(1));
     }
-    render::compile_sass(content_dir, output_dir)?;
+    render::compile_sass_tracked(&ctx.db, &ctx.sass_files, &ctx.sass_dir(), output_dir)?;
     if let Some(ref p) = progress {
         p.update(|prog| prog.sass.finish());
     }
@@ -433,6 +596,85 @@ pub fn build(
     }
 
     Ok(ctx)
+}
+
+/// Incremental rebuild using existing context (preserves Salsa memoization)
+pub fn rebuild(
+    ctx: &mut BuildContext,
+    changed_paths: &[Utf8PathBuf],
+    progress: Option<tui::ProgressReporter>,
+    render_options: render::RenderOptions,
+) -> Result<render::RenderStats> {
+    let templates_dir = ctx.templates_dir();
+    let sass_dir = ctx.sass_dir();
+
+    // Update changed source files, templates, and sass in the Salsa database
+    let mut template_changed = false;
+    let mut sass_changed = false;
+    for path in changed_paths {
+        // Check if this is a template file
+        if let Ok(relative) = path.strip_prefix(&templates_dir) {
+            let relative_str = relative.to_string();
+            let template_path = TemplatePathRef::from_str(&relative_str);
+            let _ = ctx.update_template(template_path);
+            template_changed = true;
+        }
+        // Check if this is a sass file
+        else if let Ok(relative) = path.strip_prefix(&sass_dir) {
+            let relative_str = relative.to_string();
+            let sass_path = SassPathRef::from_str(&relative_str);
+            let _ = ctx.update_sass(sass_path);
+            sass_changed = true;
+        }
+        // Check if this is a source file
+        else if let Ok(relative) = path.strip_prefix(&ctx.content_dir) {
+            let relative_str = relative.to_string();
+            let source_path = SourcePathRef::from_str(&relative_str);
+            let _ = ctx.update_source(source_path);
+        }
+    }
+
+    // Templates are always loaded fresh from disk (no caching in Engine),
+    // so template changes are automatically picked up during render.
+    // The template_changed flag could be used for logging/debugging.
+    let _ = template_changed;
+
+    // Parse all files (Salsa memoizes - unchanged files return cached results)
+    if let Some(ref p) = progress {
+        p.update(|prog| prog.parse.start(ctx.sources.len()));
+    }
+    let parsed = ctx.parse_all();
+    if let Some(ref p) = progress {
+        p.update(|prog| prog.parse.finish());
+    }
+
+    // Build the site tree
+    let (sections, pages) = build_tree(&parsed);
+
+    // Render all pages using templates (via Salsa for dependency tracking)
+    if let Some(ref p) = progress {
+        p.update(|prog| prog.render.start(sections.len() + pages.len()));
+    }
+    let site_config = render::SiteConfig::default();
+    let mut renderer =
+        render::TemplateRenderer::new(&ctx.db, &ctx.templates, site_config, sections, pages);
+    let stats = renderer.render_all(&ctx.output_dir, render_options)?;
+    if let Some(ref p) = progress {
+        p.update(|prog| prog.render.finish());
+    }
+
+    // Compile Sass if any .scss files changed (tracked via Salsa)
+    if sass_changed {
+        if let Some(ref p) = progress {
+            p.update(|prog| prog.sass.start(1));
+        }
+        render::compile_sass_tracked(&ctx.db, &ctx.sass_files, &ctx.sass_dir(), &ctx.output_dir)?;
+        if let Some(ref p) = progress {
+            p.update(|prog| prog.sass.finish());
+        }
+    }
+
+    Ok(stats)
 }
 
 /// Build with TUI progress display
@@ -544,10 +786,10 @@ async fn serve_with_tui(
     // Render options with live reload enabled
     let render_options = render::RenderOptions { livereload: true };
 
-    // Initial build
+    // Initial build - keep context for incremental rebuilds
     let _ = event_tx.send("Starting initial build...".to_string());
 
-    let _ctx = build(
+    let ctx = build(
         content_dir,
         output_dir,
         BuildMode::Quick,
@@ -555,17 +797,36 @@ async fn serve_with_tui(
         render_options,
     )?;
 
+    // Wrap context for sharing with watcher thread
+    let ctx = std::sync::Arc::new(std::sync::Mutex::new(ctx));
+
     let _ = event_tx.send("Build complete".to_string());
 
-    // Set up file watcher
+    // Set up file watcher for content and templates
     let (watch_tx, watch_rx) = mpsc::channel();
     let mut watcher = RecommendedWatcher::new(watch_tx, notify::Config::default())?;
     watcher.watch(content_dir.as_std_path(), RecursiveMode::Recursive)?;
 
-    let _ = event_tx.send(format!("Watching {}", content_dir));
+    // Also watch templates and sass directories if they exist
+    let parent_dir = content_dir.parent().unwrap_or(content_dir);
+    let templates_dir = parent_dir.join("templates");
+    let sass_dir = parent_dir.join("sass");
 
-    // Command channel for TUI -> server communication
-    let (cmd_tx, cmd_rx) = mpsc::channel::<tui::ServerCommand>();
+    let mut watched_dirs = vec![content_dir.to_string()];
+
+    if templates_dir.exists() {
+        watcher.watch(templates_dir.as_std_path(), RecursiveMode::Recursive)?;
+        watched_dirs.push("templates".to_string());
+    }
+    if sass_dir.exists() {
+        watcher.watch(sass_dir.as_std_path(), RecursiveMode::Recursive)?;
+        watched_dirs.push("sass".to_string());
+    }
+
+    let _ = event_tx.send(format!("Watching: {}", watched_dirs.join(", ")));
+
+    // Command channel for TUI -> server communication (async-compatible)
+    let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel::<tui::ServerCommand>();
 
     // Shutdown signal for the server
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -631,10 +892,10 @@ async fn serve_with_tui(
 
     // Spawn file watcher handler
     let content_for_watcher = content_dir.clone();
-    let output_for_watcher = output_dir.clone();
     let progress_tx_for_watcher = progress_tx.clone();
     let event_tx_for_watcher = event_tx.clone();
     let livereload_for_watcher = livereload.clone();
+    let ctx_for_watcher = ctx.clone();
 
     std::thread::spawn(move || {
         use std::time::Instant;
@@ -653,14 +914,15 @@ async fn serve_with_tui(
                     use notify::EventKind;
                     match event.kind {
                         EventKind::Modify(_) | EventKind::Create(_) => {
-                            let paths: Vec<_> = event
+                            let paths: Vec<Utf8PathBuf> = event
                                 .paths
                                 .iter()
                                 .filter(|p| {
                                     p.extension()
-                                        .map(|e| e == "md" || e == "scss")
+                                        .map(|e| e == "md" || e == "scss" || e == "html")
                                         .unwrap_or(false)
                                 })
+                                .filter_map(|p| Utf8PathBuf::from_path_buf(p.clone()).ok())
                                 .collect();
 
                             if paths.is_empty() {
@@ -668,10 +930,8 @@ async fn serve_with_tui(
                             }
 
                             for path in &paths {
-                                if let Ok(rel) = path.strip_prefix(&content_for_watcher) {
-                                    let _ = event_tx_for_watcher
-                                        .send(format!("Changed: {}", rel.display()));
-                                }
+                                let _ = event_tx_for_watcher
+                                    .send(format!("Changed: {}", path.file_name().unwrap_or("?")));
                             }
 
                             // Reset progress for rebuild
@@ -681,19 +941,21 @@ async fn serve_with_tui(
                                 prog.sass = tui::TaskProgress::new("Sass");
                             });
 
-                            // Rebuild with live reload enabled
-                            match build(
-                                &content_for_watcher,
-                                &output_for_watcher,
-                                BuildMode::Quick,
+                            // Incremental rebuild using existing context (preserves Salsa memoization)
+                            let mut ctx = ctx_for_watcher.lock().unwrap();
+                            match rebuild(
+                                &mut ctx,
+                                &paths,
                                 Some(tui::ProgressReporter::Channel(
                                     progress_tx_for_watcher.clone(),
                                 )),
                                 render::RenderOptions { livereload: true },
                             ) {
-                                Ok(_) => {
-                                    let _ =
-                                        event_tx_for_watcher.send("Rebuild complete".to_string());
+                                Ok(stats) => {
+                                    let _ = event_tx_for_watcher.send(format!(
+                                        "Rebuilt: {} written, {} unchanged",
+                                        stats.written, stats.skipped
+                                    ));
                                     // Trigger live reload in connected browsers
                                     livereload_for_watcher.trigger_reload();
                                 }
@@ -725,7 +987,7 @@ async fn serve_with_tui(
     let current_shutdown_for_handler = current_shutdown.clone();
 
     tokio::spawn(async move {
-        while let Ok(cmd) = cmd_rx.recv() {
+        while let Some(cmd) = cmd_rx.recv().await {
             let new_mode = match cmd {
                 tui::ServerCommand::GoPublic => tui::BindMode::Lan,
                 tui::ServerCommand::GoLocal => tui::BindMode::Local,

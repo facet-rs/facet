@@ -43,6 +43,9 @@ pub enum TokenKind {
     Endblock,
     Extends,
     Include,
+    Import,
+    Macro,
+    Endmacro,
     True,
     False,
     None,
@@ -50,6 +53,8 @@ pub enum TokenKind {
     And,
     Or,
     Is,
+    As,
+    Set,
 
     // Delimiters
     ExprOpen,     // {{
@@ -77,6 +82,7 @@ pub enum TokenKind {
     Percent,     // %
     DoubleSlash, // //
     DoubleStar,  // **
+    DoubleColon, // ::
     Tilde,       // ~ (string concat)
     Eq,          // ==
     Ne,          // !=
@@ -106,6 +112,9 @@ impl TokenKind {
             "endblock" => TokenKind::Endblock,
             "extends" => TokenKind::Extends,
             "include" => TokenKind::Include,
+            "import" => TokenKind::Import,
+            "macro" => TokenKind::Macro,
+            "endmacro" => TokenKind::Endmacro,
             "true" | "True" => TokenKind::True,
             "false" | "False" => TokenKind::False,
             "none" | "None" => TokenKind::None,
@@ -113,6 +122,8 @@ impl TokenKind {
             "and" => TokenKind::And,
             "or" => TokenKind::Or,
             "is" => TokenKind::Is,
+            "as" => TokenKind::As,
+            "set" => TokenKind::Set,
             _ => TokenKind::Ident(s.to_string()),
         }
     }
@@ -233,16 +244,16 @@ impl Lexer {
             }
             Some("{#") => {
                 self.pos += 2;
-                // Lex comment content immediately
-                self.lex_comment(start)
+                // Skip comment content and continue lexing
+                self.skip_comment();
+                self.next_token()
             }
             _ => Token::new(TokenKind::Eof, start, 0),
         }
     }
 
-    /// Lex a comment {# ... #}
-    fn lex_comment(&mut self, open_start: usize) -> Token {
-        let content_start = self.pos;
+    /// Skip a comment {# ... #} - consumes content without returning a token
+    fn skip_comment(&mut self) {
         let mut depth = 1;
 
         while depth > 0 {
@@ -259,23 +270,11 @@ impl Lexer {
                     self.advance();
                 }
                 None => {
-                    return Token::new(
-                        TokenKind::Error("Unclosed comment".to_string()),
-                        open_start,
-                        self.pos - open_start,
-                    );
+                    // Unclosed comment - just stop
+                    return;
                 }
             }
         }
-
-        // Return comment as text token (will be handled by parser)
-        let content_end = self.pos - 2; // exclude #}
-        let content = &self.source[content_start..content_end];
-        Token::new(
-            TokenKind::Text(content.to_string()),
-            open_start,
-            self.pos - open_start,
-        )
     }
 
     /// Lex code (inside {{ }} or {% %})
@@ -304,6 +303,10 @@ impl Lexer {
                 "**" => {
                     self.pos += 2;
                     Some(Token::new(TokenKind::DoubleStar, start, 2))
+                }
+                "::" => {
+                    self.pos += 2;
+                    Some(Token::new(TokenKind::DoubleColon, start, 2))
                 }
                 "==" => {
                     self.pos += 2;
