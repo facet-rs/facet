@@ -1,54 +1,62 @@
 {% extends "base.html" %}
+{% import "macros.html" as macros %}
 
 {% block title %}{{ page.title }} - {{ config.title }}{% endblock title %}
 
-{% block content %}
-<div class="page-layout">
-    <aside class="toc">
-        <nav>
-            <h2>Contents</h2>
-            {% if page.toc %}
-            <ul>
-            {% for h1 in page.toc %}
-                <li>
-                    <a href="{{ h1.permalink }}">{{ h1.title }}</a>
-                    {% if h1.children %}
-                    <ul>
-                        {% for h2 in h1.children %}
-                        <li>
-                            <a href="{{ h2.permalink }}">{{ h2.title }}</a>
-                            {% if h2.children %}
-                            <ul>
-                                {% for h3 in h2.children %}
-                                <li><a href="{{ h3.permalink }}">{{ h3.title }}</a></li>
-                                {% endfor %}
-                            </ul>
-                            {% endif %}
-                        </li>
-                        {% endfor %}
-                    </ul>
-                    {% endif %}
-                </li>
-            {% endfor %}
-            </ul>
-            {% endif %}
-        </nav>
-    </aside>
-    <main class="content {% if page.path is starting_with("/showcases/") %}showcase-container{% endif %}">
-        {% if page.path is starting_with("/showcases/") %}
-        <nav class="format-nav">
-            <a href="/showcases/assert/" {% if page.path == "/showcases/assert/" %}class="active"{% endif %}>Assert</a>
-            <a href="/showcases/diagnostics/" {% if page.path == "/showcases/diagnostics/" %}class="active"{% endif %}>Diagnostics</a>
-            <a href="/showcases/from-value/" {% if page.path == "/showcases/from-value/" %}class="active"{% endif %}>From Value</a>
-            <a href="/showcases/json/" {% if page.path == "/showcases/json/" %}class="active"{% endif %}>JSON</a>
-            <a href="/showcases/kdl/" {% if page.path == "/showcases/kdl/" %}class="active"{% endif %}>KDL</a>
-            <a href="/showcases/proto-attr/" {% if page.path == "/showcases/proto-attr/" %}class="active"{% endif %}>Proto Attr</a>
-            <a href="/showcases/spans/" {% if page.path == "/showcases/spans/" %}class="active"{% endif %}>Spans</a>
-            <a href="/showcases/yaml/" {% if page.path == "/showcases/yaml/" %}class="active"{% endif %}>YAML</a>
-        </nav>
+{% block body %}
+{# Determine which top-level section we're in #}
+{% set in_learn = page.path is containing("learn/") %}
+{% set in_extend = page.path is containing("extend/") %}
+{% set in_contribute = page.path is containing("contribute/") %}
+{% set has_sidebar = in_learn or in_extend or in_contribute %}
+
+{% if has_sidebar %}
+<div class="docs-layout">
+    {% if in_learn %}
+        {{ macros::sidebar(root_section_path="learn/_index.md", current_path=page.path) }}
+    {% elif in_extend %}
+        {{ macros::sidebar(root_section_path="extend/_index.md", current_path=page.path) }}
+    {% elif in_contribute %}
+        {{ macros::sidebar(root_section_path="contribute/_index.md", current_path=page.path) }}
+    {% endif %}
+
+    <main class="docs-content">
+        <article>
+            <h1 class="page-title">{{ page.title }}</h1>
+            {{ page.content | safe }}
+        </article>
+
+        {# Optional: page TOC on the right #}
+        {% if page.toc and page.toc | length > 0 %}
+        <aside class="page-toc">
+            <nav>
+                <h2>On this page</h2>
+                <ul>
+                {% for h1 in page.toc %}
+                    <li>
+                        <a href="{{ h1.permalink }}">{{ h1.title }}</a>
+                        {% if h1.children %}
+                        <ul>
+                            {% for h2 in h1.children %}
+                            <li><a href="{{ h2.permalink }}">{{ h2.title }}</a></li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+                    </li>
+                {% endfor %}
+                </ul>
+            </nav>
+        </aside>
         {% endif %}
+    </main>
+</div>
+{% else %}
+{# Pages outside of Learn/Extend/Contribute get the simple layout #}
+<div class="container">
+    <main class="content">
         <h1 class="page-title">{{ page.title }}</h1>
         {{ page.content | safe }}
     </main>
 </div>
-{% endblock content %}
+{% endif %}
+{% endblock body %}
