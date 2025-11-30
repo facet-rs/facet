@@ -709,8 +709,8 @@ impl Struct {
 mod renamerule;
 pub use renamerule::*;
 
-mod generics;
-pub use self::generics::*;
+mod generic_params;
+pub use self::generic_params::*;
 
 mod parsed;
 pub use parsed::*;

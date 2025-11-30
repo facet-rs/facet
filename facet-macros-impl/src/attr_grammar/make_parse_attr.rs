@@ -3,7 +3,9 @@
 //! This is the grammar compiler - it takes a grammar DSL and generates:
 //! 1. Type definitions (enum + structs)
 //! 2. Proc-macro re-exports
-//! 3. `__parse_attr!` dispatcher macro
+//! 3. `__attr!` dispatcher macro that returns `ExtensionAttr`
+
+use std::collections::HashMap;
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
@@ -20,6 +22,7 @@ keyword! {
     KBool = "bool";
     KOption = "Option";
     KStatic = "static";
+    KNs = "ns";
 }
 
 operator! {
@@ -36,9 +39,24 @@ operator! {
 }
 
 unsynn! {
-    /// The complete grammar definition - one enum and zero or more structs
+    /// The complete grammar definition
+    ///
+    /// Format:
+    /// ```ignore
+    /// ns "kdl";
+    /// pub enum Attr { ... }
+    /// pub struct Column { ... }
+    /// ```
     struct Grammar {
+        ns_decl: Option<NsDecl>,
         items: Vec<GrammarItem>,
+    }
+
+    /// Namespace declaration: `ns "kdl";`
+    struct NsDecl {
+        _kw: KNs,
+        ns_literal: Literal,
+        _semi: Semicolon,
     }
 
     /// Either an enum or a struct definition
@@ -120,6 +138,8 @@ unsynn! {
 
 /// The parsed grammar for code generation
 struct ParsedGrammar {
+    /// Namespace string (e.g., "kdl"), or None for built-in attrs
+    ns: Option<String>,
     attr_enum: ParsedEnum,
     structs: Vec<ParsedStruct>,
 }
@@ -171,6 +191,13 @@ enum FieldType {
 
 impl Grammar {
     fn to_parsed(&self) -> std::result::Result<ParsedGrammar, String> {
+        // Extract namespace from `ns "kdl";` declaration
+        let ns = self.ns_decl.as_ref().map(|decl| {
+            // Strip quotes from the literal
+            let s = decl.ns_literal.to_string();
+            s.trim_matches('"').to_string()
+        });
+
         let mut attr_enum: Option<ParsedEnum> = None;
         let mut structs = Vec::new();
 
@@ -190,7 +217,11 @@ impl Grammar {
 
         let attr_enum = attr_enum.ok_or_else(|| "expected an enum definition".to_string())?;
 
-        Ok(ParsedGrammar { attr_enum, structs })
+        Ok(ParsedGrammar {
+            ns,
+            attr_enum,
+            structs,
+        })
     }
 }
 
@@ -301,6 +332,26 @@ fn parse_field_type(ty: &FieldTypeTokens) -> std::result::Result<FieldType, Stri
 }
 
 // ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+/// Convert CamelCase to snake_case
+fn to_snake_case(s: &str) -> String {
+    let mut result = String::new();
+    for (i, c) in s.chars().enumerate() {
+        if c.is_uppercase() {
+            if i > 0 {
+                result.push('_');
+            }
+            result.push(c.to_ascii_lowercase());
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+// ============================================================================
 // CODE GENERATION
 // ============================================================================
 
@@ -308,12 +359,12 @@ impl ParsedGrammar {
     fn generate(&self) -> TokenStream2 {
         let type_defs = self.generate_types();
         let reexports = self.generate_reexports();
-        let parse_attr_macro = self.generate_parse_attr_macro();
+        let attr_macro = self.generate_attr_macro();
 
         quote! {
             #type_defs
             #reexports
-            #parse_attr_macro
+            #attr_macro
         }
     }
 
@@ -353,7 +404,8 @@ impl ParsedGrammar {
 
         quote! {
             #(#attrs)*
-            #[derive(Debug, Clone, PartialEq)]
+            #[derive(Debug, Clone, PartialEq, ::facet::Facet)]
+            #[repr(u8)]
             #vis_tokens enum #name {
                 #(#variant_defs),*
             }
@@ -369,16 +421,22 @@ impl ParsedGrammar {
             #[doc(hidden)]
             pub use ::facet::__dispatch_attr;
             #[doc(hidden)]
-            pub use ::facet::__dispatch_struct_field;
-            #[doc(hidden)]
             pub use ::facet::__field_error as __field_error_proc_macro;
             #[doc(hidden)]
             pub use ::facet::__spanned_error;
         }
     }
 
-    fn generate_parse_attr_macro(&self) -> TokenStream2 {
+    fn generate_attr_macro(&self) -> TokenStream2 {
         let enum_name = &self.attr_enum.name;
+        let ns_str = self.ns.as_deref().unwrap_or("");
+
+        // Build a map from struct name to struct definition for O(1) lookup
+        let struct_map: HashMap<String, &ParsedStruct> = self
+            .structs
+            .iter()
+            .map(|s| (s.name.to_string(), s))
+            .collect();
 
         // Generate variant metadata for the unified dispatcher
         let variants_meta: Vec<_> = self
@@ -387,16 +445,14 @@ impl ParsedGrammar {
             .iter()
             .map(|v| {
                 let name =
-                    proc_macro2::Ident::new(&v.name.to_string().to_lowercase(), Span::call_site());
+                    proc_macro2::Ident::new(&to_snake_case(&v.name.to_string()), Span::call_site());
                 match &v.kind {
                     VariantKind::Unit => quote! { #name: unit },
                     VariantKind::Newtype(_) => quote! { #name: newtype },
                     VariantKind::Struct(struct_name) => {
                         // Find the struct definition
-                        let struct_def = self
-                            .structs
-                            .iter()
-                            .find(|s| struct_name.to_string() == s.name.to_string())
+                        let struct_def = struct_map
+                            .get(&struct_name.to_string())
                             .expect("struct variant must reference a defined struct");
 
                         // Generate field metadata
@@ -422,11 +478,124 @@ impl ParsedGrammar {
             })
             .collect();
 
+        // Generate match arms for each variant that return ExtensionAttr
+        let variant_arms: Vec<_> = self
+            .attr_enum
+            .variants
+            .iter()
+            .map(|v| {
+                let key_str = to_snake_case(&v.name.to_string());
+                let key_ident = proc_macro2::Ident::new(&key_str, Span::call_site());
+
+                // For unit variants, use () as data (simple and avoids $crate issues)
+                // For complex variants, use the dispatch system
+                match &v.kind {
+                    VariantKind::Unit => {
+                        quote! {
+                            // Field-level: attr { field : Type }
+                            (#key_ident { $field:ident : $ty:ty }) => {{
+                                static __UNIT: () = ();
+                                ::facet::ExtensionAttr::new(#ns_str, #key_str, &__UNIT)
+                            }};
+                            // Field-level with args: not expected for unit variants
+                            (#key_ident { $field:ident : $ty:ty | $first:tt $($rest:tt)* }) => {{
+                                ::facet::__no_args!(concat!(#ns_str, "::", #key_str), $first)
+                            }};
+                            // Container-level: attr { }
+                            (#key_ident { }) => {{
+                                static __UNIT: () = ();
+                                ::facet::ExtensionAttr::new(#ns_str, #key_str, &__UNIT)
+                            }};
+                            // Container-level with args: not expected for unit variants
+                            (#key_ident { | $first:tt $($rest:tt)* }) => {{
+                                ::facet::__no_args!(concat!(#ns_str, "::", #key_str), $first)
+                            }};
+                        }
+                    }
+                    VariantKind::Newtype(_) | VariantKind::Struct(_) => {
+                        quote! {
+                            // Field-level: attr { field : Type } or attr { field : Type | args }
+                            (#key_ident { $field:ident : $ty:ty }) => {{
+                                static __ATTR_DATA: $crate::#enum_name = $crate::__dispatch_attr!{
+                                    @namespace { $crate }
+                                    @enum_name { #enum_name }
+                                    @variants { #(#variants_meta),* }
+                                    @name { #key_ident }
+                                    @rest { }
+                                };
+                                ::facet::ExtensionAttr::new(#ns_str, #key_str, &__ATTR_DATA)
+                            }};
+                            (#key_ident { $field:ident : $ty:ty | $($args:tt)* }) => {{
+                                static __ATTR_DATA: $crate::#enum_name = $crate::__dispatch_attr!{
+                                    @namespace { $crate }
+                                    @enum_name { #enum_name }
+                                    @variants { #(#variants_meta),* }
+                                    @name { #key_ident }
+                                    @rest { $($args)* }
+                                };
+                                ::facet::ExtensionAttr::new(#ns_str, #key_str, &__ATTR_DATA)
+                            }};
+                            // Container-level: attr { } or attr { | args }
+                            (#key_ident { }) => {{
+                                static __ATTR_DATA: $crate::#enum_name = $crate::__dispatch_attr!{
+                                    @namespace { $crate }
+                                    @enum_name { #enum_name }
+                                    @variants { #(#variants_meta),* }
+                                    @name { #key_ident }
+                                    @rest { }
+                                };
+                                ::facet::ExtensionAttr::new(#ns_str, #key_str, &__ATTR_DATA)
+                            }};
+                            (#key_ident { | $($args:tt)* }) => {{
+                                static __ATTR_DATA: $crate::#enum_name = $crate::__dispatch_attr!{
+                                    @namespace { $crate }
+                                    @enum_name { #enum_name }
+                                    @variants { #(#variants_meta),* }
+                                    @name { #key_ident }
+                                    @rest { $($args)* }
+                                };
+                                ::facet::ExtensionAttr::new(#ns_str, #key_str, &__ATTR_DATA)
+                            }};
+                        }
+                    }
+                }
+            })
+            .collect();
+
+        // Generate list of known attribute names for error messages
+        let known_attrs: Vec<_> = self
+            .attr_enum
+            .variants
+            .iter()
+            .map(|v| {
+                proc_macro2::Ident::new(&to_snake_case(&v.name.to_string()), Span::call_site())
+            })
+            .collect();
+
         quote! {
-            /// Parse an attribute into an `Attr` value.
+            /// Dispatcher macro for extension attributes.
+            ///
+            /// Called by the derive macro via `__ext!`. Returns `ExtensionAttr` values.
+            #[macro_export]
+            #[doc(hidden)]
+            macro_rules! __attr {
+                #(#variant_arms)*
+
+                // Unknown attribute: use __attr_error! for typo suggestions
+                ($unknown:ident $($tt:tt)*) => {
+                    ::facet::__attr_error!(
+                        @known_attrs { #(#known_attrs),* }
+                        @got_name { $unknown }
+                        @got_rest { $($tt)* }
+                    )
+                };
+            }
+
+            /// Parse an attribute into an `Attr` value (for internal use/testing).
             ///
             /// Uses proc-macro dispatcher to preserve spans for error messages.
             #[macro_export]
+            #[doc(hidden)]
             macro_rules! __parse_attr {
                 // Dispatch via proc-macro to handle all variant types
                 ($name:ident $($rest:tt)*) => {
@@ -476,7 +645,7 @@ impl ParsedStruct {
 
         quote! {
             #(#attrs)*
-            #[derive(Debug, Clone, PartialEq, Default)]
+            #[derive(Debug, Clone, PartialEq, Default, ::facet::Facet)]
             #vis_tokens struct #name {
                 #(#field_defs),*
             }

@@ -26,7 +26,9 @@ html = Path('extension-attributes-design-v3.html.bak').read_text()
 svg_mappings = {
     'crate_responsibilities': '00-crate-responsibilities.svg',
     'dependency_graph': '00-dependency-graph.svg',
-    'grammar_definition': '01-grammar-definition.svg',
+    'grammar_definition_3rdparty': '01a-grammar-definition-3rdparty.svg',
+    'grammar_definition_builtin': '01b-grammar-definition-builtin.svg',
+    'grammar_definition_complex': '01c-grammar-definition-complex.svg',
     'attribute_usage': '02-attribute-usage.svg',
     'dispatch_detail': '02b-dispatch-detail.svg',
     'error_flow': '03-error-flow.svg',

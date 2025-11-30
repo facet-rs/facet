@@ -98,7 +98,7 @@ digraph attribute_usage {
 <table border="0" cellspacing="0" cellpadding="2">
 <tr><td align="left" bgcolor="#d4edda"><b>7. Final Attribute value</b></td></tr>
 <tr><td align="left"><font face="Monaco">::facet_core::<font color="#0550ae">Attribute</font> {</font></td></tr>
-<tr><td align="left"><font face="Monaco">    ns: <font color="#0a3069">"orm"</font>,</font></td></tr>
+<tr><td align="left"><font face="Monaco">    ns: <font color="#0550ae">Some</font>(<font color="#0a3069">"orm"</font>),</font></td></tr>
 <tr><td align="left"><font face="Monaco">    key: <font color="#0a3069">"column"</font>,</font></td></tr>
 <tr><td align="left"><font face="Monaco">    data: <font color="#cf222e">&amp;</font>::orm::<font color="#0550ae">Column</font> {</font></td></tr>
 <tr><td align="left"><font face="Monaco">        primary_key: <font color="#0550ae">true</font>,</font></td></tr>

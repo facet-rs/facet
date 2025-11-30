@@ -44,7 +44,7 @@ digraph storage_model {
         ext1 [label=<
 <table border="0" cellspacing="0" cellpadding="2">
 <tr><td align="left"><font face="Monaco">::facet_core::<font color="#0550ae">Attribute</font> {</font></td></tr>
-<tr><td align="left"><font face="Monaco">    ns: <font color="#0a3069">""</font>,  <font color="#6e7781">// empty = built-in</font></font></td></tr>
+<tr><td align="left"><font face="Monaco">    ns: <font color="#0550ae">None</font>,  <font color="#6e7781">// None = built-in</font></font></td></tr>
 <tr><td align="left"><font face="Monaco">    key: <font color="#0a3069">"skip"</font>,</font></td></tr>
 <tr><td align="left"><font face="Monaco">    data: <font color="#cf222e">&amp;</font>() <font color="#cf222e">as</font> *<font color="#cf222e">const</font> (),</font></td></tr>
 <tr><td align="left"><font face="Monaco">    shape: &lt;()&gt;::SHAPE,</font></td></tr>
@@ -55,7 +55,7 @@ digraph storage_model {
         ext2 [label=<
 <table border="0" cellspacing="0" cellpadding="2">
 <tr><td align="left"><font face="Monaco">::facet_core::<font color="#0550ae">Attribute</font> {</font></td></tr>
-<tr><td align="left"><font face="Monaco">    ns: <font color="#0a3069">"kdl"</font>,</font></td></tr>
+<tr><td align="left"><font face="Monaco">    ns: <font color="#0550ae">Some</font>(<font color="#0a3069">"kdl"</font>),</font></td></tr>
 <tr><td align="left"><font face="Monaco">    key: <font color="#0a3069">"child"</font>,</font></td></tr>
 <tr><td align="left"><font face="Monaco">    data: <font color="#cf222e">&amp;</font>() <font color="#cf222e">as</font> *<font color="#cf222e">const</font> (),</font></td></tr>
 <tr><td align="left"><font face="Monaco">    shape: &lt;()&gt;::SHAPE,</font></td></tr>
