@@ -15,9 +15,11 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Gauge, Paragraph},
 };
+use std::collections::VecDeque;
 use std::io::stdout;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
+use tokio::sync::watch;
 
 /// Progress state for a single task
 #[derive(Debug, Clone)]
@@ -101,12 +103,72 @@ impl Default for BuildProgress {
     }
 }
 
-/// Shared progress state for use across threads
+/// Shared progress state for use across threads (legacy, for build mode)
 pub type SharedProgress = Arc<Mutex<BuildProgress>>;
 
-/// Create a new shared progress state
+/// Create a new shared progress state (legacy, for build mode)
 pub fn new_shared_progress() -> SharedProgress {
     Arc::new(Mutex::new(BuildProgress::default()))
+}
+
+// ============================================================================
+// Channel-based types for serve mode (cleaner than locks)
+// ============================================================================
+
+/// Progress sender - producers call send_modify to update progress
+pub type ProgressTx = watch::Sender<BuildProgress>;
+/// Progress receiver - TUI reads latest progress
+pub type ProgressRx = watch::Receiver<BuildProgress>;
+
+/// Create a new progress channel
+pub fn progress_channel() -> (ProgressTx, ProgressRx) {
+    watch::channel(BuildProgress::default())
+}
+
+/// Server status sender
+pub type ServerStatusTx = watch::Sender<ServerStatus>;
+/// Server status receiver
+pub type ServerStatusRx = watch::Receiver<ServerStatus>;
+
+/// Create a new server status channel
+pub fn server_status_channel() -> (ServerStatusTx, ServerStatusRx) {
+    watch::channel(ServerStatus::default())
+}
+
+/// Event sender - multiple producers can clone and send
+pub type EventTx = mpsc::Sender<String>;
+/// Event receiver - TUI drains events
+pub type EventRx = mpsc::Receiver<String>;
+
+/// Create a new event channel
+pub fn event_channel() -> (EventTx, EventRx) {
+    mpsc::channel()
+}
+
+/// Helper to update progress - works with either SharedProgress or ProgressTx
+pub enum ProgressReporter {
+    /// Legacy mutex-based (for build command)
+    Shared(SharedProgress),
+    /// Channel-based (for serve mode)
+    Channel(ProgressTx),
+}
+
+impl ProgressReporter {
+    /// Update progress with a closure
+    pub fn update<F>(&self, f: F)
+    where
+        F: FnOnce(&mut BuildProgress),
+    {
+        match self {
+            ProgressReporter::Shared(p) => {
+                let mut prog = p.lock().unwrap();
+                f(&mut prog);
+            }
+            ProgressReporter::Channel(tx) => {
+                tx.send_modify(f);
+            }
+        }
+    }
 }
 
 /// TUI application state
@@ -338,27 +400,33 @@ pub enum ServerCommand {
     GoLocal,
 }
 
-/// Serve mode TUI application state
+/// Serve mode TUI application state (channel-based)
 pub struct ServeApp {
-    progress: SharedProgress,
-    server: Arc<Mutex<ServerStatus>>,
-    events: Arc<Mutex<Vec<String>>>,
-    command_tx: std::sync::mpsc::Sender<ServerCommand>,
+    progress_rx: ProgressRx,
+    server_rx: ServerStatusRx,
+    event_rx: EventRx,
+    /// Local buffer for events (since mpsc drains)
+    event_buffer: VecDeque<String>,
+    command_tx: mpsc::Sender<ServerCommand>,
     show_help: bool,
     should_quit: bool,
 }
 
+/// Maximum number of events to keep in the buffer
+const MAX_EVENTS: usize = 100;
+
 impl ServeApp {
     pub fn new(
-        progress: SharedProgress,
-        server: Arc<Mutex<ServerStatus>>,
-        events: Arc<Mutex<Vec<String>>>,
-        command_tx: std::sync::mpsc::Sender<ServerCommand>,
+        progress_rx: ProgressRx,
+        server_rx: ServerStatusRx,
+        event_rx: EventRx,
+        command_tx: mpsc::Sender<ServerCommand>,
     ) -> Self {
         Self {
-            progress,
-            server,
-            events,
+            progress_rx,
+            server_rx,
+            event_rx,
+            event_buffer: VecDeque::with_capacity(MAX_EVENTS),
             command_tx,
             show_help: false,
             should_quit: false,
@@ -368,6 +436,9 @@ impl ServeApp {
     /// Run the serve TUI event loop
     pub fn run(&mut self, terminal: &mut DefaultTerminal) -> Result<()> {
         while !self.should_quit {
+            // Drain any new events into the buffer
+            self.drain_events();
+
             terminal.draw(|frame| self.draw(frame))?;
 
             // Poll for events with timeout
@@ -391,10 +462,7 @@ impl ServeApp {
                             }
                             KeyCode::Char('?') => self.show_help = !self.show_help,
                             KeyCode::Char('p') => {
-                                let current_mode = {
-                                    let server = self.server.lock().unwrap();
-                                    server.bind_mode
-                                };
+                                let current_mode = self.server_rx.borrow().bind_mode;
                                 let cmd = match current_mode {
                                     BindMode::Local => ServerCommand::GoPublic,
                                     BindMode::Lan => ServerCommand::GoLocal,
@@ -410,10 +478,22 @@ impl ServeApp {
         Ok(())
     }
 
+    /// Drain events from the channel into the local buffer
+    fn drain_events(&mut self) {
+        // Non-blocking drain of all available events
+        while let Ok(event) = self.event_rx.try_recv() {
+            self.event_buffer.push_back(event);
+            // Keep buffer bounded
+            if self.event_buffer.len() > MAX_EVENTS {
+                self.event_buffer.pop_front();
+            }
+        }
+    }
+
     fn draw(&self, frame: &mut Frame) {
-        let progress = self.progress.lock().unwrap();
-        let server = self.server.lock().unwrap();
-        let events = self.events.lock().unwrap();
+        // Read from channels (no locks!)
+        let progress = self.progress_rx.borrow();
+        let server = self.server_rx.borrow();
 
         let area = frame.area();
 
@@ -488,9 +568,10 @@ impl ServeApp {
             Paragraph::new(task_lines).block(Block::default().title("Build").borders(Borders::ALL));
         frame.render_widget(progress_widget, chunks[1]);
 
-        // Events log
+        // Events log (from local buffer)
         let max_events = (chunks[2].height.saturating_sub(2)) as usize;
-        let recent_events: Vec<Line> = events
+        let recent_events: Vec<Line> = self
+            .event_buffer
             .iter()
             .rev()
             .take(max_events)

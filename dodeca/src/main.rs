@@ -127,7 +127,7 @@ async fn main() -> Result<()> {
                     &output_dir,
                     BuildMode::Full,
                     None,
-                    render::RenderOptions::default(),
+                    Default::default(),
                 )?;
             }
         }
@@ -155,7 +155,7 @@ async fn main() -> Result<()> {
                     &output_dir,
                     BuildMode::Quick,
                     None,
-                    render::RenderOptions::default(),
+                    Default::default(),
                 )?;
 
                 print_server_urls(&address, port);
@@ -383,7 +383,7 @@ pub fn build(
     content_dir: &Utf8PathBuf,
     output_dir: &Utf8PathBuf,
     mode: BuildMode,
-    progress: Option<tui::SharedProgress>,
+    progress: Option<tui::ProgressReporter>,
     render_options: render::RenderOptions,
 ) -> Result<BuildContext> {
     let mut ctx = BuildContext::new(content_dir, output_dir);
@@ -393,13 +393,11 @@ pub fn build(
 
     // Phase 2: Parse all files (memoized by Salsa)
     if let Some(ref p) = progress {
-        let mut prog = p.lock().unwrap();
-        prog.parse.start(ctx.sources.len());
+        p.update(|prog| prog.parse.start(ctx.sources.len()));
     }
     let parsed = ctx.parse_all();
     if let Some(ref p) = progress {
-        let mut prog = p.lock().unwrap();
-        prog.parse.finish();
+        p.update(|prog| prog.parse.finish());
     }
 
     // Phase 3: Build the site tree
@@ -407,33 +405,30 @@ pub fn build(
 
     // Phase 4: Render all pages
     if let Some(ref p) = progress {
-        let mut prog = p.lock().unwrap();
-        prog.render.start(sections.len() + pages.len());
+        p.update(|prog| prog.render.start(sections.len() + pages.len()));
     }
     render::render_all(&sections, &pages, output_dir, render_options)?;
     if let Some(ref p) = progress {
-        let mut prog = p.lock().unwrap();
-        prog.render.finish();
+        p.update(|prog| prog.render.finish());
     }
 
     // Phase 5: Compile Sass
     if let Some(ref p) = progress {
-        let mut prog = p.lock().unwrap();
-        prog.sass.start(1);
+        p.update(|prog| prog.sass.start(1));
     }
     render::compile_sass(content_dir, output_dir)?;
     if let Some(ref p) = progress {
-        let mut prog = p.lock().unwrap();
-        prog.sass.finish();
+        p.update(|prog| prog.sass.finish());
     }
 
     if mode == BuildMode::Full {
         // TODO: check_links().await?;
         // TODO: build_search_index(output_dir).await?;
         if let Some(ref p) = progress {
-            let mut prog = p.lock().unwrap();
-            prog.links.finish();
-            prog.search.finish();
+            p.update(|prog| {
+                prog.links.finish();
+                prog.search.finish();
+            });
         }
     }
 
@@ -455,7 +450,7 @@ fn build_with_tui(content_dir: &Utf8PathBuf, output_dir: &Utf8PathBuf) -> Result
             output_dir,
             BuildMode::Full,
             None,
-            render::RenderOptions::default(),
+            Default::default(),
         )
         .map(|_| ());
     }
@@ -472,8 +467,8 @@ fn build_with_tui(content_dir: &Utf8PathBuf, output_dir: &Utf8PathBuf) -> Result
             &content,
             &output,
             BuildMode::Full,
-            Some(build_progress),
-            render::RenderOptions::default(),
+            Some(tui::ProgressReporter::Shared(build_progress)),
+            Default::default(),
         )
     });
 
@@ -504,9 +499,10 @@ async fn serve_with_tui(
     use std::sync::mpsc;
     use tokio::sync::watch;
 
-    let progress = tui::new_shared_progress();
-    let server_status = Arc::new(std::sync::Mutex::new(tui::ServerStatus::default()));
-    let events = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    // Create channels (no more Arc<Mutex>!)
+    let (progress_tx, progress_rx) = tui::progress_channel();
+    let (server_tx, server_rx) = tui::server_status_channel();
+    let (event_tx, event_rx) = tui::event_channel();
 
     // Live reload state (shared across server restarts)
     let livereload = Arc::new(serve::LiveReloadState::new());
@@ -539,43 +535,34 @@ async fn serve_with_tui(
 
     // Set initial server status
     let initial_ips = get_bind_ips(initial_mode);
-    {
-        let mut status = server_status.lock().unwrap();
-        status.urls = build_urls(&initial_ips, port);
-        status.bind_mode = initial_mode;
-    }
+    let _ = server_tx.send(tui::ServerStatus {
+        urls: build_urls(&initial_ips, port),
+        is_running: false,
+        bind_mode: initial_mode,
+    });
 
     // Render options with live reload enabled
     let render_options = render::RenderOptions { livereload: true };
 
     // Initial build
-    {
-        let mut evts = events.lock().unwrap();
-        evts.push("Starting initial build...".to_string());
-    }
+    let _ = event_tx.send("Starting initial build...".to_string());
 
     let _ctx = build(
         content_dir,
         output_dir,
         BuildMode::Quick,
-        Some(progress.clone()),
+        Some(tui::ProgressReporter::Channel(progress_tx.clone())),
         render_options,
     )?;
 
-    {
-        let mut evts = events.lock().unwrap();
-        evts.push("Build complete".to_string());
-    }
+    let _ = event_tx.send("Build complete".to_string());
 
     // Set up file watcher
     let (watch_tx, watch_rx) = mpsc::channel();
     let mut watcher = RecommendedWatcher::new(watch_tx, notify::Config::default())?;
     watcher.watch(content_dir.as_std_path(), RecursiveMode::Recursive)?;
 
-    {
-        let mut evts = events.lock().unwrap();
-        evts.push(format!("Watching {}", content_dir));
-    }
+    let _ = event_tx.send(format!("Watching {}", content_dir));
 
     // Command channel for TUI -> server communication
     let (cmd_tx, cmd_rx) = mpsc::channel::<tui::ServerCommand>();
@@ -585,42 +572,41 @@ async fn serve_with_tui(
 
     // Start server in background
     let output_for_server = output_dir.clone();
-    let server_status_clone = server_status.clone();
-    let events_clone = events.clone();
+    let server_tx_clone = server_tx.clone();
+    let event_tx_clone = event_tx.clone();
     let livereload_clone = livereload.clone();
 
     let start_server = |output: Utf8PathBuf,
                         mode: tui::BindMode,
                         port: u16,
                         shutdown_rx: watch::Receiver<bool>,
-                        server_status: Arc<std::sync::Mutex<tui::ServerStatus>>,
-                        events: Arc<std::sync::Mutex<Vec<String>>>,
+                        server_tx: tui::ServerStatusTx,
+                        event_tx: tui::EventTx,
                         livereload: Arc<serve::LiveReloadState>| {
         tokio::spawn(async move {
             let ips = get_bind_ips(mode);
-            {
-                let mut status = server_status.lock().unwrap();
-                status.is_running = true;
-                status.bind_mode = mode;
-                status.urls = build_urls(&ips, port);
-            }
-            {
-                let mut evts = events.lock().unwrap();
-                let mode_str = match mode {
-                    tui::BindMode::Local => "localhost only",
-                    tui::BindMode::Lan => "LAN",
-                };
-                evts.push(format!("Binding to {} IPs ({})", ips.len(), mode_str));
-                for ip in &ips {
-                    evts.push(format!("  → {}", ip));
-                }
+
+            // Update server status
+            let _ = server_tx.send(tui::ServerStatus {
+                urls: build_urls(&ips, port),
+                is_running: true,
+                bind_mode: mode,
+            });
+
+            // Log the binding
+            let mode_str = match mode {
+                tui::BindMode::Local => "localhost only",
+                tui::BindMode::Lan => "LAN",
+            };
+            let _ = event_tx.send(format!("Binding to {} IPs ({})", ips.len(), mode_str));
+            for ip in &ips {
+                let _ = event_tx.send(format!("  → {}", ip));
             }
 
             if let Err(e) =
                 serve::run_on_ips(&output, &ips, port, shutdown_rx, Some(livereload)).await
             {
-                let mut evts = events.lock().unwrap();
-                evts.push(format!("Server error: {}", e));
+                let _ = event_tx.send(format!("Server error: {}", e));
             }
         })
     };
@@ -630,8 +616,8 @@ async fn serve_with_tui(
         initial_mode,
         port,
         shutdown_rx.clone(),
-        server_status_clone.clone(),
-        events_clone.clone(),
+        server_tx_clone.clone(),
+        event_tx_clone.clone(),
         livereload_clone.clone(),
     );
 
@@ -639,16 +625,15 @@ async fn serve_with_tui(
     if open {
         let url = format!("http://127.0.0.1:{}", port);
         if let Err(e) = open::that(&url) {
-            let mut evts = events.lock().unwrap();
-            evts.push(format!("Failed to open browser: {}", e));
+            let _ = event_tx.send(format!("Failed to open browser: {}", e));
         }
     }
 
     // Spawn file watcher handler
     let content_for_watcher = content_dir.clone();
     let output_for_watcher = output_dir.clone();
-    let progress_for_watcher = progress.clone();
-    let events_for_watcher = events.clone();
+    let progress_tx_for_watcher = progress_tx.clone();
+    let event_tx_for_watcher = event_tx.clone();
     let livereload_for_watcher = livereload.clone();
 
     std::thread::spawn(move || {
@@ -682,40 +667,39 @@ async fn serve_with_tui(
                                 continue;
                             }
 
-                            {
-                                let mut evts = events_for_watcher.lock().unwrap();
-                                for path in &paths {
-                                    if let Ok(rel) = path.strip_prefix(&content_for_watcher) {
-                                        evts.push(format!("Changed: {}", rel.display()));
-                                    }
+                            for path in &paths {
+                                if let Ok(rel) = path.strip_prefix(&content_for_watcher) {
+                                    let _ = event_tx_for_watcher
+                                        .send(format!("Changed: {}", rel.display()));
                                 }
                             }
 
                             // Reset progress for rebuild
-                            {
-                                let mut prog = progress_for_watcher.lock().unwrap();
+                            progress_tx_for_watcher.send_modify(|prog| {
                                 prog.parse = tui::TaskProgress::new("Parsing");
                                 prog.render = tui::TaskProgress::new("Rendering");
                                 prog.sass = tui::TaskProgress::new("Sass");
-                            }
+                            });
 
                             // Rebuild with live reload enabled
                             match build(
                                 &content_for_watcher,
                                 &output_for_watcher,
                                 BuildMode::Quick,
-                                Some(progress_for_watcher.clone()),
+                                Some(tui::ProgressReporter::Channel(
+                                    progress_tx_for_watcher.clone(),
+                                )),
                                 render::RenderOptions { livereload: true },
                             ) {
                                 Ok(_) => {
-                                    let mut evts = events_for_watcher.lock().unwrap();
-                                    evts.push("Rebuild complete".to_string());
+                                    let _ =
+                                        event_tx_for_watcher.send("Rebuild complete".to_string());
                                     // Trigger live reload in connected browsers
                                     livereload_for_watcher.trigger_reload();
                                 }
                                 Err(e) => {
-                                    let mut evts = events_for_watcher.lock().unwrap();
-                                    evts.push(format!("Build error: {}", e));
+                                    let _ =
+                                        event_tx_for_watcher.send(format!("Build error: {}", e));
                                 }
                             }
 
@@ -725,8 +709,7 @@ async fn serve_with_tui(
                     }
                 }
                 Err(e) => {
-                    let mut evts = events_for_watcher.lock().unwrap();
-                    evts.push(format!("Watch error: {}", e));
+                    let _ = event_tx_for_watcher.send(format!("Watch error: {}", e));
                 }
             }
         }
@@ -734,8 +717,8 @@ async fn serve_with_tui(
 
     // Spawn command handler for rebinding
     let output_for_cmd = output_dir.clone();
-    let server_status_for_cmd = server_status.clone();
-    let events_for_cmd = events.clone();
+    let server_tx_for_cmd = server_tx.clone();
+    let event_tx_for_cmd = event_tx.clone();
     let livereload_for_cmd = livereload.clone();
     // Use Arc<Mutex> for the shutdown sender so we can update it for each rebind
     let current_shutdown = Arc::new(std::sync::Mutex::new(shutdown_tx.clone()));
@@ -766,10 +749,7 @@ async fn serve_with_tui(
                 *shutdown = new_shutdown_tx;
             }
 
-            {
-                let mut evts = events_for_cmd.lock().unwrap();
-                evts.push("Restarting server...".to_string());
-            }
+            let _ = event_tx_for_cmd.send("Restarting server...".to_string());
 
             // Start new server
             server_handle = start_server(
@@ -777,8 +757,8 @@ async fn serve_with_tui(
                 new_mode,
                 port,
                 new_shutdown_rx,
-                server_status_for_cmd.clone(),
-                events_for_cmd.clone(),
+                server_tx_for_cmd.clone(),
+                event_tx_for_cmd.clone(),
                 livereload_for_cmd.clone(),
             );
         }
@@ -786,7 +766,7 @@ async fn serve_with_tui(
 
     // Run TUI on main thread
     let mut terminal = tui::init_terminal()?;
-    let mut app = tui::ServeApp::new(progress, server_status, events, cmd_tx);
+    let mut app = tui::ServeApp::new(progress_rx, server_rx, event_rx, cmd_tx);
     let _ = app.run(&mut terminal);
     tui::restore_terminal()?;
 
