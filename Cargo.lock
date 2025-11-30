@@ -817,6 +817,7 @@ dependencies = [
  "color-eyre",
  "crossterm",
  "facet",
+ "facet-kdl",
  "facet-toml",
  "grass",
  "ignore",

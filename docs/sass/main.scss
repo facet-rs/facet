@@ -969,11 +969,16 @@ pre.term {
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: var(--spacing-lg);
   margin: var(--spacing-lg) 0;
+}
+
+.guide-card {
+  background: var(--code-bg);
+  border-radius: 6px;
+  padding: var(--spacing-md);
 
   h3 {
     font-size: 1.25rem;
-    margin-top: 0;
-    margin-bottom: var(--spacing-sm);
+    margin: 0 0 var(--spacing-sm) 0;
 
     a {
       color: var(--text-color);
@@ -984,38 +989,16 @@ pre.term {
     }
   }
 
-  // Each card is an h3 + p + p block
-  > h3,
-  > p {
-    background: var(--code-bg);
-    padding: var(--spacing-md);
-    border-radius: 6px;
-    margin: 0;
+  .tagline {
+    color: var(--text-muted);
+    font-style: italic;
+    margin: 0 0 var(--spacing-sm) 0;
   }
 
-  // Group h3 with following paragraphs visually
-  > h3 {
-    padding-bottom: 0;
-    border-radius: 6px 6px 0 0;
-  }
-
-  > h3 + p {
-    border-radius: 0;
-    padding-top: var(--spacing-sm);
-    padding-bottom: var(--spacing-sm);
-
-    strong {
-      color: var(--text-muted);
-      font-weight: 400;
-      font-style: italic;
-    }
-  }
-
-  > h3 + p + p {
-    border-radius: 0 0 6px 6px;
-    padding-top: 0;
+  .description {
     color: var(--text-muted);
     font-size: 0.9rem;
+    margin: 0;
   }
 }
 

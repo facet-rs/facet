@@ -25,25 +25,21 @@ From this single derive, you get:
 ## Choose Your Path
 
 <div class="guide-cards">
-
-### [Learn](@/learn/_index.md)
-
-**I want to serialize my types**
-
-For application developers using facet-json, facet-yaml, etc. Covers installation, attributes, and format-specific guides.
-
-### Extend
-
-**I want to build tools with facet**
-
-*Coming soon* — For developers building format crates or tools using reflection (Shape, Peek, Partial).
-
-### Contribute
-
-**I want to work on facet itself**
-
-*Coming soon* — Architecture, proc macro internals, vtables, and development setup.
-
+<div class="guide-card">
+<h3><a href="/learn/">Learn</a></h3>
+<p class="tagline">I want to serialize my types</p>
+<p class="description">For application developers using facet-json, facet-yaml, etc. Covers installation, attributes, and format-specific guides.</p>
+</div>
+<div class="guide-card">
+<h3><a href="/extend/">Extend</a></h3>
+<p class="tagline">I want to build tools with facet</p>
+<p class="description"><em>Coming soon</em> — For developers building format crates or tools using reflection (Shape, Peek, Partial).</p>
+</div>
+<div class="guide-card">
+<h3><a href="/contribute/">Contribute</a></h3>
+<p class="tagline">I want to work on facet itself</p>
+<p class="description"><em>Coming soon</em> — Architecture, proc macro internals, vtables, and development setup.</p>
+</div>
 </div>
 
 ## Quick Links

@@ -1,3 +1,4 @@
+mod config;
 mod db;
 mod queries;
 mod render;
@@ -6,12 +7,13 @@ mod template;
 mod tui;
 mod types;
 
+use crate::config::ResolvedConfig;
 use crate::db::{Database, ParsedData, SourceFile};
 use crate::queries::parse_file;
 use crate::types::{HtmlBody, Route, SourceContent, SourcePath, SourcePathRef, Title};
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Parser, Subcommand};
-use color_eyre::Result;
+use color_eyre::{Result, eyre::eyre};
 use ignore::WalkBuilder;
 use std::collections::BTreeMap;
 use std::fs;
@@ -27,24 +29,24 @@ struct Cli {
 enum Command {
     /// Build the site (blocks on link checking and search index)
     Build {
-        /// Content directory
-        #[arg(short, long, default_value = "content")]
-        content: Utf8PathBuf,
+        /// Content directory (uses .config/dodeca.kdl if not specified)
+        #[arg(short, long)]
+        content: Option<Utf8PathBuf>,
 
-        /// Output directory
-        #[arg(short, long, default_value = "public")]
-        output: Utf8PathBuf,
+        /// Output directory (uses .config/dodeca.kdl if not specified)
+        #[arg(short, long)]
+        output: Option<Utf8PathBuf>,
     },
 
     /// Build and serve with live reload
     Serve {
-        /// Content directory
-        #[arg(short, long, default_value = "content")]
-        content: Utf8PathBuf,
+        /// Content directory (uses .config/dodeca.kdl if not specified)
+        #[arg(short, long)]
+        content: Option<Utf8PathBuf>,
 
-        /// Output directory
-        #[arg(short, long, default_value = "public")]
-        output: Utf8PathBuf,
+        /// Output directory (uses .config/dodeca.kdl if not specified)
+        #[arg(short, long)]
+        output: Option<Utf8PathBuf>,
 
         /// Address to bind on
         #[arg(short, long, default_value = "127.0.0.1")]
@@ -56,6 +58,39 @@ enum Command {
     },
 }
 
+/// Resolve content and output directories from CLI args or config file
+fn resolve_dirs(
+    content: Option<Utf8PathBuf>,
+    output: Option<Utf8PathBuf>,
+) -> Result<(Utf8PathBuf, Utf8PathBuf)> {
+    // If both are specified, use them directly
+    if let (Some(c), Some(o)) = (&content, &output) {
+        return Ok((c.clone(), o.clone()));
+    }
+
+    // Try to find config file
+    let config = ResolvedConfig::discover()?;
+
+    match config {
+        Some(cfg) => {
+            let content_dir = content.unwrap_or(cfg.content_dir);
+            let output_dir = output.unwrap_or(cfg.output_dir);
+            Ok((content_dir, output_dir))
+        }
+        None => {
+            // No config found - use defaults or error if partially specified
+            if content.is_some() || output.is_some() {
+                Err(eyre!(
+                    "No .config/dodeca.kdl found. Please specify both --content and --output, or create a config file."
+                ))
+            } else {
+                // Default fallback (for backwards compatibility)
+                Ok((Utf8PathBuf::from("content"), Utf8PathBuf::from("public")))
+            }
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
@@ -63,7 +98,8 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Build { content, output } => {
-            build(&content, &output, BuildMode::Full)?;
+            let (content_dir, output_dir) = resolve_dirs(content, output)?;
+            build(&content_dir, &output_dir, BuildMode::Full)?;
         }
         Command::Serve {
             content,
@@ -71,7 +107,8 @@ async fn main() -> Result<()> {
             address,
             port,
         } => {
-            serve::run(&content, &output, &address, port).await?;
+            let (content_dir, output_dir) = resolve_dirs(content, output)?;
+            serve::run(&content_dir, &output_dir, &address, port).await?;
         }
     }
 

@@ -3,10 +3,12 @@ name = "dodeca"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+publish = false
 
 [dependencies]
 # Facet (dogfooding!)
 facet = { path = "../facet" }
+facet-kdl = { path = "../facet-kdl" }
 facet-toml = { path = "../facet-toml" }
 
 # Markdown & syntax highlighting

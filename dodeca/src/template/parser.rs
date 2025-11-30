@@ -16,6 +16,8 @@ pub struct Parser {
     current: Token,
     /// Previous token (for span info)
     previous: Token,
+    /// Pending token (for lookahead pushback)
+    pending: Option<Token>,
 }
 
 impl Parser {
@@ -31,6 +33,7 @@ impl Parser {
             source: template_source,
             current: current.clone(),
             previous: current,
+            pending: None,
         }
     }
 
@@ -58,15 +61,17 @@ impl Parser {
             // Check for terminators - they come after {% so we need to peek
             if self.check(&TokenKind::TagOpen) {
                 // Look at what comes after {%
-                let next = self.lexer.next_token();
+                let next = self
+                    .pending
+                    .take()
+                    .unwrap_or_else(|| self.lexer.next_token());
                 let is_terminator = terminators
                     .iter()
                     .any(|t| std::mem::discriminant(&next.kind) == std::mem::discriminant(t));
 
                 if is_terminator {
-                    // Put back the tokens by pushing to pending (we handle this by not consuming)
-                    // Actually we consumed TagOpen, so we need to handle this differently
-                    // The caller will consume {% and the terminator
+                    // Save the terminator token for later - caller will consume it
+                    self.pending = Some(next);
                     break;
                 }
 
@@ -185,36 +190,43 @@ impl Parser {
 
         let then_body = self.parse_body(&[TokenKind::Elif, TokenKind::Else, TokenKind::Endif])?;
 
-        // Parse elif branches
+        // Parse elif branches - peek at pending to check what follows TagOpen
         let mut elif_branches = Vec::new();
-        while self.check(&TokenKind::TagOpen) {
-            self.advance();
-            if self.check(&TokenKind::Elif) {
-                let elif_start = self.previous.span;
-                self.advance();
-                let elif_cond = self.parse_expr()?;
-                self.expect(&TokenKind::TagClose)?;
+        while self.check(&TokenKind::TagOpen)
+            && self
+                .pending
+                .as_ref()
+                .is_some_and(|t| matches!(t.kind, TokenKind::Elif))
+        {
+            let elif_start = self.current.span;
+            self.advance(); // consume TagOpen
+            self.advance(); // consume Elif (from pending)
+            let elif_cond = self.parse_expr()?;
+            self.expect(&TokenKind::TagClose)?;
 
-                let elif_body =
-                    self.parse_body(&[TokenKind::Elif, TokenKind::Else, TokenKind::Endif])?;
+            let elif_body =
+                self.parse_body(&[TokenKind::Elif, TokenKind::Else, TokenKind::Endif])?;
 
-                let elif_end = self.previous.span;
-                elif_branches.push(ElifBranch {
-                    condition: elif_cond,
-                    body: elif_body,
-                    span: span(
-                        elif_start.offset(),
-                        elif_end.offset() + elif_end.len() - elif_start.offset(),
-                    ),
-                });
-            } else {
-                break;
-            }
+            let elif_end = self.previous.span;
+            elif_branches.push(ElifBranch {
+                condition: elif_cond,
+                body: elif_body,
+                span: span(
+                    elif_start.offset(),
+                    elif_end.offset() + elif_end.len() - elif_start.offset(),
+                ),
+            });
         }
 
-        // Parse else
-        let else_body = if self.check(&TokenKind::Else) {
-            self.advance();
+        // Parse else - peek at pending to check
+        let else_body = if self.check(&TokenKind::TagOpen)
+            && self
+                .pending
+                .as_ref()
+                .is_some_and(|t| matches!(t.kind, TokenKind::Else))
+        {
+            self.advance(); // consume TagOpen
+            self.advance(); // consume Else (from pending)
             self.expect(&TokenKind::TagClose)?;
             Some(self.parse_body(&[TokenKind::Endif])?)
         } else {
@@ -222,10 +234,7 @@ impl Parser {
         };
 
         // Expect {% endif %}
-        if !self.check(&TokenKind::TagOpen) {
-            self.expect(&TokenKind::TagOpen)?;
-        }
-        self.advance();
+        self.expect(&TokenKind::TagOpen)?;
         self.expect(&TokenKind::Endif)?;
         self.expect(&TokenKind::TagClose)?;
 
@@ -253,17 +262,18 @@ impl Parser {
 
         let body = self.parse_body(&[TokenKind::Else, TokenKind::Endfor])?;
 
-        // Parse else
+        // Parse else - peek at pending to see if it's else or endfor
         let else_body = if self.check(&TokenKind::TagOpen) {
-            let saved = self.current.clone();
-            self.advance();
-            if self.check(&TokenKind::Else) {
-                self.advance();
+            if self
+                .pending
+                .as_ref()
+                .is_some_and(|t| matches!(t.kind, TokenKind::Else))
+            {
+                self.advance(); // consume TagOpen
+                self.advance(); // consume Else (from pending)
                 self.expect(&TokenKind::TagClose)?;
                 Some(self.parse_body(&[TokenKind::Endfor])?)
             } else {
-                // Put back - it's endfor
-                self.current = saved;
                 None
             }
         } else {
@@ -921,7 +931,11 @@ impl Parser {
     // ========================================================================
 
     fn advance(&mut self) {
-        self.previous = std::mem::replace(&mut self.current, self.lexer.next_token());
+        let next = self
+            .pending
+            .take()
+            .unwrap_or_else(|| self.lexer.next_token());
+        self.previous = std::mem::replace(&mut self.current, next);
     }
 
     fn check(&self, kind: &TokenKind) -> bool {
