@@ -18,6 +18,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Install system dependencies
+        run: apt-get update && apt-get install -y zlib1g-dev
+
       - uses: Swatinem/rust-cache@v2
 
       - name: ✨ Run tests
@@ -104,7 +107,9 @@ jobs:
           # Generate lockfile with minimal versions
           cargo +nightly generate-lockfile -Z minimal-versions
           # Check with stable using minimal versions
-          cargo check --workspace --all-features --locked --keep-going
+          # Exclude dodeca: its dep chain (pagefind→wax→nom-supreme→nom6→lexical-core0.7)
+          # has overly lenient minimum versions that don't build on modern Rust
+          cargo check --workspace --all-features --locked --keep-going --exclude dodeca
 
   docs:
     runs-on: depot-ubuntu-24.04-32

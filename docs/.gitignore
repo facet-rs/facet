@@ -2,3 +2,4 @@ public/
 .sass-cache/
 static/hljs/
 static/showcases/
+.dodeca.db/

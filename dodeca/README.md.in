@@ -1,0 +1,1 @@
+A static site generator for the facet documentation website. Features incremental builds via Salsa, font subsetting, OG image generation with Typst, and a live-reload dev server.

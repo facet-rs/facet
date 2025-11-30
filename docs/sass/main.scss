@@ -152,10 +152,16 @@ h6 {
   align-items: center;
   padding: var(--spacing-md) var(--spacing-lg);
   border-bottom: 1px solid var(--border-color);
-  background-color: var(--bg-color);
+  background-color: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   position: sticky;
   top: 0;
   z-index: 100;
+
+  @media (prefers-color-scheme: dark) {
+    background-color: rgba(15, 15, 26, 0.8);
+  }
 }
 
 .site-nav-brand {
@@ -778,6 +784,227 @@ pre.term {
       background-color: var(--accent-color);
       color: #fff;
     }
+  }
+}
+
+// Docs layout with sidebar
+.docs-layout {
+  display: flex;
+  min-height: calc(100vh - 60px); // Account for nav height
+}
+
+// Left sidebar
+.sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border-color);
+  background: var(--bg-color);
+  position: sticky;
+  top: 60px; // Below nav
+  height: calc(100vh - 60px);
+  overflow-y: auto;
+  padding: var(--spacing-lg) 0;
+
+  nav {
+    padding: 0 var(--spacing-md);
+  }
+
+  .sidebar-header {
+    font-weight: 700;
+    font-size: 1.1rem;
+    margin-bottom: var(--spacing-md);
+    padding: 0 var(--spacing-sm);
+
+    a {
+      color: var(--text-color);
+
+      &:hover {
+        color: var(--link-color);
+      }
+    }
+  }
+
+  ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+
+    ul {
+      padding-left: var(--spacing-md);
+      margin-top: 0.25rem;
+    }
+  }
+
+  li {
+    margin-bottom: 0.25rem;
+  }
+
+  a {
+    display: block;
+    padding: 0.35rem var(--spacing-sm);
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    border-radius: 4px;
+    transition: background-color 0.15s ease, color 0.15s ease;
+
+    &:hover {
+      color: var(--text-color);
+      background: var(--code-bg);
+    }
+
+    &.active {
+      color: var(--link-color);
+      background: var(--code-bg);
+      font-weight: 500;
+    }
+  }
+
+  .has-children > a {
+    font-weight: 500;
+  }
+}
+
+// Main docs content area
+.docs-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: var(--spacing-xl);
+  padding: var(--spacing-lg) var(--spacing-xl);
+  max-width: 1200px;
+
+  article {
+    flex: 1;
+    min-width: 0;
+    max-width: 800px;
+  }
+}
+
+// Right-side page TOC
+.page-toc {
+  width: 200px;
+  flex-shrink: 0;
+  position: sticky;
+  top: calc(60px + var(--spacing-lg));
+  align-self: flex-start;
+  max-height: calc(100vh - 100px);
+  overflow-y: auto;
+  display: none;
+
+  @media (min-width: 1200px) {
+    display: block;
+  }
+
+  h2 {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin: 0 0 var(--spacing-sm) 0;
+    font-weight: 600;
+  }
+
+  ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+
+    ul {
+      padding-left: var(--spacing-md);
+    }
+  }
+
+  li {
+    margin-bottom: 0.25rem;
+  }
+
+  a {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+
+    &:hover {
+      color: var(--link-color);
+    }
+  }
+}
+
+// Top nav active state
+.site-nav-links a.active {
+  color: var(--link-color);
+  font-weight: 600;
+}
+
+// Home page content
+.home-content {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: var(--spacing-xl) var(--spacing-lg);
+}
+
+// Responsive sidebar
+@media (max-width: 900px) {
+  .docs-layout {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    height: auto;
+    position: static;
+    border-right: none;
+    border-bottom: 1px solid var(--border-color);
+    padding: var(--spacing-md);
+
+    nav {
+      padding: 0;
+    }
+
+    ul ul {
+      display: none; // Collapse nested items on mobile
+    }
+  }
+
+  .docs-content {
+    padding: var(--spacing-md);
+  }
+}
+
+// Guide cards on homepage
+.guide-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--spacing-lg);
+  margin: var(--spacing-lg) 0;
+}
+
+.guide-card {
+  background: var(--code-bg);
+  border-radius: 6px;
+  padding: var(--spacing-md);
+
+  h3 {
+    font-size: 1.25rem;
+    margin: 0 0 var(--spacing-sm) 0;
+
+    a {
+      color: var(--text-color);
+
+      &:hover {
+        color: var(--link-color);
+      }
+    }
+  }
+
+  .tagline {
+    color: var(--text-muted);
+    font-style: italic;
+    margin: 0 0 var(--spacing-sm) 0;
+  }
+
+  .description {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin: 0;
   }
 }
 
