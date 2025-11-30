@@ -1,0 +1,32 @@
+[package]
+name = "facet-macros-impl"
+version = "0.31.8"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Implementation of facet derive macros (parsing and code generation)"
+keywords = [
+    "reflection",
+    "introspection",
+    "serialization",
+    "deserialization",
+    "derive",
+]
+categories = ["development-tools", "encoding"]
+
+[features]
+slow-tests = [] # Enable slow tests (compile tests)
+function = []
+
+[dependencies]
+unsynn = "0.3.0"
+proc-macro2 = "1.0.95"
+quote = "1.0.40"
+strsim = "0.11"
+
+[dev-dependencies]
+insta = { version = "1.43.1" }
+rust-format = { version = "0.3.4", features = ["proc-macro2", "token_stream"] }
+owo-colors = { version = "4.2.2" }
+tempfile = { version = "3.20.0" }

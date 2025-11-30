@@ -31,15 +31,14 @@ macro_rules! __attr {
     (short { $($tt:tt)* }) => { $crate::__short!{ $($tt)* } };
     (named { $($tt:tt)* }) => { $crate::__named!{ $($tt)* } };
 
-    // Unknown attribute: use path resolution to get the error span on the unknown identifier.
+    // Unknown attribute: use __attr_error! for typo suggestions
     ($unknown:ident $($tt:tt)*) => {
-        $crate::__unknown::$unknown
+        ::facet::__attr_error!(
+            @known_attrs { positional, short, named }
+            @got_name { $unknown }
+            @got_rest { $($tt)* }
+        )
     };
-}
-
-#[doc(hidden)]
-pub mod __unknown {
-    //! Valid args attributes: positional, short, named
 }
 
 /// Marks a field as a positional argument.

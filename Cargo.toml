@@ -5,8 +5,7 @@ members = [
     "facet",
 
     # derive macro
-    "facet-macros-parse",
-    "facet-macros-emit",
+    "facet-macros-impl",
     "facet-macros",
 
     # reflection
@@ -41,14 +40,10 @@ members = [
 
     # showcase infrastructure
     "facet-showcase",
-
-    # proto-attr experiment (temporary)
-    "proto-attr/crates/proto-attr-core",
-    "proto-attr/crates/proto-attr-macros",
-    "proto-attr/crates/proto-attr",
-    "proto-attr/crates/proto-ext",
-    "proto-attr/crates/proto-ext-gen",
-    "proto-attr/crates/proto-user",
+]
+exclude = [
+    # proto-attr experiment uses nightly features
+    "proto-attr",
 ]
 resolver = "3"
 

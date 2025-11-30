@@ -5,6 +5,9 @@ use crate::PtrMut;
 
 use core::alloc::Layout;
 
+mod attr_grammar;
+pub use attr_grammar::*;
+
 mod characteristic;
 pub use characteristic::*;
 

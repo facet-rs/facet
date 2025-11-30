@@ -125,7 +125,7 @@ fn enum_vec_variant_wrapper() {
 fn opaque_struct() {
     #[derive(Debug)]
     struct NonFacet;
-    
+
     #[derive(Facet, Debug)]
     #[facet(opaque)]
     struct GenStruct<T: core::fmt::Debug>(T);
@@ -146,7 +146,7 @@ fn opaque_struct() {
 fn opaque_enum() {
     #[derive(Debug)]
     struct NonFacet;
-    
+
     #[derive(Facet, Debug)]
     #[facet(opaque)]
     struct GenEnum<T: core::fmt::Debug>(T);
@@ -162,7 +162,6 @@ fn opaque_enum() {
     assert!(shape.vtable.debug.is_some());
     assert_eq!(shape.type_params.len(), 0);
 }
-
 
 #[test]
 fn type_params_vec_f64() {
