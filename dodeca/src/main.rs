@@ -8,8 +8,8 @@ mod tui;
 mod types;
 
 use crate::config::ResolvedConfig;
-use crate::db::{Database, ParsedData, SassFile, SourceFile, TemplateFile};
-use crate::queries::parse_file;
+use crate::db::{Database, SassFile, SourceFile, SourceRegistry, TemplateFile, TemplateRegistry};
+use crate::queries::{build_tree, render_page, render_section};
 use crate::types::{
     HtmlBody, Route, SassContent, SassPath, SassPathRef, SourceContent, SourcePath, SourcePathRef,
     TemplateContent, TemplatePath, TemplatePathRef, Title,
@@ -438,98 +438,54 @@ impl BuildContext {
 
         Ok(true)
     }
+}
 
-    /// Parse all source files (memoized by Salsa)
-    pub fn parse_all(&self) -> Vec<ParsedData> {
-        self.sources
-            .values()
-            .map(|source| parse_file(&self.db, *source))
-            .collect()
+/// Inject livereload script if enabled
+fn inject_livereload(html: &str, options: render::RenderOptions) -> String {
+    if options.livereload {
+        let livereload_script = r##"<script>
+(function() {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = protocol + '//' + window.location.host + '/__livereload';
+    let ws;
+    let reconnectTimer;
+
+    function connect() {
+        ws = new WebSocket(wsUrl);
+        ws.onopen = function() { console.log('[livereload] connected'); };
+        ws.onmessage = function(event) {
+            if (event.data === 'reload') {
+                console.log('[livereload] reloading...');
+                window.location.reload();
+            }
+        };
+        ws.onclose = function() {
+            console.log('[livereload] disconnected, reconnecting...');
+            clearTimeout(reconnectTimer);
+            reconnectTimer = setTimeout(connect, 1000);
+        };
+    }
+    connect();
+})();
+</script>"##;
+        html.replace("</body>", &format!("{}</body>", livereload_script))
+    } else {
+        html.to_string()
     }
 }
 
-/// A section in the site tree
-#[derive(Debug, Clone)]
-pub struct Section {
-    pub route: Route,
-    pub title: Title,
-    pub weight: i32,
-    pub body_html: HtmlBody,
-}
-
-/// A page in the site tree
-#[derive(Debug, Clone)]
-pub struct Page {
-    pub route: Route,
-    pub title: Title,
-    pub weight: i32,
-    pub body_html: HtmlBody,
-    pub section_route: Route,
-}
-
-/// Build the site tree from parsed data
-fn build_tree(parsed: &[ParsedData]) -> (BTreeMap<Route, Section>, BTreeMap<Route, Page>) {
-    let mut sections: BTreeMap<Route, Section> = BTreeMap::new();
-    let mut pages: BTreeMap<Route, Page> = BTreeMap::new();
-
-    // First pass: create all sections
-    for data in parsed.iter().filter(|d| d.is_section) {
-        sections.insert(
-            data.route.clone(),
-            Section {
-                route: data.route.clone(),
-                title: data.title.clone(),
-                weight: data.weight,
-                body_html: data.body_html.clone(),
-            },
-        );
-    }
-
-    // Ensure root section exists
-    if !sections.contains_key(&Route::root()) {
-        sections.insert(
-            Route::root(),
-            Section {
-                route: Route::root(),
-                title: Title::from_static("Home"),
-                weight: 0,
-                body_html: HtmlBody::from_static(""),
-            },
-        );
-    }
-
-    // Second pass: create pages and assign to sections
-    for data in parsed.iter().filter(|d| !d.is_section) {
-        let section_route = find_parent_section(&data.route, &sections);
-        pages.insert(
-            data.route.clone(),
-            Page {
-                route: data.route.clone(),
-                title: data.title.clone(),
-                weight: data.weight,
-                body_html: data.body_html.clone(),
-                section_route,
-            },
-        );
-    }
-
-    (sections, pages)
-}
-
-/// Find the nearest parent section for a route
-fn find_parent_section(route: &Route, sections: &BTreeMap<Route, Section>) -> Route {
-    let mut current = route.clone();
-
-    loop {
-        if sections.contains_key(&current) && current != *route {
-            return current;
-        }
-
-        match current.parent() {
-            Some(parent) => current = parent,
-            None => return Route::root(),
-        }
-    }
+/// Write HTML output to the appropriate file path
+fn write_html_output(output_dir: &Utf8Path, route: &Route, html: &str) -> Result<()> {
+    let route_str = route.as_str().trim_matches('/');
+    let out_path = if route_str.is_empty() {
+        output_dir.join("index.html")
+    } else {
+        let dir = output_dir.join(route_str);
+        fs::create_dir_all(&dir)?;
+        dir.join("index.html")
+    };
+    fs::write(&out_path, html)?;
+    Ok(())
 }
 
 pub fn build(
@@ -546,31 +502,40 @@ pub fn build(
     ctx.load_templates()?;
     ctx.load_sass()?;
 
-    // Phase 2: Parse all files (memoized by Salsa)
+    // Phase 2+3: Parse all files and build tree (tracked by Salsa)
     if let Some(ref p) = progress {
         p.update(|prog| prog.parse.start(ctx.sources.len()));
     }
-    let parsed = ctx.parse_all();
+    let source_vec: Vec<_> = ctx.sources.values().copied().collect();
+    let source_registry = SourceRegistry::new(&ctx.db, source_vec);
+    let site_tree = build_tree(&ctx.db, source_registry);
+    let sections = site_tree.sections;
+    let pages = site_tree.pages;
     if let Some(ref p) = progress {
         p.update(|prog| prog.parse.finish());
     }
 
-    // Phase 3: Build the site tree
-    let (sections, pages) = build_tree(&parsed);
-
-    // Phase 4: Render all pages using templates (via Salsa for dependency tracking)
+    // Phase 4: Render all pages using templates (via Salsa tracked queries)
     if let Some(ref p) = progress {
         p.update(|prog| prog.render.start(sections.len() + pages.len()));
     }
-    let site_config = render::SiteConfig::default();
-    let mut renderer = render::TemplateRenderer::new(
-        &ctx.db,
-        &ctx.templates,
-        site_config,
-        sections.clone(),
-        pages.clone(),
-    );
-    let _render_stats = renderer.render_all(output_dir, render_options)?;
+    let template_vec: Vec<_> = ctx.templates.values().copied().collect();
+    let template_registry = TemplateRegistry::new(&ctx.db, template_vec);
+
+    // Render sections using tracked queries
+    for route in sections.keys() {
+        let rendered = render_section(&ctx.db, route.clone(), source_registry, template_registry);
+        let html = inject_livereload(&rendered.0, render_options);
+        write_html_output(output_dir, route, &html)?;
+    }
+
+    // Render pages using tracked queries
+    for route in pages.keys() {
+        let rendered = render_page(&ctx.db, route.clone(), source_registry, template_registry);
+        let html = inject_livereload(&rendered.0, render_options);
+        write_html_output(output_dir, route, &html)?;
+    }
+
     if let Some(ref p) = progress {
         p.update(|prog| prog.render.finish());
     }
@@ -639,26 +604,44 @@ pub fn rebuild(
     // The template_changed flag could be used for logging/debugging.
     let _ = template_changed;
 
-    // Parse all files (Salsa memoizes - unchanged files return cached results)
+    // Parse all files and build tree (Salsa memoizes - unchanged files return cached results)
     if let Some(ref p) = progress {
         p.update(|prog| prog.parse.start(ctx.sources.len()));
     }
-    let parsed = ctx.parse_all();
+    let source_vec: Vec<_> = ctx.sources.values().copied().collect();
+    let source_registry = SourceRegistry::new(&ctx.db, source_vec);
+    let site_tree = build_tree(&ctx.db, source_registry);
+    let sections = site_tree.sections;
+    let pages = site_tree.pages;
     if let Some(ref p) = progress {
         p.update(|prog| prog.parse.finish());
     }
 
-    // Build the site tree
-    let (sections, pages) = build_tree(&parsed);
-
-    // Render all pages using templates (via Salsa for dependency tracking)
+    // Render all pages using templates (via Salsa tracked queries)
     if let Some(ref p) = progress {
         p.update(|prog| prog.render.start(sections.len() + pages.len()));
     }
-    let site_config = render::SiteConfig::default();
-    let mut renderer =
-        render::TemplateRenderer::new(&ctx.db, &ctx.templates, site_config, sections, pages);
-    let stats = renderer.render_all(&ctx.output_dir, render_options)?;
+    let template_vec: Vec<_> = ctx.templates.values().copied().collect();
+    let template_registry = TemplateRegistry::new(&ctx.db, template_vec);
+
+    let mut written = 0;
+
+    // Render sections using tracked queries
+    for route in sections.keys() {
+        let rendered = render_section(&ctx.db, route.clone(), source_registry, template_registry);
+        let html = inject_livereload(&rendered.0, render_options);
+        write_html_output(&ctx.output_dir, route, &html)?;
+        written += 1;
+    }
+
+    // Render pages using tracked queries
+    for route in pages.keys() {
+        let rendered = render_page(&ctx.db, route.clone(), source_registry, template_registry);
+        let html = inject_livereload(&rendered.0, render_options);
+        write_html_output(&ctx.output_dir, route, &html)?;
+        written += 1;
+    }
+
     if let Some(ref p) = progress {
         p.update(|prog| prog.render.finish());
     }
@@ -674,7 +657,10 @@ pub fn rebuild(
         }
     }
 
-    Ok(stats)
+    Ok(render::RenderStats {
+        written,
+        skipped: 0,
+    })
 }
 
 /// Build with TUI progress display
@@ -745,6 +731,9 @@ async fn serve_with_tui(
     let (progress_tx, progress_rx) = tui::progress_channel();
     let (server_tx, server_rx) = tui::server_status_channel();
     let (event_tx, event_rx) = tui::event_channel();
+
+    // Wire up Salsa events to TUI Activity feed
+    crate::db::set_salsa_event_sender(event_tx.clone());
 
     // Live reload state (shared across server restarts)
     let livereload = Arc::new(serve::LiveReloadState::new());

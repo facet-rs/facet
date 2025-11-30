@@ -1,10 +1,11 @@
 use crate::db::{
-    Db, ParsedData, SassFile, SassRegistry, SourceFile, TemplateFile, TemplateRegistry,
+    Db, Page, ParsedData, RenderedHtml, SassFile, SassRegistry, Section, SiteTree, SourceFile,
+    SourceRegistry, TemplateFile, TemplateRegistry,
 };
-use crate::types::{HtmlBody, SassContent, TemplateContent, Title};
+use crate::types::{HtmlBody, Route, SassContent, TemplateContent, Title};
 use facet::Facet;
 use pulldown_cmark::{Options, Parser, html};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Load a template file's content - tracked by Salsa for dependency tracking
 #[salsa::tracked]
@@ -97,6 +98,136 @@ pub fn parse_file(db: &dyn Db, source: SourceFile) -> ParsedData {
         body_html,
         is_section,
     }
+}
+
+/// Build the site tree from all source files
+/// This tracked query depends on all parse_file results
+#[salsa::tracked]
+pub fn build_tree<'db>(db: &'db dyn Db, sources: SourceRegistry<'db>) -> SiteTree {
+    let mut sections: BTreeMap<Route, Section> = BTreeMap::new();
+    let mut pages: BTreeMap<Route, Page> = BTreeMap::new();
+
+    // Parse all files - this creates dependencies on each parse_file
+    let parsed: Vec<ParsedData> = sources
+        .sources(db)
+        .iter()
+        .map(|source| parse_file(db, *source))
+        .collect();
+
+    // First pass: create all sections
+    for data in parsed.iter().filter(|d| d.is_section) {
+        sections.insert(
+            data.route.clone(),
+            Section {
+                route: data.route.clone(),
+                title: data.title.clone(),
+                weight: data.weight,
+                body_html: data.body_html.clone(),
+            },
+        );
+    }
+
+    // Ensure root section exists
+    if !sections.contains_key(&Route::root()) {
+        sections.insert(
+            Route::root(),
+            Section {
+                route: Route::root(),
+                title: Title::from_static("Home"),
+                weight: 0,
+                body_html: HtmlBody::from_static(""),
+            },
+        );
+    }
+
+    // Second pass: create pages and assign to sections
+    for data in parsed.iter().filter(|d| !d.is_section) {
+        let section_route = find_parent_section(&data.route, &sections);
+        pages.insert(
+            data.route.clone(),
+            Page {
+                route: data.route.clone(),
+                title: data.title.clone(),
+                weight: data.weight,
+                body_html: data.body_html.clone(),
+                section_route,
+            },
+        );
+    }
+
+    SiteTree { sections, pages }
+}
+
+/// Find the nearest parent section for a route
+fn find_parent_section(route: &Route, sections: &BTreeMap<Route, Section>) -> Route {
+    let mut current = route.clone();
+
+    loop {
+        if sections.contains_key(&current) && current != *route {
+            return current;
+        }
+
+        match current.parent() {
+            Some(parent) => current = parent,
+            None => return Route::root(),
+        }
+    }
+}
+
+/// Render a single page to HTML
+/// This tracked query depends on the page content, templates, and site tree
+#[salsa::tracked]
+pub fn render_page<'db>(
+    db: &'db dyn Db,
+    route: Route,
+    sources: SourceRegistry<'db>,
+    templates: TemplateRegistry<'db>,
+) -> RenderedHtml {
+    use crate::render::render_page_to_html;
+
+    // Build tree (cached by Salsa)
+    let site_tree = build_tree(db, sources);
+
+    // Load templates (cached by Salsa)
+    let template_map = load_all_templates(db, templates);
+
+    // Find the page
+    let page = site_tree
+        .pages
+        .get(&route)
+        .expect("Page not found for route");
+
+    // Render to HTML
+    let html = render_page_to_html(page, &site_tree, &template_map);
+    RenderedHtml(html)
+}
+
+/// Render a single section to HTML
+/// This tracked query depends on the section content, templates, and site tree
+#[salsa::tracked]
+pub fn render_section<'db>(
+    db: &'db dyn Db,
+    route: Route,
+    sources: SourceRegistry<'db>,
+    templates: TemplateRegistry<'db>,
+) -> RenderedHtml {
+    use crate::render::render_section_to_html;
+
+    // Build tree (cached by Salsa)
+    let site_tree = build_tree(db, sources);
+
+    // Load templates (cached by Salsa)
+    let template_map = load_all_templates(db, templates);
+
+    // Find the section
+    let section = site_tree
+        .sections
+        .get(&route)
+        .expect("Section not found for route");
+
+    // Render to HTML
+    let html = render_section_to_html(section, &site_tree, &template_map);
+    RenderedHtml(html)
 }
 
 /// Split content into frontmatter and body

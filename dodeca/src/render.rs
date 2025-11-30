@@ -1,8 +1,7 @@
-use crate::db::{Database, SassFile, SassRegistry, TemplateFile, TemplateRegistry};
+use crate::db::{Database, Page, SassFile, SassRegistry, Section, TemplateFile, TemplateRegistry};
 use crate::queries::{load_all_sass, load_all_templates};
 use crate::template::{Context, Engine, InMemoryLoader, Value};
 use crate::types::{HtmlBody, Route, RouteRef, SassPath, TemplatePath, Title};
-use crate::{Page, Section};
 use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::Result;
 use maud::{DOCTYPE, Markup, PreEscaped, html};
@@ -1059,4 +1058,270 @@ fn route_to_path(route: &str) -> String {
     } else {
         format!("{}/_index.md", r)
     }
+}
+
+// ============================================================================
+// Pure render functions for Salsa tracked queries
+// ============================================================================
+
+use crate::db::SiteTree;
+
+/// Pure function to render a page to HTML (for Salsa tracking)
+pub fn render_page_to_html(
+    page: &Page,
+    site_tree: &SiteTree,
+    templates: &HashMap<String, String>,
+) -> String {
+    let mut loader = InMemoryLoader::new();
+    for (path, content) in templates {
+        loader.add(path.clone(), content.clone());
+    }
+    let mut engine = Engine::new(loader);
+
+    let mut ctx = build_render_context(site_tree);
+    ctx.set("page", page_to_value(page));
+    ctx.set(
+        "current_path",
+        Value::String(page.route.as_str().to_string()),
+    );
+
+    engine
+        .render("page.html", &ctx)
+        .unwrap_or_else(|e| format!("<!-- Render error: {:?} -->", e))
+}
+
+/// Pure function to render a section to HTML (for Salsa tracking)
+pub fn render_section_to_html(
+    section: &Section,
+    site_tree: &SiteTree,
+    templates: &HashMap<String, String>,
+) -> String {
+    let mut loader = InMemoryLoader::new();
+    for (path, content) in templates {
+        loader.add(path.clone(), content.clone());
+    }
+    let mut engine = Engine::new(loader);
+
+    let mut ctx = build_render_context(site_tree);
+    ctx.set("section", section_to_value(section, site_tree));
+    ctx.set(
+        "current_path",
+        Value::String(section.route.as_str().to_string()),
+    );
+
+    let template_name = if section.route.as_str() == "/" {
+        "index.html"
+    } else {
+        "section.html"
+    };
+
+    engine
+        .render(template_name, &ctx)
+        .unwrap_or_else(|e| format!("<!-- Render error: {:?} -->", e))
+}
+
+/// Build the render context with config and global functions
+fn build_render_context(site_tree: &SiteTree) -> Context {
+    let mut ctx = Context::new();
+
+    // Add config
+    let mut config_map = HashMap::new();
+    config_map.insert("title".to_string(), Value::String("facet".to_string()));
+    config_map.insert(
+        "description".to_string(),
+        Value::String("A Rust reflection library".to_string()),
+    );
+    config_map.insert("base_url".to_string(), Value::String("/".to_string()));
+    ctx.set("config", Value::Dict(config_map));
+
+    // Register get_url function
+    ctx.register_fn(
+        "get_url",
+        Box::new(move |_args, kwargs| {
+            let path = kwargs
+                .iter()
+                .find(|(k, _)| k == "path")
+                .map(|(_, v)| v.to_string())
+                .unwrap_or_default();
+
+            let url = if path.starts_with('/') {
+                path
+            } else if path.is_empty() {
+                "/".to_string()
+            } else {
+                format!("/{}", path)
+            };
+            Ok(Value::String(url))
+        }),
+    );
+
+    // Register get_section function
+    let sections = site_tree.sections.clone();
+    let pages = site_tree.pages.clone();
+    ctx.register_fn(
+        "get_section",
+        Box::new(move |_args, kwargs| {
+            let path = kwargs
+                .iter()
+                .find(|(k, _)| k == "path")
+                .map(|(_, v)| v.to_string())
+                .unwrap_or_default();
+
+            let route = path_to_route(&path);
+
+            if let Some(section) = sections.get(&route) {
+                let mut section_map = HashMap::new();
+                section_map.insert(
+                    "title".to_string(),
+                    Value::String(section.title.as_str().to_string()),
+                );
+                section_map.insert(
+                    "permalink".to_string(),
+                    Value::String(section.route.as_str().to_string()),
+                );
+                section_map.insert("path".to_string(), Value::String(path.clone()));
+                section_map.insert(
+                    "content".to_string(),
+                    Value::String(section.body_html.as_str().to_string()),
+                );
+
+                let section_pages: Vec<Value> = pages
+                    .values()
+                    .filter(|p| p.section_route == section.route)
+                    .map(|p| {
+                        let mut page_map = HashMap::new();
+                        page_map.insert(
+                            "title".to_string(),
+                            Value::String(p.title.as_str().to_string()),
+                        );
+                        page_map.insert(
+                            "permalink".to_string(),
+                            Value::String(p.route.as_str().to_string()),
+                        );
+                        page_map.insert(
+                            "path".to_string(),
+                            Value::String(route_to_path(p.route.as_str())),
+                        );
+                        page_map.insert("weight".to_string(), Value::Int(p.weight as i64));
+                        Value::Dict(page_map)
+                    })
+                    .collect();
+                section_map.insert("pages".to_string(), Value::List(section_pages));
+
+                let subsections: Vec<Value> = sections
+                    .values()
+                    .filter(|s| {
+                        s.route != section.route
+                            && s.route.as_str().starts_with(section.route.as_str())
+                            && s.route.as_str()[section.route.as_str().len()..]
+                                .trim_matches('/')
+                                .chars()
+                                .filter(|c| *c == '/')
+                                .count()
+                                == 0
+                    })
+                    .map(|s| Value::String(route_to_path(s.route.as_str())))
+                    .collect();
+                section_map.insert("subsections".to_string(), Value::List(subsections));
+
+                Ok(Value::Dict(section_map))
+            } else {
+                Ok(Value::None)
+            }
+        }),
+    );
+
+    ctx
+}
+
+/// Convert a Page to a Value for template context
+fn page_to_value(page: &Page) -> Value {
+    let mut map = HashMap::new();
+    map.insert(
+        "title".to_string(),
+        Value::String(page.title.as_str().to_string()),
+    );
+    map.insert(
+        "content".to_string(),
+        Value::String(page.body_html.as_str().to_string()),
+    );
+    map.insert(
+        "permalink".to_string(),
+        Value::String(page.route.as_str().to_string()),
+    );
+    map.insert(
+        "path".to_string(),
+        Value::String(route_to_path(page.route.as_str())),
+    );
+    map.insert("weight".to_string(), Value::Int(page.weight as i64));
+    map.insert("toc".to_string(), Value::List(vec![]));
+    Value::Dict(map)
+}
+
+/// Convert a Section to a Value for template context
+fn section_to_value(section: &Section, site_tree: &SiteTree) -> Value {
+    let mut map = HashMap::new();
+    map.insert(
+        "title".to_string(),
+        Value::String(section.title.as_str().to_string()),
+    );
+    map.insert(
+        "content".to_string(),
+        Value::String(section.body_html.as_str().to_string()),
+    );
+    map.insert(
+        "permalink".to_string(),
+        Value::String(section.route.as_str().to_string()),
+    );
+    map.insert(
+        "path".to_string(),
+        Value::String(route_to_path(section.route.as_str())),
+    );
+    map.insert("weight".to_string(), Value::Int(section.weight as i64));
+
+    // Add pages in this section
+    let section_pages: Vec<Value> = site_tree
+        .pages
+        .values()
+        .filter(|p| p.section_route == section.route)
+        .map(|p| {
+            let mut page_map = HashMap::new();
+            page_map.insert(
+                "title".to_string(),
+                Value::String(p.title.as_str().to_string()),
+            );
+            page_map.insert(
+                "permalink".to_string(),
+                Value::String(p.route.as_str().to_string()),
+            );
+            page_map.insert(
+                "path".to_string(),
+                Value::String(route_to_path(p.route.as_str())),
+            );
+            page_map.insert("weight".to_string(), Value::Int(p.weight as i64));
+            Value::Dict(page_map)
+        })
+        .collect();
+    map.insert("pages".to_string(), Value::List(section_pages));
+
+    // Add subsections
+    let subsections: Vec<Value> = site_tree
+        .sections
+        .values()
+        .filter(|s| {
+            s.route != section.route
+                && s.route.as_str().starts_with(section.route.as_str())
+                && s.route.as_str()[section.route.as_str().len()..]
+                    .trim_matches('/')
+                    .chars()
+                    .filter(|c| *c == '/')
+                    .count()
+                    == 0
+        })
+        .map(|s| Value::String(route_to_path(s.route.as_str())))
+        .collect();
+    map.insert("subsections".to_string(), Value::List(subsections));
+    map.insert("toc".to_string(), Value::List(vec![]));
+
+    Value::Dict(map)
 }
