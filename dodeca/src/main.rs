@@ -37,6 +37,10 @@ enum Command {
         /// Output directory (uses .config/dodeca.kdl if not specified)
         #[arg(short, long)]
         output: Option<Utf8PathBuf>,
+
+        /// Show TUI progress display
+        #[arg(long)]
+        tui: bool,
     },
 
     /// Build and serve with live reload
@@ -104,9 +108,18 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Build { content, output } => {
+        Command::Build {
+            content,
+            output,
+            tui: use_tui,
+        } => {
             let (content_dir, output_dir) = resolve_dirs(content, output)?;
-            build(&content_dir, &output_dir, BuildMode::Full)?;
+
+            if use_tui {
+                build_with_tui(&content_dir, &output_dir)?;
+            } else {
+                build(&content_dir, &output_dir, BuildMode::Full, None)?;
+            }
         }
         Command::Serve {
             content,
@@ -119,7 +132,7 @@ async fn main() -> Result<()> {
 
             // Build first, then show URLs
             println!("{}", "Building...".dimmed());
-            build(&content_dir, &output_dir, BuildMode::Quick)?;
+            build(&content_dir, &output_dir, BuildMode::Quick, None)?;
 
             // Print where the server is available
             print_server_urls(&address, port);
@@ -348,6 +361,7 @@ pub fn build(
     content_dir: &Utf8PathBuf,
     output_dir: &Utf8PathBuf,
     mode: BuildMode,
+    progress: Option<tui::SharedProgress>,
 ) -> Result<BuildContext> {
     let mut ctx = BuildContext::new(content_dir, output_dir);
 
@@ -355,21 +369,87 @@ pub fn build(
     ctx.load_sources()?;
 
     // Phase 2: Parse all files (memoized by Salsa)
+    if let Some(ref p) = progress {
+        let mut prog = p.lock().unwrap();
+        prog.parse.start(ctx.sources.len());
+    }
     let parsed = ctx.parse_all();
+    if let Some(ref p) = progress {
+        let mut prog = p.lock().unwrap();
+        prog.parse.finish();
+    }
 
     // Phase 3: Build the site tree
     let (sections, pages) = build_tree(&parsed);
 
     // Phase 4: Render all pages
+    if let Some(ref p) = progress {
+        let mut prog = p.lock().unwrap();
+        prog.render.start(sections.len() + pages.len());
+    }
     render::render_all(&sections, &pages, output_dir)?;
+    if let Some(ref p) = progress {
+        let mut prog = p.lock().unwrap();
+        prog.render.finish();
+    }
 
     // Phase 5: Compile Sass
+    if let Some(ref p) = progress {
+        let mut prog = p.lock().unwrap();
+        prog.sass.start(1);
+    }
     render::compile_sass(content_dir, output_dir)?;
+    if let Some(ref p) = progress {
+        let mut prog = p.lock().unwrap();
+        prog.sass.finish();
+    }
 
     if mode == BuildMode::Full {
         // TODO: check_links().await?;
         // TODO: build_search_index(output_dir).await?;
+        if let Some(ref p) = progress {
+            let mut prog = p.lock().unwrap();
+            prog.links.finish();
+            prog.search.finish();
+        }
     }
 
     Ok(ctx)
+}
+
+/// Build with TUI progress display
+fn build_with_tui(content_dir: &Utf8PathBuf, output_dir: &Utf8PathBuf) -> Result<()> {
+    use std::io::IsTerminal;
+
+    // Check if we're running in a terminal
+    if !std::io::stdout().is_terminal() {
+        eprintln!(
+            "{}",
+            "TUI requires a terminal, falling back to normal build".yellow()
+        );
+        return build(content_dir, output_dir, BuildMode::Full, None).map(|_| ());
+    }
+
+    let progress = tui::new_shared_progress();
+
+    // Spawn build in a separate thread
+    let content = content_dir.clone();
+    let output = output_dir.clone();
+    let build_progress = progress.clone();
+
+    let build_handle =
+        std::thread::spawn(move || build(&content, &output, BuildMode::Full, Some(build_progress)));
+
+    // Run TUI on main thread
+    let mut terminal = tui::init_terminal()?;
+    let mut app = tui::App::new(progress);
+    let _ = app.run(&mut terminal);
+    tui::restore_terminal()?;
+
+    // Wait for build to complete
+    build_handle
+        .join()
+        .map_err(|_| color_eyre::eyre::eyre!("Build thread panicked"))??;
+
+    Ok(())
 }
