@@ -46,6 +46,13 @@ grass = "0.13"
 color-eyre = "0.6"
 miette = { version = "7", features = ["fancy"] }
 thiserror = "2"
+owo-colors = "4"
+
+# Open in browser
+open = "5"
+
+# Network interfaces
+if-addrs = "0.14"
 
 # Incremental computation
 salsa = "0.19"

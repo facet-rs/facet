@@ -1,0 +1,3 @@
+// Dodeca configuration for facet docs
+content "docs/content"
+output "docs/public"

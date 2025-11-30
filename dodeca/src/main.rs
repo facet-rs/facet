@@ -15,6 +15,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Parser, Subcommand};
 use color_eyre::{Result, eyre::eyre};
 use ignore::WalkBuilder;
+use owo_colors::OwoColorize;
 use std::collections::BTreeMap;
 use std::fs;
 
@@ -55,6 +56,10 @@ enum Command {
         /// Port to serve on
         #[arg(short, long, default_value = "4000")]
         port: u16,
+
+        /// Open browser after starting server
+        #[arg(long)]
+        open: bool,
     },
 }
 
@@ -77,17 +82,19 @@ fn resolve_dirs(
             let output_dir = output.unwrap_or(cfg.output_dir);
             Ok((content_dir, output_dir))
         }
-        None => {
-            // No config found - use defaults or error if partially specified
-            if content.is_some() || output.is_some() {
-                Err(eyre!(
-                    "No .config/dodeca.kdl found. Please specify both --content and --output, or create a config file."
-                ))
-            } else {
-                // Default fallback (for backwards compatibility)
-                Ok((Utf8PathBuf::from("content"), Utf8PathBuf::from("public")))
-            }
-        }
+        None => Err(eyre!(
+            "{}\n\n\
+                 Create a config file at {} with:\n\n\
+                 \x20   {}\n\
+                 \x20   {}\n\n\
+                 Or specify both {} and {} on the command line.",
+            "No configuration found.".red().bold(),
+            ".config/dodeca.kdl".cyan(),
+            "content \"path/to/content\"".green(),
+            "output \"path/to/output\"".green(),
+            "--content".yellow(),
+            "--output".yellow()
+        )),
     }
 }
 
@@ -106,13 +113,57 @@ async fn main() -> Result<()> {
             output,
             address,
             port,
+            open,
         } => {
             let (content_dir, output_dir) = resolve_dirs(content, output)?;
+
+            // Print where the server is available
+            print_server_urls(&address, port);
+
+            // Open browser if requested
+            if open {
+                let url = format!("http://127.0.0.1:{}", port);
+                if let Err(e) = open::that(&url) {
+                    eprintln!("{} Failed to open browser: {}", "warning:".yellow(), e);
+                }
+            }
+
             serve::run(&content_dir, &output_dir, &address, port).await?;
         }
     }
 
     Ok(())
+}
+
+/// Print server URLs with terminal hyperlinks
+fn print_server_urls(address: &str, port: u16) {
+    println!("\n{}", "Server running at:".bold());
+
+    if address == "0.0.0.0" {
+        // List all interfaces
+        if let Ok(interfaces) = if_addrs::get_if_addrs() {
+            for iface in interfaces {
+                if let if_addrs::IfAddr::V4(addr) = iface.addr {
+                    let ip = addr.ip;
+                    let url = format!("http://{}:{}", ip, port);
+                    println!("  {} {}", "→".cyan(), terminal_link(&url, &url));
+                }
+            }
+        }
+    } else {
+        let url = format!("http://{}:{}", address, port);
+        println!("  {} {}", "→".cyan(), terminal_link(&url, &url));
+    }
+    println!();
+}
+
+/// Create an OSC 8 terminal hyperlink
+fn terminal_link(url: &str, text: &str) -> String {
+    format!(
+        "\x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\",
+        url,
+        text.blue().underline()
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
