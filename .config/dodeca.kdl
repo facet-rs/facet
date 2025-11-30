@@ -1,0 +1,9 @@
+// Dodeca configuration for facet docs
+content "docs/content"
+output "docs/public"
+
+// Link checking configuration
+link_check {
+    // Domains to skip (anti-bot policies)
+    // skip_domain "example.com"
+}

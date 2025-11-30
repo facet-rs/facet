@@ -69,23 +69,16 @@ name = "facet-macros"
 version = "0.31.8"
 dependencies = [
  "facet-core",
- "facet-macros-emit",
+ "facet-macros-impl",
 ]
 
 [[package]]
-name = "facet-macros-emit"
-version = "0.31.8"
-dependencies = [
- "facet-macros-parse",
- "quote",
-]
-
-[[package]]
-name = "facet-macros-parse"
+name = "facet-macros-impl"
 version = "0.31.8"
 dependencies = [
  "proc-macro2",
  "quote",
+ "strsim",
  "unsynn",
 ]
 
@@ -219,6 +212,12 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "strsim"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "syn"

@@ -1,14 +1,12 @@
-# facet-macros-impl
+# dodeca
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-macros-impl/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-macros-impl.svg)](https://crates.io/crates/facet-macros-impl)
-[![documentation](https://docs.rs/facet-macros-impl/badge.svg)](https://docs.rs/facet-macros-impl)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-macros-impl.svg)](./LICENSE)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/dodeca/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![crates.io](https://img.shields.io/crates/v/dodeca.svg)](https://crates.io/crates/dodeca)
+[![documentation](https://docs.rs/dodeca/badge.svg)](https://docs.rs/dodeca)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/dodeca.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-Implementation of facet derive macros, combining parsing and code generation.
-
-Internal implementation details for facet-macros. This crate contains the actual proc-macro logic and is re-exported through facet-macros.
+A static site generator for the facet documentation website. Features incremental builds via Salsa, font subsetting, OG image generation with Typst, and a live-reload dev server.
 
 ## Sponsors
 

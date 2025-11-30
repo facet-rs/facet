@@ -3,39 +3,7 @@
 {% block title %}{{ section.title | default(value=config.title) }}{% endblock title %}
 
 {% block content %}
-<div class="page-layout">
-    <aside class="toc">
-        <nav>
-            <h2>Contents</h2>
-            {% if section.toc %}
-            <ul>
-            {% for h1 in section.toc %}
-                <li>
-                    <a href="{{ h1.permalink }}">{{ h1.title }}</a>
-                    {% if h1.children %}
-                    <ul>
-                        {% for h2 in h1.children %}
-                        <li>
-                            <a href="{{ h2.permalink }}">{{ h2.title }}</a>
-                            {% if h2.children %}
-                            <ul>
-                                {% for h3 in h2.children %}
-                                <li><a href="{{ h3.permalink }}">{{ h3.title }}</a></li>
-                                {% endfor %}
-                            </ul>
-                            {% endif %}
-                        </li>
-                        {% endfor %}
-                    </ul>
-                    {% endif %}
-                </li>
-            {% endfor %}
-            </ul>
-            {% endif %}
-        </nav>
-    </aside>
-    <main class="content">
-        {{ section.content | safe }}
-    </main>
-</div>
+<main class="content home-content">
+    {{ section.content | safe }}
+</main>
 {% endblock content %}

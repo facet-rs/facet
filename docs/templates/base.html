@@ -17,10 +17,9 @@
             <span>facet</span>
         </a>
         <div class="site-nav-links">
-            <a href="/">Home</a>
-            <a href="/showcases/kdl/">Showcases</a>
-            <a href="/format-crate-matrix/">Formats</a>
-            <a href="/serde-comparison/">Serde</a>
+            <a href="/learn/" {% if current_path is starting_with("/learn") %}class="active"{% endif %}>Learn</a>
+            <a href="/extend/" {% if current_path is starting_with("/extend") %}class="active"{% endif %}>Extend</a>
+            <a href="/contribute/" {% if current_path is starting_with("/contribute") %}class="active"{% endif %}>Contribute</a>
         </div>
         <div id="search" class="site-nav-search"></div>
         <a href="https://github.com/facet-rs/facet" class="site-nav-github" title="GitHub">
@@ -29,9 +28,13 @@
             </svg>
         </a>
     </nav>
+
+    {% block body %}
     <div class="container">
         {% block content %}{% endblock content %}
     </div>
+    {% endblock body %}
+
     <script src="/pagefind/pagefind-ui.js"></script>
     <script>
     document.addEventListener('DOMContentLoaded', function() {
