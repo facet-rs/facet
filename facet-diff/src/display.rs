@@ -122,9 +122,9 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                         }
 
                         if has_prefix {
-                            write!(f, " {}\n", punct("{"))?;
+                            writeln!(f, " {}", punct("{"))?;
                         } else {
-                            write!(f, "{}\n", punct("{"))?;
+                            writeln!(f, "{}", punct("{"))?;
                         }
                         let mut indent = PadAdapter::new_indented(f);
 
@@ -206,7 +206,7 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                 if updates.is_empty() {
                     write!(f, "{}", muted("(structurally equal)"))
                 } else {
-                    write!(f, "{}\n", punct("["))?;
+                    writeln!(f, "{}", punct("["))?;
                     let mut indent = PadAdapter::new_indented(f);
                     write!(indent, "{updates}")?;
                     write!(f, "{}", punct("]"))

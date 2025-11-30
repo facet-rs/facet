@@ -563,27 +563,20 @@ name = "facet-macros"
 version = "0.31.8"
 dependencies = [
  "facet-core",
- "facet-macros-emit",
+ "facet-macros-impl",
 ]
 
 [[package]]
-name = "facet-macros-emit"
+name = "facet-macros-impl"
 version = "0.31.8"
 dependencies = [
- "facet-macros-parse",
  "insta",
  "owo-colors",
- "quote",
- "rust-format",
- "tempfile",
-]
-
-[[package]]
-name = "facet-macros-parse"
-version = "0.31.8"
-dependencies = [
  "proc-macro2",
  "quote",
+ "rust-format",
+ "strsim",
+ "tempfile",
  "unsynn",
 ]
 
@@ -1503,54 +1496,6 @@ dependencies = [
  "rusty-fork",
  "tempfile",
  "unarray",
-]
-
-[[package]]
-name = "proto-attr"
-version = "0.1.0"
-dependencies = [
- "proto-attr-core",
- "proto-attr-macros",
-]
-
-[[package]]
-name = "proto-attr-core"
-version = "0.1.0"
-
-[[package]]
-name = "proto-attr-macros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "strsim",
- "unsynn",
-]
-
-[[package]]
-name = "proto-ext"
-version = "0.1.0"
-dependencies = [
- "facet-showcase",
- "proto-attr",
- "proto-attr-macros",
- "tempfile",
-]
-
-[[package]]
-name = "proto-ext-gen"
-version = "0.1.0"
-dependencies = [
- "proto-attr",
- "proto-attr-macros",
-]
-
-[[package]]
-name = "proto-user"
-version = "0.1.0"
-dependencies = [
- "proto-attr",
- "proto-ext",
 ]
 
 [[package]]

@@ -40,15 +40,14 @@ macro_rules! __attr {
     (arguments { $($tt:tt)* }) => { $crate::__arguments!{ $($tt)* } };
     (node_name { $($tt:tt)* }) => { $crate::__node_name!{ $($tt)* } };
 
-    // Unknown attribute: use proc macro to get error span on the unknown identifier.
+    // Unknown attribute: use __attr_error! for typo suggestions
     ($unknown:ident $($tt:tt)*) => {
-        ::facet::__unknown_attr!($unknown)
+        ::facet::__attr_error!(
+            @known_attrs { child, children, property, argument, arguments, node_name }
+            @got_name { $unknown }
+            @got_rest { $($tt)* }
+        )
     };
-}
-
-#[doc(hidden)]
-pub mod __unknown {
-    //! Valid kdl attributes: child, children, property, argument, arguments, node_name
 }
 
 /// Marks a field as a KDL child node.

@@ -19,10 +19,10 @@ categories = ["development-tools", "encoding"]
 proc-macro = true
 
 [features]
-function = ["facet-macros-emit/function"]
+function = ["facet-macros-impl/function"]
 
 [dependencies]
-facet-macros-emit = { version = "0.31.8", path = "../facet-macros-emit" }
+facet-macros-impl = { version = "0.31.8", path = "../facet-macros-impl" }
 
 # cf. https://hachyderm.io/@epage/114141126315983016
 [target.'cfg(any())'.dependencies]

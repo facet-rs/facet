@@ -230,7 +230,7 @@ fn test_invalid_kdl_attr_fails_to_compile() {
     let test = CompilationTest {
         name: "invalid_kdl_nonexistent",
         source: include_str!("compile_tests/invalid_kdl_nonexistent.rs"),
-        expected_errors: &["unknown extension attribute"],
+        expected_errors: &["unknown attribute"],
         should_compile: false,
     };
     run_compilation_test(&test);
@@ -242,7 +242,8 @@ fn test_typo_kdl_chld_fails_to_compile() {
     let test = CompilationTest {
         name: "typo_kdl_chld",
         source: include_str!("compile_tests/typo_kdl_chld.rs"),
-        expected_errors: &["unknown extension attribute"],
+        // New error format includes typo suggestion
+        expected_errors: &["unknown attribute", "did you mean"],
         should_compile: false,
     };
     run_compilation_test(&test);

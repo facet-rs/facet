@@ -58,11 +58,13 @@ pub mod serde {
 macro_rules! __serde_attr {
     (rename { $($tt:tt)* }) => { $crate::__serde_rename!{ $($tt)* } };
 
+    // Unknown attribute: use __attr_error! for typo suggestions
     ($unknown:ident $($tt:tt)*) => {
-        ::core::compile_error!(::core::concat!(
-            "unknown serde attribute `", ::core::stringify!($unknown), "`. ",
-            "expected one of: rename"
-        ))
+        ::facet::__attr_error!(
+            @known_attrs { rename }
+            @got_name { $unknown }
+            @got_rest { $($tt)* }
+        )
     };
 }
 

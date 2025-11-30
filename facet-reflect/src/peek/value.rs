@@ -8,8 +8,8 @@ use facet_core::{Field, FieldAttribute};
 use crate::{PeekNdArray, PeekSet, ReflectError, ScalarType};
 
 use super::{
-    tuple::TupleType, ListLikeDef, PeekDynamicValue, PeekEnum, PeekList, PeekListLike, PeekMap,
-    PeekOption, PeekPointer, PeekStruct, PeekTuple,
+    ListLikeDef, PeekDynamicValue, PeekEnum, PeekList, PeekListLike, PeekMap, PeekOption,
+    PeekPointer, PeekStruct, PeekTuple, tuple::TupleType,
 };
 
 #[cfg(feature = "alloc")]
