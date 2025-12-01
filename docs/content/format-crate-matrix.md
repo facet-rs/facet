@@ -18,9 +18,9 @@ Note: S = Serialization, D = Deserialization
 
 | Crate | Direction | Format Type | Parser | Showcase |
 |-------|-----------|-------------|--------|----------|
-| [facet-json](https://docs.rs/facet-json) | SD | Text | Event-based (custom) | [View](/learn/showcases/json/) |
-| [facet-kdl](https://docs.rs/facet-kdl) | SD | Text (node-based) | DOM ([kdl-rs](https://docs.rs/kdl)) | [View](/learn/showcases/kdl/) |
-| [facet-yaml](https://docs.rs/facet-yaml) | SD | Text | Event-based ([saphyr](https://docs.rs/saphyr)) | [View](/learn/showcases/yaml/) |
+| [facet-json](https://docs.rs/facet-json) | SD | Text | Event-based (custom) | [View](/learn/showcases/json) |
+| [facet-kdl](https://docs.rs/facet-kdl) | SD | Text (node-based) | DOM ([kdl-rs](https://docs.rs/kdl)) | [View](/learn/showcases/kdl) |
+| [facet-yaml](https://docs.rs/facet-yaml) | SD | Text | Event-based ([saphyr](https://docs.rs/saphyr)) | [View](/learn/showcases/yaml) |
 | [facet-toml](https://docs.rs/facet-toml) | SD | Text | DOM ([toml_edit](https://docs.rs/toml_edit)) | 🚫 |
 | [facet-msgpack](https://docs.rs/facet-msgpack) | SD | Binary | Event-based (custom) | 🚫 |
 | [facet-asn1](https://docs.rs/facet-asn1) | S | Binary | (Custom) | 🚫 |
