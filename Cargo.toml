@@ -40,9 +40,6 @@ members = [
 
     # showcase infrastructure
     "facet-showcase",
-
-    # docs site generator
-    "dodeca",
 ]
 exclude = [
     # proto-attr experiment uses nightly features
