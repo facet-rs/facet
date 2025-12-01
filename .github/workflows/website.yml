@@ -8,9 +8,7 @@ on:
       - 'docs/**'
       - '.github/workflows/website.yml'
       - 'facet-showcase/**'
-      - 'facet-json/examples/*showcase*.rs'
-      - 'facet-yaml/examples/*showcase*.rs'
-      - 'facet-kdl/examples/*showcase*.rs'
+      - 'facet-*/examples/*showcase*.rs'
   workflow_dispatch:
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
@@ -31,29 +29,37 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
 
-      - name: Setup Rust toolchain (nightly for cargo -Zscript)
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Generate showcases
+        run: |
+          mkdir -p docs/content/showcases
 
-      - name: Install Zola
-        uses: taiki-e/install-action@v2
-        with:
-          tool: zola@0.19.2
+          # Discover and run all *_showcase examples
+          for example in $(find . -path "*/examples/*_showcase.rs" -type f); do
+            # Extract package name from path (e.g., ./facet-json/examples/json_showcase.rs -> facet-json)
+            pkg=$(echo "$example" | sed 's|^\./||' | cut -d'/' -f1)
+            # Extract example name without .rs (e.g., json_showcase)
+            name=$(basename "$example" .rs)
+            # Output name (strip _showcase suffix)
+            output=$(echo "$name" | sed 's/_showcase$//')
 
-      - name: Install cargo-binstall
-        uses: cargo-bins/cargo-binstall@main
+            echo "Running $pkg::$name -> $output.md"
+            FACET_SHOWCASE_OUTPUT=markdown cargo run -p "$pkg" --example "$name" > "docs/content/showcases/$output.md" 2>/dev/null || echo "Warning: $name failed"
+          done
 
-      - name: Build website
-        run: ./docs/build-website.rs
+      - name: Install dodeca
+        run: |
+          curl -fsSL https://github.com/bearcove/dodeca/releases/download/v0.1.0/dodeca-x86_64-unknown-linux-gnu.tar.xz | tar -xJf -
+          sudo mv dodeca-x86_64-unknown-linux-gnu/ddc /usr/local/bin/
+
+      - name: Build website with dodeca
+        run: ddc build
+        working-directory: docs
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
