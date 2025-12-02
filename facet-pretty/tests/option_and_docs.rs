@@ -55,7 +55,9 @@ fn test_doc_comments_in_pretty_printing() {
         opt_field: Some("test".to_string()),
     };
 
-    let formatted = PrettyPrinter::new().format(&test_struct);
+    // Doc comments are disabled by default, must enable them
+    let printer = PrettyPrinter::new().with_doc_comments(true);
+    let formatted = printer.format(&test_struct);
 
     eprintln!("\n===== TestStruct with doc comments =====\n{}", formatted);
 
@@ -74,7 +76,7 @@ fn test_doc_comments_in_pretty_printing() {
     let struct_variant = TestEnum::Struct { field: true };
 
     // Check unit variant formatting
-    let formatted = PrettyPrinter::new().format(&unit);
+    let formatted = printer.format(&unit);
     eprintln!(
         "\n===== TestEnum::Unit with doc comments =====\n{}",
         formatted
@@ -85,7 +87,7 @@ fn test_doc_comments_in_pretty_printing() {
     assert!(formatted.contains("Unit variant with a doc comment"));
 
     // Check tuple variant formatting
-    let formatted = PrettyPrinter::new().format(&tuple);
+    let formatted = printer.format(&tuple);
     eprintln!(
         "\n===== TestEnum::Tuple with doc comments =====\n{}",
         formatted
@@ -96,7 +98,7 @@ fn test_doc_comments_in_pretty_printing() {
     assert!(formatted.contains("Tuple variant with a doc comment"));
 
     // Check struct variant formatting
-    let formatted = PrettyPrinter::new().format(&struct_variant);
+    let formatted = printer.format(&struct_variant);
     eprintln!(
         "\n===== TestEnum::Struct with doc comments =====\n{}",
         formatted
