@@ -28,6 +28,7 @@ members = [
     "facet-toml",
     "facet-args",
     "facet-msgpack",
+    "facet-postcard",
     "facet-urlencoded",
     "facet-csv",
     "facet-xdr",
