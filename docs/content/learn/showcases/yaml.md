@@ -226,16 +226,16 @@ title = "YAML"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
-  "<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">1</span><span style="opacity:0.7">,</span>
   "<span style="color:rgb(158,206,106)">two</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">2</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">1</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
 <h4>YAML Output</h4>
 <pre style="background-color:#1a1b26;">
 <span style="color:#c0caf5;">---
-</span><span style="color:#f7768e;">one</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">1
-</span><span style="color:#f7768e;">two</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">2</span></pre>
+</span><span style="color:#f7768e;">two</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">2
+</span><span style="color:#f7768e;">one</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">1</span></pre>
 
 </div>
 </section>

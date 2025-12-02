@@ -186,6 +186,8 @@ fn main() {
     scenario_unknown_flag(&mut runner);
     scenario_unknown_flag_suggestion(&mut runner);
     scenario_invalid_short_flag(&mut runner);
+    scenario_triple_dash(&mut runner);
+    scenario_single_dash_long_name(&mut runner);
     scenario_missing_value(&mut runner);
     scenario_missing_required_arg(&mut runner);
     scenario_unexpected_positional(&mut runner);
@@ -391,6 +393,33 @@ fn scenario_invalid_short_flag(runner: &mut ShowcaseRunner) {
         .description("Boolean short flags cannot have trailing characters attached.")
         .target_type::<SimpleArgs>()
         .input(Language::Rust, "from_slice(&[\"-vxyz\", \"input.txt\"])")
+        .result(&result)
+        .finish();
+}
+
+fn scenario_triple_dash(runner: &mut ShowcaseRunner) {
+    let result: Result<SimpleArgs, _> = args::from_slice(&["---verbose", "input.txt"]);
+
+    runner
+        .scenario("Triple Dash Flag")
+        .description("Flags with too many dashes are rejected.")
+        .target_type::<SimpleArgs>()
+        .input(
+            Language::Rust,
+            "from_slice(&[\"---verbose\", \"input.txt\"])",
+        )
+        .result(&result)
+        .finish();
+}
+
+fn scenario_single_dash_long_name(runner: &mut ShowcaseRunner) {
+    let result: Result<SimpleArgs, _> = args::from_slice(&["-verbose", "input.txt"]);
+
+    runner
+        .scenario("Single Dash with Long Name")
+        .description("Long flag names require double dashes.")
+        .target_type::<SimpleArgs>()
+        .input(Language::Rust, "from_slice(&[\"-verbose\", \"input.txt\"])")
         .result(&result)
         .finish();
 }

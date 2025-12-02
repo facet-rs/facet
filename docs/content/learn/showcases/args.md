@@ -890,6 +890,108 @@ title = "Args"
 </div>
 </section>
 
+### Triple Dash Flag
+
+<section class="scenario">
+<p class="description">Flags with too many dashes are rejected.</p>
+<details class="target-type">
+<summary>Target Type</summary>
+<pre style="background-color:#1a1b26;">
+<span style="font-style:italic;color:#565f89;">/// A simple CLI tool for file processing.
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">SimpleArgs </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Enable verbose output
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">named, </span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">short)]
+</span><span style="color:#9abdf5;">    verbose</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">bool</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Number of parallel jobs to run
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">named, </span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">short)]
+</span><span style="color:#9abdf5;">    jobs</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#bb9af7;">usize</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Input file to process
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">positional)]
+</span><span style="color:#9abdf5;">    input</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Output file (defaults to stdout)
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">positional)]
+</span><span style="color:#9abdf5;">    output</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#9abdf5;">String</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">}</span></pre>
+
+</details>
+<div class="input">
+<h4>Rust Input</h4>
+<pre style="background-color:#1a1b26;">
+<span style="color:#2ac3de;">from_slice</span><span style="color:#9abdf5;">(</span><span style="color:#89ddff;">&amp;</span><span style="color:#9abdf5;">[</span><span style="color:#89ddff;">&quot;</span><span style="color:#9ece6a;">---verbose</span><span style="color:#89ddff;">&quot;, &quot;</span><span style="color:#9ece6a;">input.txt</span><span style="color:#89ddff;">&quot;</span><span style="color:#9abdf5;">])</span></pre>
+
+</div>
+<div class="error">
+<h4>Error</h4>
+<pre><code><span style="color:#e06c75">args::unknown_long_flag</span>
+
+  <span style="color:#e06c75">×</span> Could not parse CLI arguments
+   ╭────
+ <span style="opacity:0.7">1</span> │ ---verbose input.txt 
+   · <span style="color:#c678dd;font-weight:bold">─────┬────</span>
+   ·      <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown flag &#96;---verbose&#96;</span>
+   ╰────
+<span style="color:#56b6c2">  help: </span>available options:
+          <span style="color:#56b6c2">-v, --verbose</span>  <span style="opacity:0.7">Enable verbose output</span>
+          <span style="color:#56b6c2">-j, --jobs</span>     <span style="opacity:0.7">Number of parallel jobs to run</span>
+          <span style="color:#56b6c2">    &lt;input&gt;</span>    <span style="opacity:0.7">Input file to process</span>
+          <span style="color:#56b6c2">    &lt;output&gt;</span>   <span style="opacity:0.7">Output file (defaults to stdout)</span>
+</code></pre>
+</div>
+</section>
+
+### Single Dash with Long Name
+
+<section class="scenario">
+<p class="description">Long flag names require double dashes.</p>
+<details class="target-type">
+<summary>Target Type</summary>
+<pre style="background-color:#1a1b26;">
+<span style="font-style:italic;color:#565f89;">/// A simple CLI tool for file processing.
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">SimpleArgs </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Enable verbose output
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">named, </span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">short)]
+</span><span style="color:#9abdf5;">    verbose</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">bool</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Number of parallel jobs to run
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">named, </span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">short)]
+</span><span style="color:#9abdf5;">    jobs</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#bb9af7;">usize</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Input file to process
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">positional)]
+</span><span style="color:#9abdf5;">    input</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Output file (defaults to stdout)
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">positional)]
+</span><span style="color:#9abdf5;">    output</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#9abdf5;">String</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">}</span></pre>
+
+</details>
+<div class="input">
+<h4>Rust Input</h4>
+<pre style="background-color:#1a1b26;">
+<span style="color:#2ac3de;">from_slice</span><span style="color:#9abdf5;">(</span><span style="color:#89ddff;">&amp;</span><span style="color:#9abdf5;">[</span><span style="color:#89ddff;">&quot;</span><span style="color:#9ece6a;">-verbose</span><span style="color:#89ddff;">&quot;, &quot;</span><span style="color:#9ece6a;">input.txt</span><span style="color:#89ddff;">&quot;</span><span style="color:#9abdf5;">])</span></pre>
+
+</div>
+<div class="error">
+<h4>Error</h4>
+<pre><code><span style="color:#e06c75">args::unknown_short_flag</span>
+
+  <span style="color:#e06c75">×</span> Could not parse CLI arguments
+   ╭────
+ <span style="opacity:0.7">1</span> │ -verbose input.txt 
+   · <span style="color:#c678dd;font-weight:bold">────┬───</span>
+   ·     <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown flag &#96;-verbose&#96;</span>
+   ╰────
+<span style="color:#56b6c2">  help: </span>&#96;-verbose&#96; is &#96;--verbose&#96;
+</code></pre>
+</div>
+</section>
+
 ### Missing Value
 
 <section class="scenario">
