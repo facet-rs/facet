@@ -45,6 +45,7 @@ fn main() {
     let mode = runner.mode();
 
     runner.header();
+    runner.intro("[`facet-assert`](https://docs.rs/facet-assert) provides structural assertions for any `Facet` type without requiring `PartialEq` or `Debug`. Compare values across different types with identical structure, and get precise structural diffs showing exactly which fields differ.");
 
     // Scenario 1: Same values pass
     scenario_same_values(&mut runner, mode);

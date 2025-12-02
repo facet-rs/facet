@@ -35,6 +35,31 @@
     </div>
     {% endblock body %}
 
+    <footer class="site-footer">
+        <div class="footer-content">
+            <div class="footer-section">
+                <h4>Documentation</h4>
+                <ul>
+                    <li><a href="/learn">Learn</a></li>
+                    <li><a href="/extend">Extend</a></li>
+                    <li><a href="/contribute">Contribute</a></li>
+                </ul>
+            </div>
+            <div class="footer-section">
+                <h4>Community</h4>
+                <ul>
+                    <li><a href="https://github.com/facet-rs/facet">GitHub</a></li>
+                    <li><a href="https://discord.gg/JhD7CwCJ8F">Discord</a></li>
+                    <li><a href="https://crates.io/crates/facet">crates.io</a></li>
+                    <li><a href="https://docs.rs/facet">docs.rs</a></li>
+                </ul>
+            </div>
+            <div class="footer-section footer-meta">
+                <p>Licensed under MIT/Apache-2.0</p>
+            </div>
+        </div>
+    </footer>
+
     <script src="/pagefind/pagefind-ui.js"></script>
     <script>
     document.addEventListener('DOMContentLoaded', function() {
@@ -54,12 +79,14 @@
         }
 
         // Initialize Pagefind
+        const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+        const searchShortcut = isMac ? '⌘K' : 'Ctrl+K';
         new PagefindUI({
             element: "#search",
             showSubResults: true,
             showImages: false,
             translations: {
-                placeholder: "Search ⌘K"
+                placeholder: `Search ${searchShortcut}`
             }
         });
 

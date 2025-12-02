@@ -6,6 +6,8 @@ insert_anchor_links = "heading"
 
 Learn how to use facet for serialization, deserialization, and more.
 
+**New to facet?** Start with [Why facet?](@/learn/why.md) to understand what facet is and how it differs from serde.
+
 ## Getting Started
 
 Add facet to your project:
@@ -41,8 +43,11 @@ let parsed: Person = from_str(&json)?;
 
 ## Guides
 
-- [Migration from Serde](@/learn/migration/_index.md) — Attribute comparison and migration tips
+- [Why facet?](@/learn/why.md) — What facet is and how it differs from serde
+- [Attributes Reference](@/learn/attributes.md) — Complete reference for `#[facet(...)]` attributes
+- [Comparison with serde](@/learn/migration/_index.md) — Attribute comparison and migration tips
 - [Showcases](@/learn/showcases/_index.md) — Interactive examples for each format
+- [FAQ](@/learn/faq.md) — Frequently asked questions
 
 ## Format Crates
 
@@ -55,3 +60,10 @@ let parsed: Person = from_str(&json)?;
 | MessagePack | `facet-msgpack` | Binary format |
 
 See the [format comparison matrix](@/format-crate-matrix.md) for detailed feature support.
+
+## Next Steps
+
+- Browse the [Showcases](@/learn/showcases/_index.md) to see facet in action
+- Read [Why facet?](@/learn/why.md) if you're curious about the design philosophy
+- Check the [Attributes Reference](@/learn/attributes.md) for all available options
+- Join the [Discord](https://discord.gg/JhD7CwCJ8F) to ask questions

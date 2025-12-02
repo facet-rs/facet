@@ -149,6 +149,7 @@ fn main() {
     let mut runner = ShowcaseRunner::new("Args").language(Language::Rust);
 
     runner.header();
+    runner.intro("[`facet-args`](https://docs.rs/facet-args) turns any `Facet` struct into a command-line interface. Define your CLI with doc comments and attributes like `args::named`, `args::positional`, and `args::subcommand`. Get auto-generated help text, shell completions for bash/zsh/fish, and rich error diagnostics with typo suggestions.");
 
     // =========================================================================
     // PART 1: Successful Parsing
