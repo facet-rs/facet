@@ -429,8 +429,8 @@ dependencies = [
  "facet-reflect",
  "heck",
  "insta",
- "log",
  "miette",
+ "tracing",
 ]
 
 [[package]]

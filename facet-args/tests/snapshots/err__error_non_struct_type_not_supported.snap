@@ -1,10 +1,10 @@
 ---
-source: tests/err.rs
+source: facet-args/tests/err.rs
 expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
 ---
   × Could not parse CLI arguments
    ╭────
  1 │ error wrong type 
    · ──┬──
-   ·   ╰── no fields available for shape: Args
+   ·   ╰── unknown subcommand for ()
    ╰────
