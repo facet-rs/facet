@@ -271,10 +271,12 @@ impl ArgsErrorKind {
     }
 }
 
-/// Check if colors should be used (respects NO_COLOR and CI env vars)
-fn use_colors() -> bool {
+/// Set up color override based on environment variables
+fn setup_color_override() {
     // Disable colors if NO_COLOR is set or if running in CI
-    std::env::var_os("NO_COLOR").is_none() && std::env::var_os("CI").is_none()
+    if std::env::var_os("NO_COLOR").is_some() || std::env::var_os("CI").is_some() {
+        owo_colors::set_override(false);
+    }
 }
 
 /// Format a two-column list with aligned descriptions
@@ -282,10 +284,12 @@ fn format_two_column_list(
     items: impl IntoIterator<Item = (String, Option<&'static str>)>,
 ) -> String {
     use core::fmt::Write;
-    use owo_colors::OwoColorize;
+    use owo_colors::{OwoColorize, Stream};
+
+    // Set up color override based on environment
+    setup_color_override();
 
     let items: Vec<_> = items.into_iter().collect();
-    let colors = use_colors();
 
     // Find max width for alignment
     let max_width = items.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
@@ -293,11 +297,12 @@ fn format_two_column_list(
     let mut lines = Vec::new();
     for (name, doc) in items {
         let mut line = String::new();
-        if colors {
-            write!(line, "  {}", name.cyan()).unwrap();
-        } else {
-            write!(line, "  {name}").unwrap();
-        }
+        write!(
+            line,
+            "  {}",
+            name.if_supports_color(Stream::Stderr, |text| text.cyan())
+        )
+        .unwrap();
 
         // Pad to alignment
         let padding = max_width.saturating_sub(name.len());
@@ -306,11 +311,13 @@ fn format_two_column_list(
         }
 
         if let Some(doc) = doc {
-            if colors {
-                write!(line, "  {}", doc.trim().dimmed()).unwrap();
-            } else {
-                write!(line, "  {}", doc.trim()).unwrap();
-            }
+            write!(
+                line,
+                "  {}",
+                doc.trim()
+                    .if_supports_color(Stream::Stderr, |text| text.dimmed())
+            )
+            .unwrap();
         }
 
         lines.push(line);
