@@ -84,6 +84,7 @@ fn main() {
     let mut runner = ShowcaseRunner::new("JSON").language(Language::Json);
 
     runner.header();
+    runner.intro("[`facet-json`](https://docs.rs/facet-json) provides JSON serialization and deserialization for any type that implements `Facet`. It includes rich error diagnostics with source locations and typo suggestions.");
 
     // =========================================================================
     // PART 1: Serialization Examples

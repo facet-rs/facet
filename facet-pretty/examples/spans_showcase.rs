@@ -119,6 +119,7 @@ enum HighlightMode {
 fn main() {
     let mut runner = ShowcaseRunner::new("Spans");
     runner.header();
+    runner.intro("[`facet-pretty`](https://docs.rs/facet-pretty) formats type shapes with syntax highlighting and span tracking. Use it to build rich error diagnostics that point to specific fields or variants in type definitions, integrating with [miette](https://docs.rs/miette) for beautiful error reports.");
 
     runner.section("Highlight Modes");
     demo_highlight_key(&mut runner);

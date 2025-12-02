@@ -33,7 +33,7 @@ From this single derive, you get:
 <div class="guide-card">
 <h3 id="extend"><a href="/extend">Extend</a></h3>
 <p class="tagline">I want to build tools with facet</p>
-<p class="description"><em>Coming soon</em> — For developers building format crates or tools using reflection (Shape, Peek, Partial).</p>
+<p class="description">For developers building format crates or tools. Covers extension attributes, the <code>define_attr_grammar!</code> macro, and querying type information at runtime.</p>
 </div>
 <div class="guide-card">
 <h3 id="contribute"><a href="/contribute">Contribute</a></h3>

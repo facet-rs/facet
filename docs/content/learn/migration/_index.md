@@ -1,5 +1,5 @@
 +++
-title = "Comparison with Serde"
+title = "Comparison with serde"
 insert_anchor_links = "heading"
 +++
 
@@ -249,7 +249,7 @@ struct MyStruct {
     field1: i32,
     #[facet(default)]
     field2: Vec<String>,
-    #[facet(default = 42))]
+    #[facet(default = 42)]
     field3: i32,
     #[facet(default = rand::random())]
     field4: i32,

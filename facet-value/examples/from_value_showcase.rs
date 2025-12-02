@@ -64,6 +64,7 @@ fn main() {
     let mut runner = ShowcaseRunner::new("From Value").language(Language::Rust);
 
     runner.header();
+    runner.intro("[`facet-value`](https://docs.rs/facet-value) provides a dynamic `Value` type and conversion to/from any `Facet` type. Use it for format-agnostic data manipulation, testing, or bridging between different serialization formats.");
 
     // =========================================================================
     // PART 1: Successful Deserialization
