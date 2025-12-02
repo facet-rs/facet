@@ -50,6 +50,84 @@ fn main() -> Result<(), facet_kdl::KdlError> {
 - `#[facet(flatten)]` merges nested structs/enums; the solver uses property/child presence to choose variants.
 - `Spanned<T>` is supported: properties/arguments can be captured with `miette::SourceSpan` data.
 
+## KDL syntax: arguments vs properties
+
+A common source of confusion is the difference between **arguments** and **properties** in KDL:
+
+```kdl
+// Arguments are positional values after the node name
+server "localhost" 8080
+
+// Properties are key=value pairs
+server host="localhost" port=8080
+
+// You can mix both - arguments come first, then properties
+server "localhost" port=8080
+```
+
+This matters for your struct definitions:
+
+```rust
+// For: server "localhost" port=8080
+#[derive(Facet)]
+struct Server {
+    #[facet(kdl::argument)]  // captures "localhost"
+    host: String,
+    #[facet(kdl::property)]  // captures port=8080
+    port: u16,
+}
+```
+
+### Child nodes with arguments
+
+A particularly common KDL pattern uses child nodes with arguments:
+
+```kdl
+config {
+    name "my-app"
+    version "1.0.0"
+    debug true
+}
+```
+
+Here, `name "my-app"` is a **child node** named `name` with an **argument** `"my-app"`.
+This is *not* a property (which would be `name="my-app"`).
+
+To deserialize this pattern, each child node needs its own struct with a `kdl::argument` field:
+
+```rust
+#[derive(Facet)]
+struct Config {
+    #[facet(kdl::child)]
+    name: Name,
+    #[facet(kdl::child)]
+    version: Version,
+    #[facet(kdl::child)]
+    debug: Debug,
+}
+
+#[derive(Facet)]
+struct Name {
+    #[facet(kdl::argument)]
+    value: String,
+}
+
+#[derive(Facet)]
+struct Version {
+    #[facet(kdl::argument)]
+    value: String,
+}
+
+#[derive(Facet)]
+struct Debug {
+    #[facet(kdl::argument)]
+    value: bool,
+}
+```
+
+If you're getting "no matching argument field for value" errors, check whether your KDL
+uses `name "value"` (child node with argument) vs `name="value"` (property) syntax.
+
 ## Feature flags
 
 - `default`/`std`: enables `std` for dependencies.
