@@ -1,59 +1,28 @@
-# facet-postcard
+# xtask
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-postcard/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/facet-postcard.svg)](https://crates.io/crates/facet-postcard)
-[![documentation](https://docs.rs/facet-postcard/badge.svg)](https://docs.rs/facet-postcard)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-postcard.svg)](./LICENSE)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/xtask/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![crates.io](https://img.shields.io/crates/v/xtask.svg)](https://crates.io/crates/xtask)
+[![documentation](https://docs.rs/xtask/badge.svg)](https://docs.rs/xtask)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/xtask.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-# facet-postcard
+# xtask
 
-Postcard serialization and deserialization for Facet types.
+A custom task runner for the facet workspace, following the [cargo xtask](https://github.com/matklad/cargo-xtask) pattern.
 
-[Postcard](https://github.com/jamesmunns/postcard) is a compact, efficient binary serialization format designed for embedded and `no_std` environments. This crate provides byte-for-byte compatible output with the standard `postcard` crate, while using Facet's reflection capabilities instead of serde.
+## Available Commands
 
-## Features
+### `cargo xtask showcases`
 
-- Compact binary format optimized for size
-- Byte-for-byte compatibility with the `postcard` crate
-- `no_std` support with the `alloc` feature
-- Zero-copy deserialization where possible
+Generates showcase markdown files for the facet website. This command:
 
-## Usage
+- Scans all `*_showcase.rs` examples across workspace crates
+- Runs each showcase example in parallel
+- Outputs generated markdown to `docs/content/learn/showcases/`
 
-```rust
-use facet::Facet;
-use facet_postcard::{to_vec, from_bytes};
+### `cargo xtask help`
 
-#[derive(Debug, Facet)]
-struct Message {
-    id: u32,
-    payload: Vec<u8>,
-}
-
-// Serialize
-let msg = Message { id: 42, payload: vec![1, 2, 3] };
-let bytes = to_vec(&msg).unwrap();
-
-// Deserialize
-let decoded: Message = from_bytes(&bytes).unwrap();
-```
-
-For `no_std` environments without an allocator, use `to_slice`:
-
-```rust
-# use facet::Facet;
-# #[derive(Debug, Facet)]
-# struct Message { id: u32, payload: Vec<u8> }
-# let msg = Message { id: 42, payload: vec![1, 2, 3] };
-let mut buf = [0u8; 64];
-let used = facet_postcard::to_slice(&msg, &mut buf).unwrap();
-```
-
-## Feature Flags
-
-- `std` (default): Enables standard library support
-- `alloc`: Enables heap allocation without full std (for `no_std` with allocator)
+Displays available commands and usage information.
 
 ## License
 
