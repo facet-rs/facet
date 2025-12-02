@@ -357,6 +357,52 @@ fn test_child_node_with_argument() {
     assert_eq!(config.commit.value, "abc123");
 }
 
+/// Test that optional child fields with `#[facet(default)]` work when the child is omitted.
+/// Regression test for: Option<T> with #[facet(kdl::child)] + #[facet(default)] fails when child is omitted
+#[test]
+fn test_optional_child_with_default() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Authors {
+        #[facet(kdl::argument)]
+        value: String,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Repo {
+        #[facet(kdl::argument)]
+        value: String,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Config {
+        #[facet(kdl::child)]
+        repo: Repo,
+        #[facet(kdl::child)]
+        #[facet(default)]
+        authors: Option<Authors>,
+    }
+
+    // Test with authors omitted - should deserialize to None
+    let kdl_without_authors = r#"repo "https://example.com""#;
+    let config: Config = facet_kdl::from_str(kdl_without_authors).unwrap();
+    assert_eq!(config.repo.value, "https://example.com");
+    assert_eq!(config.authors, None);
+
+    // Test with authors present - should deserialize to Some
+    let kdl_with_authors = indoc! {r#"
+        repo "https://example.com"
+        authors "Alice"
+    "#};
+    let config: Config = facet_kdl::from_str(kdl_with_authors).unwrap();
+    assert_eq!(config.repo.value, "https://example.com");
+    assert_eq!(
+        config.authors,
+        Some(Authors {
+            value: "Alice".to_string()
+        })
+    );
+}
+
 /// Test the exact pattern from the bug report - top-level child nodes with arguments.
 /// The KDL pattern: `repo "value"` and `commit "value"` as direct children of the document.
 #[test]
