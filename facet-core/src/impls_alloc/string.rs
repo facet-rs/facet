@@ -29,22 +29,6 @@ unsafe impl Facet<'_> for alloc::string::String {
     };
 }
 
-unsafe impl<'a> Facet<'a> for alloc::borrow::Cow<'a, str> {
-    const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
-                value_vtable!(alloc::borrow::Cow<'_, str>, |f, _opts| write!(
-                    f,
-                    "Cow<'_, str>"
-                ))
-            })
-            .def(Def::Scalar)
-            .type_identifier("Cow")
-            .ty(Type::User(UserType::Opaque))
-            .build()
-    };
-}
-
 #[cfg(test)]
 mod tests {
     use core::ptr::NonNull;
