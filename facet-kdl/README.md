@@ -68,6 +68,9 @@ server "localhost" port=8080
 This matters for your struct definitions:
 
 ```rust
+use facet::Facet;
+use facet_kdl as kdl;
+
 // For: server "localhost" port=8080
 #[derive(Facet)]
 struct Server {
@@ -96,6 +99,9 @@ This is *not* a property (which would be `name="my-app"`).
 To deserialize this pattern, each child node needs its own struct with a `kdl::argument` field:
 
 ```rust
+use facet::Facet;
+use facet_kdl as kdl;
+
 #[derive(Facet)]
 struct Config {
     #[facet(kdl::child)]
