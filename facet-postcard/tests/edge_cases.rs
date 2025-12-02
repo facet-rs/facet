@@ -3,7 +3,6 @@
 use eyre::Result;
 use facet::Facet;
 use facet_postcard::{from_bytes, to_vec};
-use postcard::from_bytes as postcard_from_bytes;
 use postcard::to_allocvec as postcard_to_vec;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -298,7 +297,7 @@ mod large_data_tests {
         facet_testhelpers::setup();
         let mut map = BTreeMap::new();
         for i in 0..1000 {
-            map.insert(i, format!("value_{}", i));
+            map.insert(i, format!("value_{i}"));
         }
         let value = LargeMap { data: map };
 
@@ -349,12 +348,11 @@ mod varint_boundary_tests {
             let postcard_bytes = postcard_to_vec(&value)?;
             assert_eq!(
                 facet_bytes, postcard_bytes,
-                "Mismatch at boundary value {}",
-                val
+                "Mismatch at boundary value {val}"
             );
 
             let decoded: VarintBoundary = from_bytes(&facet_bytes)?;
-            assert_eq!(value, decoded, "Roundtrip failed for value {}", val);
+            assert_eq!(value, decoded, "Roundtrip failed for value {val}");
         }
         Ok(())
     }
@@ -393,12 +391,11 @@ mod varint_boundary_tests {
             let postcard_bytes = postcard_to_vec(&value)?;
             assert_eq!(
                 facet_bytes, postcard_bytes,
-                "Mismatch at signed boundary value {}",
-                val
+                "Mismatch at signed boundary value {val}"
             );
 
             let decoded: SignedVarintBoundary = from_bytes(&facet_bytes)?;
-            assert_eq!(value, decoded, "Roundtrip failed for signed value {}", val);
+            assert_eq!(value, decoded, "Roundtrip failed for signed value {val}");
         }
         Ok(())
     }
