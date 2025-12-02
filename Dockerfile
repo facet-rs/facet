@@ -32,9 +32,10 @@ RUN rustup target add thumbv8m.main-none-eabihf
 
 # Set environment variables
 ENV CARGO_INCREMENTAL=0
-ENV CLICOLOR=1
-ENV FORCE_COLOR=1
-ENV CLICOLOR_FORCE=1
+# Don't force colors - let individual tools/tests decide
+# ENV CLICOLOR=1
+# ENV FORCE_COLOR=1
+# ENV CLICOLOR_FORCE=1
 
 # Create a work directory
 WORKDIR /app

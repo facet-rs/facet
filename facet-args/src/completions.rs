@@ -211,7 +211,7 @@ fn generate_fish(shape: &'static Shape, program_name: &str) -> String {
     // Add subcommand completions
     if !subcommands.is_empty() {
         out.push('\n');
-        out.push_str(&format!("# Subcommands\n"));
+        out.push_str("# Subcommands\n");
 
         // Disable file completion when expecting a subcommand
         out.push_str(&format!("complete -c {program_name} -f\n"));
