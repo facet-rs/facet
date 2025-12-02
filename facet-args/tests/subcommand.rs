@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use facet::Facet;
 use facet_args as args;
 
