@@ -40,6 +40,9 @@ members = [
 
     # showcase infrastructure
     "facet-showcase",
+
+    # dev tooling
+    "xtask",
 ]
 exclude = [
     # proto-attr experiment uses nightly features
@@ -64,4 +67,3 @@ proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "parsing", "printing"] }
 strsim = "0.11"
-

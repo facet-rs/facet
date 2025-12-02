@@ -9,8 +9,7 @@ use facet_showcase::{Language, ShowcaseRunner};
 use std::process::Command;
 
 fn main() {
-    let mut runner =
-        ShowcaseRunner::new("proto-attr Compile Error Showcase").language(Language::Rust);
+    let mut runner = ShowcaseRunner::new("Proto-Attr").language(Language::Rust);
     runner.header();
 
     // Basic attribute errors

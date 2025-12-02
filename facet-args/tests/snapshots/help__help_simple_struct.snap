@@ -1,0 +1,25 @@
+---
+source: facet-args/tests/help.rs
+expression: help
+---
+myapp 1.0.0
+
+A sample CLI application for testing help generation.
+
+This is a longer description that spans multiple lines
+to test how doc comments are handled.
+
+USAGE:
+    myapp [OPTIONS] <INPUT> [OUTPUT]
+
+ARGUMENTS:
+        <INPUT>
+            Input file to process
+        <OUTPUT>
+            Output file (optional)
+
+OPTIONS:
+    -v, --verbose
+            Enable verbose output
+    -j, --jobs <OPTION>
+            Number of parallel jobs

@@ -81,8 +81,7 @@ struct Config {
 }
 
 fn main() {
-    let mut runner =
-        ShowcaseRunner::new("facet-json Comprehensive Showcase").language(Language::Json);
+    let mut runner = ShowcaseRunner::new("JSON").language(Language::Json);
 
     runner.header();
 

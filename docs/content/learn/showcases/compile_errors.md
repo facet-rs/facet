@@ -1,5 +1,5 @@
 +++
-title = "facet-kdl Compile Error Showcase"
+title = "Diagnostics"
 +++
 
 <div class="showcase">
@@ -26,13 +26,14 @@ title = "facet-kdl Compile Error Showcase"
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: unknown extension attribute `nonexistent`</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: unknown attribute &#96;nonexistent&#96;</span>
+<span style="font-weight:bold">       available attributes: child, children, property, argument, arguments, node_name</span>
  <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:6:18
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
 <span style="font-weight:bold"></span><span style="color:#61afef">6</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span>     #[facet(kdl::nonexistent)]
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>                  <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^^^^^</span>
 
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile `test` (bin "test") due to 1 previous error</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
 </div>
 </section>
 
@@ -64,19 +65,21 @@ title = "facet-kdl Compile Error Showcase"
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: unknown extension attribute `chld`</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: unknown attribute &#96;chld&#96;, did you mean &#96;child&#96;?</span>
+<span style="font-weight:bold">       available attributes: child, children, property, argument, arguments, node_name</span>
  <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:6:18
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
 <span style="font-weight:bold"></span><span style="color:#61afef">6</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span>     #[facet(kdl::chld)]
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>                  <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^</span>
 
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: unknown extension attribute `proprty`</span>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: unknown attribute &#96;proprty&#96;, did you mean &#96;property&#96;?</span>
+<span style="font-weight:bold">       available attributes: child, children, property, argument, arguments, node_name</span>
   <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:12:18
    <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
 <span style="font-weight:bold"></span><span style="color:#61afef">12</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span>     #[facet(kdl::proprty)]
    <span style="font-weight:bold"></span><span style="color:#61afef">|</span>                  <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^</span>
 
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile `test` (bin "test") due to 2 previous errors</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 2 previous errors</code></pre>
 </div>
 </section>
 
@@ -113,7 +116,7 @@ title = "facet-kdl Compile Error Showcase"
 <span style="font-weight:bold"></span><span style="color:#61afef">6</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span>     #[facet(kdl::child = "unexpected")]
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>                          <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^^^^^^</span>
 
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile `test` (bin "test") due to 1 previous error</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
 </div>
 </section>
 

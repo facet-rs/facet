@@ -11,7 +11,7 @@ use facet_kdl::{from_str, to_string};
 use facet_showcase::{Language, ShowcaseRunner};
 
 fn main() {
-    let mut runner = ShowcaseRunner::new("facet-kdl showcase")
+    let mut runner = ShowcaseRunner::new("KDL")
         .language(Language::Kdl)
         .with_kdl_syntaxes(concat!(env!("CARGO_MANIFEST_DIR"), "/syntaxes"));
     runner.header();

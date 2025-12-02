@@ -41,8 +41,7 @@ struct Address {
 }
 
 fn main() {
-    let mut runner =
-        ShowcaseRunner::new("facet-assert: Structural Assertions").language(Language::Rust);
+    let mut runner = ShowcaseRunner::new("Assertions").language(Language::Rust);
     let mode = runner.mode();
 
     runner.header();

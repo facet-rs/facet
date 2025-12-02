@@ -1,7 +1,8 @@
 use crate::span::Span;
 use core::fmt;
-use facet_core::{Field, Shape};
+use facet_core::{Field, Shape, Type, UserType, Variant};
 use facet_reflect::ReflectError;
+use heck::ToKebabCase;
 use miette::{Diagnostic, LabeledSpan};
 
 /// An args parsing error, with input info, so that it can be formatted nicely
@@ -24,7 +25,7 @@ impl core::error::Error for ArgsErrorWithInput {}
 
 impl Diagnostic for ArgsErrorWithInput {
     fn code<'a>(&'a self) -> Option<Box<dyn core::fmt::Display + 'a>> {
-        None
+        Some(Box::new(self.inner.kind.code()))
     }
 
     fn severity(&self) -> Option<miette::Severity> {
@@ -32,7 +33,7 @@ impl Diagnostic for ArgsErrorWithInput {
     }
 
     fn help<'a>(&'a self) -> Option<Box<dyn core::fmt::Display + 'a>> {
-        None
+        self.inner.kind.help()
     }
 
     fn url<'a>(&'a self) -> Option<Box<dyn core::fmt::Display + 'a>> {
@@ -45,7 +46,7 @@ impl Diagnostic for ArgsErrorWithInput {
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = miette::LabeledSpan> + '_>> {
         Some(Box::new(core::iter::once(LabeledSpan::new(
-            Some(self.inner.kind.to_string()),
+            Some(self.inner.kind.label()),
             self.inner.span.start,
             self.inner.span.len(),
         ))))
@@ -63,77 +64,414 @@ impl Diagnostic for ArgsErrorWithInput {
 /// An args parsing error (without input info)
 #[derive(Debug)]
 pub struct ArgsError {
-    /// Where the error occured
+    /// Where the error occurred
     pub span: Span,
 
-    /// The specific error that occurred while parsing arguments JSON.
+    /// The specific error that occurred while parsing arguments.
     pub kind: ArgsErrorKind,
 }
 
-/// An error kind for JSON parsing.
+/// An error kind for argument parsing.
+///
+/// Stores references to static shape/field/variant info for lazy formatting.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum ArgsErrorKind {
     /// Did not expect a positional argument at this position
-    UnexpectedPositionalArgument,
+    UnexpectedPositionalArgument {
+        /// Fields of the struct/variant being parsed (for help text)
+        fields: &'static [Field],
+    },
 
-    /// Wanted to look up a fiedl, for example `--something` in a struct,
+    /// Wanted to look up a field, for example `--something` in a struct,
     /// but the current shape was not a struct.
-    NoFields { shape: &'static Shape },
+    NoFields {
+        /// The shape that was being parsed
+        shape: &'static Shape,
+    },
 
     /// Passed `--something` (see span), no such long flag
-    UnknownLongFlag,
+    UnknownLongFlag {
+        /// The flag that was passed
+        flag: String,
+        /// Fields of the struct/variant being parsed
+        fields: &'static [Field],
+    },
 
     /// Passed `-j` (see span), no such short flag
-    UnknownShortFlag,
+    UnknownShortFlag {
+        /// The flag that was passed
+        flag: String,
+        /// Fields of the struct/variant being parsed
+        fields: &'static [Field],
+    },
 
     /// Struct/type expected a certain argument to be passed and it wasn't
-    MissingArgument { field: &'static Field },
+    MissingArgument {
+        /// The field that was missing
+        field: &'static Field,
+    },
 
     /// Expected a value of type shape, got EOF
-    ExpectedValueGotEof { shape: &'static Shape },
+    ExpectedValueGotEof {
+        /// The type that was expected
+        shape: &'static Shape,
+    },
 
     /// Unknown subcommand name
-    UnknownSubcommand { shape: &'static Shape },
+    UnknownSubcommand {
+        /// The subcommand that was provided
+        provided: String,
+        /// Variants of the enum (subcommands)
+        variants: &'static [Variant],
+    },
 
     /// Required subcommand was not provided
-    MissingSubcommand { shape: &'static Shape },
+    MissingSubcommand {
+        /// Variants of the enum (available subcommands)
+        variants: &'static [Variant],
+    },
 
     /// Generic reflection error: something went wrong
     ReflectError(ReflectError),
 }
 
-impl core::fmt::Display for ArgsErrorKind {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl ArgsErrorKind {
+    /// Returns an error code for this error kind.
+    pub fn code(&self) -> &'static str {
         match self {
-            ArgsErrorKind::UnexpectedPositionalArgument => {
-                write!(f, "unexpected positional argument")
+            ArgsErrorKind::UnexpectedPositionalArgument { .. } => "args::unexpected_positional",
+            ArgsErrorKind::NoFields { .. } => "args::no_fields",
+            ArgsErrorKind::UnknownLongFlag { .. } => "args::unknown_long_flag",
+            ArgsErrorKind::UnknownShortFlag { .. } => "args::unknown_short_flag",
+            ArgsErrorKind::MissingArgument { .. } => "args::missing_argument",
+            ArgsErrorKind::ExpectedValueGotEof { .. } => "args::expected_value",
+            ArgsErrorKind::UnknownSubcommand { .. } => "args::unknown_subcommand",
+            ArgsErrorKind::MissingSubcommand { .. } => "args::missing_subcommand",
+            ArgsErrorKind::ReflectError(_) => "args::reflect_error",
+        }
+    }
+
+    /// Returns a short label for the error (shown inline in the source)
+    pub fn label(&self) -> String {
+        match self {
+            ArgsErrorKind::UnexpectedPositionalArgument { .. } => {
+                "unexpected positional argument".to_string()
             }
             ArgsErrorKind::NoFields { shape } => {
-                write!(f, "no fields available for shape: {shape}")
+                format!("cannot parse arguments into `{}`", shape.type_identifier)
             }
-            ArgsErrorKind::UnknownLongFlag => {
-                write!(f, "unknown long flag")
+            ArgsErrorKind::UnknownLongFlag { flag, .. } => {
+                format!("unknown flag `--{flag}`")
             }
-            ArgsErrorKind::UnknownShortFlag => {
-                write!(f, "unknown short flag")
+            ArgsErrorKind::UnknownShortFlag { flag, .. } => {
+                format!("unknown flag `-{flag}`")
             }
             ArgsErrorKind::ExpectedValueGotEof { shape } => {
-                write!(f, "expected value of type '{shape}', got end of input")
+                // Unwrap Option to show the inner type
+                let inner_type = unwrap_option_type(shape);
+                format!("expected `{inner_type}` value")
             }
-            ArgsErrorKind::ReflectError(err) => {
-                write!(f, "reflection error: {err}")
+            ArgsErrorKind::ReflectError(err) => format_reflect_error(err),
+            ArgsErrorKind::MissingArgument { field } => {
+                let doc_hint = field
+                    .doc
+                    .first()
+                    .map(|d| format!(" ({})", d.trim()))
+                    .unwrap_or_default();
+                let positional = field.has_attr(Some("args"), "positional");
+                let arg_name = if positional {
+                    format!("<{}>", field.name.to_kebab_case())
+                } else {
+                    format!("--{}", field.name.to_kebab_case())
+                };
+                format!("missing required argument `{arg_name}`{doc_hint}")
+            }
+            ArgsErrorKind::UnknownSubcommand { provided, .. } => {
+                format!("unknown subcommand `{provided}`")
+            }
+            ArgsErrorKind::MissingSubcommand { .. } => "expected a subcommand".to_string(),
+        }
+    }
+
+    /// Returns help text for this error
+    pub fn help(&self) -> Option<Box<dyn core::fmt::Display + '_>> {
+        match self {
+            ArgsErrorKind::UnexpectedPositionalArgument { fields } => {
+                if fields.is_empty() {
+                    return Some(Box::new(
+                        "this command does not accept positional arguments",
+                    ));
+                }
+                let flags = format_available_flags(fields);
+                Some(Box::new(format!("available options:\n{flags}")))
+            }
+            ArgsErrorKind::UnknownLongFlag { flag, fields } => {
+                // Try to find a similar flag
+                if let Some(suggestion) = find_similar_flag(flag, fields) {
+                    return Some(Box::new(format!("did you mean `--{suggestion}`?")));
+                }
+                if fields.is_empty() {
+                    return None;
+                }
+                let flags = format_available_flags(fields);
+                Some(Box::new(format!("available options:\n{flags}")))
+            }
+            ArgsErrorKind::UnknownShortFlag { flag, fields } => {
+                // Try to find what flag the user might have meant
+                let short_char = flag.chars().next();
+                if let Some(field) = fields.iter().find(|f| get_short_flag(f) == short_char) {
+                    return Some(Box::new(format!(
+                        "`-{}` is `--{}`",
+                        flag,
+                        field.name.to_kebab_case()
+                    )));
+                }
+                if fields.is_empty() {
+                    return None;
+                }
+                let flags = format_available_flags(fields);
+                Some(Box::new(format!("available options:\n{flags}")))
             }
             ArgsErrorKind::MissingArgument { field } => {
-                write!(f, "missing argument: {}", field.name)
+                let kebab = field.name.to_kebab_case();
+                let type_name = (field.shape)().type_identifier;
+                let positional = field.has_attr(Some("args"), "positional");
+                if positional {
+                    Some(Box::new(format!("provide a value for `<{kebab}>`")))
+                } else {
+                    Some(Box::new(format!(
+                        "provide a value with `--{kebab} <{type_name}>`"
+                    )))
+                }
             }
-            ArgsErrorKind::UnknownSubcommand { shape } => {
-                write!(f, "unknown subcommand for {shape}")
+            ArgsErrorKind::UnknownSubcommand { provided, variants } => {
+                if variants.is_empty() {
+                    return None;
+                }
+                // Try to find a similar subcommand
+                if let Some(suggestion) = find_similar_subcommand(provided, variants) {
+                    return Some(Box::new(format!("did you mean `{suggestion}`?")));
+                }
+                let cmds = format_available_subcommands(variants);
+                Some(Box::new(format!("available subcommands:\n{cmds}")))
             }
-            ArgsErrorKind::MissingSubcommand { shape } => {
-                write!(f, "missing required subcommand for {shape}")
+            ArgsErrorKind::MissingSubcommand { variants } => {
+                if variants.is_empty() {
+                    return None;
+                }
+                let cmds = format_available_subcommands(variants);
+                Some(Box::new(format!("available subcommands:\n{cmds}")))
+            }
+            ArgsErrorKind::ExpectedValueGotEof { .. } => {
+                Some(Box::new("provide a value after the flag"))
+            }
+            ArgsErrorKind::NoFields { .. } | ArgsErrorKind::ReflectError(_) => None,
+        }
+    }
+}
+
+/// Check if colors should be used (respects NO_COLOR env var)
+fn use_colors() -> bool {
+    std::env::var_os("NO_COLOR").is_none()
+}
+
+/// Format a two-column list with aligned descriptions
+fn format_two_column_list(
+    items: impl IntoIterator<Item = (String, Option<&'static str>)>,
+) -> String {
+    use owo_colors::OwoColorize;
+    use std::fmt::Write;
+
+    let items: Vec<_> = items.into_iter().collect();
+    let colors = use_colors();
+
+    // Find max width for alignment
+    let max_width = items.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
+
+    let mut lines = Vec::new();
+    for (name, doc) in items {
+        let mut line = String::new();
+        if colors {
+            write!(line, "  {}", name.cyan()).unwrap();
+        } else {
+            write!(line, "  {}", name).unwrap();
+        }
+
+        // Pad to alignment
+        let padding = max_width.saturating_sub(name.len());
+        for _ in 0..padding {
+            line.push(' ');
+        }
+
+        if let Some(doc) = doc {
+            if colors {
+                write!(line, "  {}", doc.trim().dimmed()).unwrap();
+            } else {
+                write!(line, "  {}", doc.trim()).unwrap();
             }
         }
+
+        lines.push(line);
+    }
+    lines.join("\n")
+}
+
+/// Format available flags for help text (from static field info)
+fn format_available_flags(fields: &'static [Field]) -> String {
+    let items = fields.iter().filter_map(|field| {
+        if field.has_attr(Some("args"), "subcommand") {
+            return None;
+        }
+
+        let short = get_short_flag(field);
+        let positional = field.has_attr(Some("args"), "positional");
+        let kebab = field.name.to_kebab_case();
+
+        let name = if positional {
+            match short {
+                Some(s) => format!("-{s}, <{kebab}>"),
+                None => format!("    <{kebab}>"),
+            }
+        } else {
+            match short {
+                Some(s) => format!("-{s}, --{kebab}"),
+                None => format!("    --{kebab}"),
+            }
+        };
+
+        Some((name, field.doc.first().copied()))
+    });
+
+    format_two_column_list(items)
+}
+
+/// Format available subcommands for help text (from static variant info)
+fn format_available_subcommands(variants: &'static [Variant]) -> String {
+    let items = variants.iter().map(|variant| {
+        let name = variant
+            .get_builtin_attr("rename")
+            .and_then(|attr| attr.get_as::<&str>())
+            .map(|s| (*s).to_string())
+            .unwrap_or_else(|| variant.name.to_kebab_case());
+
+        (name, variant.doc.first().copied())
+    });
+
+    format_two_column_list(items)
+}
+
+/// Get the short flag character for a field, if any
+fn get_short_flag(field: &Field) -> Option<char> {
+    field
+        .get_attr(Some("args"), "short")
+        .and_then(|attr| attr.get_as::<crate::Attr>())
+        .and_then(|attr| {
+            if let crate::Attr::Short(c) = attr {
+                // If explicit char provided, use it; otherwise use first char of field name
+                c.or_else(|| field.name.chars().next())
+            } else {
+                None
+            }
+        })
+}
+
+/// Find a similar flag name using simple heuristics
+fn find_similar_flag(input: &str, fields: &'static [Field]) -> Option<String> {
+    for field in fields {
+        let kebab = field.name.to_kebab_case();
+        if is_similar(input, &kebab) {
+            return Some(kebab);
+        }
+    }
+    None
+}
+
+/// Find a similar subcommand name using simple heuristics
+fn find_similar_subcommand(input: &str, variants: &'static [Variant]) -> Option<String> {
+    for variant in variants {
+        // Check for rename attribute first
+        let name = variant
+            .get_builtin_attr("rename")
+            .and_then(|attr| attr.get_as::<&str>())
+            .map(|s| (*s).to_string())
+            .unwrap_or_else(|| variant.name.to_kebab_case());
+        if is_similar(input, &name) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// Check if two strings are similar (differ by at most 2 edits)
+fn is_similar(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let len_diff = (a.len() as isize - b.len() as isize).abs();
+    if len_diff > 2 {
+        return false;
+    }
+
+    // Simple check: count character differences
+    let mut diffs = 0;
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+
+    for (ac, bc) in a_chars.iter().zip(b_chars.iter()) {
+        if ac != bc {
+            diffs += 1;
+        }
+    }
+    diffs += len_diff as usize;
+    diffs <= 2
+}
+
+/// Get the inner type identifier, unwrapping Option if present
+fn unwrap_option_type(shape: &'static Shape) -> &'static str {
+    match shape.def {
+        facet_core::Def::Option(opt_def) => opt_def.t.type_identifier,
+        _ => shape.type_identifier,
+    }
+}
+
+/// Format a ReflectError into a user-friendly message
+fn format_reflect_error(err: &ReflectError) -> String {
+    use facet_reflect::ReflectError::*;
+    match err {
+        OperationFailed { shape, operation } => {
+            // Improve common operation failure messages
+            // Unwrap Option to show the inner type
+            let inner_type = unwrap_option_type(shape);
+            match *operation {
+                "Type does not support parsing from string" => {
+                    format!("`{inner_type}` cannot be parsed from a string value")
+                }
+                "Failed to parse string value" => {
+                    format!("invalid value for `{inner_type}`")
+                }
+                _ => format!("`{inner_type}`: {operation}"),
+            }
+        }
+        UninitializedField { shape, field_name } => {
+            format!(
+                "field `{}` of `{}` was not provided",
+                field_name, shape.type_identifier
+            )
+        }
+        WrongShape { expected, actual } => {
+            format!(
+                "expected `{}`, got `{}`",
+                expected.type_identifier, actual.type_identifier
+            )
+        }
+        _ => format!("{err}"),
+    }
+}
+
+impl core::fmt::Display for ArgsErrorKind {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.label())
     }
 }
 
@@ -153,5 +491,14 @@ impl ArgsError {
 impl fmt::Display for ArgsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(self, f)
+    }
+}
+
+/// Extract variants from a shape (if it's an enum)
+pub(crate) fn get_variants_from_shape(shape: &'static Shape) -> &'static [Variant] {
+    if let Type::User(UserType::Enum(enum_type)) = shape.ty {
+        enum_type.variants
+    } else {
+        &[]
     }
 }

@@ -274,3 +274,62 @@ fn test_unit_variant_subcommand() {
     let cmd: Command = facet_args::from_slice(&["version"]).unwrap();
     assert_eq!(cmd, Command::Version);
 }
+
+/// Test nested subcommands wrapped in a struct (bug reproduction)
+/// This is different from test_nested_subcommands because the outer type is a struct, not an enum
+#[test]
+fn test_nested_subcommands_in_struct() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum GrammarsAction {
+        Vendor {
+            #[facet(args::positional)]
+            url: String,
+        },
+        Update {
+            #[facet(default, args::positional)]
+            name: Option<String>,
+        },
+        Generate {
+            #[facet(default, args::positional)]
+            name: Option<String>,
+        },
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Command {
+        Grammars {
+            #[facet(args::subcommand)]
+            action: GrammarsAction,
+        },
+    }
+
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
+    // This should work: struct -> subcommand enum -> variant with nested subcommand -> subcommand enum
+    let args: Args = facet_args::from_slice(&["grammars", "generate"]).unwrap();
+    match args.command {
+        Command::Grammars { action } => {
+            assert_eq!(action, GrammarsAction::Generate { name: None });
+        }
+    }
+
+    // With positional argument
+    let args: Args =
+        facet_args::from_slice(&["grammars", "vendor", "https://example.com"]).unwrap();
+    match args.command {
+        Command::Grammars { action } => {
+            assert_eq!(
+                action,
+                GrammarsAction::Vendor {
+                    url: "https://example.com".to_string()
+                }
+            );
+        }
+    }
+}

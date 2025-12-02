@@ -1,6 +1,6 @@
 use crate::{
     arg::ArgType,
-    error::{ArgsError, ArgsErrorKind, ArgsErrorWithInput},
+    error::{ArgsError, ArgsErrorKind, ArgsErrorWithInput, get_variants_from_shape},
     span::Span,
 };
 use facet_core::{Def, EnumType, Facet, Field, Shape, Type, UserType, Variant};
@@ -91,8 +91,24 @@ impl<'input> Context<'input> {
 
         tracing::trace!("After begin_field, shape is {}", p.shape());
         if p.shape().is_shape(bool::SHAPE) {
-            tracing::trace!("Flag is boolean, setting it to true");
-            p = p.set(true)?;
+            // For bool flags, check if a value was provided via `=`
+            let bool_value = if let Some(value) = value {
+                // Parse the value as a boolean
+                match value.s.to_lowercase().as_str() {
+                    "true" | "yes" | "1" | "on" => true,
+                    "false" | "no" | "0" | "off" => false,
+                    "" => true, // `--flag=` means true
+                    other => {
+                        tracing::warn!("Unknown boolean value '{other}', treating as true");
+                        true
+                    }
+                }
+            } else {
+                // No value provided, presence of flag means true
+                true
+            };
+            tracing::trace!("Flag is boolean, setting it to {bool_value}");
+            p = p.set(bool_value)?;
 
             self.index += 1;
         } else {
@@ -180,7 +196,9 @@ impl<'input> Context<'input> {
     ) -> Result<HeapValue<'static>, ArgsErrorKind> {
         // The first positional argument should be the subcommand name
         if self.index >= self.args.len() {
-            return Err(ArgsErrorKind::MissingSubcommand { shape: self.shape });
+            return Err(ArgsErrorKind::MissingSubcommand {
+                variants: enum_type.variants,
+            });
         }
 
         let subcommand_name = self.args[self.index];
@@ -222,6 +240,15 @@ impl<'input> Context<'input> {
                     self.index += 1;
                 }
                 ArgType::LongFlag(flag) => {
+                    // Reject flags that start with `-` (e.g., `---verbose`)
+                    if flag.starts_with('-') {
+                        let fields = self.fields(&p)?;
+                        return Err(ArgsErrorKind::UnknownLongFlag {
+                            flag: flag.to_string(),
+                            fields,
+                        });
+                    }
+
                     let flag_span = Span::new(arg_span.start + 2, arg_span.len - 2);
                     match split(flag, flag_span) {
                         Some(tokens) => {
@@ -237,16 +264,24 @@ impl<'input> Context<'input> {
                             let flag = key.s;
                             let snek = key.s.to_snake_case();
                             tracing::trace!("Looking up long flag {flag} (field name: {snek})");
+                            let fields = self.fields(&p)?;
                             let Some(field_index) = p.field_index(&snek) else {
-                                return Err(ArgsErrorKind::UnknownLongFlag);
+                                return Err(ArgsErrorKind::UnknownLongFlag {
+                                    flag: flag.to_string(),
+                                    fields,
+                                });
                             };
                             p = self.handle_field(p, field_index, Some(value))?;
                         }
                         None => {
                             let snek = flag.to_snake_case();
                             tracing::trace!("Looking up long flag {flag} (field name: {snek})");
+                            let fields = self.fields(&p)?;
                             let Some(field_index) = p.field_index(&snek) else {
-                                return Err(ArgsErrorKind::UnknownLongFlag);
+                                return Err(ArgsErrorKind::UnknownLongFlag {
+                                    flag: flag.to_string(),
+                                    fields,
+                                });
                             };
                             p = self.handle_field(p, field_index, None)?;
                         }
@@ -265,23 +300,70 @@ impl<'input> Context<'input> {
                                 unreachable!()
                             };
 
-                            let flag = key.s;
-                            tracing::trace!("Looking up short flag {flag}");
+                            let short_char = key.s;
+                            tracing::trace!("Looking up short flag {short_char}");
                             let fields = self.fields(&p)?;
-                            let Some(field_index) = find_field_index_with_short(fields, flag)
+                            let Some(field_index) =
+                                find_field_index_with_short_char(fields, short_char)
                             else {
-                                return Err(ArgsErrorKind::UnknownShortFlag);
+                                return Err(ArgsErrorKind::UnknownShortFlag {
+                                    flag: short_char.to_string(),
+                                    fields,
+                                });
                             };
                             p = self.handle_field(p, field_index, Some(value))?;
                         }
                         None => {
-                            tracing::trace!("Looking up short flag {flag}");
+                            // No `=` in the flag. Could be:
+                            // - `-v` (single char bool flag)
+                            // - `-j4` (short flag with attached value)
+                            // - `-vvv` (repeated bool flags - not currently supported)
                             let fields = self.fields(&p)?;
-                            let Some(field_index) = find_field_index_with_short(fields, flag)
+
+                            // Get the first character as the flag
+                            let first_char = flag.chars().next().unwrap();
+                            let first_char_str = &flag[..first_char.len_utf8()];
+                            let rest = &flag[first_char.len_utf8()..];
+
+                            tracing::trace!(
+                                "Looking up short flag '{first_char}' (rest: '{rest}')"
+                            );
+
+                            let Some(field_index) =
+                                find_field_index_with_short_char(fields, first_char_str)
                             else {
-                                return Err(ArgsErrorKind::UnknownShortFlag);
+                                return Err(ArgsErrorKind::UnknownShortFlag {
+                                    flag: flag.to_string(),
+                                    fields,
+                                });
                             };
-                            p = self.handle_field(p, field_index, None)?;
+
+                            let field = &fields[field_index];
+                            let field_is_bool = field.shape().is_shape(bool::SHAPE);
+
+                            if rest.is_empty() {
+                                // Simple case: `-v` or `-j`
+                                p = self.handle_field(p, field_index, None)?;
+                            } else if field_is_bool {
+                                // Bool flag with trailing chars: `-vxyz`
+                                // Error: bool flags shouldn't have attached values
+                                return Err(ArgsErrorKind::UnknownShortFlag {
+                                    flag: flag.to_string(),
+                                    fields,
+                                });
+                            } else {
+                                // Non-bool flag with attached value: `-j4`
+                                let value_span =
+                                    Span::new(flag_span.start + first_char.len_utf8(), rest.len());
+                                p = self.handle_field(
+                                    p,
+                                    field_index,
+                                    Some(SplitToken {
+                                        s: rest,
+                                        span: value_span,
+                                    }),
+                                )?;
+                            }
                         }
                     }
                 }
@@ -320,7 +402,7 @@ impl<'input> Context<'input> {
                     }
 
                     let Some(chosen_field_index) = chosen_field_index else {
-                        return Err(ArgsErrorKind::UnexpectedPositionalArgument);
+                        return Err(ArgsErrorKind::UnexpectedPositionalArgument { fields });
                     };
 
                     p = p.begin_nth_field(chosen_field_index)?;
@@ -365,6 +447,14 @@ impl<'input> Context<'input> {
                     self.index += 1;
                 }
                 ArgType::LongFlag(flag) => {
+                    // Reject flags that start with `-` (e.g., `---verbose`)
+                    if flag.starts_with('-') {
+                        return Err(ArgsErrorKind::UnknownLongFlag {
+                            flag: flag.to_string(),
+                            fields,
+                        });
+                    }
+
                     let flag_span = Span::new(arg_span.start + 2, arg_span.len - 2);
                     match split(flag, flag_span) {
                         Some(tokens) => {
@@ -378,7 +468,10 @@ impl<'input> Context<'input> {
                             );
                             let Some(field_index) = fields.iter().position(|f| f.name == snek)
                             else {
-                                return Err(ArgsErrorKind::UnknownLongFlag);
+                                return Err(ArgsErrorKind::UnknownLongFlag {
+                                    flag: flag.to_string(),
+                                    fields,
+                                });
                             };
                             p = self.handle_field(p, field_index, Some(value))?;
                         }
@@ -389,7 +482,10 @@ impl<'input> Context<'input> {
                             );
                             let Some(field_index) = fields.iter().position(|f| f.name == snek)
                             else {
-                                return Err(ArgsErrorKind::UnknownLongFlag);
+                                return Err(ArgsErrorKind::UnknownLongFlag {
+                                    flag: flag.to_string(),
+                                    fields,
+                                });
                             };
                             p = self.handle_field(p, field_index, None)?;
                         }
@@ -403,20 +499,65 @@ impl<'input> Context<'input> {
                             let key = tokens.next().unwrap();
                             let value = tokens.next().unwrap();
 
-                            tracing::trace!("Looking up short flag {flag} in variant");
-                            let Some(field_index) = find_field_index_with_short(fields, key.s)
+                            let short_char = key.s;
+                            tracing::trace!("Looking up short flag {short_char} in variant");
+                            let Some(field_index) =
+                                find_field_index_with_short_char(fields, short_char)
                             else {
-                                return Err(ArgsErrorKind::UnknownShortFlag);
+                                return Err(ArgsErrorKind::UnknownShortFlag {
+                                    flag: short_char.to_string(),
+                                    fields,
+                                });
                             };
                             p = self.handle_field(p, field_index, Some(value))?;
                         }
                         None => {
-                            tracing::trace!("Looking up short flag {flag} in variant");
-                            let Some(field_index) = find_field_index_with_short(fields, flag)
+                            // No `=` in the flag. Could be:
+                            // - `-v` (single char bool flag)
+                            // - `-j4` (short flag with attached value)
+                            let first_char = flag.chars().next().unwrap();
+                            let first_char_str = &flag[..first_char.len_utf8()];
+                            let rest = &flag[first_char.len_utf8()..];
+
+                            tracing::trace!(
+                                "Looking up short flag '{first_char}' in variant (rest: '{rest}')"
+                            );
+
+                            let Some(field_index) =
+                                find_field_index_with_short_char(fields, first_char_str)
                             else {
-                                return Err(ArgsErrorKind::UnknownShortFlag);
+                                return Err(ArgsErrorKind::UnknownShortFlag {
+                                    flag: flag.to_string(),
+                                    fields,
+                                });
                             };
-                            p = self.handle_field(p, field_index, None)?;
+
+                            let field = &fields[field_index];
+                            let field_is_bool = field.shape().is_shape(bool::SHAPE);
+
+                            if rest.is_empty() {
+                                // Simple case: `-v` or `-j`
+                                p = self.handle_field(p, field_index, None)?;
+                            } else if field_is_bool {
+                                // Bool flag with trailing chars: `-vxyz`
+                                // Error: bool flags shouldn't have attached values
+                                return Err(ArgsErrorKind::UnknownShortFlag {
+                                    flag: flag.to_string(),
+                                    fields,
+                                });
+                            } else {
+                                // Non-bool flag with attached value: `-j4`
+                                let value_span =
+                                    Span::new(flag_span.start + first_char.len_utf8(), rest.len());
+                                p = self.handle_field(
+                                    p,
+                                    field_index,
+                                    Some(SplitToken {
+                                        s: rest,
+                                        span: value_span,
+                                    }),
+                                )?;
+                            }
                         }
                     }
                 }
@@ -449,7 +590,7 @@ impl<'input> Context<'input> {
                     }
 
                     let Some(chosen_field_index) = chosen_field_index else {
-                        return Err(ArgsErrorKind::UnexpectedPositionalArgument);
+                        return Err(ArgsErrorKind::UnexpectedPositionalArgument { fields });
                     };
 
                     p = p.begin_nth_field(chosen_field_index)?;
@@ -562,7 +703,9 @@ impl<'input> Context<'input> {
                     continue;
                 } else {
                     // Required subcommand missing
-                    return Err(ArgsErrorKind::MissingSubcommand { shape: field_shape });
+                    return Err(ArgsErrorKind::MissingSubcommand {
+                        variants: get_variants_from_shape(field_shape),
+                    });
                 }
             }
 
@@ -651,14 +794,8 @@ fn find_variant_by_name(
     }
 
     Err(ArgsErrorKind::UnknownSubcommand {
-        shape: enum_type
-            .variants
-            .first()
-            .map(|v| v.data.fields)
-            .unwrap_or(&[])
-            .first()
-            .map(|f| f.shape())
-            .unwrap_or(<()>::SHAPE),
+        provided: name.to_string(),
+        variants: enum_type.variants,
     })
 }
 
@@ -741,7 +878,8 @@ fn test_split() {
 
 /// Given an array of fields, find the field with the given `args::short = 'a'`
 /// annotation. Uses extension attribute syntax: #[facet(args::short = "j")]
-fn find_field_index_with_short(fields: &'static [Field], short: &str) -> Option<usize> {
+/// The `short` parameter should be a single character (as a string slice).
+fn find_field_index_with_short_char(fields: &'static [Field], short: &str) -> Option<usize> {
     let short_char = short.chars().next()?;
     fields.iter().position(|f| {
         if let Some(ext) = f.get_attr(Some("args"), "short") {

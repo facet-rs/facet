@@ -1,0 +1,18 @@
+---
+source: facet-args/tests/help.rs
+expression: help
+---
+git
+
+Available git commands
+
+USAGE:
+    git <COMMAND>
+
+COMMANDS:
+    clone
+            Clone a repository
+    log
+            Show commit history
+    remote
+            Manage remotes

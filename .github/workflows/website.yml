@@ -36,21 +36,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Generate showcases
-        run: |
-          mkdir -p docs/content/showcases
-
-          # Discover and run all *_showcase examples
-          for example in $(find . -path "*/examples/*_showcase.rs" -type f); do
-            # Extract package name from path (e.g., ./facet-json/examples/json_showcase.rs -> facet-json)
-            pkg=$(echo "$example" | sed 's|^\./||' | cut -d'/' -f1)
-            # Extract example name without .rs (e.g., json_showcase)
-            name=$(basename "$example" .rs)
-            # Output name (strip _showcase suffix)
-            output=$(echo "$name" | sed 's/_showcase$//')
-
-            echo "Running $pkg::$name -> $output.md"
-            FACET_SHOWCASE_OUTPUT=markdown cargo run -p "$pkg" --example "$name" > "docs/content/showcases/$output.md" 2>/dev/null || echo "Warning: $name failed"
-          done
+        run: cargo xtask showcases
 
       - name: Install dodeca
         run: curl --proto '=https' --tlsv1.2 -LsSf https://github.com/bearcove/dodeca/releases/latest/download/dodeca-installer.sh | sh

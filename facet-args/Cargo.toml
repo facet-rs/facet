@@ -20,11 +20,13 @@ facet-core = { path = "../facet-core" }
 tracing = "0.1"
 heck = "0.5.0"
 miette = { version = "7.6.0", default-features = false }
+owo-colors = "4"
 
 [dev-dependencies]
 eyre = "0.6.12"
 facet = { path = "../facet" }
 facet-pretty = { path = "../facet-pretty" }
+facet-showcase = { path = "../facet-showcase" }
 insta = "1.44.1"
 miette = { version = "7.6.0", default-features = false, features = ["fancy"] }
 

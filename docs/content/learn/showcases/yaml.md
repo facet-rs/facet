@@ -1,5 +1,5 @@
 +++
-title = "facet-yaml Comprehensive Showcase"
+title = "YAML"
 +++
 
 <div class="showcase">
@@ -8,23 +8,25 @@ title = "facet-yaml Comprehensive Showcase"
 
 <section class="scenario">
 <p class="description">Simple struct with optional field serialized to YAML.</p>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Person </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">age</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u32</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">email</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#9abdf5;">String</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Person</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Alice</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Option&lt;String&gt;</span><span style="opacity:0.7">Some(</span><span style="color:rgb(81,103,224)">alice@example.com</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Person</span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Alice</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">30</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;String&gt;</span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">alice@example.com</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -42,35 +44,38 @@ title = "facet-yaml Comprehensive Showcase"
 
 <section class="scenario">
 <p class="description">Struct containing nested struct and vector.</p>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Company </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">address</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> Address,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">employees</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Vec</span><span style="color:#89ddff;">&lt;</span><span style="color:#9abdf5;">String</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
 </span><span style="color:#9abdf5;">}
 </span><span style="color:#c0caf5;">
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Address </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">street</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">city</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Company</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Acme Corp</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">address</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Address</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">street</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">123 Main St</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">city</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Springfield</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Company</span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Acme Corp</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">address</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Address</span><span style="opacity:0.7"> {</span>
+    <span style="color:rgb(115,218,202)">street</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">123 Main St</span>"<span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">city</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Springfield</span>"<span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">employees</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
-    <span style="color:rgb(81,103,224)">Bob</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(81,103,224)">Carol</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(81,103,224)">Dave</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">employees</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
+    "<span style="color:rgb(158,206,106)">Bob</span>"<span style="opacity:0.7">,</span>
+    "<span style="color:rgb(158,206,106)">Carol</span>"<span style="opacity:0.7">,</span>
+    "<span style="color:rgb(158,206,106)">Dave</span>"<span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -95,21 +100,21 @@ title = "facet-yaml Comprehensive Showcase"
 
 <section class="scenario">
 <p class="description">Default enum serialization with external tagging: <code>Variant: content</code></p>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 </pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">[Message; 3]</span><span style="opacity:0.7"> [</span>
-  <span style="font-weight:bold">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Text</span><span style="opacity:0.7">(</span><span style="color:rgb(81,103,224)">Hello, world!</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Image</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">url</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">https://example.com/cat.jpg</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">width</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">800</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">[Message; 3]</span><span style="opacity:0.7"> [</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Text</span><span style="opacity:0.7">(</span>"<span style="color:rgb(158,206,106)">Hello, world!</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Image</span><span style="opacity:0.7"> {</span>
+    <span style="color:rgb(115,218,202)">url</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">https://example.com/cat.jpg</span>"<span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">width</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">800</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Ping</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Ping</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -125,21 +130,21 @@ title = "facet-yaml Comprehensive Showcase"
 
 <section class="scenario">
 <p class="description">Enum with internal tagging using <code>#[facet(tag = "type")]</code> - variant name becomes a field.</p>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 </pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">[ApiResponse; 2]</span><span style="opacity:0.7"> [</span>
-  <span style="font-weight:bold">ApiResponse</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Success</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">data</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Operation completed</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">[ApiResponse; 2]</span><span style="opacity:0.7"> [</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">ApiResponse</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Success</span><span style="opacity:0.7"> {</span>
+    <span style="color:rgb(115,218,202)">data</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Operation completed</span>"<span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold">ApiResponse</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Error</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">code</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">404</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">message</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Not found</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">ApiResponse</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Error</span><span style="opacity:0.7"> {</span>
+    <span style="color:rgb(115,218,202)">code</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,95)">404</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">message</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Not found</span>"<span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
@@ -156,21 +161,21 @@ title = "facet-yaml Comprehensive Showcase"
 
 <section class="scenario">
 <p class="description">Enum with adjacent tagging using <code>#[facet(tag = "t", content = "c")]</code> - variant name and content are separate fields.</p>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 </pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">[Event; 3]</span><span style="opacity:0.7"> [</span>
-  <span style="font-weight:bold">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Click</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">x</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">100</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">y</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">200</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">[Event; 3]</span><span style="opacity:0.7"> [</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Click</span><span style="opacity:0.7"> {</span>
+    <span style="color:rgb(115,218,202)">x</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,95)">100</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">y</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,95)">200</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">KeyPress</span><span style="opacity:0.7">(</span><span style="color:rgb(81,224,91)">A</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Resize</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">KeyPress</span><span style="opacity:0.7">(</span><span style="color:rgb(81,122,224)">A</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Resize</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -186,17 +191,17 @@ title = "facet-yaml Comprehensive Showcase"
 
 <section class="scenario">
 <p class="description">Enum with <code>#[facet(untagged)]</code> - no tagging, relies on YAML structure to determine variant.</p>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 </pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">[StringOrNumber; 2]</span><span style="opacity:0.7"> [</span>
-  <span style="font-weight:bold">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Str</span><span style="opacity:0.7">(</span><span style="color:rgb(81,103,224)">hello</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Num</span><span style="opacity:0.7">(</span><span style="color:rgb(222,81,224)">42</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">[StringOrNumber; 2]</span><span style="opacity:0.7"> [</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Str</span><span style="opacity:0.7">(</span>"<span style="color:rgb(158,206,106)">hello</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Num</span><span style="opacity:0.7">(</span><span style="color:rgb(224,88,81)">42</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -212,17 +217,17 @@ title = "facet-yaml Comprehensive Showcase"
 
 <section class="scenario">
 <p class="description">HashMap with string keys serializes to YAML mapping.</p>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 </pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
-  <span style="color:rgb(81,103,224)">one</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(81,103,224)">two</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
+  "<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">1</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">two</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">2</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -239,17 +244,17 @@ title = "facet-yaml Comprehensive Showcase"
 
 <section class="scenario">
 <p class="description">HashMap with integer keys - YAML supports non-string keys natively.</p>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 </pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">HashMap&lt;i32, &amp;str&gt;</span><span style="opacity:0.7"> [</span>
-  <span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7"> =&gt; </span>"<span style="color:#e5c07b">two</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7"> =&gt; </span>"<span style="color:#e5c07b">one</span>"<span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;i32, &amp;str&gt;</span><span style="opacity:0.7"> [</span>
+  <span style="color:rgb(224,81,95)">2</span><span style="opacity:0.7"> =&gt; </span>"<span style="color:rgb(158,206,106)">two</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,95)">1</span><span style="opacity:0.7"> =&gt; </span>"<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -266,19 +271,19 @@ title = "facet-yaml Comprehensive Showcase"
 
 <section class="scenario">
 <p class="description">Tuple struct serializes as YAML sequence.</p>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Point</span><span style="color:#9abdf5;">(</span><span style="color:#bb9af7;">i32</span><span style="color:#c0caf5;">, </span><span style="color:#bb9af7;">i32</span><span style="color:#c0caf5;">, </span><span style="color:#bb9af7;">i32</span><span style="color:#9abdf5;">)</span><span style="color:#89ddff;">;</span></pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Point</span><span style="opacity:0.7">(</span>
-  <span style="color:rgb(224,81,93)">10</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,93)">20</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,93)">30</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Point</span><span style="opacity:0.7">(</span>
+  <span style="color:rgb(224,81,95)">10</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,95)">20</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,95)">30</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">)</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -296,23 +301,24 @@ title = "facet-yaml Comprehensive Showcase"
 
 <section class="scenario">
 <p class="description">YAML's excellent support for multiline strings with proper formatting.</p>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Document </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">title</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">content</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Document</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">title</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">My Document</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">content</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">This is a longer piece of text
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Document</span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">title</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">My Document</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">content</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">This is a longer piece of text
 that spans multiple lines
-and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</span>
+and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -329,59 +335,67 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 
 <section class="scenario">
 <p class="description">Complex nested structure demonstrating YAML's readability for configuration files.</p>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">AppConfig </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">debug</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">bool</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">server</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> ServerConfig,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">database</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> DatabaseConfig,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">features</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Vec</span><span style="color:#89ddff;">&lt;</span><span style="color:#9abdf5;">String</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
 </span><span style="color:#9abdf5;">}
 </span><span style="color:#c0caf5;">
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">DatabaseConfig </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">url</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">pool_size</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u32</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">timeout_secs</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u32</span><span style="color:#9abdf5;">,
 </span><span style="color:#9abdf5;">}
 </span><span style="color:#c0caf5;">
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">ServerConfig </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">host</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">port</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u16</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">tls</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#9abdf5;">TlsConfig</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
 </span><span style="color:#9abdf5;">}
 </span><span style="color:#c0caf5;">
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">TlsConfig </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">cert_path</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">key_path</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">AppConfig</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">server</span><span style="opacity:0.7">: </span><span style="font-weight:bold">ServerConfig</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">host</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">localhost</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">port</span><span style="opacity:0.7">: </span><span style="color:rgb(224,186,81)">8080</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">tls</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Option&lt;TlsConfig&gt;</span><span style="opacity:0.7">Some(</span><span style="font-weight:bold">TlsConfig</span><span style="opacity:0.7"> {</span>
-      <span style="color:#56b6c2">cert_path</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">/etc/ssl/cert.pem</span><span style="opacity:0.7">,</span>
-      <span style="color:#56b6c2">key_path</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">/etc/ssl/key.pem</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">AppConfig</span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">true</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">server</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">ServerConfig</span><span style="opacity:0.7"> {</span>
+    <span style="color:rgb(115,218,202)">host</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">localhost</span>"<span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">port</span><span style="opacity:0.7">: </span><span style="color:rgb(112,224,81)">8080</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">tls</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;TlsConfig&gt;</span><span style="opacity:0.7">::Some(</span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">TlsConfig</span><span style="opacity:0.7"> {</span>
+      <span style="color:rgb(115,218,202)">cert_path</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">/etc/ssl/cert.pem</span>"<span style="opacity:0.7">,</span>
+      <span style="color:rgb(115,218,202)">key_path</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">/etc/ssl/key.pem</span>"<span style="opacity:0.7">,</span>
     <span style="opacity:0.7">}</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">database</span><span style="opacity:0.7">: </span><span style="font-weight:bold">DatabaseConfig</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">url</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">postgres://localhost/mydb</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">pool_size</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">10</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">timeout_secs</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">database</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">DatabaseConfig</span><span style="opacity:0.7"> {</span>
+    <span style="color:rgb(115,218,202)">url</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">postgres://localhost/mydb</span>"<span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">pool_size</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">10</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">timeout_secs</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">30</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">features</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
-    <span style="color:rgb(81,103,224)">auth</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(81,103,224)">logging</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(81,103,224)">metrics</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">features</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
+    "<span style="color:rgb(158,206,106)">auth</span>"<span style="opacity:0.7">,</span>
+    "<span style="color:rgb(158,206,106)">logging</span>"<span style="opacity:0.7">,</span>
+    "<span style="color:rgb(158,206,106)">metrics</span>"<span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -413,25 +427,27 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 
 <section class="scenario">
 <p class="description">Original data serialized to YAML and successfully deserialized back to Rust.</p>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Config </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">debug</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">bool</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">max_connections</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u32</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">endpoints</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Vec</span><span style="color:#89ddff;">&lt;</span><span style="color:#9abdf5;">String</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Config</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">100</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">endpoints</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
-    <span style="color:rgb(81,103,224)">https://api1.example.com</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(81,103,224)">https://api2.example.com</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">true</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">100</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">endpoints</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
+    "<span style="color:rgb(158,206,106)">https://api1.example.com</span>"<span style="opacity:0.7">,</span>
+    "<span style="color:rgb(158,206,106)">https://api2.example.com</span>"<span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -449,12 +465,12 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 </div>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Config</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">100</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">endpoints</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
-    <span style="color:rgb(81,103,224)">https://api1.example.com</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(81,103,224)">https://api2.example.com</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">true</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">100</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">endpoints</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
+    "<span style="color:rgb(158,206,106)">https://api1.example.com</span>"<span style="opacity:0.7">,</span>
+    "<span style="color:rgb(158,206,106)">https://api2.example.com</span>"<span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -472,15 +488,15 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 </span><span style="color:#c0caf5;"> </span><span style="color:#f7768e;">wrong</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">indent</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Config </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::parse</span>
@@ -500,20 +516,20 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 <span style="color:#f7768e;">name</span><span style="color:#89ddff;">:</span><span style="color:#c0caf5;"> @</span><span style="color:#9ece6a;">invalid</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Config </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::parse</span>
 
-  <span style="color:#e06c75">×</span> YAML parse error: unexpected character: `@' at byte 6 line 1 column 7
+  <span style="color:#e06c75">×</span> YAML parse error: unexpected character: &#96;@' at byte 6 line 1 column 7
 </code></pre>
 </div>
 </section>
@@ -529,16 +545,17 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 </span><span style="color:#9ece6a;">name: test</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Config </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">message</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::parse</span>
@@ -559,27 +576,28 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 </span><span style="color:#f7768e;">emial</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">alice@example.com</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">deny_unknown_fields</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">User </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">username</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">email</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::unknown_field</span>
 
-  <span style="color:#e06c75">×</span> unknown field `emial`, expected one of: ["username", "email"]
+  <span style="color:#e06c75">×</span> unknown field &#96;emial&#96;, expected one of: ["username", "email"]
    ╭─[<span style="color:#56b6c2;font-weight:bold;text-decoration:underline">input.yaml:2:1</span>]
  <span style="opacity:0.7">1</span> │ <span style="color:rgb(247,118,142)">username</span><span style="color:rgb(137,221,255)">:</span><span style="color:rgb(192,202,245)"> </span><span style="color:rgb(158,206,106)">alice</span>
  <span style="opacity:0.7">2</span> │ <span style="color:rgb(247,118,142)">emial</span><span style="color:rgb(137,221,255)">:</span><span style="color:rgb(192,202,245)"> </span><span style="color:rgb(158,206,106)">alice@example.com</span>
    · <span style="color:#c678dd;font-weight:bold">──┬──</span>
-   ·   <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown field `emial`</span>
+   ·   <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown field &#96;emial&#96;</span>
    ╰────
 </code></pre>
 </div>
@@ -596,26 +614,27 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 </span><span style="color:#f7768e;">count</span><span style="color:#89ddff;">: &quot;</span><span style="color:#9ece6a;">not a number</span><span style="color:#89ddff;">&quot;</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Item </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">id</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u64</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">count</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">i32</span><span style="color:#9abdf5;">,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::invalid_value</span>
 
-  <span style="color:#e06c75">×</span> invalid value: cannot parse `not a number` as signed integer
+  <span style="color:#e06c75">×</span> invalid value: cannot parse &#96;not a number&#96; as signed integer
    ╭─[<span style="color:#56b6c2;font-weight:bold;text-decoration:underline">input.yaml:2:8</span>]
  <span style="opacity:0.7">1</span> │ <span style="color:rgb(247,118,142)">id</span><span style="color:rgb(137,221,255)">:</span><span style="color:rgb(192,202,245)"> </span><span style="color:rgb(255,158,100)">42</span>
  <span style="opacity:0.7">2</span> │ <span style="color:rgb(247,118,142)">count</span><span style="color:rgb(137,221,255)">:</span><span style="color:rgb(192,202,245)"> </span><span style="color:rgb(137,221,255)">"</span><span style="color:rgb(158,206,106)">not a number</span><span style="color:rgb(137,221,255)">"</span>
    · <span style="color:#c678dd;font-weight:bold">       ───────┬──────</span>
-   ·               <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">cannot parse `not a number` as signed integer</span>
+   ·               <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">cannot parse &#96;not a number&#96; as signed integer</span>
    ╰────
 </code></pre>
 </div>
@@ -632,21 +651,22 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 </span><span style="color:#f7768e;">name</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">123</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Item </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">id</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u64</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Item</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">id</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,179)">42</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">123</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Item</span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">id</span><span style="opacity:0.7">: </span><span style="color:rgb(81,126,224)">42</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">123</span>"<span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -661,8 +681,8 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 <span style="color:#f7768e;">host</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">localhost</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">ServerConfig </span><span style="color:#9abdf5;">{
@@ -670,7 +690,7 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">port</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u16</span><span style="color:#9abdf5;">,  </span><span style="font-style:italic;color:#565f89;">// Required but missing from YAML
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::reflect</span>
@@ -690,20 +710,20 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 <span style="color:#f7768e;">count</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">999999999999</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Counter </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">count</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u32</span><span style="color:#9abdf5;">,  </span><span style="font-style:italic;color:#565f89;">// Max value is 4,294,967,295
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::number_out_of_range</span>
 
-  <span style="color:#e06c75">×</span> number `999999999999` out of range for u32
+  <span style="color:#e06c75">×</span> number &#96;999999999999&#96; out of range for u32
    ╭─[<span style="color:#56b6c2;font-weight:bold;text-decoration:underline">input.yaml:1:8</span>]
  <span style="opacity:0.7">1</span> │ <span style="color:rgb(247,118,142)">count</span><span style="color:rgb(137,221,255)">:</span><span style="color:rgb(192,202,245)"> </span><span style="color:rgb(255,158,100)">999999999999</span>
    · <span style="color:#c678dd;font-weight:bold">       ──────┬─────</span>
@@ -723,15 +743,15 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 <span style="color:#f7768e;">items</span><span style="color:#89ddff;">: &quot;</span><span style="color:#9ece6a;">not a sequence</span><span style="color:#89ddff;">&quot;</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Container </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">items</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Vec</span><span style="color:#89ddff;">&lt;</span><span style="color:#bb9af7;">i32</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,  </span><span style="font-style:italic;color:#565f89;">// Expected sequence, got string
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::unexpected_event</span>
@@ -756,8 +776,8 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 <span style="color:#f7768e;">config</span><span style="color:#89ddff;">: &quot;</span><span style="color:#9ece6a;">not a mapping</span><span style="color:#89ddff;">&quot;</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Nested </span><span style="color:#9abdf5;">{
@@ -769,7 +789,7 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">config</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> Nested,  </span><span style="font-style:italic;color:#565f89;">// Expected mapping, got string
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::unexpected_event</span>
@@ -794,8 +814,8 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 <span style="color:#9ece6a;">Unknown</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">u8</span><span style="color:#9abdf5;">)]
@@ -806,7 +826,7 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 </span><span style="color:#9abdf5;">}
 </span><span style="font-style:italic;color:#565f89;">// YAML has &quot;Unknown&quot; which is not a valid variant</span></pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::unexpected_event</span>
@@ -832,8 +852,8 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 </span><span style="color:#f7768e;">content</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">hello</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">u8</span><span style="color:#9abdf5;">)]
@@ -847,7 +867,7 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 </span><span style="font-style:italic;color:#565f89;">//   type: Text
 </span><span style="font-style:italic;color:#565f89;">//   content: hello</span></pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::reflect</span>
@@ -868,8 +888,8 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 </span><span style="color:#f7768e;">method</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">ping</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">C</span><span style="color:#9abdf5;">)]
@@ -880,7 +900,7 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 </span><span style="color:#9abdf5;">}
 </span><span style="font-style:italic;color:#565f89;">// YAML is missing the &quot;type&quot; tag field</span></pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::reflect</span>
@@ -902,21 +922,22 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 </span><span style="color:#f7768e;">name</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">second</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Config </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">value</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">i32</span><span style="color:#9abdf5;">,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Config</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">second</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">value</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">42</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">second</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">value</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,95)">42</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -941,24 +962,28 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 </span><span style="color:#c0caf5;">  </span><span style="color:#f7768e;">host</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">staging.example.com</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">AllConfigs </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">defaults</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> ServerConfig,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">production</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> ServerConfig,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">staging</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> ServerConfig,
 </span><span style="color:#9abdf5;">}
 </span><span style="color:#c0caf5;">
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">ServerConfig </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">timeout</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u32</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">retries</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u32</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">host</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::reflect</span>
@@ -985,24 +1010,25 @@ and demonstrates YAML's string handling.</span><span style="opacity:0.7">,</
 </span><span style="color:#9ece6a;">  a single paragraph.</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">TextContent </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">literal</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">folded</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">TextContent</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">literal</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">This is a literal block.
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">TextContent</span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">literal</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">This is a literal block.
 Newlines are preserved.
-</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">folded</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">This is a folded block. Lines get folded into a single paragraph.
-</span><span style="opacity:0.7">,</span>
+</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">folded</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">This is a folded block. Lines get folded into a single paragraph.
+</span>"<span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -1017,12 +1043,12 @@ Newlines are preserved.
 </pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 </pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::unexpected_event</span>
@@ -1045,21 +1071,22 @@ Newlines are preserved.
 </span><span style="color:#f7768e;">count</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">42</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Item </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">count</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">i32</span><span style="color:#9abdf5;">,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Item</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">~</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">count</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">42</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Item</span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">~</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">count</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,95)">42</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -1075,26 +1102,27 @@ Newlines are preserved.
 </span><span style="color:#f7768e;">count</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">nope</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">EmojiData </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">emoji</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">count</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">i32</span><span style="color:#9abdf5;">,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::invalid_value</span>
 
-  <span style="color:#e06c75">×</span> invalid value: cannot parse `nope` as signed integer
+  <span style="color:#e06c75">×</span> invalid value: cannot parse &#96;nope&#96; as signed integer
    ╭─[<span style="color:#56b6c2;font-weight:bold;text-decoration:underline">input.yaml:2:2</span>]
  <span style="opacity:0.7">1</span> │ <span style="color:rgb(247,118,142)">emoji</span><span style="color:rgb(137,221,255)">:</span><span style="color:rgb(192,202,245)"> </span><span style="color:rgb(137,221,255)">"</span><span style="color:rgb(158,206,106)">🎉🚀</span><span style="color:rgb(137,221,255)">"</span>
  <span style="opacity:0.7">2</span> │ <span style="color:rgb(247,118,142)">count</span><span style="color:rgb(137,221,255)">:</span><span style="color:rgb(192,202,245)"> </span><span style="color:rgb(158,206,106)">nope</span>
    · <span style="color:#c678dd;font-weight:bold"> ──┬─</span>
-   ·    <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">cannot parse `nope` as signed integer</span>
+   ·    <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">cannot parse &#96;nope&#96; as signed integer</span>
    ╰────
 </code></pre>
 </div>
@@ -1116,8 +1144,8 @@ Newlines are preserved.
 </span><span style="color:#c0caf5;">    </span><span style="color:#f7768e;">url</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">postgres://localhost/db</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">AppConfig </span><span style="color:#9abdf5;">{
@@ -1127,7 +1155,9 @@ Newlines are preserved.
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Server </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">host</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">ports</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> Ports,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">database</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> Database,
 </span><span style="color:#9abdf5;">}
 </span><span style="color:#c0caf5;">
@@ -1139,20 +1169,21 @@ Newlines are preserved.
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Ports </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">http</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u16</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">https</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u16</span><span style="color:#9abdf5;">,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::invalid_value</span>
 
-  <span style="color:#e06c75">×</span> invalid value: cannot parse `not a number` as unsigned integer
+  <span style="color:#e06c75">×</span> invalid value: cannot parse &#96;not a number&#96; as unsigned integer
    ╭─[<span style="color:#56b6c2;font-weight:bold;text-decoration:underline">input.yaml:5:12</span>]
  <span style="opacity:0.7">4</span> │ <span style="color:rgb(192,202,245)">    </span><span style="color:rgb(247,118,142)">http</span><span style="color:rgb(137,221,255)">:</span><span style="color:rgb(192,202,245)"> </span><span style="color:rgb(255,158,100)">8080</span>
  <span style="opacity:0.7">5</span> │ <span style="color:rgb(192,202,245)">    </span><span style="color:rgb(247,118,142)">https</span><span style="color:rgb(137,221,255)">:</span><span style="color:rgb(192,202,245)"> </span><span style="color:rgb(137,221,255)">"</span><span style="color:rgb(158,206,106)">not a number</span><span style="color:rgb(137,221,255)">"</span>
    · <span style="color:#c678dd;font-weight:bold">           ───────┬──────</span>
-   ·                   <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">cannot parse `not a number` as unsigned integer</span>
+   ·                   <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">cannot parse &#96;not a number&#96; as unsigned integer</span>
  <span style="opacity:0.7">6</span> │ <span style="color:rgb(192,202,245)">  </span><span style="color:rgb(247,118,142)">database</span><span style="color:rgb(137,221,255)">:</span>
    ╰────
 </code></pre>
@@ -1175,8 +1206,8 @@ Newlines are preserved.
 </span><span style="color:#c0caf5;">    </span><span style="color:#f7768e;">age</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">35</span></pre>
 
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">UserList </span><span style="color:#9abdf5;">{
@@ -1186,20 +1217,21 @@ Newlines are preserved.
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">User </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">age</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u32</span><span style="color:#9abdf5;">,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="error">
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::invalid_value</span>
 
-  <span style="color:#e06c75">×</span> invalid value: cannot parse `twenty-five` as unsigned integer
+  <span style="color:#e06c75">×</span> invalid value: cannot parse &#96;twenty-five&#96; as unsigned integer
    ╭─[<span style="color:#56b6c2;font-weight:bold;text-decoration:underline">input.yaml:5:10</span>]
  <span style="opacity:0.7">4</span> │ <span style="color:rgb(192,202,245)">  </span><span style="color:rgb(154,189,245)">-</span><span style="color:rgb(192,202,245)"> </span><span style="color:rgb(247,118,142)">name</span><span style="color:rgb(137,221,255)">:</span><span style="color:rgb(192,202,245)"> </span><span style="color:rgb(158,206,106)">Bob</span>
  <span style="opacity:0.7">5</span> │ <span style="color:rgb(192,202,245)">    </span><span style="color:rgb(247,118,142)">age</span><span style="color:rgb(137,221,255)">:</span><span style="color:rgb(192,202,245)"> </span><span style="color:rgb(137,221,255)">"</span><span style="color:rgb(158,206,106)">twenty-five</span><span style="color:rgb(137,221,255)">"</span>
    · <span style="color:#c678dd;font-weight:bold">         ──────┬──────</span>
-   ·                <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">cannot parse `twenty-five` as unsigned integer</span>
+   ·                <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">cannot parse &#96;twenty-five&#96; as unsigned integer</span>
  <span style="opacity:0.7">6</span> │ <span style="color:rgb(192,202,245)">  </span><span style="color:rgb(154,189,245)">-</span><span style="color:rgb(192,202,245)"> </span><span style="color:rgb(247,118,142)">name</span><span style="color:rgb(137,221,255)">:</span><span style="color:rgb(192,202,245)"> </span><span style="color:rgb(158,206,106)">Charlie</span>
    ╰────
 </code></pre>

@@ -1,5 +1,5 @@
 +++
-title = "facet-value: from_value Deserialization"
+title = "From Value"
 +++
 
 <div class="showcase">
@@ -14,28 +14,30 @@ title = "facet-value: from_value Deserialization"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">{</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:#e5c07b">"Alice"</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">age</span><span style="opacity:0.7">: </span><span style="color:#56b6c2">30</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">email</span><span style="opacity:0.7">: </span><span style="color:#e5c07b">"alice@example.com"</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Alice</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">30</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">alice@example.com</span>"<span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Person </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">age</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u32</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">email</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#9abdf5;">String</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Person</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Alice</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Option&lt;String&gt;</span><span style="opacity:0.7">Some(</span><span style="color:rgb(81,103,224)">alice@example.com</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Person</span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Alice</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">30</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;String&gt;</span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">alice@example.com</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -47,58 +49,64 @@ title = "facet-value: from_value Deserialization"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">{</span>
-  <span style="color:#56b6c2">person</span><span style="opacity:0.7">: </span><span style="opacity:0.7">{</span>
-    <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:#e5c07b">"Bob"</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">age</span><span style="opacity:0.7">: </span><span style="color:#56b6c2">42</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">email</span><span style="opacity:0.7">: </span><span style="color:#c678dd">null</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">person</span><span style="opacity:0.7">: </span><span style="opacity:0.7">{</span>
+    <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Bob</span>"<span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">42</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="color:rgb(187,154,247)">null</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">address</span><span style="opacity:0.7">: </span><span style="opacity:0.7">{</span>
-    <span style="color:#56b6c2">street</span><span style="opacity:0.7">: </span><span style="color:#e5c07b">"123 Main St"</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">city</span><span style="opacity:0.7">: </span><span style="color:#e5c07b">"Springfield"</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">zip</span><span style="opacity:0.7">: </span><span style="color:#e5c07b">"12345"</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">address</span><span style="opacity:0.7">: </span><span style="opacity:0.7">{</span>
+    <span style="color:rgb(115,218,202)">street</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">123 Main St</span>"<span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">city</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Springfield</span>"<span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">zip</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">12345</span>"<span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">department</span><span style="opacity:0.7">: </span><span style="color:#e5c07b">"Engineering"</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">department</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Engineering</span>"<span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Employee </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">person</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> Person,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">address</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> Address,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">department</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
 </span><span style="color:#9abdf5;">}
 </span><span style="color:#c0caf5;">
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Address </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">street</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">city</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">zip</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
 </span><span style="color:#9abdf5;">}
 </span><span style="color:#c0caf5;">
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Person </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">age</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u32</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">email</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#9abdf5;">String</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Employee</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">person</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Person</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Bob</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">42</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Option&lt;String&gt;</span><span style="opacity:0.7">None</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Employee</span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">person</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Person</span><span style="opacity:0.7"> {</span>
+    <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Bob</span>"<span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">42</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;String&gt;</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">address</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Address</span><span style="opacity:0.7"> {</span>
-    <span style="color:#56b6c2">street</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">123 Main St</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">city</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Springfield</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">zip</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">12345</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">address</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Address</span><span style="opacity:0.7"> {</span>
+    <span style="color:rgb(115,218,202)">street</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">123 Main St</span>"<span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">city</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Springfield</span>"<span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">zip</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">12345</span>"<span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">department</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">Engineering</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">department</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Engineering</span>"<span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -109,23 +117,25 @@ title = "facet-value: from_value Deserialization"
 <p class="description">A string value deserializes into a unit variant.</p>
 <div class="input">
 <h4>Value Input</h4>
-<pre><code><span style="color:#e5c07b">"Active"</span></code></pre>
+<pre><code>"<span style="color:rgb(158,206,106)">Active</span>"</code></pre>
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">u8</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">enum </span><span style="color:#c0caf5;">Status </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    Active</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    Inactive</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    Pending</span><span style="color:#89ddff;">,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Status</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Active</span></code></pre>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Status</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Active</span></code></pre>
 </div>
 </section>
 
@@ -136,27 +146,30 @@ title = "facet-value: from_value Deserialization"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">{</span>
-  <span style="color:#56b6c2">Text</span><span style="opacity:0.7">: </span><span style="color:#e5c07b">"Hello world!"</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">Text</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Hello world!</span>"<span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">u8</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">enum </span><span style="color:#c0caf5;">Message </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    Text(</span><span style="color:#0db9d7;">String</span><span style="color:#9abdf5;">)</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    Number(</span><span style="color:#bb9af7;">i32</span><span style="color:#9abdf5;">)</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    Data {
 </span><span style="color:#9abdf5;">        id</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u64</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">        payload</span><span style="color:#89ddff;">: </span><span style="color:#0db9d7;">String</span><span style="color:#89ddff;">,
 </span><span style="color:#9abdf5;">    }</span><span style="color:#89ddff;">,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Text</span><span style="opacity:0.7">(</span><span style="color:rgb(81,103,224)">Hello world!</span><span style="opacity:0.7">)</span></code></pre>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Text</span><span style="opacity:0.7">(</span>"<span style="color:rgb(158,206,106)">Hello world!</span>"<span style="opacity:0.7">)</span></code></pre>
 </div>
 </section>
 
@@ -167,32 +180,35 @@ title = "facet-value: from_value Deserialization"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">{</span>
-  <span style="color:#56b6c2">Data</span><span style="opacity:0.7">: </span><span style="opacity:0.7">{</span>
-    <span style="color:#56b6c2">id</span><span style="opacity:0.7">: </span><span style="color:#56b6c2">42</span><span style="opacity:0.7">,</span>
-    <span style="color:#56b6c2">payload</span><span style="opacity:0.7">: </span><span style="color:#e5c07b">"secret data"</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">Data</span><span style="opacity:0.7">: </span><span style="opacity:0.7">{</span>
+    <span style="color:rgb(115,218,202)">id</span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">42</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">payload</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">secret data</span>"<span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">u8</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">enum </span><span style="color:#c0caf5;">Message </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    Text(</span><span style="color:#0db9d7;">String</span><span style="color:#9abdf5;">)</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    Number(</span><span style="color:#bb9af7;">i32</span><span style="color:#9abdf5;">)</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    Data {
 </span><span style="color:#9abdf5;">        id</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u64</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">        payload</span><span style="color:#89ddff;">: </span><span style="color:#0db9d7;">String</span><span style="color:#89ddff;">,
 </span><span style="color:#9abdf5;">    }</span><span style="color:#89ddff;">,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Data</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">id</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,179)">42</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">payload</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">secret data</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Data</span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">id</span><span style="opacity:0.7">: </span><span style="color:rgb(81,126,224)">42</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">payload</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">secret data</span>"<span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -204,27 +220,27 @@ title = "facet-value: from_value Deserialization"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">[</span>
-  <span style="color:#56b6c2">1</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">2</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">3</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">4</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">5</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(255,158,100)">1</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(255,158,100)">2</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(255,158,100)">3</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(255,158,100)">4</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(255,158,100)">5</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 </pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Vec&lt;i32&gt;</span><span style="opacity:0.7"> [</span>
-  <span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,93)">3</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,93)">4</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,93)">5</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;i32&gt;</span><span style="opacity:0.7"> [</span>
+  <span style="color:rgb(224,81,95)">1</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,95)">2</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,95)">3</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,95)">4</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,95)">5</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 </section>
@@ -236,23 +252,23 @@ title = "facet-value: from_value Deserialization"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">[</span>
-  <span style="color:#e5c07b">"a"</span><span style="opacity:0.7">,</span>
-  <span style="color:#e5c07b">"b"</span><span style="opacity:0.7">,</span>
-  <span style="color:#e5c07b">"c"</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">a</span>"<span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">b</span>"<span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">c</span>"<span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 </pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">[String; 3]</span><span style="opacity:0.7"> [</span>
-  <span style="color:rgb(81,103,224)">a</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(81,103,224)">b</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(81,103,224)">c</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">[String; 3]</span><span style="opacity:0.7"> [</span>
+  "<span style="color:rgb(158,206,106)">a</span>"<span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">b</span>"<span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">c</span>"<span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 </section>
@@ -264,23 +280,23 @@ title = "facet-value: from_value Deserialization"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">{</span>
-  <span style="color:#56b6c2">x</span><span style="opacity:0.7">: </span><span style="color:#56b6c2">10</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">y</span><span style="opacity:0.7">: </span><span style="color:#56b6c2">20</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">z</span><span style="opacity:0.7">: </span><span style="color:#56b6c2">30</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">x</span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">10</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">y</span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">20</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">z</span><span style="opacity:0.7">: </span><span style="color:rgb(255,158,100)">30</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 </pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
-  <span style="color:rgb(81,103,224)">z</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">30</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(81,103,224)">y</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">20</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(81,103,224)">x</span><span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">10</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
+  "<span style="color:rgb(158,206,106)">y</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">20</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">z</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">30</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">x</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">10</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 </section>
@@ -292,27 +308,27 @@ title = "facet-value: from_value Deserialization"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">[</span>
-  <span style="color:#56b6c2">1</span><span style="opacity:0.7">,</span>
-  <span style="color:#c678dd">null</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">3</span><span style="opacity:0.7">,</span>
-  <span style="color:#c678dd">null</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">5</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(255,158,100)">1</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(187,154,247)">null</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(255,158,100)">3</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(187,154,247)">null</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(255,158,100)">5</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 </pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Vec&lt;Option&lt;i32&gt;&gt;</span><span style="opacity:0.7"> [</span>
-  <span style="font-weight:bold">Option&lt;i32&gt;</span><span style="opacity:0.7">Some(</span><span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold">Option&lt;i32&gt;</span><span style="opacity:0.7">None</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold">Option&lt;i32&gt;</span><span style="opacity:0.7">Some(</span><span style="color:rgb(224,81,93)">3</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold">Option&lt;i32&gt;</span><span style="opacity:0.7">None</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold">Option&lt;i32&gt;</span><span style="opacity:0.7">Some(</span><span style="color:rgb(224,81,93)">5</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;Option&lt;i32&gt;&gt;</span><span style="opacity:0.7"> [</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;i32&gt;</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(224,81,95)">1</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;i32&gt;</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;i32&gt;</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(224,81,95)">3</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;i32&gt;</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;i32&gt;</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(224,81,95)">5</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 </section>
@@ -324,26 +340,28 @@ title = "facet-value: from_value Deserialization"
 <div class="input">
 <h4>Value Input</h4>
 <pre><code><span style="opacity:0.7">{</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:#e5c07b">"minimal"</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">minimal</span>"<span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
-<div class="target-type">
-<h4>Target Type</h4>
+<details class="target-type">
+<summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
 <span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
 </span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Config </span><span style="color:#9abdf5;">{
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">enabled</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">bool</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
 </span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">max_retries</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#bb9af7;">u32</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
 </span><span style="color:#9abdf5;">}</span></pre>
 
-</div>
+</details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold">Config</span><span style="opacity:0.7"> {</span>
-  <span style="color:#56b6c2">name</span><span style="opacity:0.7">: </span><span style="color:rgb(81,103,224)">minimal</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">enabled</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="opacity:0.7">,</span>
-  <span style="color:#56b6c2">max_retries</span><span style="opacity:0.7">: </span><span style="font-weight:bold">Option&lt;u32&gt;</span><span style="opacity:0.7">None</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">minimal</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">enabled</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">false</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">max_retries</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;u32&gt;</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>

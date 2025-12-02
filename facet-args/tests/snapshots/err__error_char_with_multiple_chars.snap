@@ -1,10 +1,12 @@
 ---
-source: tests/err.rs
+source: facet-args/tests/err.rs
 expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
 ---
+args::reflect_error
+
   × Could not parse CLI arguments
    ╭────
  1 │ --letter abc 
    ·          ─┬─
-   ·           ╰── reflection error: Operation failed on shape char: Failed to parse string value
+   ·           ╰── invalid value for `char`
    ╰────

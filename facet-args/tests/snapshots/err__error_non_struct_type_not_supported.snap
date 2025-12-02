@@ -2,9 +2,14 @@
 source: facet-args/tests/err.rs
 expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
 ---
+args::unknown_subcommand
+
   × Could not parse CLI arguments
    ╭────
  1 │ error wrong type 
    · ──┬──
-   ·   ╰── unknown subcommand for ()
+   ·   ╰── unknown subcommand `error`
    ╰────
+  help: available subcommands:
+          something
+          else
