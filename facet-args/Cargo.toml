@@ -20,7 +20,7 @@ facet-core = { path = "../facet-core" }
 tracing = "0.1"
 heck = "0.5.0"
 miette = { version = "7.6.0", default-features = false }
-owo-colors = "4"
+owo-colors = { version = "4", features = ["supports-colors"] }
 
 [dev-dependencies]
 eyre = "0.6.12"
