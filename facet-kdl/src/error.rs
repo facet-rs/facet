@@ -229,6 +229,10 @@ impl miette::Diagnostic for KdlError {
     }
 
     fn source_code(&self) -> Option<&dyn miette::SourceCode> {
+        // For parse errors, delegate to the inner kdl::KdlError which has the source
+        if let KdlErrorKind::Parse(kdl_err) = &self.kind {
+            return kdl_err.source_code();
+        }
         self.source_code
             .as_ref()
             .map(|s| s as &dyn miette::SourceCode)
@@ -267,6 +271,14 @@ impl miette::Diagnostic for KdlError {
         } else {
             None
         }
+    }
+
+    fn related<'a>(&'a self) -> Option<Box<dyn Iterator<Item = &'a dyn miette::Diagnostic> + 'a>> {
+        // For parse errors, delegate to the inner kdl::KdlError which has sub-diagnostics
+        if let KdlErrorKind::Parse(kdl_err) = &self.kind {
+            return kdl_err.related();
+        }
+        None
     }
 
     fn help<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
