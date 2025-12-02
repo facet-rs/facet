@@ -4,7 +4,7 @@ use facet_reflect::Partial;
 use log::trace;
 
 #[cfg(feature = "alloc")]
-use alloc::string::String;
+use alloc::{borrow::Cow, string::String};
 
 /// Deserializes postcard-encoded data into a type that implements `Facet`.
 ///
@@ -302,6 +302,9 @@ impl<'input> Decoder<'input> {
                 partial = partial.set(c)?;
             } else if shape.is_type::<()>() {
                 // Unit type - nothing to read
+            } else if shape.is_type::<Cow<'_, str>>() {
+                let s = self.read_string()?;
+                partial = partial.set(Cow::Owned(s))?;
             } else {
                 return Err(DeserializeError::UnsupportedType("Unknown scalar type"));
             }
