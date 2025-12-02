@@ -179,8 +179,15 @@ impl<'input> Decoder<'input> {
                 trace!("Deserializing struct");
                 // Postcard deserializes structs in field order
                 for idx in 0..struct_type.fields.len() {
+                    let field = &struct_type.fields[idx];
                     let field_partial = partial.begin_nth_field(idx)?;
-                    let field_partial = self.deserialize_value(field_partial)?;
+
+                    // Skip fields marked with #[facet(skip)] or #[facet(skip_deserializing)]
+                    let field_partial = if field.should_skip_deserializing() {
+                        field_partial.set_default()?
+                    } else {
+                        self.deserialize_value(field_partial)?
+                    };
                     partial = field_partial.end()?;
                 }
                 return Ok(partial);
