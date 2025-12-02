@@ -1,0 +1,38 @@
+[package]
+name = "facet-postcard"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Postcard serialization and deserialization for Facet types"
+keywords = [
+    "postcard",
+    "serialization",
+    "deserialization",
+    "reflection",
+    "facet",
+    "no_std",
+    "embedded",
+]
+categories = ["encoding", "no-std", "embedded"]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
+
+[features]
+default = ["std"]
+std = ["alloc", "facet-core/std", "facet-reflect/std"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc"]
+
+[dependencies]
+facet-core = { path = "../facet-core", default-features = false }
+facet-reflect = { path = "../facet-reflect", default-features = false }
+log = "0.4"
+
+[dev-dependencies]
+facet = { path = "../facet" }
+facet-testhelpers = { path = "../facet-testhelpers" }
+eyre = "0.6"
+postcard = { version = "1", features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
