@@ -194,6 +194,10 @@ impl<'input> Decoder<'input> {
                 }
                 return Ok(partial);
             }
+            Type::User(UserType::Enum(_)) if matches!(shape.def, Def::Option(_)) => {
+                // Option types are enums but need special handling via Def::Option path
+                // Fall through to the Def::Option check below
+            }
             Type::User(UserType::Enum(enum_type)) => {
                 trace!("Deserializing enum");
                 let variant_idx = self.read_varint()? as usize;
