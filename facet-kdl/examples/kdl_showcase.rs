@@ -15,6 +15,7 @@ fn main() {
         .language(Language::Kdl)
         .with_kdl_syntaxes(concat!(env!("CARGO_MANIFEST_DIR"), "/syntaxes"));
     runner.header();
+    runner.intro("[`facet-kdl`](https://docs.rs/facet-kdl) provides serialization and deserialization for [KDL](https://kdl.dev), a document language with a focus on human readability. Use attributes like `kdl::property`, `kdl::argument`, and `kdl::child` to control how your types map to KDL's node-based structure.");
 
     // =========================================================================
     // Serialization Examples

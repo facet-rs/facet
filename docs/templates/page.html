@@ -22,6 +22,27 @@
 
     <main class="docs-content">
         <article>
+            {# Breadcrumbs #}
+            <nav class="breadcrumbs" aria-label="Breadcrumb">
+                <ol>
+                    <li><a href="/">Home</a></li>
+                    {% if in_learn %}
+                    <li><a href="/learn">Learn</a></li>
+                    {% elif in_extend %}
+                    <li><a href="/extend">Extend</a></li>
+                    {% elif in_contribute %}
+                    <li><a href="/contribute">Contribute</a></li>
+                    {% endif %}
+                    {% if page.ancestors | length > 1 %}
+                        {% for ancestor in page.ancestors | slice(start=1) %}
+                            {% set section = get_section(path=ancestor) %}
+                            <li><a href="{{ section.permalink }}">{{ section.title }}</a></li>
+                        {% endfor %}
+                    {% endif %}
+                    <li aria-current="page">{{ page.title }}</li>
+                </ol>
+            </nav>
+
             <h1 class="page-title">{{ page.title }}</h1>
             {{ page.content | safe }}
         </article>

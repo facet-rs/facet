@@ -118,6 +118,7 @@ fn main() {
     let mut runner = ShowcaseRunner::new("YAML").language(Language::Yaml);
 
     runner.header();
+    runner.intro("[`facet-yaml`](https://docs.rs/facet-yaml) provides YAML serialization and deserialization for any type that implements `Facet`. It supports all YAML features including anchors, aliases, multiline strings, and produces clear error diagnostics with source locations.");
 
     // =========================================================================
     // PART 1: Serialization Examples

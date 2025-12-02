@@ -1,4 +1,5 @@
 // Dodeca configuration for facet docs
+title "facet"
 content "docs/content"
 output "docs/public"
 
@@ -8,4 +9,10 @@ link_check {
     // skip_domain "example.com"
 }
 
-stable_assets {}
+stable_assets {
+    "docs/static/favicon.png" "favicon.png"
+    "docs/static/logo.jxl" "logo.jxl"
+    "docs/static/fonts" "fonts"
+    "docs/static/hljs" "hljs"
+    "docs/static/CNAME" "CNAME"
+}

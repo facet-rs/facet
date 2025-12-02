@@ -90,6 +90,25 @@ impl ShowcaseRunner {
         }
     }
 
+    /// Print an intro paragraph after the header.
+    ///
+    /// This should be called immediately after `header()` to add context
+    /// about what this showcase demonstrates.
+    pub fn intro(&self, text: &str) {
+        match self.mode {
+            OutputMode::Terminal => {
+                println!();
+                println!("{}", text.dimmed());
+                println!();
+            }
+            OutputMode::Markdown => {
+                println!();
+                println!("{text}");
+                println!();
+            }
+        }
+    }
+
     /// Start a new scenario.
     ///
     /// If a filter is set, scenarios that don't match are skipped (all methods become no-ops).
