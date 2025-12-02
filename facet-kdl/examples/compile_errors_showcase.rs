@@ -9,7 +9,7 @@ use facet_showcase::{Language, ShowcaseRunner};
 use std::process::Command;
 
 fn main() {
-    let mut runner = ShowcaseRunner::new("facet-kdl Compile Error Showcase")
+    let mut runner = ShowcaseRunner::new("Diagnostics")
         .language(Language::Rust)
         .with_kdl_syntaxes(concat!(env!("CARGO_MANIFEST_DIR"), "/syntaxes"));
     runner.header();

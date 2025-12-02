@@ -14,8 +14,8 @@ Interactive examples demonstrating facet's serialization and deserialization cap
 
 ## Feature Showcases
 
+- [Args](@/learn/showcases/args.md) — Command-line argument parsing with facet-args
 - [Assertions](@/learn/showcases/assert.md) — Structural diffing with facet-assert
-- [Value Deserialization](@/learn/showcases/from-value.md) — Converting facet-value to typed structs
-- [Error Diagnostics](@/learn/showcases/diagnostics.md) — Rich error messages with source spans
-- [Span Highlighting](@/learn/showcases/spans.md) — How errors point to source locations
-- [Proto-Attr](@/learn/showcases/proto-attr.md) — Declarative attribute grammar prototype
+- [Diagnostics](@/learn/showcases/compile_errors.md) — Rich error messages with source spans
+- [From Value](@/learn/showcases/from_value.md) — Converting facet-value to typed structs
+- [Spans](@/learn/showcases/spans.md) — How errors point to source locations

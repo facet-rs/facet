@@ -1,10 +1,13 @@
 ---
-source: tests/err.rs
+source: facet-args/tests/err.rs
 expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
 ---
+args::unknown_long_flag
+
   × Could not parse CLI arguments
    ╭────
  1 │ --c0ncurrency 
    · ──────┬──────
-   ·       ╰── unknown long flag
+   ·       ╰── unknown flag `--c0ncurrency`
    ╰────
+  help: did you mean `--concurrency`?

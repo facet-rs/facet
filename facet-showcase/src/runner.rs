@@ -380,8 +380,8 @@ impl<'a> Scenario<'a> {
                 println!("{}", "─".repeat(60).dimmed());
             }
             OutputMode::Markdown => {
-                println!("<div class=\"target-type\">");
-                println!("<h4>Target Type</h4>");
+                println!("<details class=\"target-type\">");
+                println!("<summary>Target Type</summary>");
                 // highlight_to_html returns a complete <pre> element with inline styles
                 println!(
                     "{}",
@@ -389,7 +389,7 @@ impl<'a> Scenario<'a> {
                         .highlighter
                         .highlight_to_html(&type_def, Language::Rust)
                 );
-                println!("</div>");
+                println!("</details>");
             }
         }
         self
@@ -416,8 +416,8 @@ impl<'a> Scenario<'a> {
                 println!("{}", "─".repeat(60).dimmed());
             }
             OutputMode::Markdown => {
-                println!("<div class=\"target-type\">");
-                println!("<h4>Target Type</h4>");
+                println!("<details class=\"target-type\">");
+                println!("<summary>Target Type</summary>");
                 // highlight_to_html returns a complete <pre> element with inline styles
                 println!(
                     "{}",
@@ -425,7 +425,7 @@ impl<'a> Scenario<'a> {
                         .highlighter
                         .highlight_to_html(type_def, Language::Rust)
                 );
-                println!("</div>");
+                println!("</details>");
             }
         }
         self

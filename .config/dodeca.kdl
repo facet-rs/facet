@@ -7,3 +7,5 @@ link_check {
     // Domains to skip (anti-bot policies)
     // skip_domain "example.com"
 }
+
+stable_assets {}

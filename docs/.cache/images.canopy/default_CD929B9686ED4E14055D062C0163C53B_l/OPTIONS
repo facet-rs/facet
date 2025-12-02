@@ -1,0 +1,13 @@
+{
+  "use_wal": true,
+  "default_commit_sync": false,
+  "checkpoint_db_on_drop": false,
+  "checkpoint_interval": {
+    "secs": 30,
+    "nanos": 0
+  },
+  "write_txn_memory_limit": 67108864,
+  "checkpoint_target_size": 67108864,
+  "throttle_memory_limit": 268435456,
+  "stall_memory_limit": 268435456
+}

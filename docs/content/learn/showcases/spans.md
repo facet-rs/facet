@@ -1,5 +1,5 @@
 +++
-title = "Error Highlighting Showcase"
+title = "Spans"
 +++
 
 <div class="showcase">
@@ -16,14 +16,17 @@ title = "Error Highlighting Showcase"
 <pre><code><span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">derive</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(122,162,247)">Facet</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">struct</span> <span style="color:rgb(192,202,245)">Config</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(125,207,255)">name</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">max_retries</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">u8</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">timeout_ms</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">u32</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">enabled</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">bool</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span></code></pre>
 </div>
 <div class="error">
 <h4>Error</h4>
-<pre><code>  <span style="color:#e06c75">×</span> unknown field `max_retries`
+<pre><code>  <span style="color:#e06c75">×</span> unknown field &#96;max_retries&#96;
    ╭─[<span style="color:#56b6c2;font-weight:bold;text-decoration:underline">target type:4:5</span>]
  <span style="opacity:0.7">3</span> │     name: String,
  <span style="opacity:0.7">4</span> │     max_retries: u8,
@@ -44,8 +47,11 @@ title = "Error Highlighting Showcase"
 <pre><code><span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">derive</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(122,162,247)">Facet</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">struct</span> <span style="color:rgb(192,202,245)">Config</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(125,207,255)">name</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">max_retries</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">u8</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">timeout_ms</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">u32</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">enabled</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">bool</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span></code></pre>
 </div>
@@ -72,8 +78,11 @@ title = "Error Highlighting Showcase"
 <pre><code><span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">derive</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(122,162,247)">Facet</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">struct</span> <span style="color:rgb(192,202,245)">Config</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(125,207,255)">name</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">max_retries</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">u8</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">timeout_ms</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">u32</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">enabled</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">bool</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span></code></pre>
 </div>
@@ -103,22 +112,29 @@ title = "Error Highlighting Showcase"
 <pre><code><span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">derive</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(122,162,247)">Facet</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">struct</span> <span style="color:rgb(192,202,245)">Employee</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(125,207,255)">person</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(192,202,245)">Person</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">address</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(192,202,245)">Address</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">tags</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(255,158,100)">Vec</span><span style="color:rgb(154,165,206)">&lt;</span><span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">&gt;</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">metadata</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(255,158,100)">HashMap</span><span style="color:rgb(154,165,206)">&lt;</span><span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span> <span style="color:rgb(115,218,202)">i32</span><span style="color:rgb(154,165,206)">&gt;</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span>
 
 <span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">derive</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(122,162,247)">Facet</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">struct</span> <span style="color:rgb(192,202,245)">Address</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(125,207,255)">street</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">city</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">zip</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span>
 
 <span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">derive</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(122,162,247)">Facet</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">struct</span> <span style="color:rgb(192,202,245)">Person</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(125,207,255)">name</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">age</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">u8</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">email</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(255,158,100)">Option</span><span style="color:rgb(154,165,206)">&lt;</span><span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">&gt;</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span></code></pre>
 </div>
@@ -145,22 +161,29 @@ title = "Error Highlighting Showcase"
 <pre><code><span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">derive</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(122,162,247)">Facet</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">struct</span> <span style="color:rgb(192,202,245)">Employee</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(125,207,255)">person</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(192,202,245)">Person</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">address</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(192,202,245)">Address</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">tags</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(255,158,100)">Vec</span><span style="color:rgb(154,165,206)">&lt;</span><span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">&gt;</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">metadata</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(255,158,100)">HashMap</span><span style="color:rgb(154,165,206)">&lt;</span><span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span> <span style="color:rgb(115,218,202)">i32</span><span style="color:rgb(154,165,206)">&gt;</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span>
 
 <span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">derive</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(122,162,247)">Facet</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">struct</span> <span style="color:rgb(192,202,245)">Address</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(125,207,255)">street</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">city</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">zip</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span>
 
 <span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">derive</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(122,162,247)">Facet</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">struct</span> <span style="color:rgb(192,202,245)">Person</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(125,207,255)">name</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">age</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">u8</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">email</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(255,158,100)">Option</span><span style="color:rgb(154,165,206)">&lt;</span><span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">&gt;</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span></code></pre>
 </div>
@@ -191,9 +214,12 @@ title = "Error Highlighting Showcase"
 <span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">repr</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(115,218,202)">u8</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">enum</span> <span style="color:rgb(192,202,245)">Status</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(192,202,245)">Active</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(192,202,245)">Pending</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(192,202,245)">Error</span> <span style="color:rgb(154,165,206)">{</span>
         <span style="color:rgb(125,207,255)">code</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">i32</span><span style="color:rgb(154,165,206)">,</span>
+
         <span style="color:rgb(125,207,255)">message</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
     <span style="color:rgb(154,165,206)">}</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span></code></pre>
@@ -222,10 +248,14 @@ title = "Error Highlighting Showcase"
 <span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">repr</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(115,218,202)">u8</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">enum</span> <span style="color:rgb(192,202,245)">Message</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(192,202,245)">Text</span><span style="color:rgb(154,165,206)">(</span><span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">)</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(192,202,245)">Number</span><span style="color:rgb(154,165,206)">(</span><span style="color:rgb(115,218,202)">i32</span><span style="color:rgb(154,165,206)">)</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(192,202,245)">Pair</span><span style="color:rgb(154,165,206)">(</span><span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span> <span style="color:rgb(115,218,202)">i32</span><span style="color:rgb(154,165,206)">)</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(192,202,245)">Data</span> <span style="color:rgb(154,165,206)">{</span>
         <span style="color:rgb(125,207,255)">id</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">u64</span><span style="color:rgb(154,165,206)">,</span>
+
         <span style="color:rgb(125,207,255)">payload</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(255,158,100)">Vec</span><span style="color:rgb(154,165,206)">&lt;</span><span style="color:rgb(115,218,202)">u8</span><span style="color:rgb(154,165,206)">&gt;</span><span style="color:rgb(154,165,206)">,</span>
     <span style="color:rgb(154,165,206)">}</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span></code></pre>
@@ -254,9 +284,12 @@ title = "Error Highlighting Showcase"
 <span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">repr</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(115,218,202)">u8</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">enum</span> <span style="color:rgb(192,202,245)">Status</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(192,202,245)">Active</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(192,202,245)">Pending</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(192,202,245)">Error</span> <span style="color:rgb(154,165,206)">{</span>
         <span style="color:rgb(125,207,255)">code</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">i32</span><span style="color:rgb(154,165,206)">,</span>
+
         <span style="color:rgb(125,207,255)">message</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
     <span style="color:rgb(154,165,206)">}</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span></code></pre>
@@ -287,22 +320,29 @@ title = "Error Highlighting Showcase"
 <pre><code><span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">derive</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(122,162,247)">Facet</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">struct</span> <span style="color:rgb(192,202,245)">Employee</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(125,207,255)">person</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(192,202,245)">Person</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">address</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(192,202,245)">Address</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">tags</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(255,158,100)">Vec</span><span style="color:rgb(154,165,206)">&lt;</span><span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">&gt;</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">metadata</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(255,158,100)">HashMap</span><span style="color:rgb(154,165,206)">&lt;</span><span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span> <span style="color:rgb(115,218,202)">i32</span><span style="color:rgb(154,165,206)">&gt;</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span>
 
 <span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">derive</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(122,162,247)">Facet</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">struct</span> <span style="color:rgb(192,202,245)">Address</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(125,207,255)">street</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">city</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">zip</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span>
 
 <span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">derive</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(122,162,247)">Facet</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">struct</span> <span style="color:rgb(192,202,245)">Person</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(125,207,255)">name</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">age</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">u8</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">email</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(255,158,100)">Option</span><span style="color:rgb(154,165,206)">&lt;</span><span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">&gt;</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span></code></pre>
 </div>
@@ -329,7 +369,9 @@ title = "Error Highlighting Showcase"
 <pre><code><span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">derive</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(122,162,247)">Facet</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">struct</span> <span style="color:rgb(192,202,245)">Person</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(125,207,255)">name</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">age</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">u8</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">email</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(255,158,100)">Option</span><span style="color:rgb(154,165,206)">&lt;</span><span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">&gt;</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span></code></pre>
 </div>
@@ -356,22 +398,29 @@ title = "Error Highlighting Showcase"
 <pre><code><span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">derive</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(122,162,247)">Facet</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">struct</span> <span style="color:rgb(192,202,245)">Employee</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(125,207,255)">person</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(192,202,245)">Person</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">address</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(192,202,245)">Address</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">tags</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(255,158,100)">Vec</span><span style="color:rgb(154,165,206)">&lt;</span><span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">&gt;</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">metadata</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(255,158,100)">HashMap</span><span style="color:rgb(154,165,206)">&lt;</span><span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span> <span style="color:rgb(115,218,202)">i32</span><span style="color:rgb(154,165,206)">&gt;</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span>
 
 <span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">derive</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(122,162,247)">Facet</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">struct</span> <span style="color:rgb(192,202,245)">Address</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(125,207,255)">street</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">city</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">zip</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span>
 
 <span style="color:rgb(137,221,255)">#[</span><span style="color:rgb(122,162,247)">derive</span><span style="color:rgb(137,221,255)">(</span><span style="color:rgb(122,162,247)">Facet</span><span style="color:rgb(137,221,255)">)]</span>
 <span style="color:rgb(187,154,247)">struct</span> <span style="color:rgb(192,202,245)">Person</span> <span style="color:rgb(154,165,206)">{</span>
     <span style="color:rgb(125,207,255)">name</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">age</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(115,218,202)">u8</span><span style="color:rgb(154,165,206)">,</span>
+
     <span style="color:rgb(125,207,255)">email</span><span style="color:rgb(154,165,206)">:</span> <span style="color:rgb(255,158,100)">Option</span><span style="color:rgb(154,165,206)">&lt;</span><span style="color:rgb(115,218,202)">String</span><span style="color:rgb(154,165,206)">&gt;</span><span style="color:rgb(154,165,206)">,</span>
 <span style="color:rgb(154,165,206)">}</span></code></pre>
 </div>

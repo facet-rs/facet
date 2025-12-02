@@ -115,8 +115,7 @@ struct AppConfig {
 }
 
 fn main() {
-    let mut runner =
-        ShowcaseRunner::new("facet-yaml Comprehensive Showcase").language(Language::Yaml);
+    let mut runner = ShowcaseRunner::new("YAML").language(Language::Yaml);
 
     runner.header();
 

@@ -1,0 +1,22 @@
+---
+source: facet-args/tests/help.rs
+expression: help
+---
+git 2.40.0
+
+Git-like CLI with subcommands
+
+USAGE:
+    git [OPTIONS] <COMMAND>
+
+OPTIONS:
+        --version
+            Show version information
+
+COMMANDS:
+    clone
+            Clone a repository
+    log
+            Show commit history
+    remote
+            Manage remotes

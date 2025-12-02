@@ -11,7 +11,8 @@ use alloc::vec::Vec;
 use core::fmt::Write;
 
 use facet_core::{
-    Def, EnumRepr, EnumType, PointerType, Shape, StructKind, StructType, Type, UserType,
+    Def, EnumRepr, EnumType, ExtensionAttr, Field, PointerType, Shape, StructKind, StructType,
+    Type, UserType, Variant,
 };
 use owo_colors::OwoColorize;
 
@@ -62,6 +63,46 @@ pub mod colors {
     /// Container types: Vec, Option, HashMap (orange)
     pub fn container() -> Style {
         Style::new().fg_rgb::<255, 158, 100>()
+    }
+
+    /// Doc comments (muted gray)
+    pub fn comment() -> Style {
+        Style::new().fg_rgb::<86, 95, 137>()
+    }
+}
+
+/// Configuration options for shape formatting
+#[derive(Clone, Debug, Default)]
+pub struct ShapeFormatConfig {
+    /// Whether to include doc comments in the output
+    pub show_doc_comments: bool,
+    /// Whether to include third-party (namespaced) attributes
+    pub show_third_party_attrs: bool,
+}
+
+impl ShapeFormatConfig {
+    /// Create a new config with default settings (no doc comments, no third-party attrs)
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enable doc comment display
+    pub fn with_doc_comments(mut self) -> Self {
+        self.show_doc_comments = true;
+        self
+    }
+
+    /// Enable third-party attribute display
+    pub fn with_third_party_attrs(mut self) -> Self {
+        self.show_third_party_attrs = true;
+        self
+    }
+
+    /// Enable all metadata (doc comments and third-party attrs)
+    pub fn with_all_metadata(mut self) -> Self {
+        self.show_doc_comments = true;
+        self.show_third_party_attrs = true;
+        self
     }
 }
 
@@ -124,8 +165,15 @@ pub fn strip_ansi(s: &str) -> String {
 }
 
 /// Format a Shape as Rust-like source code (plain text, no colors)
+///
+/// By default, this includes doc comments and third-party attributes.
 pub fn format_shape(shape: &Shape) -> String {
     strip_ansi(&format_shape_colored(shape))
+}
+
+/// Format a Shape as Rust-like source code with config options (plain text, no colors)
+pub fn format_shape_with_config(shape: &Shape, config: &ShapeFormatConfig) -> String {
+    strip_ansi(&format_shape_colored_with_config(shape, config))
 }
 
 /// Format a Shape with span tracking for each field/variant
@@ -140,14 +188,30 @@ pub fn format_shape_with_spans(shape: &Shape) -> FormattedShape {
 }
 
 /// Format a Shape as Rust-like source code with ANSI colors (Tokyo Night theme)
+///
+/// By default, this includes doc comments and third-party attributes.
 pub fn format_shape_colored(shape: &Shape) -> String {
+    format_shape_colored_with_config(shape, &ShapeFormatConfig::default().with_all_metadata())
+}
+
+/// Format a Shape as Rust-like source code with ANSI colors and config options
+pub fn format_shape_colored_with_config(shape: &Shape, config: &ShapeFormatConfig) -> String {
     let mut output = String::new();
-    format_shape_colored_into(shape, &mut output).expect("Formatting failed");
+    format_shape_colored_into_with_config(shape, &mut output, config).expect("Formatting failed");
     output
 }
 
 /// Format a Shape with ANSI colors into an existing String
 pub fn format_shape_colored_into(shape: &Shape, output: &mut String) -> core::fmt::Result {
+    format_shape_colored_into_with_config(shape, output, &ShapeFormatConfig::default())
+}
+
+/// Format a Shape with ANSI colors into an existing String with config options
+pub fn format_shape_colored_into_with_config(
+    shape: &Shape,
+    output: &mut String,
+    config: &ShapeFormatConfig,
+) -> core::fmt::Result {
     let mut printed: BTreeSet<&'static str> = BTreeSet::new();
     let mut queue: Vec<&Shape> = Vec::new();
     queue.push(shape);
@@ -173,11 +237,11 @@ pub fn format_shape_colored_into(shape: &Shape, output: &mut String) -> core::fm
         match &current.ty {
             Type::User(user_type) => match user_type {
                 UserType::Struct(struct_type) => {
-                    format_struct_colored(current, struct_type, output)?;
+                    format_struct_colored(current, struct_type, output, config)?;
                     collect_nested_types(struct_type, &mut queue);
                 }
                 UserType::Enum(enum_type) => {
-                    format_enum_colored(current, enum_type, output)?;
+                    format_enum_colored(current, enum_type, output, config)?;
                     for variant in enum_type.variants {
                         collect_nested_types(&variant.data, &mut queue);
                     }
@@ -198,7 +262,13 @@ fn format_struct_colored(
     shape: &Shape,
     struct_type: &StructType,
     output: &mut String,
+    config: &ShapeFormatConfig,
 ) -> core::fmt::Result {
+    // Write doc comments for the struct if enabled
+    if config.show_doc_comments {
+        write_doc_comments_colored(shape.doc, output, "")?;
+    }
+
     // #[derive(Facet)]
     write!(output, "{}", "#[".style(colors::attribute()))?;
     write!(output, "{}", "derive".style(colors::attribute_content()))?;
@@ -208,6 +278,11 @@ fn format_struct_colored(
 
     // Write facet attributes if any
     write_facet_attrs_colored(shape, output)?;
+
+    // Write third-party attributes if enabled
+    if config.show_third_party_attrs {
+        write_third_party_attrs_colored(shape.attributes, output, "")?;
+    }
 
     match struct_type.kind {
         StructKind::Struct => {
@@ -219,7 +294,19 @@ fn format_struct_colored(
             )?;
             writeln!(output, " {}", "{".style(colors::punctuation()))?;
 
-            for field in struct_type.fields {
+            for (i, field) in struct_type.fields.iter().enumerate() {
+                // Blank line between fields (not before the first one)
+                if i > 0 {
+                    writeln!(output)?;
+                }
+                // Write doc comments for the field if enabled
+                if config.show_doc_comments {
+                    write_doc_comments_colored(field.doc, output, "    ")?;
+                }
+                // Write third-party attributes for the field if enabled
+                if config.show_third_party_attrs {
+                    write_field_third_party_attrs_colored(field, output, "    ")?;
+                }
                 write!(output, "    {}", field.name.style(colors::field_name()))?;
                 write!(output, "{} ", ":".style(colors::punctuation()))?;
                 write_type_name_colored(field.shape(), output)?;
@@ -265,7 +352,13 @@ fn format_enum_colored(
     shape: &Shape,
     enum_type: &EnumType,
     output: &mut String,
+    config: &ShapeFormatConfig,
 ) -> core::fmt::Result {
+    // Write doc comments for the enum if enabled
+    if config.show_doc_comments {
+        write_doc_comments_colored(shape.doc, output, "")?;
+    }
+
     // #[derive(Facet)]
     write!(output, "{}", "#[".style(colors::attribute()))?;
     write!(output, "{}", "derive".style(colors::attribute_content()))?;
@@ -299,6 +392,11 @@ fn format_enum_colored(
     // Write facet attributes if any
     write_facet_attrs_colored(shape, output)?;
 
+    // Write third-party attributes if enabled
+    if config.show_third_party_attrs {
+        write_third_party_attrs_colored(shape.attributes, output, "")?;
+    }
+
     // enum Name {
     write!(output, "{} ", "enum".style(colors::keyword()))?;
     write!(
@@ -308,7 +406,20 @@ fn format_enum_colored(
     )?;
     writeln!(output, " {}", "{".style(colors::punctuation()))?;
 
-    for variant in enum_type.variants {
+    for (vi, variant) in enum_type.variants.iter().enumerate() {
+        // Blank line between variants (not before the first one)
+        if vi > 0 {
+            writeln!(output)?;
+        }
+        // Write doc comments for the variant if enabled
+        if config.show_doc_comments {
+            write_doc_comments_colored(variant.doc, output, "    ")?;
+        }
+        // Write third-party attributes for the variant if enabled
+        if config.show_third_party_attrs {
+            write_variant_third_party_attrs_colored(variant, output, "    ")?;
+        }
+
         match variant.data.kind {
             StructKind::Unit => {
                 write!(output, "    {}", variant.name.style(colors::type_name()))?;
@@ -329,7 +440,19 @@ fn format_enum_colored(
             StructKind::Struct => {
                 write!(output, "    {}", variant.name.style(colors::type_name()))?;
                 writeln!(output, " {}", "{".style(colors::punctuation()))?;
-                for field in variant.data.fields {
+                for (fi, field) in variant.data.fields.iter().enumerate() {
+                    // Blank line between variant fields (not before the first one)
+                    if fi > 0 {
+                        writeln!(output)?;
+                    }
+                    // Write doc comments for variant fields if enabled
+                    if config.show_doc_comments {
+                        write_doc_comments_colored(field.doc, output, "        ")?;
+                    }
+                    // Write third-party attributes for variant fields if enabled
+                    if config.show_third_party_attrs {
+                        write_field_third_party_attrs_colored(field, output, "        ")?;
+                    }
                     write!(output, "        {}", field.name.style(colors::field_name()))?;
                     write!(output, "{} ", ":".style(colors::punctuation()))?;
                     write_type_name_colored(field.shape(), output)?;
@@ -399,6 +522,74 @@ fn write_facet_attrs_colored(shape: &Shape, output: &mut String) -> core::fmt::R
     }
 
     Ok(())
+}
+
+/// Write doc comments with the given indentation prefix
+fn write_doc_comments_colored(
+    doc: &[&str],
+    output: &mut String,
+    indent: &str,
+) -> core::fmt::Result {
+    for line in doc {
+        write!(output, "{}", indent)?;
+        writeln!(output, "{}", format!("///{line}").style(colors::comment()))?;
+    }
+    Ok(())
+}
+
+/// Write third-party (namespaced) attributes from a Shape's attributes
+/// Groups attributes by namespace, e.g. `#[facet(args::named, args::short)]`
+fn write_third_party_attrs_colored(
+    attributes: &[ExtensionAttr],
+    output: &mut String,
+    indent: &str,
+) -> core::fmt::Result {
+    // Group attributes by namespace
+    let mut by_namespace: BTreeMap<&'static str, Vec<&'static str>> = BTreeMap::new();
+    for attr in attributes {
+        if let Some(ns) = attr.ns {
+            by_namespace.entry(ns).or_default().push(attr.key);
+        }
+    }
+
+    // Write one line per namespace with all keys
+    for (ns, keys) in by_namespace {
+        write!(output, "{}", indent)?;
+        write!(output, "{}", "#[".style(colors::attribute()))?;
+        write!(output, "{}", "facet".style(colors::attribute_content()))?;
+        write!(output, "{}", "(".style(colors::attribute()))?;
+
+        for (i, key) in keys.iter().enumerate() {
+            if i > 0 {
+                write!(output, "{}", ", ".style(colors::punctuation()))?;
+            }
+            write!(output, "{}", ns.style(colors::attribute_content()))?;
+            write!(output, "{}", "::".style(colors::punctuation()))?;
+            write!(output, "{}", key.style(colors::attribute_content()))?;
+        }
+
+        write!(output, "{}", ")".style(colors::attribute()))?;
+        writeln!(output, "{}", "]".style(colors::attribute()))?;
+    }
+    Ok(())
+}
+
+/// Write third-party attributes for a field
+fn write_field_third_party_attrs_colored(
+    field: &Field,
+    output: &mut String,
+    indent: &str,
+) -> core::fmt::Result {
+    write_third_party_attrs_colored(field.attributes, output, indent)
+}
+
+/// Write third-party attributes for a variant
+fn write_variant_third_party_attrs_colored(
+    variant: &Variant,
+    output: &mut String,
+    indent: &str,
+) -> core::fmt::Result {
+    write_third_party_attrs_colored(variant.attributes, output, indent)
 }
 
 fn write_type_name_colored(shape: &Shape, output: &mut String) -> core::fmt::Result {
@@ -1092,5 +1283,78 @@ mod tests {
         let field_span = &result.spans[&error_code_path];
         let spanned_text = &result.text[field_span.value.0..field_span.value.1];
         assert_eq!(spanned_text, "i32", "Expected 'i32', got '{spanned_text}'");
+    }
+
+    #[test]
+    fn test_format_with_doc_comments() {
+        /// A configuration struct for the application.
+        #[derive(Facet)]
+        #[allow(dead_code)]
+        struct Config {
+            /// The name of the configuration.
+            name: String,
+            /// Maximum number of retries.
+            max_retries: u8,
+        }
+
+        // With doc comments (default)
+        let output = format_shape(Config::SHAPE);
+        assert!(
+            output.contains("/// A configuration struct"),
+            "Should contain struct doc comment: {output}"
+        );
+        assert!(
+            output.contains("/// The name of the configuration"),
+            "Should contain field doc comment: {output}"
+        );
+        assert!(
+            output.contains("/// Maximum number of retries"),
+            "Should contain field doc comment: {output}"
+        );
+
+        // Without doc comments (explicit config)
+        let config = ShapeFormatConfig::new();
+        let output_without = format_shape_with_config(Config::SHAPE, &config);
+        assert!(
+            !output_without.contains("///"),
+            "Should not contain doc comments when disabled: {output_without}"
+        );
+    }
+
+    #[test]
+    fn test_format_enum_with_doc_comments() {
+        /// Status of an operation.
+        #[derive(Facet)]
+        #[repr(u8)]
+        #[allow(dead_code)]
+        enum Status {
+            /// The operation is active.
+            Active,
+            /// The operation failed with an error.
+            Error {
+                /// Error code.
+                code: i32,
+            },
+        }
+
+        let config = ShapeFormatConfig::new().with_doc_comments();
+        let output = format_shape_with_config(Status::SHAPE, &config);
+
+        assert!(
+            output.contains("/// Status of an operation"),
+            "Should contain enum doc comment: {output}"
+        );
+        assert!(
+            output.contains("/// The operation is active"),
+            "Should contain variant doc comment: {output}"
+        );
+        assert!(
+            output.contains("/// The operation failed"),
+            "Should contain variant doc comment: {output}"
+        );
+        assert!(
+            output.contains("/// Error code"),
+            "Should contain variant field doc comment: {output}"
+        );
     }
 }

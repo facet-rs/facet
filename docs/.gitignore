@@ -3,3 +3,4 @@ public/
 static/hljs/
 static/showcases/
 .dodeca.db/
+.cache/

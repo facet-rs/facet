@@ -335,6 +335,9 @@ pub fn ansi_to_html(input: &str) -> String {
             output.push_str("&gt;");
         } else if c == '&' {
             output.push_str("&amp;");
+        } else if c == '`' {
+            // Escape backticks to prevent markdown interpretation
+            output.push_str("&#96;");
         } else if c == ' ' {
             // Use non-breaking space to preserve alignment
             output.push('\u{00A0}');

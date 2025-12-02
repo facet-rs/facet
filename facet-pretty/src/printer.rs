@@ -115,6 +115,8 @@ pub struct PrettyPrinter {
     list_u8_as_bytes: bool,
     /// Skip type names for Options (show `Some(x)` instead of `Option<T>::Some(x)`)
     minimal_option_names: bool,
+    /// Whether to show doc comments in output
+    show_doc_comments: bool,
 }
 
 impl Default for PrettyPrinter {
@@ -126,6 +128,7 @@ impl Default for PrettyPrinter {
             use_colors: std::env::var_os("NO_COLOR").is_none(),
             list_u8_as_bytes: true,
             minimal_option_names: false,
+            show_doc_comments: false,
         }
     }
 }
@@ -163,6 +166,12 @@ impl PrettyPrinter {
     /// Use minimal names for Options (show `Some(x)` instead of `Option<T>::Some(x)`)
     pub fn with_minimal_option_names(mut self, minimal: bool) -> Self {
         self.minimal_option_names = minimal;
+        self
+    }
+
+    /// Enable or disable doc comments in output
+    pub fn with_doc_comments(mut self, show: bool) -> Self {
+        self.show_doc_comments = show;
         self
     }
 
@@ -351,7 +360,7 @@ impl PrettyPrinter {
             }
 
             (_, Type::User(UserType::Union(_))) => {
-                if !short {
+                if !short && self.show_doc_comments {
                     for &line in shape.doc {
                         self.write_comment(f, &format!("///{line}"))?;
                         writeln!(f)?;
@@ -374,7 +383,7 @@ impl PrettyPrinter {
                     },
                 )),
             ) => {
-                if !short {
+                if !short && self.show_doc_comments {
                     for &line in shape.doc {
                         self.write_comment(f, &format!("///{line}"))?;
                         writeln!(f)?;
@@ -410,7 +419,7 @@ impl PrettyPrinter {
                     },
                 )),
             ) => {
-                if !short {
+                if !short && self.show_doc_comments {
                     for &line in shape.doc {
                         self.write_comment(f, &format!("///{line}"))?;
                         writeln!(f)?;
@@ -445,7 +454,7 @@ impl PrettyPrinter {
                         self.write_punctuation(f, "}")?;
                     }
                     Ok(variant) => {
-                        if !short {
+                        if !short && self.show_doc_comments {
                             for &line in shape.doc {
                                 self.write_comment(f, &format!("///{line}"))?;
                                 writeln!(f)?;
@@ -850,10 +859,12 @@ impl PrettyPrinter {
                     writeln!(f)?;
                     self.indent(f, format_depth + 1)?;
 
-                    for &line in fields[idx].doc {
-                        self.write_comment(f, &format!("///{line}"))?;
-                        writeln!(f)?;
-                        self.indent(f, format_depth + 1)?;
+                    if self.show_doc_comments {
+                        for &line in fields[idx].doc {
+                            self.write_comment(f, &format!("///{line}"))?;
+                            writeln!(f)?;
+                            self.indent(f, format_depth + 1)?;
+                        }
                     }
                 }
 
@@ -904,10 +915,12 @@ impl PrettyPrinter {
                     self.indent(f, format_depth + 1)?;
                 }
 
-                for &line in fields[idx].doc {
-                    self.write_comment(f, &format!("///{line}"))?;
-                    writeln!(f)?;
-                    self.indent(f, format_depth + 1)?;
+                if self.show_doc_comments {
+                    for &line in fields[idx].doc {
+                        self.write_comment(f, &format!("///{line}"))?;
+                        writeln!(f)?;
+                        self.indent(f, format_depth + 1)?;
+                    }
                 }
 
                 self.write_field_name(f, fields[idx].name)?;

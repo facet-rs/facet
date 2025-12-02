@@ -117,7 +117,7 @@ enum HighlightMode {
 // ============================================================================
 
 fn main() {
-    let mut runner = ShowcaseRunner::new("Error Highlighting Showcase");
+    let mut runner = ShowcaseRunner::new("Spans");
     runner.header();
 
     runner.section("Highlight Modes");

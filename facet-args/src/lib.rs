@@ -6,14 +6,19 @@
 
 extern crate alloc;
 
+pub mod completions;
 mod format;
+pub mod help;
 
 pub(crate) mod arg;
 pub(crate) mod error;
 pub(crate) mod span;
 
+pub use completions::{Shell, generate_completions, generate_completions_for_shape};
+pub use error::ArgsErrorWithInput;
 pub use format::from_slice;
 pub use format::from_std_args;
+pub use help::{HelpConfig, generate_help, generate_help_for_shape};
 
 // Args extension attributes for use with #[facet(args::attr)] syntax.
 //

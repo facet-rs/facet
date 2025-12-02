@@ -61,8 +61,7 @@ struct Config {
 }
 
 fn main() {
-    let mut runner =
-        ShowcaseRunner::new("facet-value: from_value Deserialization").language(Language::Rust);
+    let mut runner = ShowcaseRunner::new("From Value").language(Language::Rust);
 
     runner.header();
 
