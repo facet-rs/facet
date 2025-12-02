@@ -531,7 +531,7 @@ fn write_doc_comments_colored(
     indent: &str,
 ) -> core::fmt::Result {
     for line in doc {
-        write!(output, "{}", indent)?;
+        write!(output, "{indent}")?;
         writeln!(output, "{}", format!("///{line}").style(colors::comment()))?;
     }
     Ok(())
@@ -554,7 +554,7 @@ fn write_third_party_attrs_colored(
 
     // Write one line per namespace with all keys
     for (ns, keys) in by_namespace {
-        write!(output, "{}", indent)?;
+        write!(output, "{indent}")?;
         write!(output, "{}", "#[".style(colors::attribute()))?;
         write!(output, "{}", "facet".style(colors::attribute_content()))?;
         write!(output, "{}", "(".style(colors::attribute()))?;

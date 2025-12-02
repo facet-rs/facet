@@ -280,8 +280,8 @@ fn use_colors() -> bool {
 fn format_two_column_list(
     items: impl IntoIterator<Item = (String, Option<&'static str>)>,
 ) -> String {
+    use core::fmt::Write;
     use owo_colors::OwoColorize;
-    use std::fmt::Write;
 
     let items: Vec<_> = items.into_iter().collect();
     let colors = use_colors();
@@ -295,7 +295,7 @@ fn format_two_column_list(
         if colors {
             write!(line, "  {}", name.cyan()).unwrap();
         } else {
-            write!(line, "  {}", name).unwrap();
+            write!(line, "  {name}").unwrap();
         }
 
         // Pad to alignment
