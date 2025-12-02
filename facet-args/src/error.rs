@@ -93,6 +93,12 @@ pub enum ArgsErrorKind {
     /// Expected a value of type shape, got EOF
     ExpectedValueGotEof { shape: &'static Shape },
 
+    /// Unknown subcommand name
+    UnknownSubcommand { shape: &'static Shape },
+
+    /// Required subcommand was not provided
+    MissingSubcommand { shape: &'static Shape },
+
     /// Generic reflection error: something went wrong
     ReflectError(ReflectError),
 }
@@ -120,6 +126,12 @@ impl core::fmt::Display for ArgsErrorKind {
             }
             ArgsErrorKind::MissingArgument { field } => {
                 write!(f, "missing argument: {}", field.name)
+            }
+            ArgsErrorKind::UnknownSubcommand { shape } => {
+                write!(f, "unknown subcommand for {shape}")
+            }
+            ArgsErrorKind::MissingSubcommand { shape } => {
+                write!(f, "missing required subcommand for {shape}")
             }
         }
     }

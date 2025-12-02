@@ -45,5 +45,12 @@ facet::define_attr_grammar! {
         ///
         /// Usage: `#[facet(args::short = 'v')]` or just `#[facet(args::short)]`
         Short(Option<char>),
+        /// Marks a field as a subcommand.
+        ///
+        /// The field type must be an enum where each variant represents a subcommand.
+        /// Variant names are converted to kebab-case for matching.
+        ///
+        /// Usage: `#[facet(args::subcommand)]`
+        Subcommand,
     }
 }
