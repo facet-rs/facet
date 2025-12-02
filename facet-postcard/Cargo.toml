@@ -35,4 +35,4 @@ facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 eyre = "0.6"
 postcard = { version = "1", features = ["alloc"] }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
