@@ -653,7 +653,7 @@ mod tests {
             value: f32,
         }
 
-        let value = F32Struct { value: 3.14 };
+        let value = F32Struct { value: 1.5 };
         let facet_bytes = to_vec(&value).unwrap();
         let postcard_bytes = postcard_to_vec(&value).unwrap();
         assert_eq!(facet_bytes, postcard_bytes);
@@ -669,7 +669,7 @@ mod tests {
         }
 
         let value = F64Struct {
-            value: 3.14159265359,
+            value: 1.23456789012345,
         };
         let facet_bytes = to_vec(&value).unwrap();
         let postcard_bytes = postcard_to_vec(&value).unwrap();

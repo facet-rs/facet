@@ -1,5 +1,8 @@
 //! Tests for fixed-size arrays and tuples
 
+// Allow non-camel-case names like ArrayU8_4 to indicate array element type and size
+#![allow(non_camel_case_types)]
+
 use eyre::Result;
 use facet::Facet;
 use facet_postcard::{from_bytes, to_vec};
@@ -225,7 +228,7 @@ mod tuple_tests {
     fn test_tuple_4_mixed() -> Result<()> {
         facet_testhelpers::setup();
         let wrapper = Tuple4 {
-            data: (true, 'X', 3.14, 2.718),
+            data: (true, 'X', 1.5, 9.99),
         };
         let facet_bytes = to_vec(&wrapper)?;
         let postcard_bytes = postcard_to_vec(&wrapper)?;

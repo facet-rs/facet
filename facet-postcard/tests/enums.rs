@@ -252,7 +252,7 @@ mod struct_variant_tests {
         let value = StructEnum::MoreFields {
             a: "test".to_string(),
             b: true,
-            c: 3.14,
+            c: 1.5,
         };
         let facet_bytes = to_vec(&value)?;
         let postcard_bytes = postcard_to_vec(&value)?;
