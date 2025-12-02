@@ -49,6 +49,13 @@ fn main() {
     scenario_unknown_field(&mut runner);
     scenario_missing_field(&mut runner);
 
+    // =========================================================================
+    // Syntax Errors
+    // =========================================================================
+
+    scenario_syntax_error_unquoted_bool(&mut runner);
+    scenario_syntax_error_unclosed_brace(&mut runner);
+
     runner.footer();
 }
 
@@ -719,6 +726,41 @@ fn scenario_missing_field(runner: &mut ShowcaseRunner) {
     runner
         .scenario("Missing Required Field")
         .description("KDL is missing a required field that has no default.")
+        .input(Language::Kdl, kdl)
+        .target_type::<SimpleConfig>()
+        .result(&result)
+        .finish();
+}
+
+fn scenario_syntax_error_unquoted_bool(runner: &mut ShowcaseRunner) {
+    // In KDL 2.0, booleans must use #true/#false, not bare true/false
+    let kdl = r#"server host="localhost" enabled=true"#;
+    let result: Result<SimpleConfig, _> = from_str(kdl);
+
+    runner
+        .scenario("Syntax Error: Unquoted Boolean")
+        .description(
+            "KDL 2.0 requires booleans to be written as #true/#false.\n\
+             Bare `true` or `false` is a syntax error with a helpful message.",
+        )
+        .input(Language::Kdl, kdl)
+        .target_type::<SimpleConfig>()
+        .result(&result)
+        .finish();
+}
+
+fn scenario_syntax_error_unclosed_brace(runner: &mut ShowcaseRunner) {
+    let kdl = r#"server host="localhost" port=8080 {
+    tls cert="/path/to/cert"
+"#;
+    let result: Result<SimpleConfig, _> = from_str(kdl);
+
+    runner
+        .scenario("Syntax Error: Unclosed Brace")
+        .description(
+            "Missing closing brace in nested node structure.\n\
+             The parser provides line/column information for the error.",
+        )
         .input(Language::Kdl, kdl)
         .target_type::<SimpleConfig>()
         .result(&result)
