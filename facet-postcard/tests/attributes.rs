@@ -8,7 +8,6 @@
 use eyre::Result;
 use facet::Facet;
 use facet_postcard::{from_bytes, to_vec};
-use postcard::from_bytes as postcard_from_bytes;
 use postcard::to_allocvec as postcard_to_vec;
 use serde::{Deserialize, Serialize};
 

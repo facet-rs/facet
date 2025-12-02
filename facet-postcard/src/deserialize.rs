@@ -532,8 +532,8 @@ mod tests {
         }
 
         let original = FloatStruct {
-            f32_val: 3.14,
-            f64_val: 2.718281828,
+            f32_val: 1.5,
+            f64_val: 9.87654321,
         };
 
         let bytes = to_vec(&original).unwrap();
