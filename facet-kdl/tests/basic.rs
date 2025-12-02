@@ -321,3 +321,163 @@ fn skip_field() {
     assert_eq!(config.server.port, 8080);
     assert_eq!(config.server.internal_id, 0); // Default value
 }
+
+/// Test child nodes with arguments into nested structs - the common KDL pattern.
+/// This tests the bug where `repo "value"` style nodes couldn't be deserialized
+/// into nested struct types with `#[facet(kdl::argument)]` fields.
+#[test]
+fn test_child_node_with_argument() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Config {
+        #[facet(kdl::child)]
+        repo: Repo,
+        #[facet(kdl::child)]
+        commit: Commit,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Repo {
+        #[facet(kdl::argument)]
+        value: String,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Commit {
+        #[facet(kdl::argument)]
+        value: String,
+    }
+
+    let kdl = indoc! {r#"
+        repo "https://github.com/example/repo"
+        commit "abc123"
+    "#};
+
+    let config: Config = facet_kdl::from_str(kdl).unwrap();
+    assert_eq!(config.repo.value, "https://github.com/example/repo");
+    assert_eq!(config.commit.value, "abc123");
+}
+
+/// Test the exact pattern from the bug report - top-level child nodes with arguments.
+/// The KDL pattern: `repo "value"` and `commit "value"` as direct children of the document.
+#[test]
+fn test_top_level_child_nodes_with_arguments() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Repo {
+        #[facet(kdl::argument)]
+        value: String,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Commit {
+        #[facet(kdl::argument)]
+        value: String,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Config {
+        #[facet(kdl::child)]
+        repo: Repo,
+        #[facet(kdl::child)]
+        commit: Commit,
+        #[facet(kdl::child)]
+        license: License,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct License {
+        #[facet(kdl::argument)]
+        value: String,
+    }
+
+    let kdl = indoc! {r#"
+        repo "https://github.com/example/repo"
+        commit "abc123def456"
+        license "MIT"
+    "#};
+
+    let config: Config = facet_kdl::from_str(kdl).unwrap();
+    assert_eq!(config.repo.value, "https://github.com/example/repo");
+    assert_eq!(config.commit.value, "abc123def456");
+    assert_eq!(config.license.value, "MIT");
+}
+
+/// Test child nodes with arguments when flattened structs are involved.
+/// This forces the solver-based deserialization path.
+#[test]
+fn test_child_with_argument_and_flatten_struct() {
+    #[derive(Debug, Facet, PartialEq)]
+    struct Repo {
+        #[facet(kdl::argument)]
+        url: String,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct ConnectionSettings {
+        #[facet(kdl::property)]
+        timeout: u32,
+        #[facet(kdl::property)]
+        retries: u8,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Config {
+        #[facet(kdl::child)]
+        server: Server,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Server {
+        #[facet(kdl::child)]
+        repo: Repo,
+        #[facet(flatten)]
+        connection: ConnectionSettings,
+    }
+
+    // Test: server has a child `repo` with an argument, and flattened connection properties
+    let kdl = indoc! {r#"
+        server timeout=30 retries=3 {
+            repo "https://github.com/example/repo"
+        }
+    "#};
+
+    let config: Config = facet_kdl::from_str(kdl).unwrap();
+    assert_eq!(config.server.repo.url, "https://github.com/example/repo");
+    assert_eq!(config.server.connection.timeout, 30);
+    assert_eq!(config.server.connection.retries, 3);
+}
+
+/// Test the exact pattern from the bug report - using `#[facet(kdl::child, rename = "...")]`
+/// on the struct itself, not just `#[facet(kdl::child)]` on the field.
+#[test]
+fn test_child_node_with_argument_using_struct_rename() {
+    #[derive(Debug, Facet, PartialEq)]
+    #[facet(kdl::child, rename = "repo")]
+    struct Repo {
+        #[facet(kdl::argument)]
+        pub value: String,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    #[facet(kdl::child, rename = "commit")]
+    struct Commit {
+        #[facet(kdl::argument)]
+        pub value: String,
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Config {
+        #[facet(kdl::child)]
+        pub repo: Repo,
+        #[facet(kdl::child)]
+        pub commit: Commit,
+    }
+
+    let kdl = indoc! {r#"
+        repo "https://github.com/example/repo"
+        commit "abc123"
+    "#};
+
+    let config: Config = facet_kdl::from_str(kdl).unwrap();
+    assert_eq!(config.repo.value, "https://github.com/example/repo");
+    assert_eq!(config.commit.value, "abc123");
+}
