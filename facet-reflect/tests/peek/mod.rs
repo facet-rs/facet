@@ -7,6 +7,7 @@ mod ndarray;
 mod option;
 mod pointer;
 mod reference;
+mod result;
 mod serialize;
 mod set;
 mod struct_;

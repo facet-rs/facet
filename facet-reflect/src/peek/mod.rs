@@ -30,6 +30,9 @@ pub use set::*;
 mod option;
 pub use option::*;
 
+mod result;
+pub use result::*;
+
 mod pointer;
 pub use pointer::*;
 

@@ -15,6 +15,7 @@ pub enum TrackerKind {
     Map,
     Set,
     Option,
+    Result,
     DynamicValue,
 }
 
