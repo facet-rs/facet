@@ -271,9 +271,10 @@ impl ArgsErrorKind {
     }
 }
 
-/// Check if colors should be used (respects NO_COLOR env var)
+/// Check if colors should be used (respects NO_COLOR and CI env vars)
 fn use_colors() -> bool {
-    std::env::var_os("NO_COLOR").is_none()
+    // Disable colors if NO_COLOR is set or if running in CI
+    std::env::var_os("NO_COLOR").is_none() && std::env::var_os("CI").is_none()
 }
 
 /// Format a two-column list with aligned descriptions
