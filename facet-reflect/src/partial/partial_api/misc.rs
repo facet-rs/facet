@@ -381,6 +381,7 @@ impl<'facet> Partial<'facet> {
                         | Tracker::List { .. }
                         | Tracker::Set { .. }
                         | Tracker::Option { .. }
+                        | Tracker::Result { .. }
                         | Tracker::DynamicValue {
                             state: DynamicValueState::Array { .. }
                         }
@@ -880,6 +881,79 @@ impl<'facet> Partial<'facet> {
                     // building_inner is false - the Option was already initialized but
                     // begin_some was called again. The popped frame was not used to
                     // initialize the Option, so we need to clean it up.
+                    popped_frame.deinit();
+                    if let FrameOwnership::Owned = popped_frame.ownership {
+                        if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
+                            if layout.size() > 0 {
+                                unsafe {
+                                    ::alloc::alloc::dealloc(
+                                        popped_frame.data.as_mut_byte_ptr(),
+                                        layout,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Tracker::Result {
+                is_ok,
+                building_inner,
+            } => {
+                crate::trace!(
+                    "end(): matched Tracker::Result, is_ok={}, building_inner={}",
+                    *is_ok,
+                    *building_inner
+                );
+                // We just popped the inner value frame for a Result's Ok or Err variant
+                if *building_inner {
+                    if let Def::Result(result_def) = parent_frame.shape.def {
+                        // The popped frame contains the inner value
+                        let inner_value_ptr = unsafe { popped_frame.data.assume_init().as_const() };
+
+                        // Initialize the Result as Ok(inner_value) or Err(inner_value)
+                        if *is_ok {
+                            let init_ok_fn = result_def.vtable.init_ok_fn;
+                            unsafe {
+                                init_ok_fn(parent_frame.data, inner_value_ptr);
+                            }
+                        } else {
+                            let init_err_fn = result_def.vtable.init_err_fn;
+                            unsafe {
+                                init_err_fn(parent_frame.data, inner_value_ptr);
+                            }
+                        }
+
+                        // Deallocate the inner value's memory since init_ok/err_fn moved it
+                        if let FrameOwnership::Owned = popped_frame.ownership {
+                            if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
+                                if layout.size() > 0 {
+                                    unsafe {
+                                        ::alloc::alloc::dealloc(
+                                            popped_frame.data.as_mut_byte_ptr(),
+                                            layout,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        // Mark that we're no longer building the inner value
+                        *building_inner = false;
+                        crate::trace!("end(): set building_inner to false");
+                        // Mark the Result as initialized
+                        parent_frame.is_init = true;
+                        crate::trace!("end(): set parent_frame.is_init to true");
+                    } else {
+                        return Err(ReflectError::OperationFailed {
+                            shape: parent_frame.shape,
+                            operation: "Result frame without Result definition",
+                        });
+                    }
+                } else {
+                    // building_inner is false - the Result was already initialized but
+                    // begin_ok/begin_err was called again. The popped frame was not used to
+                    // initialize the Result, so we need to clean it up.
                     popped_frame.deinit();
                     if let FrameOwnership::Owned = popped_frame.ownership {
                         if let Ok(layout) = popped_frame.shape.layout.sized_layout() {

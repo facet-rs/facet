@@ -33,6 +33,7 @@ mod maps;
 mod misc;
 mod option;
 mod ptr;
+mod result;
 mod set;
 mod sets;
 mod shorthands;

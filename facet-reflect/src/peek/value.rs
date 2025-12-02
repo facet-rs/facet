@@ -9,7 +9,7 @@ use crate::{PeekNdArray, PeekSet, ReflectError, ScalarType};
 
 use super::{
     ListLikeDef, PeekDynamicValue, PeekEnum, PeekList, PeekListLike, PeekMap, PeekOption,
-    PeekPointer, PeekStruct, PeekTuple, tuple::TupleType,
+    PeekPointer, PeekResult, PeekStruct, PeekTuple, tuple::TupleType,
 };
 
 #[cfg(feature = "alloc")]
@@ -406,6 +406,19 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         } else {
             Err(ReflectError::WasNotA {
                 expected: "option",
+                actual: self.shape,
+            })
+        }
+    }
+
+    /// Tries to identify this value as a result
+    #[inline]
+    pub fn into_result(self) -> Result<PeekResult<'mem, 'facet>, ReflectError> {
+        if let Def::Result(def) = self.shape.def {
+            Ok(PeekResult { value: self, def })
+        } else {
+            Err(ReflectError::WasNotA {
+                expected: "result",
                 actual: self.shape,
             })
         }

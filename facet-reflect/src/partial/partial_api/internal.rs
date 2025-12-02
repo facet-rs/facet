@@ -368,6 +368,7 @@ impl<'facet> Partial<'facet> {
             | Tracker::Map { .. }
             | Tracker::Set { .. }
             | Tracker::Option { .. }
+            | Tracker::Result { .. }
             | Tracker::DynamicValue { .. } => true,
         };
         if !needs_cleanup {

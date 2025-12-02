@@ -1,0 +1,150 @@
+use super::*;
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Result
+////////////////////////////////////////////////////////////////////////////////////////////////////
+impl Partial<'_> {
+    /// Begin building the Ok variant of a Result
+    pub fn begin_ok(mut self) -> Result<Self, ReflectError> {
+        // Verify we're working with a Result and get the def
+        let result_def = {
+            let frame = self.frames().last().unwrap();
+            match frame.shape.def {
+                Def::Result(def) => def,
+                _ => {
+                    return Err(ReflectError::WasNotA {
+                        expected: "Result",
+                        actual: frame.shape,
+                    });
+                }
+            }
+        };
+
+        // Check if we need to handle re-initialization.
+        let needs_reinit = {
+            let frame = self.frames().last().unwrap();
+            frame.is_init
+                || matches!(
+                    frame.tracker,
+                    Tracker::Result {
+                        building_inner: false,
+                        ..
+                    }
+                )
+        };
+
+        if needs_reinit {
+            self.prepare_for_reinitialization();
+        }
+
+        // Set tracker to indicate we're building the Ok value
+        let frame = self.frames_mut().last_mut().unwrap();
+        frame.tracker = Tracker::Result {
+            is_ok: true,
+            building_inner: true,
+        };
+
+        // Get the Ok type shape
+        let inner_shape = result_def.t;
+
+        // Allocate memory for the inner value
+        let inner_layout =
+            inner_shape
+                .layout
+                .sized_layout()
+                .map_err(|_| ReflectError::Unsized {
+                    shape: inner_shape,
+                    operation: "begin_ok, allocating Result Ok value",
+                })?;
+
+        let inner_data = if inner_layout.size() == 0 {
+            // For ZST, use a non-null but unallocated pointer
+            PtrUninit::new(NonNull::<u8>::dangling())
+        } else {
+            // Allocate memory for the inner value
+            let ptr = unsafe { ::alloc::alloc::alloc(inner_layout) };
+            let Some(ptr) = NonNull::new(ptr) else {
+                ::alloc::alloc::handle_alloc_error(inner_layout);
+            };
+            PtrUninit::new(ptr)
+        };
+
+        // Create a new frame for the inner value
+        let inner_frame = Frame::new(inner_data, inner_shape, FrameOwnership::Owned);
+        self.frames_mut().push(inner_frame);
+
+        Ok(self)
+    }
+
+    /// Begin building the Err variant of a Result
+    pub fn begin_err(mut self) -> Result<Self, ReflectError> {
+        // Verify we're working with a Result and get the def
+        let result_def = {
+            let frame = self.frames().last().unwrap();
+            match frame.shape.def {
+                Def::Result(def) => def,
+                _ => {
+                    return Err(ReflectError::WasNotA {
+                        expected: "Result",
+                        actual: frame.shape,
+                    });
+                }
+            }
+        };
+
+        // Check if we need to handle re-initialization.
+        let needs_reinit = {
+            let frame = self.frames().last().unwrap();
+            frame.is_init
+                || matches!(
+                    frame.tracker,
+                    Tracker::Result {
+                        building_inner: false,
+                        ..
+                    }
+                )
+        };
+
+        if needs_reinit {
+            self.prepare_for_reinitialization();
+        }
+
+        // Set tracker to indicate we're building the Err value
+        let frame = self.frames_mut().last_mut().unwrap();
+        frame.tracker = Tracker::Result {
+            is_ok: false,
+            building_inner: true,
+        };
+
+        // Get the Err type shape
+        let inner_shape = result_def.e;
+
+        // Allocate memory for the inner value
+        let inner_layout =
+            inner_shape
+                .layout
+                .sized_layout()
+                .map_err(|_| ReflectError::Unsized {
+                    shape: inner_shape,
+                    operation: "begin_err, allocating Result Err value",
+                })?;
+
+        let inner_data = if inner_layout.size() == 0 {
+            // For ZST, use a non-null but unallocated pointer
+            PtrUninit::new(NonNull::<u8>::dangling())
+        } else {
+            // Allocate memory for the inner value
+            let ptr = unsafe { ::alloc::alloc::alloc(inner_layout) };
+            let Some(ptr) = NonNull::new(ptr) else {
+                ::alloc::alloc::handle_alloc_error(inner_layout);
+            };
+            PtrUninit::new(ptr)
+        };
+
+        // Create a new frame for the inner value
+        let inner_frame = Frame::new(inner_data, inner_shape, FrameOwnership::Owned);
+        self.frames_mut().push(inner_frame);
+
+        Ok(self)
+    }
+}

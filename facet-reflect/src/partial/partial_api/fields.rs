@@ -66,9 +66,20 @@ impl Partial<'_> {
                     })
                 }
             }
+            Tracker::Result { building_inner, .. } => {
+                // For Results, index 0 represents the inner value (Ok or Err)
+                if index == 0 {
+                    Ok(!building_inner)
+                } else {
+                    Err(ReflectError::InvalidOperation {
+                        operation: "is_field_set",
+                        reason: "Result only has one field (index 0)",
+                    })
+                }
+            }
             _ => Err(ReflectError::InvalidOperation {
                 operation: "is_field_set",
-                reason: "Current frame is not a struct, enum variant, or option",
+                reason: "Current frame is not a struct, enum variant, option, or result",
             }),
         }
     }
@@ -369,6 +380,9 @@ impl Partial<'_> {
             }
             Tracker::Option { .. } => {
                 unreachable!("can't steal fields from options")
+            }
+            Tracker::Result { .. } => {
+                unreachable!("can't steal fields from results")
             }
             Tracker::DynamicValue { .. } => {
                 unreachable!("can't steal fields from dynamic values")

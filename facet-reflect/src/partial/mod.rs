@@ -385,6 +385,14 @@ pub(crate) enum Tracker {
         building_inner: bool,
     },
 
+    /// Result being initialized with Ok or Err
+    Result {
+        /// Whether we're building Ok (true) or Err (false)
+        is_ok: bool,
+        /// Whether we're currently building the inner value
+        building_inner: bool,
+    },
+
     /// Dynamic value (e.g., facet_value::Value) being initialized
     DynamicValue {
         /// What kind of dynamic value we're building
@@ -434,6 +442,7 @@ impl Tracker {
             Tracker::Map { .. } => TrackerKind::Map,
             Tracker::Set { .. } => TrackerKind::Set,
             Tracker::Option { .. } => TrackerKind::Option,
+            Tracker::Result { .. } => TrackerKind::Result,
             Tracker::DynamicValue { .. } => TrackerKind::DynamicValue,
         }
     }
@@ -667,6 +676,17 @@ impl Frame {
                 // initialized or remain uninitialized
                 if !building_inner {
                     // Option is fully initialized, drop it normally
+                    if let Some(drop_fn) = self.shape.vtable.drop_in_place {
+                        unsafe { drop_fn(self.data.assume_init()) };
+                    }
+                }
+            }
+            Tracker::Result { building_inner, .. } => {
+                // If we're building the inner value, it will be handled by the Result vtable
+                // No special cleanup needed here as the Result will either be properly
+                // initialized or remain uninitialized
+                if !building_inner {
+                    // Result is fully initialized, drop it normally
                     if let Some(drop_fn) = self.shape.vtable.drop_in_place {
                         unsafe { drop_fn(self.data.assume_init()) };
                     }
@@ -951,6 +971,13 @@ impl Frame {
                 }
             }
             Tracker::Option { building_inner } => {
+                if building_inner {
+                    Err(ReflectError::UninitializedValue { shape: self.shape })
+                } else {
+                    Ok(())
+                }
+            }
+            Tracker::Result { building_inner, .. } => {
                 if building_inner {
                     Err(ReflectError::UninitializedValue { shape: self.shape })
                 } else {

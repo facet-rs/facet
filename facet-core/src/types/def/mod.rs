@@ -21,6 +21,9 @@ pub use set::*;
 mod option;
 pub use option::*;
 
+mod result;
+pub use result::*;
+
 mod pointer;
 pub use pointer::*;
 
@@ -84,6 +87,11 @@ pub enum Def {
     /// e.g. `Option<T>`
     Option(OptionDef),
 
+    /// Result
+    ///
+    /// e.g. `Result<T, E>`
+    Result(ResultDef),
+
     /// Pointer types like `Arc<T>`, `Rc<T>`, etc.
     Pointer(PointerDef),
 
@@ -107,6 +115,7 @@ impl core::fmt::Debug for Def {
             Def::Array(array_def) => write!(f, "Array<{}; {}>", array_def.t, array_def.n),
             Def::Slice(slice_def) => write!(f, "Slice<{}>", slice_def.t),
             Def::Option(option_def) => write!(f, "Option<{}>", option_def.t),
+            Def::Result(result_def) => write!(f, "Result<{}, {}>", result_def.t, result_def.e),
             Def::Pointer(smart_ptr_def) => {
                 if let Some(pointee) = smart_ptr_def.pointee {
                     write!(f, "SmartPointer<{pointee}>")
@@ -176,6 +185,13 @@ impl Def {
     pub fn into_option(self) -> Result<OptionDef, Self> {
         match self {
             Self::Option(def) => Ok(def),
+            _ => Err(self),
+        }
+    }
+    /// Returns the `ResultDef` wrapped in an `Ok` if this is a [`Def::Result`].
+    pub fn into_result(self) -> Result<ResultDef, Self> {
+        match self {
+            Self::Result(def) => Ok(def),
             _ => Err(self),
         }
     }
