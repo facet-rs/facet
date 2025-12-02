@@ -261,6 +261,26 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             partial = partial.end()?;
         }
 
+        // Set defaults for any unset child fields that have the DEFAULT flag
+        // This handles optional child nodes that weren't present in the document
+        let fields: &[Field] = if let Some(fields) = override_fields {
+            fields
+        } else if let Type::User(UserType::Struct(struct_def)) = document_shape.ty {
+            struct_def.fields
+        } else {
+            &[]
+        };
+
+        for (idx, field) in fields.iter().enumerate() {
+            if field.is_kdl_child()
+                && !partial.is_field_set(idx)?
+                && (field.has_default() || field.should_skip_deserializing())
+            {
+                log::trace!("Setting default for unset child field: {}", field.name);
+                partial = partial.set_nth_field_to_default(idx)?;
+            }
+        }
+
         log::trace!(
             "Exiting `deserialize_document` method at {}",
             partial.path()
@@ -1671,6 +1691,23 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                     }
                 }
             }
+        }
+
+        // Set defaults for missing optional child fields
+        // We skipped these earlier in missing_optional_fields, so handle them now
+        for field_info in final_resolution.missing_optional_fields(&seen_keys) {
+            if !field_info.field.is_kdl_child() {
+                continue;
+            }
+            log::trace!(
+                "Setting default for missing optional child field '{}'",
+                field_info.serialized_name
+            );
+            // Close paths and navigate to the field
+            partial = self.close_paths_to(partial, &mut open_paths, &field_info.path)?;
+            (partial, _) = self.open_path_to(partial, &mut open_paths, &field_info.path, false)?;
+            partial = partial.set_default()?;
+            partial = partial.end()?;
         }
 
         // Close all paths after processing child nodes
