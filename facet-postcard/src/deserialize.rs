@@ -348,6 +348,16 @@ impl<'input> Decoder<'input> {
                     partial = item_partial.end()?;
                 }
             }
+        } else if let Def::Set(_set_def) = shape.def {
+            trace!("Deserializing set");
+            let set_len = self.read_varint()? as usize;
+            partial = partial.begin_set()?;
+
+            for _ in 0..set_len {
+                let item_partial = partial.begin_set_item()?;
+                let item_partial = self.deserialize_value(item_partial)?;
+                partial = item_partial.end()?;
+            }
         } else if let Def::Option(_option_def) = shape.def {
             trace!("Deserializing option");
             let is_some = self.read_bool()?;
