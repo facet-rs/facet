@@ -343,21 +343,23 @@ impl<'input> Decoder<'input> {
             trace!("Deserializing array");
             let expected_len = array_def.n;
 
-            // Special case for [u8; N]
-            if array_def.t().is_type::<u8>() {
+            if expected_len == 0 {
+                // Empty arrays need to be marked as initialized
+                partial = partial.set_default()?;
+            } else if array_def.t().is_type::<u8>() {
+                // Special case for [u8; N]
                 let bytes = self.read_bytes(expected_len)?;
-                // For fixed byte arrays, we need to set each element
-                partial = partial.begin_list()?;
-                for &byte in bytes {
-                    let item_partial = partial.begin_list_item()?;
+                // For fixed byte arrays, set each element by index
+                for (idx, &byte) in bytes.iter().enumerate() {
+                    let item_partial = partial.begin_nth_field(idx)?;
                     let item_partial = item_partial.set(byte)?;
                     partial = item_partial.end()?;
                 }
             } else {
                 // Fixed-size arrays don't have length prefix in postcard
-                partial = partial.begin_list()?;
-                for _ in 0..expected_len {
-                    let item_partial = partial.begin_list_item()?;
+                // Use begin_nth_field for arrays (not begin_list which is for Vec)
+                for idx in 0..expected_len {
+                    let item_partial = partial.begin_nth_field(idx)?;
                     let item_partial = self.deserialize_value(item_partial)?;
                     partial = item_partial.end()?;
                 }
