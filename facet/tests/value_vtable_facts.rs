@@ -859,8 +859,8 @@ fn test_string_traits() {
             .ref_unwind_safe(),
     );
     check_facts(
-        &Cow::Owned("hello".to_string()),
-        &Cow::Owned("world".to_string()),
+        &Cow::<str>::Owned("hello".to_string()),
+        &Cow::<str>::Owned("world".to_string()),
         FactBuilder::new()
             .debug()
             .display()

@@ -304,7 +304,7 @@ impl<'input> Decoder<'input> {
                 // Unit type - nothing to read
             } else if shape.is_type::<Cow<'_, str>>() {
                 let s = self.read_string()?;
-                partial = partial.set(Cow::Owned(s))?;
+                partial = partial.set(Cow::<str>::Owned(s))?;
             } else {
                 return Err(DeserializeError::UnsupportedType("Unknown scalar type"));
             }

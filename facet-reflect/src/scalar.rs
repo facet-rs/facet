@@ -156,7 +156,7 @@ mod tests {
         #[cfg(feature = "std")]
         assert_eq!(
             ScalarType::CowStr,
-            ScalarType::try_from_shape(alloc::borrow::Cow::SHAPE).unwrap()
+            ScalarType::try_from_shape(alloc::borrow::Cow::<str>::SHAPE).unwrap()
         );
         assert_eq!(
             ScalarType::F32,
