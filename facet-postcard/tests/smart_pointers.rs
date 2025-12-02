@@ -1,5 +1,10 @@
 //! Tests for smart pointer types (Box, Rc, Arc)
 
+// These are intentional test cases for smart pointer serialization
+#![allow(clippy::box_collection)]
+#![allow(clippy::redundant_allocation)]
+#![allow(clippy::vec_box)]
+
 use eyre::Result;
 use facet::Facet;
 use facet_postcard::{from_bytes, to_vec};

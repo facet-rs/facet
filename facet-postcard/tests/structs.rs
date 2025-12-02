@@ -200,7 +200,7 @@ mod named_struct_tests {
             a: 42,
             b: "hello".to_string(),
             c: true,
-            d: 3.14,
+            d: 1.5,
         };
         let facet_bytes = to_vec(&value)?;
         let postcard_bytes = postcard_to_vec(&value)?;
@@ -331,8 +331,8 @@ mod named_struct_tests {
             i16_field: -32768,
             i32_field: -2147483648,
             i64_field: -9223372036854775808,
-            f32_field: 3.14,
-            f64_field: 2.718281828,
+            f32_field: 1.5,
+            f64_field: 9.87654321,
             bool_field: true,
             char_field: '🦀',
             string_field: "hello world".to_string(),
