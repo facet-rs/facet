@@ -77,6 +77,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         PRepr::Transparent => unreachable!("this should be caught by PRepr::parse"),
         PRepr::Rust(_) => quote! { #facet_crate::Repr::default() },
         PRepr::C(_) => quote! { #facet_crate::Repr::c() },
+        PRepr::RustcWillCatch => {
+            // rustc will emit the error - return empty TokenStream
+            return quote! {};
+        }
     };
 
     // Helper for EnumRepr TS (token stream) generation for primitives
@@ -561,6 +565,11 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             return quote! {
                 compile_error!("Facet requires enums to have an explicit representation (e.g., #[repr(C)], #[repr(u8)])");
             };
+        }
+        PRepr::RustcWillCatch => {
+            // rustc will emit an error for the invalid repr (e.g., conflicting hints).
+            // Return empty TokenStream so we don't add misleading errors.
+            return quote! {};
         }
     };
 
