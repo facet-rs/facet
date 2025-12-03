@@ -5,19 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}{{ config.title }}{% endblock title %}</title>
     <meta name="description" content="{{ config.description }}">
-    <link rel="stylesheet" href="{{ get_url(path='main.css') }}">
+    <link rel="stylesheet" href="/main.css">
     <link rel="stylesheet" href="/pagefind/pagefind-ui.css">
-    <link rel="icon" type="image/png" href="{{ get_url(path='favicon.png') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="/favicon.png">
     {% block head %}{% endblock head %}
 </head>
 <body>
     <nav class="site-nav">
         <a href="/" class="site-nav-brand">
-            <img src="{{ get_url(path='favicon.png') }}" alt="" class="site-nav-logo">
+            <img src="/favicon.png" alt="" class="site-nav-logo">
             <span>facet</span>
         </a>
         <div class="site-nav-links">
-            <a href="/learn" {% if current_path is starting_with("/learn") %}class="active"{% endif %}>Learn</a>
+            <a href="/learn" {% if current_path is starting_with("/learn") %}class="active"{% endif %}>Guide</a>
+            <a href="/reference" {% if current_path is starting_with("/reference") or current_path == "/format-crate-matrix/" %}class="active"{% endif %}>Reference</a>
             <a href="/extend" {% if current_path is starting_with("/extend") %}class="active"{% endif %}>Extend</a>
             <a href="/contribute" {% if current_path is starting_with("/contribute") %}class="active"{% endif %}>Contribute</a>
         </div>
@@ -40,7 +43,8 @@
             <div class="footer-section">
                 <h4>Documentation</h4>
                 <ul>
-                    <li><a href="/learn">Learn</a></li>
+                    <li><a href="/learn">Guide</a></li>
+                    <li><a href="/reference">Reference</a></li>
                     <li><a href="/extend">Extend</a></li>
                     <li><a href="/contribute">Contribute</a></li>
                 </ul>
@@ -56,6 +60,9 @@
             </div>
             <div class="footer-section footer-meta">
                 <p>Licensed under MIT/Apache-2.0</p>
+                {% if page and page.updated_at %}
+                <p class="muted">Updated {{ page.updated_at | date(format="%Y-%m-%d") }}</p>
+                {% endif %}
             </div>
         </div>
     </footer>

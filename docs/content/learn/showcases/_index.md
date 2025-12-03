@@ -1,5 +1,6 @@
 +++
 title = "Showcases"
+weight = 5
 sort_by = "title"
 insert_anchor_links = "heading"
 +++
