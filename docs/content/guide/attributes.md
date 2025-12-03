@@ -69,15 +69,58 @@ struct UserId(u64);  // Serialized as just the u64
 
 ### `opaque`
 
-Mark a container as opaque — inner fields don't need to implement `Facet`. Useful for types that shouldn't be inspected.
+Mark a type as opaque — its inner structure is hidden from facet. The type itself implements `Facet`, but its fields are not inspected or serialized. This is useful for:
+
+- Types with fields that don't implement `Facet`
+- Types whose internal structure shouldn't be exposed
+- Wrapper types around FFI or unsafe internals
 
 ```rust
 #[derive(Facet)]
 #[facet(opaque)]
 struct InternalState {
-    // Fields don't need Facet
+    handle: *mut c_void,  // Doesn't need Facet
+    cache: SomeNonFacetType,
 }
 ```
+
+**Important:** Opaque types cannot be serialized or deserialized on their own — use them with `#[facet(proxy = ...)]` to provide a serializable representation:
+
+```rust
+// A type that doesn't implement Facet
+struct SecretKey([u8; 32]);
+
+// A proxy that can be serialized (as hex string)
+#[derive(Facet)]
+#[facet(transparent)]
+struct SecretKeyProxy(String);
+
+impl TryFrom<SecretKeyProxy> for SecretKey {
+    type Error = &'static str;
+    fn try_from(proxy: SecretKeyProxy) -> Result<Self, Self::Error> {
+        // Parse hex string into bytes
+        let bytes = hex::decode(&proxy.0).map_err(|_| "invalid hex")?;
+        let arr: [u8; 32] = bytes.try_into().map_err(|_| "wrong length")?;
+        Ok(SecretKey(arr))
+    }
+}
+
+impl TryFrom<&SecretKey> for SecretKeyProxy {
+    type Error = std::convert::Infallible;
+    fn try_from(key: &SecretKey) -> Result<Self, Self::Error> {
+        Ok(SecretKeyProxy(hex::encode(&key.0)))
+    }
+}
+
+#[derive(Facet)]
+struct Config {
+    name: String,
+    #[facet(opaque, proxy = SecretKeyProxy)]
+    key: SecretKey,  // Serialized as hex string via proxy
+}
+```
+
+**When `assert_same!` encounters an opaque type**, it returns `Sameness::Opaque` — you cannot structurally compare opaque values.
 
 ### `type_tag`
 
@@ -401,13 +444,109 @@ impl ValidatedRange {
 
 ### `proxy`
 
-Use a proxy type for serialization/deserialization. The proxy type must implement the appropriate `TryFrom` conversions.
+Use a proxy type for serialization/deserialization. The proxy type handles the format representation while your actual type handles the domain logic.
+
+**Required trait implementations:**
+- `TryFrom<ProxyType> for FieldType` — for deserialization (proxy → actual)
+- `TryFrom<&FieldType> for ProxyType` — for serialization (actual → proxy)
+
+```rust
+use facet::Facet;
+
+// Your domain type
+struct CustomId(u64);
+
+// Proxy: serialize as a string with "ID-" prefix
+#[derive(Facet)]
+#[facet(transparent)]
+struct CustomIdProxy(String);
+
+impl TryFrom<CustomIdProxy> for CustomId {
+    type Error = &'static str;
+    fn try_from(proxy: CustomIdProxy) -> Result<Self, Self::Error> {
+        let num = proxy.0.strip_prefix("ID-")
+            .ok_or("missing ID- prefix")?
+            .parse()
+            .map_err(|_| "invalid number")?;
+        Ok(CustomId(num))
+    }
+}
+
+impl TryFrom<&CustomId> for CustomIdProxy {
+    type Error = std::convert::Infallible;
+    fn try_from(id: &CustomId) -> Result<Self, Self::Error> {
+        Ok(CustomIdProxy(format!("ID-{}", id.0)))
+    }
+}
+
+#[derive(Facet)]
+struct Record {
+    #[facet(proxy = CustomIdProxy)]
+    id: CustomId,  // JSON: "ID-12345"
+}
+```
+
+**Use cases for proxy:**
+
+1. **Custom serialization format** — serialize numbers as strings, dates as timestamps, etc.
+2. **Type conversion** — deserialize a string into a parsed type
+3. **Validation** — reject invalid values during `TryFrom` conversion
+4. **Non-Facet types** — combine with `#[facet(opaque)]` for types that don't implement `Facet`
+
+**Example: Parse integers from hex strings:**
 
 ```rust
 #[derive(Facet)]
-struct Record {
-    #[facet(proxy = String)]
-    id: CustomId,  // Serialized as String, converted via TryFrom
+#[facet(transparent)]
+struct HexU64(String);
+
+impl TryFrom<HexU64> for u64 {
+    type Error = std::num::ParseIntError;
+    fn try_from(proxy: HexU64) -> Result<Self, Self::Error> {
+        let s = proxy.0.strip_prefix("0x").unwrap_or(&proxy.0);
+        u64::from_str_radix(s, 16)
+    }
+}
+
+impl TryFrom<&u64> for HexU64 {
+    type Error = std::convert::Infallible;
+    fn try_from(n: &u64) -> Result<Self, Self::Error> {
+        Ok(HexU64(format!("0x{:x}", n)))
+    }
+}
+
+#[derive(Facet)]
+struct Pointer {
+    #[facet(proxy = HexU64)]
+    address: u64,  // JSON: "0x7fff5fbff8c0"
+}
+```
+
+**Example: Nested proxy with opaque type:**
+
+```rust
+// Arc<T> with a custom serialization
+#[derive(Facet)]
+struct ArcU64Proxy { val: u64 }
+
+impl TryFrom<ArcU64Proxy> for std::sync::Arc<u64> {
+    type Error = std::convert::Infallible;
+    fn try_from(proxy: ArcU64Proxy) -> Result<Self, Self::Error> {
+        Ok(std::sync::Arc::new(proxy.val))
+    }
+}
+
+impl TryFrom<&std::sync::Arc<u64>> for ArcU64Proxy {
+    type Error = std::convert::Infallible;
+    fn try_from(arc: &std::sync::Arc<u64>) -> Result<Self, Self::Error> {
+        Ok(ArcU64Proxy { val: **arc })
+    }
+}
+
+#[derive(Facet)]
+struct Container {
+    #[facet(opaque, proxy = ArcU64Proxy)]
+    counter: std::sync::Arc<u64>,  // JSON: {"val": 42}
 }
 ```
 
