@@ -64,6 +64,18 @@ Make sure to check the platform-specific notes:
 
 As of Jul 25, 2025, the 408 tests run in .547 on a MacBook Pro M4.
 
+## Inline string validation workflow
+
+- Use `just test -p facet-value --features bolero-inline-tests` (this wraps `cargo nextest run`) whenever you touch inline string logic so the deterministic + property suites run.
+- Run cross-target coverage with `just test-i686` at least once before merging to ensure the inline encoding behaves on 32-bit pointers.
+- Nightly tooling:
+  - `just miri -p facet-value` already exists; it runs the crate's test suite under strict provenance.
+  - `just asan-facet-value` (or the `-ci` variant) exercises the crate with the address sanitizer.
+- Fuzzing:
+  - `just fuzz-smoke-value` runs a ~60s libFuzzer smoke test for the general dynamic-value target.
+  - `just fuzz-smoke-inline` hones in on inline string mutations; wire both into CI smoke stages.
+- For long fuzz sessions, prefer `cargo fuzz cmin` + `heaptrack target/debug/fuzz_inline_string ...` or run under `valgrind --tool=memcheck` to confirm no allocator leaks appear when inline/heap transitions churn.
+
 ## Rust nightly / MSRV
 
 facet does not use Rust nightly, on purpose. It is "the best of stable". However,

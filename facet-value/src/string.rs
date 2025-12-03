@@ -8,8 +8,11 @@ use core::borrow::Borrow;
 use core::cmp::Ordering;
 use core::fmt::{self, Debug, Formatter};
 use core::hash::{Hash, Hasher};
+use core::mem;
 use core::ops::Deref;
 use core::ptr;
+use static_assertions::const_assert;
+use static_assertions::const_assert_eq;
 
 use crate::value::{TypeTag, Value};
 
@@ -23,13 +26,23 @@ struct StringHeader {
 
 /// A string value.
 ///
-/// `VString` stores UTF-8 string data. Unlike some implementations, strings are
-/// not interned - each `VString` owns its own copy of the data.
+/// `VString` stores UTF-8 string data. Short strings (up to 7 bytes on 64-bit targets) are
+/// embedded directly in the `Value` pointer bits, while longer strings fall back to heap storage.
 #[repr(transparent)]
 #[derive(Clone)]
 pub struct VString(pub(crate) Value);
 
 impl VString {
+    const INLINE_WORD_BYTES: usize = mem::size_of::<usize>();
+    const INLINE_DATA_OFFSET: usize = 1;
+    const INLINE_CAP_BYTES: usize = Self::INLINE_WORD_BYTES - Self::INLINE_DATA_OFFSET;
+    pub(crate) const INLINE_LEN_MAX: usize = {
+        const LEN_MASK: usize = (1 << (8 - 3)) - 1;
+        let cap = mem::size_of::<usize>() - 1;
+        if cap < LEN_MASK { cap } else { LEN_MASK }
+    };
+    const INLINE_LEN_SHIFT: u8 = 3;
+
     fn layout(len: usize) -> Layout {
         Layout::new::<StringHeader>()
             .extend(Layout::array::<u8>(len).unwrap())
@@ -63,10 +76,12 @@ impl VString {
     }
 
     fn header(&self) -> &StringHeader {
+        debug_assert!(!self.is_inline());
         unsafe { &*(self.0.heap_ptr() as *const StringHeader) }
     }
 
     fn data_ptr(&self) -> *const u8 {
+        debug_assert!(!self.is_inline());
         // Go through heap_ptr directly to avoid creating intermediate reference
         // that would limit provenance to just the header
         unsafe { (self.0.heap_ptr() as *const StringHeader).add(1).cast() }
@@ -76,8 +91,8 @@ impl VString {
     #[cfg(feature = "alloc")]
     #[must_use]
     pub fn new(s: &str) -> Self {
-        if s.is_empty() {
-            return Self::empty();
+        if Self::can_inline(s.len()) {
+            return Self::new_inline(s);
         }
         unsafe {
             let ptr = Self::alloc(s);
@@ -89,20 +104,17 @@ impl VString {
     #[cfg(feature = "alloc")]
     #[must_use]
     pub fn empty() -> Self {
-        // For empty strings, we still allocate a header with len=0
-        // This keeps the code simpler
-        unsafe {
-            let layout = Self::layout(0);
-            let ptr = alloc(layout).cast::<StringHeader>();
-            (*ptr).len = 0;
-            VString(Value::new_ptr(ptr.cast(), TypeTag::StringOrNull))
-        }
+        Self::new_inline("")
     }
 
     /// Returns the length of the string in bytes.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.header().len
+        if self.is_inline() {
+            self.inline_len()
+        } else {
+            self.header().len
+        }
     }
 
     /// Returns `true` if the string is empty.
@@ -114,16 +126,17 @@ impl VString {
     /// Returns the string as a `&str`.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        unsafe {
-            let bytes = core::slice::from_raw_parts(self.data_ptr(), self.len());
-            core::str::from_utf8_unchecked(bytes)
-        }
+        unsafe { core::str::from_utf8_unchecked(self.as_bytes()) }
     }
 
     /// Returns the string as a byte slice.
     #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
-        unsafe { core::slice::from_raw_parts(self.data_ptr(), self.len()) }
+        if self.is_inline() {
+            unsafe { core::slice::from_raw_parts(self.inline_data_ptr(), self.inline_len()) }
+        } else {
+            unsafe { core::slice::from_raw_parts(self.data_ptr(), self.len()) }
+        }
     }
 
     pub(crate) fn clone_impl(&self) -> Value {
@@ -131,11 +144,59 @@ impl VString {
     }
 
     pub(crate) fn drop_impl(&mut self) {
+        if self.is_inline() {
+            return;
+        }
         unsafe {
             Self::dealloc_ptr(self.0.heap_ptr_mut().cast());
         }
     }
+
+    #[inline]
+    fn is_inline(&self) -> bool {
+        self.0.is_inline_string()
+    }
+
+    #[inline]
+    fn can_inline(len: usize) -> bool {
+        len <= Self::INLINE_LEN_MAX && len <= Self::INLINE_CAP_BYTES
+    }
+
+    #[inline]
+    fn inline_meta_ptr(&self) -> *const u8 {
+        self as *const VString as *const u8
+    }
+
+    #[inline]
+    fn inline_data_ptr(&self) -> *const u8 {
+        unsafe { self.inline_meta_ptr().add(Self::INLINE_DATA_OFFSET) }
+    }
+
+    #[inline]
+    fn inline_len(&self) -> usize {
+        debug_assert!(self.is_inline());
+        unsafe { (*self.inline_meta_ptr() >> Self::INLINE_LEN_SHIFT) as usize }
+    }
+
+    #[cfg(feature = "alloc")]
+    fn new_inline(s: &str) -> Self {
+        debug_assert!(Self::can_inline(s.len()));
+        let mut storage = [0u8; Self::INLINE_WORD_BYTES];
+        storage[0] = ((s.len() as u8) << Self::INLINE_LEN_SHIFT) | (TypeTag::InlineString as u8);
+        storage[Self::INLINE_DATA_OFFSET..Self::INLINE_DATA_OFFSET + s.len()]
+            .copy_from_slice(s.as_bytes());
+        let bits = usize::from_ne_bytes(storage);
+        VString(unsafe { Value::from_bits(bits) })
+    }
 }
+
+const _: () = {
+    const_assert_eq!(VString::INLINE_DATA_OFFSET, 1);
+    const_assert!(
+        VString::INLINE_CAP_BYTES <= VString::INLINE_WORD_BYTES - VString::INLINE_DATA_OFFSET
+    );
+    const_assert!(VString::INLINE_LEN_MAX <= VString::INLINE_CAP_BYTES);
+};
 
 impl Deref for VString {
     type Target = str;
@@ -323,6 +384,7 @@ impl From<&String> for Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value::{TypeTag, Value};
 
     #[test]
     fn test_new() {
@@ -377,5 +439,220 @@ mod tests {
         let a = VString::new("apple");
         let b = VString::new("banana");
         assert!(a < b);
+    }
+
+    #[test]
+    fn test_inline_representation() {
+        let s = VString::new("inline");
+        assert!(s.is_inline(), "expected inline storage");
+        assert_eq!(s.as_str(), "inline");
+    }
+
+    #[test]
+    fn test_heap_representation() {
+        let long_input = "a".repeat(VString::INLINE_LEN_MAX + 1);
+        let s = VString::new(&long_input);
+        assert!(!s.is_inline(), "expected heap storage");
+        assert_eq!(s.as_str(), long_input);
+    }
+
+    #[test]
+    fn inline_capacity_boundaries() {
+        for len in 0..=VString::INLINE_LEN_MAX {
+            let input = "x".repeat(len);
+            let s = VString::new(&input);
+            assert!(
+                s.is_inline(),
+                "expected inline storage for length {} (capacity {})",
+                len,
+                VString::INLINE_LEN_MAX
+            );
+            assert_eq!(s.len(), len);
+            assert_eq!(s.as_str(), input);
+            assert_eq!(s.as_bytes(), input.as_bytes());
+        }
+
+        let overflow = "y".repeat(VString::INLINE_LEN_MAX + 1);
+        let heap = VString::new(&overflow);
+        assert!(
+            !heap.is_inline(),
+            "length {} should force heap allocation",
+            overflow.len()
+        );
+    }
+
+    #[test]
+    fn inline_value_tag_matches() {
+        for len in 0..=VString::INLINE_LEN_MAX {
+            let input = "z".repeat(len);
+            let value = Value::from(input.as_str());
+            assert!(value.is_inline_string(), "Value should mark inline string");
+            assert_eq!(
+                value.ptr_usize() & 0b111,
+                TypeTag::InlineString as usize,
+                "low bits must store inline string tag"
+            );
+            let roundtrip = value.as_string().expect("string value");
+            assert_eq!(roundtrip.as_str(), input);
+            assert_eq!(roundtrip.as_bytes(), input.as_bytes());
+        }
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn inline_len_max_is_seven_on_64_bit() {
+        assert_eq!(VString::INLINE_LEN_MAX, 7);
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    #[test]
+    fn inline_len_max_is_three_on_32_bit() {
+        assert_eq!(VString::INLINE_LEN_MAX, 3);
+    }
+}
+
+#[cfg(all(test, feature = "bolero-inline-tests"))]
+mod bolero_props {
+    use super::*;
+    use alloc::string::String;
+    use alloc::vec::Vec;
+    use bolero::check;
+    use crate::array::VArray;
+    use crate::ValueType;
+
+    #[test]
+    fn bolero_inline_string_round_trip() {
+        check!().with_type::<Vec<u8>>().for_each(|bytes: &Vec<u8>| {
+            if bytes.len() > VString::INLINE_LEN_MAX + 8 {
+                // Keep the generator focused on short payloads to hit inline cases hard.
+                return;
+            }
+
+            if let Ok(s) = String::from_utf8(bytes.clone()) {
+                let value = Value::from(s.as_str());
+                let roundtrip = value.as_string().expect("expected string value");
+                assert_eq!(roundtrip.as_str(), s);
+
+                if VString::can_inline(s.len()) {
+                    assert!(value.is_inline_string(), "expected inline tag for {:?}", s);
+                } else {
+                    assert!(
+                        !value.is_inline_string(),
+                        "unexpected inline tag for {:?}",
+                        s
+                    );
+                }
+            }
+        });
+    }
+
+    #[test]
+    fn bolero_string_mutation_sequences() {
+        check!()
+            .with_type::<Vec<u8>>()
+            .for_each(|bytes: &Vec<u8>| {
+                let mut value = Value::from("");
+                let mut expected = String::new();
+
+                for chunk in bytes.chunks(3).take(24) {
+                    let selector = chunk.get(0).copied().unwrap_or(0) % 3;
+                    match selector {
+                        0 => {
+                            let ch = (b'a' + chunk.get(1).copied().unwrap_or(0) % 26) as char;
+                            expected.push(ch);
+                        }
+                        1 => {
+                            if !expected.is_empty() {
+                                let len = chunk
+                                    .get(1)
+                                    .copied()
+                                    .map(|n| (n as usize) % expected.len())
+                                    .unwrap_or(0);
+                                expected.truncate(len);
+                            }
+                        }
+                        _ => expected.clear(),
+                    }
+
+                    overwrite_value_string(&mut value, &expected);
+                    assert_eq!(value.as_string().unwrap().as_str(), expected);
+                    assert_eq!(
+                        value.is_inline_string(),
+                        expected.len() <= VString::INLINE_LEN_MAX,
+                        "mutation sequence should keep inline status accurate"
+                    );
+                }
+            });
+    }
+
+    #[test]
+    fn bolero_array_model_matches() {
+        check!()
+            .with_type::<Vec<u8>>()
+            .for_each(|bytes: &Vec<u8>| {
+                let mut arr = VArray::new();
+                let mut model: Vec<String> = Vec::new();
+
+                for chunk in bytes.chunks(4).take(20) {
+                    match chunk.get(0).copied().unwrap_or(0) % 4 {
+                        0 => {
+                            let content = inline_string_from_chunk(chunk, 1);
+                            arr.push(Value::from(content.as_str()));
+                            model.push(content);
+                        }
+                        1 => {
+                            let idx = chunk.get(1).copied().unwrap_or(0) as usize;
+                            if !model.is_empty() {
+                                let idx = idx % model.len();
+                                model.remove(idx);
+                                let _ = arr.remove(idx);
+                            }
+                        }
+                        2 => {
+                            let content = inline_string_from_chunk(chunk, 2);
+                            if model.is_empty() {
+                                arr.insert(0, Value::from(content.as_str()));
+                                model.insert(0, content);
+                            } else {
+                                let len = model.len();
+                                let idx =
+                                    (chunk.get(2).copied().unwrap_or(0) as usize) % (len + 1);
+                                arr.insert(idx, Value::from(content.as_str()));
+                                model.insert(idx, content);
+                            }
+                        }
+                        _ => {
+                            arr.clear();
+                            model.clear();
+                        }
+                    }
+
+                    assert_eq!(arr.len(), model.len());
+                    for (value, expected) in arr.iter().zip(model.iter()) {
+                        assert_eq!(value.value_type(), ValueType::String);
+                        assert_eq!(value.as_string().unwrap().as_str(), expected);
+                        assert_eq!(
+                            value.is_inline_string(),
+                            expected.len() <= VString::INLINE_LEN_MAX
+                        );
+                    }
+                }
+            });
+    }
+
+    fn overwrite_value_string(value: &mut Value, new_value: &str) {
+        let slot = value.as_string_mut().expect("expected string value");
+        *slot = VString::new(new_value);
+    }
+
+    fn inline_string_from_chunk(chunk: &[u8], seed_idx: usize) -> String {
+        let len_hint = chunk.get(seed_idx).copied().unwrap_or(0) as usize;
+        let len = len_hint % (VString::INLINE_LEN_MAX.saturating_sub(1).max(1));
+        (0..len)
+            .map(|i| {
+                let byte = chunk.get(i % chunk.len()).copied().unwrap_or(b'a');
+                (b'a' + (byte % 26)) as char
+            })
+            .collect()
     }
 }

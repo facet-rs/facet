@@ -1,8 +1,9 @@
 #![no_main]
 
 use arbitrary::{Arbitrary, Unstructured};
-use facet_value::{VArray, VObject, Value};
+use facet_value::{VArray, VObject, VString, Value, ValueType};
 use libfuzzer_sys::fuzz_target;
+use std::hint::black_box;
 
 /// Operations on VArray
 #[derive(Arbitrary, Debug, Clone)]
@@ -90,7 +91,7 @@ fn create_value(choice: &ValueChoice, depth: u8) -> Value {
         return Value::NULL;
     }
 
-    match choice {
+    let value = match choice {
         ValueChoice::Null => Value::NULL,
         ValueChoice::Bool(b) => Value::from(*b),
         ValueChoice::I64(n) => Value::from(*n),
@@ -156,20 +157,68 @@ fn create_value(choice: &ValueChoice, depth: u8) -> Value {
             }
             val
         }
+    };
+    ensure_inline_consistency(&value);
+    value
+}
+
+#[derive(Default)]
+struct InlineStats {
+    inline: usize,
+    heap: usize,
+}
+
+impl InlineStats {
+    fn observe(&mut self, value: &Value) {
+        if value.value_type() != ValueType::String {
+            return;
+        }
+        ensure_inline_consistency(value);
+        if value.is_inline_string() {
+            self.inline += 1;
+        } else {
+            self.heap += 1;
+        }
+    }
+
+    fn observe_collection(&mut self, iter: impl Iterator<Item = Value>) {
+        for value in iter {
+            self.observe(&value);
+        }
+    }
+
+    fn finish(self) {
+        black_box((self.inline, self.heap));
     }
 }
 
-fn apply_array_op(arr: &mut VArray, op: &ArrayOp) {
+fn ensure_inline_consistency(value: &Value) {
+    if let Some(s) = value.as_string() {
+        let should_inline = s.len() <= VString::INLINE_LEN_MAX;
+        assert_eq!(
+            should_inline,
+            value.is_inline_string(),
+            "string layout mismatch for {:?}",
+            s.as_str()
+        );
+    }
+}
+
+fn apply_array_op(arr: &mut VArray, op: &ArrayOp, stats: &mut InlineStats) {
     match op {
         ArrayOp::Push(v) => {
-            arr.push(create_value(v, 0));
+            let new_value = create_value(v, 0);
+            stats.observe(&new_value);
+            arr.push(new_value);
         }
         ArrayOp::Pop => {
             let _ = arr.pop();
         }
         ArrayOp::Insert(idx, v) => {
             let idx = (*idx as usize).min(arr.len());
-            arr.insert(idx, create_value(v, 0));
+            let new_value = create_value(v, 0);
+            stats.observe(&new_value);
+            arr.insert(idx, new_value);
         }
         ArrayOp::Remove(idx) => {
             let _ = arr.remove(*idx as usize);
@@ -184,10 +233,13 @@ fn apply_array_op(arr: &mut VArray, op: &ArrayOp) {
             arr.truncate(*len as usize);
         }
         ArrayOp::Clone => {
-            let _ = arr.clone();
+            let cloned = arr.clone();
+            stats.observe_collection(cloned.into_iter());
         }
         ArrayOp::Get(idx) => {
-            let _ = arr.get(*idx as usize);
+            if let Some(val) = arr.get(*idx as usize) {
+                stats.observe(val);
+            }
         }
         ArrayOp::ShrinkToFit => {
             arr.shrink_to_fit();
@@ -195,10 +247,12 @@ fn apply_array_op(arr: &mut VArray, op: &ArrayOp) {
     }
 }
 
-fn apply_object_op(obj: &mut VObject, op: &ObjectOp) {
+fn apply_object_op(obj: &mut VObject, op: &ObjectOp, stats: &mut InlineStats) {
     match op {
         ObjectOp::Insert(key, v) => {
-            obj.insert(&key.0, create_value(v, 0));
+            let new_value = create_value(v, 0);
+            stats.observe(&new_value);
+            obj.insert(&key.0, new_value);
         }
         ObjectOp::Remove(key) => {
             let _ = obj.remove(&key.0);
@@ -207,15 +261,20 @@ fn apply_object_op(obj: &mut VObject, op: &ObjectOp) {
             obj.clear();
         }
         ObjectOp::Clone => {
-            let _ = obj.clone();
+            let cloned = obj.clone();
+            for (_, value) in cloned.into_iter() {
+                stats.observe(&value);
+            }
         }
         ObjectOp::Get(key) => {
-            let _ = obj.get(&key.0);
+            if let Some(value) = obj.get(&key.0) {
+                stats.observe(value);
+            }
         }
     }
 }
 
-fn apply_value_op(val: &mut Value, op: &ValueOp) {
+fn apply_value_op(val: &mut Value, op: &ValueOp, stats: &mut InlineStats) {
     match op {
         ValueOp::CheckType => {
             let _ = val.value_type();
@@ -233,7 +292,10 @@ fn apply_value_op(val: &mut Value, op: &ValueOp) {
             let _ = val.as_object();
         }
         ValueOp::AsString => {
-            let _ = val.as_string();
+            if let Some(string) = val.as_string() {
+                stats.observe(val);
+                let _ = string.as_str();
+            }
         }
         ValueOp::AsNumber => {
             let _ = val.as_number();
@@ -243,24 +305,27 @@ fn apply_value_op(val: &mut Value, op: &ValueOp) {
         }
         ValueOp::ArrayOp(array_op) => {
             if let Some(arr) = val.as_array_mut() {
-                apply_array_op(arr, array_op);
+                apply_array_op(arr, array_op, stats);
             }
         }
         ValueOp::ObjectOp(object_op) => {
             if let Some(obj) = val.as_object_mut() {
-                apply_object_op(obj, object_op);
+                apply_object_op(obj, object_op, stats);
             }
         }
         ValueOp::Clone => {
             let _ = val.clone();
+            stats.observe(val);
         }
         ValueOp::Replace(choice) => {
             *val = create_value(choice, 0);
+            stats.observe(val);
         }
         ValueOp::DropAndRecreate(choice) => {
             // Drop current value and create new one
             *val = Value::NULL;
             *val = create_value(choice, 0);
+            stats.observe(val);
         }
     }
 }
@@ -290,11 +355,14 @@ fuzz_target!(|mode: TestMode| {
             } else {
                 &ops[..]
             };
+            let mut stats = InlineStats::default();
             let mut val = create_value(&choice, 0);
+            stats.observe(&val);
             for op in ops {
-                apply_value_op(&mut val, op);
+                apply_value_op(&mut val, op, &mut stats);
             }
             // val is dropped here
+            stats.finish();
         }
         TestMode::DirectArray(ops) => {
             let ops = if ops.len() > 100 {
@@ -302,11 +370,13 @@ fuzz_target!(|mode: TestMode| {
             } else {
                 &ops[..]
             };
+            let mut stats = InlineStats::default();
             let mut arr = VArray::new();
             for op in ops {
-                apply_array_op(&mut arr, op);
+                apply_array_op(&mut arr, op, &mut stats);
             }
             // arr is dropped here
+            stats.finish();
         }
         TestMode::DirectObject(ops) => {
             let ops = if ops.len() > 100 {
@@ -314,15 +384,20 @@ fuzz_target!(|mode: TestMode| {
             } else {
                 &ops[..]
             };
+            let mut stats = InlineStats::default();
             let mut obj = VObject::new();
             for op in ops {
-                apply_object_op(&mut obj, op);
+                apply_object_op(&mut obj, op, &mut stats);
             }
             // obj is dropped here
+            stats.finish();
         }
         TestMode::DropNested(choice) => {
             // Just create and drop - tests drop implementation
-            let _val = create_value(&choice, 0);
+            let val = create_value(&choice, 0);
+            let mut stats = InlineStats::default();
+            stats.observe(&val);
+            stats.finish();
         }
         TestMode::CloneNested(choice) => {
             let val = create_value(&choice, 0);
@@ -335,14 +410,19 @@ fuzz_target!(|mode: TestMode| {
                 .iter()
                 .map(|(choice, _)| create_value(choice, 0))
                 .collect();
+            let mut stats = InlineStats::default();
+            for value in &values {
+                stats.observe(value);
+            }
 
             for (i, (_, ops)) in items.iter().enumerate() {
                 let ops = if ops.len() > 50 { &ops[..50] } else { &ops[..] };
                 for op in ops {
-                    apply_value_op(&mut values[i], op);
+                    apply_value_op(&mut values[i], op, &mut stats);
                 }
             }
             // All values dropped here
+            stats.finish();
         }
     }
 });

@@ -551,6 +551,7 @@ impl VObject {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ValueType;
 
     #[test]
     fn test_new() {
@@ -638,5 +639,53 @@ mod tests {
         obj.insert("key", Value::from(42));
 
         assert_eq!(obj["key"].as_number().unwrap().to_i64(), Some(42));
+    }
+
+    #[test]
+    fn inline_strings_in_objects_remain_inline() {
+        let mut obj = VObject::new();
+        for idx in 0..=crate::string::VString::INLINE_LEN_MAX.min(5) {
+            let key = format!("k{idx}");
+            let val = "v".repeat(idx);
+            obj.insert(key.as_str(), Value::from(val.as_str()));
+        }
+
+        for (key, value) in obj.iter() {
+            assert!(
+                key.0.is_inline_string(),
+                "object key {:?} expected inline storage",
+                key.as_str()
+            );
+            if value.value_type() == ValueType::String {
+                assert!(
+                    value.is_inline_string(),
+                    "object value {:?} expected inline storage",
+                    value
+                );
+            }
+        }
+
+        let mut cloned = obj.clone();
+        for (key, value) in cloned.iter() {
+            assert!(key.0.is_inline_string(), "cloned key lost inline storage");
+            if value.value_type() == ValueType::String {
+                assert!(
+                    value.is_inline_string(),
+                    "cloned value lost inline storage"
+                );
+            }
+        }
+
+        let (removed_key, removed_value) = cloned.remove_entry("k1").expect("entry exists");
+        assert!(
+            removed_key.0.is_inline_string(),
+            "removed key should stay inline"
+        );
+        if removed_value.value_type() == ValueType::String {
+            assert!(
+                removed_value.is_inline_string(),
+                "removed value should stay inline"
+            );
+        }
     }
 }

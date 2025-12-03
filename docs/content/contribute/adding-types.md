@@ -4,7 +4,7 @@ weight = 6
 insert_anchor_links = "heading"
 +++
 
-This guide is for contributing `Facet` implementations to the facet repository. If you just want to use a type that doesn't implement `Facet`, see [When a type doesn't implement Facet](@/guide/ecosystem.md#when-a-type-doesnt-implement-facet).
+This guide is for contributing `Facet` implementations to the facet repository. If you just want to use a type that doesn't implement `Facet`, see [When a type doesn't implement Facet](@/guide/ecosystem.md#when-a-type-doesn-t-implement-facet).
 
 ## Why we implement from the facet side
 

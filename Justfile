@@ -64,6 +64,27 @@ clippy:
 test *args:
     cargo nextest run {{args}} < /dev/null
 
+test-i686:
+    rustup target add i686-unknown-linux-gnu
+    cargo nextest run -p facet-value --target i686-unknown-linux-gnu --tests --lib < /dev/null
+
+asan-facet-value:
+    #!/usr/bin/env -S bash -euo pipefail
+    rustup toolchain install nightly
+    cargo +nightly test -Zsanitizer=address -p facet-value --lib --tests -- --test-threads=1
+
+asan-facet-value-ci:
+    #!/usr/bin/env -S bash -euo pipefail
+    source .envrc
+    rustup toolchain install nightly
+    cmd_group "cargo +nightly test -Zsanitizer=address -p facet-value --lib --tests -- --test-threads=1"
+
+fuzz-smoke-value:
+    cargo fuzz run fuzz_value -- -runs=1000
+
+fuzz-smoke-inline:
+    cargo fuzz run fuzz_inline_string -- -runs=1000
+
 test-ci *args:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc

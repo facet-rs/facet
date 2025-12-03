@@ -15,10 +15,13 @@
 //!
 //! ## Inline vs Heap Values
 //!
-//! We distinguish inline values from heap pointers by checking if `ptr < 8`:
+//! We distinguish inline values from heap pointers primarily by checking if `ptr < 8`.
+//! Additionally, some tag patterns (like inline short strings) are treated as inline even if
+//! the encoded pointer is ≥ 8 because their payload lives directly in the pointer bits.
 //!
-//! - **Inline values** (ptr < 8): The entire pointer value IS the tag (1, 2, or 3)
-//! - **Heap pointers** (ptr ≥ 8): Value is `aligned_address | tag`
+//! - **Inline values**: Either `ptr < 8` (null/booleans) or the tag explicitly denotes an inline
+//!   payload (e.g. short strings).
+//! - **Heap pointers** (ptr ≥ 8 without an inline tag): Value is `aligned_address | tag`
 //!
 //! Since heap addresses are 8-byte aligned (≥ 8) and tags are < 8, heap pointers
 //! are always ≥ 8 after OR-ing in the tag.
@@ -39,7 +42,8 @@
 //! | 3   | True             | Array          |
 //! | 4   | (invalid)        | Object         |
 //! | 5   | (invalid)        | DateTime       |
-//! | 6-7 | reserved         | reserved       |
+//! | 6   | (inline short string payload) | (inline short string payload) |
+//! | 7   | reserved        | reserved       |
 
 use core::fmt::{self, Debug, Formatter};
 use core::hash::{Hash, Hasher};
@@ -72,12 +76,14 @@ pub(crate) enum TypeTag {
     Object = 4,
     /// DateTime type
     DateTime = 5,
-    // Tags 6, 7 reserved for future use
+    /// Inline short string payload (data encoded directly in the pointer bits)
+    InlineString = 6,
+    // Tag 7 reserved for future use
 }
 
 impl From<usize> for TypeTag {
     fn from(other: usize) -> Self {
-        // Safety: We mask to 3 bits, and only use valid values 0-5
+        // Safety: We mask to 3 bits, and only use valid values 0-6
         match other & 0b111 {
             0 => TypeTag::Number,
             1 => TypeTag::StringOrNull,
@@ -85,6 +91,7 @@ impl From<usize> for TypeTag {
             3 => TypeTag::ArrayOrTrue,
             4 => TypeTag::Object,
             5 => TypeTag::DateTime,
+            6 => TypeTag::InlineString,
             // Invalid tags shouldn't occur if we maintain invariants
             _ => TypeTag::Number, // fallback
         }
@@ -171,16 +178,31 @@ impl Value {
 
     // === Internal accessors ===
 
+    /// Raw constructor from pointer/tag bits.
+    /// Safety: `bits` must be non-zero and encode a valid representation.
+    pub(crate) unsafe fn from_bits(bits: usize) -> Self {
+        debug_assert!(bits != 0);
+        Self {
+            ptr: unsafe { NonNull::new_unchecked(bits as *mut u8) },
+        }
+    }
+
     pub(crate) fn ptr_usize(&self) -> usize {
         self.ptr.as_ptr() as usize
     }
 
     fn is_inline(&self) -> bool {
-        self.ptr_usize() < ALIGNMENT
+        self.ptr_usize() < ALIGNMENT || self.is_inline_string()
     }
 
     fn type_tag(&self) -> TypeTag {
         TypeTag::from(self.ptr_usize())
+    }
+
+    /// Returns `true` if the encoded value is an inline short string.
+    #[inline]
+    pub(crate) fn is_inline_string(&self) -> bool {
+        matches!(self.type_tag(), TypeTag::InlineString)
     }
 
     /// Get the actual heap pointer (strips the tag bits).
@@ -231,11 +253,13 @@ impl Value {
             (TypeTag::ArrayOrTrue, false) => ValueType::Array,
             (TypeTag::Object, false) => ValueType::Object,
             (TypeTag::DateTime, false) => ValueType::DateTime,
+            (TypeTag::InlineString, false) => ValueType::String,
 
             // Inline values
             (TypeTag::StringOrNull, true) => ValueType::Null,
             (TypeTag::BytesOrFalse, true) => ValueType::Bool, // false
             (TypeTag::ArrayOrTrue, true) => ValueType::Bool,  // true
+            (TypeTag::InlineString, true) => ValueType::String,
 
             // Invalid states (shouldn't happen)
             (TypeTag::Number, true) | (TypeTag::Object, true) | (TypeTag::DateTime, true) => {
@@ -278,7 +302,11 @@ impl Value {
     /// Returns `true` if this is a string.
     #[must_use]
     pub fn is_string(&self) -> bool {
-        self.type_tag() == TypeTag::StringOrNull && !self.is_inline()
+        match self.type_tag() {
+            TypeTag::StringOrNull => !self.is_inline(),
+            TypeTag::InlineString => true,
+            _ => false,
+        }
     }
 
     /// Returns `true` if this is bytes.
@@ -775,6 +803,7 @@ impl Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::string::VString;
 
     #[test]
     fn test_size() {
@@ -823,5 +852,102 @@ mod tests {
         let v = Value::TRUE;
         let v2 = v.clone();
         assert_eq!(v, v2);
+    }
+
+    #[test]
+    fn test_inline_short_string() {
+        let v: Value = VString::new("inline").into();
+        assert_eq!(v.value_type(), ValueType::String);
+        assert!(v.is_string());
+        assert!(v.is_inline());
+    }
+
+    #[test]
+    fn short_strings_are_stored_inline() {
+        for len in 0..=VString::INLINE_LEN_MAX {
+            let data = "s".repeat(len);
+            let v = Value::from(data.as_str());
+            assert!(
+                v.is_inline_string(),
+                "expected inline string for length {len}, ptr={:#x}",
+                v.ptr_usize()
+            );
+            assert!(
+                v.is_inline(),
+                "inline flag should be true for strings of length {len}"
+            );
+            assert_eq!(
+                v.as_string().unwrap().as_str(),
+                data,
+                "round-trip mismatch for inline string"
+            );
+        }
+    }
+
+    #[test]
+    fn long_strings_force_heap_storage() {
+        let long = "l".repeat(VString::INLINE_LEN_MAX + 16);
+        let v = Value::from(long.as_str());
+        assert!(
+            !v.is_inline_string(),
+            "expected heap storage for long string ptr={:#x}",
+            v.ptr_usize()
+        );
+        assert_eq!(
+            v.as_string().unwrap().as_str(),
+            long,
+            "heap string should round-trip"
+        );
+    }
+
+    #[test]
+    fn clone_preserves_inline_string_representation() {
+        let original = Value::from("inline");
+        assert!(original.is_inline_string());
+        let clone = original.clone();
+        assert!(
+            clone.is_inline_string(),
+            "clone lost inline tag for ptr={:#x}",
+            clone.ptr_usize()
+        );
+        assert_eq!(
+            clone.as_string().unwrap().as_str(),
+            "inline",
+            "clone should preserve payload"
+        );
+    }
+
+    #[test]
+    fn string_mutations_transition_inline_and_heap() {
+        let mut value = Value::from("seed");
+        assert!(value.is_inline_string());
+
+        // Grow the string beyond inline capacity.
+        {
+            let slot = value.as_string_mut().expect("string value");
+            let mut owned = slot.to_string();
+            while owned.len() <= VString::INLINE_LEN_MAX {
+                owned.push('g');
+            }
+            // Ensure we crossed the boundary by at least 4 bytes for good measure.
+            owned.push_str("OVERFLOW");
+            *slot = VString::new(&owned);
+        }
+        assert!(
+            !value.is_inline_string(),
+            "string expected to spill to heap after grow"
+        );
+
+        // Shrink back to inline size.
+        {
+            let slot = value.as_string_mut().expect("string value");
+            let mut owned = slot.to_string();
+            owned.truncate(VString::INLINE_LEN_MAX);
+            *slot = VString::new(&owned);
+        }
+        assert!(
+            value.is_inline_string(),
+            "string should return to inline storage after shrink"
+        );
     }
 }

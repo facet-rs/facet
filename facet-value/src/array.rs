@@ -513,6 +513,7 @@ impl VArray {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ValueType;
 
     #[test]
     fn test_new() {
@@ -560,6 +561,34 @@ mod tests {
 
         let arr2 = arr.clone();
         assert_eq!(arr, arr2);
+    }
+
+    #[test]
+    fn inline_strings_in_array_remain_inline() {
+        let mut arr = VArray::new();
+        for len in 0..=crate::string::VString::INLINE_LEN_MAX.min(6) {
+            let s = "a".repeat(len);
+            arr.push(Value::from(s.as_str()));
+        }
+
+        for value in arr.iter() {
+            if value.value_type() == ValueType::String {
+                assert!(
+                    value.is_inline_string(),
+                    "array element lost inline representation"
+                );
+            }
+        }
+
+        let cloned = arr.clone();
+        for value in cloned.iter() {
+            if value.value_type() == ValueType::String {
+                assert!(
+                    value.is_inline_string(),
+                    "clone should preserve inline storage"
+                );
+            }
+        }
     }
 
     #[test]
