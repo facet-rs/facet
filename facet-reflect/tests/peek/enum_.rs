@@ -1,4 +1,7 @@
+use core::convert::Infallible;
+
 use facet::Facet;
+use facet_core::Opaque;
 use facet_reflect::Peek;
 use facet_testhelpers::test;
 
@@ -125,4 +128,33 @@ fn peek_repr_c_enum() {
     let inner_value = peek_enum.field_by_name("b").unwrap().unwrap();
     let value = inner_value.get::<String>().unwrap();
     assert_eq!(value, "Hello");
+}
+
+// Regression test for https://github.com/facet-rs/facet/issues/998#issuecomment-3605191431
+// Option<Opaque<Infallible>> is a zero-size type, and calling discriminant() on it
+// would read junk from memory, causing a SEGFAULT.
+#[test]
+fn option_of_zst_no_segfault() {
+    // Option<Opaque<Infallible>> has size 0
+    assert_eq!(
+        core::mem::size_of::<Option<Opaque<Infallible>>>(),
+        0,
+        "Expected Option<Opaque<Infallible>> to be a ZST"
+    );
+
+    // Test None case - this should not crash even though it's a ZST
+    let none_value: Option<Opaque<Infallible>> = None;
+    let peek = Peek::new(&none_value);
+    let peek_enum = peek.into_enum().unwrap();
+
+    // This should not cause a SEGFAULT - discriminant() was reading junk memory
+    assert_eq!(
+        peek_enum.variant_name_active().unwrap(),
+        "None",
+        "Option::None was incorrectly identified"
+    );
+
+    // Also test calling discriminant() directly - this used to cause SEGFAULT
+    // by reading memory for a type that has size 0
+    let _ = peek_enum.discriminant();
 }
