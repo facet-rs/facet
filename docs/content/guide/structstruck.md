@@ -4,7 +4,7 @@ weight = 6
 insert_anchor_links = "heading"
 +++
 
-Turn sample JSON/YAML into Rust types with [`structstruck`](https://crates.io/crates/structstruck), then derive `Facet` to get multi-format I/O and diagnostics for free. structstruck generates nested structs/enums at **compile time** from example data, so you avoid hand-writing boilerplate while keeping everything type-checked. citeturn0search0
+Turn sample JSON/YAML into Rust types with [`structstruck`](https://crates.io/crates/structstruck), then derive `Facet` to get multi-format I/O and diagnostics for free. structstruck generates nested structs/enums at **compile time** from example data, so you avoid hand-writing boilerplate while keeping everything type-checked.
 
 ## Why pair them?
 - **Faster modeling:** structstruck infers shapes from example payloads; facet then exposes those shapes to every format crate.
@@ -14,9 +14,9 @@ Turn sample JSON/YAML into Rust types with [`structstruck`](https://crates.io/cr
 ## Quick start
 ```toml
 [dependencies]
-structstruck = "0.4"         # sample-driven type generation
-facet = "1"
-facet-json = "1"
+structstruck = "0.5"         # sample-driven type generation
+facet = "{{ data.versions.facet }}"
+facet-json = "{{ data.versions.facet }}"
 ```
 
 ```rust

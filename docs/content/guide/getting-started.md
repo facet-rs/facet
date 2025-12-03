@@ -24,8 +24,8 @@ Pick at least one format crate. JSON is a good default:
 ```toml
 # Cargo.toml
 [dependencies]
-facet = "1"
-facet-json = "1"
+facet = "{{ data.versions.facet }}"
+facet-json = "{{ data.versions.facet }}"
 miette = { version = "7", features = ["fancy"] } # pretty diagnostics
 ```
 
