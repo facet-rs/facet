@@ -4,21 +4,16 @@
 {% block title %}{{ section.title }} - {{ config.title }}{% endblock title %}
 
 {% block body %}
-{# Determine which top-level section we're in #}
-{% set in_learn = section.path is containing("learn/") %}
-{% set in_extend = section.path is containing("extend/") %}
-{% set in_contribute = section.path is containing("contribute/") %}
-{% set has_sidebar = in_learn or in_extend or in_contribute %}
+{# Dynamically determine the root section from path #}
+{% set root_name = section.path | split(pat="/") | first %}
+{% set root_section_path = root_name ~ "/_index.md" %}
+{% set root_section = get_section(path=root_section_path) %}
+{# Show sidebar if this root section has pages or subsections #}
+{% set has_sidebar = root_section and (root_section.pages | length > 0 or root_section.subsections | length > 0) %}
 
 {% if has_sidebar %}
 <div class="docs-layout">
-    {% if in_learn %}
-        {{ macros::sidebar(root_section_path="learn/_index.md", current_path=section.path) }}
-    {% elif in_extend %}
-        {{ macros::sidebar(root_section_path="extend/_index.md", current_path=section.path) }}
-    {% elif in_contribute %}
-        {{ macros::sidebar(root_section_path="contribute/_index.md", current_path=section.path) }}
-    {% endif %}
+    {{ macros::sidebar(root_section_path=root_section_path, current_path=section.path) }}
 
     <main class="docs-content">
         <article>
