@@ -2,6 +2,38 @@ use facet::Facet;
 use facet_reflect::Peek;
 use facet_testhelpers::test;
 
+// Regression test for https://github.com/facet-rs/facet/issues/998
+// Option<Enum> was incorrectly reporting the active variant due to
+// niche optimization handling in RustNPO.
+#[derive(Facet)]
+#[repr(u8)]
+enum SimpleEnum {
+    Variant,
+}
+
+#[test]
+fn option_of_enum_niche_optimization() {
+    // Test None case - this was incorrectly returning "Some" before the fix
+    let none_value: Option<SimpleEnum> = None;
+    let peek = Peek::new(&none_value);
+    let peek_enum = peek.into_enum().unwrap();
+    assert_eq!(
+        peek_enum.variant_name_active().unwrap(),
+        "None",
+        "Option::None was incorrectly identified as Some"
+    );
+
+    // Test Some case
+    let some_value: Option<SimpleEnum> = Some(SimpleEnum::Variant);
+    let peek = Peek::new(&some_value);
+    let peek_enum = peek.into_enum().unwrap();
+    assert_eq!(
+        peek_enum.variant_name_active().unwrap(),
+        "Some",
+        "Option::Some was incorrectly identified"
+    );
+}
+
 #[derive(Facet)]
 #[repr(u8)]
 enum DefinitelyNotAnEnum {
