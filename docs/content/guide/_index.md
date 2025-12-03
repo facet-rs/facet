@@ -24,5 +24,6 @@ Learn how to use facet for serialization, deserialization, and rich diagnostics.
 - [Attributes Reference](@/reference/attributes/) — complete `#[facet(...)]` catalog.
 - [Format comparison matrix](@/reference/format-crate-matrix/) — feature support across format crates.
 
-## Works well with
-- [`structstruck`](@/guide/structstruck.md) — generate structs from sample data, then add `Facet` for multi-format I/O and diagnostics.
+## Ecosystem
+- [Third-party types](@/guide/ecosystem.md) — uuid, chrono, time, camino, bytes, and more
+- [`structstruck`](@/guide/structstruck.md) — generate structs from sample data, then add `Facet` for multi-format I/O and diagnostics
