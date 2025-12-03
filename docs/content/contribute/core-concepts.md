@@ -12,7 +12,7 @@ Facet has two main layers:
 
 **Low-level** (`facet-core`): `Shape`, `Def`, `Type`, and vtables define the raw reflection metadata. The derive macro generates this. You rarely interact with it directly unless you're writing a format crate or implementing `Facet` manually.
 
-## Shape, Type, and Def
+## Shape, type, and def
 
 Every type that implements `Facet` has a `Shape` — a complete description of the type at runtime. The shape contains:
 
@@ -22,7 +22,7 @@ Every type that implements `Facet` has a `Shape` — a complete description of t
 
 - **VTables** — Function pointers for runtime operations. Can I clone this? Display it? Parse it from a string? The vtables answer these questions without requiring trait bounds at compile time.
 
-## Peek and Partial
+## Peek and partial
 
 `Peek` wraps a reference and lets you inspect it through the shape:
 

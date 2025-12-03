@@ -33,7 +33,7 @@ let bytes = facet_msgpack::to_vec(&msg)?;
 let decoded: Message = facet_msgpack::from_slice(&bytes)?;
 ```
 
-### When to use MessagePack
+### When to use messagePack
 
 - **Network protocols**: More compact than JSON, widely supported
 - **Cross-language data exchange**: Libraries exist for most languages
@@ -74,7 +74,7 @@ let bytes = facet_postcard::to_vec(&reading)?;
 let decoded: SensorReading = facet_postcard::from_slice(&bytes)?;
 ```
 
-### When to use Postcard
+### When to use postcard
 
 - **Embedded systems**: `no_std` compatible, minimal overhead
 - **High-performance**: Variable-length encoding, no schema overhead
@@ -121,7 +121,7 @@ For a typical struct with a few fields:
 | MessagePack | 40-60 |
 | Postcard | 20-40 |
 
-## Other Binary Formats
+## Other binary formats
 
 ### facet-asn1
 
@@ -131,7 +131,7 @@ ASN.1 DER encoding, used in cryptography and X.509 certificates. Serialization o
 
 XDR (External Data Representation), used in NFS and some RPC protocols. Serialization only.
 
-## Next Steps
+## Next steps
 
 - See [Format comparison matrix](@/reference/format-crate-matrix/) for feature support
 - Check [Ecosystem](@/guide/ecosystem.md) for `no_std` support details

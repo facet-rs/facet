@@ -4,10 +4,10 @@ title = "From Value"
 
 <div class="showcase">
 
-## Happy Path
+## Happy path
 
 
-### Simple Struct
+### Simple struct
 
 <section class="scenario">
 <p class="description">Deserialize a <code>Value</code> map into a struct with basic fields.</p>
@@ -42,7 +42,7 @@ title = "From Value"
 </div>
 </section>
 
-### Nested Structs
+### Nested structs
 
 <section class="scenario">
 <p class="description">Nested structs are deserialized recursively.</p>
@@ -111,7 +111,7 @@ title = "From Value"
 </div>
 </section>
 
-### Unit Enum Variant
+### Unit enum variant
 
 <section class="scenario">
 <p class="description">A string value deserializes into a unit variant.</p>
@@ -139,7 +139,7 @@ title = "From Value"
 </div>
 </section>
 
-### Tuple Enum Variant
+### Tuple enum variant
 
 <section class="scenario">
 <p class="description">Externally tagged enum: <code>{"Variant": content}</code>.</p>
@@ -173,7 +173,7 @@ title = "From Value"
 </div>
 </section>
 
-### Struct Enum Variant
+### Struct enum variant
 
 <section class="scenario">
 <p class="description">Struct variants deserialize with named fields.</p>
@@ -213,7 +213,7 @@ title = "From Value"
 </div>
 </section>
 
-### Vec Deserialization
+### Vec deserialization
 
 <section class="scenario">
 <p class="description">Arrays deserialize into <code>Vec&lt;T&gt;</code>.</p>
@@ -245,7 +245,7 @@ title = "From Value"
 </div>
 </section>
 
-### Fixed-Size Array
+### Fixed-Size array
 
 <section class="scenario">
 <p class="description">Arrays with exact length deserialize into <code>[T; N]</code>.</p>
@@ -301,7 +301,7 @@ title = "From Value"
 </div>
 </section>
 
-### Nested Collections
+### Nested collections
 
 <section class="scenario">
 <p class="description"><code>null</code> values become <code>None</code> in <code>Option&lt;T&gt;</code>.</p>
@@ -333,7 +333,7 @@ title = "From Value"
 </div>
 </section>
 
-### Default Field Values
+### Default field values
 
 <section class="scenario">
 <p class="description">Fields marked with <code>#[facet(default)]</code> use <code>Default::default()</code> when missing.</p>
@@ -369,7 +369,7 @@ title = "From Value"
 ## Errors
 
 
-### Error: Type Mismatch
+### Error: type mismatch
 
 <section class="scenario">
 <p class="description">Trying to deserialize a string as an integer.</p>
@@ -388,7 +388,7 @@ Error: 
 </div>
 </section>
 
-### Error: Number Out of Range
+### Error: number out of range
 
 <section class="scenario">
 <p class="description">Value 1000 is too large for u8 (max 255).</p>
@@ -407,7 +407,7 @@ Error: 
 </div>
 </section>
 
-### Error: Wrong Array Length
+### Error: wrong array length
 
 <section class="scenario">
 <p class="description">Array has 4 elements but target type expects exactly 3.</p>
@@ -430,7 +430,7 @@ Error: 
 </div>
 </section>
 
-### Error: Invalid Enum Variant
+### Error: invalid Enum variant
 
 <section class="scenario">
 <p class="description">"Unknown" is not a valid variant of Status.</p>
@@ -462,7 +462,7 @@ Error: 
 </div>
 </section>
 
-### Error: Expected Object, Got Array
+### Error: expected object, got array
 
 <section class="scenario">
 <p class="description">Cannot deserialize an array as a struct.</p>

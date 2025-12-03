@@ -6,7 +6,7 @@ insert_anchor_links = "heading"
 
 [`facet-pretty`](https://docs.rs/facet-pretty) provides colorful, human-readable output for any `Facet` type. It's useful for debugging, logging, and REPL-style interfaces.
 
-## Basic Usage
+## Basic usage
 
 The simplest way to pretty-print is with the `FacetPretty` trait:
 
@@ -40,7 +40,7 @@ User {
 }
 ```
 
-## PrettyPrinter Configuration
+## PrettyPrinter configuration
 
 For more control, use `PrettyPrinter` directly:
 
@@ -58,7 +58,7 @@ let output = printer.format(&user);
 println!("{}", output);
 ```
 
-### Available Options
+### Available options
 
 | Method | Description | Default |
 |--------|-------------|---------|
@@ -69,7 +69,7 @@ println!("{}", output);
 | `with_doc_comments(bool)` | Include `///` doc comments in output | `false` |
 | `with_color_generator(gen)` | Custom color generation strategy | default HSL-based |
 
-## Using with Custom Printer
+## Using with custom printer
 
 Use `pretty_with()` to pass a custom printer configuration:
 
@@ -83,7 +83,7 @@ let printer = PrettyPrinter::new()
 println!("{}", user.pretty_with(printer));
 ```
 
-## Doc Comment Display
+## Doc comment display
 
 When `with_doc_comments(true)` is set, field documentation appears in the output:
 
@@ -116,7 +116,7 @@ Config {
 }
 ```
 
-## Sensitive Field Redaction
+## Sensitive field redaction
 
 Fields marked with `#[facet(sensitive)]` are automatically redacted:
 
@@ -151,7 +151,7 @@ Credentials {
 
 This works automatically — no configuration needed. It's safe to log `Facet` types without accidentally exposing secrets.
 
-## Nested Types and Collections
+## Nested types and collections
 
 Pretty printing handles complex nested structures:
 
@@ -198,7 +198,7 @@ Team {
 }
 ```
 
-## Byte Arrays
+## Byte arrays
 
 `Vec<u8>` and `[u8; N]` are displayed as hex dumps:
 
@@ -260,7 +260,7 @@ Status::Active {
 Status::Completed(42,)
 ```
 
-## Option Display
+## Option display
 
 By default, Options show their full type name:
 
@@ -285,7 +285,7 @@ println!("{}", printer.format(&None::<u32>));
 // Output: None
 ```
 
-## Custom Color Generator
+## Custom color generator
 
 The `ColorGenerator` controls how colors are assigned to values:
 
@@ -305,7 +305,7 @@ println!("{}", printer.format(&user));
 
 Colors are generated deterministically based on type — the same type always gets the same color, making it easy to visually scan output.
 
-## Tokyo Night Color Palette
+## Tokyo night color palette
 
 The default color scheme uses the [Tokyo Night](https://github.com/tokyo-night/tokyo-night-vscode-theme) palette:
 
@@ -319,7 +319,7 @@ The default color scheme uses the [Tokyo Night](https://github.com/tokyo-night/t
 | Redacted values | Red (bold) | `#db4b4b` |
 | Comments | Muted gray | `#565f89` |
 
-## NO_COLOR Support
+## NO_COLOR support
 
 `facet-pretty` respects the `NO_COLOR` environment variable. When set, ANSI color codes are disabled automatically:
 
@@ -333,7 +333,7 @@ You can also explicitly disable colors:
 let printer = PrettyPrinter::new().with_colors(false);
 ```
 
-## Cycle Detection
+## Cycle detection
 
 Recursive structures are handled gracefully:
 
@@ -351,7 +351,7 @@ struct Node {
 // It detects the cycle and shows: /* cycle detected */
 ```
 
-## Integration with Logging
+## Integration with logging
 
 `facet-pretty` output works well with logging frameworks:
 
@@ -369,7 +369,7 @@ use log::debug;
 debug!("user={}", facet_json::to_string(&user)?);
 ```
 
-## Next Steps
+## Next steps
 
 - See [Assertions](@/guide/showcases/assert.md) for structural diffing (which uses pretty-printing internally)
 - Check the [sensitive attribute](@/reference/attributes/#sensitive) for more on redaction

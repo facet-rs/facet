@@ -6,7 +6,7 @@ insert_anchor_links = "heading"
 
 [`facet-toml`](https://docs.rs/facet-toml) provides TOML serialization and deserialization, built on [`toml_edit`](https://docs.rs/toml_edit). Perfect for configuration files.
 
-## Basic Usage
+## Basic usage
 
 ```rust
 use facet::Facet;
@@ -30,7 +30,7 @@ let config: Config = facet_toml::from_str(toml)?;
 let output = facet_toml::to_string(&config)?;
 ```
 
-## Nested Tables
+## Nested tables
 
 TOML tables map to nested structs:
 
@@ -96,7 +96,7 @@ let config: Config = facet_toml::from_str(toml)?;
 assert_eq!(config.dependencies.len(), 2);
 ```
 
-## Inline Tables
+## Inline tables
 
 Inline tables in TOML are handled automatically:
 
@@ -110,7 +110,7 @@ host = "localhost"
 port = 8080
 ```
 
-## Optional Fields
+## Optional fields
 
 Use `Option<T>` for optional configuration:
 
@@ -124,7 +124,7 @@ struct Database {
 }
 ```
 
-## DateTime Support
+## DateTime support
 
 TOML has native datetime support. Enable the appropriate feature:
 
@@ -151,7 +151,7 @@ timestamp = 2024-01-15T10:30:00Z
 let event: Event = facet_toml::from_str(toml)?;
 ```
 
-## Error Messages
+## Error messages
 
 facet-toml provides helpful error messages with source locations:
 
@@ -164,7 +164,7 @@ Error: missing field `port`
   │
 ```
 
-## Common Patterns
+## Common patterns
 
 ### Cargo.toml-style configs
 
@@ -248,7 +248,7 @@ host = "localhost"
 port = 8080
 ```
 
-## Next Steps
+## Next steps
 
 - See [Ecosystem](@/guide/ecosystem.md) for third-party type support (chrono, time, etc.)
 - Check [Attributes Reference](@/guide/attributes.md) for all available attributes

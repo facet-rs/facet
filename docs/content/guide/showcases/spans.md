@@ -4,10 +4,10 @@ title = "Spans"
 
 <div class="showcase">
 
-## Highlight Modes
+## Highlight modes
 
 
-### Highlight Field Name
+### Highlight field name
 
 <section class="scenario">
 <p class="description">Point to the field name when it's unknown or unexpected.</p>
@@ -38,7 +38,7 @@ title = "Spans"
 </div>
 </section>
 
-### Highlight Type
+### Highlight type
 
 <section class="scenario">
 <p class="description">Point to the type when the value doesn't match.</p>
@@ -69,7 +69,7 @@ title = "Spans"
 </div>
 </section>
 
-### Highlight Entire Field
+### Highlight entire field
 
 <section class="scenario">
 <p class="description">Point to both name and type for context.</p>
@@ -100,10 +100,10 @@ title = "Spans"
 </div>
 </section>
 
-## Nested Structures
+## Nested structures
 
 
-### Nested Struct Field
+### Nested struct field
 
 <section class="scenario">
 <p class="description">Highlight a field inside a nested struct.</p>
@@ -152,7 +152,7 @@ title = "Spans"
 </div>
 </section>
 
-### Deeply Nested Field
+### Deeply nested field
 
 <section class="scenario">
 <p class="description">Highlight a deeply nested field path.</p>
@@ -201,10 +201,10 @@ title = "Spans"
 </div>
 </section>
 
-## Enum Variants
+## Enum variants
 
 
-### Unit Variant
+### Unit variant
 
 <section class="scenario">
 <p class="description">Highlight an enum variant name.</p>
@@ -238,7 +238,7 @@ title = "Spans"
 </div>
 </section>
 
-### Tuple Variant
+### Tuple variant
 
 <section class="scenario">
 <p class="description">Highlight a tuple variant.</p>
@@ -274,7 +274,7 @@ title = "Spans"
 </div>
 </section>
 
-### Struct Variant Field
+### Struct variant field
 
 <section class="scenario">
 <p class="description">Highlight a field inside a struct variant.</p>
@@ -311,7 +311,7 @@ title = "Spans"
 ## Collections
 
 
-### Vec Field
+### Vec field
 
 <section class="scenario">
 <p class="description">Highlight a Vec field type.</p>
@@ -360,7 +360,7 @@ title = "Spans"
 </div>
 </section>
 
-### Option Field
+### Option field
 
 <section class="scenario">
 <p class="description">Highlight an Option field.</p>
@@ -389,7 +389,7 @@ title = "Spans"
 </div>
 </section>
 
-### HashMap Field
+### HashMap field
 
 <section class="scenario">
 <p class="description">Highlight a HashMap field.</p>

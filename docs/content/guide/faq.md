@@ -33,7 +33,7 @@ If you're serializing millions of objects per second in a hot loop, serde is the
 
 Yes. [`facet-core`](https://docs.rs/facet-core) is `no_std` compatible. Format crates typically require `alloc`.
 
-### What Rust version does facet require?
+### What rust version does facet require?
 
 facet targets the latest stable Rust. Check the CI configuration for the current MSRV (minimum supported Rust version).
 
@@ -179,7 +179,7 @@ enum AnyValue {
 // Just the value: 42 or 3.14 or "hello"
 ```
 
-## Error Handling
+## Error handling
 
 ### Why do I get "unknown field" errors?
 
@@ -268,7 +268,7 @@ use facet::Facet;
 struct MyType { ... }
 ```
 
-### Compile errors mention extension attributes I'm not using
+### Compile errors mention extension attributes i'm not using
 
 Extension attributes require importing the crate with an alias:
 
@@ -284,7 +284,7 @@ struct Config {
 
 Without the import, `kdl::property` is not recognized.
 
-## Still Have Questions?
+## Still have questions?
 
 - Join the [Discord](https://discord.gg/JhD7CwCJ8F) to chat with the community
 - Check the [Showcases](@/guide/showcases/_index.md) for more examples

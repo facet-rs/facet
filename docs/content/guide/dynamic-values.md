@@ -6,11 +6,11 @@ insert_anchor_links = "heading"
 
 Facet supports dynamic, schema-less data through `facet_value::Value` — a pointer-sized type that can hold any structured data. This enables powerful patterns like two-phase deserialization, mixed static/dynamic comparisons, and deferred parsing.
 
-## facet-value: The Dynamic Value Type
+## facet-value: the dynamic value type
 
 [`facet_value::Value`](https://docs.rs/facet-value) is facet's equivalent to `serde_json::Value`, but format-agnostic and more memory-efficient. It supports eight value types: Null, Bool, Number, String, Bytes, Array, Object, and DateTime.
 
-### Deserialize to Value, then to a Type
+### Deserialize to value, then to a type
 
 A common pattern is to deserialize into `Value` first, then convert to a concrete type later. This is useful when:
 
@@ -40,7 +40,7 @@ let config: Config = from_value(&value)?;
 println!("{:?}", config);
 ```
 
-### Partial Tree Extraction
+### Partial tree extraction
 
 You can also extract just part of a `Value` tree into a typed struct:
 
@@ -69,11 +69,11 @@ if let Some(db_value) = value.as_object().and_then(|o| o.get("database")) {
 }
 ```
 
-## assert_same!: Compare Anything to Anything
+## assert_same!: compare anything to anything
 
 [`facet_assert::assert_same!`](https://docs.rs/facet-assert) compares values structurally using reflection — no `PartialEq` required. The powerful part? **It can compare values of different types**, including a `Value` against a typed struct.
 
-### Dynamic vs Typed Comparison
+### Dynamic vs typed comparison
 
 This is incredibly useful for testing: verify that your JSON matches the expected typed structure without manually constructing the typed value:
 
@@ -98,7 +98,7 @@ let expected: Value = facet_json::from_str(r#"{"name": "Alice", "age": 30}"#)?;
 assert_same!(user, expected);
 ```
 
-### Cross-Version DTO Comparison
+### Cross-Version DTO comparison
 
 Compare DTOs across API versions without implementing `PartialEq` between them:
 
@@ -115,7 +115,7 @@ let v2 = UserV2 { name: "Bob".into(), age: 25 };
 assert_same!(v1, v2);  // Works! Compares by structure, not type
 ```
 
-### Rich Diff Output
+### Rich diff output
 
 When values differ, you get a detailed, colored diff showing exactly what's different:
 
@@ -126,18 +126,18 @@ assertion `assert_same!(left, right)` failed
   .age: 30 → 25
 ```
 
-## RawJson: Defer Parsing
+## RawJson: defer parsing
 
 [`facet_json::RawJson`](https://docs.rs/facet-json) captures unparsed JSON text, letting you delay or skip deserialization of parts of a document. The JSON text can be borrowed (zero-copy) or owned.
 
-### Use Cases
+### Use cases
 
 - **Unknown schema**: Part of your JSON has an unknown or highly variable structure
 - **Pass-through**: You need to store/forward JSON without parsing it
 - **Lazy parsing**: Defer expensive parsing until you know you need it
 - **Selective parsing**: Only parse the parts you care about
 
-### Basic Usage
+### Basic usage
 
 ```rust
 use facet::Facet;
@@ -158,7 +158,7 @@ assert_eq!(response.status, 200);
 assert_eq!(response.data.as_str(), r#"{"nested": [1, 2, 3], "complex": true}"#);
 ```
 
-### Zero-Copy Borrowing
+### Zero-Copy borrowing
 
 When possible, `RawJson` borrows from the input string (zero allocation):
 
@@ -178,7 +178,7 @@ let envelope: Envelope = facet_json::from_str(json)?;
 // payload.0 is Cow::Borrowed — no allocation for the payload!
 ```
 
-### Owned RawJson
+### Owned rawJson
 
 If you need to outlive the input, convert to owned:
 
@@ -186,7 +186,7 @@ If you need to outlive the input, convert to owned:
 let owned: RawJson<'static> = envelope.payload.into_owned();
 ```
 
-### Later Parsing
+### Later parsing
 
 Parse the raw JSON when you're ready:
 
@@ -201,7 +201,7 @@ struct ClickEvent {
 let event: ClickEvent = facet_json::from_str(response.data.as_str())?;
 ```
 
-## Combining These Patterns
+## Combining these patterns
 
 These features compose naturally:
 
@@ -237,7 +237,7 @@ let expected = Payload { items: vec!["a".into(), "b".into(), "c".into()] };
 assert_same!(payload, expected);
 ```
 
-## Next Steps
+## Next steps
 
 - See the [From Value showcase](@/guide/showcases/from_value.md) for more `Value` → typed examples
 - See the [Assertions showcase](@/guide/showcases/assert.md) for `assert_same!` examples

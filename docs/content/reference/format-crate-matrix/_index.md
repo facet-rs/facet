@@ -31,7 +31,7 @@ Note: S = Serialization, D = Deserialization
 | [facet-urlencoded](https://docs.rs/facet-urlencoded) | D | Text | (Custom) | 🚫 |
 | [facet-csv](https://docs.rs/facet-csv) | S | Text | (Custom) | 🚫 |
 
-## Scalar Types
+## Scalar types
 
 | Type | json | kdl | yaml | toml | msgp | pcrd | asn1 | xdr | args | urlenc | csv |
 |------|------|-----|------|------|------|------|------|-----|------|--------|-----|
@@ -43,11 +43,11 @@ Note: S = Serialization, D = Deserialization
 | `char` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | ✅ | ✅ | ✅ |
 | NonZero integers | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 | 🚫 | 🟡 | 🟡 | 🟡 |
 
-## String Types
+## String types
 
 All formats support `String`, `&str` (with best-effort borrowing), and `Cow<str>`.
 
-## Lists, Sets, and Maps
+## Lists, sets, and maps
 
 | Type | json | kdl | yaml | toml | msgp | pcrd | asn1 | xdr | args | urlenc | csv |
 |------|------|-----|------|------|------|------|------|-----|------|--------|-----|
@@ -59,14 +59,14 @@ All formats support `String`, `&str` (with best-effort borrowing), and `Cow<str>
 | `BTreeMap<K, V>` | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
 | Non-string map keys | ✅ | 🚫 | ✅ | 🚫 | ✅ | ✅ | 🚫 | 🚫 | ➖ | ➖ | ➖ |
 
-## Compound Types
+## Compound types
 
 | Type | json | kdl | yaml | toml | msgp | pcrd | asn1 | xdr | args | urlenc | csv |
 |------|------|-----|------|------|------|------|------|-----|------|--------|-----|
 | `Option<T>` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | ✅ | ✅ | 🟡 |
 | `Result<T, E>` | ✅ | 🟡 | 🟡 | 🟡 | ✅ | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
 
-## Smart Pointers
+## Smart pointers
 
 | Type | json | kdl | yaml | toml | msgp | pcrd | asn1 | xdr | args | urlenc | csv |
 |------|------|-----|------|------|------|------|------|-----|------|--------|-----|

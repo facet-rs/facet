@@ -6,7 +6,7 @@ insert_anchor_links = "heading"
 
 [`facet-diff`](https://docs.rs/facet-diff) computes structural differences between any two `Facet` values — even values of **different types**. It's the engine behind `facet-assert`'s rich failure output.
 
-## Basic Usage
+## Basic usage
 
 Use the `FacetDiff` trait to compare two values:
 
@@ -47,7 +47,7 @@ Output:
 }
 ```
 
-## The Diff Type
+## The diff type
 
 `Diff::new()` returns a `Diff` enum with these variants:
 
@@ -76,7 +76,7 @@ pub enum Diff<'mem, 'facet> {
 }
 ```
 
-## Checking Equality
+## Checking equality
 
 Use `is_equal()` to check if values are structurally identical:
 
@@ -90,7 +90,7 @@ if diff.is_equal() {
 }
 ```
 
-## Cross-Type Comparison
+## Cross-Type comparison
 
 One of facet-diff's unique features: compare values of **different types**:
 
@@ -134,7 +134,7 @@ Output:
 
 The diff shows that `phone` was added (it exists in `to` but not `from`).
 
-## Sequence Diffing
+## Sequence diffing
 
 facet-diff uses an optimal diff algorithm for sequences:
 
@@ -163,7 +163,7 @@ The algorithm:
 - Shows inline replacements for 1-to-1 changes
 - Collapses unchanged items into `.. N unchanged items`
 
-## Nested Structure Diffing
+## Nested structure diffing
 
 Diffs recurse into nested structures:
 
@@ -212,7 +212,7 @@ Output:
 }
 ```
 
-## Enum Diffing
+## Enum diffing
 
 Enum variants are compared structurally:
 
@@ -256,7 +256,7 @@ Output:
 Status::Pending → Status::Active { since: "2024-01-01" }
 ```
 
-## Dynamic Value Comparison
+## Dynamic value comparison
 
 facet-diff can compare `facet_value::Value` against typed structs:
 
@@ -291,7 +291,7 @@ Output:
 
 This is powerful for testing: compare expected typed values against parsed JSON/YAML without manual conversion.
 
-## Option Diffing
+## Option diffing
 
 Options are compared by their inner values:
 
@@ -325,7 +325,7 @@ Output:
 Some(42) → None
 ```
 
-## Display Formatting
+## Display formatting
 
 The `Diff` type implements `Display` with colorized output using the Tokyo Night color scheme:
 
@@ -363,7 +363,7 @@ assertion `assert_same!(left, right)` failed
 }
 ```
 
-## Pointer Dereferencing
+## Pointer dereferencing
 
 Smart pointers (`Box`, `Rc`, `Arc`) and references are automatically dereferenced:
 
@@ -377,7 +377,7 @@ let diff = before.diff(&after);
 // Compares the inner User values, not the Rc pointers
 ```
 
-## Closeness Score
+## Closeness score
 
 Internally, diffs compute a "closeness" score used to find optimal alignments in sequences. You generally don't need this directly, but it's how facet-diff decides whether two sequence elements are "the same element, modified" vs "one deleted, one inserted":
 
@@ -385,7 +385,7 @@ Internally, diffs compute a "closeness" score used to find optimal alignments in
 - Used by the sequence diff algorithm to minimize noise
 - Prefers showing field changes over delete+insert pairs
 
-## Next Steps
+## Next steps
 
 - See [Assertions](@/guide/showcases/assert.md) for `assert_same!` usage
 - Check [Pretty Printing](@/guide/showcases/pretty.md) for value display
