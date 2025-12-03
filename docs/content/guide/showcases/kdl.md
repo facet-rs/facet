@@ -4,7 +4,10 @@ title = "KDL"
 
 <div class="showcase">
 
-## Basic node with properties
+[`facet-kdl`](https://docs.rs/facet-kdl) provides serialization and deserialization for [KDL](https://kdl.dev), a document language with a focus on human readability. Use attributes like `kdl::property`, `kdl::argument`, and `kdl::child` to control how your types map to KDL's node-based structure.
+
+
+## Basic Node with Properties
 
 <section class="scenario">
 <p class="description">Simple struct with <code>#[facet(kdl::property)]</code> fields becomes KDL properties.</p>
@@ -49,7 +52,7 @@ title = "KDL"
 </div>
 </section>
 
-## Node with argument
+## Node with Argument
 
 <section class="scenario">
 <p class="description"><code>#[facet(kdl::argument)]</code> field becomes a positional argument after the node name.<br>Result: <code>server "web-01" host="localhost" port=8080</code></p>
@@ -94,7 +97,7 @@ title = "KDL"
 </div>
 </section>
 
-## Nested nodes (Children)
+## Nested Nodes (Children)
 
 <section class="scenario">
 <p class="description"><code>#[facet(kdl::child)]</code> fields become nested child nodes in braces.<br>The address struct becomes a child node of company.</p>
@@ -149,7 +152,7 @@ title = "KDL"
 </div>
 </section>
 
-## Vec as repeated children
+## Vec as Repeated Children
 
 <section class="scenario">
 <p class="description"><code>#[facet(kdl::children)]</code> on a <code>Vec</code> field creates repeated child nodes.<br>Each <code>Member</code> becomes a separate <code>member</code> node.</p>
@@ -202,7 +205,7 @@ title = "KDL"
 </div>
 </section>
 
-## Complex nested config
+## Complex Nested Config
 
 <section class="scenario">
 <p class="description">A realistic application config showing:<br>- Top-level properties (<code>debug</code>, <code>features</code>)<br>- Child nodes with arguments (<code>server</code>, <code>database</code>)<br>- Nested children (<code>tls</code> inside <code>server</code>)<br>- Optional children (<code>tls</code> is <code>Option&lt;TlsConfig&gt;</code>)</p>
@@ -280,7 +283,7 @@ title = "KDL"
 </div>
 </section>
 
-## Roundtrip: rust → KDL → rust
+## Roundtrip: Rust → KDL → Rust
 
 <section class="scenario">
 <p class="description">Demonstrates serialization followed by deserialization.<br>The value survives the roundtrip intact.</p>
@@ -325,7 +328,7 @@ title = "KDL"
 </div>
 </section>
 
-## Ambiguous flattened enum
+## Ambiguous Flattened Enum
 
 <section class="scenario">
 <p class="description">Both TypeA and TypeB variants have identical fields (value, priority).<br>The solver cannot determine which variant to use.</p>
@@ -381,7 +384,7 @@ title = "KDL"
 </div>
 </section>
 
-## NoMatch with per-Candidate failures
+## NoMatch with Per-Candidate Failures
 
 <section class="scenario">
 <p class="description">Provide field names that don't exactly match any variant.<br>The solver shows WHY each candidate failed with 'did you mean?' suggestions.</p>
@@ -483,7 +486,7 @@ title = "KDL"
 </div>
 </section>
 
-## Unknown fields with 'Did you mean?' suggestions
+## Unknown Fields with 'Did You Mean?' Suggestions
 
 <section class="scenario">
 <p class="description">Misspell field names and see the solver suggest corrections!<br>Uses Jaro-Winkler similarity to find close matches.</p>
@@ -575,7 +578,7 @@ title = "KDL"
 </div>
 </section>
 
-## Value overflow detection
+## Value Overflow Detection
 
 <section class="scenario">
 <p class="description">When a value doesn't fit ANY candidate type, the solver reports it.<br>count=5000000000 exceeds both u8 (max 255) and u32 (max ~4 billion).</p>
@@ -629,7 +632,7 @@ title = "KDL"
 </div>
 </section>
 
-## Multi-Line config with typos
+## Multi-Line Config with Typos
 
 <section class="scenario">
 <p class="description">A more realistic multi-line configuration file with several typos.<br>Shows how the solver sorts candidates by closeness to the input.</p>
@@ -758,7 +761,7 @@ title = "KDL"
 </div>
 </section>
 
-## Unknown field
+## Unknown Field
 
 <section class="scenario">
 <p class="description">KDL contains a property that doesn't exist in the target struct.<br>With #[facet(deny_unknown_fields)], this is an error.</p>
@@ -804,7 +807,7 @@ title = "KDL"
 </div>
 </section>
 
-## Missing required field
+## Missing Required Field
 
 <section class="scenario">
 <p class="description">KDL is missing a required field that has no default.</p>
@@ -840,6 +843,113 @@ title = "KDL"
 <pre><code><span style="color:#e06c75">kdl::reflect</span>
 
   <span style="color:#e06c75">×</span> Field 'SimpleServer::port' was not initialized
+</code></pre>
+</div>
+</section>
+
+## Syntax Error: Unquoted Boolean
+
+<section class="scenario">
+<p class="description">KDL 2.0 requires booleans to be written as #true/#false.<br>Bare <code>true</code> or <code>false</code> is a syntax error with a helpful message.</p>
+<div class="input">
+<h4>KDL Input</h4>
+<pre style="background-color:#1a1b26;">
+<span style="color:#f7768e;">server </span><span style="color:#7dcfff;">host</span><span style="color:#89ddff;">=&quot;</span><span style="color:#9ece6a;">localhost</span><span style="color:#89ddff;">&quot; </span><span style="color:#7dcfff;">enabled</span><span style="color:#89ddff;">=</span><span style="color:#ff9e64;">true</span></pre>
+
+</div>
+<details class="target-type">
+<summary>Target Type</summary>
+<pre style="background-color:#1a1b26;">
+<span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">deny_unknown_fields</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">SimpleConfig </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">kdl</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">child)]
+</span><span style="color:#9abdf5;">    server</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> SimpleServer,
+</span><span style="color:#9abdf5;">}
+</span><span style="color:#c0caf5;">
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">deny_unknown_fields</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">SimpleServer </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">kdl</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">property)]
+</span><span style="color:#9abdf5;">    host</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">kdl</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">property)]
+</span><span style="color:#9abdf5;">    port</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u16</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">}</span></pre>
+
+</details>
+<div class="error">
+<h4>Error</h4>
+<pre><code><span style="color:#e06c75">kdl::parse</span>
+
+  <span style="color:#e06c75">×</span> Failed to parse KDL document
+
+Error: 
+  <span style="color:#e06c75">×</span> Expected identifier string
+   ╭────
+ <span style="opacity:0.7">1</span> │ server host="localhost" enabled=true
+   · <span style="color:#c678dd;font-weight:bold">                                ──┬─</span>
+   ·                                   <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">not identifier string</span>
+   ╰────
+</code></pre>
+</div>
+</section>
+
+## Syntax Error: Unclosed Brace
+
+<section class="scenario">
+<p class="description">Missing closing brace in nested node structure.<br>The parser provides line/column information for the error.</p>
+<div class="input">
+<h4>KDL Input</h4>
+<pre style="background-color:#1a1b26;">
+<span style="color:#f7768e;">server </span><span style="color:#7dcfff;">host</span><span style="color:#89ddff;">=&quot;</span><span style="color:#9ece6a;">localhost</span><span style="color:#89ddff;">&quot; </span><span style="color:#7dcfff;">port</span><span style="color:#89ddff;">=</span><span style="color:#ff9e64;">8080 </span><span style="color:#9abdf5;">{
+</span><span style="color:#c0caf5;">    </span><span style="color:#f7768e;">tls </span><span style="color:#7dcfff;">cert</span><span style="color:#89ddff;">=&quot;</span><span style="color:#9ece6a;">/path/to/cert</span><span style="color:#89ddff;">&quot;
+</span></pre>
+
+</div>
+<details class="target-type">
+<summary>Target Type</summary>
+<pre style="background-color:#1a1b26;">
+<span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">deny_unknown_fields</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">SimpleConfig </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">kdl</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">child)]
+</span><span style="color:#9abdf5;">    server</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> SimpleServer,
+</span><span style="color:#9abdf5;">}
+</span><span style="color:#c0caf5;">
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">deny_unknown_fields</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">SimpleServer </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">kdl</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">property)]
+</span><span style="color:#9abdf5;">    host</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">kdl</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">property)]
+</span><span style="color:#9abdf5;">    port</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u16</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">}</span></pre>
+
+</details>
+<div class="error">
+<h4>Error</h4>
+<pre><code><span style="color:#e06c75">kdl::parse</span>
+
+  <span style="color:#e06c75">×</span> Failed to parse KDL document
+
+Error: 
+  <span style="color:#e06c75">×</span> No closing '}' for child block
+   ╭─[1:35]
+ <span style="opacity:0.7">1</span> │ server host="localhost" port=8080 {
+   · <span style="color:#c678dd;font-weight:bold">                                  ┬</span>
+   ·                                   <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">not closed</span>
+ <span style="opacity:0.7">2</span> │     tls cert="/path/to/cert"
+   ╰────
+
+Error: 
+  <span style="color:#e06c75">×</span> Closing '}' was not found after nodes
+   ╭─[1:36]
+ <span style="opacity:0.7">1</span> │ <span style="color:#c678dd;font-weight:bold">╭</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span> server host="localhost" port=8080 {
+ <span style="opacity:0.7">2</span> │ <span style="color:#c678dd;font-weight:bold">├</span><span style="color:#c678dd;font-weight:bold">─</span><span style="color:#c678dd;font-weight:bold">▶</span>     tls cert="/path/to/cert"
+   · <span style="color:#c678dd;font-weight:bold">╰</span><span style="color:#c678dd;font-weight:bold">───</span><span style="color:#c678dd;font-weight:bold">─</span> <span style="color:#c678dd;font-weight:bold">not closed</span>
+   ╰────
 </code></pre>
 </div>
 </section>

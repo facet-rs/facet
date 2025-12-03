@@ -4,7 +4,10 @@ title = "JSON"
 
 <div class="showcase">
 
-## Basic struct
+[`facet-json`](https://docs.rs/facet-json) provides JSON serialization and deserialization for any type that implements `Facet`. It includes rich error diagnostics with source locations and typo suggestions.
+
+
+## Basic Struct
 
 <section class="scenario">
 <p class="description">Simple struct with optional field serialized to JSON.</p>
@@ -41,7 +44,7 @@ title = "JSON"
 </div>
 </section>
 
-## Nested structs
+## Nested Structs
 
 <section class="scenario">
 <p class="description">Struct containing nested struct and vector.</p>
@@ -99,7 +102,7 @@ title = "JSON"
 </div>
 </section>
 
-## Externally tagged enum (default)
+## Externally Tagged Enum (default)
 
 <section class="scenario">
 <p class="description">Default enum serialization with external tagging: <code>{"Variant": content}</code></p>
@@ -139,7 +142,7 @@ title = "JSON"
 </div>
 </section>
 
-## Internally tagged enum
+## Internally Tagged Enum
 
 <section class="scenario">
 <p class="description">Enum with internal tagging using <code>#[facet(tag = "type")]</code> - variant name becomes a field.</p>
@@ -179,7 +182,7 @@ title = "JSON"
 </div>
 </section>
 
-## Adjacently tagged enum
+## Adjacently Tagged Enum
 
 <section class="scenario">
 <p class="description">Enum with adjacent tagging using <code>#[facet(tag = "t", content = "c")]</code> - variant name and content are separate fields.</p>
@@ -223,7 +226,7 @@ title = "JSON"
 </div>
 </section>
 
-## Untagged enum
+## Untagged Enum
 
 <section class="scenario">
 <p class="description">Enum with <code>#[facet(untagged)]</code> - no tagging, relies on JSON structure to determine variant.</p>
@@ -251,7 +254,7 @@ title = "JSON"
 </div>
 </section>
 
-## Maps with string keys
+## Maps with String Keys
 
 <section class="scenario">
 <p class="description">HashMap with string keys serializes to JSON object.</p>
@@ -264,22 +267,22 @@ title = "JSON"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
-  "<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">1</span><span style="opacity:0.7">,</span>
   "<span style="color:rgb(158,206,106)">two</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">2</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">1</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
 <h4>JSON Output</h4>
 <pre style="background-color:#1a1b26;">
 <span style="color:#9abdf5;">{
-</span><span style="color:#c0caf5;">  </span><span style="color:#89ddff;">&quot;</span><span style="color:#7aa2f7;">one</span><span style="color:#89ddff;">&quot;: </span><span style="color:#ff9e64;">1</span><span style="color:#89ddff;">,
-</span><span style="color:#c0caf5;">  </span><span style="color:#89ddff;">&quot;</span><span style="color:#7aa2f7;">two</span><span style="color:#89ddff;">&quot;: </span><span style="color:#ff9e64;">2
+</span><span style="color:#c0caf5;">  </span><span style="color:#89ddff;">&quot;</span><span style="color:#7aa2f7;">two</span><span style="color:#89ddff;">&quot;: </span><span style="color:#ff9e64;">2</span><span style="color:#89ddff;">,
+</span><span style="color:#c0caf5;">  </span><span style="color:#89ddff;">&quot;</span><span style="color:#7aa2f7;">one</span><span style="color:#89ddff;">&quot;: </span><span style="color:#ff9e64;">1
 </span><span style="color:#9abdf5;">}</span></pre>
 
 </div>
 </section>
 
-## Maps with integer keys
+## Maps with Integer Keys
 
 <section class="scenario">
 <p class="description">HashMap with integer keys - keys are stringified for JSON compatibility.</p>
@@ -307,7 +310,7 @@ title = "JSON"
 </div>
 </section>
 
-## Tuple struct
+## Tuple Struct
 
 <section class="scenario">
 <p class="description">Tuple struct serializes as JSON array.</p>
@@ -338,7 +341,7 @@ title = "JSON"
 </div>
 </section>
 
-## Compact JSON output
+## Compact JSON Output
 
 <section class="scenario">
 <p class="description">Compact serialization - all on one line, minimal whitespace.</p>
@@ -374,7 +377,7 @@ title = "JSON"
 </div>
 </section>
 
-## Pretty JSON output
+## Pretty JSON Output
 
 <section class="scenario">
 <p class="description">Pretty-printed serialization - formatted with indentation and newlines.</p>
@@ -417,7 +420,7 @@ title = "JSON"
 </div>
 </section>
 
-## Syntax error: unexpected character
+## Syntax Error: Unexpected Character
 
 <section class="scenario">
 <p class="description">Invalid character at the start of JSON input.</p>
@@ -447,7 +450,7 @@ title = "JSON"
 </div>
 </section>
 
-## Syntax error: invalid character in object
+## Syntax Error: Invalid Character in Object
 
 <section class="scenario">
 <p class="description">Invalid character appears mid-parse with surrounding context visible.</p>
@@ -482,7 +485,7 @@ title = "JSON"
 </div>
 </section>
 
-## Syntax error: multiline JSON
+## Syntax Error: Multiline JSON
 
 <section class="scenario">
 <p class="description">Error location is correctly identified in multiline JSON.</p>
@@ -525,7 +528,7 @@ title = "JSON"
 </div>
 </section>
 
-## Unknown field
+## Unknown Field
 
 <section class="scenario">
 <p class="description">JSON contains a field that doesn't exist in the target struct.<br>The error shows the unknown field and lists valid alternatives.</p>
@@ -561,7 +564,7 @@ title = "JSON"
 </div>
 </section>
 
-## Type mismatch
+## Type Mismatch
 
 <section class="scenario">
 <p class="description">JSON value type doesn't match the expected Rust type.</p>
@@ -596,7 +599,7 @@ title = "JSON"
 </div>
 </section>
 
-## Missing required field
+## Missing Required Field
 
 <section class="scenario">
 <p class="description">JSON is missing a required field that has no default.</p>
@@ -632,7 +635,7 @@ title = "JSON"
 </div>
 </section>
 
-## Number out of range
+## Number Out of Range
 
 <section class="scenario">
 <p class="description">JSON number is too large for the target integer type.</p>
@@ -665,7 +668,7 @@ title = "JSON"
 </div>
 </section>
 
-## Expected array, got string
+## Expected Array, Got String
 
 <section class="scenario">
 <p class="description">JSON has a string where an array was expected.</p>
@@ -698,7 +701,7 @@ title = "JSON"
 </div>
 </section>
 
-## Tuple size mismatch
+## Tuple Size Mismatch
 
 <section class="scenario">
 <p class="description">JSON array has wrong number of elements for tuple type.</p>
@@ -729,7 +732,7 @@ title = "JSON"
 </div>
 </section>
 
-## Unknown enum variant
+## Unknown Enum Variant
 
 <section class="scenario">
 <p class="description">JSON specifies a variant name that doesn't exist.</p>
@@ -762,7 +765,7 @@ title = "JSON"
 </div>
 </section>
 
-## Wrong variant format
+## Wrong Variant Format
 
 <section class="scenario">
 <p class="description">Externally tagged enum expects {"Variant": content} but got wrong format.</p>
@@ -793,7 +796,7 @@ title = "JSON"
 </div>
 </section>
 
-## Internally tagged enum: missing tag field
+## Internally Tagged Enum: Missing Tag Field
 
 <section class="scenario">
 <p class="description">Internally tagged enum requires the tag field to be present.</p>
@@ -831,7 +834,7 @@ title = "JSON"
 </div>
 </section>
 
-## Trailing data after valid JSON
+## Trailing Data After Valid JSON
 
 <section class="scenario">
 <p class="description">Valid JSON followed by unexpected extra content.</p>
@@ -856,7 +859,7 @@ title = "JSON"
 </div>
 </section>
 
-## Empty input
+## Empty Input
 
 <section class="scenario">
 <p class="description">No JSON content at all.</p>
@@ -883,7 +886,7 @@ title = "JSON"
 </div>
 </section>
 
-## Error with unicode content
+## Error with Unicode Content
 
 <section class="scenario">
 <p class="description">Error reporting handles unicode correctly.</p>
