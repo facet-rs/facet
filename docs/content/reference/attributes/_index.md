@@ -1,5 +1,6 @@
 +++
 title = "Extension Attributes"
+weight = 1
 +++
 
 Extension attributes allow format crates to define custom `#[facet(...)]` attributes with **compile-time validation** and helpful error messages.

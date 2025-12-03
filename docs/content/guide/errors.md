@@ -73,6 +73,6 @@ Another common one:
 - **Extension attributes:** If you see “unknown attribute” errors, ensure the namespace crate is imported (e.g., `use facet_kdl as kdl;`).
 
 ## Next steps
-- Start with the [Getting Started](@/learn/getting-started.md) guide.
-- Browse [Showcases](@/learn/showcases/_index.md) for real inputs/outputs.
-- Consult the [Attributes Reference](@/learn/attributes.md) for all error-related knobs.
+- Start with the [Getting Started](@/guide/getting-started.md) guide.
+- Browse [Showcases](@/guide/showcases/_index.md) for real inputs/outputs.
+- Consult the [Attributes Reference](@/reference/attributes/_index.md) for all error-related knobs.

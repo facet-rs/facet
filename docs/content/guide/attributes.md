@@ -353,6 +353,6 @@ See each format crate's documentation for available extension attributes.
 
 ## Next Steps
 
-- Check the [Showcases](@/learn/showcases/_index.md) to see these attributes in action
-- Read [Comparison with serde](@/learn/migration/_index.md) if you're migrating
+- Check the [Showcases](@/guide/showcases/_index.md) to see these attributes in action
+- Read [Comparison with serde](@/guide/migration/_index.md) if you're migrating
 - See the [Extend guide](/extend/) to create your own extension attributes

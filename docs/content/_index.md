@@ -25,7 +25,7 @@ From this single derive, you get:
 ## Choose Your Path
 
 <div class="guide-cards">
-<a class="guide-card" href="/learn">
+<a class="guide-card" href="/guide">
   <div class="guide-card__icon"><img src="/icons/learn.svg" alt="" loading="lazy"></div>
   <h3 id="guide">Guide</h3>
   <p class="tagline">Use facet in your app</p>
