@@ -20,13 +20,21 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         .iter()
         .any(|a| a.is_builtin() && a.key_str() == "opaque");
 
-    let type_name_fn = generate_type_name_fn(enum_name, parsed.generics.as_ref(), opaque);
+    // Get the facet crate path (custom or default ::facet)
+    let facet_crate = pe.container.attrs.facet_crate();
+
+    let type_name_fn =
+        generate_type_name_fn(enum_name, parsed.generics.as_ref(), opaque, &facet_crate);
 
     let bgp = pe.container.bgp.clone();
     // Use the AST directly for where clauses and generics, as PContainer/PEnum doesn't store them
-    let where_clauses_tokens =
-        build_where_clauses(parsed.clauses.as_ref(), parsed.generics.as_ref(), opaque);
-    let type_params = build_type_params(parsed.generics.as_ref(), opaque);
+    let where_clauses_tokens = build_where_clauses(
+        parsed.clauses.as_ref(),
+        parsed.generics.as_ref(),
+        opaque,
+        &facet_crate,
+    );
+    let type_params = build_type_params(parsed.generics.as_ref(), opaque, &facet_crate);
 
     // Container-level docs from PAttrs
     let maybe_container_doc = match &pe.container.attrs.doc[..] {
@@ -37,8 +45,12 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     let container_attributes_tokens = {
         let mut attribute_tokens: Vec<TokenStream> = Vec::new();
         for attr in &pe.container.attrs.facet {
+            // Skip crate attribute - it's handled specially
+            if attr.is_builtin() && attr.key_str() == "crate" {
+                continue;
+            }
             // All attributes go through grammar dispatch
-            let ext_attr = emit_attr(attr);
+            let ext_attr = emit_attr(attr, &facet_crate);
             attribute_tokens.push(quote! { #ext_attr });
         }
 
@@ -63,16 +75,16 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     // Are these relevant for enums? Or is it always `repr(C)` if a `PrimitiveRepr` is present?
     let repr = match &valid_repr {
         PRepr::Transparent => unreachable!("this should be caught by PRepr::parse"),
-        PRepr::Rust(_) => quote! { ::facet::Repr::default() },
-        PRepr::C(_) => quote! { ::facet::Repr::c() },
+        PRepr::Rust(_) => quote! { #facet_crate::Repr::default() },
+        PRepr::C(_) => quote! { #facet_crate::Repr::c() },
     };
 
     // Helper for EnumRepr TS (token stream) generation for primitives
-    fn enum_repr_ts_from_primitive(primitive_repr: PrimitiveRepr) -> TokenStream {
+    let enum_repr_ts_from_primitive = |primitive_repr: PrimitiveRepr| -> TokenStream {
         let type_name_str = primitive_repr.type_name().to_string();
         let enum_repr_variant_ident = format_ident!("{}", type_name_str.to_uppercase());
-        quote! { ::facet::EnumRepr::#enum_repr_variant_ident }
-    }
+        quote! { #facet_crate::EnumRepr::#enum_repr_variant_ident }
+    };
 
     // --- Processing code for shadow struct/fields/variant_expressions ---
     // A. C-style enums have shadow-discriminant, shadow-union, shadow-struct
@@ -173,7 +185,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             .facet
                             .iter()
                             .map(|attr| {
-                                let ext_attr = emit_attr(attr);
+                                let ext_attr = emit_attr(attr, &facet_crate);
                                 quote! { #ext_attr }
                             })
                             .collect();
@@ -215,10 +227,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             struct #shadow_struct_name #bgp_with_bounds #where_clauses_tokens { _phantom: #phantom_data }
                         });
                         exprs.push(quote! {
-                            ::facet::Variant::builder()
+                            #facet_crate::Variant::builder()
                                 #variant_attrs_tokens
                                 .discriminant(#discriminant_ts as i64)
-                                .data(::facet::StructType::builder().repr(::facet::Repr::c()).unit().build())
+                                .data(#facet_crate::StructType::builder().repr(#facet_crate::Repr::c()).unit().build())
                                 #maybe_doc
                                 .build()
                         });
@@ -254,17 +266,18 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                                     &shadow_struct_name,
                                     &facet_bgp,
                                     Some(variant_offset.clone()),
+                                    &facet_crate,
                                 )
                             })
                             .collect();
                         exprs.push(quote! {{
-                            let fields: &'static [::facet::Field] = &const {[
+                            let fields: &'static [#facet_crate::Field] = &const {[
                                 #(#field_defs),*
                             ]};
-                            ::facet::Variant::builder()
+                            #facet_crate::Variant::builder()
                                 #variant_attrs_tokens
                                 .discriminant(#discriminant_ts as i64)
-                                .data(::facet::StructType::builder().repr(::facet::Repr::c()).tuple().fields(fields).build())
+                                .data(#facet_crate::StructType::builder().repr(#facet_crate::Repr::c()).tuple().fields(fields).build())
                                 #maybe_doc
                                 .build()
                         }});
@@ -309,18 +322,19 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                                     &shadow_struct_name,
                                     &facet_bgp,
                                     Some(variant_offset.clone()),
+                                    &facet_crate,
                                 )
                             })
                             .collect();
 
                         exprs.push(quote! {{
-                            let fields: &'static [::facet::Field] = &const {[
+                            let fields: &'static [#facet_crate::Field] = &const {[
                                 #(#field_defs),*
                             ]};
-                            ::facet::Variant::builder()
+                            #facet_crate::Variant::builder()
                                 #variant_attrs_tokens
                                 .discriminant(#discriminant_ts as i64)
-                                .data(::facet::StructType::builder().repr(::facet::Repr::c()).struct_().fields(fields).build())
+                                .data(#facet_crate::StructType::builder().repr(#facet_crate::Repr::c()).struct_().fields(fields).build())
                                 #maybe_doc
                                 .build()
                         }});
@@ -334,7 +348,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             // Generate the EnumRepr token stream
             let repr_type_ts = match prim_opt {
                 None => {
-                    quote! { ::facet::EnumRepr::from_discriminant_size::<#shadow_discriminant_name>() }
+                    quote! { #facet_crate::EnumRepr::from_discriminant_size::<#shadow_discriminant_name>() }
                 }
                 Some(p) => enum_repr_ts_from_primitive(*p),
             };
@@ -383,7 +397,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             .facet
                             .iter()
                             .map(|attr| {
-                                let ext_attr = emit_attr(attr);
+                                let ext_attr = emit_attr(attr, &facet_crate);
                                 quote! { #ext_attr }
                             })
                             .collect();
@@ -399,10 +413,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 match &pv.kind {
                     PVariantKind::Unit => {
                         exprs.push(quote! {
-                            ::facet::Variant::builder()
+                            #facet_crate::Variant::builder()
                                 #variant_attrs_tokens
                                 .discriminant(#discriminant_ts as i64)
-                                .data(::facet::StructType::builder().repr(::facet::Repr::c()).unit().build())
+                                .data(#facet_crate::StructType::builder().repr(#facet_crate::Repr::c()).unit().build())
                                 #maybe_doc
                                 .build()
                         });
@@ -447,17 +461,23 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                                 let mut pf = pf.clone();
                                 let field_ident = format_ident!("_{}", idx);
                                 pf.name.raw = IdentOrLiteral::Ident(field_ident);
-                                gen_field_from_pfield(&pf, &shadow_struct_name, &facet_bgp, None)
+                                gen_field_from_pfield(
+                                    &pf,
+                                    &shadow_struct_name,
+                                    &facet_bgp,
+                                    None,
+                                    &facet_crate,
+                                )
                             })
                             .collect();
                         exprs.push(quote! {{
-                            let fields: &'static [::facet::Field] = &const {[
+                            let fields: &'static [#facet_crate::Field] = &const {[
                                 #(#field_defs),*
                             ]};
-                            ::facet::Variant::builder()
+                            #facet_crate::Variant::builder()
                                 #variant_attrs_tokens
                                 .discriminant(#discriminant_ts as i64)
-                                .data(::facet::StructType::builder().repr(::facet::Repr::c()).tuple().fields(fields).build())
+                                .data(#facet_crate::StructType::builder().repr(#facet_crate::Repr::c()).tuple().fields(fields).build())
                                 #maybe_doc
                                 .build()
                         }});
@@ -504,17 +524,23 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         let field_defs: Vec<TokenStream> = fields
                             .iter()
                             .map(|pf| {
-                                gen_field_from_pfield(pf, &shadow_struct_name, &facet_bgp, None)
+                                gen_field_from_pfield(
+                                    pf,
+                                    &shadow_struct_name,
+                                    &facet_bgp,
+                                    None,
+                                    &facet_crate,
+                                )
                             })
                             .collect();
                         exprs.push(quote! {{
-                            let fields: &'static [::facet::Field] = &const {[
+                            let fields: &'static [#facet_crate::Field] = &const {[
                                 #(#field_defs),*
                             ]};
-                            ::facet::Variant::builder()
+                            #facet_crate::Variant::builder()
                                 #variant_attrs_tokens
                                 .discriminant(#discriminant_ts as i64)
-                                .data(::facet::StructType::builder().repr(::facet::Repr::c()).struct_().fields(fields).build())
+                                .data(#facet_crate::StructType::builder().repr(#facet_crate::Repr::c()).struct_().fields(fields).build())
                                 #maybe_doc
                                 .build()
                         }});
@@ -540,7 +566,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
 
     // Only make static_decl for non-generic enums
     let static_decl = if parsed.generics.is_none() {
-        generate_static_decl(enum_name)
+        generate_static_decl(enum_name, &facet_crate)
     } else {
         quote! {}
     };
@@ -553,14 +579,14 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     let (ty, fields) = if opaque {
         (
             quote! {
-                .ty(::facet::Type::User(::facet::UserType::Opaque))
+                .ty(#facet_crate::Type::User(#facet_crate::UserType::Opaque))
             },
             quote! {},
         )
     } else {
         (
             quote! {
-                .ty(::facet::Type::User(::facet::UserType::Enum(::facet::EnumType::builder()
+                .ty(#facet_crate::Type::User(#facet_crate::UserType::Enum(#facet_crate::EnumType::builder()
                         // Use variant expressions that just reference the shadow structs
                         // which are now defined above
                         .variants(__facet_variants)
@@ -570,7 +596,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 ))
             },
             quote! {
-                let __facet_variants: &'static [::facet::Variant] = &const {[
+                let __facet_variants: &'static [#facet_crate::Variant] = &const {[
                     #(#variant_expressions),*
                 ]};
             },
@@ -583,13 +609,13 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
 
         #[automatically_derived]
         #[allow(non_camel_case_types)]
-        unsafe impl #bgp_def ::facet::Facet<'__facet> for #enum_name #bgp_without_bounds #where_clauses_tokens {
-            const SHAPE: &'static ::facet::Shape = &const {
+        unsafe impl #bgp_def #facet_crate::Facet<'__facet> for #enum_name #bgp_without_bounds #where_clauses_tokens {
+            const SHAPE: &'static #facet_crate::Shape = &const {
                 #(#shadow_struct_defs)*
                 #fields
-                ::facet::Shape::builder_for_sized::<Self>()
+                #facet_crate::Shape::builder_for_sized::<Self>()
                     .vtable({
-                        ::facet::value_vtable!(Self, #type_name_fn)
+                        #facet_crate::value_vtable!(Self, #type_name_fn)
                     })
                     .type_identifier(#enum_name_str)
                     #type_params

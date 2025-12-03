@@ -349,6 +349,9 @@ pub struct PAttrs {
 
     /// rename_all rule (if any)
     pub rename_all: Option<RenameRule>,
+
+    /// Custom crate path (if any), e.g., `::my_crate::facet`
+    pub crate_path: Option<TokenStream>,
 }
 
 impl PAttrs {
@@ -357,6 +360,7 @@ impl PAttrs {
         let mut facet_attrs: Vec<PFacetAttr> = Vec::new();
         let mut repr: Option<PRepr> = None;
         let mut rename_all: Option<RenameRule> = None;
+        let mut crate_path: Option<TokenStream> = None;
 
         for attr in attrs {
             match &attr.body.content {
@@ -389,7 +393,7 @@ impl PAttrs {
             }
         }
 
-        // Extract rename and rename_all from parsed attrs
+        // Extract rename, rename_all, and crate from parsed attrs
         for attr in &facet_attrs {
             if attr.is_builtin() {
                 match attr.key_str().as_str() {
@@ -407,6 +411,10 @@ impl PAttrs {
                             panic!("Unknown #[facet(rename_all = ...)] rule: {rule_str}");
                         }
                     }
+                    "crate" => {
+                        // Store the crate path tokens directly
+                        crate_path = Some(attr.args.clone());
+                    }
                     _ => {}
                 }
             }
@@ -417,6 +425,7 @@ impl PAttrs {
             facet: facet_attrs,
             repr: repr.unwrap_or(PRepr::Rust(None)),
             rename_all,
+            crate_path,
         }
     }
 
@@ -433,6 +442,13 @@ impl PAttrs {
             .iter()
             .find(|a| a.is_builtin() && a.key_str() == key)
             .map(|a| a.args.to_string().trim().trim_matches('"').to_string())
+    }
+
+    /// Get the facet crate path, defaulting to `::facet` if not specified
+    pub fn facet_crate(&self) -> TokenStream {
+        self.crate_path
+            .clone()
+            .unwrap_or_else(|| quote! { ::facet })
     }
 }
 

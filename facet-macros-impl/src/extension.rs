@@ -23,16 +23,17 @@ pub fn emit_extension_attr_for_field(
     args: &TokenStream,
     field_name: &impl ToTokens,
     field_type: &TokenStream,
+    facet_crate: &TokenStream,
 ) -> TokenStream {
     if args.is_empty() {
         // No args: ::facet::__ext!(ns::key { field : Type })
         quote! {
-            ::facet::__ext!(#ns_ident::#key_ident { #field_name : #field_type })
+            #facet_crate::__ext!(#ns_ident::#key_ident { #field_name : #field_type })
         }
     } else {
         // With args: ::facet::__ext!(ns::key { field : Type | args })
         quote! {
-            ::facet::__ext!(#ns_ident::#key_ident { #field_name : #field_type | #args })
+            #facet_crate::__ext!(#ns_ident::#key_ident { #field_name : #field_type | #args })
         }
     }
 }
@@ -50,16 +51,21 @@ pub fn emit_extension_attr_for_field(
 /// ```ignore
 /// ::facet::__ext!(ns::attr { | = "value" })
 /// ```
-pub fn emit_extension_attr(ns_ident: &Ident, key_ident: &Ident, args: &TokenStream) -> TokenStream {
+pub fn emit_extension_attr(
+    ns_ident: &Ident,
+    key_ident: &Ident,
+    args: &TokenStream,
+    facet_crate: &TokenStream,
+) -> TokenStream {
     if args.is_empty() {
         // No args: ::facet::__ext!(ns::key { })
         quote! {
-            ::facet::__ext!(#ns_ident::#key_ident { })
+            #facet_crate::__ext!(#ns_ident::#key_ident { })
         }
     } else {
         // With args: ::facet::__ext!(ns::key { | args })
         quote! {
-            ::facet::__ext!(#ns_ident::#key_ident { | #args })
+            #facet_crate::__ext!(#ns_ident::#key_ident { | #args })
         }
     }
 }
@@ -68,24 +74,24 @@ pub fn emit_extension_attr(ns_ident: &Ident, key_ident: &Ident, args: &TokenStre
 ///
 /// - Builtin attrs (no namespace) → `::facet::__attr!(...)`
 /// - Namespaced attrs → `::facet::__ext!(ns::key ...)`
-pub fn emit_attr(attr: &crate::parsed::PFacetAttr) -> TokenStream {
+pub fn emit_attr(attr: &crate::parsed::PFacetAttr, facet_crate: &TokenStream) -> TokenStream {
     let key = &attr.key;
     let args = &attr.args;
 
     match &attr.ns {
         Some(ns) => {
             // Namespaced: use __ext! which routes to ns::__attr!
-            emit_extension_attr(ns, key, args)
+            emit_extension_attr(ns, key, args, facet_crate)
         }
         None => {
             // Builtin: route directly to ::facet::__attr! (macro_export puts it at crate root)
             if args.is_empty() {
                 quote! {
-                    ::facet::__attr!(@ns { ::facet::builtin } #key { })
+                    #facet_crate::__attr!(@ns { #facet_crate::builtin } #key { })
                 }
             } else {
                 quote! {
-                    ::facet::__attr!(@ns { ::facet::builtin } #key { | #args })
+                    #facet_crate::__attr!(@ns { #facet_crate::builtin } #key { | #args })
                 }
             }
         }
@@ -100,6 +106,7 @@ pub fn emit_attr_for_field(
     attr: &crate::parsed::PFacetAttr,
     field_name: &impl ToTokens,
     field_type: &TokenStream,
+    facet_crate: &TokenStream,
 ) -> TokenStream {
     let key = &attr.key;
     let args = &attr.args;
@@ -107,17 +114,17 @@ pub fn emit_attr_for_field(
     match &attr.ns {
         Some(ns) => {
             // Namespaced: use existing helper
-            emit_extension_attr_for_field(ns, key, args, field_name, field_type)
+            emit_extension_attr_for_field(ns, key, args, field_name, field_type, facet_crate)
         }
         None => {
             // Builtin: route directly to ::facet::__attr! (macro_export puts it at crate root)
             if args.is_empty() {
                 quote! {
-                    ::facet::__attr!(@ns { ::facet::builtin } #key { #field_name : #field_type })
+                    #facet_crate::__attr!(@ns { #facet_crate::builtin } #key { #field_name : #field_type })
                 }
             } else {
                 quote! {
-                    ::facet::__attr!(@ns { ::facet::builtin } #key { #field_name : #field_type | #args })
+                    #facet_crate::__attr!(@ns { #facet_crate::builtin } #key { #field_name : #field_type | #args })
                 }
             }
         }

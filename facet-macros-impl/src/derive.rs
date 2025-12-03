@@ -20,14 +20,14 @@ pub fn facet_macros(input: TokenStream) -> TokenStream {
 }
 
 /// Generate a static declaration that exports the crate
-pub(crate) fn generate_static_decl(type_name: &Ident) -> TokenStream {
+pub(crate) fn generate_static_decl(type_name: &Ident, facet_crate: &TokenStream) -> TokenStream {
     let type_name_str = type_name.to_string();
     let screaming_snake_name = RenameRule::ScreamingSnakeCase.apply(&type_name_str);
 
     let static_name_ident = quote::format_ident!("{}_SHAPE", screaming_snake_name);
 
     quote! {
-        static #static_name_ident: &'static ::facet::Shape = <#type_name as ::facet::Facet>::SHAPE;
+        static #static_name_ident: &'static #facet_crate::Shape = <#type_name as #facet_crate::Facet>::SHAPE;
     }
 }
 
@@ -35,6 +35,7 @@ pub(crate) fn build_where_clauses(
     where_clauses: Option<&WhereClauses>,
     generics: Option<&GenericParams>,
     opaque: bool,
+    facet_crate: &TokenStream,
 ) -> TokenStream {
     let mut where_clause_tokens = TokenStream::new();
     let mut has_clauses = false;
@@ -74,7 +75,7 @@ pub(crate) fn build_where_clauses(
                     if opaque {
                         where_clause_tokens.extend(quote! { #name: '__facet });
                     } else {
-                        where_clause_tokens.extend(quote! { #name: ::facet::Facet<'__facet> });
+                        where_clause_tokens.extend(quote! { #name: #facet_crate::Facet<'__facet> });
                     }
                     has_clauses = true;
                 }
@@ -89,7 +90,11 @@ pub(crate) fn build_where_clauses(
     }
 }
 
-pub(crate) fn build_type_params(generics: Option<&GenericParams>, opaque: bool) -> TokenStream {
+pub(crate) fn build_type_params(
+    generics: Option<&GenericParams>,
+    opaque: bool,
+    facet_crate: &TokenStream,
+) -> TokenStream {
     if opaque {
         return quote! {};
     }
@@ -107,9 +112,9 @@ pub(crate) fn build_type_params(generics: Option<&GenericParams>, opaque: bool) 
                 GenericParam::Type { name, .. } => {
                     let name_str = name.to_string();
                     type_params.push(quote! {
-                        ::facet::TypeParam {
+                        #facet_crate::TypeParam {
                             name: #name_str,
-                            shape: <#name as ::facet::Facet>::SHAPE
+                            shape: <#name as #facet_crate::Facet>::SHAPE
                         }
                     });
                 }
@@ -130,6 +135,7 @@ pub(crate) fn generate_type_name_fn(
     type_name: &Ident,
     generics: Option<&GenericParams>,
     opaque: bool,
+    facet_crate: &TokenStream,
 ) -> TokenStream {
     let type_name_str = type_name.to_string();
 
@@ -145,7 +151,7 @@ pub(crate) fn generate_type_name_fn(
                     write!(f, "{:?}", #name)?;
                 }),
                 GenericParam::Type { name, .. } => Some(quote! {
-                    <#name as ::facet::Facet>::SHAPE.vtable.type_name()(f, opts)?;
+                    <#name as #facet_crate::Facet>::SHAPE.vtable.type_name()(f, opts)?;
                 }),
             });
             // TODO: is there a way to construct a DelimitedVec from an iterator?

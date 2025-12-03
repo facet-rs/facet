@@ -8,6 +8,7 @@ pub(crate) fn gen_field_from_pfield(
     struct_name: &Ident,
     bgp: &BoundedGenericParams,
     base_offset: Option<TokenStream>,
+    facet_crate: &TokenStream,
 ) -> TokenStream {
     let field_name_effective = &field.name.effective;
     let field_name_raw = &field.name.raw;
@@ -38,7 +39,7 @@ pub(crate) fn gen_field_from_pfield(
         .facet
         .iter()
         .map(|attr| {
-            let ext_attr = emit_attr_for_field(attr, field_name_raw, field_type);
+            let ext_attr = emit_attr_for_field(attr, field_name_raw, field_type, facet_crate);
             quote! { #ext_attr }
         })
         .collect();
@@ -54,47 +55,47 @@ pub(crate) fn gen_field_from_pfield(
 
         // Generate __proxy_in: converts proxy -> field type via TryFrom
         attribute_list.push(quote! {
-            ::facet::ExtensionAttr {
+            #facet_crate::ExtensionAttr {
                 ns: ::core::option::Option::None,
                 key: "__proxy_in",
                 data: &const {
                     extern crate alloc as __alloc;
                     unsafe fn __proxy_convert_in<'mem>(
-                        proxy_ptr: ::facet::PtrConst<'mem>,
-                        field_ptr: ::facet::PtrUninit<'mem>,
-                    ) -> ::core::result::Result<::facet::PtrMut<'mem>, __alloc::string::String> {
+                        proxy_ptr: #facet_crate::PtrConst<'mem>,
+                        field_ptr: #facet_crate::PtrUninit<'mem>,
+                    ) -> ::core::result::Result<#facet_crate::PtrMut<'mem>, __alloc::string::String> {
                         let proxy: #proxy_type = proxy_ptr.read();
                         match <#field_type as ::core::convert::TryFrom<#proxy_type>>::try_from(proxy) {
                             ::core::result::Result::Ok(value) => ::core::result::Result::Ok(field_ptr.put(value)),
                             ::core::result::Result::Err(e) => ::core::result::Result::Err(__alloc::string::ToString::to_string(&e)),
                         }
                     }
-                    __proxy_convert_in as ::facet::ProxyConvertInFn
-                } as *const ::facet::ProxyConvertInFn as *const (),
-                shape: <() as ::facet::Facet>::SHAPE,
+                    __proxy_convert_in as #facet_crate::ProxyConvertInFn
+                } as *const #facet_crate::ProxyConvertInFn as *const (),
+                shape: <() as #facet_crate::Facet>::SHAPE,
             }
         });
 
         // Generate __proxy_out: converts &field type -> proxy via TryFrom
         attribute_list.push(quote! {
-            ::facet::ExtensionAttr {
+            #facet_crate::ExtensionAttr {
                 ns: ::core::option::Option::None,
                 key: "__proxy_out",
                 data: &const {
                     extern crate alloc as __alloc;
                     unsafe fn __proxy_convert_out<'mem>(
-                        field_ptr: ::facet::PtrConst<'mem>,
-                        proxy_ptr: ::facet::PtrUninit<'mem>,
-                    ) -> ::core::result::Result<::facet::PtrMut<'mem>, __alloc::string::String> {
+                        field_ptr: #facet_crate::PtrConst<'mem>,
+                        proxy_ptr: #facet_crate::PtrUninit<'mem>,
+                    ) -> ::core::result::Result<#facet_crate::PtrMut<'mem>, __alloc::string::String> {
                         let field_ref: &#field_type = field_ptr.get();
                         match <#proxy_type as ::core::convert::TryFrom<&#field_type>>::try_from(field_ref) {
                             ::core::result::Result::Ok(proxy) => ::core::result::Result::Ok(proxy_ptr.put(proxy)),
                             ::core::result::Result::Err(e) => ::core::result::Result::Err(__alloc::string::ToString::to_string(&e)),
                         }
                     }
-                    __proxy_convert_out as ::facet::ProxyConvertOutFn
-                } as *const ::facet::ProxyConvertOutFn as *const (),
-                shape: <() as ::facet::Facet>::SHAPE,
+                    __proxy_convert_out as #facet_crate::ProxyConvertOutFn
+                } as *const #facet_crate::ProxyConvertOutFn as *const (),
+                shape: <() as #facet_crate::Facet>::SHAPE,
             }
         });
     }
@@ -123,11 +124,11 @@ pub(crate) fn gen_field_from_pfield(
 
     quote! {
         {
-            ::facet::Field::builder()
+            #facet_crate::Field::builder()
                 // Use the effective name (after rename rules) for metadata
                 .name(#field_name_effective)
                 // Use the raw field name/index TokenStream for shape_of and offset_of
-                .shape(|| ::facet::#shape_of(&|s: &#struct_name #bgp_without_bounds| &s.#field_name_raw))
+                .shape(|| #facet_crate::#shape_of(&|s: &#struct_name #bgp_without_bounds| &s.#field_name_raw))
                 .offset(#final_offset)
                 #maybe_attributes
                 #maybe_field_doc
@@ -154,35 +155,43 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
     let opaque = ps.container.attrs.has_builtin("opaque");
 
-    let type_name_fn = generate_type_name_fn(struct_name, parsed.generics.as_ref(), opaque);
+    // Get the facet crate path (custom or default ::facet)
+    let facet_crate = ps.container.attrs.facet_crate();
+
+    let type_name_fn =
+        generate_type_name_fn(struct_name, parsed.generics.as_ref(), opaque, &facet_crate);
 
     // TODO: I assume the `PrimitiveRepr` is only relevant for enums, and does not need to be preserved?
     let repr = match &ps.container.attrs.repr {
-        PRepr::Transparent => quote! { ::facet::Repr::transparent() },
-        PRepr::Rust(_) => quote! { ::facet::Repr::default() },
-        PRepr::C(_) => quote! { ::facet::Repr::c() },
+        PRepr::Transparent => quote! { #facet_crate::Repr::transparent() },
+        PRepr::Rust(_) => quote! { #facet_crate::Repr::default() },
+        PRepr::C(_) => quote! { #facet_crate::Repr::c() },
     };
 
     // Use PStruct for kind and fields
     let (kind, fields_vec) = match &ps.kind {
         PStructKind::Struct { fields } => {
-            let kind = quote!(::facet::StructKind::Struct);
+            let kind = quote!(#facet_crate::StructKind::Struct);
             let fields_vec = fields
                 .iter()
-                .map(|field| gen_field_from_pfield(field, struct_name, &ps.container.bgp, None))
+                .map(|field| {
+                    gen_field_from_pfield(field, struct_name, &ps.container.bgp, None, &facet_crate)
+                })
                 .collect::<Vec<_>>();
             (kind, fields_vec)
         }
         PStructKind::TupleStruct { fields } => {
-            let kind = quote!(::facet::StructKind::TupleStruct);
+            let kind = quote!(#facet_crate::StructKind::TupleStruct);
             let fields_vec = fields
                 .iter()
-                .map(|field| gen_field_from_pfield(field, struct_name, &ps.container.bgp, None))
+                .map(|field| {
+                    gen_field_from_pfield(field, struct_name, &ps.container.bgp, None, &facet_crate)
+                })
                 .collect::<Vec<_>>();
             (kind, fields_vec)
         }
         PStructKind::UnitStruct => {
-            let kind = quote!(::facet::StructKind::Unit);
+            let kind = quote!(#facet_crate::StructKind::Unit);
             (kind, vec![])
         }
     };
@@ -193,12 +202,17 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         StructKind::TupleStruct { clauses, .. } => clauses.as_ref(),
         StructKind::UnitStruct { clauses, .. } => clauses.as_ref(),
     };
-    let where_clauses = build_where_clauses(where_clauses_ast, parsed.generics.as_ref(), opaque);
-    let type_params = build_type_params(parsed.generics.as_ref(), opaque);
+    let where_clauses = build_where_clauses(
+        where_clauses_ast,
+        parsed.generics.as_ref(),
+        opaque,
+        &facet_crate,
+    );
+    let type_params = build_type_params(parsed.generics.as_ref(), opaque, &facet_crate);
 
     // Static decl using PStruct BGP
     let static_decl = if ps.container.bgp.params.is_empty() {
-        generate_static_decl(struct_name)
+        generate_static_decl(struct_name, &facet_crate)
     } else {
         TokenStream::new()
     };
@@ -212,7 +226,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     };
 
     // Container attributes - most go through grammar dispatch
-    // Filter out `invariants` since it's handled specially for vtable.invariants
+    // Filter out `invariants` and `crate` since they're handled specially
     let container_attributes_tokens = {
         let items: Vec<TokenStream> = ps
             .container
@@ -221,10 +235,12 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             .iter()
             .filter(|attr| {
                 // invariants is handled specially - it populates vtable.invariants
-                !(attr.is_builtin() && attr.key_str() == "invariants")
+                // crate is handled specially - it sets the facet crate path
+                !(attr.is_builtin()
+                    && (attr.key_str() == "invariants" || attr.key_str() == "crate"))
             })
             .map(|attr| {
-                let ext_attr = emit_attr(attr);
+                let ext_attr = emit_attr(attr, &facet_crate);
                 quote! { #ext_attr }
             })
             .collect();
@@ -267,7 +283,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
             let bgp_display = ps.container.bgp.display_without_bounds();
             quote! {
-                unsafe fn invariants<'mem>(value: ::facet::PtrConst<'mem>) -> bool {
+                unsafe fn invariants<'mem>(value: #facet_crate::PtrConst<'mem>) -> bool {
                     let value = value.get::<#struct_name_ident #bgp_display>();
                     #(#tests)*
                     true
@@ -314,16 +330,16 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 quote! {
                     // Define the try_from function for the value vtable
                     unsafe fn try_from<'src, 'dst>(
-                        src_ptr: ::facet::PtrConst<'src>,
-                        src_shape: &'static ::facet::Shape,
-                        dst: ::facet::PtrUninit<'dst>
-                    ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {
+                        src_ptr: #facet_crate::PtrConst<'src>,
+                        src_shape: &'static #facet_crate::Shape,
+                        dst: #facet_crate::PtrUninit<'dst>
+                    ) -> Result<#facet_crate::PtrMut<'dst>, #facet_crate::TryFromError> {
                         // Try the inner type's try_from function if it exists
-                        let inner_result = match <#inner_field_type as ::facet::Facet>::SHAPE.vtable.try_from {
+                        let inner_result = match <#inner_field_type as #facet_crate::Facet>::SHAPE.vtable.try_from {
                             Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
-                            None => Err(::facet::TryFromError::UnsupportedSourceShape {
+                            None => Err(#facet_crate::TryFromError::UnsupportedSourceShape {
                                 src_shape,
-                                expected: const { &[ &<#inner_field_type as ::facet::Facet>::SHAPE ] },
+                                expected: const { &[ &<#inner_field_type as #facet_crate::Facet>::SHAPE ] },
                             })
                         };
 
@@ -331,10 +347,10 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                             Ok(result) => Ok(result),
                             Err(_) => {
                                 // If inner_try failed, check if source shape is exactly the inner shape
-                                if src_shape != <#inner_field_type as ::facet::Facet>::SHAPE {
-                                    return Err(::facet::TryFromError::UnsupportedSourceShape {
+                                if src_shape != <#inner_field_type as #facet_crate::Facet>::SHAPE {
+                                    return Err(#facet_crate::TryFromError::UnsupportedSourceShape {
                                         src_shape,
-                                        expected: const { &[ &<#inner_field_type as ::facet::Facet>::SHAPE ] },
+                                        expected: const { &[ &<#inner_field_type as #facet_crate::Facet>::SHAPE ] },
                                     });
                                 }
                                 // Read the inner value and construct the wrapper.
@@ -346,20 +362,20 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
                     // Define the try_into_inner function for the value vtable
                     unsafe fn try_into_inner<'src, 'dst>(
-                        src_ptr: ::facet::PtrMut<'src>,
-                        dst: ::facet::PtrUninit<'dst>
-                    ) -> Result<::facet::PtrMut<'dst>, ::facet::TryIntoInnerError> {
+                        src_ptr: #facet_crate::PtrMut<'src>,
+                        dst: #facet_crate::PtrUninit<'dst>
+                    ) -> Result<#facet_crate::PtrMut<'dst>, #facet_crate::TryIntoInnerError> {
                         let wrapper = unsafe { src_ptr.get::<#struct_name_ident #bgp_without_bounds>() };
                         Ok(unsafe { dst.put(wrapper.0.clone()) }) // Assume tuple struct field 0
                     }
 
                     // Define the try_borrow_inner function for the value vtable
                     unsafe fn try_borrow_inner<'src>(
-                        src_ptr: ::facet::PtrConst<'src>
-                    ) -> Result<::facet::PtrConst<'src>, ::facet::TryBorrowInnerError> {
+                        src_ptr: #facet_crate::PtrConst<'src>
+                    ) -> Result<#facet_crate::PtrConst<'src>, #facet_crate::TryBorrowInnerError> {
                         let wrapper = unsafe { src_ptr.get::<#struct_name_ident #bgp_without_bounds>() };
                         // Return a pointer to the inner field (field 0 for tuple struct)
-                        Ok(::facet::PtrConst::new(::core::ptr::NonNull::from(&wrapper.0)))
+                        Ok(#facet_crate::PtrConst::new(::core::ptr::NonNull::from(&wrapper.0)))
                     }
 
                     {
@@ -376,16 +392,16 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             quote! {
                 // Define the try_from function for the value vtable (ZST case)
                 unsafe fn try_from<'src, 'dst>(
-                    src_ptr: ::facet::PtrConst<'src>,
-                    src_shape: &'static ::facet::Shape,
-                    dst: ::facet::PtrUninit<'dst>
-                ) -> Result<::facet::PtrMut<'dst>, ::facet::TryFromError> {
+                    src_ptr: #facet_crate::PtrConst<'src>,
+                    src_shape: &'static #facet_crate::Shape,
+                    dst: #facet_crate::PtrUninit<'dst>
+                ) -> Result<#facet_crate::PtrMut<'dst>, #facet_crate::TryFromError> {
                     if src_shape.layout.size() == 0 {
                          Ok(unsafe { dst.put(#struct_name_ident) }) // Construct ZST
                     } else {
-                        Err(::facet::TryFromError::UnsupportedSourceShape {
+                        Err(#facet_crate::TryFromError::UnsupportedSourceShape {
                             src_shape,
-                            expected: const { &[ <() as ::facet::Facet>::SHAPE ] }, // Expect unit-like shape
+                            expected: const { &[ <() as #facet_crate::Facet>::SHAPE ] }, // Expect unit-like shape
                         })
                     }
                 }
@@ -407,13 +423,13 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         let inner_shape_val = if let Some(inner_field) = &inner_field {
             let ty = &inner_field.ty;
             if inner_field.attrs.has_builtin("opaque") {
-                quote! { <::facet::Opaque<#ty> as ::facet::Facet>::SHAPE }
+                quote! { <#facet_crate::Opaque<#ty> as #facet_crate::Facet>::SHAPE }
             } else {
-                quote! { <#ty as ::facet::Facet>::SHAPE }
+                quote! { <#ty as #facet_crate::Facet>::SHAPE }
             }
         } else {
             // Transparent ZST case
-            quote! { <() as ::facet::Facet>::SHAPE }
+            quote! { <() as #facet_crate::Facet>::SHAPE }
         };
         quote! { .inner(#inner_shape_val) }
     } else {
@@ -431,14 +447,14 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let (ty, fields) = if opaque {
         (
             quote! {
-                .ty(::facet::Type::User(::facet::UserType::Opaque))
+                .ty(#facet_crate::Type::User(#facet_crate::UserType::Opaque))
             },
             quote! {},
         )
     } else {
         (
             quote! {
-                .ty(::facet::Type::User(::facet::UserType::Struct(::facet::StructType::builder()
+                .ty(#facet_crate::Type::User(#facet_crate::UserType::Struct(#facet_crate::StructType::builder()
                     .repr(#repr)
                     .kind(#kind)
                     .fields(fields)
@@ -446,7 +462,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 )))
             },
             quote! {
-                let fields: &'static [::facet::Field] = &const {[#(#fields_vec),*]};
+                let fields: &'static [#facet_crate::Field] = &const {[#(#fields_vec),*]};
             },
         )
     };
@@ -456,13 +472,13 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         #static_decl
 
         #[automatically_derived]
-        unsafe impl #bgp_def ::facet::Facet<'__facet> for #struct_name_ident #bgp_without_bounds #where_clauses {
-            const SHAPE: &'static ::facet::Shape = &const {
+        unsafe impl #bgp_def #facet_crate::Facet<'__facet> for #struct_name_ident #bgp_without_bounds #where_clauses {
+            const SHAPE: &'static #facet_crate::Shape = &const {
                 #fields
 
-                ::facet::Shape::builder_for_sized::<Self>()
+                #facet_crate::Shape::builder_for_sized::<Self>()
                     .vtable({
-                        let mut vtable = ::facet::value_vtable!(Self, #type_name_fn);
+                        let mut vtable = #facet_crate::value_vtable!(Self, #type_name_fn);
                         #invariant_maybe
                         #try_from_inner_code // Use the generated code for transparent types
                         vtable
