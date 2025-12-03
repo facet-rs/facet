@@ -6,7 +6,27 @@ insert_anchor_links = "heading"
 
 ## Prerequisites
 
-Install [just](https://github.com/casey/just):
+### cargo-nextest
+
+We use [cargo-nextest](https://nexte.st/) instead of `cargo test`. It's faster and runs each test in its own process, which lets us install a process-wide tracing subscriber without conflicts.
+
+If you try to run tests with `cargo test`, you'll see a banner telling you to use `cargo nextest run` instead.
+
+```bash
+cargo install cargo-nextest
+```
+
+### cargo-insta
+
+We use [insta](https://insta.rs/) for snapshot testing. When a snapshot changes, review it with:
+
+```bash
+cargo insta review
+```
+
+### just (optional)
+
+[just](https://github.com/casey/just) is a task runner that makes it easy to run common commands. It's not required — you can run the underlying commands directly.
 
 ```bash
 # macOS
@@ -16,69 +36,34 @@ brew install just
 cargo install just
 ```
 
-## Quick Start
+## Quick start
 
 ```bash
 git clone https://github.com/facet-rs/facet
 cd facet
-just
+just ci
 ```
 
-If `just` succeeds, CI will most likely pass.
+`just ci` runs locally what CI runs remotely. If it passes, your PR will likely pass CI.
 
-## Running Tests
-
-facet uses [cargo-nextest](https://nexte.st/):
+## Common commands
 
 ```bash
-# All tests
-just test
+# Run all tests
+cargo nextest run
 
-# Specific crate
+# Run tests for a specific crate
 cargo nextest run -p facet-json
 
-# With logging
+# With tracing output
 RUST_LOG=debug cargo nextest run -p facet-reflect
-```
 
-## Other Commands
-
-```bash
-# Miri (undefined behavior check)
-just miri
-
-# no_std compatibility
-just nostd-ci
-
-# Clippy
-cargo clippy --workspace --all-features
-
-# Build docs
-just docs
-```
-
-## Testing Tips
-
-```bash
-# Filter by test name
-cargo nextest run -p facet-reflect partial
-
-# With output
-RUST_LOG=trace cargo nextest run -- --nocapture
-```
-
-### Miri
-
-Always run Miri when modifying unsafe code:
-
-```bash
-just miri
-```
-
-### Snapshot Testing
-
-Some crates use [insta](https://docs.rs/insta). Update snapshots with:
-
-```bash
+# Review snapshot changes
 cargo insta review
+
+# Check for undefined behavior
+just miri
+
+# Check no_std compatibility
+just nostd-ci
 ```

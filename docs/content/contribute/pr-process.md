@@ -4,27 +4,21 @@ weight = 2
 insert_anchor_links = "heading"
 +++
 
-1. **Create a branch** — never commit directly to `main`
+## Workflow
 
-2. **Write tests** — ensure your changes are covered
+1. Create a branch — never commit directly to `main`
+2. Make your changes
+3. Run `just ci` locally
+4. Push and open a PR with `gh pr create`
 
-3. **Run checks locally**:
-   ```bash
-   just           # Full test suite
-   just miri      # Memory safety
-   just nostd-ci  # no_std compatibility
-   ```
-
-4. **Push and open a PR** with `gh pr create`
-
-5. **CI must pass** — the test matrix includes:
-   - Tests (Linux, macOS, Windows)
-   - no_std build
-   - Miri
-   - MSRV check
-   - Clippy
-   - Documentation build
-
-## Generated Files
+## Generated files
 
 Do **not** edit `README.md` files directly. Edit `README.md.in` instead — READMEs are generated.
+
+### facet-dev
+
+The [facet-dev](https://github.com/facet-rs/facet-dev) tool keeps all crates in sync. It generates READMEs from templates and ensures consistent metadata across the monorepo.
+
+## Licensing
+
+Everything in the monorepo is dual-licensed under MIT and Apache 2.0. If you want your crate in the monorepo, it must use the same license.

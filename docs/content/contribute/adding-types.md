@@ -4,7 +4,17 @@ weight = 6
 insert_anchor_links = "heading"
 +++
 
-## Standard Library Types
+## Why we implement from the facet side
+
+In Rust, you can only implement a trait in one of two places:
+1. The crate that defines the trait
+2. The crate that defines the type
+
+Ideally, crates like `chrono` or `uuid` would implement `Facet` for their types directly. But facet isn't stable yet — the `Facet` trait and `Shape` structure are still evolving.
+
+So we implement `Facet` for third-party types from the facet side, using optional features in `facet-core`. When facet stabilizes, crate authors can implement `Facet` themselves, and we'll deprecate our implementations.
+
+## Standard library types
 
 Add implementations in the appropriate `impls_*` module in `facet-core`:
 
@@ -25,7 +35,7 @@ unsafe impl Facet<'_> for MyType {
 }
 ```
 
-## External Crate Types
+## External crate types
 
 1. Add the dependency to `facet-core/Cargo.toml`:
    ```toml
@@ -44,9 +54,9 @@ unsafe impl Facet<'_> for MyType {
    mod impls_my_crate;
    ```
 
-## Collection Types
+## Collection types
 
-Collections need vtable functions:
+Collections need vtable functions for their operations (push, get, len, etc.):
 
 ```rust
 unsafe impl<T: Facet<'static>> Facet<'_> for MyVec<T> {

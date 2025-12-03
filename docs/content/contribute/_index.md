@@ -7,18 +7,18 @@ insert_anchor_links = "heading"
 
 Help improve facet! This section covers development setup, architecture, and contribution guidelines.
 
-## Getting Started
+## Getting started
 
 - [Development Setup](@/contribute/setup.md) — Clone, test, and verify your environment
 - [Pull Request Process](@/contribute/pr-process.md) — How to submit changes
 
-## Understanding the Codebase
+## Understanding the codebase
 
 - [Architecture](@/contribute/architecture.md) — Crate graph and key components
 - [Core Concepts](@/contribute/core-concepts.md) — Shape, Type, Def, VTables
 - [The Derive Macro](@/contribute/derive-macro.md) — How `#[derive(Facet)]` works
 
-## Adding New Features
+## Adding new features
 
 - [Adding Type Support](@/contribute/adding-types.md) — Implement Facet for new types
 
