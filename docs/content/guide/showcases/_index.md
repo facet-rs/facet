@@ -13,6 +13,7 @@ Interactive examples demonstrating facet's serialization and deserialization cap
 - [YAML](@/guide/showcases/yaml.md) — facet-yaml examples
 - [KDL](@/guide/showcases/kdl.md) — facet-kdl with KDL-specific attributes
 - [TOML](@/guide/showcases/toml.md) — facet-toml for configuration files
+- [Binary Formats](@/guide/showcases/binary.md) — MessagePack and Postcard for compact encoding
 
 ## Feature Showcases
 
