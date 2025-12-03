@@ -24,3 +24,10 @@ path = "fuzz_targets/fuzz_value.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_inline_string"
+path = "fuzz_targets/fuzz_inline_string.rs"
+test = false
+doc = false
+bench = false

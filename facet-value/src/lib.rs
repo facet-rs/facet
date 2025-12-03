@@ -66,3 +66,6 @@ pub use format::{FormattedValue, format_value, format_value_with_spans};
 
 #[cfg(feature = "diagnostics")]
 mod highlight;
+
+#[cfg(all(test, feature = "alloc"))]
+mod inline_roundtrip_tests;
