@@ -133,9 +133,9 @@ The ecosystem is here. The tooling is here.
 
 ## Next steps
 
-- Browse the [showcases](/learn/showcases/) to see facet in action
-- Check the [format support matrix](/format-crate-matrix/) to see what's available
-- Read the [Learn guide](/learn/) to get started
+- Browse the [showcases](/guide/showcases/) to see facet in action
+- Check the [format support matrix](/reference/format-crate-matrix/) to see what's available
+- Read the [Guide](/guide/) to get started
 - Look at the source: [github.com/facet-rs/facet](https://github.com/facet-rs/facet)
 
 Decide for yourself.

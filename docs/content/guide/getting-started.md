@@ -96,6 +96,6 @@ Facet implements `miette::Diagnostic`, so you get spans, hints, and suggestions 
 - **Rename fields:** `#[facet(rename = "serverPort")]` or `#[facet(rename_all = "camelCase")]`.
 
 ## Next steps
-- Browse the [Attributes Reference](@/learn/attributes.md) for all knobs.
-- Read [Errors & diagnostics](@/learn/errors.md) to understand and customize error output.
-- Check the [Format Support Matrix](@/format-crate-matrix.md) if you use multiple formats.
+- Browse the [Attributes Reference](@/reference/attributes/_index.md) for all knobs.
+- Read [Errors & diagnostics](@/guide/errors.md) to understand and customize error output.
+- Check the [Format Support Matrix](@/reference/format-crate-matrix/_index.md) if you use multiple formats.

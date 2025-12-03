@@ -19,7 +19,7 @@
             <span>facet</span>
         </a>
         <div class="site-nav-links">
-            <a href="/learn" {% if current_path is starting_with("/learn") %}class="active"{% endif %}>Guide</a>
+            <a href="/guide" {% if current_path is starting_with("/guide") %}class="active"{% endif %}>Guide</a>
             <a href="/reference" {% if current_path is starting_with("/reference") or current_path == "/format-crate-matrix/" %}class="active"{% endif %}>Reference</a>
             <a href="/extend" {% if current_path is starting_with("/extend") %}class="active"{% endif %}>Extend</a>
             <a href="/contribute" {% if current_path is starting_with("/contribute") %}class="active"{% endif %}>Contribute</a>
@@ -43,7 +43,7 @@
             <div class="footer-section">
                 <h4>Documentation</h4>
                 <ul>
-                    <li><a href="/learn">Guide</a></li>
+                    <li><a href="/guide">Guide</a></li>
                     <li><a href="/reference">Reference</a></li>
                     <li><a href="/extend">Extend</a></li>
                     <li><a href="/contribute">Contribute</a></li>
@@ -60,8 +60,8 @@
             </div>
             <div class="footer-section footer-meta">
                 <p>Licensed under MIT/Apache-2.0</p>
-                {% if page and page.updated_at %}
-                <p class="muted">Updated {{ page.updated_at | date(format="%Y-%m-%d") }}</p>
+                {% if page is defined and page and page.last_updated %}
+                <p class="muted">Updated {{ page.last_updated }}</p>
                 {% endif %}
             </div>
         </div>
