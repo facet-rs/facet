@@ -22,9 +22,6 @@
             <nav class="breadcrumbs" aria-label="Breadcrumb">
                 <ol>
                     <li><a href="/">Home</a></li>
-                    {% if root in root_labels %}
-                    <li><a href="/{{ root }}">{{ root_labels[root] }}</a></li>
-                    {% endif %}
                     {% if page.ancestors and page.ancestors | length > 0 %}
                         {% for ancestor in page.ancestors %}
                             {# ancestor is a dict with title/permalink/path #}
