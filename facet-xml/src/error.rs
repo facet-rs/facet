@@ -117,6 +117,16 @@ pub enum XmlErrorKind {
         expected_type: String,
     },
 
+    /// Unknown field encountered when deny_unknown_fields is set.
+    UnknownField {
+        /// The unknown field name.
+        field: String,
+        /// List of expected field names.
+        expected: Vec<&'static str>,
+    },
+    /// Invalid UTF-8 in input.
+    InvalidUtf8(String),
+
     // Serialization errors
     /// IO error during serialization.
     Io(String),
@@ -152,6 +162,8 @@ impl XmlErrorKind {
             XmlErrorKind::MissingElement(_) => "xml::missing_element",
             XmlErrorKind::MissingAttribute(_) => "xml::missing_attribute",
             XmlErrorKind::InvalidAttributeValue { .. } => "xml::invalid_attribute_value",
+            XmlErrorKind::UnknownField { .. } => "xml::unknown_field",
+            XmlErrorKind::InvalidUtf8(_) => "xml::invalid_utf8",
             XmlErrorKind::Io(_) => "xml::io",
             XmlErrorKind::SerializeNotStruct => "xml::serialize_not_struct",
             XmlErrorKind::SerializeNotList => "xml::serialize_not_list",
@@ -220,6 +232,15 @@ impl Display for XmlErrorKind {
                     "invalid value '{value}' for attribute '{name}', expected {expected_type}"
                 )
             }
+            XmlErrorKind::UnknownField { field, expected } => {
+                write!(
+                    f,
+                    "unknown field '{}', expected one of: {}",
+                    field,
+                    expected.join(", ")
+                )
+            }
+            XmlErrorKind::InvalidUtf8(msg) => write!(f, "invalid UTF-8: {msg}"),
             XmlErrorKind::Io(msg) => write!(f, "IO error: {msg}"),
             XmlErrorKind::SerializeNotStruct => {
                 write!(f, "expected struct for XML document serialization")
@@ -285,6 +306,9 @@ impl miette::Diagnostic for XmlError {
                 XmlErrorKind::MissingAttribute(name) => {
                     format!("missing attribute `{name}`")
                 }
+                XmlErrorKind::UnknownField { field, .. } => {
+                    format!("unknown field `{field}`")
+                }
                 _ => "error occurred here".to_string(),
             };
             Some(Box::new(std::iter::once(miette::LabeledSpan::at(
@@ -304,6 +328,10 @@ impl miette::Diagnostic for XmlError {
             XmlErrorKind::NoTextField => Some(Box::new(
                 "add #[facet(xml::text)] to a String field to capture text content",
             )),
+            XmlErrorKind::UnknownField { expected, .. } => Some(Box::new(format!(
+                "expected one of: {}",
+                expected.join(", ")
+            ))),
             _ => None,
         }
     }

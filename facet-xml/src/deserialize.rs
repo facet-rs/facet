@@ -3,7 +3,9 @@
 //! This deserializer uses quick-xml's event-based API, processing events
 //! on-demand and supporting rewind via event indices for flatten deserialization.
 
-use facet_core::{Def, Facet, Field, NumericType, PrimitiveType, ShapeLayout, Type, UserType};
+use facet_core::{
+    Def, Facet, Field, NumericType, PrimitiveType, ShapeLayout, StructKind, Type, UserType,
+};
 use facet_reflect::{Partial, is_spanned_shape};
 use miette::SourceSpan;
 use quick_xml::Reader;
@@ -60,6 +62,40 @@ where
         .map_err(|e| XmlError::new(XmlErrorKind::Reflect(e)).with_source(xml))?;
 
     Ok(result)
+}
+
+/// Deserialize an XML byte slice into a value of type `T`.
+///
+/// This is a convenience wrapper around [`from_str`] that first validates
+/// that the input is valid UTF-8.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_xml as xml;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Person {
+///     #[facet(xml::attribute)]
+///     id: u32,
+///     #[facet(xml::element)]
+///     name: String,
+/// }
+///
+/// let xml_bytes = b"<Person id=\"42\"><name>Alice</name></Person>";
+/// let person: Person = facet_xml::from_slice(xml_bytes).unwrap();
+/// assert_eq!(person.name, "Alice");
+/// assert_eq!(person.id, 42);
+/// ```
+pub fn from_slice<'input, 'facet, T>(xml: &'input [u8]) -> Result<T>
+where
+    T: Facet<'facet>,
+    'input: 'facet,
+{
+    let xml_str = std::str::from_utf8(xml)
+        .map_err(|e| XmlError::new(XmlErrorKind::InvalidUtf8(e.to_string())))?;
+    from_str(xml_str)
 }
 
 // ============================================================================
@@ -336,8 +372,7 @@ impl<'input> XmlDeserializer<'input> {
                 self.deserialize_element(partial, &name, &attributes, span, true)
             }
             other => Err(self.err(XmlErrorKind::UnexpectedEvent(format!(
-                "expected start element, got {:?}",
-                other
+                "expected start element, got {other:?}"
             )))),
         }
     }
@@ -392,14 +427,76 @@ impl<'input> XmlDeserializer<'input> {
             return Ok(partial);
         }
 
+        // Handle fixed arrays
+        if let Def::Array(arr_def) = &shape.def {
+            if is_empty {
+                return Err(self.err_at(
+                    XmlErrorKind::InvalidValueForShape("empty element for array".into()),
+                    span,
+                ));
+            }
+            let array_len = arr_def.n;
+            return self.deserialize_array_content(partial, array_len, element_name);
+        }
+
+        // Handle sets
+        if matches!(&shape.def, Def::Set(_)) {
+            if is_empty {
+                partial = partial.begin_set()?;
+                // Empty set - nothing to do
+                return Ok(partial);
+            }
+            return self.deserialize_set_content(partial, element_name);
+        }
+
+        // Handle maps
+        if matches!(&shape.def, Def::Map(_)) {
+            if is_empty {
+                partial = partial.begin_map()?;
+                // Empty map - nothing to do
+                return Ok(partial);
+            }
+            return self.deserialize_map_content(partial, element_name);
+        }
+
         // Handle different shapes
         match &shape.ty {
             Type::User(UserType::Struct(struct_def)) => {
                 // Get fields
                 let fields = struct_def.fields;
+                let deny_unknown = shape.has_deny_unknown_fields_attr();
+
+                match struct_def.kind {
+                    StructKind::Unit => {
+                        // Unit struct - nothing to deserialize, just skip content
+                        if !is_empty {
+                            self.skip_element(element_name)?;
+                        }
+                        return Ok(partial);
+                    }
+                    StructKind::Tuple | StructKind::TupleStruct => {
+                        // Tuple struct - deserialize fields by position
+                        if is_empty {
+                            // Set defaults for all fields
+                            partial = self.set_defaults_for_unset_fields(partial, fields)?;
+                            return Ok(partial);
+                        }
+
+                        // Deserialize tuple fields from child elements
+                        partial = self.deserialize_tuple_content(partial, fields, element_name)?;
+
+                        // Set defaults for any unset fields
+                        partial = self.set_defaults_for_unset_fields(partial, fields)?;
+                        return Ok(partial);
+                    }
+                    StructKind::Struct => {
+                        // Normal named struct - fall through to standard handling
+                    }
+                }
 
                 // First, deserialize attributes
-                partial = self.deserialize_attributes(partial, fields, attributes)?;
+                partial =
+                    self.deserialize_attributes(partial, fields, attributes, deny_unknown, span)?;
 
                 // If empty element, we're done with content
                 if is_empty {
@@ -409,10 +506,142 @@ impl<'input> XmlDeserializer<'input> {
                 }
 
                 // Deserialize child elements and text content
-                partial = self.deserialize_element_content(partial, fields, element_name)?;
+                partial =
+                    self.deserialize_element_content(partial, fields, element_name, deny_unknown)?;
 
                 // Set defaults for any unset fields
                 partial = self.set_defaults_for_unset_fields(partial, fields)?;
+
+                Ok(partial)
+            }
+            Type::User(UserType::Enum(enum_def)) => {
+                // Enum deserialization - expect wrapper element with variant as child
+                // Format: <MyEnum><VariantName>...</VariantName></MyEnum>
+                if is_empty {
+                    return Err(self.err_at(
+                        XmlErrorKind::InvalidValueForShape("empty element for enum".into()),
+                        span,
+                    ));
+                }
+
+                // Read the variant element
+                let variant_event = loop {
+                    let Some(event) = self.next() else {
+                        return Err(self.err(XmlErrorKind::UnexpectedEof));
+                    };
+
+                    match &event.event {
+                        OwnedEvent::Text { content } if content.trim().is_empty() => {
+                            // Skip whitespace
+                            continue;
+                        }
+                        OwnedEvent::Start { .. } | OwnedEvent::Empty { .. } => {
+                            break event;
+                        }
+                        _ => {
+                            return Err(self.err_at(
+                                XmlErrorKind::UnexpectedEvent(format!(
+                                    "expected variant element, got {:?}",
+                                    event.event
+                                )),
+                                event.span(),
+                            ));
+                        }
+                    }
+                };
+
+                let variant_span = variant_event.span();
+                let (variant_name, variant_attrs, variant_is_empty) = match &variant_event.event {
+                    OwnedEvent::Start { name, attributes } => {
+                        (name.clone(), attributes.clone(), false)
+                    }
+                    OwnedEvent::Empty { name, attributes } => {
+                        (name.clone(), attributes.clone(), true)
+                    }
+                    _ => unreachable!(),
+                };
+
+                // Find the variant by name
+                let variant = enum_def
+                    .variants
+                    .iter()
+                    .find(|v| v.name == variant_name)
+                    .ok_or_else(|| {
+                        self.err_at(
+                            XmlErrorKind::NoMatchingElement(variant_name.clone()),
+                            variant_span,
+                        )
+                    })?;
+
+                // Select the variant
+                partial = partial.select_variant_named(&variant_name)?;
+
+                let variant_fields = variant.data.fields;
+
+                match variant.data.kind {
+                    StructKind::Unit => {
+                        // Unit variant - nothing to deserialize
+                        if !variant_is_empty {
+                            self.skip_element(&variant_name)?;
+                        }
+                    }
+                    StructKind::Tuple | StructKind::TupleStruct => {
+                        // Tuple variant - deserialize fields by position
+                        if !variant_is_empty {
+                            partial = self.deserialize_tuple_content(
+                                partial,
+                                variant_fields,
+                                &variant_name,
+                            )?;
+                        }
+                        partial = self.set_defaults_for_unset_fields(partial, variant_fields)?;
+                    }
+                    StructKind::Struct => {
+                        // Struct variant - deserialize as struct
+                        partial = self.deserialize_attributes(
+                            partial,
+                            variant_fields,
+                            &variant_attrs,
+                            false,
+                            variant_span,
+                        )?;
+                        if !variant_is_empty {
+                            partial = self.deserialize_element_content(
+                                partial,
+                                variant_fields,
+                                &variant_name,
+                                false,
+                            )?;
+                        }
+                        partial = self.set_defaults_for_unset_fields(partial, variant_fields)?;
+                    }
+                }
+
+                // Skip to the end of the wrapper element
+                loop {
+                    let Some(event) = self.next() else {
+                        return Err(self.err(XmlErrorKind::UnexpectedEof));
+                    };
+
+                    match &event.event {
+                        OwnedEvent::End { name } if name == element_name => {
+                            break;
+                        }
+                        OwnedEvent::Text { content } if content.trim().is_empty() => {
+                            // Skip whitespace
+                            continue;
+                        }
+                        _ => {
+                            return Err(self.err_at(
+                                XmlErrorKind::UnexpectedEvent(format!(
+                                    "expected end of enum wrapper, got {:?}",
+                                    event.event
+                                )),
+                                event.span(),
+                            ));
+                        }
+                    }
+                }
 
                 Ok(partial)
             }
@@ -429,6 +658,8 @@ impl<'input> XmlDeserializer<'input> {
         partial: Partial<'facet>,
         fields: &[Field],
         attributes: &[(String, String)],
+        deny_unknown: bool,
+        element_span: SourceSpan,
     ) -> Result<Partial<'facet>> {
         let mut partial = partial;
 
@@ -467,8 +698,22 @@ impl<'input> XmlDeserializer<'input> {
                 }
 
                 partial = partial.end()?; // end field
+            } else if deny_unknown {
+                // Unknown attribute when deny_unknown_fields is set
+                let expected: Vec<&'static str> = fields
+                    .iter()
+                    .filter(|f| f.is_xml_attribute())
+                    .map(|f| f.name)
+                    .collect();
+                return Err(self.err_at(
+                    XmlErrorKind::UnknownAttribute {
+                        attribute: attr_name.clone(),
+                        expected,
+                    },
+                    element_span,
+                ));
             }
-            // Ignore unknown attributes for now (could be configurable)
+            // Otherwise ignore unknown attributes
         }
 
         Ok(partial)
@@ -480,6 +725,7 @@ impl<'input> XmlDeserializer<'input> {
         partial: Partial<'facet>,
         fields: &[Field],
         parent_element_name: &str,
+        deny_unknown: bool,
     ) -> Result<Partial<'facet>> {
         let mut partial = partial;
         let mut text_content = String::new();
@@ -518,6 +764,7 @@ impl<'input> XmlDeserializer<'input> {
                         span,
                         false,
                         &mut elements_field_started,
+                        deny_unknown,
                     )?;
                 }
                 OwnedEvent::Empty { name, attributes } => {
@@ -529,6 +776,7 @@ impl<'input> XmlDeserializer<'input> {
                         span,
                         true,
                         &mut elements_field_started,
+                        deny_unknown,
                     )?;
                 }
                 OwnedEvent::Text { content } | OwnedEvent::CData { content } => {
@@ -538,8 +786,7 @@ impl<'input> XmlDeserializer<'input> {
                     // End tag for a different element - this shouldn't happen
                     return Err(self.err_at(
                         XmlErrorKind::UnexpectedEvent(format!(
-                            "unexpected end tag for '{}' while parsing '{}'",
-                            name, parent_element_name
+                            "unexpected end tag for '{name}' while parsing '{parent_element_name}'"
                         )),
                         span,
                     ));
@@ -548,6 +795,321 @@ impl<'input> XmlDeserializer<'input> {
                     return Err(self.err(XmlErrorKind::UnexpectedEof));
                 }
             }
+        }
+
+        Ok(partial)
+    }
+
+    /// Deserialize tuple struct content - fields are numbered elements like `<_0>`, `<_1>`, etc.
+    fn deserialize_tuple_content<'facet>(
+        &mut self,
+        partial: Partial<'facet>,
+        fields: &[Field],
+        parent_element_name: &str,
+    ) -> Result<Partial<'facet>> {
+        let mut partial = partial;
+        let mut field_idx = 0;
+
+        loop {
+            let Some(event) = self.next() else {
+                return Err(self.err(XmlErrorKind::UnexpectedEof));
+            };
+
+            let span = event.span();
+
+            match event.event {
+                OwnedEvent::End { ref name } if name == parent_element_name => {
+                    break;
+                }
+                OwnedEvent::Start { name, attributes } => {
+                    if field_idx >= fields.len() {
+                        return Err(self.err_at(
+                            XmlErrorKind::UnexpectedEvent(format!(
+                                "too many elements for tuple struct (expected {})",
+                                fields.len()
+                            )),
+                            span,
+                        ));
+                    }
+
+                    partial = partial.begin_nth_field(field_idx)?;
+
+                    // Handle Option<T>
+                    if matches!(&partial.shape().def, Def::Option(_)) {
+                        partial = partial.begin_some()?;
+                    }
+
+                    partial = self.deserialize_element(partial, &name, &attributes, span, false)?;
+                    partial = partial.end()?; // end field
+                    field_idx += 1;
+                }
+                OwnedEvent::Empty { name, attributes } => {
+                    if field_idx >= fields.len() {
+                        return Err(self.err_at(
+                            XmlErrorKind::UnexpectedEvent(format!(
+                                "too many elements for tuple struct (expected {})",
+                                fields.len()
+                            )),
+                            span,
+                        ));
+                    }
+
+                    partial = partial.begin_nth_field(field_idx)?;
+
+                    // Handle Option<T>
+                    if matches!(&partial.shape().def, Def::Option(_)) {
+                        partial = partial.begin_some()?;
+                    }
+
+                    partial = self.deserialize_element(partial, &name, &attributes, span, true)?;
+                    partial = partial.end()?; // end field
+                    field_idx += 1;
+                }
+                OwnedEvent::Text { .. } | OwnedEvent::CData { .. } => {
+                    // Ignore text content in tuple structs
+                }
+                OwnedEvent::End { name } => {
+                    return Err(self.err_at(
+                        XmlErrorKind::UnexpectedEvent(format!(
+                            "unexpected end tag for '{name}' while parsing '{parent_element_name}'"
+                        )),
+                        span,
+                    ));
+                }
+                OwnedEvent::Eof => {
+                    return Err(self.err(XmlErrorKind::UnexpectedEof));
+                }
+            }
+        }
+
+        Ok(partial)
+    }
+
+    /// Deserialize fixed array content - expects sequential child elements
+    fn deserialize_array_content<'facet>(
+        &mut self,
+        partial: Partial<'facet>,
+        array_len: usize,
+        parent_element_name: &str,
+    ) -> Result<Partial<'facet>> {
+        let mut partial = partial;
+        let mut idx = 0;
+
+        loop {
+            let Some(event) = self.next() else {
+                return Err(self.err(XmlErrorKind::UnexpectedEof));
+            };
+
+            let span = event.span();
+
+            match event.event {
+                OwnedEvent::End { ref name } if name == parent_element_name => {
+                    if idx < array_len {
+                        return Err(self.err_at(
+                            XmlErrorKind::InvalidValueForShape(format!(
+                                "not enough elements for array (got {idx}, expected {array_len})"
+                            )),
+                            span,
+                        ));
+                    }
+                    break;
+                }
+                OwnedEvent::Start { name, attributes } => {
+                    if idx >= array_len {
+                        return Err(self.err_at(
+                            XmlErrorKind::InvalidValueForShape(format!(
+                                "too many elements for array (expected {array_len})"
+                            )),
+                            span,
+                        ));
+                    }
+                    partial = partial.begin_nth_field(idx)?;
+                    partial = self.deserialize_element(partial, &name, &attributes, span, false)?;
+                    partial = partial.end()?;
+                    idx += 1;
+                }
+                OwnedEvent::Empty { name, attributes } => {
+                    if idx >= array_len {
+                        return Err(self.err_at(
+                            XmlErrorKind::InvalidValueForShape(format!(
+                                "too many elements for array (expected {array_len})"
+                            )),
+                            span,
+                        ));
+                    }
+                    partial = partial.begin_nth_field(idx)?;
+                    partial = self.deserialize_element(partial, &name, &attributes, span, true)?;
+                    partial = partial.end()?;
+                    idx += 1;
+                }
+                OwnedEvent::Text { .. } | OwnedEvent::CData { .. } => {
+                    // Ignore whitespace between elements
+                }
+                OwnedEvent::End { name } => {
+                    return Err(self.err_at(
+                        XmlErrorKind::UnexpectedEvent(format!(
+                            "unexpected end tag for '{name}' while parsing '{parent_element_name}'"
+                        )),
+                        span,
+                    ));
+                }
+                OwnedEvent::Eof => {
+                    return Err(self.err(XmlErrorKind::UnexpectedEof));
+                }
+            }
+        }
+
+        Ok(partial)
+    }
+
+    /// Deserialize set content - each child element is a set item
+    fn deserialize_set_content<'facet>(
+        &mut self,
+        partial: Partial<'facet>,
+        parent_element_name: &str,
+    ) -> Result<Partial<'facet>> {
+        let mut partial = partial;
+        partial = partial.begin_set()?;
+
+        loop {
+            let Some(event) = self.next() else {
+                return Err(self.err(XmlErrorKind::UnexpectedEof));
+            };
+
+            let span = event.span();
+
+            match event.event {
+                OwnedEvent::End { ref name } if name == parent_element_name => {
+                    break;
+                }
+                OwnedEvent::Start { name, attributes } => {
+                    partial = partial.begin_set_item()?;
+                    partial = self.deserialize_element(partial, &name, &attributes, span, false)?;
+                    partial = partial.end()?; // end set item
+                }
+                OwnedEvent::Empty { name, attributes } => {
+                    partial = partial.begin_set_item()?;
+                    partial = self.deserialize_element(partial, &name, &attributes, span, true)?;
+                    partial = partial.end()?; // end set item
+                }
+                OwnedEvent::Text { .. } | OwnedEvent::CData { .. } => {
+                    // Ignore whitespace between elements
+                }
+                OwnedEvent::End { name } => {
+                    return Err(self.err_at(
+                        XmlErrorKind::UnexpectedEvent(format!(
+                            "unexpected end tag for '{name}' while parsing '{parent_element_name}'"
+                        )),
+                        span,
+                    ));
+                }
+                OwnedEvent::Eof => {
+                    return Err(self.err(XmlErrorKind::UnexpectedEof));
+                }
+            }
+        }
+
+        Ok(partial)
+    }
+
+    /// Deserialize map content - expects <entry key="...">value</entry> or similar structure
+    fn deserialize_map_content<'facet>(
+        &mut self,
+        partial: Partial<'facet>,
+        parent_element_name: &str,
+    ) -> Result<Partial<'facet>> {
+        let mut partial = partial;
+        partial = partial.begin_map()?;
+
+        loop {
+            let Some(event) = self.next() else {
+                return Err(self.err(XmlErrorKind::UnexpectedEof));
+            };
+
+            let span = event.span();
+
+            match event.event {
+                OwnedEvent::End { ref name } if name == parent_element_name => {
+                    break;
+                }
+                OwnedEvent::Start { name, attributes } => {
+                    // Map entry: element name is the key, content is the value
+                    partial = partial.begin_key()?;
+                    partial = partial.set(name.clone())?;
+                    partial = partial.end()?; // end key
+
+                    partial = partial.begin_value()?;
+                    // If there's a key attribute, use that as context; otherwise read content
+                    partial = self.deserialize_map_entry_value(partial, &name, &attributes)?;
+                    partial = partial.end()?; // end value
+                }
+                OwnedEvent::Empty { name, .. } => {
+                    // Empty element as map entry - key is element name, value is default/empty
+                    partial = partial.begin_key()?;
+                    partial = partial.set(name.clone())?;
+                    partial = partial.end()?; // end key
+
+                    partial = partial.begin_value()?;
+                    // Set default value for the map value type
+                    let value_shape = partial.shape();
+                    if value_shape.is_type::<String>() {
+                        partial = partial.set(String::new())?;
+                    } else if value_shape.is_type::<bool>() {
+                        partial = partial.set(true)?; // presence implies true
+                    } else {
+                        return Err(self.err_at(
+                            XmlErrorKind::InvalidValueForShape(
+                                "empty element for non-string/bool map value".into(),
+                            ),
+                            span,
+                        ));
+                    }
+                    partial = partial.end()?; // end value
+                }
+                OwnedEvent::Text { .. } | OwnedEvent::CData { .. } => {
+                    // Ignore whitespace between elements
+                }
+                OwnedEvent::End { name } => {
+                    return Err(self.err_at(
+                        XmlErrorKind::UnexpectedEvent(format!(
+                            "unexpected end tag for '{name}' while parsing '{parent_element_name}'"
+                        )),
+                        span,
+                    ));
+                }
+                OwnedEvent::Eof => {
+                    return Err(self.err(XmlErrorKind::UnexpectedEof));
+                }
+            }
+        }
+
+        Ok(partial)
+    }
+
+    /// Deserialize the value portion of a map entry
+    fn deserialize_map_entry_value<'facet>(
+        &mut self,
+        partial: Partial<'facet>,
+        element_name: &str,
+        _attributes: &[(String, String)],
+    ) -> Result<Partial<'facet>> {
+        let mut partial = partial;
+        let shape = partial.shape();
+
+        // For scalar values, read text content
+        if matches!(&shape.def, Def::Scalar) {
+            let text = self.read_text_until_end(element_name)?;
+            partial = self.set_scalar_value(partial, &text)?;
+            return Ok(partial);
+        }
+
+        // For complex values, read the element content
+        // This is a simplified version - complex map values would need more work
+        let text = self.read_text_until_end(element_name)?;
+        if shape.is_type::<String>() {
+            partial = partial.set(text)?;
+        } else {
+            partial = self.set_scalar_value(partial, &text)?;
         }
 
         Ok(partial)
@@ -563,6 +1125,7 @@ impl<'input> XmlDeserializer<'input> {
         span: SourceSpan,
         is_empty: bool,
         elements_field_started: &mut Option<usize>,
+        deny_unknown: bool,
     ) -> Result<Partial<'facet>> {
         let mut partial = partial;
 
@@ -622,8 +1185,25 @@ impl<'input> XmlDeserializer<'input> {
             return Ok(partial);
         }
 
-        // No matching field found - skip this element
-        log::trace!("skipping unknown element: {}", element_name);
+        // No matching field found
+        if deny_unknown {
+            // Unknown element when deny_unknown_fields is set
+            let expected: Vec<&'static str> = fields
+                .iter()
+                .filter(|f| f.is_xml_element() || f.is_xml_elements())
+                .map(|f| f.name)
+                .collect();
+            return Err(self.err_at(
+                XmlErrorKind::UnknownField {
+                    field: element_name.to_string(),
+                    expected,
+                },
+                span,
+            ));
+        }
+
+        // Skip this element
+        log::trace!("skipping unknown element: {element_name}");
         if !is_empty {
             self.skip_element(element_name)?;
         }
@@ -674,8 +1254,7 @@ impl<'input> XmlDeserializer<'input> {
                 }
                 other => {
                     return Err(self.err(XmlErrorKind::UnexpectedEvent(format!(
-                        "expected text or end tag, got {:?}",
-                        other
+                        "expected text or end tag, got {other:?}"
                     ))));
                 }
             }

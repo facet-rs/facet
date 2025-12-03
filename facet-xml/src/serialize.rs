@@ -2,7 +2,7 @@
 
 use std::io::Write;
 
-use facet_core::Facet;
+use facet_core::{Facet, StructKind};
 use facet_reflect::{HasFields, Peek, is_spanned_shape};
 
 use crate::deserialize::XmlFieldExt;
@@ -118,10 +118,112 @@ impl<W: Write> XmlSerializer<W> {
             return self.serialize_struct_as_element(element_name, struct_peek);
         }
 
+        // Check if this is an enum
+        if let Ok(enum_peek) = peek.into_enum() {
+            return self.serialize_enum_as_element(element_name, enum_peek);
+        }
+
+        // Check if this is a list-like type (Vec, array, set)
+        if let Ok(list_peek) = peek.into_list_like() {
+            return self.serialize_list_as_element(element_name, list_peek);
+        }
+
+        // Check if this is a map
+        if let Ok(map_peek) = peek.into_map() {
+            return self.serialize_map_as_element(element_name, map_peek);
+        }
+
         // For scalars/primitives, serialize as element with text content
         write!(self.writer, "<{}>", escape_element_name(element_name))
             .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
         self.serialize_value(peek)?;
+        write!(self.writer, "</{}>", escape_element_name(element_name))
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+        Ok(())
+    }
+
+    fn serialize_enum_as_element<'mem, 'facet>(
+        &mut self,
+        element_name: &str,
+        enum_peek: facet_reflect::PeekEnum<'mem, 'facet>,
+    ) -> Result<()> {
+        let variant_name = enum_peek
+            .variant_name_active()
+            .map_err(|_| XmlErrorKind::SerializeUnknownElementType)?;
+
+        let fields: Vec<_> = enum_peek.fields_for_serialize().collect();
+
+        write!(self.writer, "<{}>", escape_element_name(element_name))
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+        if fields.is_empty() {
+            // Unit variant - just the variant name as an empty element
+            write!(self.writer, "<{}/>", escape_element_name(variant_name))
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+        } else if fields.len() == 1 && fields[0].0.name.parse::<usize>().is_ok() {
+            // Newtype variant - serialize the inner value with variant name
+            self.serialize_element(variant_name, fields[0].1)?;
+        } else {
+            // Struct-like variant
+            write!(self.writer, "<{}>", escape_element_name(variant_name))
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+            for (field_item, field_peek) in fields {
+                self.serialize_element(field_item.name, field_peek)?;
+            }
+
+            write!(self.writer, "</{}>", escape_element_name(variant_name))
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+        }
+
+        write!(self.writer, "</{}>", escape_element_name(element_name))
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+        Ok(())
+    }
+
+    fn serialize_list_as_element<'mem, 'facet>(
+        &mut self,
+        element_name: &str,
+        list_peek: facet_reflect::PeekListLike<'mem, 'facet>,
+    ) -> Result<()> {
+        write!(self.writer, "<{}>", escape_element_name(element_name))
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+        for item in list_peek.iter() {
+            self.serialize_list_item_element(item)?;
+        }
+
+        write!(self.writer, "</{}>", escape_element_name(element_name))
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+        Ok(())
+    }
+
+    fn serialize_map_as_element<'mem, 'facet>(
+        &mut self,
+        element_name: &str,
+        map_peek: facet_reflect::PeekMap<'mem, 'facet>,
+    ) -> Result<()> {
+        write!(self.writer, "<{}>", escape_element_name(element_name))
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+        for (key, value) in map_peek.iter() {
+            // Use the key as the element name
+            if let Some(key_str) = key.as_str() {
+                self.serialize_element(key_str, value)?;
+            } else if let Some(key_val) = self.value_to_string(key) {
+                self.serialize_element(&key_val, value)?;
+            } else {
+                // Fallback: use "entry" as element name with key as text
+                write!(self.writer, "<entry>").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                self.serialize_value(key)?;
+                self.serialize_value(value)?;
+                write!(self.writer, "</entry>").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            }
+        }
+
         write!(self.writer, "</{}>", escape_element_name(element_name))
             .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
@@ -133,6 +235,40 @@ impl<W: Write> XmlSerializer<W> {
         element_name: &str,
         struct_peek: facet_reflect::PeekStruct<'mem, 'facet>,
     ) -> Result<()> {
+        match struct_peek.ty().kind {
+            StructKind::Unit => {
+                // Unit struct - just output empty element
+                write!(self.writer, "<{}/>", escape_element_name(element_name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                return Ok(());
+            }
+            StructKind::Tuple | StructKind::TupleStruct => {
+                // Tuple struct - serialize fields in order as child elements
+                let fields: Vec<_> = struct_peek.fields_for_serialize().collect();
+                if fields.is_empty() {
+                    write!(self.writer, "<{}/>", escape_element_name(element_name))
+                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                    return Ok(());
+                }
+
+                write!(self.writer, "<{}>", escape_element_name(element_name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+                for (i, (_, field_peek)) in fields.into_iter().enumerate() {
+                    // Use indexed element names for tuple fields
+                    let field_name = format!("_{i}");
+                    self.serialize_element(&field_name, field_peek)?;
+                }
+
+                write!(self.writer, "</{}>", escape_element_name(element_name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                return Ok(());
+            }
+            StructKind::Struct => {
+                // Named struct - fall through to normal handling
+            }
+        }
+
         // Collect attributes, elements, and text content
         // We store field name (&'static str) instead of &Field to avoid lifetime issues
         let mut attributes: Vec<(&str, String)> = Vec::new();
@@ -140,14 +276,15 @@ impl<W: Write> XmlSerializer<W> {
         let mut elements_list: Vec<Peek<'mem, 'facet>> = Vec::new();
         let mut text_content: Option<Peek<'mem, 'facet>> = None;
 
-        for (field, field_peek) in struct_peek.fields() {
+        for (field_item, field_peek) in struct_peek.fields_for_serialize() {
+            let field = &field_item.field;
             if field.is_xml_attribute() {
                 // Serialize attribute value to string
                 if let Some(value) = self.value_to_string(field_peek) {
-                    attributes.push((field.name, value));
+                    attributes.push((field_item.name, value));
                 }
             } else if field.is_xml_element() {
-                elements.push((field.name, field_peek));
+                elements.push((field_item.name, field_peek));
             } else if field.is_xml_elements() {
                 elements_list.push(field_peek);
             } else if field.is_xml_text() {
@@ -244,8 +381,8 @@ impl<W: Write> XmlSerializer<W> {
                 .variant_name_active()
                 .map_err(|_| XmlErrorKind::SerializeUnknownElementType)?;
 
-            // Get the variant's fields
-            let fields: Vec<_> = enum_peek.fields().collect();
+            // Get the variant's fields (respecting skip_serializing)
+            let fields: Vec<_> = enum_peek.fields_for_serialize().collect();
 
             if fields.is_empty() {
                 // Unit variant - empty element
@@ -259,8 +396,8 @@ impl<W: Write> XmlSerializer<W> {
                 write!(self.writer, "<{}>", escape_element_name(variant_name))
                     .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
-                for (field, field_peek) in fields {
-                    self.serialize_element(field.name, field_peek)?;
+                for (field_item, field_peek) in fields {
+                    self.serialize_element(field_item.name, field_peek)?;
                 }
 
                 write!(self.writer, "</{}>", escape_element_name(variant_name))
