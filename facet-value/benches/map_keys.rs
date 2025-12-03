@@ -175,7 +175,7 @@ fn run_collect_bench(bencher: Bencher, entries: usize, shape: KeyShape, flavor: 
 
 fn build_keys(entries: usize, shape: KeyShape) -> Vec<String> {
     match shape {
-        KeyShape::InlineFriendly => (0..entries).map(|idx| format!("k{:03}", idx)).collect(),
+        KeyShape::InlineFriendly => (0..entries).map(|idx| format!("k{idx:03}")).collect(),
         KeyShape::HeapOnly => (0..entries)
             .map(|idx| format!("very-long-key-{idx:08}-suffix"))
             .collect(),

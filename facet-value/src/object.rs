@@ -659,8 +659,7 @@ mod tests {
             if value.value_type() == ValueType::String {
                 assert!(
                     value.is_inline_string(),
-                    "object value {:?} expected inline storage",
-                    value
+                    "object value {value:?} expected inline storage"
                 );
             }
         }
@@ -669,10 +668,7 @@ mod tests {
         for (key, value) in cloned.iter() {
             assert!(key.0.is_inline_string(), "cloned key lost inline storage");
             if value.value_type() == ValueType::String {
-                assert!(
-                    value.is_inline_string(),
-                    "cloned value lost inline storage"
-                );
+                assert!(value.is_inline_string(), "cloned value lost inline storage");
             }
         }
 
