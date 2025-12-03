@@ -4,103 +4,56 @@ weight = 4
 insert_anchor_links = "heading"
 +++
 
-## The `Facet` Trait
+## The layered architecture
 
-Every reflectable type implements `Facet`:
+Facet has two main layers:
 
-```rust
-pub unsafe trait Facet<'facet>: 'facet {
-    const SHAPE: &'static Shape;
-}
-```
+**High-level** (`facet-reflect`): `Peek` and `Partial` provide safe, ergonomic APIs for reading and building values. This is what format crates and most users interact with.
 
-The trait is `unsafe` because incorrect implementations break safety guarantees throughout the ecosystem.
+**Low-level** (`facet-core`): `Shape`, `Def`, `Type`, and vtables define the raw reflection metadata. The derive macro generates this. You rarely interact with it directly unless you're writing a format crate or implementing `Facet` manually.
 
-## `Shape`
+## Shape, Type, and Def
 
-`Shape` describes everything about a type at runtime:
+Every type that implements `Facet` has a `Shape` — a complete description of the type at runtime. The shape contains:
 
-```rust
-pub struct Shape {
-    pub id: ConstTypeId,           // Unique type identifier
-    pub layout: ShapeLayout,       // Size and alignment
-    pub vtable: ValueVTable,       // Function pointers for operations
-    pub ty: Type,                  // Structural classification
-    pub def: Def,                  // Semantic definition
-    pub type_identifier: &'static str,
-    pub type_params: &'static [TypeParam],
-    pub doc: &'static [&'static str],
-    pub attributes: &'static [ShapeAttribute],
-    // ...
-}
-```
+- **Type** — Structural classification (is it a struct? an enum? a primitive?). This follows the [Rust Reference](https://doc.rust-lang.org/reference/types.html) categories.
 
-## `Type`
+- **Def** — Semantic definition (how do I interact with it?). A `Vec<T>` has `Type::User` (it's a struct) but `Def::List` (you push/pop/iterate). A `String` has `Type::User` but `Def::Scalar` (it's an atomic value).
 
-Structural classification following the [Rust Reference](https://doc.rust-lang.org/reference/types.html):
+- **VTables** — Function pointers for runtime operations. Can I clone this? Display it? Parse it from a string? The vtables answer these questions without requiring trait bounds at compile time.
 
-- `Type::Primitive` — numeric, boolean, textual, never
-- `Type::Sequence` — tuple, array, slice
-- `Type::User` — struct, enum, union, opaque
-- `Type::Pointer` — references, raw pointers, function pointers
+## Peek and Partial
 
-## `Def`
+`Peek` wraps a reference and lets you inspect it through the shape:
 
-Semantic definition — *how* to interact with a type:
+- What fields does this struct have?
+- What variant is this enum?
+- What elements are in this list?
 
-```rust
-pub enum Def {
-    Undefined,           // Interact via Type and ValueVTable only
-    Scalar,              // Atomic values (u32, String, bool, etc.)
-    Map(MapDef),         // HashMap<K, V>, BTreeMap<K, V>
-    Set(SetDef),         // HashSet<T>, BTreeSet<T>
-    List(ListDef),       // Vec<T>
-    Array(ArrayDef),     // [T; N]
-    Slice(SliceDef),     // [T]
-    Option(OptionDef),   // Option<T>
-    Pointer(PointerDef), // Arc<T>, Box<T>, Rc<T>
-    // ...
-}
-```
+`Partial` is the inverse — it lets you build a value piece by piece:
 
-## `ValueVTable`
+- Set this field to this value
+- Push this element to the list
+- Select this enum variant
 
-Function pointers for runtime operations:
+Format crates use `Peek` to serialize and `Partial` to deserialize. They never see the concrete types — just shapes.
+
+## ValueVTable
+
+The `ValueVTable` contains function pointers for common operations: `clone_into`, `display`, `debug`, `parse`, `hash`, `partial_eq`, etc.
+
+The `value_vtable!` macro auto-detects which traits a type implements using autoderef specialization. If a type implements `Clone`, the vtable gets a clone function. If not, that slot is `None`.
+
+This lets you clone a value at runtime without a `Clone` bound — you check `shape.is(Characteristic::Clone)` and call the vtable function.
+
+## Characteristic
+
+`Characteristic` lets you query whether a shape supports certain operations:
 
 ```rust
-pub struct ValueVTable {
-    pub type_name: TypeNameFn,
-    pub marker_traits: MarkerTraits,
-    pub drop_in_place: Option<DropInPlaceFn>,
-    pub display: Option<DisplayFn>,
-    pub debug: Option<DebugFn>,
-    pub default_in_place: Option<DefaultInPlaceFn>,
-    pub clone_into: Option<CloneIntoFn>,
-    pub partial_eq: Option<PartialEqFn>,
-    pub partial_ord: Option<PartialOrdFn>,
-    pub ord: Option<OrdFn>,
-    pub hash: Option<HashFn>,
-    pub parse: Option<ParseFn>,
-    // ...
-}
-```
-
-The `value_vtable!` macro auto-detects which traits a type implements using autoderef specialization.
-
-## `Characteristic`
-
-Query whether a shape implements certain traits:
-
-```rust
-pub enum Characteristic {
-    Send, Sync, Copy, Eq, Unpin,
-    Clone, Display, Debug,
-    PartialEq, PartialOrd, Ord, Hash,
-    Default, FromStr,
-}
-
-// Usage
 if shape.is(Characteristic::Clone) {
-    // Safe to call clone_into
+    // Safe to call clone_into from the vtable
 }
 ```
+
+This is how facet provides "runtime trait bounds" — you can write generic code that adapts based on what the actual type supports.
