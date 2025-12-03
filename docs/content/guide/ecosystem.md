@@ -6,7 +6,7 @@ insert_anchor_links = "heading"
 
 Facet provides `Facet` trait implementations for many popular Rust crates via feature flags. Enable the feature, and those types work seamlessly with all facet format crates.
 
-## Third-Party Type Support
+## Third-Party type support
 
 Enable these features in your `Cargo.toml`:
 
@@ -15,7 +15,7 @@ Enable these features in your `Cargo.toml`:
 facet = { version = "{{ data.versions.facet }}", features = ["uuid", "chrono"] }
 ```
 
-### Available Features
+### Available features
 
 | Feature | Crate | Types |
 |---------|-------|-------|
@@ -30,7 +30,7 @@ facet = { version = "{{ data.versions.facet }}", features = ["uuid", "chrono"] }
 | `ordered-float` | [ordered-float](https://docs.rs/ordered-float) | `OrderedFloat<f32>`, `OrderedFloat<f64>`, `NotNan<f32>`, `NotNan<f64>` |
 | `ruint` | [ruint](https://docs.rs/ruint) | `Uint<BITS, LIMBS>`, `Bits<BITS, LIMBS>` |
 
-### Example: UUIDs
+### Example: uUIDs
 
 ```rust
 use facet::Facet;
@@ -46,7 +46,7 @@ let json = r#"{"id": "550e8400-e29b-41d4-a716-446655440000", "name": "Alice"}"#;
 let user: User = facet_json::from_str(json)?;
 ```
 
-### Example: DateTime with chrono
+### Example: dateTime with chrono
 
 ```rust
 use facet::Facet;
@@ -62,7 +62,7 @@ let json = r#"{"name": "deploy", "timestamp": "2024-01-15T10:30:00Z"}"#;
 let event: Event = facet_json::from_str(json)?;
 ```
 
-### Example: UTF-8 Paths with camino
+### Example: UTF-8 paths with camino
 
 ```rust
 use facet::Facet;
@@ -74,7 +74,7 @@ struct Config {
 }
 ```
 
-## Extended Tuple Support
+## Extended tuple support
 
 By default, facet supports tuples up to 4 elements. Enable `tuples-12` for tuples up to 12 elements:
 
@@ -83,7 +83,7 @@ By default, facet supports tuples up to 4 elements. Enable `tuples-12` for tuple
 facet = { version = "{{ data.versions.facet }}", features = ["tuples-12"] }
 ```
 
-## Function Pointer Support
+## Function pointer support
 
 Enable `fn-ptr` for `Facet` implementations on function pointer types:
 
@@ -92,11 +92,11 @@ Enable `fn-ptr` for `Facet` implementations on function pointer types:
 facet = { version = "{{ data.versions.facet }}", features = ["fn-ptr"] }
 ```
 
-## facet-args: CLI Argument Parsing
+## facet-args: CLI argument parsing
 
 Beyond basic argument parsing, `facet-args` provides utilities for help generation and shell completions.
 
-### Help Generation
+### Help generation
 
 Generate formatted help text from your type's structure and doc comments:
 
@@ -127,7 +127,7 @@ fn main() {
 }
 ```
 
-### Shell Completions
+### Shell completions
 
 Generate completion scripts for bash, zsh, and fish:
 
@@ -166,7 +166,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 See the [Args showcase](@/guide/showcases/args.md) for comprehensive examples including subcommands, error messages, and more.
 
-## no_std Support
+## no_std support
 
 Facet works in `no_std` environments. Disable default features and enable `alloc`:
 

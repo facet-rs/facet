@@ -4,10 +4,10 @@ title = "Args"
 
 <div class="showcase">
 
-## Successful Parsing
+## Successful parsing
 
 
-### Simple Arguments
+### Simple arguments
 
 <section class="scenario">
 <p class="description">Parse a struct with flags, options, and positional arguments.</p>
@@ -52,7 +52,7 @@ title = "Args"
 </div>
 </section>
 
-### Attached Short Flag Value
+### Attached short flag value
 
 <section class="scenario">
 <p class="description">Short flags can have their values attached directly without a space.</p>
@@ -97,7 +97,7 @@ title = "Args"
 </div>
 </section>
 
-### Boolean Flag with Explicit Value
+### Boolean flag with explicit value
 
 <section class="scenario">
 <p class="description">Boolean flags can be explicitly set to true or false using <code>=</code>.</p>
@@ -254,7 +254,7 @@ title = "Args"
 </div>
 </section>
 
-### Nested Subcommands
+### Nested subcommands
 
 <section class="scenario">
 <p class="description">Parse deeply nested subcommands like <code>git remote add</code>.</p>
@@ -366,10 +366,10 @@ title = "Args"
 </div>
 </section>
 
-## Help Generation
+## Help generation
 
 
-### Simple Help
+### Simple help
 
 <section class="scenario">
 <p class="description">Auto-generated help text from struct definition and doc comments.</p>
@@ -424,7 +424,7 @@ title = "Args"
 </div>
 </section>
 
-### Help with Subcommands
+### Help with subcommands
 
 <section class="scenario">
 <p class="description">Help text automatically lists available subcommands with descriptions.</p>
@@ -543,10 +543,10 @@ title = "Args"
 </div>
 </section>
 
-## Shell Completions
+## Shell completions
 
 
-### Bash Completions
+### Bash completions
 
 <section class="scenario">
 <p class="description">Generated Bash completion script for tab-completion support.</p>
@@ -613,7 +613,7 @@ title = "Args"
 </div>
 </section>
 
-### Zsh Completions
+### Zsh completions
 
 <section class="scenario">
 <p class="description">Generated Zsh completion script with argument descriptions.</p>
@@ -680,7 +680,7 @@ title = "Args"
 </div>
 </section>
 
-### Fish Completions
+### Fish completions
 
 <section class="scenario">
 <p class="description">Generated Fish shell completion script.</p>
@@ -732,10 +732,10 @@ title = "Args"
 </div>
 </section>
 
-## Error Diagnostics
+## Error diagnostics
 
 
-### Unknown Flag
+### Unknown flag
 
 <section class="scenario">
 <p class="description">Error when an unrecognized flag is provided.</p>
@@ -784,7 +784,7 @@ title = "Args"
 </div>
 </section>
 
-### Unknown Flag with Suggestion
+### Unknown flag with suggestion
 
 <section class="scenario">
 <p class="description">When the flag name is close to a valid one, a suggestion is offered.</p>
@@ -841,7 +841,7 @@ title = "Args"
 </div>
 </section>
 
-### Invalid Short Flag
+### Invalid short flag
 
 <section class="scenario">
 <p class="description">Boolean short flags cannot have trailing characters attached.</p>
@@ -890,7 +890,7 @@ title = "Args"
 </div>
 </section>
 
-### Triple Dash Flag
+### Triple dash flag
 
 <section class="scenario">
 <p class="description">Flags with too many dashes are rejected.</p>
@@ -943,7 +943,7 @@ title = "Args"
 </div>
 </section>
 
-### Single Dash with Long Name
+### Single dash with long name
 
 <section class="scenario">
 <p class="description">Long flag names require double dashes.</p>
@@ -992,7 +992,7 @@ title = "Args"
 </div>
 </section>
 
-### Missing Value
+### Missing value
 
 <section class="scenario">
 <p class="description">Error when a flag that requires a value doesn't get one.</p>
@@ -1041,7 +1041,7 @@ title = "Args"
 </div>
 </section>
 
-### Missing Required Argument
+### Missing required argument
 
 <section class="scenario">
 <p class="description">Error when a required positional argument is not provided.</p>
@@ -1088,7 +1088,7 @@ title = "Args"
 </div>
 </section>
 
-### Unexpected Positional Argument
+### Unexpected positional argument
 
 <section class="scenario">
 <p class="description">Error when a positional argument is provided but not expected.</p>
@@ -1151,7 +1151,7 @@ title = "Args"
 </div>
 </section>
 
-### Unknown Subcommand
+### Unknown subcommand
 
 <section class="scenario">
 <p class="description">Error when an unrecognized subcommand is provided, with available options listed.</p>
@@ -1264,7 +1264,7 @@ title = "Args"
 </div>
 </section>
 
-### Missing Subcommand
+### Missing subcommand
 
 <section class="scenario">
 <p class="description">Error when a required subcommand is not provided.</p>
@@ -1378,7 +1378,7 @@ title = "Args"
 </div>
 </section>
 
-### Missing Nested Subcommand Argument
+### Missing nested subcommand argument
 
 <section class="scenario">
 <p class="description">Error when a required argument in a nested subcommand is missing.</p>
@@ -1489,7 +1489,7 @@ title = "Args"
 </div>
 </section>
 
-### Invalid Value Type
+### Invalid value type
 
 <section class="scenario">
 <p class="description">Error when a value cannot be parsed as the expected type.</p>

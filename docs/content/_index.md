@@ -22,7 +22,7 @@ From this single derive, you get:
 - **Diffing** — Structural comparison between values
 - **Introspection** — Query type information at runtime
 
-## Choose Your Path
+## Choose your path
 
 <div class="guide-cards">
 <a class="guide-card" href="/guide">
@@ -51,7 +51,7 @@ From this single derive, you get:
 </a>
 </div>
 
-## Quick Links
+## Quick links
 
 - [Format Support Matrix](@/format-crate-matrix.md) — Feature comparison across format crates
 - [Extension Attributes](@/extension-attributes.md) — Format-specific attribute namespaces

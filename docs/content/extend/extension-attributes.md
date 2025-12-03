@@ -8,7 +8,7 @@ Extension attributes let your crate define custom `#[facet(...)]` attributes wit
 
 For the full guide on creating extension attributes, see this page; for a quick consumer reference, see [Extension Attributes](@/extension-attributes.md).
 
-## Using Extension Attributes
+## Using extension attributes
 
 ```rust
 use facet::Facet;
@@ -30,7 +30,7 @@ use facet_kdl as kdl;  // Enables kdl:: prefix
 use facet_args as args;  // Enables args:: prefix
 ```
 
-## Declaring Attributes with `define_attr_grammar!`
+## Declaring attributes with `define_attr_grammar!`
 
 Use the [`define_attr_grammar!`](https://docs.rs/facet/latest/facet/macro.define_attr_grammar.html) macro to declare your attribute grammar. Here's how [`facet-kdl`](https://docs.rs/facet-kdl) does it:
 
@@ -63,7 +63,7 @@ This generates:
 2. Compile-time parsing that validates attribute usage
 3. Type-safe data storage accessible at runtime
 
-### Grammar Components
+### Grammar components
 
 | Component | Purpose | Example |
 |-----------|---------|---------|
@@ -71,9 +71,9 @@ This generates:
 | `crate_path ...;` | Path to your crate for macro hygiene | `crate_path ::facet_kdl;` |
 | `pub enum Attr { ... }` | The attribute variants | See above |
 
-### Variant Types
+### Variant types
 
-#### Unit Variants (Markers)
+#### Unit variants (markers)
 
 Simple flags with no arguments:
 
@@ -86,7 +86,7 @@ pub enum Attr {
 
 Usage: `#[facet(kdl::child)]`
 
-#### String Values
+#### String values
 
 Attributes that take a string:
 
@@ -99,7 +99,7 @@ pub enum Attr {
 
 Usage: `#[facet(rename = "new_name")]`
 
-#### Optional Characters
+#### Optional characters
 
 For single-character flags (like CLI short options):
 
@@ -112,7 +112,7 @@ pub enum Attr {
 
 Usage: `#[facet(args::short)]` or `#[facet(args::short = 'v')]`
 
-### Advanced: How Built-in Attributes Work
+### Advanced: how built-in attributes work
 
 The built-in facet attributes use additional payload types not typically needed by extension crates. For reference:
 
@@ -147,7 +147,7 @@ define_attr_grammar! {
 
 These special payload types enable powerful features but are primarily for core facet development.
 
-## Compile-Time Validation
+## Compile-Time validation
 
 One of the major benefits of `define_attr_grammar!`: **typos are caught at compile time** with helpful suggestions.
 
@@ -170,7 +170,7 @@ error: unknown attribute `chld`, did you mean `child`?
 
 The system uses string similarity to suggest corrections.
 
-## Querying Attributes at Runtime
+## Querying attributes at runtime
 
 When your format crate needs to check for attributes, use the `get_as` method on [`ExtensionAttr`](https://docs.rs/facet-core/latest/facet_core/struct.ExtensionAttr.html):
 
@@ -224,7 +224,7 @@ for attr in field.attributes {
 - Namespaces prevent collisions across format crates.
 - Built-in attributes remain short (`#[facet(rename = "...")]`, etc.).
 
-## Real-World Examples
+## Real-World examples
 
 ### facet-args
 
@@ -296,7 +296,7 @@ struct Config {
 }
 ```
 
-## Next Steps
+## Next steps
 - Learn what information `Shape` exposes: [Shape](@/extend/shape.md).
 - See how to read values: [Peek](@/extend/peek.md).
 - Build values (strict vs deferred): [Partial](@/extend/partial.md).

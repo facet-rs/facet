@@ -6,7 +6,7 @@ insert_anchor_links = "heading"
 
 Complete reference for `#[facet(...)]` attributes.
 
-## Container Attributes
+## Container attributes
 
 These attributes apply to structs and enums.
 
@@ -166,7 +166,7 @@ enum MyEnum {
 struct TupleStruct(u32, String);
 ```
 
-## Enum Attributes
+## Enum attributes
 
 These attributes control enum serialization format.
 
@@ -212,7 +212,7 @@ enum Message {
 // {"t": "Text", "c": "hello"}
 ```
 
-## Field Attributes
+## Field attributes
 
 These attributes apply to struct fields.
 
@@ -550,11 +550,11 @@ struct Container {
 }
 ```
 
-## Extension Attributes
+## Extension attributes
 
 Format crates can define their own namespaced attributes. See the [Extend guide](/extend/) for details.
 
-### KDL Attributes
+### KDL attributes
 
 ```rust
 use facet_kdl as kdl;
@@ -572,7 +572,7 @@ struct Dependency {
 }
 ```
 
-### Args Attributes
+### Args attributes
 
 ```rust
 use facet_args as args;
@@ -589,7 +589,7 @@ struct Cli {
 
 See each format crate's documentation for available extension attributes.
 
-## Next Steps
+## Next steps
 
 - Check the [Showcases](@/guide/showcases/_index.md) to see these attributes in action
 - Read [Comparison with serde](@/guide/migration/_index.md) if you're migrating

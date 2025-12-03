@@ -7,9 +7,9 @@ Extension attributes allow format crates to define custom `#[facet(...)]` attrib
 
 For the full guide on creating extension attributes, see [Extend → Extension Attributes](/extend/#extension-attributes).
 
-## Quick Reference
+## Quick reference
 
-### Using Extension Attributes
+### Using extension attributes
 
 ```rust
 use facet::Facet;
@@ -32,7 +32,7 @@ use facet_kdl as kdl;  // Enables kdl:: prefix
 use facet_args as args;  // Enables args:: prefix
 ```
 
-### Available Namespaces
+### Available namespaces
 
 | Crate | Namespace | Example Attributes |
 |-------|-----------|-------------------|
@@ -40,7 +40,7 @@ use facet_args as args;  // Enables args:: prefix
 | [`facet-args`](https://docs.rs/facet-args) | `args` | `positional`, `named`, `short`, `subcommand` |
 | [`facet-yaml`](https://docs.rs/facet-yaml) | `serde` | `rename` |
 
-### Creating Your Own
+### Creating your own
 
 Use [`define_attr_grammar!`](https://docs.rs/facet/latest/facet/macro.define_attr_grammar.html) in your crate:
 

@@ -4,7 +4,7 @@ title = "KDL"
 
 <div class="showcase">
 
-## Basic Node with Properties
+## Basic node with properties
 
 <section class="scenario">
 <p class="description">Simple struct with <code>#[facet(kdl::property)]</code> fields becomes KDL properties.</p>
@@ -49,7 +49,7 @@ title = "KDL"
 </div>
 </section>
 
-## Node with Argument
+## Node with argument
 
 <section class="scenario">
 <p class="description"><code>#[facet(kdl::argument)]</code> field becomes a positional argument after the node name.<br>Result: <code>server "web-01" host="localhost" port=8080</code></p>
@@ -94,7 +94,7 @@ title = "KDL"
 </div>
 </section>
 
-## Nested Nodes (Children)
+## Nested nodes (Children)
 
 <section class="scenario">
 <p class="description"><code>#[facet(kdl::child)]</code> fields become nested child nodes in braces.<br>The address struct becomes a child node of company.</p>
@@ -149,7 +149,7 @@ title = "KDL"
 </div>
 </section>
 
-## Vec as Repeated Children
+## Vec as repeated children
 
 <section class="scenario">
 <p class="description"><code>#[facet(kdl::children)]</code> on a <code>Vec</code> field creates repeated child nodes.<br>Each <code>Member</code> becomes a separate <code>member</code> node.</p>
@@ -202,7 +202,7 @@ title = "KDL"
 </div>
 </section>
 
-## Complex Nested Config
+## Complex nested config
 
 <section class="scenario">
 <p class="description">A realistic application config showing:<br>- Top-level properties (<code>debug</code>, <code>features</code>)<br>- Child nodes with arguments (<code>server</code>, <code>database</code>)<br>- Nested children (<code>tls</code> inside <code>server</code>)<br>- Optional children (<code>tls</code> is <code>Option&lt;TlsConfig&gt;</code>)</p>
@@ -280,7 +280,7 @@ title = "KDL"
 </div>
 </section>
 
-## Roundtrip: Rust → KDL → Rust
+## Roundtrip: rust → KDL → rust
 
 <section class="scenario">
 <p class="description">Demonstrates serialization followed by deserialization.<br>The value survives the roundtrip intact.</p>
@@ -325,7 +325,7 @@ title = "KDL"
 </div>
 </section>
 
-## Ambiguous Flattened Enum
+## Ambiguous flattened enum
 
 <section class="scenario">
 <p class="description">Both TypeA and TypeB variants have identical fields (value, priority).<br>The solver cannot determine which variant to use.</p>
@@ -381,7 +381,7 @@ title = "KDL"
 </div>
 </section>
 
-## NoMatch with Per-Candidate Failures
+## NoMatch with per-Candidate failures
 
 <section class="scenario">
 <p class="description">Provide field names that don't exactly match any variant.<br>The solver shows WHY each candidate failed with 'did you mean?' suggestions.</p>
@@ -483,7 +483,7 @@ title = "KDL"
 </div>
 </section>
 
-## Unknown Fields with 'Did You Mean?' Suggestions
+## Unknown fields with 'Did you mean?' suggestions
 
 <section class="scenario">
 <p class="description">Misspell field names and see the solver suggest corrections!<br>Uses Jaro-Winkler similarity to find close matches.</p>
@@ -575,7 +575,7 @@ title = "KDL"
 </div>
 </section>
 
-## Value Overflow Detection
+## Value overflow detection
 
 <section class="scenario">
 <p class="description">When a value doesn't fit ANY candidate type, the solver reports it.<br>count=5000000000 exceeds both u8 (max 255) and u32 (max ~4 billion).</p>
@@ -629,7 +629,7 @@ title = "KDL"
 </div>
 </section>
 
-## Multi-Line Config with Typos
+## Multi-Line config with typos
 
 <section class="scenario">
 <p class="description">A more realistic multi-line configuration file with several typos.<br>Shows how the solver sorts candidates by closeness to the input.</p>
@@ -758,7 +758,7 @@ title = "KDL"
 </div>
 </section>
 
-## Unknown Field
+## Unknown field
 
 <section class="scenario">
 <p class="description">KDL contains a property that doesn't exist in the target struct.<br>With #[facet(deny_unknown_fields)], this is an error.</p>
@@ -804,7 +804,7 @@ title = "KDL"
 </div>
 </section>
 
-## Missing Required Field
+## Missing required field
 
 <section class="scenario">
 <p class="description">KDL is missing a required field that has no default.</p>

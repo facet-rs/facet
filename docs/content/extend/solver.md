@@ -6,7 +6,7 @@ insert_anchor_links = "heading"
 
 The **solver** helps format crates implement `#[facet(flatten)]` and `#[facet(untagged)]` correctly, efficiently, and with useful diagnostics. It answers the question: "given the fields I've seen so far, which variant(s) could this be?"
 
-## The Problem
+## The problem
 
 Consider a type with a flattened enum:
 
@@ -50,7 +50,7 @@ Without a solver, you'd have to:
 
 This is what serde does, and it has fundamental problems (more on that later).
 
-## The Solution: Configuration-Based Disambiguation
+## The solution: configuration-based disambiguation
 
 The solver pre-computes all valid "configurations" — unique combinations of fields that can appear together. Then it uses an inverted index to quickly narrow down which configuration(s) match as you see fields.
 
@@ -74,7 +74,7 @@ The solver pre-computes all valid "configurations" — unique combinations of fi
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Basic Usage
+## Basic usage
 
 ```rust
 use facet_solver::{KeyResult, Schema, Solver};
@@ -102,7 +102,7 @@ match solver.see_key("content") {
 }
 ```
 
-## How Disambiguation Works
+## How disambiguation works
 
 The solver maintains a bitmask of candidate configurations. Each time you report a key, it ANDs the bitmask with the set of configurations that have that key:
 
@@ -120,7 +120,7 @@ see_key("content"):
 
 This is O(1) per key lookup and O(configs/64) for the bitwise AND — extremely fast.
 
-## Nested Field Disambiguation
+## Nested field disambiguation
 
 Sometimes top-level keys don't distinguish variants:
 
@@ -196,7 +196,7 @@ match solver.probe_key(&["inner"], "content") {
 }
 ```
 
-## Type-Based Disambiguation
+## Type-based disambiguation
 
 Sometimes variants have **identical keys** but different value types:
 
@@ -265,7 +265,7 @@ assert_eq!(solver.candidates().len(), 1);  // Solved!
 
 This enables **true streaming deserialization**: you never buffer values, never parse speculatively, and never lose precision.
 
-## Performance Characteristics
+## Performance characteristics
 
 | Operation | Complexity | Typical Time |
 |-----------|------------|--------------|
@@ -280,7 +280,7 @@ The solver uses:
 - **Zero allocation**: Schema built once, solving just manipulates stack-allocated bitmasks
 - **Early termination**: Stops immediately when one candidate remains
 
-## Why Not Buffer Like Serde?
+## Why not buffer like serde?
 
 Serde's `#[serde(flatten)]` and `#[serde(untagged)]` buffer values into an intermediate `Content` enum, then re-deserialize. This has fundamental problems:
 
@@ -310,7 +310,7 @@ Facet's approach:
                     • Zero-copy possible
 ```
 
-### Issues Facet Resolves
+### Issues facet resolves
 
 | Serde Issue | Problem | Facet's Solution |
 |-------------|---------|------------------|
@@ -321,7 +321,7 @@ Facet's approach:
 | [json#721](https://github.com/serde-rs/json/issues/721) | `arbitrary_precision` + `flatten` loses precision | No `Value` intermediary |
 | [json#1155](https://github.com/serde-rs/json/issues/1155) | `u128` in flattened struct fails | Direct deserialization |
 
-## Integration Pattern
+## Integration pattern
 
 Here's how a format crate typically integrates the solver:
 
@@ -356,7 +356,7 @@ fn deserialize_object<T: Facet>(input: &str) -> Result<T, Error> {
 }
 ```
 
-## API Reference
+## API reference
 
 ### Schema
 
@@ -412,7 +412,7 @@ pub enum KeyResult<'a> {
 }
 ```
 
-## Next Steps
+## Next steps
 
 - See [Build a Format Crate](@/extend/format-crate.md) for the full architecture
 - Check the [facet-json source](https://github.com/facet-rs/facet/tree/main/facet-json) for a real integration
