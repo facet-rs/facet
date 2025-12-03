@@ -40,11 +40,11 @@ structstruck::strike! {
     struct Config {
         name: String,
         port: u16,
-        limits: struct {
+        limits: struct Limits {
             connections: u32,
             requests_per_second: u32,
         },
-        features: Option<struct {
+        features: Option<struct Features {
             tracing: bool,
             metrics: bool,
         }>,
@@ -53,3 +53,5 @@ structstruck::strike! {
 ```
 
 Same result, less scrolling. The `each[derive(...)]` applies to all generated types.
+
+You can omit the struct name and it will be inferred from the field name (`limits: struct { ... }` becomes `Limits`).
