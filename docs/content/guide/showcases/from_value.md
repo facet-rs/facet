@@ -4,10 +4,13 @@ title = "From Value"
 
 <div class="showcase">
 
-## Happy path
+[`facet-value`](https://docs.rs/facet-value) provides a dynamic `Value` type and conversion to/from any `Facet` type. Use it for format-agnostic data manipulation, testing, or bridging between different serialization formats.
 
 
-### Simple struct
+## Happy Path
+
+
+### Simple Struct
 
 <section class="scenario">
 <p class="description">Deserialize a <code>Value</code> map into a struct with basic fields.</p>
@@ -42,7 +45,7 @@ title = "From Value"
 </div>
 </section>
 
-### Nested structs
+### Nested Structs
 
 <section class="scenario">
 <p class="description">Nested structs are deserialized recursively.</p>
@@ -111,7 +114,7 @@ title = "From Value"
 </div>
 </section>
 
-### Unit enum variant
+### Unit Enum Variant
 
 <section class="scenario">
 <p class="description">A string value deserializes into a unit variant.</p>
@@ -139,7 +142,7 @@ title = "From Value"
 </div>
 </section>
 
-### Tuple enum variant
+### Tuple Enum Variant
 
 <section class="scenario">
 <p class="description">Externally tagged enum: <code>{"Variant": content}</code>.</p>
@@ -173,7 +176,7 @@ title = "From Value"
 </div>
 </section>
 
-### Struct enum variant
+### Struct Enum Variant
 
 <section class="scenario">
 <p class="description">Struct variants deserialize with named fields.</p>
@@ -213,7 +216,7 @@ title = "From Value"
 </div>
 </section>
 
-### Vec deserialization
+### Vec Deserialization
 
 <section class="scenario">
 <p class="description">Arrays deserialize into <code>Vec&lt;T&gt;</code>.</p>
@@ -245,7 +248,7 @@ title = "From Value"
 </div>
 </section>
 
-### Fixed-Size array
+### Fixed-Size Array
 
 <section class="scenario">
 <p class="description">Arrays with exact length deserialize into <code>[T; N]</code>.</p>
@@ -294,14 +297,14 @@ title = "From Value"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
-  "<span style="color:rgb(158,206,106)">z</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">30</span><span style="opacity:0.7">,</span>
   "<span style="color:rgb(158,206,106)">x</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">10</span><span style="opacity:0.7">,</span>
   "<span style="color:rgb(158,206,106)">y</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">20</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">z</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">30</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 </section>
 
-### Nested collections
+### Nested Collections
 
 <section class="scenario">
 <p class="description"><code>null</code> values become <code>None</code> in <code>Option&lt;T&gt;</code>.</p>
@@ -333,7 +336,7 @@ title = "From Value"
 </div>
 </section>
 
-### Default field values
+### Default Field Values
 
 <section class="scenario">
 <p class="description">Fields marked with <code>#[facet(default)]</code> use <code>Default::default()</code> when missing.</p>
@@ -369,7 +372,7 @@ title = "From Value"
 ## Errors
 
 
-### Error: type mismatch
+### Error: Type Mismatch
 
 <section class="scenario">
 <p class="description">Trying to deserialize a string as an integer.</p>
@@ -388,7 +391,7 @@ Error: 
 </div>
 </section>
 
-### Error: number out of range
+### Error: Number Out of Range
 
 <section class="scenario">
 <p class="description">Value 1000 is too large for u8 (max 255).</p>
@@ -407,7 +410,7 @@ Error: 
 </div>
 </section>
 
-### Error: wrong array length
+### Error: Wrong Array Length
 
 <section class="scenario">
 <p class="description">Array has 4 elements but target type expects exactly 3.</p>
@@ -430,7 +433,7 @@ Error: 
 </div>
 </section>
 
-### Error: invalid Enum variant
+### Error: Invalid Enum Variant
 
 <section class="scenario">
 <p class="description">"Unknown" is not a valid variant of Status.</p>
@@ -462,7 +465,7 @@ Error: 
 </div>
 </section>
 
-### Error: expected object, got array
+### Error: Expected Object, Got Array
 
 <section class="scenario">
 <p class="description">Cannot deserialize an array as a struct.</p>

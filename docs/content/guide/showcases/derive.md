@@ -1,0 +1,321 @@
++++
+title = "Derive Macro Diagnostics"
+slug = "derive-diagnostics"
++++
+
+<div class="showcase">
+
+The `#[derive(Facet)]` macro provides helpful compile-time error messages when attributes are used incorrectly. This showcase demonstrates the various error scenarios and their diagnostics.
+
+
+## Representation Errors
+
+
+### Conflicting repr: C and Rust
+
+<section class="scenario">
+<p class="description">Using both <code>#[repr(C)]</code> and <code>#[repr(Rust)]</code> is not allowed.<br>Facet defers to rustc's E0566 error for this - no duplicate diagnostic.</p>
+<div class="input">
+<h4>Rust Input</h4>
+<pre style="background-color:#1a1b26;">
+<span style="color:#89ddff;">use </span><span style="color:#c0caf5;">facet</span><span style="color:#89ddff;">::</span><span style="color:#c0caf5;">Facet</span><span style="color:#89ddff;">;
+</span><span style="color:#c0caf5;">
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">C</span><span style="color:#89ddff;">,</span><span style="color:#c0caf5;"> Rust</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">enum </span><span style="color:#c0caf5;">Status </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    Active</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">    Inactive</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">}
+</span><span style="color:#c0caf5;">
+</span><span style="color:#bb9af7;">fn </span><span style="color:#7aa2f7;">main</span><span style="color:#9abdf5;">() {}
+</span></pre>
+
+</div>
+<div class="compiler-error">
+<h4>Compiler Error</h4>
+<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error[E0566]</span><span style="font-weight:bold">: conflicting representation hints</span>
+ <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:4:8
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+<span style="font-weight:bold"></span><span style="color:#61afef">4</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[repr(C, Rust)]
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>        <span style="font-weight:bold"></span><span style="color:#e06c75">^</span>  <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^</span>
+
+<span style="font-weight:bold">For more information about this error, try &#96;rustc --explain E0566&#96;.</span>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
+</div>
+</section>
+
+### Conflicting repr: C and transparent
+
+<section class="scenario">
+<p class="description">Combining <code>#[repr(C)]</code> with <code>#[repr(transparent)]</code> is not valid.<br>Facet defers to rustc's E0692 error for this - no duplicate diagnostic.</p>
+<div class="input">
+<h4>Rust Input</h4>
+<pre style="background-color:#1a1b26;">
+<span style="color:#89ddff;">use </span><span style="color:#c0caf5;">facet</span><span style="color:#89ddff;">::</span><span style="color:#c0caf5;">Facet</span><span style="color:#89ddff;">;
+</span><span style="color:#c0caf5;">
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">C</span><span style="color:#89ddff;">,</span><span style="color:#c0caf5;"> transparent</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Wrapper</span><span style="color:#9abdf5;">(</span><span style="color:#bb9af7;">u32</span><span style="color:#9abdf5;">)</span><span style="color:#89ddff;">;
+</span><span style="color:#c0caf5;">
+</span><span style="color:#bb9af7;">fn </span><span style="color:#7aa2f7;">main</span><span style="color:#9abdf5;">() {}
+</span></pre>
+
+</div>
+<div class="compiler-error">
+<h4>Compiler Error</h4>
+<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error[E0692]</span><span style="font-weight:bold">: transparent struct cannot have other repr hints</span>
+ <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:4:8
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+<span style="font-weight:bold"></span><span style="color:#61afef">4</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[repr(C, transparent)]
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>        <span style="font-weight:bold"></span><span style="color:#e06c75">^</span>  <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^^^^^</span>
+
+<span style="font-weight:bold">For more information about this error, try &#96;rustc --explain E0692&#96;.</span>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
+</div>
+</section>
+
+### Conflicting repr: transparent and primitive
+
+<section class="scenario">
+<p class="description">Using <code>#[repr(transparent)]</code> with a primitive type like <code>u8</code> is not allowed.<br>Facet defers to rustc's E0692 error for this - no duplicate diagnostic.</p>
+<div class="input">
+<h4>Rust Input</h4>
+<pre style="background-color:#1a1b26;">
+<span style="color:#89ddff;">use </span><span style="color:#c0caf5;">facet</span><span style="color:#89ddff;">::</span><span style="color:#c0caf5;">Facet</span><span style="color:#89ddff;">;
+</span><span style="color:#c0caf5;">
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">transparent</span><span style="color:#89ddff;">,</span><span style="color:#c0caf5;"> u8</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">enum </span><span style="color:#c0caf5;">Status </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    Active</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">    Inactive</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">}
+</span><span style="color:#c0caf5;">
+</span><span style="color:#bb9af7;">fn </span><span style="color:#7aa2f7;">main</span><span style="color:#9abdf5;">() {}
+</span></pre>
+
+</div>
+<div class="compiler-error">
+<h4>Compiler Error</h4>
+<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error[E0692]</span><span style="font-weight:bold">: transparent enum cannot have other repr hints</span>
+ <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:4:8
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+<span style="font-weight:bold"></span><span style="color:#61afef">4</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[repr(transparent, u8)]
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>        <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^^^^^</span>  <span style="font-weight:bold"></span><span style="color:#e06c75">^^</span>
+
+<span style="font-weight:bold"></span><span style="color:#e06c75">error[E0731]</span><span style="font-weight:bold">: transparent enum needs exactly one variant, but has 2</span>
+ <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:5:1
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+<span style="font-weight:bold"></span><span style="color:#61afef">5</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> enum Status {
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span> <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^^^^^</span> <span style="font-weight:bold"></span><span style="color:#e06c75">needs exactly one variant, but has 2</span>
+<span style="font-weight:bold"></span><span style="color:#61afef">6</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span>     Active,
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>     <span style="font-weight:bold"></span><span style="color:#61afef">------</span> <span style="font-weight:bold"></span><span style="color:#61afef">variant here</span>
+<span style="font-weight:bold"></span><span style="color:#61afef">7</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span>     Inactive,
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>     <span style="font-weight:bold"></span><span style="color:#61afef">--------</span> <span style="font-weight:bold"></span><span style="color:#61afef">too many variants in &#96;Status&#96;</span>
+
+<span style="font-weight:bold">Some errors have detailed explanations: E0692, E0731.</span>
+<span style="font-weight:bold">For more information about an error, try &#96;rustc --explain E0692&#96;.</span>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 2 previous errors</code></pre>
+</div>
+</section>
+
+### Multiple primitive types in repr
+
+<section class="scenario">
+<p class="description">Specifying multiple primitive types in <code>#[repr(...)]</code> is not allowed.<br>Facet defers to rustc's E0566 error for this - no duplicate diagnostic.</p>
+<div class="input">
+<h4>Rust Input</h4>
+<pre style="background-color:#1a1b26;">
+<span style="color:#89ddff;">use </span><span style="color:#c0caf5;">facet</span><span style="color:#89ddff;">::</span><span style="color:#c0caf5;">Facet</span><span style="color:#89ddff;">;
+</span><span style="color:#c0caf5;">
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">u8</span><span style="color:#89ddff;">,</span><span style="color:#c0caf5;"> u16</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">enum </span><span style="color:#c0caf5;">Priority </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    Low</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">    Medium</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">    High</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">}
+</span><span style="color:#c0caf5;">
+</span><span style="color:#bb9af7;">fn </span><span style="color:#7aa2f7;">main</span><span style="color:#9abdf5;">() {}
+</span></pre>
+
+</div>
+<div class="compiler-error">
+<h4>Compiler Error</h4>
+<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error[E0566]</span><span style="font-weight:bold">: conflicting representation hints</span>
+ <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:4:8
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+<span style="font-weight:bold"></span><span style="color:#61afef">4</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[repr(u8, u16)]
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>        <span style="font-weight:bold"></span><span style="color:#e06c75">^^</span>  <span style="font-weight:bold"></span><span style="color:#e06c75">^^^</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">warning</span>: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: for more information, see issue #68585 &lt;https://github.com/rust-lang/rust/issues/68585&gt;
+  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: &#96;#[deny(conflicting_repr_hints)]&#96; on by default
+
+<span style="font-weight:bold"></span><span style="color:#e5c07b">warning</span><span style="font-weight:bold">: enum &#96;Priority&#96; is never used</span>
+ <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:5:6
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+<span style="font-weight:bold"></span><span style="color:#61afef">5</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> enum Priority {
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>      <span style="font-weight:bold"></span><span style="color:#e5c07b">^^^^^^^^</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: &#96;#[warn(dead_code)]&#96; on by default
+
+<span style="font-weight:bold">For more information about this error, try &#96;rustc --explain E0566&#96;.</span>
+<span style="font-weight:bold"></span><span style="color:#e5c07b">warning</span><span style="font-weight:bold">:</span> &#96;test&#96; (bin "test") generated 1 warning
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 2 previous errors; 1 warning emitted</code></pre>
+</div>
+</section>
+
+### Unsupported repr (facet-specific)
+
+<section class="scenario">
+<p class="description">Using <code>#[repr(packed)]</code> is valid Rust, but facet doesn't support it.<br>This is a facet-specific error with a helpful message.</p>
+<div class="input">
+<h4>Rust Input</h4>
+<pre style="background-color:#1a1b26;">
+<span style="color:#89ddff;">use </span><span style="color:#c0caf5;">facet</span><span style="color:#89ddff;">::</span><span style="color:#c0caf5;">Facet</span><span style="color:#89ddff;">;
+</span><span style="color:#c0caf5;">
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">packed</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Data </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">a</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u8</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">b</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u32</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">}
+</span><span style="color:#c0caf5;">
+</span><span style="color:#bb9af7;">fn </span><span style="color:#7aa2f7;">main</span><span style="color:#9abdf5;">() {}
+</span></pre>
+
+</div>
+<div class="compiler-error">
+<h4>Compiler Error</h4>
+<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: proc-macro derive panicked</span>
+ <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:3:10
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+<span style="font-weight:bold"></span><span style="color:#61afef">3</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[derive(Facet)]
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>          <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">help</span>: message: unsupported repr &#96;packed&#96; - facet only supports C, Rust, transparent, and primitive integer types
+
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
+</div>
+</section>
+
+### Multiple #[repr] attributes
+
+<section class="scenario">
+<p class="description">Having multiple separate <code>#[repr(...)]</code> attributes triggers rustc's E0566.<br>Facet defers to rustc for this - no duplicate diagnostic.</p>
+<div class="input">
+<h4>Rust Input</h4>
+<pre style="background-color:#1a1b26;">
+<span style="color:#89ddff;">use </span><span style="color:#c0caf5;">facet</span><span style="color:#89ddff;">::</span><span style="color:#c0caf5;">Facet</span><span style="color:#89ddff;">;
+</span><span style="color:#c0caf5;">
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">C</span><span style="color:#9abdf5;">)]
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">u8</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">enum </span><span style="color:#c0caf5;">Status </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    Active</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">    Inactive</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">}
+</span><span style="color:#c0caf5;">
+</span><span style="color:#bb9af7;">fn </span><span style="color:#7aa2f7;">main</span><span style="color:#9abdf5;">() {}
+</span></pre>
+
+</div>
+<div class="compiler-error">
+<h4>Compiler Error</h4>
+<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error[E0566]</span><span style="font-weight:bold">: conflicting representation hints</span>
+ <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:4:8
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+<span style="font-weight:bold"></span><span style="color:#61afef">4</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[repr(C)]
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>        <span style="font-weight:bold"></span><span style="color:#e06c75">^</span>
+<span style="font-weight:bold"></span><span style="color:#61afef">5</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[repr(u8)]
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>        <span style="font-weight:bold"></span><span style="color:#e06c75">^^</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">warning</span>: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: for more information, see issue #68585 &lt;https://github.com/rust-lang/rust/issues/68585&gt;
+  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: &#96;#[deny(conflicting_repr_hints)]&#96; on by default
+
+<span style="font-weight:bold"></span><span style="color:#e5c07b">warning</span><span style="font-weight:bold">: enum &#96;Status&#96; is never used</span>
+ <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:6:6
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+<span style="font-weight:bold"></span><span style="color:#61afef">6</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> enum Status {
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>      <span style="font-weight:bold"></span><span style="color:#e5c07b">^^^^^^</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: &#96;#[warn(dead_code)]&#96; on by default
+
+<span style="font-weight:bold">For more information about this error, try &#96;rustc --explain E0566&#96;.</span>
+<span style="font-weight:bold"></span><span style="color:#e5c07b">warning</span><span style="font-weight:bold">:</span> &#96;test&#96; (bin "test") generated 1 warning
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 2 previous errors; 1 warning emitted</code></pre>
+</div>
+</section>
+
+## Rename Errors
+
+
+### Unknown rename_all rule (facet-specific)
+
+<section class="scenario">
+<p class="description">Using an unknown case convention in <code>rename_all</code> is a facet-specific error.<br>Valid options: <code>camelCase</code>, <code>snake_case</code>, <code>kebab-case</code>, <code>PascalCase</code>, <code>SCREAMING_SNAKE_CASE</code>.</p>
+<div class="input">
+<h4>Rust Input</h4>
+<pre style="background-color:#1a1b26;">
+<span style="color:#89ddff;">use </span><span style="color:#c0caf5;">facet</span><span style="color:#89ddff;">::</span><span style="color:#c0caf5;">Facet</span><span style="color:#89ddff;">;
+</span><span style="color:#c0caf5;">
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">rename_all </span><span style="color:#89ddff;">= &quot;</span><span style="color:#9ece6a;">SCREAMING_SNAKE</span><span style="color:#89ddff;">&quot;</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Config </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">user_name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">max_retries</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u32</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">}
+</span><span style="color:#c0caf5;">
+</span><span style="color:#bb9af7;">fn </span><span style="color:#7aa2f7;">main</span><span style="color:#9abdf5;">() {}
+</span></pre>
+
+</div>
+<div class="compiler-error">
+<h4>Compiler Error</h4>
+<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: proc-macro derive panicked</span>
+ <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:3:10
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+<span style="font-weight:bold"></span><span style="color:#61afef">3</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[derive(Facet)]
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>          <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">help</span>: message: Unknown #[facet(rename_all = ...)] rule: SCREAMING_SNAKE
+
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
+</div>
+</section>
+
+### rename on container (facet-specific)
+
+<section class="scenario">
+<p class="description">Using <code>#[facet(rename = "...")]</code> on a struct/enum is a facet-specific error.<br>A container's name is controlled by its parent field, not by itself.</p>
+<div class="input">
+<h4>Rust Input</h4>
+<pre style="background-color:#1a1b26;">
+<span style="color:#89ddff;">use </span><span style="color:#c0caf5;">facet</span><span style="color:#89ddff;">::</span><span style="color:#c0caf5;">Facet</span><span style="color:#89ddff;">;
+</span><span style="color:#c0caf5;">
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">rename </span><span style="color:#89ddff;">= &quot;</span><span style="color:#9ece6a;">MyConfig</span><span style="color:#89ddff;">&quot;</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">Config </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">name</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">    </span><span style="color:#7dcfff;">value</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">u32</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">}
+</span><span style="color:#c0caf5;">
+</span><span style="color:#bb9af7;">fn </span><span style="color:#7aa2f7;">main</span><span style="color:#9abdf5;">() {}
+</span></pre>
+
+</div>
+<div class="compiler-error">
+<h4>Compiler Error</h4>
+<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: proc-macro derive panicked</span>
+ <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:3:10
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+<span style="font-weight:bold"></span><span style="color:#61afef">3</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[derive(Facet)]
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>          <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">help</span>: message: #[facet(rename = "...")] cannot be used on a struct definition. A struct's serialized name is controlled by the field that contains it, not by the struct itself. Did you mean to use #[facet(rename_all = "...")]?
+
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
+</div>
+</section>
+</div>

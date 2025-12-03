@@ -4,7 +4,10 @@ title = "Assertions"
 
 <div class="showcase">
 
-## Same values
+[`facet-assert`](https://docs.rs/facet-assert) provides structural assertions for any `Facet` type without requiring `PartialEq` or `Debug`. Compare values across different types with identical structure, and get precise structural diffs showing exactly which fields differ.
+
+
+## Same Values
 
 <section class="scenario">
 <p class="description">Two values with identical content pass <code>assert_same!</code> — no <code>PartialEq</code> required.</p>
@@ -37,7 +40,7 @@ title = "Assertions"
 </div>
 </section>
 
-## Cross-Type comparison
+## Cross-Type Comparison
 
 <section class="scenario">
 <p class="description">Different type names (<code>Config</code> vs <code>ConfigV2</code>) with the same structure are considered "same". Useful for comparing DTOs across API versions or testing serialization roundtrips.</p>
@@ -69,7 +72,7 @@ title = "Assertions"
 </div>
 </section>
 
-## Nested structs
+## Nested Structs
 
 <section class="scenario">
 <p class="description">Nested structs are compared recursively, field by field.</p>
@@ -106,7 +109,7 @@ title = "Assertions"
 </div>
 </section>
 
-## Structural diff
+## Structural Diff
 
 <section class="scenario">
 <p class="description">When values differ, you get a precise structural diff showing exactly which fields changed and at what path — not just a wall of red/green text.</p>
@@ -127,7 +130,7 @@ title = "Assertions"
 </div>
 </section>
 
-## Vector differences
+## Vector Differences
 
 <section class="scenario">
 <p class="description">Vector comparisons show exactly which indices differ, which elements were added, and which were removed.</p>

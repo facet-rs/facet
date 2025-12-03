@@ -4,7 +4,7 @@ title = "Diagnostics"
 
 <div class="showcase">
 
-## Unknown extension attribute
+## Unknown Extension Attribute
 
 <section class="scenario">
 <p class="description">Using an unknown attribute like <code>kdl::nonexistent</code> produces a clear error<br>that points directly to the attribute and suggests valid options.</p>
@@ -37,7 +37,7 @@ title = "Diagnostics"
 </div>
 </section>
 
-## Typo in attribute name
+## Typo in Attribute Name
 
 <section class="scenario">
 <p class="description">Common typos like <code>chld</code> instead of <code>child</code> or <code>proprty</code> instead of <code>property</code><br>are caught at compile time with helpful suggestions.</p>
@@ -83,7 +83,7 @@ title = "Diagnostics"
 </div>
 </section>
 
-## Attribute with unexpected arguments
+## Attribute with Unexpected Arguments
 
 <section class="scenario">
 <p class="description">Passing arguments to attributes that don't accept them produces a clear error.</p>
@@ -120,7 +120,7 @@ title = "Diagnostics"
 </div>
 </section>
 
-## Valid usage
+## Valid Usage
 
 <section class="scenario">
 <p class="description">When extension attributes are used correctly, everything compiles smoothly.<br>This shows the intended usage pattern for KDL attributes.</p>

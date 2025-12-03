@@ -4,10 +4,13 @@ title = "Args"
 
 <div class="showcase">
 
-## Successful parsing
+[`facet-args`](https://docs.rs/facet-args) turns any `Facet` struct into a command-line interface. Define your CLI with doc comments and attributes like `args::named`, `args::positional`, and `args::subcommand`. Get auto-generated help text, shell completions for bash/zsh/fish, and rich error diagnostics with typo suggestions.
 
 
-### Simple arguments
+## Successful Parsing
+
+
+### Simple Arguments
 
 <section class="scenario">
 <p class="description">Parse a struct with flags, options, and positional arguments.</p>
@@ -52,7 +55,7 @@ title = "Args"
 </div>
 </section>
 
-### Attached short flag value
+### Attached Short Flag Value
 
 <section class="scenario">
 <p class="description">Short flags can have their values attached directly without a space.</p>
@@ -97,7 +100,7 @@ title = "Args"
 </div>
 </section>
 
-### Boolean flag with explicit value
+### Boolean Flag with Explicit Value
 
 <section class="scenario">
 <p class="description">Boolean flags can be explicitly set to true or false using <code>=</code>.</p>
@@ -254,7 +257,7 @@ title = "Args"
 </div>
 </section>
 
-### Nested subcommands
+### Nested Subcommands
 
 <section class="scenario">
 <p class="description">Parse deeply nested subcommands like <code>git remote add</code>.</p>
@@ -366,10 +369,10 @@ title = "Args"
 </div>
 </section>
 
-## Help generation
+## Help Generation
 
 
-### Simple help
+### Simple Help
 
 <section class="scenario">
 <p class="description">Auto-generated help text from struct definition and doc comments.</p>
@@ -424,7 +427,7 @@ title = "Args"
 </div>
 </section>
 
-### Help with subcommands
+### Help with Subcommands
 
 <section class="scenario">
 <p class="description">Help text automatically lists available subcommands with descriptions.</p>
@@ -543,10 +546,10 @@ title = "Args"
 </div>
 </section>
 
-## Shell completions
+## Shell Completions
 
 
-### Bash completions
+### Bash Completions
 
 <section class="scenario">
 <p class="description">Generated Bash completion script for tab-completion support.</p>
@@ -613,7 +616,7 @@ title = "Args"
 </div>
 </section>
 
-### Zsh completions
+### Zsh Completions
 
 <section class="scenario">
 <p class="description">Generated Zsh completion script with argument descriptions.</p>
@@ -680,7 +683,7 @@ title = "Args"
 </div>
 </section>
 
-### Fish completions
+### Fish Completions
 
 <section class="scenario">
 <p class="description">Generated Fish shell completion script.</p>
@@ -732,10 +735,10 @@ title = "Args"
 </div>
 </section>
 
-## Error diagnostics
+## Error Diagnostics
 
 
-### Unknown flag
+### Unknown Flag
 
 <section class="scenario">
 <p class="description">Error when an unrecognized flag is provided.</p>
@@ -784,7 +787,7 @@ title = "Args"
 </div>
 </section>
 
-### Unknown flag with suggestion
+### Unknown Flag with Suggestion
 
 <section class="scenario">
 <p class="description">When the flag name is close to a valid one, a suggestion is offered.</p>
@@ -841,7 +844,7 @@ title = "Args"
 </div>
 </section>
 
-### Invalid short flag
+### Invalid Short Flag
 
 <section class="scenario">
 <p class="description">Boolean short flags cannot have trailing characters attached.</p>
@@ -890,7 +893,7 @@ title = "Args"
 </div>
 </section>
 
-### Triple dash flag
+### Triple Dash Flag
 
 <section class="scenario">
 <p class="description">Flags with too many dashes are rejected.</p>
@@ -935,15 +938,15 @@ title = "Args"
    ·      <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown flag &#96;---verbose&#96;</span>
    ╰────
 <span style="color:#56b6c2">  help: </span>available options:
-          <span style="color:#56b6c2">-v, --verbose</span>  <span style="opacity:0.7">Enable verbose output</span>
-          <span style="color:#56b6c2">-j, --jobs</span>     <span style="opacity:0.7">Number of parallel jobs to run</span>
-          <span style="color:#56b6c2">    &lt;input&gt;</span>    <span style="opacity:0.7">Input file to process</span>
-          <span style="color:#56b6c2">    &lt;output&gt;</span>   <span style="opacity:0.7">Output file (defaults to stdout)</span>
+          -v, --verbose  Enable verbose output
+          -j, --jobs     Number of parallel jobs to run
+              &lt;input&gt;    Input file to process
+              &lt;output&gt;   Output file (defaults to stdout)
 </code></pre>
 </div>
 </section>
 
-### Single dash with long name
+### Single Dash with Long Name
 
 <section class="scenario">
 <p class="description">Long flag names require double dashes.</p>
@@ -992,7 +995,7 @@ title = "Args"
 </div>
 </section>
 
-### Missing value
+### Missing Value
 
 <section class="scenario">
 <p class="description">Error when a flag that requires a value doesn't get one.</p>
@@ -1041,7 +1044,7 @@ title = "Args"
 </div>
 </section>
 
-### Missing required argument
+### Missing Required Argument
 
 <section class="scenario">
 <p class="description">Error when a required positional argument is not provided.</p>
@@ -1088,7 +1091,7 @@ title = "Args"
 </div>
 </section>
 
-### Unexpected positional argument
+### Unexpected Positional Argument
 
 <section class="scenario">
 <p class="description">Error when a positional argument is provided but not expected.</p>
@@ -1141,17 +1144,17 @@ title = "Args"
    ·   <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unexpected positional argument</span>
    ╰────
 <span style="color:#56b6c2">  help: </span>available options:
-          <span style="color:#56b6c2">-r, --release</span>    <span style="opacity:0.7">Build in release mode with optimizations</span>
-          <span style="color:#56b6c2">-j, --jobs</span>       <span style="opacity:0.7">Number of parallel jobs</span>
-          <span style="color:#56b6c2">-p, --package</span>    <span style="opacity:0.7">Package to build</span>
-          <span style="color:#56b6c2">    --workspace</span>  <span style="opacity:0.7">Build all packages in the workspace</span>
-          <span style="color:#56b6c2">-F, --features</span>   <span style="opacity:0.7">Space-separated list of features to enable</span>
-          <span style="color:#56b6c2">    --target</span>     <span style="opacity:0.7">Target triple to build for</span>
+          -r, --release    Build in release mode with optimizations
+          -j, --jobs       Number of parallel jobs
+          -p, --package    Package to build
+              --workspace  Build all packages in the workspace
+          -F, --features   Space-separated list of features to enable
+              --target     Target triple to build for
 </code></pre>
 </div>
 </section>
 
-### Unknown subcommand
+### Unknown Subcommand
 
 <section class="scenario">
 <p class="description">Error when an unrecognized subcommand is provided, with available options listed.</p>
@@ -1264,7 +1267,7 @@ title = "Args"
 </div>
 </section>
 
-### Missing subcommand
+### Missing Subcommand
 
 <section class="scenario">
 <p class="description">Error when a required subcommand is not provided.</p>
@@ -1371,14 +1374,14 @@ title = "Args"
  <span style="opacity:0.7">1</span> │ --version 
    ╰────
 <span style="color:#56b6c2">  help: </span>available subcommands:
-          <span style="color:#56b6c2">clone</span>   <span style="opacity:0.7">Clone a repository into a new directory</span>
-          <span style="color:#56b6c2">status</span>  <span style="opacity:0.7">Show the working tree status</span>
-          <span style="color:#56b6c2">remote</span>  <span style="opacity:0.7">Manage set of tracked repositories</span>
+          clone   Clone a repository into a new directory
+          status  Show the working tree status
+          remote  Manage set of tracked repositories
 </code></pre>
 </div>
 </section>
 
-### Missing nested subcommand argument
+### Missing Nested Subcommand Argument
 
 <section class="scenario">
 <p class="description">Error when a required argument in a nested subcommand is missing.</p>
@@ -1489,7 +1492,7 @@ title = "Args"
 </div>
 </section>
 
-### Invalid value type
+### Invalid Value Type
 
 <section class="scenario">
 <p class="description">Error when a value cannot be parsed as the expected type.</p>

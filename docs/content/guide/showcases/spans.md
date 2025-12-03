@@ -4,10 +4,13 @@ title = "Spans"
 
 <div class="showcase">
 
-## Highlight modes
+[`facet-pretty`](https://docs.rs/facet-pretty) formats type shapes with syntax highlighting and span tracking. Use it to build rich error diagnostics that point to specific fields or variants in type definitions, integrating with [miette](https://docs.rs/miette) for beautiful error reports.
 
 
-### Highlight field name
+## Highlight Modes
+
+
+### Highlight Field Name
 
 <section class="scenario">
 <p class="description">Point to the field name when it's unknown or unexpected.</p>
@@ -38,7 +41,7 @@ title = "Spans"
 </div>
 </section>
 
-### Highlight type
+### Highlight Type
 
 <section class="scenario">
 <p class="description">Point to the type when the value doesn't match.</p>
@@ -69,7 +72,7 @@ title = "Spans"
 </div>
 </section>
 
-### Highlight entire field
+### Highlight Entire Field
 
 <section class="scenario">
 <p class="description">Point to both name and type for context.</p>
@@ -100,10 +103,10 @@ title = "Spans"
 </div>
 </section>
 
-## Nested structures
+## Nested Structures
 
 
-### Nested struct field
+### Nested Struct Field
 
 <section class="scenario">
 <p class="description">Highlight a field inside a nested struct.</p>
@@ -152,7 +155,7 @@ title = "Spans"
 </div>
 </section>
 
-### Deeply nested field
+### Deeply Nested Field
 
 <section class="scenario">
 <p class="description">Highlight a deeply nested field path.</p>
@@ -201,10 +204,10 @@ title = "Spans"
 </div>
 </section>
 
-## Enum variants
+## Enum Variants
 
 
-### Unit variant
+### Unit Variant
 
 <section class="scenario">
 <p class="description">Highlight an enum variant name.</p>
@@ -238,7 +241,7 @@ title = "Spans"
 </div>
 </section>
 
-### Tuple variant
+### Tuple Variant
 
 <section class="scenario">
 <p class="description">Highlight a tuple variant.</p>
@@ -274,7 +277,7 @@ title = "Spans"
 </div>
 </section>
 
-### Struct variant field
+### Struct Variant Field
 
 <section class="scenario">
 <p class="description">Highlight a field inside a struct variant.</p>
@@ -311,7 +314,7 @@ title = "Spans"
 ## Collections
 
 
-### Vec field
+### Vec Field
 
 <section class="scenario">
 <p class="description">Highlight a Vec field type.</p>
@@ -360,7 +363,7 @@ title = "Spans"
 </div>
 </section>
 
-### Option field
+### Option Field
 
 <section class="scenario">
 <p class="description">Highlight an Option field.</p>
@@ -389,7 +392,7 @@ title = "Spans"
 </div>
 </section>
 
-### HashMap field
+### HashMap Field
 
 <section class="scenario">
 <p class="description">Highlight a HashMap field.</p>

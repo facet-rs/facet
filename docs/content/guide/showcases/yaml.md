@@ -4,7 +4,10 @@ title = "YAML"
 
 <div class="showcase">
 
-## Basic struct
+[`facet-yaml`](https://docs.rs/facet-yaml) provides YAML serialization and deserialization for any type that implements `Facet`. It supports all YAML features including anchors, aliases, multiline strings, and produces clear error diagnostics with source locations.
+
+
+## Basic Struct
 
 <section class="scenario">
 <p class="description">Simple struct with optional field serialized to YAML.</p>
@@ -40,7 +43,7 @@ title = "YAML"
 </div>
 </section>
 
-## Nested structs
+## Nested Structs
 
 <section class="scenario">
 <p class="description">Struct containing nested struct and vector.</p>
@@ -96,7 +99,7 @@ title = "YAML"
 </div>
 </section>
 
-## Externally tagged enum (default)
+## Externally Tagged Enum (default)
 
 <section class="scenario">
 <p class="description">Default enum serialization with external tagging: <code>Variant: content</code></p>
@@ -126,7 +129,7 @@ title = "YAML"
 </div>
 </section>
 
-## Internally tagged enum
+## Internally Tagged Enum
 
 <section class="scenario">
 <p class="description">Enum with internal tagging using <code>#[facet(tag = "type")]</code> - variant name becomes a field.</p>
@@ -157,7 +160,7 @@ title = "YAML"
 </div>
 </section>
 
-## Adjacently tagged enum
+## Adjacently Tagged Enum
 
 <section class="scenario">
 <p class="description">Enum with adjacent tagging using <code>#[facet(tag = "t", content = "c")]</code> - variant name and content are separate fields.</p>
@@ -187,7 +190,7 @@ title = "YAML"
 </div>
 </section>
 
-## Untagged enum
+## Untagged Enum
 
 <section class="scenario">
 <p class="description">Enum with <code>#[facet(untagged)]</code> - no tagging, relies on YAML structure to determine variant.</p>
@@ -213,7 +216,7 @@ title = "YAML"
 </div>
 </section>
 
-## Maps with string keys
+## Maps with String Keys
 
 <section class="scenario">
 <p class="description">HashMap with string keys serializes to YAML mapping.</p>
@@ -226,21 +229,21 @@ title = "YAML"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
-  "<span style="color:rgb(158,206,106)">two</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">2</span><span style="opacity:0.7">,</span>
   "<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">1</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">two</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">2</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
 <h4>YAML Output</h4>
 <pre style="background-color:#1a1b26;">
 <span style="color:#c0caf5;">---
-</span><span style="color:#f7768e;">two</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">2
-</span><span style="color:#f7768e;">one</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">1</span></pre>
+</span><span style="color:#f7768e;">one</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">1
+</span><span style="color:#f7768e;">two</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">2</span></pre>
 
 </div>
 </section>
 
-## Maps with integer keys
+## Maps with Integer Keys
 
 <section class="scenario">
 <p class="description">HashMap with integer keys - YAML supports non-string keys natively.</p>
@@ -267,7 +270,7 @@ title = "YAML"
 </div>
 </section>
 
-## Tuple struct
+## Tuple Struct
 
 <section class="scenario">
 <p class="description">Tuple struct serializes as YAML sequence.</p>
@@ -297,7 +300,7 @@ title = "YAML"
 </div>
 </section>
 
-## Multiline strings
+## Multiline Strings
 
 <section class="scenario">
 <p class="description">YAML's excellent support for multiline strings with proper formatting.</p>
@@ -331,7 +334,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Complex nested configuration
+## Complex Nested Configuration
 
 <section class="scenario">
 <p class="description">Complex nested structure demonstrating YAML's readability for configuration files.</p>
@@ -423,7 +426,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Roundtrip serialization
+## Roundtrip Serialization
 
 <section class="scenario">
 <p class="description">Original data serialized to YAML and successfully deserialized back to Rust.</p>
@@ -476,7 +479,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Syntax error: bad indentation
+## Syntax Error: Bad Indentation
 
 <section class="scenario">
 <p class="description">YAML indentation is inconsistent or invalid.</p>
@@ -506,7 +509,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Syntax error: invalid character
+## Syntax Error: Invalid Character
 
 <section class="scenario">
 <p class="description">YAML contains an invalid character in an unexpected location.</p>
@@ -534,7 +537,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Syntax error: unclosed quote
+## Syntax Error: Unclosed Quote
 
 <section class="scenario">
 <p class="description">String value has an opening quote but no closing quote.</p>
@@ -565,7 +568,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Unknown field
+## Unknown Field
 
 <section class="scenario">
 <p class="description">YAML contains a field that doesn't exist in the target struct.<br>The error shows the unknown field and lists valid alternatives.</p>
@@ -603,7 +606,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Type mismatch: string for integer
+## Type Mismatch: String for Integer
 
 <section class="scenario">
 <p class="description">YAML value is a string where an integer was expected.</p>
@@ -640,7 +643,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Type mismatch: integer for string
+## Type Mismatch: Integer for String
 
 <section class="scenario">
 <p class="description">YAML value is an integer where a string was expected (may succeed with coercion).</p>
@@ -671,7 +674,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Missing required field
+## Missing Required Field
 
 <section class="scenario">
 <p class="description">YAML is missing a required field that has no default.</p>
@@ -700,7 +703,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Number out of range
+## Number Out of Range
 
 <section class="scenario">
 <p class="description">YAML number is too large for the target integer type.</p>
@@ -733,7 +736,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Expected sequence, got scalar
+## Expected Sequence, Got Scalar
 
 <section class="scenario">
 <p class="description">YAML has a scalar where a sequence was expected.</p>
@@ -766,7 +769,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Expected mapping, got scalar
+## Expected Mapping, Got Scalar
 
 <section class="scenario">
 <p class="description">YAML has a scalar where a mapping was expected.</p>
@@ -804,7 +807,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Unknown enum variant
+## Unknown Enum Variant
 
 <section class="scenario">
 <p class="description">YAML specifies a variant name that doesn't exist.</p>
@@ -841,7 +844,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Enum wrong format
+## Enum Wrong Format
 
 <section class="scenario">
 <p class="description">Externally tagged enum expects {Variant: content} but got wrong format.</p>
@@ -877,7 +880,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Internally tagged enum: missing tag field
+## Internally Tagged Enum: Missing Tag Field
 
 <section class="scenario">
 <p class="description">Internally tagged enum requires the tag field to be present.</p>
@@ -910,7 +913,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Duplicate key
+## Duplicate Key
 
 <section class="scenario">
 <p class="description">YAML mapping contains the same key more than once.</p>
@@ -942,7 +945,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Anchors and aliases
+## Anchors and Aliases
 
 <section class="scenario">
 <p class="description">YAML anchors and aliases for value reuse.</p>
@@ -993,7 +996,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 </div>
 </section>
 
-## Multiline string styles
+## Multiline String Styles
 
 <section class="scenario">
 <p class="description">YAML supports various multiline string styles.</p>
@@ -1033,7 +1036,7 @@ Newlines are preserved.
 </div>
 </section>
 
-## Empty input
+## Empty Input
 
 <section class="scenario">
 <p class="description">No YAML content at all.</p>
@@ -1060,7 +1063,7 @@ Newlines are preserved.
 </div>
 </section>
 
-## Null for required field
+## Null for Required Field
 
 <section class="scenario">
 <p class="description">YAML has explicit null where a value is required.</p>
@@ -1091,7 +1094,7 @@ Newlines are preserved.
 </div>
 </section>
 
-## Error with unicode content
+## Error with Unicode Content
 
 <section class="scenario">
 <p class="description">Error reporting handles unicode correctly.</p>
@@ -1128,7 +1131,7 @@ Newlines are preserved.
 </div>
 </section>
 
-## Error in nested structure
+## Error in Nested Structure
 
 <section class="scenario">
 <p class="description">Error location is correctly identified in deeply nested YAML.</p>
@@ -1190,7 +1193,7 @@ Newlines are preserved.
 </div>
 </section>
 
-## Error in sequence item
+## Error in Sequence Item
 
 <section class="scenario">
 <p class="description">Error in one item of a sequence is reported with context.</p>
