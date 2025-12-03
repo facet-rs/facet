@@ -713,3 +713,87 @@ fn enum_externally_tagged_default() {
     assert!(shape.get_tag_attr().is_none());
     assert!(shape.get_content_attr().is_none());
 }
+
+// ============================================================================
+// Custom crate path tests
+// ============================================================================
+
+/// Tests that the `#[facet(crate = "...")]` attribute works correctly.
+/// This allows re-exporters of facet (like plugcard) to use the derive macro
+/// with their own path to the facet crate.
+#[test]
+fn struct_with_custom_crate_path() {
+    // Use `::facet` explicitly via the crate attribute
+    #[derive(Debug, Facet)]
+    #[facet(crate = ::facet)]
+    struct CustomPathStruct {
+        foo: u32,
+        bar: String,
+    }
+
+    let shape = CustomPathStruct::SHAPE;
+    assert_eq!(format!("{shape}"), "CustomPathStruct");
+
+    if let Type::User(UserType::Struct(StructType { kind, fields, .. })) = shape.ty {
+        assert_eq!(kind, StructKind::Struct);
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].name, "foo");
+        assert_eq!(fields[1].name, "bar");
+    } else {
+        panic!("Expected Struct innards");
+    }
+}
+
+#[test]
+fn enum_with_custom_crate_path() {
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    #[facet(crate = ::facet)]
+    #[allow(dead_code)]
+    enum CustomPathEnum {
+        VariantA,
+        VariantB(u32),
+        VariantC { x: String },
+    }
+
+    let shape = CustomPathEnum::SHAPE;
+    assert_eq!(format!("{shape}"), "CustomPathEnum");
+
+    if let Type::User(UserType::Enum(enum_kind)) = shape.ty {
+        assert_eq!(enum_kind.variants.len(), 3);
+        assert_eq!(enum_kind.variants[0].name, "VariantA");
+        assert_eq!(enum_kind.variants[1].name, "VariantB");
+        assert_eq!(enum_kind.variants[2].name, "VariantC");
+    } else {
+        panic!("Expected Enum definition");
+    }
+}
+
+#[test]
+fn tuple_struct_with_custom_crate_path() {
+    #[derive(Debug, Facet)]
+    #[facet(crate = ::facet)]
+    struct CustomPathTuple(u32, String);
+
+    let shape = CustomPathTuple::SHAPE;
+    assert_eq!(format!("{shape}"), "CustomPathTuple");
+
+    if let Type::User(UserType::Struct(StructType { kind, fields, .. })) = shape.ty {
+        assert_eq!(kind, StructKind::TupleStruct);
+        assert_eq!(fields.len(), 2);
+    } else {
+        panic!("Expected Struct innards");
+    }
+}
+
+#[test]
+fn generic_struct_with_custom_crate_path() {
+    #[derive(Debug, Facet)]
+    #[facet(crate = ::facet)]
+    struct GenericCustomPath<T: Debug> {
+        value: T,
+    }
+
+    let shape = GenericCustomPath::<u32>::SHAPE;
+    assert_eq!(format!("{shape}"), "GenericCustomPath<u32>");
+}
