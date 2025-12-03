@@ -318,7 +318,7 @@ struct Document {
 
 ### `invariants`
 
-Validate type invariants after deserialization.
+Validate type invariants after deserialization. The function takes `&self` and returns `bool` — returning `false` causes deserialization to fail.
 
 ```rust
 #[derive(Facet)]
@@ -331,6 +331,73 @@ fn validate_port(config: &ServerConfig) -> bool {
     config.port > 0 && config.port < 65535
 }
 ```
+
+**When is it called?** The invariant function is called when finalizing a `Partial` value — that is, when `partial.build()` is called after all fields have been set. At this point, the entire value is initialized and can be validated as a whole.
+
+**Method syntax:** You can also use a method on the type itself:
+
+```rust
+#[derive(Facet)]
+#[facet(invariants = Point::is_valid)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+impl Point {
+    fn is_valid(&self) -> bool {
+        // Point must be in first quadrant
+        self.x >= 0 && self.y >= 0
+    }
+}
+```
+
+**Multi-field invariants:** This is where invariants really shine — validating relationships between fields:
+
+```rust
+#[derive(Facet)]
+#[facet(invariants = Range::is_valid)]
+struct Range {
+    min: u32,
+    max: u32,
+}
+
+impl Range {
+    fn is_valid(&self) -> bool {
+        self.min <= self.max
+    }
+}
+```
+
+**With enums:** Enums themselves don't support invariants directly, but you can wrap them in a struct:
+
+```rust
+#[derive(Facet)]
+#[repr(C)]
+enum RangeKind {
+    Low(u8),
+    High(u8),
+}
+
+#[derive(Facet)]
+#[facet(invariants = ValidatedRange::is_valid)]
+struct ValidatedRange {
+    range: RangeKind,
+}
+
+impl ValidatedRange {
+    fn is_valid(&self) -> bool {
+        match &self.range {
+            RangeKind::Low(v) => *v <= 50,
+            RangeKind::High(v) => *v > 50,
+        }
+    }
+}
+```
+
+**Why this matters:** Invariants are crucial for types where certain field combinations are invalid. Without them, deserialization could produce values that violate your type's assumptions, potentially leading to logic errors or — in `unsafe` code — undefined behavior.
+
+**Current limitation:** Invariants are only checked at the top level when building a `Partial`. Nested structs with their own invariants are not automatically validated when contained in a parent struct. If you need nested validation, add an invariant to the parent that explicitly checks nested values.
 
 ### `proxy`
 
