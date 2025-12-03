@@ -1,8 +1,10 @@
 +++
-title = "Adding Type Support"
+title = "Implementing Facet for third-party types"
 weight = 6
 insert_anchor_links = "heading"
 +++
+
+This guide is for contributing `Facet` implementations to the facet repository. If you just want to use a type that doesn't implement `Facet`, see [When a type doesn't implement Facet](@/guide/ecosystem.md#when-a-type-doesnt-implement-facet).
 
 ## Why we implement from the facet side
 
@@ -12,30 +14,9 @@ In Rust, you can only implement a trait in one of two places:
 
 Ideally, crates like `chrono` or `uuid` would implement `Facet` for their types directly. But facet isn't stable yet — the `Facet` trait and `Shape` structure are still evolving.
 
-So we implement `Facet` for third-party types from the facet side, using optional features in `facet-core`. When facet stabilizes, crate authors can implement `Facet` themselves, and we'll deprecate our implementations.
+So we implement `Facet` for third-party types from the facet side, using optional features in `facet-core` (re-exported through `facet`). When facet stabilizes, crate authors can implement `Facet` themselves, and we'll deprecate our implementations.
 
-## Standard library types
-
-Add implementations in the appropriate `impls_*` module in `facet-core`:
-
-```rust
-// In facet-core/src/impls_core/scalar.rs
-
-unsafe impl Facet<'_> for MyType {
-    const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable(value_vtable!(MyType, |f, _opts| {
-                write!(f, "MyType")
-            }))
-            .type_identifier("MyType")
-            .def(Def::Scalar)
-            .ty(Type::User(UserType::Opaque))
-            .build()
-    };
-}
-```
-
-## External crate types
+## Adding support for a new crate
 
 1. Add the dependency to `facet-core/Cargo.toml`:
    ```toml
@@ -53,6 +34,37 @@ unsafe impl Facet<'_> for MyType {
    #[cfg(feature = "my-crate")]
    mod impls_my_crate;
    ```
+
+4. Re-export the feature from `facet/Cargo.toml`:
+   ```toml
+   [features]
+   my-crate = ["facet-core/my-crate"]
+   ```
+
+## Implementing Facet
+
+Most third-party types are scalars (atomic values like UUIDs, timestamps, paths):
+
+```rust
+unsafe impl Facet<'_> for my_crate::MyType {
+    const SHAPE: &'static Shape = &const {
+        Shape::builder_for_sized::<Self>()
+            .vtable(value_vtable!(my_crate::MyType, |f, _opts| {
+                write!(f, "MyType")
+            }))
+            .type_identifier("MyType")
+            .def(Def::Scalar)
+            .ty(Type::User(UserType::Opaque))
+            .build()
+    };
+}
+```
+
+Look at existing implementations in `facet-core/src/impls_*` for patterns:
+- `impls_uuid.rs` — simple scalar
+- `impls_chrono.rs` — multiple related types
+- `impls_camino.rs` — path types with borrowed variants
+- `impls_bytes.rs` — byte buffer types
 
 ## Collection types
 
@@ -83,3 +95,9 @@ unsafe impl<T: Facet<'static>> Facet<'_> for MyVec<T> {
     };
 }
 ```
+
+## Testing
+
+Add tests in the same file or in `facet-core/tests/`. Make sure to test:
+- Round-trip through at least one format (JSON is easiest)
+- Edge cases for the type (empty values, max values, etc.)

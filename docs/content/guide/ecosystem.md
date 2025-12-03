@@ -166,6 +166,71 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 See the [Args showcase](@/guide/showcases/args.md) for comprehensive examples including subcommands, error messages, and more.
 
+## When a type doesn't implement Facet
+
+If you have a type that doesn't implement `Facet`, you have several options:
+
+### Your own type
+
+If it's your type, just derive it:
+
+```rust
+#[derive(Facet)]
+struct MyType {
+    // ...
+}
+```
+
+### Type with non-Facet fields
+
+If your type contains fields that don't implement `Facet`, use `opaque` to hide them:
+
+```rust
+use some_crate::ExternalType;  // Doesn't implement Facet
+
+#[derive(Facet)]
+struct MyWrapper {
+    name: String,
+    #[facet(opaque)]
+    internal: ExternalType,  // Hidden from serialization
+}
+```
+
+Opaque fields can't be serialized on their own. If you need serialization, add a `proxy`:
+
+```rust
+#[derive(Facet)]
+#[facet(transparent)]
+struct ExternalTypeProxy(String);
+
+impl TryFrom<ExternalTypeProxy> for ExternalType {
+    type Error = &'static str;
+    fn try_from(proxy: ExternalTypeProxy) -> Result<Self, Self::Error> {
+        ExternalType::parse(&proxy.0).ok_or("invalid format")
+    }
+}
+
+impl TryFrom<&ExternalType> for ExternalTypeProxy {
+    type Error = std::convert::Infallible;
+    fn try_from(val: &ExternalType) -> Result<Self, Self::Error> {
+        Ok(ExternalTypeProxy(val.to_string()))
+    }
+}
+
+#[derive(Facet)]
+struct MyWrapper {
+    name: String,
+    #[facet(opaque, proxy = ExternalTypeProxy)]
+    internal: ExternalType,  // Serializes via the proxy
+}
+```
+
+See the [Attributes Reference](@/guide/attributes.md#opaque) for details on `opaque` and `proxy`.
+
+### Third-party type you want full support for
+
+If you want a third-party type to work seamlessly with facet (like `uuid::Uuid` does), you can contribute an implementation to facet. See [Implementing Facet for third-party types](@/contribute/adding-types.md).
+
 ## no_std support
 
 Facet works in `no_std` environments. Disable default features and enable `alloc`:
