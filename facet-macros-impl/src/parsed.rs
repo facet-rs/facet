@@ -555,6 +555,14 @@ impl PAttrs {
     pub fn has_any_namespaced(&self) -> bool {
         self.facet.iter().any(|a| a.ns.is_some())
     }
+
+    /// Get the span of a builtin attribute with the given key (if present)
+    pub fn get_builtin_span(&self, key: &str) -> Option<Span> {
+        self.facet
+            .iter()
+            .find(|a| a.is_builtin() && a.key_str() == key)
+            .map(|a| a.key.span())
+    }
 }
 
 /// Parsed container
@@ -794,12 +802,18 @@ impl PStruct {
         // However, when combined with namespaced attributes like `kdl::child`,
         // `rename` IS meaningful because it controls how the type appears in that
         // specific format (e.g., the KDL node name).
+        let mut attrs = attrs;
         if container_display_name != original_name && !attrs.has_any_namespaced() {
-            panic!(
-                "#[facet(rename = \"...\")] cannot be used on a struct definition. \
-                 A struct's serialized name is controlled by the field that contains it, \
-                 not by the struct itself. Did you mean to use #[facet(rename_all = \"...\")]?"
-            );
+            let span = attrs
+                .get_builtin_span("rename")
+                .unwrap_or_else(Span::call_site);
+            attrs.errors.push(CompileError {
+                message: "#[facet(rename = \"...\")] cannot be used on a struct definition. \
+                          A struct's serialized name is controlled by the field that contains it, \
+                          not by the struct itself. Did you mean to use #[facet(rename_all = \"...\")]?"
+                    .to_string(),
+                span,
+            });
         }
 
         // Extract the rename_all rule *after* parsing all attributes.

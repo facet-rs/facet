@@ -1,4 +1,4 @@
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, quote_spanned};
 
 use super::*;
 
@@ -148,6 +148,16 @@ pub(crate) fn gen_field_from_pfield(
 /// ```
 pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let ps = PStruct::parse(&parsed); // Use the parsed representation
+
+    // Emit any collected errors as compile_error! with proper spans
+    if !ps.container.attrs.errors.is_empty() {
+        let errors = ps.container.attrs.errors.iter().map(|e| {
+            let msg = &e.message;
+            let span = e.span;
+            quote_spanned! { span => compile_error!(#msg); }
+        });
+        return quote! { #(#errors)* };
+    }
 
     let struct_name_ident = format_ident!("{}", ps.container.name);
     let struct_name = &ps.container.name;

@@ -297,9 +297,9 @@ title = "From Value"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
-  "<span style="color:rgb(158,206,106)">x</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">10</span><span style="opacity:0.7">,</span>
   "<span style="color:rgb(158,206,106)">y</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">20</span><span style="opacity:0.7">,</span>
   "<span style="color:rgb(158,206,106)">z</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">30</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">x</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">10</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 </section>
