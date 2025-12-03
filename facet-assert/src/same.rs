@@ -3,7 +3,56 @@
 use core::fmt;
 use facet_core::{Def, DynValueKind, Facet, Type, UserType};
 use facet_pretty::PrettyPrinter;
-use facet_reflect::{HasFields, Peek};
+use facet_reflect::{HasFields, Peek, ScalarType};
+
+/// Options for customizing structural comparison behavior.
+///
+/// Use the builder pattern to configure options:
+///
+/// ```
+/// use facet_assert::SameOptions;
+///
+/// let options = SameOptions::new()
+///     .float_tolerance(1e-6);
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct SameOptions {
+    /// Tolerance for floating-point comparisons.
+    /// If set, two floats are considered equal if their absolute difference
+    /// is less than or equal to this value.
+    float_tolerance: Option<f64>,
+}
+
+impl SameOptions {
+    /// Create a new `SameOptions` with default settings (exact comparison).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the tolerance for floating-point comparisons.
+    ///
+    /// When set, two `f32` or `f64` values are considered equal if:
+    /// `|left - right| <= tolerance`
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use facet_assert::{assert_same_with, SameOptions};
+    ///
+    /// let a = 1.0000001_f64;
+    /// let b = 1.0000002_f64;
+    ///
+    /// // This would fail with exact comparison:
+    /// // assert_same!(a, b);
+    ///
+    /// // But passes with tolerance:
+    /// assert_same_with!(a, b, SameOptions::new().float_tolerance(1e-6));
+    /// ```
+    pub fn float_tolerance(mut self, tolerance: f64) -> Self {
+        self.float_tolerance = Some(tolerance);
+        self
+    }
+}
 
 /// Result of checking if two values are structurally the same.
 pub enum Sameness {
@@ -26,10 +75,34 @@ pub enum Sameness {
 ///
 /// Returns [`Sameness::Opaque`] if either value contains an opaque type.
 pub fn check_same<'f, T: Facet<'f>, U: Facet<'f>>(left: &T, right: &U) -> Sameness {
+    check_same_with(left, right, SameOptions::default())
+}
+
+/// Check if two Facet values are structurally the same, with custom options.
+///
+/// Like [`check_same`], but allows configuring comparison behavior via [`SameOptions`].
+///
+/// # Example
+///
+/// ```
+/// use facet_assert::{check_same_with, SameOptions, Sameness};
+///
+/// let a = 1.0000001_f64;
+/// let b = 1.0000002_f64;
+///
+/// // With tolerance, these are considered the same
+/// let options = SameOptions::new().float_tolerance(1e-6);
+/// assert!(matches!(check_same_with(&a, &b, options), Sameness::Same));
+/// ```
+pub fn check_same_with<'f, T: Facet<'f>, U: Facet<'f>>(
+    left: &T,
+    right: &U,
+    options: SameOptions,
+) -> Sameness {
     let left_peek = Peek::new(left);
     let right_peek = Peek::new(right);
 
-    let mut differ = Differ::new();
+    let mut differ = Differ::new(options);
     match differ.check(left_peek, right_peek) {
         CheckResult::Same => Sameness::Same,
         CheckResult::Different => Sameness::Different(differ.into_diff()),
@@ -48,6 +121,8 @@ struct Differ {
     diffs: Vec<DiffLine>,
     /// Current path for context
     path: Vec<PathSegment>,
+    /// Comparison options
+    options: SameOptions,
 }
 
 enum PathSegment {
@@ -85,11 +160,37 @@ enum DiffLine {
 }
 
 impl Differ {
-    fn new() -> Self {
+    fn new(options: SameOptions) -> Self {
         Self {
             diffs: Vec::new(),
             path: Vec::new(),
+            options,
         }
+    }
+
+    /// Compare two f64 values, using tolerance if configured.
+    fn floats_equal(&self, left: f64, right: f64) -> bool {
+        if let Some(tolerance) = self.options.float_tolerance {
+            (left - right).abs() <= tolerance
+        } else {
+            left == right
+        }
+    }
+
+    /// Try to extract f64 values from two Peek values if they are both floats.
+    /// Returns None if either value is not a float type.
+    fn extract_floats(&self, left: Peek<'_, '_>, right: Peek<'_, '_>) -> Option<(f64, f64)> {
+        let left_f64 = match left.scalar_type()? {
+            ScalarType::F64 => *left.get::<f64>().ok()?,
+            ScalarType::F32 => *left.get::<f32>().ok()? as f64,
+            _ => return None,
+        };
+        let right_f64 = match right.scalar_type()? {
+            ScalarType::F64 => *right.get::<f64>().ok()?,
+            ScalarType::F32 => *right.get::<f32>().ok()? as f64,
+            _ => return None,
+        };
+        Some((left_f64, right_f64))
     }
 
     fn current_path(&self) -> String {
@@ -169,8 +270,22 @@ impl Differ {
         let right = right.innermost_peek();
 
         // Try scalar comparison first (for leaf values like String, i32, etc.)
-        // Scalars are compared by their formatted representation.
+        // Scalars are compared by their formatted representation, except for floats
+        // with tolerance configured.
         if matches!(left.shape().def, Def::Scalar) && matches!(right.shape().def, Def::Scalar) {
+            // Try float comparison with tolerance if configured
+            if self.options.float_tolerance.is_some() {
+                if let Some((left_f64, right_f64)) = self.extract_floats(left, right) {
+                    if self.floats_equal(left_f64, right_f64) {
+                        return CheckResult::Same;
+                    } else {
+                        self.record_changed(left, right);
+                        return CheckResult::Different;
+                    }
+                }
+            }
+
+            // Default: compare by formatted representation
             let left_str = Self::format_value(left);
             let right_str = Self::format_value(right);
             if left_str == right_str {
@@ -539,7 +654,7 @@ impl Differ {
                         _ => match (dyn_val.as_u64(), other_dyn.as_u64()) {
                             (Some(l), Some(r)) => l == r,
                             _ => match (dyn_val.as_f64(), other_dyn.as_f64()) {
-                                (Some(l), Some(r)) => l == r,
+                                (Some(l), Some(r)) => self.floats_equal(l, r),
                                 _ => false,
                             },
                         },
@@ -560,7 +675,10 @@ impl Differ {
                 } else if let Some(dyn_u64) = dyn_val.as_u64() {
                     other_str.parse::<u64>().ok() == Some(dyn_u64)
                 } else if let Some(dyn_f64) = dyn_val.as_f64() {
-                    other_str.parse::<f64>().ok() == Some(dyn_f64)
+                    other_str
+                        .parse::<f64>()
+                        .ok()
+                        .is_some_and(|other_f64| self.floats_equal(dyn_f64, other_f64))
                 } else {
                     false
                 };
