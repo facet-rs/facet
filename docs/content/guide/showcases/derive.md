@@ -187,18 +187,12 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error[E0793]</span><span style="font-weight:bold">: reference to packed field is unaligned</span>
- <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:3:10
+<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: unsupported repr &#96;packed&#96; - facet only supports C, Rust, transparent, and primitive integer types</span>
+ <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:4:8
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
-<span style="font-weight:bold"></span><span style="color:#61afef">3</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[derive(Facet)]
-  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>          <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^</span>
-  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
-  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: packed structs are only aligned by one byte, and many modern architectures penalize unaligned field accesses
-  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: creating a misaligned reference is undefined behavior (even if that reference is never dereferenced)
-  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">help</span>: copy the field contents to a local variable, or replace the reference with a raw pointer and use &#96;read_unaligned&#96;/&#96;write_unaligned&#96; (loads and stores via &#96;*p&#96; must be properly aligned even when using raw pointers)
-  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: this error originates in the derive macro &#96;Facet&#96; (in Nightly builds, run with -Z macro-backtrace for more info)
+<span style="font-weight:bold"></span><span style="color:#61afef">4</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[repr(packed)]
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>        <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^</span>
 
-<span style="font-weight:bold">For more information about this error, try &#96;rustc --explain E0793&#96;.</span>
 <span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
 </div>
 </section>
@@ -277,7 +271,13 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code></code></pre>
+<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: unknown #[facet(rename_all = "...")] rule: &#96;SCREAMING_SNAKE&#96;. Valid options: camelCase, snake_case, kebab-case, PascalCase, SCREAMING_SNAKE_CASE</span>
+ <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:4:9
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+<span style="font-weight:bold"></span><span style="color:#61afef">4</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[facet(rename_all = "SCREAMING_SNAKE")]
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>         <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^^^^</span>
+
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
 </div>
 </section>
 
@@ -303,7 +303,13 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code></code></pre>
+<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: #[facet(rename = "...")] cannot be used on a struct definition. A struct's serialized name is controlled by the field that contains it, not by the struct itself. Did you mean to use #[facet(rename_all = "...")]?</span>
+ <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:4:9
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
+<span style="font-weight:bold"></span><span style="color:#61afef">4</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[facet(rename = "MyConfig")]
+  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>         <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^</span>
+
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
 </div>
 </section>
 </div>
