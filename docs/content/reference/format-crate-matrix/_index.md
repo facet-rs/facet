@@ -11,7 +11,7 @@ Legend:
 - 🚫 = Not supported
 - ➖ = Not applicable to this format
 
-Note: `msgp` = `facet-msgpack` (shortened for column width)
+Note: `msgp` = `facet-msgpack`, `pcrd` = `facet-postcard` (shortened for column width)
 
 ## Overview
 
@@ -24,23 +24,24 @@ Note: S = Serialization, D = Deserialization
 | [facet-yaml](https://docs.rs/facet-yaml) | SD | Text | Event-based ([saphyr](https://docs.rs/saphyr)) | [View](/guide/showcases/yaml) |
 | [facet-toml](https://docs.rs/facet-toml) | SD | Text | DOM ([toml_edit](https://docs.rs/toml_edit)) | 🚫 |
 | [facet-msgpack](https://docs.rs/facet-msgpack) | SD | Binary | Event-based (custom) | 🚫 |
+| [facet-postcard](https://docs.rs/facet-postcard) | SD | Binary | Event-based (custom) | 🚫 |
 | [facet-asn1](https://docs.rs/facet-asn1) | S | Binary | (Custom) | 🚫 |
 | [facet-xdr](https://docs.rs/facet-xdr) | S | Binary | (Custom) | 🚫 |
-| [facet-args](https://docs.rs/facet-args) | D | CLI | (Custom) | 🚫 |
+| [facet-args](https://docs.rs/facet-args) | D | CLI | (Custom) | [View](/guide/showcases/args) |
 | [facet-urlencoded](https://docs.rs/facet-urlencoded) | D | Text | (Custom) | 🚫 |
 | [facet-csv](https://docs.rs/facet-csv) | S | Text | (Custom) | 🚫 |
 
 ## Scalar Types
 
-| Type | json | kdl | yaml | toml | msgp | asn1 | xdr | args | urlenc | csv |
-|------|------|-----|------|------|------|------|-----|------|--------|-----|
-| `bool` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `u8..u64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `i8..i64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `u128/i128` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
-| `f32/f64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `char` | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | ✅ | ✅ | ✅ |
-| NonZero integers | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 | 🚫 | 🟡 | 🟡 | 🟡 |
+| Type | json | kdl | yaml | toml | msgp | pcrd | asn1 | xdr | args | urlenc | csv |
+|------|------|-----|------|------|------|------|------|-----|------|--------|-----|
+| `bool` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `u8..u64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `i8..i64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `u128/i128` | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
+| `f32/f64` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `char` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | ✅ | ✅ | ✅ |
+| NonZero integers | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 | 🚫 | 🚫 | 🟡 | 🟡 | 🟡 |
 
 ## String Types
 
@@ -48,22 +49,27 @@ All formats support `String`, `&str` (with best-effort borrowing), and `Cow<str>
 
 ## Lists, Sets, and Maps
 
-| Type | json | kdl | yaml | toml | msgp | asn1 | xdr | args | urlenc | csv |
-|------|------|-----|------|------|------|------|-----|------|--------|-----|
-| `Vec<T>` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 |
-| `[T; N]` (arrays) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🟡 |
-| `HashSet<T>` | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
-| `BTreeSet<T>` | ✅ | ✅ | ✅ | 🟡 | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
-| `HashMap<K, V>` | ✅ | 🟡 | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
-| `BTreeMap<K, V>` | ✅ | 🟡 | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
-| Non-string map keys | ✅ | 🚫 | ✅ | 🚫 | ✅ | 🚫 | 🚫 | ➖ | ➖ | ➖ |
+| Type | json | kdl | yaml | toml | msgp | pcrd | asn1 | xdr | args | urlenc | csv |
+|------|------|-----|------|------|------|------|------|-----|------|--------|-----|
+| `Vec<T>` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 |
+| `[T; N]` (arrays) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🟡 |
+| `HashSet<T>` | ✅ | ✅ | ✅ | 🟡 | ✅ | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
+| `BTreeSet<T>` | ✅ | ✅ | ✅ | 🟡 | ✅ | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
+| `HashMap<K, V>` | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
+| `BTreeMap<K, V>` | ✅ | 🟡 | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🚫 | 🚫 | 🚫 |
+| Non-string map keys | ✅ | 🚫 | ✅ | 🚫 | ✅ | ✅ | 🚫 | 🚫 | ➖ | ➖ | ➖ |
 
 ## Compound Types
 
-| Type | json | kdl | yaml | toml | msgp | asn1 | xdr | args | urlenc | csv |
-|------|------|-----|------|------|------|------|-----|------|--------|-----|
-| `Option<T>` | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | ✅ | ✅ | 🟡 |
-| `Result<T, E>` | ✅ | 🟡 | 🟡 | 🟡 | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
+| Type | json | kdl | yaml | toml | msgp | pcrd | asn1 | xdr | args | urlenc | csv |
+|------|------|-----|------|------|------|------|------|-----|------|--------|-----|
+| `Option<T>` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | ✅ | ✅ | 🟡 |
+| `Result<T, E>` | ✅ | 🟡 | 🟡 | 🟡 | ✅ | ✅ | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
 
 ## Smart Pointers
-... (rest unchanged)
+
+| Type | json | kdl | yaml | toml | msgp | pcrd | asn1 | xdr | args | urlenc | csv |
+|------|------|-----|------|------|------|------|------|-----|------|--------|-----|
+| `Box<T>` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
+| `Rc<T>` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |
+| `Arc<T>` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | 🟡 | 🟡 | 🟡 | 🟡 | 🟡 |

@@ -91,6 +91,38 @@ struct User {
 }
 ```
 
+### `crate`
+
+Specify a custom path to the facet crate. This is primarily useful for crates that re-export facet and want users to derive `Facet` without adding facet as a direct dependency.
+
+```rust
+// In a crate that re-exports facet
+use other_crate::facet;
+
+#[derive(other_crate::facet::Facet)]
+#[facet(crate = other_crate::facet)]
+struct MyStruct {
+    field: u32,
+}
+```
+
+This attribute can also be used with enums and all struct variants:
+
+```rust
+use other_crate::facet;
+
+#[derive(other_crate::facet::Facet)]
+#[facet(crate = other_crate::facet)]
+enum MyEnum {
+    Variant1,
+    Variant2 { data: String },
+}
+
+#[derive(other_crate::facet::Facet)]
+#[facet(crate = other_crate::facet)]
+struct TupleStruct(u32, String);
+```
+
 ## Enum Attributes
 
 These attributes control enum serialization format.
