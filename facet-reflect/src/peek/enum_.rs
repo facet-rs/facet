@@ -85,27 +85,29 @@ impl<'mem, 'facet> PeekEnum<'mem, 'facet> {
     }
 
     /// Returns the discriminant value for the current enum value
+    ///
+    /// Note: For `RustNPO` (null pointer optimization) types, there is no explicit
+    /// discriminant stored in memory. In this case, 0 is returned. Use
+    /// [`variant_index()`](Self::variant_index) to determine the active variant for NPO types.
     #[inline]
     pub fn discriminant(self) -> i64 {
         // Read the discriminant based on the enum representation
-        unsafe {
-            let data = self.value.data();
-            match self.ty.enum_repr {
-                EnumRepr::U8 => data.read::<u8>() as i64,
-                EnumRepr::U16 => data.read::<u16>() as i64,
-                EnumRepr::U32 => data.read::<u32>() as i64,
-                EnumRepr::U64 => data.read::<u64>() as i64,
-                EnumRepr::USize => data.read::<usize>() as i64,
-                EnumRepr::I8 => data.read::<i8>() as i64,
-                EnumRepr::I16 => data.read::<i16>() as i64,
-                EnumRepr::I32 => data.read::<i32>() as i64,
-                EnumRepr::I64 => data.read::<i64>(),
-                EnumRepr::ISize => data.read::<isize>() as i64,
-                _ => {
-                    // Default to a reasonable size for other representations that might be added in the future
-                    data.read::<u32>() as i64
-                }
-            }
+        match self.ty.enum_repr {
+            // For RustNPO types, there is no explicit discriminant stored in memory.
+            // The variant is determined by niche optimization (e.g., null pointer pattern).
+            // Return 0 since that's the declared discriminant for NPO variants.
+            // This also prevents UB when reading from zero-sized types.
+            EnumRepr::RustNPO => 0,
+            EnumRepr::U8 => unsafe { self.value.data().read::<u8>() as i64 },
+            EnumRepr::U16 => unsafe { self.value.data().read::<u16>() as i64 },
+            EnumRepr::U32 => unsafe { self.value.data().read::<u32>() as i64 },
+            EnumRepr::U64 => unsafe { self.value.data().read::<u64>() as i64 },
+            EnumRepr::USize => unsafe { self.value.data().read::<usize>() as i64 },
+            EnumRepr::I8 => unsafe { self.value.data().read::<i8>() as i64 },
+            EnumRepr::I16 => unsafe { self.value.data().read::<i16>() as i64 },
+            EnumRepr::I32 => unsafe { self.value.data().read::<i32>() as i64 },
+            EnumRepr::I64 => unsafe { self.value.data().read::<i64>() },
+            EnumRepr::ISize => unsafe { self.value.data().read::<isize>() as i64 },
         }
     }
 
