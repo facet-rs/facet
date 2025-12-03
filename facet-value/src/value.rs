@@ -48,7 +48,7 @@
 use core::fmt::{self, Debug, Formatter};
 use core::hash::{Hash, Hasher};
 use core::mem;
-use core::ptr::NonNull;
+use core::ptr::{self, NonNull};
 
 use crate::array::VArray;
 use crate::bytes::VBytes;
@@ -152,7 +152,9 @@ impl Value {
     const unsafe fn new_inline(tag: TypeTag) -> Self {
         unsafe {
             Self {
-                ptr: NonNull::new_unchecked(tag as usize as *mut u8),
+                // Use without_provenance since inline values are data packed into
+                // pointer bits, not actual pointers to memory.
+                ptr: NonNull::new_unchecked(ptr::without_provenance_mut(tag as usize)),
             }
         }
     }
@@ -178,17 +180,20 @@ impl Value {
 
     // === Internal accessors ===
 
-    /// Raw constructor from pointer/tag bits.
-    /// Safety: `bits` must be non-zero and encode a valid representation.
+    /// Raw constructor from inline data bits (e.g., inline short strings).
+    /// Safety: `bits` must be non-zero and encode a valid inline representation.
+    /// This is only for inline values - heap pointers should use `new_ptr`.
     pub(crate) unsafe fn from_bits(bits: usize) -> Self {
         debug_assert!(bits != 0);
         Self {
-            ptr: unsafe { NonNull::new_unchecked(bits as *mut u8) },
+            // Use without_provenance since this is inline data packed into
+            // pointer bits, not an actual pointer to memory.
+            ptr: unsafe { NonNull::new_unchecked(ptr::without_provenance_mut(bits)) },
         }
     }
 
     pub(crate) fn ptr_usize(&self) -> usize {
-        self.ptr.as_ptr() as usize
+        self.ptr.as_ptr().addr()
     }
 
     fn is_inline(&self) -> bool {
