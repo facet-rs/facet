@@ -20,7 +20,7 @@ Help improve facet! This section covers development setup, architecture, and con
 
 ## Adding new features
 
-- [Adding Type Support](@/contribute/adding-types.md) — Implement Facet for new types
+- [Implementing Facet for third-party types](@/contribute/adding-types.md) — Add support for external crates
 
 ## Community
 
