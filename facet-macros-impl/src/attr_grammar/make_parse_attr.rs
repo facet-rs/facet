@@ -617,11 +617,17 @@ impl ParsedGrammar {
         // For builtin mode, skip deriving Facet entirely because the derive macro
         // generates ::facet:: paths which don't work inside the facet crate.
         // Builtin attrs will have Facet implemented manually via a blanket impl.
+        //
+        // We don't derive PartialEq because some variants contain function pointers.
+        // Instead, we generate a manual impl that uses fn_addr_eq for those variants.
         let derive_attr = if self.builtin {
-            quote! { #[derive(Debug, Clone, PartialEq)] }
+            quote! { #[derive(Debug, Clone)] }
         } else {
-            quote! { #[derive(Debug, Clone, PartialEq, ::facet::Facet)] }
+            quote! { #[derive(Debug, Clone, ::facet::Facet)] }
         };
+
+        // Generate manual PartialEq implementation
+        let partial_eq_impl = self.generate_partial_eq_impl();
 
         quote! {
             #(#attrs)*
@@ -629,6 +635,84 @@ impl ParsedGrammar {
             #[repr(u8)]
             #vis_tokens enum #name {
                 #(#variant_defs),*
+            }
+
+            #partial_eq_impl
+        }
+    }
+
+    /// Generate a manual PartialEq implementation for the enum.
+    ///
+    /// Function pointer variants use `core::ptr::fn_addr_eq` for comparison,
+    /// which is more explicit about the semantics (addresses may vary across
+    /// codegen units, but within the same unit they should be stable).
+    fn generate_partial_eq_impl(&self) -> TokenStream2 {
+        let name = &self.attr_enum.name;
+
+        let match_arms: Vec<_> = self
+            .attr_enum
+            .variants
+            .iter()
+            .map(|v| {
+                let variant_name = &v.name;
+                match &v.kind {
+                    // Unit variants: simple equality
+                    VariantKind::Unit => {
+                        quote! {
+                            (Self::#variant_name, Self::#variant_name) => true
+                        }
+                    }
+                    // Simple value types: use regular equality
+                    VariantKind::NewtypeStr | VariantKind::NewtypeOptionChar => {
+                        quote! {
+                            (Self::#variant_name(a), Self::#variant_name(b)) => a == b
+                        }
+                    }
+                    // Newtype with non-fn-ptr type: use regular equality
+                    VariantKind::Newtype(_) => {
+                        quote! {
+                            (Self::#variant_name(a), Self::#variant_name(b)) => a == b
+                        }
+                    }
+                    // Struct variants: use regular equality (structs derive PartialEq)
+                    VariantKind::Struct(_) => {
+                        quote! {
+                            (Self::#variant_name(a), Self::#variant_name(b)) => a == b
+                        }
+                    }
+                    // ArbitraryType: assume it has PartialEq
+                    VariantKind::ArbitraryType(_) => {
+                        quote! {
+                            (Self::#variant_name(a), Self::#variant_name(b)) => a == b
+                        }
+                    }
+                    // ShapeType: comparing &'static Shape by pointer equality is fine
+                    VariantKind::ShapeType => {
+                        quote! {
+                            (Self::#variant_name(a), Self::#variant_name(b)) => ::core::ptr::eq(*a, *b)
+                        }
+                    }
+                    // Function pointer variants: always return false
+                    // Function pointer comparison is unreliable across codegen units,
+                    // so we don't even try - two function pointers are never considered equal.
+                    VariantKind::MakeT | VariantKind::Predicate(_) | VariantKind::FnPtr(_) => {
+                        quote! {
+                            (Self::#variant_name(_), Self::#variant_name(_)) => false
+                        }
+                    }
+                }
+            })
+            .collect();
+
+        quote! {
+            impl ::core::cmp::PartialEq for #name {
+                fn eq(&self, other: &Self) -> bool {
+                    match (self, other) {
+                        #(#match_arms,)*
+                        // Different variants are never equal
+                        _ => false,
+                    }
+                }
             }
         }
     }
