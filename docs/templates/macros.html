@@ -1,7 +1,8 @@
 {# Recursively render a section's pages and subsections #}
 {% macro render_section_tree(section, current_path, depth=0) %}
-    {% set pages = section.pages | sort(attribute="title") %}
-    {% set subsections = section.subsections %}
+    {# Sort pages by weight, then title as tie-breaker #}
+    {% set pages = section.pages | sort(attribute="weight") %}
+    {% set subsections = section.subsections | sort(attribute="weight") %}
 
     {% if pages | length > 0 or subsections | length > 0 %}
     <ul>
@@ -9,7 +10,7 @@
         {% for page in pages %}
         <li>
             <a href="{{ page.permalink }}" {% if current_path == page.path %}class="active"{% endif %}>
-                {{ page.title }}
+                {{ page.title or page.path }}
             </a>
         </li>
         {% endfor %}
@@ -17,12 +18,12 @@
         {# Then render subsections #}
         {% for subsection_path in subsections %}
             {% set subsection = get_section(path=subsection_path) %}
-            <li class="has-children">
-                <a href="{{ subsection.permalink }}" {% if current_path is starting_with(subsection.path) %}class="active"{% endif %}>
-                    {{ subsection.title }}
-                </a>
-                {{ self::render_section_tree(section=subsection, current_path=current_path, depth=depth+1) }}
-            </li>
+        <li class="has-children">
+            <a href="{{ subsection.permalink }}" {% if current_path is starting_with(subsection.path) %}class="active"{% endif %}>
+                    {{ subsection.title or subsection.path }}
+            </a>
+            {{ self::render_section_tree(section=subsection, current_path=current_path, depth=depth+1) }}
+        </li>
         {% endfor %}
     </ul>
     {% endif %}
@@ -34,7 +35,7 @@
     <aside class="sidebar">
         <nav>
             <div class="sidebar-header">
-                <a href="{{ root.permalink }}">{{ root.title }}</a>
+                <a href="{{ root.permalink }}">{{ root.title or root.path }}</a>
             </div>
             {{ self::render_section_tree(section=root, current_path=current_path) }}
         </nav>
