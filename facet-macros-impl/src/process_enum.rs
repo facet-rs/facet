@@ -3,12 +3,22 @@ use crate::{
     parsed::{IdentOrLiteral, PRepr, PVariantKind, PrimitiveRepr},
     process_struct::gen_field_from_pfield,
 };
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, quote_spanned};
 
 /// Processes an enum to implement Facet
 pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     // Use already-parsed PEnum, including container/variant/field attributes and rename rules
     let pe = PEnum::parse(&parsed);
+
+    // Emit any collected errors as compile_error! with proper spans
+    if !pe.container.attrs.errors.is_empty() {
+        let errors = pe.container.attrs.errors.iter().map(|e| {
+            let msg = &e.message;
+            let span = e.span;
+            quote_spanned! { span => compile_error!(#msg); }
+        });
+        return quote! { #(#errors)* };
+    }
 
     let enum_name = &pe.container.name;
     let enum_name_str = enum_name.to_string();
