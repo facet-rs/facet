@@ -12,6 +12,7 @@ Build on facet’s reflection system: write your own format crate, add extension
 - [Shape](@/extend/shape.md) — What the runtime type description contains and how to use it.
 - [Peek](@/extend/peek.md) — Read values dynamically.
 - [Partial](@/extend/partial.md) — Build values dynamically (strict vs deferred).
+- [Solver](@/extend/solver.md) — Disambiguate `#[facet(flatten)]` and `#[facet(untagged)]` efficiently.
 - [Build a Format Crate](@/extend/format-crate.md) — Architecture and testing patterns (outline).
 
 If you just want to *use* facet for serialization, head to [Guide](/guide).
