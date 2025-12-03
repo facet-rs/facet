@@ -14,4 +14,4 @@ Build on facet’s reflection system: write your own format crate, add extension
 - [Partial](@/extend/partial.md) — Build values dynamically (strict vs deferred).
 - [Build a Format Crate](@/extend/format-crate.md) — Architecture and testing patterns (outline).
 
-If you just want to *use* facet for serialization, head to [Learn](/learn).
+If you just want to *use* facet for serialization, head to [Guide](/guide).

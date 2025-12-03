@@ -21,7 +21,7 @@ The key difference is in the approach:
 
 This means facet trades some speed for features: rich error diagnostics, one derive for many tools, and smaller binaries in format-heavy applications.
 
-See [Why facet?](@/learn/why.md) for a detailed comparison.
+See [Why facet?](@/guide/why.md) for a detailed comparison.
 
 ### Is facet faster than serde?
 
@@ -238,7 +238,7 @@ This lets you migrate incrementally or use serde for formats facet doesn't suppo
 
 ### Does facet support all serde attributes?
 
-Most common attributes have equivalents. See [Comparison with serde](@/learn/migration/_index.md) for a mapping.
+Most common attributes have equivalents. See [Comparison with serde](@/guide/migration/_index.md) for a mapping.
 
 Some serde features like `#[serde(borrow)]` don't have direct equivalents due to architectural differences.
 
@@ -287,6 +287,6 @@ Without the import, `kdl::property` is not recognized.
 ## Still Have Questions?
 
 - Join the [Discord](https://discord.gg/JhD7CwCJ8F) to chat with the community
-- Check the [Showcases](@/learn/showcases/_index.md) for more examples
+- Check the [Showcases](@/guide/showcases/_index.md) for more examples
 - Browse the [API documentation](https://docs.rs/facet) for detailed type information
 - Open an [issue](https://github.com/facet-rs/facet/issues) if you've found a bug
