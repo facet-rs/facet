@@ -16,14 +16,16 @@ Learn how to use facet for serialization, deserialization, and rich diagnostics.
 ## Guides
 - [Getting Started](@/guide/getting-started.md)
 - [Why facet?](@/guide/why.md)
+- [Attributes Reference](@/guide/attributes.md) — complete `#[facet(...)]` catalog
 - [Dynamic Values](@/guide/dynamic-values.md) — `Value`, `assert_same!`, `RawJson`
 - [Errors & diagnostics](@/guide/errors.md)
 - [Comparison with serde](@/guide/migration/_index.md)
+- [FAQ](@/guide/faq.md) — common questions and quick answers
 
 ## Reference (quick links)
-- [Attributes Reference](@/reference/attributes/) — complete `#[facet(...)]` catalog.
-- [Format comparison matrix](@/reference/format-crate-matrix/) — feature support across format crates.
+- [Format comparison matrix](@/reference/format-crate-matrix/) — feature support across format crates
+- [Extension Attributes](@/reference/attributes/) — namespaced attributes by crate
 
 ## Ecosystem
 - [Third-party types](@/guide/ecosystem.md) — uuid, chrono, time, camino, bytes, and more
-- [`structstruck`](@/guide/structstruck.md) — generate structs from sample data, then add `Facet` for multi-format I/O and diagnostics
+- [`structstruck`](@/guide/structstruck.md) — generate structs from sample data
