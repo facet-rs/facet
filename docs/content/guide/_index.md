@@ -16,6 +16,7 @@ Learn how to use facet for serialization, deserialization, and rich diagnostics.
 ## Guides
 - [Getting Started](@/guide/getting-started.md)
 - [Why facet?](@/guide/why.md)
+- [Dynamic Values](@/guide/dynamic-values.md) — `Value`, `assert_same!`, `RawJson`
 - [Errors & diagnostics](@/guide/errors.md)
 - [Comparison with serde](@/guide/migration/_index.md)
 
