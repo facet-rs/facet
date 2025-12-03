@@ -24,6 +24,7 @@ members = [
     # format crates
     "facet-json",
     "facet-kdl",
+    "facet-xml",
     "facet-yaml",
     "facet-toml",
     "facet-args",
