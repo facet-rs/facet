@@ -6,14 +6,17 @@
 {% block body %}
 {# Determine which top-level section we're in #}
 {% set in_learn = page.path is containing("learn/") %}
+{% set in_reference = page.path is containing("reference/") or page.path == "format-crate-matrix.md" %}
 {% set in_extend = page.path is containing("extend/") %}
 {% set in_contribute = page.path is containing("contribute/") %}
-{% set has_sidebar = in_learn or in_extend or in_contribute %}
+{% set has_sidebar = in_learn or in_reference or in_extend or in_contribute %}
 
 {% if has_sidebar %}
 <div class="docs-layout">
     {% if in_learn %}
         {{ macros::sidebar(root_section_path="learn/_index.md", current_path=page.path) }}
+    {% elif in_reference %}
+        {{ macros::sidebar(root_section_path="reference/_index.md", current_path=page.path) }}
     {% elif in_extend %}
         {{ macros::sidebar(root_section_path="extend/_index.md", current_path=page.path) }}
     {% elif in_contribute %}
@@ -27,16 +30,18 @@
                 <ol>
                     <li><a href="/">Home</a></li>
                     {% if in_learn %}
-                    <li><a href="/learn">Learn</a></li>
+                    <li><a href="/learn">Guide</a></li>
+                    {% elif in_reference %}
+                    <li><a href="/reference">Reference</a></li>
                     {% elif in_extend %}
                     <li><a href="/extend">Extend</a></li>
                     {% elif in_contribute %}
                     <li><a href="/contribute">Contribute</a></li>
                     {% endif %}
-                    {% if page.ancestors | length > 1 %}
-                        {% for ancestor in page.ancestors | slice(start=1) %}
+                    {% if page.ancestors and page.ancestors | length > 0 %}
+                        {% for ancestor in page.ancestors %}
                             {% set section = get_section(path=ancestor) %}
-                            <li><a href="{{ section.permalink }}">{{ section.title }}</a></li>
+                            <li><a href="{{ section.permalink }}">{{ section.title or section.path }}</a></li>
                         {% endfor %}
                     {% endif %}
                     <li aria-current="page">{{ page.title }}</li>

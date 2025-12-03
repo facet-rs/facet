@@ -25,21 +25,30 @@ From this single derive, you get:
 ## Choose Your Path
 
 <div class="guide-cards">
-<div class="guide-card">
-<h3 id="learn"><a href="/learn">Learn</a></h3>
-<p class="tagline">I want to serialize my types</p>
-<p class="description">For application developers using facet-json, facet-yaml, etc. Covers installation, attributes, and format-specific guides.</p>
-</div>
-<div class="guide-card">
-<h3 id="extend"><a href="/extend">Extend</a></h3>
-<p class="tagline">I want to build tools with facet</p>
-<p class="description">For developers building format crates or tools. Covers extension attributes, the <code>define_attr_grammar!</code> macro, and querying type information at runtime.</p>
-</div>
-<div class="guide-card">
-<h3 id="contribute"><a href="/contribute">Contribute</a></h3>
-<p class="tagline">I want to work on facet itself</p>
-<p class="description"><em>Coming soon</em> — Architecture, proc macro internals, vtables, and development setup.</p>
-</div>
+<a class="guide-card" href="/learn">
+  <div class="guide-card__icon"><img src="/icons/learn.svg" alt="" loading="lazy"></div>
+  <h3 id="guide">Guide</h3>
+  <p class="tagline">Use facet in your app</p>
+  <p class="description">Install a format crate, derive <code>Facet</code>, configure attributes, and ship with great diagnostics.</p>
+</a>
+<a class="guide-card" href="/reference">
+  <div class="guide-card__icon"><img src="/icons/reference.svg" alt="" loading="lazy"></div>
+  <h3 id="reference">Reference</h3>
+  <p class="tagline">Look it up fast</p>
+  <p class="description">Attributes catalog, format matrix, extension namespaces, and FAQs in one place.</p>
+</a>
+<a class="guide-card" href="/extend">
+  <div class="guide-card__icon"><img src="/icons/extend.svg" alt="" loading="lazy"></div>
+  <h3 id="extend">Extend</h3>
+  <p class="tagline">Build on reflection</p>
+  <p class="description">Create extension attributes, read data with <code>Peek</code>, build values with <code>Partial</code>, and architect new format crates.</p>
+</a>
+<a class="guide-card" href="/contribute">
+  <div class="guide-card__icon"><img src="/icons/contribute.svg" alt="" loading="lazy"></div>
+  <h3 id="contribute">Contribute</h3>
+  <p class="tagline">Work on facet itself</p>
+  <p class="description">Architecture, derive internals, vtables, unsafe invariants, and the contributor workflow.</p>
+</a>
 </div>
 
 ## Quick Links

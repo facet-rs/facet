@@ -1,5 +1,6 @@
 +++
 title = "Comparison with serde"
+weight = 4
 insert_anchor_links = "heading"
 +++
 
@@ -25,6 +26,7 @@ is to ignore field that are not known.
 #[facet(deny_unknown_fields)]
 struct MyStruct {
     field1: i32,
+    #[facet(default)] // Option needs a default to allow omission
     field2: Option<i32>,
 }
 ```
@@ -65,6 +67,7 @@ variant.
 #[facet(default)]
 struct MyStruct {
     field1: i32,
+    #[facet(default)] // Option needs a default to allow omission
     field2: Option<i32>,
 }
 
@@ -203,7 +206,7 @@ want to omit the field entirely from serialized output when the value is `None`.
 struct MyStruct {
     #[facet(skip_serializing_if = |n| n % 2 == 0)]
     field1: i32,
-    #[facet(skip_serializing_if = Option::is_none)]
+    #[facet(default, skip_serializing_if = Option::is_none)] // default needed for missing Option
     field2: Option<i32>,
 }
 ```

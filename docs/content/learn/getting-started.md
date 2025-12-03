@@ -1,0 +1,101 @@
++++
+title = "Getting Started"
+weight = 0
+insert_anchor_links = "heading"
++++
+
+Start from a fresh binary crate, add facet, and ship your first JSON round-trip with helpful errors.
+
+## Prerequisites
+- Rust stable (latest recommended)
+- `cargo` available on your PATH
+
+## Create a project
+
+```bash
+cargo new facet-hello
+cd facet-hello
+```
+
+## Add dependencies
+
+Pick at least one format crate. JSON is a good default:
+
+```toml
+# Cargo.toml
+[dependencies]
+facet = "1"
+facet-json = "1"
+miette = { version = "7", features = ["fancy"] } # pretty diagnostics
+```
+
+If you also need YAML/TOML/KDL/etc., add `facet-yaml`, `facet-toml`, `facet-kdl`, `facet-msgpack`, etc.
+
+### Optional feature flags
+- Time/UUID: enable the matching features on the format crate (check the crate docs).
+- `no_std`: use `facet-core` with `alloc`; most format crates require `std`.
+
+## Derive `Facet` on your types
+
+```rust
+// src/main.rs
+use facet::Facet;
+use facet_json::{from_str, to_string};
+use miette::{IntoDiagnostic, Result};
+
+#[derive(Facet)]
+struct Config {
+    name: String,
+    port: u16,
+    #[facet(default = "info".to_string())]
+    level: String,
+}
+
+fn main() -> Result<()> {
+    let json = r#"{ "name": "app", "port": 8080 }"#;
+
+    // Deserialize with rich errors
+    let cfg: Config = from_str(json).into_diagnostic()?;
+
+    // Serialize back out
+    let out = to_string(&cfg);
+    println!("Round trip: {out}");
+    Ok(())
+}
+```
+
+Run it:
+
+```bash
+cargo run
+```
+
+## See the errors
+
+Break the input to observe diagnostics:
+
+```bash
+PORT=bad cargo run
+```
+
+Example output:
+```
+× invalid type: string "bad", expected u16
+  ┌─ <stdin>:1:23
+  │
+1 │ { "name": "app", "port": "bad" }
+  │                       ──── invalid type
+```
+
+Facet implements `miette::Diagnostic`, so you get spans, hints, and suggestions by default.
+
+## Common tweaks
+- **Require strict inputs:** add `#[facet(deny_unknown_fields)]` to your structs.
+- **Hide secrets:** mark sensitive fields `#[facet(sensitive)]`; tools like `facet-pretty` will redact.
+- **Provide defaults:** `#[facet(default)]` or `#[facet(default = some_fn())]`.
+- **Rename fields:** `#[facet(rename = "serverPort")]` or `#[facet(rename_all = "camelCase")]`.
+
+## Next steps
+- Browse the [Attributes Reference](@/learn/attributes.md) for all knobs.
+- Read [Errors & diagnostics](@/learn/errors.md) to understand and customize error output.
+- Check the [Format Support Matrix](@/format-crate-matrix.md) if you use multiple formats.
