@@ -19,4 +19,5 @@ Interactive examples demonstrating facet's serialization and deserialization cap
 - [Assertions](@/guide/showcases/assert.md) — Structural diffing with facet-assert
 - [Diagnostics](@/guide/showcases/compile_errors.md) — Rich error messages with source spans
 - [From Value](@/guide/showcases/from_value.md) — Converting facet-value to typed structs
+- [Pretty Printing](@/guide/showcases/pretty.md) — Colorful debug output with facet-pretty
 - [Spans](@/guide/showcases/spans.md) — How errors point to source locations
