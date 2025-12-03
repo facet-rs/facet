@@ -1,6 +1,60 @@
 # Format Crate Implementation Guide
 
-This document specifies requirements for implementing a facet format crate (like `facet-json`, `facet-kdl`, `facet-yaml`, etc.).
+This document specifies requirements for implementing a facet format crate (like `facet-json`, `facet-kdl`, `facet-yaml`, `facet-xml`, etc.).
+
+## Format Implementation Status
+
+| Requirement | JSON | KDL | YAML | XML |
+|------------|------|-----|------|-----|
+| **API** |
+| `[r.api.deser]` from_str | ✅ | ✅ | ✅ | ✅ |
+| `[r.api.deser]` from_slice | ✅ | ❌ | ❌ | ✅ |
+| `[r.api.ser]` to_string | ✅ | ✅ | ❌ | ✅ |
+| `[r.api.ser]` to_writer | ✅ | ✅ | ❌ | ✅ |
+| `[r.api.errors]` miette Diagnostic | ✅ | ✅ | ✅ | ✅ |
+| **Scalars** |
+| `[r.types.scalars]` u8–u64, i8–i64 | ✅ | ✅ | ✅ | ✅ |
+| `[r.types.scalars]` u128, i128 | ⚠️ | ❓ | ❓ | ✅ |
+| `[r.types.floats]` f32, f64 | ✅ | ✅ | ✅ | ✅ |
+| `[r.types.bool]` bool | ✅ | ✅ | ✅ | ✅ |
+| `[r.types.char]` char | ✅ | ✅ | ✅ | ✅ |
+| `[r.types.strings]` String | ✅ | ✅ | ✅ | ✅ |
+| `[r.types.strings]` &str zero-copy | ✅ | ❌ | ❌ | ❌ |
+| `[r.types.strings]` Cow<str> | ✅ | ❌ | ❌ | ❌ |
+| **Compound Types** |
+| `[r.types.option]` Option | ✅ | ✅ | ✅ | ✅ |
+| `[r.types.result]` Result | ❓ | ❓ | ❓ | ❌ |
+| `[r.types.structs]` Named structs | ✅ | ✅ | ✅ | ✅ |
+| `[r.types.structs]` Tuple structs | ✅ | ❌ | ✅ | ✅ |
+| `[r.types.structs]` Unit structs | ✅ | ❌ | ✅ | ✅ |
+| `[r.types.enums]` Externally tagged | ✅ | ✅ | ✅ | ✅ |
+| `[r.types.enums]` Internally tagged | ✅ | ❓ | ❓ | ❌ |
+| `[r.types.enums]` Adjacently tagged | ✅ | ❓ | ❓ | ❌ |
+| `[r.types.enums]` Untagged | ✅ | ❓ | ❓ | ❌ |
+| `[r.types.collections]` Vec | ✅ | ✅ | ✅ | ✅ |
+| `[r.types.collections]` Arrays | ✅ | ❓ | ✅ | ✅ |
+| `[r.types.collections]` Sets | ✅ | ❓ | ✅ | ✅ |
+| `[r.types.maps]` Maps | ✅ | ❓ | ✅ | ✅ |
+| `[r.types.pointers]` Box/Rc/Arc | ✅ | ❓ | ❓ | ✅ |
+| `[r.types.bytes]` byte slices | ✅ | ❓ | ❓ | ❌ |
+| **Attributes** |
+| `[r.attrs.rename]` rename | ✅ | ✅ | ✅ | ✅ |
+| `[r.attrs.default]` default | ✅ | ✅ | ✅ | ✅ |
+| `[r.attrs.skip]` skip_serializing | ✅ | ✅ | ✅ | ✅ |
+| `[r.attrs.skip]` skip_deserializing | ✅ | ✅ | ✅ | ✅ |
+| `[r.attrs.skip_if]` skip_serializing_if | ✅ | ✅ | ❓ | ✅ |
+| `[r.attrs.transparent]` transparent | ✅ | ✅ | ✅ | ✅ |
+| `[r.attrs.flatten]` flatten | ✅ | ✅ | ✅ | ❌ |
+| `[r.attrs.deny_unknown]` deny_unknown | ✅ | ✅ | ✅ | ✅ |
+| `[r.attrs.deser_with]` deserialize_with | ❓ | ❓ | ❓ | ❌ |
+| `[r.attrs.ser_with]` serialize_with | ❓ | ❓ | ❓ | ❌ |
+| `[r.attrs.type_tag]` type_tag | N/A | ✅ | N/A | ⚠️ |
+| **Spans** |
+| `[r.spans.spanned]` Spanned<T> | ✅ | ✅ | ✅ | ⚠️ |
+| **Solver** |
+| `[r.solver]` flatten solver | ✅ | ✅ | ✅ | ❌ |
+
+Legend: ✅ = implemented, ⚠️ = partial, ❌ = not implemented, ❓ = unknown/untested, N/A = not applicable
 
 ## API Surface
 
