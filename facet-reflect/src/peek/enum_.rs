@@ -1,4 +1,4 @@
-use facet_core::{EnumRepr, EnumType, Shape, UserType, Variant};
+use facet_core::{Def, EnumRepr, EnumType, Shape, UserType, Variant};
 
 use crate::{Peek, trace};
 
@@ -113,7 +113,26 @@ impl<'mem, 'facet> PeekEnum<'mem, 'facet> {
     #[inline]
     pub fn variant_index(self) -> Result<usize, VariantError> {
         if self.ty.enum_repr == EnumRepr::RustNPO {
-            // Check if enum is all zeros
+            // For Option<T> types with niche optimization, use the OptionVTable
+            // to correctly determine if the value is Some or None.
+            // This is necessary because Rust's niche optimization may use non-zero
+            // values to represent None (when the inner type has unused discriminants).
+            if let Def::Option(option_def) = self.value.shape.def {
+                let is_some = unsafe { (option_def.vtable.is_some_fn)(self.value.data()) };
+                trace!("PeekEnum::variant_index (RustNPO Option): is_some = {is_some}");
+                // Find the variant by checking which has fields (Some) vs no fields (None)
+                return Ok(self
+                    .ty
+                    .variants
+                    .iter()
+                    .position(|variant| {
+                        let has_fields = !variant.data.fields.is_empty();
+                        has_fields == is_some
+                    })
+                    .expect("No variant found matching Option state"));
+            }
+
+            // Fallback for other RustNPO types (e.g., Option<&T> where all-zeros means None)
             let layout = self
                 .value
                 .shape
