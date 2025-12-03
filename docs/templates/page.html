@@ -4,23 +4,16 @@
 {% block title %}{{ page.title }} - {{ config.title }}{% endblock title %}
 
 {% block body %}
-{# Determine which top-level section we're in #}
-{% set in_learn = page.path is containing("guide/") %}
-{% set in_reference = page.path is containing("reference/") or page.path == "format-crate-matrix.md" %}
-{% set in_extend = page.path is containing("extend/") %}
-{% set in_contribute = page.path is containing("contribute/") %}
-{% set has_sidebar = in_learn or in_reference or in_extend or in_contribute %}
+{# Determine root section dynamically from path #}
+{% set root = page.path | split(pat="/") | first %}
+{% set root_labels = { "guide": "Guide", "reference": "Reference", "extend": "Extend", "contribute": "Contribute" } %}
+{% set root_section_path = root ~ "/_index.md" %}
+{% set has_sidebar = root in root_labels %}
 
 {% if has_sidebar %}
 <div class="docs-layout">
-    {% if in_learn %}
-        {{ macros::sidebar(root_section_path="guide/_index.md", current_path=page.path) }}
-    {% elif in_reference %}
-        {{ macros::sidebar(root_section_path="reference/_index.md", current_path=page.path) }}
-    {% elif in_extend %}
-        {{ macros::sidebar(root_section_path="extend/_index.md", current_path=page.path) }}
-    {% elif in_contribute %}
-        {{ macros::sidebar(root_section_path="contribute/_index.md", current_path=page.path) }}
+    {% if has_sidebar %}
+        {{ macros::sidebar(root_section_path=root_section_path, current_path=page.path) }}
     {% endif %}
 
     <main class="docs-content">
@@ -29,14 +22,8 @@
             <nav class="breadcrumbs" aria-label="Breadcrumb">
                 <ol>
                     <li><a href="/">Home</a></li>
-                    {% if in_learn %}
-                    <li><a href="/guide">Guide</a></li>
-                    {% elif in_reference %}
-                    <li><a href="/reference">Reference</a></li>
-                    {% elif in_extend %}
-                    <li><a href="/extend">Extend</a></li>
-                    {% elif in_contribute %}
-                    <li><a href="/contribute">Contribute</a></li>
+                    {% if root in root_labels %}
+                    <li><a href="/{{ root }}">{{ root_labels[root] }}</a></li>
                     {% endif %}
                     {% if page.ancestors and page.ancestors | length > 0 %}
                         {% for ancestor in page.ancestors %}
