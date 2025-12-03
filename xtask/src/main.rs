@@ -33,7 +33,7 @@ fn print_help() {
 
 fn generate_showcases() {
     let workspace_root = workspace_root();
-    let output_dir = workspace_root.join("docs/content/learn/showcases");
+    let output_dir = workspace_root.join("docs/content/guide/showcases");
 
     fs::create_dir_all(&output_dir).expect("Failed to create output directory");
 
@@ -90,7 +90,7 @@ fn generate_showcases() {
                     .args(["run", "-p", &pkg, "--example", &example, "--all-features"])
                     .env("FACET_SHOWCASE_OUTPUT", "markdown")
                     .stdout(Stdio::piped())
-                    .stderr(Stdio::null())
+                    .stderr(Stdio::piped())
                     .output();
 
                 let status = match result {
@@ -99,7 +99,10 @@ fn generate_showcases() {
                             .expect("Failed to write output file");
                         Ok(())
                     }
-                    Ok(_) => Err("failed".to_string()),
+                    Ok(output_result) => {
+                        let stderr = String::from_utf8_lossy(&output_result.stderr);
+                        Err(stderr.lines().take(10).collect::<Vec<_>>().join("\n"))
+                    }
                     Err(e) => Err(e.to_string()),
                 };
 
