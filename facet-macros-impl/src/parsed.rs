@@ -608,7 +608,7 @@ impl PEnum {
         let container_rename_all_rule = attrs.rename_all;
 
         // Get repr from already-parsed attrs
-        let repr = attrs.repr.clone();
+        let repr = attrs.repr;
 
         // Build PContainer
         let container = PContainer {

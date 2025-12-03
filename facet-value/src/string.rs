@@ -514,11 +514,11 @@ mod tests {
 #[cfg(all(test, feature = "bolero-inline-tests"))]
 mod bolero_props {
     use super::*;
+    use crate::ValueType;
+    use crate::array::VArray;
     use alloc::string::String;
     use alloc::vec::Vec;
     use bolero::check;
-    use crate::array::VArray;
-    use crate::ValueType;
 
     #[test]
     fn bolero_inline_string_round_trip() {
@@ -534,13 +534,9 @@ mod bolero_props {
                 assert_eq!(roundtrip.as_str(), s);
 
                 if VString::can_inline(s.len()) {
-                    assert!(value.is_inline_string(), "expected inline tag for {:?}", s);
+                    assert!(value.is_inline_string(), "expected inline tag for {s:?}");
                 } else {
-                    assert!(
-                        !value.is_inline_string(),
-                        "unexpected inline tag for {:?}",
-                        s
-                    );
+                    assert!(!value.is_inline_string(), "unexpected inline tag for {s:?}");
                 }
             }
         });
@@ -548,96 +544,91 @@ mod bolero_props {
 
     #[test]
     fn bolero_string_mutation_sequences() {
-        check!()
-            .with_type::<Vec<u8>>()
-            .for_each(|bytes: &Vec<u8>| {
-                let mut value = Value::from("");
-                let mut expected = String::new();
+        check!().with_type::<Vec<u8>>().for_each(|bytes: &Vec<u8>| {
+            let mut value = Value::from("");
+            let mut expected = String::new();
 
-                for chunk in bytes.chunks(3).take(24) {
-                    let selector = chunk.get(0).copied().unwrap_or(0) % 3;
-                    match selector {
-                        0 => {
-                            let ch = (b'a' + chunk.get(1).copied().unwrap_or(0) % 26) as char;
-                            expected.push(ch);
-                        }
-                        1 => {
-                            if !expected.is_empty() {
-                                let len = chunk
-                                    .get(1)
-                                    .copied()
-                                    .map(|n| (n as usize) % expected.len())
-                                    .unwrap_or(0);
-                                expected.truncate(len);
-                            }
-                        }
-                        _ => expected.clear(),
+            for chunk in bytes.chunks(3).take(24) {
+                let selector = chunk.first().copied().unwrap_or(0) % 3;
+                match selector {
+                    0 => {
+                        let ch = (b'a' + chunk.get(1).copied().unwrap_or(0) % 26) as char;
+                        expected.push(ch);
                     }
-
-                    overwrite_value_string(&mut value, &expected);
-                    assert_eq!(value.as_string().unwrap().as_str(), expected);
-                    assert_eq!(
-                        value.is_inline_string(),
-                        expected.len() <= VString::INLINE_LEN_MAX,
-                        "mutation sequence should keep inline status accurate"
-                    );
+                    1 => {
+                        if !expected.is_empty() {
+                            let len = chunk
+                                .get(1)
+                                .copied()
+                                .map(|n| (n as usize) % expected.len())
+                                .unwrap_or(0);
+                            expected.truncate(len);
+                        }
+                    }
+                    _ => expected.clear(),
                 }
-            });
+
+                overwrite_value_string(&mut value, &expected);
+                assert_eq!(value.as_string().unwrap().as_str(), expected);
+                assert_eq!(
+                    value.is_inline_string(),
+                    expected.len() <= VString::INLINE_LEN_MAX,
+                    "mutation sequence should keep inline status accurate"
+                );
+            }
+        });
     }
 
     #[test]
     fn bolero_array_model_matches() {
-        check!()
-            .with_type::<Vec<u8>>()
-            .for_each(|bytes: &Vec<u8>| {
-                let mut arr = VArray::new();
-                let mut model: Vec<String> = Vec::new();
+        check!().with_type::<Vec<u8>>().for_each(|bytes: &Vec<u8>| {
+            let mut arr = VArray::new();
+            let mut model: Vec<String> = Vec::new();
 
-                for chunk in bytes.chunks(4).take(20) {
-                    match chunk.get(0).copied().unwrap_or(0) % 4 {
-                        0 => {
-                            let content = inline_string_from_chunk(chunk, 1);
-                            arr.push(Value::from(content.as_str()));
-                            model.push(content);
-                        }
-                        1 => {
-                            let idx = chunk.get(1).copied().unwrap_or(0) as usize;
-                            if !model.is_empty() {
-                                let idx = idx % model.len();
-                                model.remove(idx);
-                                let _ = arr.remove(idx);
-                            }
-                        }
-                        2 => {
-                            let content = inline_string_from_chunk(chunk, 2);
-                            if model.is_empty() {
-                                arr.insert(0, Value::from(content.as_str()));
-                                model.insert(0, content);
-                            } else {
-                                let len = model.len();
-                                let idx =
-                                    (chunk.get(2).copied().unwrap_or(0) as usize) % (len + 1);
-                                arr.insert(idx, Value::from(content.as_str()));
-                                model.insert(idx, content);
-                            }
-                        }
-                        _ => {
-                            arr.clear();
-                            model.clear();
+            for chunk in bytes.chunks(4).take(20) {
+                match chunk.first().copied().unwrap_or(0) % 4 {
+                    0 => {
+                        let content = inline_string_from_chunk(chunk, 1);
+                        arr.push(Value::from(content.as_str()));
+                        model.push(content);
+                    }
+                    1 => {
+                        let idx = chunk.get(1).copied().unwrap_or(0) as usize;
+                        if !model.is_empty() {
+                            let idx = idx % model.len();
+                            model.remove(idx);
+                            let _ = arr.remove(idx);
                         }
                     }
-
-                    assert_eq!(arr.len(), model.len());
-                    for (value, expected) in arr.iter().zip(model.iter()) {
-                        assert_eq!(value.value_type(), ValueType::String);
-                        assert_eq!(value.as_string().unwrap().as_str(), expected);
-                        assert_eq!(
-                            value.is_inline_string(),
-                            expected.len() <= VString::INLINE_LEN_MAX
-                        );
+                    2 => {
+                        let content = inline_string_from_chunk(chunk, 2);
+                        if model.is_empty() {
+                            arr.insert(0, Value::from(content.as_str()));
+                            model.insert(0, content);
+                        } else {
+                            let len = model.len();
+                            let idx = (chunk.get(2).copied().unwrap_or(0) as usize) % (len + 1);
+                            arr.insert(idx, Value::from(content.as_str()));
+                            model.insert(idx, content);
+                        }
+                    }
+                    _ => {
+                        arr.clear();
+                        model.clear();
                     }
                 }
-            });
+
+                assert_eq!(arr.len(), model.len());
+                for (value, expected) in arr.iter().zip(model.iter()) {
+                    assert_eq!(value.value_type(), ValueType::String);
+                    assert_eq!(value.as_string().unwrap().as_str(), expected);
+                    assert_eq!(
+                        value.is_inline_string(),
+                        expected.len() <= VString::INLINE_LEN_MAX
+                    );
+                }
+            }
+        });
     }
 
     fn overwrite_value_string(value: &mut Value, new_value: &str) {
