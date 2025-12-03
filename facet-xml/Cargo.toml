@@ -1,0 +1,36 @@
+[package]
+name = "facet-xml"
+version = "0.31.0"
+edition = "2024"
+rust-version = "1.88.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet"
+description = "XML serialization and deserialization for Facet types"
+keywords = ["xml", "serialization", "deserialization", "reflection", "facet"]
+categories = ["encoding", "parsing", "data-structures"]
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
+
+[features]
+std = ["alloc", "facet-core/std", "facet-reflect/std"]
+alloc = ["facet-core/alloc", "facet-reflect/alloc"]
+default = ["std"]
+
+[dependencies]
+quick-xml = "0.37"
+facet = { path = "../facet", default-features = false }
+facet-core = { path = "../facet-core", default-features = false }
+facet-reflect = { path = "../facet-reflect", default-features = false, features = ["miette"] }
+facet-solver = { path = "../facet-solver" }
+miette = "7"
+log = "0.4"
+
+[dev-dependencies]
+facet = { path = "../facet" }
+facet-core = { path = "../facet-core" }
+facet-pretty = { path = "../facet-pretty" }
+facet-testhelpers = { path = "../facet-testhelpers" }
+miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
+indoc = "2"
+cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
