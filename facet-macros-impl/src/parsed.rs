@@ -1,6 +1,59 @@
 use crate::{BoundedGenericParams, RenameRule, unescaping::unescape};
 use crate::{Ident, ReprInner, ToTokens, TokenStream};
-use quote::quote;
+use proc_macro2::Span;
+use quote::{quote, quote_spanned};
+
+/// Errors that can occur during parsing of derive macro attributes.
+///
+/// Some errors are caught by rustc itself, so we don't emit duplicate diagnostics.
+/// Others are facet-specific and need our own compile_error!.
+#[derive(Debug)]
+pub enum ParseError {
+    /// An error that rustc will catch on its own - we don't emit a diagnostic.
+    ///
+    /// We track these so the code is explicit about why we're not panicking,
+    /// and to document what rustc catches.
+    RustcWillCatch {
+        /// Description of what rustc will catch (for documentation purposes)
+        reason: &'static str,
+    },
+
+    /// A facet-specific error that rustc won't catch - we emit compile_error!
+    FacetError {
+        /// The error message to display
+        message: String,
+        /// The span to point the error at
+        span: Span,
+    },
+}
+
+impl ParseError {
+    /// Create a "rustc will catch this" error.
+    ///
+    /// Use this when we detect an error that rustc will also catch,
+    /// so we avoid duplicate diagnostics.
+    pub fn rustc_will_catch(reason: &'static str) -> Self {
+        ParseError::RustcWillCatch { reason }
+    }
+
+    /// Create a facet-specific error with a span.
+    pub fn facet_error(message: impl Into<String>, span: Span) -> Self {
+        ParseError::FacetError {
+            message: message.into(),
+            span,
+        }
+    }
+
+    /// Convert to a compile_error! TokenStream, or None if rustc will catch it.
+    pub fn to_compile_error(&self) -> Option<TokenStream> {
+        match self {
+            ParseError::RustcWillCatch { .. } => None,
+            ParseError::FacetError { message, span } => {
+                Some(quote_spanned! { *span => compile_error!(#message); })
+            }
+        }
+    }
+}
 
 /// For struct fields, they can either be identifiers (`my_struct.foo`)
 /// or literals (`my_struct.2`) — for tuple structs.
@@ -173,12 +226,20 @@ pub enum PRepr {
     Rust(Option<PrimitiveRepr>),
     /// `#[repr(C)]` with optional primitive type
     C(Option<PrimitiveRepr>),
+    /// A repr error that rustc will catch (e.g., conflicting hints).
+    /// We use this sentinel to avoid emitting our own misleading errors.
+    RustcWillCatch,
 }
 
 impl PRepr {
     /// Parse a `&str` (for example a value coming from #[repr(...)] attribute)
     /// into a `PRepr` variant.
-    pub fn parse(s: &ReprInner) -> Option<Self> {
+    ///
+    /// Returns `Err(ParseError::RustcWillCatch { .. })` for errors that rustc
+    /// will catch on its own (conflicting repr hints). Returns
+    /// `Err(ParseError::FacetError { .. })` for facet-specific errors like
+    /// unsupported repr types (e.g., `packed`).
+    pub fn parse(s: &ReprInner) -> Result<Option<Self>, ParseError> {
         enum ReprKind {
             Rust,
             C,
@@ -191,44 +252,46 @@ impl PRepr {
 
         for token_delimited in items {
             let token_str = token_delimited.value.to_string();
+            let token_span = token_delimited.value.span();
+
             match token_str.as_str() {
                 "C" | "c" => {
                     if repr_kind.is_some() && !matches!(repr_kind, Some(ReprKind::C)) {
-                        panic!(
-                            "Conflicting repr kinds found in #[repr(...)]. Cannot mix C/c and Rust/rust."
-                        );
+                        // rustc emits E0566: conflicting representation hints
+                        return Err(ParseError::rustc_will_catch(
+                            "E0566: conflicting representation hints (C vs Rust)",
+                        ));
                     }
                     if is_transparent {
-                        panic!(
-                            "Conflicting repr kinds found in #[repr(...)]. Cannot mix C/c and transparent."
-                        );
+                        // rustc emits E0692: transparent struct/enum cannot have other repr hints
+                        return Err(ParseError::rustc_will_catch(
+                            "E0692: transparent cannot have other repr hints",
+                        ));
                     }
-                    // If primitive is already set, and kind is not already C, ensure kind becomes C.
-                    // Example: #[repr(u8, C)] is valid.
                     repr_kind = Some(ReprKind::C);
                 }
                 "Rust" | "rust" => {
                     if repr_kind.is_some() && !matches!(repr_kind, Some(ReprKind::Rust)) {
-                        panic!(
-                            "Conflicting repr kinds found in #[repr(...)]. Cannot mix Rust/rust and C/c."
-                        );
+                        // rustc emits E0566: conflicting representation hints
+                        return Err(ParseError::rustc_will_catch(
+                            "E0566: conflicting representation hints (Rust vs C)",
+                        ));
                     }
                     if is_transparent {
-                        panic!(
-                            "Conflicting repr kinds found in #[repr(...)]. Cannot mix Rust/rust and transparent."
-                        );
+                        // rustc emits E0692: transparent struct/enum cannot have other repr hints
+                        return Err(ParseError::rustc_will_catch(
+                            "E0692: transparent cannot have other repr hints",
+                        ));
                     }
-                    // If primitive is already set, and kind is not already Rust, ensure kind becomes Rust.
-                    // Example: #[repr(i32, Rust)] is valid.
                     repr_kind = Some(ReprKind::Rust);
                 }
                 "transparent" => {
                     if repr_kind.is_some() || primitive_repr.is_some() {
-                        panic!(
-                            "Conflicting repr kinds found in #[repr(...)]. Cannot mix transparent with C/c, Rust/rust, or primitive types."
-                        );
+                        // rustc emits E0692: transparent struct/enum cannot have other repr hints
+                        return Err(ParseError::rustc_will_catch(
+                            "E0692: transparent cannot have other repr hints",
+                        ));
                     }
-                    // Allow duplicate "transparent", although weird.
                     is_transparent = true;
                 }
                 prim_str @ ("u8" | "u16" | "u32" | "u64" | "u128" | "i8" | "i16" | "i32"
@@ -246,42 +309,49 @@ impl PRepr {
                         "i128" => PrimitiveRepr::I128,
                         "usize" => PrimitiveRepr::Usize,
                         "isize" => PrimitiveRepr::Isize,
-                        _ => unreachable!(), // Already matched by outer pattern
+                        _ => unreachable!(),
                     };
                     if is_transparent {
-                        panic!(
-                            "Conflicting repr kinds found in #[repr(...)]. Cannot mix primitive types and transparent."
-                        );
+                        // rustc emits E0692: transparent struct/enum cannot have other repr hints
+                        return Err(ParseError::rustc_will_catch(
+                            "E0692: transparent cannot have other repr hints",
+                        ));
                     }
                     if primitive_repr.is_some() {
-                        panic!("Multiple primitive types specified in #[repr(...)].");
+                        // rustc emits E0566: conflicting representation hints
+                        return Err(ParseError::rustc_will_catch(
+                            "E0566: conflicting representation hints (multiple primitives)",
+                        ));
                     }
                     primitive_repr = Some(current_prim);
                 }
                 unknown => {
-                    // Standard #[repr] only allows specific identifiers.
-                    panic!(
-                        "Unknown token '{unknown}' in #[repr(...)]. Only C, Rust, transparent, or primitive integer types allowed."
-                    );
+                    // This is a facet-specific error: rustc accepts things like `packed`,
+                    // `align(N)`, etc., but facet doesn't support them.
+                    return Err(ParseError::facet_error(
+                        format!(
+                            "unsupported repr `{unknown}` - facet only supports \
+                             C, Rust, transparent, and primitive integer types"
+                        ),
+                        token_span,
+                    ));
                 }
             }
         }
 
         // Final construction
         if is_transparent {
-            if repr_kind.is_some() || primitive_repr.is_some() {
-                // This check should be redundant due to checks inside the loop, but added for safety.
-                panic!("Internal error: transparent repr mixed with other kinds after parsing.");
-            }
-            Some(PRepr::Transparent)
+            debug_assert!(
+                repr_kind.is_none() && primitive_repr.is_none(),
+                "internal error: transparent repr mixed with other kinds after parsing"
+            );
+            Ok(Some(PRepr::Transparent))
         } else {
-            // Default to Rust if only a primitive type is provided (e.g., #[repr(u8)]) or if nothing is specified.
-            // If C/c or Rust/rust was specified, use that.
             let final_kind = repr_kind.unwrap_or(ReprKind::Rust);
-            match final_kind {
-                ReprKind::Rust => Some(PRepr::Rust(primitive_repr)),
-                ReprKind::C => Some(PRepr::C(primitive_repr)),
-            }
+            Ok(Some(match final_kind {
+                ReprKind::Rust => PRepr::Rust(primitive_repr),
+                ReprKind::C => PRepr::C(primitive_repr),
+            }))
         }
     }
 }
@@ -335,6 +405,15 @@ impl PrimitiveRepr {
     }
 }
 
+/// A compile error to be emitted during code generation
+#[derive(Clone)]
+pub struct CompileError {
+    /// The error message
+    pub message: String,
+    /// The span where the error occurred
+    pub span: Span,
+}
+
 /// Parsed attributes
 #[derive(Clone)]
 pub struct PAttrs {
@@ -352,6 +431,9 @@ pub struct PAttrs {
 
     /// Custom crate path (if any), e.g., `::my_crate::facet`
     pub crate_path: Option<TokenStream>,
+
+    /// Errors to be emitted as compile_error! during code generation
+    pub errors: Vec<CompileError>,
 }
 
 impl PAttrs {
@@ -361,6 +443,7 @@ impl PAttrs {
         let mut repr: Option<PRepr> = None;
         let mut rename_all: Option<RenameRule> = None;
         let mut crate_path: Option<TokenStream> = None;
+        let mut errors: Vec<CompileError> = Vec::new();
 
         for attr in attrs {
             match &attr.body.content {
@@ -371,18 +454,24 @@ impl PAttrs {
                 }
                 crate::AttributeInner::Repr(repr_attr) => {
                     if repr.is_some() {
-                        panic!("Multiple #[repr] attributes found");
+                        // rustc emits E0566: conflicting representation hints
+                        // for multiple #[repr] attributes - use sentinel
+                        repr = Some(PRepr::RustcWillCatch);
+                        continue;
                     }
 
-                    repr = match PRepr::parse(repr_attr) {
-                        Some(parsed) => Some(parsed),
-                        None => {
-                            panic!(
-                                "Unknown #[repr] attribute: {}",
-                                repr_attr.tokens_to_string()
-                            );
+                    match PRepr::parse(repr_attr) {
+                        Ok(Some(parsed)) => repr = Some(parsed),
+                        Ok(None) => { /* empty repr, use default */ }
+                        Err(ParseError::RustcWillCatch { .. }) => {
+                            // rustc will emit the error - use sentinel so we don't
+                            // emit misleading "missing repr" errors later
+                            repr = Some(PRepr::RustcWillCatch);
                         }
-                    };
+                        Err(ParseError::FacetError { message, span }) => {
+                            errors.push(CompileError { message, span });
+                        }
+                    }
                 }
                 crate::AttributeInner::Facet(facet_attr) => {
                     PFacetAttr::parse(facet_attr, &mut facet_attrs);
@@ -408,7 +497,14 @@ impl PAttrs {
                         if let Some(rule) = RenameRule::from_str(rule_str) {
                             rename_all = Some(rule);
                         } else {
-                            panic!("Unknown #[facet(rename_all = ...)] rule: {rule_str}");
+                            errors.push(CompileError {
+                                message: format!(
+                                    "unknown #[facet(rename_all = \"...\")] rule: `{rule_str}`. \
+                                     Valid options: camelCase, snake_case, kebab-case, \
+                                     PascalCase, SCREAMING_SNAKE_CASE"
+                                ),
+                                span: attr.key.span(),
+                            });
                         }
                     }
                     "crate" => {
@@ -426,6 +522,7 @@ impl PAttrs {
             repr: repr.unwrap_or(PRepr::Rust(None)),
             rename_all,
             crate_path,
+            errors,
         }
     }
 
@@ -449,6 +546,14 @@ impl PAttrs {
         self.crate_path
             .clone()
             .unwrap_or_else(|| quote! { ::facet })
+    }
+
+    /// Check if any namespaced attribute exists (e.g., `kdl::child`, `args::short`)
+    ///
+    /// When a namespaced attribute is present, `rename` on a container may be valid
+    /// because it controls how the type appears in that specific context.
+    pub fn has_any_namespaced(&self) -> bool {
+        self.facet.iter().any(|a| a.ns.is_some())
     }
 }
 
@@ -488,11 +593,14 @@ impl PEnum {
     pub fn parse(e: &crate::Enum) -> Self {
         let mut container_display_name = e.name.to_string();
 
-        // Parse container-level attributes
+        // Parse container-level attributes (including repr and any errors)
         let attrs = PAttrs::parse(&e.attributes, &mut container_display_name);
 
         // Get the container-level rename_all rule
         let container_rename_all_rule = attrs.rename_all;
+
+        // Get repr from already-parsed attrs
+        let repr = attrs.repr.clone();
 
         // Build PContainer
         let container = PContainer {
@@ -508,24 +616,6 @@ impl PEnum {
             .iter()
             .map(|delim| PVariant::parse(&delim.value, container_rename_all_rule))
             .collect();
-
-        // Get the repr attribute if present, or default to Rust(None)
-        let mut repr = None;
-        for attr in &e.attributes {
-            if let crate::AttributeInner::Repr(repr_attr) = &attr.body.content {
-                // Parse repr attribute, will panic if invalid, just like struct repr parser
-                repr = match PRepr::parse(repr_attr) {
-                    Some(parsed) => Some(parsed),
-                    None => panic!(
-                        "Unknown #[repr] attribute: {}",
-                        repr_attr.tokens_to_string()
-                    ),
-                };
-                break; // Only use the first #[repr] attribute
-            }
-        }
-        // Default to Rust(None) if not present, to match previous behavior, but enums will typically require repr(C) or a primitive in process_enum
-        let repr = repr.unwrap_or(PRepr::Rust(None));
 
         PEnum {
             container,
@@ -691,16 +781,26 @@ impl PStructKind {
 impl PStruct {
     /// Parse a struct into its parsed representation
     pub fn parse(s: &crate::Struct) -> Self {
-        // Create a mutable string to pass to PAttrs::parse.
-        // While #[facet(rename = "...")] isn't typically used directly on the struct
-        // definition itself in the same way as fields, the parse function expects
-        // a mutable string to potentially modify if such an attribute is found.
-        // We initialize it with the struct's name, although its value isn't
-        // directly used for the container's name after parsing attributes.
-        let mut container_display_name = s.name.to_string();
+        let original_name = s.name.to_string();
+        let mut container_display_name = original_name.clone();
 
         // Parse top-level (container) attributes for the struct.
         let attrs = PAttrs::parse(&s.attributes, &mut container_display_name);
+
+        // Error if #[facet(rename = "...")] was used on the container WITHOUT
+        // any namespaced attribute. When used alone, `rename` on a container has no
+        // effect because a container's name is determined by the parent field.
+        //
+        // However, when combined with namespaced attributes like `kdl::child`,
+        // `rename` IS meaningful because it controls how the type appears in that
+        // specific format (e.g., the KDL node name).
+        if container_display_name != original_name && !attrs.has_any_namespaced() {
+            panic!(
+                "#[facet(rename = \"...\")] cannot be used on a struct definition. \
+                 A struct's serialized name is controlled by the field that contains it, \
+                 not by the struct itself. Did you mean to use #[facet(rename_all = \"...\")]?"
+            );
+        }
 
         // Extract the rename_all rule *after* parsing all attributes.
         let rename_all_rule = attrs.rename_all;

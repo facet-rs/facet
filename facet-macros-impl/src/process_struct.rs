@@ -166,6 +166,11 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         PRepr::Transparent => quote! { #facet_crate::Repr::transparent() },
         PRepr::Rust(_) => quote! { #facet_crate::Repr::default() },
         PRepr::C(_) => quote! { #facet_crate::Repr::c() },
+        PRepr::RustcWillCatch => {
+            // rustc will emit an error for the invalid repr.
+            // Return empty TokenStream so we don't add misleading errors.
+            return quote! {};
+        }
     };
 
     // Use PStruct for kind and fields
