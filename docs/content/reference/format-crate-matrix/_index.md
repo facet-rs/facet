@@ -22,7 +22,7 @@ Note: S = Serialization, D = Deserialization
 | [facet-json](https://docs.rs/facet-json) | SD | Text | Event-based (custom) | [View](/guide/showcases/json) |
 | [facet-kdl](https://docs.rs/facet-kdl) | SD | Text (node-based) | DOM ([kdl-rs](https://docs.rs/kdl)) | [View](/guide/showcases/kdl) |
 | [facet-yaml](https://docs.rs/facet-yaml) | SD | Text | Event-based ([saphyr](https://docs.rs/saphyr)) | [View](/guide/showcases/yaml) |
-| [facet-toml](https://docs.rs/facet-toml) | SD | Text | DOM ([toml_edit](https://docs.rs/toml_edit)) | 🚫 |
+| [facet-toml](https://docs.rs/facet-toml) | SD | Text | DOM ([toml_edit](https://docs.rs/toml_edit)) | [View](/guide/showcases/toml) |
 | [facet-msgpack](https://docs.rs/facet-msgpack) | SD | Binary | Event-based (custom) | 🚫 |
 | [facet-postcard](https://docs.rs/facet-postcard) | SD | Binary | Event-based (custom) | 🚫 |
 | [facet-asn1](https://docs.rs/facet-asn1) | S | Binary | (Custom) | 🚫 |
