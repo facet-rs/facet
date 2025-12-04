@@ -18,6 +18,11 @@ pub use serialize::*;
 
 mod tokenizer;
 
+mod scanner;
+pub use scanner::{
+    NumberHint, ScanError, ScanErrorKind, Scanner, SpannedToken, Token as ScanToken,
+};
+
 mod raw_json;
 pub use raw_json::RawJson;
 
