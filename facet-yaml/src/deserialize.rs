@@ -12,7 +12,7 @@ use facet_core::{
     Characteristic, Def, Facet, Field, NumericType, PrimitiveType, ShapeLayout, StructKind, Type,
     UserType,
 };
-use facet_reflect::Partial;
+use facet_reflect::{HeapValue, Partial};
 use saphyr_parser::{Event, Parser, ScalarStyle, Span as SaphyrSpan, SpannedEventReceiver};
 
 use crate::error::{SpanExt, YamlError, YamlErrorKind};
@@ -25,6 +25,14 @@ type Result<T> = core::result::Result<T, YamlError>;
 // ============================================================================
 
 /// Deserialize a YAML string into a value of type `T`.
+///
+/// This is the recommended default for most use cases. The input does not need
+/// to outlive the result, making it suitable for deserializing from temporary
+/// buffers (e.g., HTTP request bodies, config files read into a String).
+///
+/// Types containing `&str` fields cannot be deserialized with this function;
+/// use `String` or `Cow<str>` instead. For zero-copy deserialization into
+/// borrowed types, use [`from_str_borrowed`].
 ///
 /// # Example
 ///
@@ -43,46 +51,91 @@ type Result<T> = core::result::Result<T, YamlError>;
 /// assert_eq!(config.name, "myapp");
 /// assert_eq!(config.port, 8080);
 /// ```
-pub fn from_str<'input, 'facet, T>(yaml: &'input str) -> Result<T>
-where
-    T: Facet<'facet>,
-    'input: 'facet,
-{
-    log::trace!(
-        "from_str: parsing YAML for type {}",
-        core::any::type_name::<T>()
-    );
-
-    let mut deserializer = YamlDeserializer::new(yaml)?;
-    let partial = Partial::alloc::<T>()?;
-
-    let partial = deserializer.deserialize_document(partial)?;
-
-    // Check we consumed everything meaningful
-    deserializer.expect_end()?;
-
-    let result = partial
-        .build()
-        .map_err(|e| YamlError::without_span(YamlErrorKind::Reflect(e)).with_source(yaml))?
-        .materialize()
-        .map_err(|e| YamlError::without_span(YamlErrorKind::Reflect(e)).with_source(yaml))?;
-
-    Ok(result)
+pub fn from_str<T: Facet<'static>>(yaml: &str) -> Result<T> {
+    from_str_inner(yaml)
 }
 
-/// Deserialize YAML from a string slice into an owned type.
+/// Inner implementation for owned deserialization.
 ///
-/// This variant does not require the input to outlive the result, making it
-/// suitable for deserializing from temporary buffers (e.g., HTTP request bodies).
+/// Uses lifetime transmutation to work around the constraint that the deserializer
+/// is parameterized by the input lifetime, while we want to produce a `T: Facet<'static>`.
+fn from_str_inner<T: Facet<'static>>(yaml: &str) -> Result<T> {
+    // We need to work around the lifetime constraints in the deserialization machinery.
+    // The deserializer is parameterized by 'input (the input slice lifetime),
+    // but we want to produce a T: Facet<'static> that doesn't borrow from input.
+    //
+    // The approach: Use an inner function parameterized by 'input that does all the work,
+    // then transmute the result back to the 'static lifetime we need.
+    //
+    // SAFETY: This is safe because:
+    // 1. T: Facet<'static> guarantees the type T itself contains no borrowed data
+    // 2. YAML events already convert all strings to owned String values
+    // 3. BORROW: false on Partial/HeapValue documents that no borrowing occurs
+    // 4. The transmutes only affect phantom lifetime markers, not actual runtime data
+
+    fn inner<'input, T: Facet<'static>>(yaml: &'input str) -> Result<T> {
+        log::trace!(
+            "from_str: parsing YAML for type {}",
+            core::any::type_name::<T>()
+        );
+
+        let mut deserializer = YamlDeserializer::new(yaml)?;
+
+        // Allocate a Partial<'static, false> - owned mode, no borrowing allowed.
+        // We transmute to Partial<'input, false> to work with the deserializer.
+        // SAFETY: We're only changing the lifetime marker. The Partial<_, false> doesn't
+        // store any 'input references because:
+        // - BORROW=false documents no borrowed data
+        // - YAML events already convert all strings to owned values
+        #[allow(unsafe_code)]
+        let wip: Partial<'input, false> = unsafe {
+            core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
+                Partial::alloc_owned::<T>()?,
+            )
+        };
+
+        let partial = deserializer.deserialize_document(wip)?;
+
+        // Check we consumed everything meaningful
+        deserializer.expect_end()?;
+
+        // Build the Partial into a HeapValue
+        let heap_value = partial
+            .build()
+            .map_err(|e| YamlError::without_span(YamlErrorKind::Reflect(e)).with_source(yaml))?;
+
+        // Transmute HeapValue<'input, false> to HeapValue<'static, false> so we can materialize to T
+        // SAFETY: The HeapValue contains no borrowed data:
+        // - BORROW=false documents no borrowed data
+        // - YAML events already convert all strings to owned values
+        // The transmute only affects the phantom lifetime marker.
+        #[allow(unsafe_code)]
+        let heap_value: HeapValue<'static, false> = unsafe {
+            core::mem::transmute::<HeapValue<'input, false>, HeapValue<'static, false>>(heap_value)
+        };
+
+        heap_value
+            .materialize::<T>()
+            .map_err(|e| YamlError::without_span(YamlErrorKind::Reflect(e)).with_source(yaml))
+    }
+
+    inner::<T>(yaml)
+}
+
+/// Deserialize YAML from a string slice, allowing zero-copy borrowing.
 ///
-/// Types containing `&str` fields cannot be deserialized with this function;
-/// use `String` or `Cow<str>` instead.
+/// This variant requires the input to outlive the result (`'input: 'facet`),
+/// enabling zero-copy deserialization of string fields as `&str`.
+///
+/// Use this when you need maximum performance and can guarantee the input
+/// buffer outlives the deserialized value. For most use cases, prefer
+/// [`from_str`] which doesn't have lifetime requirements.
 ///
 /// # Example
 ///
 /// ```
 /// use facet::Facet;
-/// use facet_yaml::from_str_owned;
+/// use facet_yaml::from_str_borrowed;
 ///
 /// #[derive(Facet, Debug, PartialEq)]
 /// struct Config {
@@ -91,13 +144,17 @@ where
 /// }
 ///
 /// let yaml = "name: myapp\nport: 8080";
-/// let config: Config = from_str_owned(yaml).unwrap();
+/// let config: Config = from_str_borrowed(yaml).unwrap();
 /// assert_eq!(config.name, "myapp");
 /// assert_eq!(config.port, 8080);
 /// ```
-pub fn from_str_owned<T: Facet<'static>>(yaml: &str) -> Result<T> {
+pub fn from_str_borrowed<'input, 'facet, T>(yaml: &'input str) -> Result<T>
+where
+    T: Facet<'facet>,
+    'input: 'facet,
+{
     log::trace!(
-        "from_str_owned: parsing YAML for type {}",
+        "from_str_borrowed: parsing YAML for type {}",
         core::any::type_name::<T>()
     );
 
@@ -303,10 +360,10 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize a YAML document.
-    fn deserialize_document<'facet>(
+    fn deserialize_document<'facet, const BORROW: bool>(
         &mut self,
-        partial: Partial<'facet>,
-    ) -> Result<Partial<'facet>> {
+        partial: Partial<'facet, BORROW>,
+    ) -> Result<Partial<'facet, BORROW>> {
         log::trace!("deserialize_document: shape = {}", partial.shape());
 
         // Skip StreamStart and DocumentStart
@@ -324,7 +381,10 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Main deserialization dispatch based on shape.
-    fn deserialize_value<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
+    fn deserialize_value<'facet, const BORROW: bool>(
+        &mut self,
+        partial: Partial<'facet, BORROW>,
+    ) -> Result<Partial<'facet, BORROW>> {
         let shape = partial.shape();
         log::trace!(
             "deserialize_value: shape = {}, path = {}",
@@ -389,7 +449,10 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize into a `Spanned<T>` wrapper.
-    fn deserialize_spanned<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
+    fn deserialize_spanned<'facet, const BORROW: bool>(
+        &mut self,
+        partial: Partial<'facet, BORROW>,
+    ) -> Result<Partial<'facet, BORROW>> {
         log::trace!("deserialize_spanned");
 
         // Peek to get the span of the value we're about to parse
@@ -415,7 +478,10 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize a scalar value.
-    fn deserialize_scalar<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
+    fn deserialize_scalar<'facet, const BORROW: bool>(
+        &mut self,
+        partial: Partial<'facet, BORROW>,
+    ) -> Result<Partial<'facet, BORROW>> {
         let shape = partial.shape();
         log::trace!("deserialize_scalar: shape = {shape}");
 
@@ -441,12 +507,12 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Set a scalar value on the partial based on its type.
-    fn set_scalar_value<'facet>(
+    fn set_scalar_value<'facet, const BORROW: bool>(
         &self,
-        partial: Partial<'facet>,
+        partial: Partial<'facet, BORROW>,
         value: &str,
         span: Span,
-    ) -> Result<Partial<'facet>> {
+    ) -> Result<Partial<'facet, BORROW>> {
         let mut partial = partial;
         let shape = partial.shape();
 
@@ -560,14 +626,14 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Set a numeric value with proper type conversion.
-    fn set_numeric_value<'facet>(
+    fn set_numeric_value<'facet, const BORROW: bool>(
         &self,
-        partial: Partial<'facet>,
+        partial: Partial<'facet, BORROW>,
         value: &str,
         numeric_type: NumericType,
         size: usize,
         span: Span,
-    ) -> Result<Partial<'facet>> {
+    ) -> Result<Partial<'facet, BORROW>> {
         let mut partial = partial;
         match numeric_type {
             NumericType::Integer { signed: false } => {
@@ -749,7 +815,10 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize an Option.
-    fn deserialize_option<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
+    fn deserialize_option<'facet, const BORROW: bool>(
+        &mut self,
+        partial: Partial<'facet, BORROW>,
+    ) -> Result<Partial<'facet, BORROW>> {
         log::trace!("deserialize_option at path = {}", partial.path());
 
         let mut partial = partial;
@@ -773,7 +842,10 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize a list/Vec.
-    fn deserialize_list<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
+    fn deserialize_list<'facet, const BORROW: bool>(
+        &mut self,
+        partial: Partial<'facet, BORROW>,
+    ) -> Result<Partial<'facet, BORROW>> {
         log::trace!("deserialize_list at path = {}", partial.path());
 
         // Expect SequenceStart
@@ -820,7 +892,10 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize a map.
-    fn deserialize_map<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
+    fn deserialize_map<'facet, const BORROW: bool>(
+        &mut self,
+        partial: Partial<'facet, BORROW>,
+    ) -> Result<Partial<'facet, BORROW>> {
         log::trace!("deserialize_map at path = {}", partial.path());
 
         // Expect MappingStart
@@ -892,7 +967,10 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize a struct.
-    fn deserialize_struct<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
+    fn deserialize_struct<'facet, const BORROW: bool>(
+        &mut self,
+        partial: Partial<'facet, BORROW>,
+    ) -> Result<Partial<'facet, BORROW>> {
         log::trace!(
             "deserialize_struct: {} at path = {}",
             partial.shape(),
@@ -1027,7 +1105,10 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize an enum (externally tagged by default).
-    fn deserialize_enum<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
+    fn deserialize_enum<'facet, const BORROW: bool>(
+        &mut self,
+        partial: Partial<'facet, BORROW>,
+    ) -> Result<Partial<'facet, BORROW>> {
         log::trace!(
             "deserialize_enum: {} at path = {}",
             partial.shape(),
@@ -1154,11 +1235,11 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize tuple variant fields from a sequence.
-    fn deserialize_tuple_variant_fields<'facet>(
+    fn deserialize_tuple_variant_fields<'facet, const BORROW: bool>(
         &mut self,
-        partial: Partial<'facet>,
+        partial: Partial<'facet, BORROW>,
         num_fields: usize,
-    ) -> Result<Partial<'facet>> {
+    ) -> Result<Partial<'facet, BORROW>> {
         let event = self.next_or_eof("sequence start")?;
         let event_span = event.span;
         let event_kind = event.event.clone();
@@ -1202,10 +1283,10 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize struct variant fields from a mapping.
-    fn deserialize_struct_variant_fields<'facet>(
+    fn deserialize_struct_variant_fields<'facet, const BORROW: bool>(
         &mut self,
-        partial: Partial<'facet>,
-    ) -> Result<Partial<'facet>> {
+        partial: Partial<'facet, BORROW>,
+    ) -> Result<Partial<'facet, BORROW>> {
         let event = self.next_or_eof("mapping start")?;
         let event_span = event.span;
         let event_kind = event.event.clone();
@@ -1264,7 +1345,10 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize a smart pointer (Box, Arc, Rc).
-    fn deserialize_pointer<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
+    fn deserialize_pointer<'facet, const BORROW: bool>(
+        &mut self,
+        partial: Partial<'facet, BORROW>,
+    ) -> Result<Partial<'facet, BORROW>> {
         log::trace!("deserialize_pointer at path = {}", partial.path());
 
         // Check what kind of pointer this is BEFORE calling begin_smart_ptr
@@ -1331,7 +1415,10 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize a fixed-size array.
-    fn deserialize_array<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
+    fn deserialize_array<'facet, const BORROW: bool>(
+        &mut self,
+        partial: Partial<'facet, BORROW>,
+    ) -> Result<Partial<'facet, BORROW>> {
         log::trace!("deserialize_array at path = {}", partial.path());
 
         let array_len = match &partial.shape().def {
@@ -1386,7 +1473,10 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize a set.
-    fn deserialize_set<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
+    fn deserialize_set<'facet, const BORROW: bool>(
+        &mut self,
+        partial: Partial<'facet, BORROW>,
+    ) -> Result<Partial<'facet, BORROW>> {
         log::trace!("deserialize_set at path = {}", partial.path());
 
         let event = self.next_or_eof("sequence start")?;
@@ -1431,7 +1521,10 @@ impl<'input> YamlDeserializer<'input> {
     }
 
     /// Deserialize a tuple.
-    fn deserialize_tuple<'facet>(&mut self, partial: Partial<'facet>) -> Result<Partial<'facet>> {
+    fn deserialize_tuple<'facet, const BORROW: bool>(
+        &mut self,
+        partial: Partial<'facet, BORROW>,
+    ) -> Result<Partial<'facet, BORROW>> {
         log::trace!("deserialize_tuple at path = {}", partial.path());
 
         let tuple_len = match &partial.shape().ty {

@@ -84,7 +84,7 @@ where
             kind: YamlRejectionKind::InvalidUtf8,
         })?;
 
-        let value: T = crate::from_str_owned(body_str).map_err(|e| YamlRejection {
+        let value: T = crate::from_str(body_str).map_err(|e| YamlRejection {
             kind: YamlRejectionKind::Deserialize(e),
         })?;
 
