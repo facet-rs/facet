@@ -160,7 +160,7 @@ impl<'input, const BORROW: bool> SliceAdapter<'input, BORROW> {
 
     /// Get the next token with decoded content.
     ///
-    /// Strings are decoded (escapes processed) and returned as Cow<str>.
+    /// Strings are decoded (escapes processed) and returned as `Cow<str>`.
     /// Numbers are parsed into appropriate numeric types.
     ///
     /// Uses windowed scanning: on `NeedMore`, grows the window and retries.
