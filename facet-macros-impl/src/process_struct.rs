@@ -482,9 +482,25 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         )
     };
 
+    // Generate code to suppress dead_code warnings on structs constructed via reflection.
+    // When structs are constructed via reflection (e.g., facet_args::from_std_args()),
+    // the compiler doesn't see them being used and warns about dead code.
+    // This function ensures the struct type is "used" from the compiler's perspective.
+    // See: https://github.com/facet-rs/facet/issues/996
+    let dead_code_suppression = quote! {
+        const _: () = {
+            #[allow(dead_code, clippy::multiple_bound_locations)]
+            fn __facet_use_struct #bgp_def (__v: &#struct_name_ident #bgp_without_bounds) #where_clauses {
+                let _ = __v;
+            }
+        };
+    };
+
     // Final quote block using refactored parts
     let result = quote! {
         #static_decl
+
+        #dead_code_suppression
 
         #[automatically_derived]
         unsafe impl #bgp_def #facet_crate::Facet<'__facet> for #struct_name_ident #bgp_without_bounds #where_clauses {
