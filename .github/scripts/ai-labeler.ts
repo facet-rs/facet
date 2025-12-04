@@ -1,7 +1,7 @@
 /**
- * AI-powered issue labeler using GitHub Models API
+ * AI-powered labeler for issues and PRs using GitHub Models API
  *
- * This script analyzes GitHub issues and applies appropriate labels
+ * This script analyzes GitHub issues and pull requests and applies appropriate labels
  * using the GitHub Models inference API (free tier, no API key needed).
  */
 
@@ -34,9 +34,12 @@ interface GitHubModelsResponse {
 
 async function callGitHubModels(
   token: string,
-  issueTitle: string,
-  issueBody: string
+  title: string,
+  body: string,
+  eventType: "issue" | "pull_request"
 ): Promise<Label[]> {
+  const itemType = eventType === "issue" ? "issue" : "pull request";
+
   const response = await fetch(
     "https://models.github.ai/inference/chat/completions",
     {
@@ -50,10 +53,10 @@ async function callGitHubModels(
         messages: [
           {
             role: "system",
-            content: `You are a GitHub issue classifier for the "facet" Rust library.
+            content: `You are a GitHub ${itemType} classifier for the "facet" Rust library.
 facet is a reflection and serialization framework for Rust.
 
-Analyze the issue and return a JSON array of applicable labels. Choose labels that accurately describe the issue.
+Analyze the ${itemType} and return a JSON array of applicable labels. Choose labels that accurately describe the ${itemType}.
 
 Available labels and their meanings:
 - "🐛 bug": Something is broken, crashes, errors, panics, regressions
@@ -71,14 +74,14 @@ Available labels and their meanings:
 Rules:
 1. Return ONLY a valid JSON array of strings, nothing else
 2. Only use labels from the list above (exact match including emoji)
-3. Apply 1-3 labels that best fit the issue
+3. Apply 1-3 labels that best fit the ${itemType}
 4. If unsure, prefer fewer labels over more
 
 Example response: ["🐛 bug", "📁 formats"]`,
           },
           {
             role: "user",
-            content: `Issue Title: ${issueTitle}\n\nIssue Body:\n${issueBody || "(no body)"}`,
+            content: `${itemType === "issue" ? "Issue" : "PR"} Title: ${title}\n\n${itemType === "issue" ? "Issue" : "PR"} Body:\n${body || "(no body)"}`,
           },
         ],
         max_tokens: 150,
@@ -126,33 +129,36 @@ const FALLBACK_LABEL = "needs-triage";
 async function main() {
   const token = process.env.GITHUB_TOKEN;
   const repo = process.env.GITHUB_REPOSITORY;
-  const issueNumber = process.env.ISSUE_NUMBER;
-  const issueTitle = process.env.ISSUE_TITLE;
-  const issueBody = process.env.ISSUE_BODY;
+  const eventType = process.env.EVENT_TYPE as "issue" | "pull_request";
+  const itemNumber = process.env.ITEM_NUMBER;
+  const itemTitle = process.env.ITEM_TITLE;
+  const itemBody = process.env.ITEM_BODY;
 
   if (!token) throw new Error("GITHUB_TOKEN is required");
   if (!repo) throw new Error("GITHUB_REPOSITORY is required");
-  if (!issueNumber) throw new Error("ISSUE_NUMBER is required");
-  if (!issueTitle) throw new Error("ISSUE_TITLE is required");
+  if (!eventType) throw new Error("EVENT_TYPE is required");
+  if (!itemNumber) throw new Error("ITEM_NUMBER is required");
+  if (!itemTitle) throw new Error("ITEM_TITLE is required");
 
   const [owner, repoName] = repo.split("/");
   const octokit = new Octokit({ auth: token });
+  const itemType = eventType === "issue" ? "issue" : "PR";
 
-  console.log(`Analyzing issue #${issueNumber}: ${issueTitle}`);
+  console.log(`Analyzing ${itemType} #${itemNumber}: ${itemTitle}`);
 
   let labels: Label[];
 
   try {
-    labels = await callGitHubModels(token, issueTitle, issueBody || "");
+    labels = await callGitHubModels(token, itemTitle, itemBody || "", eventType);
   } catch (error) {
-    // AI failed — fall back to needs-triage so the issue doesn't slip through
+    // AI failed — fall back to needs-triage so the item doesn't slip through
     console.error(`AI labeling failed: ${error instanceof Error ? error.message : error}`);
     console.log(`Falling back to "${FALLBACK_LABEL}" label`);
 
     await octokit.rest.issues.addLabels({
       owner,
       repo: repoName,
-      issue_number: parseInt(issueNumber, 10),
+      issue_number: parseInt(itemNumber, 10),
       labels: [FALLBACK_LABEL],
     });
 
@@ -160,8 +166,8 @@ async function main() {
     await octokit.rest.issues.createComment({
       owner,
       repo: repoName,
-      issue_number: parseInt(issueNumber, 10),
-      body: `⚠️ Automatic labeling failed (likely rate limit). This issue needs manual triage.`,
+      issue_number: parseInt(itemNumber, 10),
+      body: `⚠️ Automatic labeling failed (likely rate limit). This ${itemType} needs manual triage.`,
     });
 
     return;
@@ -172,7 +178,7 @@ async function main() {
     await octokit.rest.issues.addLabels({
       owner,
       repo: repoName,
-      issue_number: parseInt(issueNumber, 10),
+      issue_number: parseInt(itemNumber, 10),
       labels: [FALLBACK_LABEL],
     });
     return;
@@ -183,7 +189,7 @@ async function main() {
   await octokit.rest.issues.addLabels({
     owner,
     repo: repoName,
-    issue_number: parseInt(issueNumber, 10),
+    issue_number: parseInt(itemNumber, 10),
     labels,
   });
 
