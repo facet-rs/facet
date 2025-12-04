@@ -87,178 +87,404 @@ impl From<ScanError> for AdapterError {
     }
 }
 
-/// Token adapter for slice-based parsing.
+/// Default chunk size for windowed scanning (small for testing boundary conditions)
+pub const DEFAULT_CHUNK_SIZE: usize = 4;
+
+/// Token adapter for slice-based parsing with fixed-size windowing.
 ///
-/// Wraps a Scanner and provides `next()` and `skip()` methods.
+/// Uses a sliding window approach:
+/// - Scanner sees only `chunk_size` bytes at a time
+/// - On `NeedMore`, window grows (extends end) to include more bytes
+/// - On token complete, window slides (moves start) past consumed bytes
+/// - No data is copied - window is just a view into the original slice
 ///
 /// The const generic `BORROW` controls string handling:
 /// - `BORROW=true`: strings without escapes are borrowed (`Cow::Borrowed`)
 /// - `BORROW=false`: all strings are owned (`Cow::Owned`)
 pub struct SliceAdapter<'input, const BORROW: bool> {
-    buffer: &'input [u8],
+    /// Full original input (for borrowing strings)
+    input: &'input [u8],
+    /// Start of current window in input
+    window_start: usize,
+    /// End of current window in input
+    window_end: usize,
+    /// Chunk size for window growth
+    chunk_size: usize,
+    /// The scanner
     scanner: Scanner,
 }
 
 impl<'input, const BORROW: bool> SliceAdapter<'input, BORROW> {
-    /// Create a new adapter for slice-based parsing.
-    pub fn new(buffer: &'input [u8]) -> Self {
+    /// Create a new adapter with the default chunk size (4 bytes).
+    pub fn new(input: &'input [u8]) -> Self {
+        Self::with_chunk_size(input, DEFAULT_CHUNK_SIZE)
+    }
+
+    /// Create a new adapter with a custom chunk size.
+    pub fn with_chunk_size(input: &'input [u8], chunk_size: usize) -> Self {
+        let initial_end = chunk_size.min(input.len());
         Self {
-            buffer,
+            input,
+            window_start: 0,
+            window_end: initial_end,
+            chunk_size,
             scanner: Scanner::new(),
         }
+    }
+
+    /// Get the current window into the input.
+    #[inline]
+    fn current_window(&self) -> &'input [u8] {
+        &self.input[self.window_start..self.window_end]
+    }
+
+    /// Grow the window by one chunk (or to end of input).
+    #[inline]
+    fn grow_window(&mut self) {
+        self.window_end = (self.window_end + self.chunk_size).min(self.input.len());
+    }
+
+    /// Slide the window forward past consumed bytes, reset scanner.
+    #[inline]
+    fn slide_window(&mut self, consumed_in_window: usize) {
+        self.window_start += consumed_in_window;
+        self.window_end = (self.window_start + self.chunk_size).min(self.input.len());
+        self.scanner.set_pos(0);
+    }
+
+    /// Check if we've reached the end of input.
+    #[inline]
+    fn at_end_of_input(&self) -> bool {
+        self.window_end >= self.input.len()
     }
 
     /// Get the next token with decoded content.
     ///
     /// Strings are decoded (escapes processed) and returned as Cow<str>.
     /// Numbers are parsed into appropriate numeric types.
+    ///
+    /// Uses windowed scanning: on `NeedMore`, grows the window and retries.
+    /// Spans are absolute positions in the original input.
     pub fn next_token(&mut self) -> Result<SpannedAdapterToken<'input>, AdapterError> {
-        let spanned = self.scanner.next_token(self.buffer)?;
+        loop {
+            let window = self.current_window();
+            let spanned = match self.scanner.next_token(window) {
+                Ok(s) => s,
+                Err(e) => {
+                    // Translate error span to absolute position
+                    return Err(AdapterError {
+                        kind: AdapterErrorKind::Scan(e.kind),
+                        span: Span::new(self.window_start + e.span.offset, e.span.len),
+                    });
+                }
+            };
 
-        let token = match spanned.token {
-            ScanToken::ObjectStart => Token::ObjectStart,
-            ScanToken::ObjectEnd => Token::ObjectEnd,
-            ScanToken::ArrayStart => Token::ArrayStart,
-            ScanToken::ArrayEnd => Token::ArrayEnd,
-            ScanToken::Colon => Token::Colon,
-            ScanToken::Comma => Token::Comma,
-            ScanToken::Null => Token::Null,
-            ScanToken::True => Token::True,
-            ScanToken::False => Token::False,
+            match spanned.token {
+                ScanToken::NeedMore { .. } => {
+                    // Need more data - grow window if possible
+                    if self.at_end_of_input() {
+                        // True EOF - try to finalize any pending token (e.g., number at EOF)
+                        let window = self.current_window();
+                        let finalized = match self.scanner.finalize_at_eof(window) {
+                            Ok(f) => f,
+                            Err(e) => {
+                                return Err(AdapterError {
+                                    kind: AdapterErrorKind::Scan(e.kind),
+                                    span: Span::new(self.window_start + e.span.offset, e.span.len),
+                                });
+                            }
+                        };
+
+                        // Handle the finalized token
+                        let consumed = self.scanner.pos();
+                        let absolute_span = Span::new(
+                            self.window_start + finalized.span.offset,
+                            finalized.span.len,
+                        );
+
+                        let token = self.materialize_token(&finalized)?;
+                        self.slide_window(consumed);
+
+                        return Ok(SpannedAdapterToken {
+                            token,
+                            span: absolute_span,
+                        });
+                    }
+                    self.grow_window();
+                    continue;
+                }
+                ScanToken::Eof => {
+                    // Scanner hit end of window
+                    if self.at_end_of_input() {
+                        // True EOF
+                        return Ok(SpannedAdapterToken {
+                            token: Token::Eof,
+                            span: Span::new(self.window_start + spanned.span.offset, 0),
+                        });
+                    }
+                    // End of window but more input available - slide forward
+                    self.slide_window(self.scanner.pos());
+                    continue;
+                }
+                _ => {
+                    // Complete token - materialize and return
+                    let consumed = self.scanner.pos();
+                    let absolute_span =
+                        Span::new(self.window_start + spanned.span.offset, spanned.span.len);
+
+                    let token = self.materialize_token(&spanned)?;
+
+                    // Slide window past this token for next call
+                    self.slide_window(consumed);
+
+                    return Ok(SpannedAdapterToken {
+                        token,
+                        span: absolute_span,
+                    });
+                }
+            }
+        }
+    }
+
+    /// Materialize a scanned token into a decoded token.
+    ///
+    /// Positions in `spanned` are relative to current window.
+    /// We borrow/decode from the original input slice using absolute positions.
+    fn materialize_token(
+        &self,
+        spanned: &scanner::SpannedToken,
+    ) -> Result<Token<'input>, AdapterError> {
+        match &spanned.token {
+            ScanToken::ObjectStart => Ok(Token::ObjectStart),
+            ScanToken::ObjectEnd => Ok(Token::ObjectEnd),
+            ScanToken::ArrayStart => Ok(Token::ArrayStart),
+            ScanToken::ArrayEnd => Ok(Token::ArrayEnd),
+            ScanToken::Colon => Ok(Token::Colon),
+            ScanToken::Comma => Ok(Token::Comma),
+            ScanToken::Null => Ok(Token::Null),
+            ScanToken::True => Ok(Token::True),
+            ScanToken::False => Ok(Token::False),
             ScanToken::String {
                 start,
                 end,
                 has_escapes,
             } => {
-                let s = if BORROW && !has_escapes {
-                    // Can borrow directly from input
-                    scanner::decode_string(self.buffer, start, end, false)?
+                // Convert to absolute positions in original input
+                let abs_start = self.window_start + start;
+                let abs_end = self.window_start + end;
+
+                let s = if BORROW && !*has_escapes {
+                    // Borrow directly from original input (zero-copy)
+                    scanner::decode_string(self.input, abs_start, abs_end, false)?
                 } else {
-                    // Must produce owned string (either BORROW=false or has escapes)
-                    Cow::Owned(scanner::decode_string_owned(self.buffer, start, end)?)
+                    // Must produce owned string (has escapes or BORROW=false)
+                    Cow::Owned(scanner::decode_string_owned(
+                        self.input, abs_start, abs_end,
+                    )?)
                 };
-                Token::String(s)
+                Ok(Token::String(s))
             }
             ScanToken::Number { start, end, hint } => {
-                let parsed = scanner::parse_number(self.buffer, start, end, hint)?;
-                match parsed {
+                // Convert to absolute positions
+                let abs_start = self.window_start + start;
+                let abs_end = self.window_start + end;
+
+                let parsed = scanner::parse_number(self.input, abs_start, abs_end, *hint)?;
+                Ok(match parsed {
                     ParsedNumber::U64(n) => Token::U64(n),
                     ParsedNumber::I64(n) => Token::I64(n),
                     ParsedNumber::U128(n) => Token::U128(n),
                     ParsedNumber::I128(n) => Token::I128(n),
                     ParsedNumber::F64(n) => Token::F64(n),
-                }
-            }
-            ScanToken::Eof => Token::Eof,
-            ScanToken::NeedMore { .. } => {
-                // For slice-based parsing, NeedMore means unexpected EOF
-                return Err(AdapterError {
-                    kind: AdapterErrorKind::Scan(ScanErrorKind::UnexpectedEof("in token")),
-                    span: spanned.span,
-                });
-            }
-        };
-
-        Ok(SpannedAdapterToken {
-            token,
-            span: spanned.span,
-        })
-    }
-
-    /// Skip a JSON value without decoding.
-    ///
-    /// Returns the span of the skipped value.
-    /// No string allocations occur.
-    pub fn skip(&mut self) -> Result<Span, AdapterError> {
-        let start_spanned = self.scanner.next_token(self.buffer)?;
-        let start_offset = start_spanned.span.offset;
-
-        match start_spanned.token {
-            ScanToken::ObjectStart => {
-                // Skip until matching ObjectEnd
-                let mut depth = 1;
-                let mut end_span = start_spanned.span;
-                while depth > 0 {
-                    let spanned = self.scanner.next_token(self.buffer)?;
-                    end_span = spanned.span;
-                    match spanned.token {
-                        ScanToken::ObjectStart => depth += 1,
-                        ScanToken::ObjectEnd => depth -= 1,
-                        ScanToken::NeedMore { .. } => {
-                            return Err(AdapterError {
-                                kind: AdapterErrorKind::Scan(ScanErrorKind::UnexpectedEof(
-                                    "in object",
-                                )),
-                                span: spanned.span,
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-                Ok(Span::new(
-                    start_offset,
-                    end_span.offset + end_span.len - start_offset,
-                ))
-            }
-            ScanToken::ArrayStart => {
-                // Skip until matching ArrayEnd
-                let mut depth = 1;
-                let mut end_span = start_spanned.span;
-                while depth > 0 {
-                    let spanned = self.scanner.next_token(self.buffer)?;
-                    end_span = spanned.span;
-                    match spanned.token {
-                        ScanToken::ArrayStart => depth += 1,
-                        ScanToken::ArrayEnd => depth -= 1,
-                        ScanToken::NeedMore { .. } => {
-                            return Err(AdapterError {
-                                kind: AdapterErrorKind::Scan(ScanErrorKind::UnexpectedEof(
-                                    "in array",
-                                )),
-                                span: spanned.span,
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-                Ok(Span::new(
-                    start_offset,
-                    end_span.offset + end_span.len - start_offset,
-                ))
-            }
-            // Scalars: just return their span
-            ScanToken::String { .. }
-            | ScanToken::Number { .. }
-            | ScanToken::True
-            | ScanToken::False
-            | ScanToken::Null => Ok(start_spanned.span),
-            ScanToken::Eof => Err(AdapterError {
-                kind: AdapterErrorKind::Scan(ScanErrorKind::UnexpectedEof("expected value")),
-                span: start_spanned.span,
-            }),
-            ScanToken::NeedMore { .. } => Err(AdapterError {
-                kind: AdapterErrorKind::Scan(ScanErrorKind::UnexpectedEof("expected value")),
-                span: start_spanned.span,
-            }),
-            // Colon/Comma are not values
-            ScanToken::Colon | ScanToken::ObjectEnd | ScanToken::ArrayEnd | ScanToken::Comma => {
-                Err(AdapterError {
-                    kind: AdapterErrorKind::Scan(ScanErrorKind::UnexpectedChar(':')),
-                    span: start_spanned.span,
                 })
+            }
+            ScanToken::Eof | ScanToken::NeedMore { .. } => {
+                unreachable!("Eof and NeedMore handled in next_token loop")
             }
         }
     }
 
-    /// Get the current position in the buffer.
-    pub fn position(&self) -> usize {
-        self.scanner.pos()
+    /// Skip a JSON value without decoding.
+    ///
+    /// Returns the span of the skipped value (absolute positions).
+    /// No string allocations occur.
+    pub fn skip(&mut self) -> Result<Span, AdapterError> {
+        // Get the first token using windowing
+        let first_token = self.next_token_for_skip()?;
+        let abs_start = first_token.span.offset;
+
+        match first_token.token {
+            SkipToken::ObjectStart => {
+                // Skip until matching ObjectEnd
+                let mut depth = 1;
+                let mut abs_end = first_token.span.offset + first_token.span.len;
+                while depth > 0 {
+                    let t = self.next_token_for_skip()?;
+                    abs_end = t.span.offset + t.span.len;
+                    match t.token {
+                        SkipToken::ObjectStart => depth += 1,
+                        SkipToken::ObjectEnd => depth -= 1,
+                        _ => {}
+                    }
+                }
+                Ok(Span::new(abs_start, abs_end - abs_start))
+            }
+            SkipToken::ArrayStart => {
+                // Skip until matching ArrayEnd
+                let mut depth = 1;
+                let mut abs_end = first_token.span.offset + first_token.span.len;
+                while depth > 0 {
+                    let t = self.next_token_for_skip()?;
+                    abs_end = t.span.offset + t.span.len;
+                    match t.token {
+                        SkipToken::ArrayStart => depth += 1,
+                        SkipToken::ArrayEnd => depth -= 1,
+                        _ => {}
+                    }
+                }
+                Ok(Span::new(abs_start, abs_end - abs_start))
+            }
+            // Scalars: just return their span
+            SkipToken::Scalar => Ok(first_token.span),
+            SkipToken::Eof => Err(AdapterError {
+                kind: AdapterErrorKind::Scan(ScanErrorKind::UnexpectedEof("expected value")),
+                span: first_token.span,
+            }),
+            // These shouldn't appear as first token when skipping a value
+            SkipToken::ObjectEnd | SkipToken::ArrayEnd => Err(AdapterError {
+                kind: AdapterErrorKind::Scan(ScanErrorKind::UnexpectedChar('}')),
+                span: first_token.span,
+            }),
+        }
     }
 
-    /// Get the underlying buffer.
-    pub fn buffer(&self) -> &'input [u8] {
-        self.buffer
+    /// Internal: get next token for skip operation (handles windowing).
+    fn next_token_for_skip(&mut self) -> Result<SpannedSkipToken, AdapterError> {
+        loop {
+            let window = self.current_window();
+            let spanned = match self.scanner.next_token(window) {
+                Ok(s) => s,
+                Err(e) => {
+                    return Err(AdapterError {
+                        kind: AdapterErrorKind::Scan(e.kind),
+                        span: Span::new(self.window_start + e.span.offset, e.span.len),
+                    });
+                }
+            };
+
+            match spanned.token {
+                ScanToken::NeedMore { .. } => {
+                    if self.at_end_of_input() {
+                        // True EOF - try to finalize any pending token
+                        let window = self.current_window();
+                        let finalized = match self.scanner.finalize_at_eof(window) {
+                            Ok(f) => f,
+                            Err(e) => {
+                                return Err(AdapterError {
+                                    kind: AdapterErrorKind::Scan(e.kind),
+                                    span: Span::new(self.window_start + e.span.offset, e.span.len),
+                                });
+                            }
+                        };
+
+                        let consumed = self.scanner.pos();
+                        let abs_span = Span::new(
+                            self.window_start + finalized.span.offset,
+                            finalized.span.len,
+                        );
+
+                        let skip_token = match finalized.token {
+                            ScanToken::ObjectStart => SkipToken::ObjectStart,
+                            ScanToken::ObjectEnd => SkipToken::ObjectEnd,
+                            ScanToken::ArrayStart => SkipToken::ArrayStart,
+                            ScanToken::ArrayEnd => SkipToken::ArrayEnd,
+                            ScanToken::String { .. }
+                            | ScanToken::Number { .. }
+                            | ScanToken::True
+                            | ScanToken::False
+                            | ScanToken::Null
+                            | ScanToken::Colon
+                            | ScanToken::Comma => SkipToken::Scalar,
+                            ScanToken::Eof => SkipToken::Eof,
+                            ScanToken::NeedMore { .. } => unreachable!(),
+                        };
+
+                        self.slide_window(consumed);
+                        return Ok(SpannedSkipToken {
+                            token: skip_token,
+                            span: abs_span,
+                        });
+                    }
+                    self.grow_window();
+                    continue;
+                }
+                ScanToken::Eof => {
+                    if self.at_end_of_input() {
+                        return Ok(SpannedSkipToken {
+                            token: SkipToken::Eof,
+                            span: Span::new(self.window_start + spanned.span.offset, 0),
+                        });
+                    }
+                    self.slide_window(self.scanner.pos());
+                    continue;
+                }
+                _ => {
+                    let consumed = self.scanner.pos();
+                    let abs_span =
+                        Span::new(self.window_start + spanned.span.offset, spanned.span.len);
+
+                    let skip_token = match spanned.token {
+                        ScanToken::ObjectStart => SkipToken::ObjectStart,
+                        ScanToken::ObjectEnd => SkipToken::ObjectEnd,
+                        ScanToken::ArrayStart => SkipToken::ArrayStart,
+                        ScanToken::ArrayEnd => SkipToken::ArrayEnd,
+                        ScanToken::String { .. }
+                        | ScanToken::Number { .. }
+                        | ScanToken::True
+                        | ScanToken::False
+                        | ScanToken::Null
+                        | ScanToken::Colon
+                        | ScanToken::Comma => SkipToken::Scalar,
+                        ScanToken::Eof | ScanToken::NeedMore { .. } => unreachable!(),
+                    };
+
+                    self.slide_window(consumed);
+                    return Ok(SpannedSkipToken {
+                        token: skip_token,
+                        span: abs_span,
+                    });
+                }
+            }
+        }
     }
+
+    /// Get the current absolute position in the input.
+    pub fn position(&self) -> usize {
+        self.window_start + self.scanner.pos()
+    }
+
+    /// Get the underlying input slice.
+    pub fn input(&self) -> &'input [u8] {
+        self.input
+    }
+}
+
+/// Simplified token type for skip operations (no need to decode content).
+#[derive(Debug, Clone, Copy)]
+enum SkipToken {
+    ObjectStart,
+    ObjectEnd,
+    ArrayStart,
+    ArrayEnd,
+    Scalar, // String, Number, true, false, null, colon, comma
+    Eof,
+}
+
+/// Spanned skip token.
+#[derive(Debug)]
+struct SpannedSkipToken {
+    token: SkipToken,
+    span: Span,
 }
 
 #[cfg(test)]
@@ -450,6 +676,101 @@ mod tests {
         let t = adapter.next_token().unwrap();
         // No escapes + BORROW=true means Borrowed
         assert!(matches!(t.token, Token::String(Cow::Borrowed(_))));
+    }
+
+    #[test]
+    fn test_windowed_parsing_long_string() {
+        // Test that strings longer than the chunk size (4 bytes) work correctly
+        // This exercises the NeedMore handling
+        let json = br#""hello world""#; // 13 bytes, much longer than chunk_size=4
+        let mut adapter = SliceAdapter::<true>::new(json);
+
+        let t = adapter.next_token().unwrap();
+        assert_eq!(t.token, Token::String(Cow::Borrowed("hello world")));
+        // Span should cover the entire string including quotes
+        assert_eq!(t.span.offset, 0);
+        assert_eq!(t.span.len, 13);
+    }
+
+    #[test]
+    fn test_windowed_parsing_number_at_eof() {
+        // Test that numbers at EOF are finalized correctly
+        let json = b"-123"; // 4 bytes, exactly chunk_size
+        let mut adapter = SliceAdapter::<true>::new(json);
+
+        let t = adapter.next_token().unwrap();
+        assert_eq!(t.token, Token::I64(-123));
+    }
+
+    #[test]
+    fn test_windowed_parsing_complex_object() {
+        // Test a complex object that spans many chunks
+        let json = br#"{"name": "hello world", "value": 12345, "nested": {"a": 1}}"#;
+        let mut adapter = SliceAdapter::<true>::new(json);
+
+        // {
+        assert!(matches!(
+            adapter.next_token().unwrap().token,
+            Token::ObjectStart
+        ));
+        // "name"
+        assert_eq!(
+            adapter.next_token().unwrap().token,
+            Token::String(Cow::Borrowed("name"))
+        );
+        // :
+        assert!(matches!(adapter.next_token().unwrap().token, Token::Colon));
+        // "hello world"
+        assert_eq!(
+            adapter.next_token().unwrap().token,
+            Token::String(Cow::Borrowed("hello world"))
+        );
+        // ,
+        assert!(matches!(adapter.next_token().unwrap().token, Token::Comma));
+        // "value"
+        assert_eq!(
+            adapter.next_token().unwrap().token,
+            Token::String(Cow::Borrowed("value"))
+        );
+        // :
+        assert!(matches!(adapter.next_token().unwrap().token, Token::Colon));
+        // 12345
+        assert_eq!(adapter.next_token().unwrap().token, Token::U64(12345));
+        // ,
+        assert!(matches!(adapter.next_token().unwrap().token, Token::Comma));
+        // "nested"
+        assert_eq!(
+            adapter.next_token().unwrap().token,
+            Token::String(Cow::Borrowed("nested"))
+        );
+        // :
+        assert!(matches!(adapter.next_token().unwrap().token, Token::Colon));
+        // {
+        assert!(matches!(
+            adapter.next_token().unwrap().token,
+            Token::ObjectStart
+        ));
+        // "a"
+        assert_eq!(
+            adapter.next_token().unwrap().token,
+            Token::String(Cow::Borrowed("a"))
+        );
+        // :
+        assert!(matches!(adapter.next_token().unwrap().token, Token::Colon));
+        // 1
+        assert_eq!(adapter.next_token().unwrap().token, Token::U64(1));
+        // }
+        assert!(matches!(
+            adapter.next_token().unwrap().token,
+            Token::ObjectEnd
+        ));
+        // }
+        assert!(matches!(
+            adapter.next_token().unwrap().token,
+            Token::ObjectEnd
+        ));
+        // EOF
+        assert!(matches!(adapter.next_token().unwrap().token, Token::Eof));
     }
 }
 
