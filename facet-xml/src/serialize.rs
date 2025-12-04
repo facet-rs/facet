@@ -1,14 +1,28 @@
 //! XML serialization implementation.
 
+use std::collections::HashMap;
 use std::io::Write;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-use facet_core::{Def, Facet, StructKind};
+use facet_core::{Def, Facet, Field, Shape, StructKind};
 use facet_reflect::{HasFields, Peek, is_spanned_shape};
 
-use crate::deserialize::XmlFieldExt;
+use crate::deserialize::{XmlFieldExt, XmlShapeExt};
 use crate::error::{XmlError, XmlErrorKind};
+
+/// Well-known XML namespace URIs and their conventional prefixes.
+const WELL_KNOWN_NAMESPACES: &[(&str, &str)] = &[
+    ("http://www.w3.org/2001/XMLSchema-instance", "xsi"),
+    ("http://www.w3.org/2001/XMLSchema", "xs"),
+    ("http://www.w3.org/XML/1998/namespace", "xml"),
+    ("http://www.w3.org/1999/xlink", "xlink"),
+    ("http://www.w3.org/2000/svg", "svg"),
+    ("http://www.w3.org/1999/xhtml", "xhtml"),
+    ("http://schemas.xmlsoap.org/soap/envelope/", "soap"),
+    ("http://www.w3.org/2003/05/soap-envelope", "soap12"),
+    ("http://schemas.android.com/apk/res/android", "android"),
+];
 
 pub(crate) type Result<T> = std::result::Result<T, XmlError>;
 
@@ -83,11 +97,64 @@ pub fn to_writer<W: Write, T: Facet<'static>>(writer: &mut W, value: &T) -> Resu
 
 struct XmlSerializer<W> {
     writer: W,
+    /// Namespace URI -> prefix mapping for already-declared namespaces.
+    declared_namespaces: HashMap<String, String>,
+    /// Counter for auto-generating namespace prefixes (ns0, ns1, ...).
+    next_ns_index: usize,
 }
 
 impl<W: Write> XmlSerializer<W> {
     fn new(writer: W) -> Self {
-        Self { writer }
+        Self {
+            writer,
+            declared_namespaces: HashMap::new(),
+            next_ns_index: 0,
+        }
+    }
+
+    /// Get or create a prefix for the given namespace URI.
+    /// Returns the prefix (without colon).
+    ///
+    /// Note: We always need to emit xmlns declarations on each element that uses a prefix,
+    /// because XML namespace declarations are scoped to the element and its descendants.
+    /// A declaration on a sibling or earlier element doesn't apply.
+    fn get_or_create_prefix(&mut self, namespace_uri: &str) -> String {
+        // Check if we've already assigned a prefix to this URI
+        if let Some(prefix) = self.declared_namespaces.get(namespace_uri) {
+            return prefix.clone();
+        }
+
+        // Try well-known namespaces
+        let prefix = WELL_KNOWN_NAMESPACES
+            .iter()
+            .find(|(uri, _)| *uri == namespace_uri)
+            .map(|(_, prefix)| (*prefix).to_string())
+            .unwrap_or_else(|| {
+                // Auto-generate a prefix
+                let prefix = format!("ns{}", self.next_ns_index);
+                self.next_ns_index += 1;
+                prefix
+            });
+
+        // Ensure the prefix isn't already in use for a different namespace
+        let final_prefix = if self.declared_namespaces.values().any(|p| p == &prefix) {
+            // Conflict! Generate a new one
+            let prefix = format!("ns{}", self.next_ns_index);
+            self.next_ns_index += 1;
+            prefix
+        } else {
+            prefix
+        };
+
+        self.declared_namespaces
+            .insert(namespace_uri.to_string(), final_prefix.clone());
+        final_prefix
+    }
+
+    /// Get the effective namespace for a field, considering field-level xml::ns
+    /// and container-level xml::ns_all.
+    fn get_field_namespace(field: &Field, ns_all: Option<&'static str>) -> Option<&'static str> {
+        field.xml_ns().or(ns_all)
     }
 
     fn serialize_element<'mem, 'facet>(
@@ -116,8 +183,9 @@ impl<W: Write> XmlSerializer<W> {
         }
 
         // Check if this is a struct
+        let shape = peek.shape();
         if let Ok(struct_peek) = peek.into_struct() {
-            return self.serialize_struct_as_element(element_name, struct_peek);
+            return self.serialize_struct_as_element(element_name, struct_peek, shape);
         }
 
         // Check if this is an enum
@@ -405,6 +473,7 @@ impl<W: Write> XmlSerializer<W> {
         &mut self,
         element_name: &str,
         struct_peek: facet_reflect::PeekStruct<'mem, 'facet>,
+        shape: &'static Shape,
     ) -> Result<()> {
         match struct_peek.ty().kind {
             StructKind::Unit => {
@@ -440,9 +509,16 @@ impl<W: Write> XmlSerializer<W> {
             }
         }
 
-        // Collect attributes, elements, and text content
-        // We store field name (&'static str) instead of &Field to avoid lifetime issues
-        let mut attributes: Vec<(&str, String)> = Vec::new();
+        // Get container-level namespace default
+        let ns_all = shape.xml_ns_all();
+
+        // Collect attributes (with field info for namespace), elements, and text content
+        struct AttrInfo<'a> {
+            name: &'a str,
+            value: String,
+            namespace: Option<&'static str>,
+        }
+        let mut attributes: Vec<AttrInfo> = Vec::new();
         let mut elements: Vec<(facet_reflect::FieldItem, Peek<'mem, 'facet>)> = Vec::new();
         let mut elements_list: Vec<Peek<'mem, 'facet>> = Vec::new();
         let mut text_content: Option<Peek<'mem, 'facet>> = None;
@@ -463,7 +539,12 @@ impl<W: Write> XmlSerializer<W> {
                     value_to_string(field_peek)
                 };
                 if let Some(value) = value {
-                    attributes.push((field_item.name, value));
+                    let namespace = Self::get_field_namespace(field, ns_all);
+                    attributes.push(AttrInfo {
+                        name: field_item.name,
+                        value,
+                        namespace,
+                    });
                 }
             } else if field.is_xml_element() {
                 elements.push((field_item, field_peek));
@@ -478,16 +559,52 @@ impl<W: Write> XmlSerializer<W> {
         let has_content =
             !elements.is_empty() || !elements_list.is_empty() || text_content.is_some();
 
-        // Write opening tag with attributes
+        // Collect xmlns declarations needed for attributes on this element
+        // We always emit xmlns declarations on the element that uses them, because
+        // XML namespace scope is limited to an element and its descendants.
+        let mut xmlns_decls: Vec<(String, String)> = Vec::new(); // (prefix, uri)
+        let mut attr_prefixes: Vec<Option<String>> = Vec::new(); // prefix for each attribute
+
+        for attr in &attributes {
+            if let Some(ns_uri) = attr.namespace {
+                let prefix = self.get_or_create_prefix(ns_uri);
+                // Always emit xmlns declaration on this element
+                if !xmlns_decls.iter().any(|(_, u)| u == ns_uri) {
+                    xmlns_decls.push((prefix.clone(), ns_uri.to_string()));
+                }
+                attr_prefixes.push(Some(prefix));
+            } else {
+                attr_prefixes.push(None);
+            }
+        }
+
+        // Write opening tag
         write!(self.writer, "<{}", escape_element_name(element_name))
             .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
-        for (attr_name, attr_value) in &attributes {
+        // Write xmlns declarations for attributes
+        for (prefix, uri) in &xmlns_decls {
+            write!(
+                self.writer,
+                " xmlns:{}=\"{}\"",
+                escape_element_name(prefix),
+                escape_attribute_value(uri)
+            )
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+        }
+
+        // Write attributes (with prefix if namespaced)
+        for (attr, prefix) in attributes.iter().zip(attr_prefixes.iter()) {
+            let attr_name = if let Some(p) = prefix {
+                format!("{}:{}", p, attr.name)
+            } else {
+                attr.name.to_string()
+            };
             write!(
                 self.writer,
                 " {}=\"{}\"",
-                escape_element_name(attr_name),
-                escape_attribute_value(attr_value)
+                escape_element_name(&attr_name),
+                escape_attribute_value(&attr.value)
             )
             .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
         }
@@ -505,17 +622,19 @@ impl<W: Write> XmlSerializer<W> {
             self.serialize_text_value(text_peek)?;
         }
 
-        // Write child elements
+        // Write child elements (with namespace support)
         for (field_item, field_peek) in elements {
+            let field_ns = Self::get_field_namespace(&field_item.field, ns_all);
+
             // Handle custom serialization for elements
             if field_item.field.proxy_convert_out_fn().is_some() {
                 if let Ok(owned) = field_peek.custom_serialization(field_item.field) {
-                    self.serialize_named_element(field_item.name, owned.as_peek())?;
+                    self.serialize_namespaced_element(field_item.name, owned.as_peek(), field_ns)?;
                 } else {
-                    self.serialize_named_element(field_item.name, field_peek)?;
+                    self.serialize_namespaced_element(field_item.name, field_peek, field_ns)?;
                 }
             } else {
-                self.serialize_named_element(field_item.name, field_peek)?;
+                self.serialize_namespaced_element(field_item.name, field_peek, field_ns)?;
             }
         }
 
@@ -531,10 +650,13 @@ impl<W: Write> XmlSerializer<W> {
         Ok(())
     }
 
-    fn serialize_named_element<'mem, 'facet>(
+    /// Serialize an element with optional namespace.
+    /// If namespace is provided, uses a prefix and emits xmlns declaration if needed.
+    fn serialize_namespaced_element<'mem, 'facet>(
         &mut self,
-        name: &str,
+        element_name: &str,
         peek: Peek<'mem, 'facet>,
+        namespace: Option<&str>,
     ) -> Result<()> {
         // Handle Option<T> - skip if None
         if let Ok(opt_peek) = peek.into_option() {
@@ -542,12 +664,443 @@ impl<W: Write> XmlSerializer<W> {
                 return Ok(());
             }
             if let Some(inner) = opt_peek.value() {
-                return self.serialize_named_element(name, inner);
+                return self.serialize_namespaced_element(element_name, inner, namespace);
             }
             return Ok(());
         }
 
-        self.serialize_element(name, peek)
+        // Handle Spanned<T> - unwrap to the inner value
+        if is_spanned_shape(peek.shape()) {
+            if let Ok(struct_peek) = peek.into_struct() {
+                if let Ok(value_field) = struct_peek.field_by_name("value") {
+                    return self.serialize_namespaced_element(element_name, value_field, namespace);
+                }
+            }
+        }
+
+        // Determine prefixed name and xmlns declaration
+        // We always emit xmlns declarations on each element that uses a prefix,
+        // because XML namespace scope is limited to the element and its descendants.
+        let (prefixed_name, xmlns_decl) = if let Some(ns_uri) = namespace {
+            let prefix = self.get_or_create_prefix(ns_uri);
+            let prefixed = format!("{}:{}", prefix, element_name);
+            // Always emit xmlns declaration on this element
+            (prefixed, Some((prefix, ns_uri.to_string())))
+        } else {
+            (element_name.to_string(), None)
+        };
+
+        // Check if this is a struct - handle specially for proper namespace propagation
+        let shape = peek.shape();
+        if let Ok(struct_peek) = peek.into_struct() {
+            return self.serialize_struct_as_namespaced_element(
+                &prefixed_name,
+                struct_peek,
+                xmlns_decl,
+                shape,
+            );
+        }
+
+        // Check if this is an enum
+        if let Ok(enum_peek) = peek.into_enum() {
+            return self.serialize_enum_as_namespaced_element(
+                &prefixed_name,
+                enum_peek,
+                xmlns_decl,
+            );
+        }
+
+        // For scalars/primitives, serialize as element with text content
+        write!(self.writer, "<{}", escape_element_name(&prefixed_name))
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+        // Add xmlns declaration if needed
+        if let Some((prefix, uri)) = xmlns_decl {
+            write!(
+                self.writer,
+                " xmlns:{}=\"{}\"",
+                escape_element_name(&prefix),
+                escape_attribute_value(&uri)
+            )
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+        }
+
+        write!(self.writer, ">").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+        self.serialize_value(peek)?;
+        write!(self.writer, "</{}>", escape_element_name(&prefixed_name))
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Serialize a struct as an element with optional xmlns declaration on the opening tag.
+    fn serialize_struct_as_namespaced_element<'mem, 'facet>(
+        &mut self,
+        prefixed_element_name: &str,
+        struct_peek: facet_reflect::PeekStruct<'mem, 'facet>,
+        xmlns_decl: Option<(String, String)>,
+        shape: &'static Shape,
+    ) -> Result<()> {
+        match struct_peek.ty().kind {
+            StructKind::Unit => {
+                // Unit struct - just output empty element with xmlns if needed
+                write!(
+                    self.writer,
+                    "<{}",
+                    escape_element_name(prefixed_element_name)
+                )
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                if let Some((prefix, uri)) = xmlns_decl {
+                    write!(
+                        self.writer,
+                        " xmlns:{}=\"{}\"",
+                        escape_element_name(&prefix),
+                        escape_attribute_value(&uri)
+                    )
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                }
+                write!(self.writer, "/>").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                return Ok(());
+            }
+            StructKind::Tuple | StructKind::TupleStruct => {
+                // Tuple struct - serialize fields in order as child elements
+                let fields: Vec<_> = struct_peek.fields_for_serialize().collect();
+                if fields.is_empty() {
+                    write!(
+                        self.writer,
+                        "<{}",
+                        escape_element_name(prefixed_element_name)
+                    )
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                    if let Some((prefix, uri)) = xmlns_decl {
+                        write!(
+                            self.writer,
+                            " xmlns:{}=\"{}\"",
+                            escape_element_name(&prefix),
+                            escape_attribute_value(&uri)
+                        )
+                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                    }
+                    write!(self.writer, "/>").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                    return Ok(());
+                }
+
+                write!(
+                    self.writer,
+                    "<{}",
+                    escape_element_name(prefixed_element_name)
+                )
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                if let Some((prefix, uri)) = xmlns_decl {
+                    write!(
+                        self.writer,
+                        " xmlns:{}=\"{}\"",
+                        escape_element_name(&prefix),
+                        escape_attribute_value(&uri)
+                    )
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                }
+                write!(self.writer, ">").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+                for (i, (_, field_peek)) in fields.into_iter().enumerate() {
+                    let field_name = format!("_{i}");
+                    self.serialize_element(&field_name, field_peek)?;
+                }
+
+                write!(
+                    self.writer,
+                    "</{}>",
+                    escape_element_name(prefixed_element_name)
+                )
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                return Ok(());
+            }
+            StructKind::Struct => {
+                // Named struct - fall through to normal handling
+            }
+        }
+
+        // Get container-level namespace default for the nested struct
+        let ns_all = shape.xml_ns_all();
+
+        // Collect attributes, elements, and text content
+        struct AttrInfo<'a> {
+            name: &'a str,
+            value: String,
+            namespace: Option<&'static str>,
+        }
+        let mut attributes: Vec<AttrInfo> = Vec::new();
+        let mut elements: Vec<(facet_reflect::FieldItem, Peek<'mem, 'facet>)> = Vec::new();
+        let mut elements_list: Vec<Peek<'mem, 'facet>> = Vec::new();
+        let mut text_content: Option<Peek<'mem, 'facet>> = None;
+
+        for (field_item, field_peek) in struct_peek.fields_for_serialize() {
+            let field = &field_item.field;
+
+            if field.is_xml_attribute() {
+                let value = if field.proxy_convert_out_fn().is_some() {
+                    if let Ok(owned) = field_peek.custom_serialization(*field) {
+                        value_to_string(owned.as_peek())
+                    } else {
+                        value_to_string(field_peek)
+                    }
+                } else {
+                    value_to_string(field_peek)
+                };
+                if let Some(value) = value {
+                    let namespace = Self::get_field_namespace(field, ns_all);
+                    attributes.push(AttrInfo {
+                        name: field_item.name,
+                        value,
+                        namespace,
+                    });
+                }
+            } else if field.is_xml_element() {
+                elements.push((field_item, field_peek));
+            } else if field.is_xml_elements() {
+                elements_list.push(field_peek);
+            } else if field.is_xml_text() {
+                text_content = Some(field_peek);
+            }
+        }
+
+        let has_content =
+            !elements.is_empty() || !elements_list.is_empty() || text_content.is_some();
+
+        // Collect xmlns declarations needed for attributes
+        // We always emit xmlns declarations on each element that uses them.
+        let mut xmlns_decls: Vec<(String, String)> = Vec::new();
+        let mut attr_prefixes: Vec<Option<String>> = Vec::new();
+
+        // Start with the element's own xmlns declaration if any
+        if let Some((prefix, uri)) = xmlns_decl {
+            xmlns_decls.push((prefix, uri));
+        }
+
+        for attr in &attributes {
+            if let Some(ns_uri) = attr.namespace {
+                let prefix = self.get_or_create_prefix(ns_uri);
+                // Always emit xmlns declaration on this element (if not already)
+                if !xmlns_decls.iter().any(|(_, u)| u == ns_uri) {
+                    xmlns_decls.push((prefix.clone(), ns_uri.to_string()));
+                }
+                attr_prefixes.push(Some(prefix));
+            } else {
+                attr_prefixes.push(None);
+            }
+        }
+
+        // Write opening tag
+        write!(
+            self.writer,
+            "<{}",
+            escape_element_name(prefixed_element_name)
+        )
+        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+        // Write all xmlns declarations
+        for (prefix, uri) in &xmlns_decls {
+            write!(
+                self.writer,
+                " xmlns:{}=\"{}\"",
+                escape_element_name(prefix),
+                escape_attribute_value(uri)
+            )
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+        }
+
+        // Write attributes
+        for (attr, prefix) in attributes.iter().zip(attr_prefixes.iter()) {
+            let attr_name = if let Some(p) = prefix {
+                format!("{}:{}", p, attr.name)
+            } else {
+                attr.name.to_string()
+            };
+            write!(
+                self.writer,
+                " {}=\"{}\"",
+                escape_element_name(&attr_name),
+                escape_attribute_value(&attr.value)
+            )
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+        }
+
+        if !has_content {
+            write!(self.writer, "/>").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            return Ok(());
+        }
+
+        write!(self.writer, ">").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+        if let Some(text_peek) = text_content {
+            self.serialize_text_value(text_peek)?;
+        }
+
+        for (field_item, field_peek) in elements {
+            let field_ns = Self::get_field_namespace(&field_item.field, ns_all);
+
+            if field_item.field.proxy_convert_out_fn().is_some() {
+                if let Ok(owned) = field_peek.custom_serialization(field_item.field) {
+                    self.serialize_namespaced_element(field_item.name, owned.as_peek(), field_ns)?;
+                } else {
+                    self.serialize_namespaced_element(field_item.name, field_peek, field_ns)?;
+                }
+            } else {
+                self.serialize_namespaced_element(field_item.name, field_peek, field_ns)?;
+            }
+        }
+
+        for field_peek in elements_list {
+            self.serialize_elements_list(field_peek)?;
+        }
+
+        write!(
+            self.writer,
+            "</{}>",
+            escape_element_name(prefixed_element_name)
+        )
+        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+        Ok(())
+    }
+
+    /// Serialize an enum as an element with optional xmlns declaration.
+    fn serialize_enum_as_namespaced_element<'mem, 'facet>(
+        &mut self,
+        prefixed_element_name: &str,
+        enum_peek: facet_reflect::PeekEnum<'mem, 'facet>,
+        xmlns_decl: Option<(String, String)>,
+    ) -> Result<()> {
+        let shape = enum_peek.shape();
+        let variant_name = enum_peek
+            .variant_name_active()
+            .map_err(|_| XmlErrorKind::SerializeUnknownElementType)?;
+
+        let fields: Vec<_> = enum_peek.fields_for_serialize().collect();
+
+        let is_untagged = shape.is_untagged();
+        let tag_attr = shape.get_tag_attr();
+        let content_attr = shape.get_content_attr();
+
+        // Helper to write opening tag with optional xmlns
+        let write_open_tag =
+            |writer: &mut W, name: &str, xmlns: &Option<(String, String)>| -> Result<()> {
+                write!(writer, "<{}", escape_element_name(name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                if let Some((prefix, uri)) = xmlns {
+                    write!(
+                        writer,
+                        " xmlns:{}=\"{}\"",
+                        escape_element_name(prefix),
+                        escape_attribute_value(uri)
+                    )
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                }
+                Ok(())
+            };
+
+        if is_untagged {
+            // Untagged: serialize content directly
+            if fields.is_empty() {
+                write_open_tag(&mut self.writer, prefixed_element_name, &xmlns_decl)?;
+                write!(self.writer, "/>").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            } else if fields.len() == 1 && fields[0].0.name.parse::<usize>().is_ok() {
+                // Newtype variant
+                write_open_tag(&mut self.writer, prefixed_element_name, &xmlns_decl)?;
+                write!(self.writer, ">").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                self.serialize_value(fields[0].1)?;
+                write!(
+                    self.writer,
+                    "</{}>",
+                    escape_element_name(prefixed_element_name)
+                )
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            } else {
+                write_open_tag(&mut self.writer, prefixed_element_name, &xmlns_decl)?;
+                write!(self.writer, ">").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                for (field_item, field_peek) in fields {
+                    self.serialize_element(field_item.name, field_peek)?;
+                }
+                write!(
+                    self.writer,
+                    "</{}>",
+                    escape_element_name(prefixed_element_name)
+                )
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            }
+        } else if let Some(tag) = tag_attr {
+            if let Some(content) = content_attr {
+                // Adjacently tagged
+                write_open_tag(&mut self.writer, prefixed_element_name, &xmlns_decl)?;
+                write!(
+                    self.writer,
+                    " {}=\"{}\">",
+                    escape_element_name(tag),
+                    escape_attribute_value(variant_name)
+                )
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+                if !fields.is_empty() {
+                    write!(self.writer, "<{}>", escape_element_name(content))
+                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                    self.serialize_variant_fields(&fields)?;
+                    write!(self.writer, "</{}>", escape_element_name(content))
+                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                }
+
+                write!(
+                    self.writer,
+                    "</{}>",
+                    escape_element_name(prefixed_element_name)
+                )
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            } else {
+                // Internally tagged
+                write_open_tag(&mut self.writer, prefixed_element_name, &xmlns_decl)?;
+                write!(
+                    self.writer,
+                    " {}=\"{}\">",
+                    escape_element_name(tag),
+                    escape_attribute_value(variant_name)
+                )
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                self.serialize_variant_fields(&fields)?;
+                write!(
+                    self.writer,
+                    "</{}>",
+                    escape_element_name(prefixed_element_name)
+                )
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            }
+        } else {
+            // Externally tagged (default)
+            write_open_tag(&mut self.writer, prefixed_element_name, &xmlns_decl)?;
+            write!(self.writer, ">").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+            if fields.is_empty() {
+                write!(self.writer, "<{}/>", escape_element_name(variant_name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            } else if fields.len() == 1 && fields[0].0.name.parse::<usize>().is_ok() {
+                self.serialize_element(variant_name, fields[0].1)?;
+            } else {
+                write!(self.writer, "<{}>", escape_element_name(variant_name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                for (field_item, field_peek) in fields {
+                    self.serialize_element(field_item.name, field_peek)?;
+                }
+                write!(self.writer, "</{}>", escape_element_name(variant_name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            }
+
+            write!(
+                self.writer,
+                "</{}>",
+                escape_element_name(prefixed_element_name)
+            )
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+        }
+
+        Ok(())
     }
 
     fn serialize_elements_list<'mem, 'facet>(&mut self, peek: Peek<'mem, 'facet>) -> Result<()> {

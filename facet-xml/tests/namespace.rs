@@ -294,3 +294,239 @@ fn test_ns_all_attributes() {
     assert_eq!(parsed.attr1, "one");
     assert_eq!(parsed.attr2, "two");
 }
+
+// ============================================================================
+// Serialization with namespaces
+// ============================================================================
+
+#[test]
+fn test_serialize_namespaced_element() {
+    // Serialize a struct with xml::ns on a field
+    let value = NamespacedRoot {
+        item: "value".to_string(),
+    };
+    let xml_output = xml::to_string(&value).unwrap();
+
+    // Should contain xmlns declaration and prefixed element name
+    assert!(
+        xml_output.contains("xmlns:"),
+        "Should contain xmlns declaration: {}",
+        xml_output
+    );
+    assert!(
+        xml_output.contains(":item"),
+        "Should contain prefixed element: {}",
+        xml_output
+    );
+    assert!(
+        xml_output.contains("http://example.com/ns"),
+        "Should contain namespace URI: {}",
+        xml_output
+    );
+
+    // Round-trip: the serialized XML should deserialize back to the same value
+    let parsed: NamespacedRoot = xml::from_str(&xml_output).unwrap();
+    assert_eq!(parsed, value);
+}
+
+#[test]
+fn test_serialize_namespaced_attribute() {
+    // Serialize a struct with xml::ns on an attribute
+    let value = NamespacedAttr {
+        value: "hello".to_string(),
+    };
+    let xml_output = xml::to_string(&value).unwrap();
+
+    // Should contain xmlns declaration and prefixed attribute
+    assert!(
+        xml_output.contains("xmlns:"),
+        "Should contain xmlns declaration: {}",
+        xml_output
+    );
+    assert!(
+        xml_output.contains(":value="),
+        "Should contain prefixed attribute: {}",
+        xml_output
+    );
+
+    // Round-trip
+    let parsed: NamespacedAttr = xml::from_str(&xml_output).unwrap();
+    assert_eq!(parsed, value);
+}
+
+#[test]
+fn test_serialize_mixed_namespaces() {
+    // Serialize a struct with both namespaced and non-namespaced fields
+    let value = MixedNamespaces {
+        plain: "plain value".to_string(),
+        special: "special value".to_string(),
+    };
+    let xml_output = xml::to_string(&value).unwrap();
+
+    // plain should not have a prefix, special should
+    assert!(
+        xml_output.contains("<plain>"),
+        "Plain element should not be prefixed: {}",
+        xml_output
+    );
+    assert!(
+        xml_output.contains(":special>"),
+        "Special element should be prefixed: {}",
+        xml_output
+    );
+
+    // Round-trip
+    let parsed: MixedNamespaces = xml::from_str(&xml_output).unwrap();
+    assert_eq!(parsed, value);
+}
+
+#[test]
+fn test_serialize_ns_all() {
+    // Serialize a struct with xml::ns_all
+    let value = NsAllContainer {
+        first: "one".to_string(),
+        second: "two".to_string(),
+        other: "three".to_string(),
+    };
+    let xml_output = xml::to_string(&value).unwrap();
+
+    // All fields from ns_all namespace should use the same prefix
+    // 'other' should use a different prefix
+    assert!(
+        xml_output.contains("http://example.com/ns"),
+        "Should contain main namespace: {}",
+        xml_output
+    );
+    assert!(
+        xml_output.contains("http://other.com/ns"),
+        "Should contain other namespace: {}",
+        xml_output
+    );
+
+    // Round-trip
+    let parsed: NsAllContainer = xml::from_str(&xml_output).unwrap();
+    assert_eq!(parsed, value);
+}
+
+#[test]
+fn test_serialize_ns_all_attributes_roundtrip() {
+    // Serialize a struct with xml::ns_all on attributes
+    let value = NsAllAttributes {
+        attr1: "one".to_string(),
+        attr2: "two".to_string(),
+    };
+    let xml_output = xml::to_string(&value).unwrap();
+
+    // Both attributes should be namespaced with the same prefix
+    assert!(
+        xml_output.contains("xmlns:"),
+        "Should contain xmlns declaration: {}",
+        xml_output
+    );
+
+    // Round-trip
+    let parsed: NsAllAttributes = xml::from_str(&xml_output).unwrap();
+    assert_eq!(parsed, value);
+}
+
+#[test]
+fn test_serialize_same_local_name_different_namespaces() {
+    // Serialize a struct with same field name but different namespaces
+    let value = SameLocalNameDifferentNs {
+        item_ns1: "from ns1".to_string(),
+        item_ns2: "from ns2".to_string(),
+    };
+    let xml_output = xml::to_string(&value).unwrap();
+
+    // Both should be "item" but with different prefixes
+    assert!(
+        xml_output.contains("http://ns1.com"),
+        "Should contain ns1: {}",
+        xml_output
+    );
+    assert!(
+        xml_output.contains("http://ns2.com"),
+        "Should contain ns2: {}",
+        xml_output
+    );
+
+    // Round-trip
+    let parsed: SameLocalNameDifferentNs = xml::from_str(&xml_output).unwrap();
+    assert_eq!(parsed, value);
+}
+
+/// Test that well-known namespaces get their conventional prefixes
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename = "root")]
+struct WellKnownNamespace {
+    #[facet(xml::element, xml::ns = "http://www.w3.org/2001/XMLSchema-instance")]
+    xsi_element: String,
+}
+
+#[test]
+fn test_serialize_well_known_namespace() {
+    let value = WellKnownNamespace {
+        xsi_element: "test".to_string(),
+    };
+    let xml_output = xml::to_string(&value).unwrap();
+
+    // Should use 'xsi' prefix for XMLSchema-instance namespace
+    assert!(
+        xml_output.contains("xsi:"),
+        "Should use well-known 'xsi' prefix: {}",
+        xml_output
+    );
+    assert!(
+        xml_output.contains("xmlns:xsi="),
+        "Should declare xsi namespace: {}",
+        xml_output
+    );
+}
+
+// ============================================================================
+// Nested struct namespace scoping
+// ============================================================================
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename = "inner", xml::ns_all = "http://inner.com/ns")]
+struct InnerNsAll {
+    #[facet(xml::element)]
+    inner_field: String,
+}
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename = "outer", xml::ns_all = "http://outer.com/ns")]
+struct OuterNsAll {
+    #[facet(xml::element)]
+    outer_field: String,
+    #[facet(xml::element)]
+    nested: InnerNsAll,
+}
+
+#[test]
+fn test_serialize_nested_ns_all() {
+    let value = OuterNsAll {
+        outer_field: "outer".to_string(),
+        nested: InnerNsAll {
+            inner_field: "inner".to_string(),
+        },
+    };
+    let xml_output = xml::to_string(&value).unwrap();
+
+    // outer_field and nested should use outer namespace
+    // inner_field should use inner namespace
+    assert!(
+        xml_output.contains("http://outer.com/ns"),
+        "Should contain outer namespace: {}",
+        xml_output
+    );
+    assert!(
+        xml_output.contains("http://inner.com/ns"),
+        "Should contain inner namespace: {}",
+        xml_output
+    );
+
+    // Round-trip
+    let parsed: OuterNsAll = xml::from_str(&xml_output).unwrap();
+    assert_eq!(parsed, value);
+}
