@@ -173,7 +173,14 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             );
 
             // Fill in defaults for unset fields that have defaults
-            frame.fill_defaults();
+            if let Err(e) = frame.fill_defaults() {
+                // Couldn't fill defaults (e.g., opaque field with #[facet(default)] but no default impl)
+                frame.deinit();
+                for (_, mut remaining_frame) in stored_frames {
+                    remaining_frame.deinit();
+                }
+                return Err(e);
+            }
 
             // Validate the frame is fully initialized
             if let Err(e) = frame.require_full_initialization() {
@@ -240,7 +247,8 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         // Fill defaults and validate the root frame is fully initialized
         if let Some(frame) = self.frames_mut().last_mut() {
-            frame.fill_defaults();
+            // Fill defaults - this can fail if a field has #[facet(default)] but no default impl
+            frame.fill_defaults()?;
             // Root validation failed. At this point, all stored frames have been
             // processed and their parent isets updated.
             // No need to poison - returning Err consumes self, Drop will handle cleanup

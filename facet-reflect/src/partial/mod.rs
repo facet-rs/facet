@@ -745,8 +745,9 @@ impl Frame {
     /// - Fields with `#[facet(default)]` - uses the type's Default impl
     /// - `Option<T>` fields - default to None
     ///
-    /// Returns Ok(()) if successful, or an error if defaulting fails.
-    fn fill_defaults(&mut self) {
+    /// Returns Ok(()) if successful, or an error if a field has `#[facet(default)]`
+    /// but no default implementation is available.
+    fn fill_defaults(&mut self) -> Result<(), ReflectError> {
         // First, check if we need to upgrade from Scalar to Struct tracker
         // This happens when no fields were visited at all in deferred mode
         if !self.is_init && matches!(self.tracker, Tracker::Scalar) {
@@ -755,7 +756,7 @@ impl Frame {
                 if let Some(default_fn) = self.shape.vtable.default_in_place {
                     unsafe { default_fn(self.data) };
                     self.is_init = true;
-                    return;
+                    return Ok(());
                 }
                 // Otherwise initialize the struct tracker with empty iset
                 self.tracker = Tracker::Struct {
@@ -775,7 +776,7 @@ impl Frame {
                             unsafe { default_fn(self.data) };
                             self.tracker = Tracker::Scalar;
                             self.is_init = true;
-                            return;
+                            return Ok(());
                         }
                     }
 
@@ -796,6 +797,12 @@ impl Frame {
 
                             // Mark field as initialized
                             iset.set(idx);
+                        } else if field.has_default() {
+                            // Field has #[facet(default)] but we couldn't find a default function.
+                            // This happens with opaque types that don't have default_in_place.
+                            return Err(ReflectError::DefaultAttrButNoDefaultImpl {
+                                shape: field.shape(),
+                            });
                         }
                     }
                 }
@@ -818,12 +825,18 @@ impl Frame {
 
                         // Mark field as initialized
                         data.set(idx);
+                    } else if field.has_default() {
+                        // Field has #[facet(default)] but we couldn't find a default function.
+                        return Err(ReflectError::DefaultAttrButNoDefaultImpl {
+                            shape: field.shape(),
+                        });
                     }
                 }
             }
             // Other tracker types don't have fields with defaults
             _ => {}
         }
+        Ok(())
     }
 
     /// Get the default function for a field, if one is available.
