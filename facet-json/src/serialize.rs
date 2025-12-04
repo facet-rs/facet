@@ -6,6 +6,49 @@ use log::trace;
 
 use crate::RawJson;
 
+/// Options for JSON serialization.
+#[derive(Debug, Clone)]
+pub struct SerializeOptions {
+    /// Whether to pretty-print with indentation (default: false)
+    pub pretty: bool,
+    /// Indentation string for pretty-printing (default: "  ")
+    pub indent: &'static str,
+}
+
+impl Default for SerializeOptions {
+    fn default() -> Self {
+        Self {
+            pretty: false,
+            indent: "  ",
+        }
+    }
+}
+
+impl SerializeOptions {
+    /// Create new default options (compact output).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enable pretty-printing with default indentation.
+    pub fn pretty(mut self) -> Self {
+        self.pretty = true;
+        self
+    }
+
+    /// Set a custom indentation string (implies pretty-printing).
+    pub fn indent(mut self, indent: &'static str) -> Self {
+        self.indent = indent;
+        self.pretty = true;
+        self
+    }
+
+    /// Get the indent string if pretty-printing is enabled, otherwise None.
+    fn indent_str(&self) -> Option<&str> {
+        if self.pretty { Some(self.indent) } else { None }
+    }
+}
+
 /// Serializes a value implementing `Facet` to a JSON string.
 pub fn to_string<'facet, T: Facet<'facet> + ?Sized>(value: &T) -> String {
     peek_to_string(Peek::new(value))
@@ -16,17 +59,53 @@ pub fn to_string_pretty<'facet, T: Facet<'facet> + ?Sized>(value: &T) -> String 
     peek_to_string_pretty(Peek::new(value))
 }
 
+/// Serializes a value implementing `Facet` to a JSON string with custom options.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_json::{to_string_with_options, SerializeOptions};
+///
+/// #[derive(Facet)]
+/// struct Person {
+///     name: String,
+///     age: u32,
+/// }
+///
+/// let person = Person { name: "Alice".to_string(), age: 30 };
+///
+/// // Compact output
+/// let json = to_string_with_options(&person, &SerializeOptions::default());
+/// assert_eq!(json, r#"{"name":"Alice","age":30}"#);
+///
+/// // Pretty output with tabs
+/// let json = to_string_with_options(&person, &SerializeOptions::default().indent("\t"));
+/// ```
+pub fn to_string_with_options<'facet, T: Facet<'facet> + ?Sized>(
+    value: &T,
+    options: &SerializeOptions,
+) -> String {
+    peek_to_string_with_options(Peek::new(value), options)
+}
+
 /// Serializes a `Peek` instance to a JSON string.
 pub fn peek_to_string<'input, 'facet>(peek: Peek<'input, 'facet>) -> String {
-    let mut s = Vec::new();
-    peek_to_writer(peek, &mut s).unwrap();
-    String::from_utf8(s).unwrap()
+    peek_to_string_with_options(peek, &SerializeOptions::default())
 }
 
 /// Serializes a `Peek` instance to a pretty-printed JSON string.
 pub fn peek_to_string_pretty<'input, 'facet>(peek: Peek<'input, 'facet>) -> String {
+    peek_to_string_with_options(peek, &SerializeOptions::default().pretty())
+}
+
+/// Serializes a `Peek` instance to a JSON string with custom options.
+pub fn peek_to_string_with_options<'input, 'facet>(
+    peek: Peek<'input, 'facet>,
+    options: &SerializeOptions,
+) -> String {
     let mut s = Vec::new();
-    peek_to_writer_pretty(peek, &mut s).unwrap();
+    peek_to_writer_with_options(peek, &mut s, options).unwrap();
     String::from_utf8(s).unwrap()
 }
 
@@ -46,20 +125,66 @@ pub fn to_writer_pretty<'mem, 'facet, T: Facet<'facet>, W: crate::JsonWrite>(
     peek_to_writer_pretty(Peek::new(value), writer)
 }
 
+/// Serializes a `Facet` value to JSON with custom options and writes it to the given writer.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_json::{to_writer_with_options, SerializeOptions};
+///
+/// #[derive(Facet)]
+/// struct Person {
+///     name: String,
+///     age: u32,
+/// }
+///
+/// let person = Person { name: "Alice".to_string(), age: 30 };
+///
+/// // Compact output (default)
+/// let mut buffer = Vec::new();
+/// to_writer_with_options(&person, &mut buffer, &SerializeOptions::default()).unwrap();
+/// assert_eq!(buffer, br#"{"name":"Alice","age":30}"#);
+///
+/// // Pretty output with default indent
+/// let mut buffer = Vec::new();
+/// to_writer_with_options(&person, &mut buffer, &SerializeOptions::default().pretty()).unwrap();
+///
+/// // Pretty output with custom indent (tabs)
+/// let mut buffer = Vec::new();
+/// to_writer_with_options(&person, &mut buffer, &SerializeOptions::default().indent("\t")).unwrap();
+/// ```
+pub fn to_writer_with_options<'mem, 'facet, T: Facet<'facet>, W: crate::JsonWrite>(
+    value: &'mem T,
+    writer: W,
+    options: &SerializeOptions,
+) -> Result<(), SerializeError> {
+    peek_to_writer_with_options(Peek::new(value), writer, options)
+}
+
 /// Serializes a `Peek` value to JSON and writes it to the given writer.
 pub fn peek_to_writer<'mem, 'facet, W: crate::JsonWrite>(
     peek: Peek<'mem, 'facet>,
-    mut writer: W,
+    writer: W,
 ) -> Result<(), SerializeError> {
-    serialize_value(peek, None, &mut writer, None, 0)
+    peek_to_writer_with_options(peek, writer, &SerializeOptions::default())
 }
 
 /// Serializes a `Peek` value to pretty-printed JSON and writes it to the given writer.
 pub fn peek_to_writer_pretty<'mem, 'facet, W: crate::JsonWrite>(
     peek: Peek<'mem, 'facet>,
-    mut writer: W,
+    writer: W,
 ) -> Result<(), SerializeError> {
-    serialize_value(peek, None, &mut writer, Some("  "), 0)
+    peek_to_writer_with_options(peek, writer, &SerializeOptions::default().pretty())
+}
+
+/// Serializes a `Peek` value to JSON with custom options and writes it to the given writer.
+pub fn peek_to_writer_with_options<'mem, 'facet, W: crate::JsonWrite>(
+    peek: Peek<'mem, 'facet>,
+    mut writer: W,
+    options: &SerializeOptions,
+) -> Result<(), SerializeError> {
+    serialize_value(peek, None, &mut writer, options.indent_str(), 0)
 }
 
 /// Serializes a `Facet` value to JSON and writes it to a `std::io::Write` writer.
@@ -104,15 +229,47 @@ pub fn to_writer_std_pretty<'mem, 'facet, W: std::io::Write, T: Facet<'facet>>(
     peek_to_writer_std_pretty(writer, Peek::new(value))
 }
 
+/// Serializes a `Facet` value to JSON with custom options and writes it to a `std::io::Write` writer.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_json::{to_writer_std_with_options, SerializeOptions};
+///
+/// #[derive(Facet)]
+/// struct Person {
+///     name: String,
+///     age: u32,
+/// }
+///
+/// let person = Person { name: "Alice".to_string(), age: 30 };
+///
+/// // Compact output
+/// let mut buffer = Vec::new();
+/// to_writer_std_with_options(&mut buffer, &person, &SerializeOptions::default()).unwrap();
+/// assert_eq!(buffer, br#"{"name":"Alice","age":30}"#);
+///
+/// // Pretty output with tabs
+/// let mut buffer = Vec::new();
+/// to_writer_std_with_options(&mut buffer, &person, &SerializeOptions::default().indent("\t")).unwrap();
+/// ```
+#[cfg(feature = "std")]
+pub fn to_writer_std_with_options<'mem, 'facet, W: std::io::Write, T: Facet<'facet>>(
+    writer: W,
+    value: &'mem T,
+    options: &SerializeOptions,
+) -> std::io::Result<()> {
+    peek_to_writer_std_with_options(writer, Peek::new(value), options)
+}
+
 /// Serializes a `Peek` value to JSON and writes it to a `std::io::Write` writer.
 #[cfg(feature = "std")]
 pub fn peek_to_writer_std<'mem, 'facet, W: std::io::Write>(
     writer: W,
     peek: Peek<'mem, 'facet>,
 ) -> std::io::Result<()> {
-    let mut adapter = StdWriteAdapter::new(writer);
-    let _ = peek_to_writer(peek, &mut adapter);
-    adapter.into_result()
+    peek_to_writer_std_with_options(writer, peek, &SerializeOptions::default())
 }
 
 /// Serializes a `Peek` value to pretty-printed JSON and writes it to a `std::io::Write` writer.
@@ -121,8 +278,18 @@ pub fn peek_to_writer_std_pretty<'mem, 'facet, W: std::io::Write>(
     writer: W,
     peek: Peek<'mem, 'facet>,
 ) -> std::io::Result<()> {
+    peek_to_writer_std_with_options(writer, peek, &SerializeOptions::default().pretty())
+}
+
+/// Serializes a `Peek` value to JSON with custom options and writes it to a `std::io::Write` writer.
+#[cfg(feature = "std")]
+pub fn peek_to_writer_std_with_options<'mem, 'facet, W: std::io::Write>(
+    writer: W,
+    peek: Peek<'mem, 'facet>,
+    options: &SerializeOptions,
+) -> std::io::Result<()> {
     let mut adapter = StdWriteAdapter::new(writer);
-    let _ = peek_to_writer_pretty(peek, &mut adapter);
+    let _ = peek_to_writer_with_options(peek, &mut adapter, options);
     adapter.into_result()
 }
 
