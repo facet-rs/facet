@@ -9,17 +9,47 @@ import { Octokit } from "@octokit/rest";
 
 // Available labels in the facet repo
 const AVAILABLE_LABELS = [
+  // Issue types
   "🐛 bug",
   "✨ enhancement",
   "✋ question",
   "📒 documentation",
-  "📁 formats",
+
+  // Areas
   "📜 derive",
   "🍪 nostd",
   "💨 performance",
   "🎺 soundness",
   "💅 devex",
   "🧹 code quality",
+
+  // Format-specific
+  "🔵 json",
+  "🐪 yaml",
+  "🍊 toml",
+  "📄 xml",
+  "🟣 kdl",
+  "📦 msgpack",
+  "📬 postcard",
+  "📊 csv",
+  "🔗 urlencoded",
+  "🌌 xdr",
+  "🔐 asn1",
+
+  // Core crates
+  "⚙️ core",
+  "🪞 reflect",
+  "💎 value",
+  "🏷️ macros",
+  "🎯 args",
+  "🎨 pretty",
+  "↔️ diff",
+
+  // Process labels
+  "💥 breaking",
+  "🔄 ci",
+  "🧪 testing",
+  "🐝 fuzz",
 ] as const;
 
 type Label = (typeof AVAILABLE_LABELS)[number];
@@ -32,13 +62,89 @@ interface GitHubModelsResponse {
   }>;
 }
 
+async function fetchPRDiff(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number
+): Promise<string> {
+  try {
+    const { data } = await octokit.rest.pulls.get({
+      owner,
+      repo,
+      pull_number: prNumber,
+      mediaType: { format: "diff" },
+    });
+    // Truncate diff if too long (keep first 8000 chars to stay within token limits)
+    const diff = data as unknown as string;
+    if (diff.length > 8000) {
+      return diff.slice(0, 8000) + "\n... (diff truncated)";
+    }
+    return diff;
+  } catch (error) {
+    console.warn("Failed to fetch PR diff:", error);
+    return "";
+  }
+}
+
 async function callGitHubModels(
   token: string,
   title: string,
   body: string,
-  eventType: "issue" | "pull_request"
+  eventType: "issue" | "pull_request",
+  diff?: string
 ): Promise<Label[]> {
   const itemType = eventType === "issue" ? "issue" : "pull request";
+
+  const labelDescriptions = `Available labels and their meanings:
+
+Issue types (pick one primary type):
+- "🐛 bug": Something is broken, crashes, errors, panics, regressions
+- "✨ enhancement": Feature requests, improvements, new functionality
+- "✋ question": Questions about usage, how things work, requests for help
+- "📒 documentation": Docs improvements, typos, README updates, examples
+
+Areas (pick if relevant):
+- "📜 derive": Related to the derive macro, proc-macros, #[facet(...)] attributes
+- "🍪 nostd": no_std support, embedded, alloc-only environments
+- "💨 performance": Speed, benchmarks, optimization
+- "🎺 soundness": Unsafe code, undefined behavior, miri, memory safety
+- "💅 devex": Developer experience, ergonomics, API design
+- "🧹 code quality": Refactoring, cleanup, technical debt
+
+Format crates (pick if the ${itemType} is specifically about one of these):
+- "🔵 json": facet-json crate
+- "🐪 yaml": facet-yaml crate
+- "🍊 toml": facet-toml crate
+- "📄 xml": facet-xml crate
+- "🟣 kdl": facet-kdl crate
+- "📦 msgpack": facet-msgpack crate
+- "📬 postcard": facet-postcard crate
+- "📊 csv": facet-csv crate
+- "🔗 urlencoded": facet-urlencoded crate
+- "🌌 xdr": facet-xdr crate
+- "🔐 asn1": facet-asn1 crate
+
+Core crates (pick if the ${itemType} is specifically about one of these):
+- "⚙️ core": facet-core crate, core types and traits
+- "🪞 reflect": facet-reflect crate, runtime reflection
+- "💎 value": facet-value crate, dynamic value type
+- "🏷️ macros": facet-macros, proc-macro implementation (use this for macro internals, use "📜 derive" for user-facing derive usage)
+- "🎯 args": facet-args crate, CLI argument parsing
+- "🎨 pretty": facet-pretty crate, pretty printing
+- "↔️ diff": facet-diff crate, value diffing
+
+Process labels:
+- "💥 breaking": Breaking API changes - use when: removing public APIs, changing function signatures, changing default behavior, renaming public types/functions, or the title/body mentions "breaking" or "BREAKING CHANGE"
+- "🔄 ci": CI/CD, GitHub Actions, workflows
+- "🧪 testing": Tests and test infrastructure
+- "🐝 fuzz": Fuzzing related`;
+
+  let userContent = `${itemType === "issue" ? "Issue" : "PR"} Title: ${title}\n\n${itemType === "issue" ? "Issue" : "PR"} Body:\n${body || "(no body)"}`;
+
+  if (diff) {
+    userContent += `\n\nPR Diff:\n${diff}`;
+  }
 
   const response = await fetch(
     "https://models.github.ai/inference/chat/completions",
@@ -58,33 +164,23 @@ facet is a reflection and serialization framework for Rust.
 
 Analyze the ${itemType} and return a JSON array of applicable labels. Choose labels that accurately describe the ${itemType}.
 
-Available labels and their meanings:
-- "🐛 bug": Something is broken, crashes, errors, panics, regressions
-- "✨ enhancement": Feature requests, improvements, new functionality
-- "✋ question": Questions about usage, how things work, requests for help
-- "📒 documentation": Docs improvements, typos, README updates, examples
-- "📁 formats": Related to serialization formats (JSON, YAML, TOML, XML, KDL, msgpack, postcard, CSV, etc.)
-- "📜 derive": Related to the derive macro, proc-macros, #[facet(...)] attributes
-- "🍪 nostd": no_std support, embedded, alloc-only environments
-- "💨 performance": Speed, benchmarks, optimization
-- "🎺 soundness": Unsafe code, undefined behavior, miri, memory safety
-- "💅 devex": Developer experience, ergonomics, API design
-- "🧹 code quality": Refactoring, cleanup, technical debt
+${labelDescriptions}
 
 Rules:
 1. Return ONLY a valid JSON array of strings, nothing else
 2. Only use labels from the list above (exact match including emoji)
-3. Apply 1-3 labels that best fit the ${itemType}
+3. Apply 1-4 labels that best fit the ${itemType}
 4. If unsure, prefer fewer labels over more
+5. For PRs with a diff: analyze the actual code changes to determine which crates are affected and whether changes are breaking
 
-Example response: ["🐛 bug", "📁 formats"]`,
+Example response: ["🐛 bug", "🔵 json"]`,
           },
           {
             role: "user",
-            content: `${itemType === "issue" ? "Issue" : "PR"} Title: ${title}\n\n${itemType === "issue" ? "Issue" : "PR"} Body:\n${body || "(no body)"}`,
+            content: userContent,
           },
         ],
-        max_tokens: 150,
+        max_tokens: 200,
         temperature: 0.1, // Low temperature for consistent classification
       }),
     }
@@ -124,7 +220,7 @@ Example response: ["🐛 bug", "📁 formats"]`,
   return validLabels;
 }
 
-const FALLBACK_LABEL = "needs-triage";
+const FALLBACK_LABEL = "⏳ needs-triage";
 
 async function main() {
   const token = process.env.GITHUB_TOKEN;
@@ -146,10 +242,20 @@ async function main() {
 
   console.log(`Analyzing ${itemType} #${itemNumber}: ${itemTitle}`);
 
+  // Fetch diff for PRs
+  let diff: string | undefined;
+  if (eventType === "pull_request") {
+    console.log("Fetching PR diff...");
+    diff = await fetchPRDiff(octokit, owner, repoName, parseInt(itemNumber, 10));
+    if (diff) {
+      console.log(`Diff fetched (${diff.length} chars)`);
+    }
+  }
+
   let labels: Label[];
 
   try {
-    labels = await callGitHubModels(token, itemTitle, itemBody || "", eventType);
+    labels = await callGitHubModels(token, itemTitle, itemBody || "", eventType, diff);
   } catch (error) {
     // AI failed — fall back to needs-triage so the item doesn't slip through
     console.error(`AI labeling failed: ${error instanceof Error ? error.message : error}`);
