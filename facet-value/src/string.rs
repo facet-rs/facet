@@ -16,12 +16,31 @@ use static_assertions::const_assert_eq;
 
 use crate::value::{TypeTag, Value};
 
+/// Flag indicating the string is marked as "safe" (e.g., pre-escaped HTML).
+/// This uses the high bit of the length field in StringHeader.
+const SAFE_FLAG: usize = 1usize << (usize::BITS - 1);
+
 /// Header for heap-allocated strings.
 #[repr(C, align(8))]
 struct StringHeader {
-    /// Length of the string in bytes
+    /// Length of the string in bytes.
+    /// The high bit may be set to indicate a "safe" string (see SAFE_FLAG).
     len: usize,
     // String data follows immediately after
+}
+
+impl StringHeader {
+    /// Returns the actual length of the string, masking out the safe flag.
+    #[inline]
+    fn actual_len(&self) -> usize {
+        self.len & !SAFE_FLAG
+    }
+
+    /// Returns true if the safe flag is set.
+    #[inline]
+    fn is_safe(&self) -> bool {
+        self.len & SAFE_FLAG != 0
+    }
 }
 
 /// A string value.
@@ -69,7 +88,7 @@ impl VString {
     #[cfg(feature = "alloc")]
     fn dealloc_ptr(ptr: *mut StringHeader) {
         unsafe {
-            let len = (*ptr).len;
+            let len = (*ptr).actual_len();
             let layout = Self::layout(len);
             dealloc(ptr.cast::<u8>(), layout);
         }
@@ -113,7 +132,7 @@ impl VString {
         if self.is_inline() {
             self.inline_len()
         } else {
-            self.header().len
+            self.header().actual_len()
         }
     }
 
@@ -140,7 +159,12 @@ impl VString {
     }
 
     pub(crate) fn clone_impl(&self) -> Value {
-        VString::new(self.as_str()).0
+        if self.is_safe() {
+            // Preserve the safe flag through clone
+            VSafeString::new(self.as_str()).0
+        } else {
+            VString::new(self.as_str()).0
+        }
     }
 
     pub(crate) fn drop_impl(&mut self) {
@@ -188,6 +212,54 @@ impl VString {
         let bits = usize::from_ne_bytes(storage);
         VString(unsafe { Value::from_bits(bits) })
     }
+
+    /// Allocate a heap string with the safe flag set.
+    #[cfg(feature = "alloc")]
+    fn alloc_safe(s: &str) -> *mut StringHeader {
+        unsafe {
+            let layout = Self::layout(s.len());
+            let ptr = alloc(layout).cast::<StringHeader>();
+            (*ptr).len = s.len() | SAFE_FLAG;
+
+            // Copy string data
+            let data_ptr = ptr.add(1).cast::<u8>();
+            ptr::copy_nonoverlapping(s.as_ptr(), data_ptr, s.len());
+
+            ptr
+        }
+    }
+
+    /// Returns `true` if this string is marked as safe (e.g., pre-escaped HTML).
+    ///
+    /// Inline strings are never safe - only heap-allocated strings can carry the safe flag.
+    #[must_use]
+    pub fn is_safe(&self) -> bool {
+        if self.is_inline() {
+            false
+        } else {
+            self.header().is_safe()
+        }
+    }
+
+    /// Converts this string into a safe string.
+    ///
+    /// If the string is already safe, returns the same string wrapped as VSafeString.
+    /// If the string is inline, promotes it to heap storage with the safe flag.
+    /// If the string is on the heap but not safe, reallocates with the safe flag set.
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    pub fn into_safe(self) -> VSafeString {
+        if self.is_safe() {
+            // Already safe, just wrap it
+            return VSafeString(self.0);
+        }
+        // Need to allocate (or reallocate) with safe flag
+        let s = self.as_str();
+        unsafe {
+            let ptr = Self::alloc_safe(s);
+            VSafeString(Value::new_ptr(ptr.cast(), TypeTag::StringOrNull))
+        }
+    }
 }
 
 const _: () = {
@@ -197,6 +269,251 @@ const _: () = {
     );
     const_assert!(VString::INLINE_LEN_MAX <= VString::INLINE_CAP_BYTES);
 };
+
+/// A string value marked as "safe" (e.g., pre-escaped HTML that should not be escaped again).
+///
+/// `VSafeString` is semantically a string, but carries a flag indicating it has already been
+/// processed (e.g., HTML-escaped) and should be output verbatim by template engines.
+///
+/// Unlike regular strings, safe strings are always heap-allocated since inline strings
+/// don't have room for the safe flag.
+///
+/// # Example use case
+///
+/// ```ignore
+/// // In a template engine:
+/// {{ page.content }}           // If VSafeString, output as-is
+/// {{ user_input }}             // Regular VString, escape HTML
+/// {{ user_input | safe }}      // Convert to VSafeString via into_safe()
+/// ```
+#[repr(transparent)]
+#[derive(Clone)]
+pub struct VSafeString(pub(crate) Value);
+
+impl VSafeString {
+    /// Creates a new safe string from a `&str`.
+    ///
+    /// This always heap-allocates, even for short strings, since the safe flag
+    /// is stored in the heap header.
+    #[cfg(feature = "alloc")]
+    #[must_use]
+    pub fn new(s: &str) -> Self {
+        unsafe {
+            let ptr = VString::alloc_safe(s);
+            VSafeString(Value::new_ptr(ptr.cast(), TypeTag::StringOrNull))
+        }
+    }
+
+    /// Returns the length of the string in bytes.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        // Safe strings are never inline, so we can go directly to the header
+        self.header().actual_len()
+    }
+
+    /// Returns `true` if the string is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Returns the string as a `&str`.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        unsafe { core::str::from_utf8_unchecked(self.as_bytes()) }
+    }
+
+    /// Returns the string as a byte slice.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        unsafe { core::slice::from_raw_parts(self.data_ptr(), self.len()) }
+    }
+
+    fn header(&self) -> &StringHeader {
+        unsafe { &*(self.0.heap_ptr() as *const StringHeader) }
+    }
+
+    fn data_ptr(&self) -> *const u8 {
+        unsafe { (self.0.heap_ptr() as *const StringHeader).add(1).cast() }
+    }
+}
+
+impl Deref for VSafeString {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl Borrow<str> for VSafeString {
+    fn borrow(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl AsRef<str> for VSafeString {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl AsRef<[u8]> for VSafeString {
+    fn as_ref(&self) -> &[u8] {
+        self.as_bytes()
+    }
+}
+
+impl PartialEq for VSafeString {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for VSafeString {}
+
+impl PartialOrd for VSafeString {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for VSafeString {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl Hash for VSafeString {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
+    }
+}
+
+impl Debug for VSafeString {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("SafeString").field(&self.as_str()).finish()
+    }
+}
+
+impl fmt::Display for VSafeString {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self.as_str(), f)
+    }
+}
+
+// === PartialEq with str ===
+
+impl PartialEq<str> for VSafeString {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<VSafeString> for str {
+    fn eq(&self, other: &VSafeString) -> bool {
+        self == other.as_str()
+    }
+}
+
+impl PartialEq<&str> for VSafeString {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl PartialEq<String> for VSafeString {
+    fn eq(&self, other: &String) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl PartialEq<VString> for VSafeString {
+    fn eq(&self, other: &VString) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl PartialEq<VSafeString> for VString {
+    fn eq(&self, other: &VSafeString) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+// === From implementations ===
+
+#[cfg(feature = "alloc")]
+impl From<&str> for VSafeString {
+    fn from(s: &str) -> Self {
+        Self::new(s)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl From<String> for VSafeString {
+    fn from(s: String) -> Self {
+        Self::new(&s)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl From<&String> for VSafeString {
+    fn from(s: &String) -> Self {
+        Self::new(s)
+    }
+}
+
+#[cfg(feature = "alloc")]
+impl From<VSafeString> for String {
+    fn from(s: VSafeString) -> Self {
+        s.as_str().into()
+    }
+}
+
+// A safe string IS a string, so we can convert
+impl From<VSafeString> for VString {
+    fn from(s: VSafeString) -> Self {
+        VString(s.0)
+    }
+}
+
+// === Value conversions ===
+
+impl AsRef<Value> for VSafeString {
+    fn as_ref(&self) -> &Value {
+        &self.0
+    }
+}
+
+impl AsMut<Value> for VSafeString {
+    fn as_mut(&mut self) -> &mut Value {
+        &mut self.0
+    }
+}
+
+impl From<VSafeString> for Value {
+    fn from(s: VSafeString) -> Self {
+        s.0
+    }
+}
+
+impl VSafeString {
+    /// Converts this VSafeString into a Value, consuming self.
+    #[inline]
+    pub fn into_value(self) -> Value {
+        self.0
+    }
+
+    /// Converts this VSafeString into a VString, consuming self.
+    /// The resulting VString will still have the safe flag set.
+    #[inline]
+    pub fn into_string(self) -> VString {
+        VString(self.0)
+    }
+}
 
 impl Deref for VString {
     type Target = str;
@@ -508,6 +825,144 @@ mod tests {
     #[test]
     fn inline_len_max_is_three_on_32_bit() {
         assert_eq!(VString::INLINE_LEN_MAX, 3);
+    }
+
+    // === VSafeString tests ===
+
+    #[test]
+    fn test_safe_string_new() {
+        let s = VSafeString::new("hello");
+        assert_eq!(s.as_str(), "hello");
+        assert_eq!(s.len(), 5);
+        assert!(!s.is_empty());
+    }
+
+    #[test]
+    fn test_safe_string_roundtrip() {
+        let original = "<b>bold</b>";
+        let safe = VSafeString::new(original);
+        assert_eq!(safe.as_str(), original);
+    }
+
+    #[test]
+    fn test_safe_string_is_always_heap() {
+        // Even short strings should be heap-allocated for safe strings
+        let short = VSafeString::new("hi");
+        assert_eq!(short.len(), 2);
+        assert_eq!(short.as_str(), "hi");
+        // The value should have tag 1 (StringOrNull) not tag 6 (InlineString)
+        let value: Value = short.into();
+        assert!(!value.is_inline_string());
+        assert!(value.is_string());
+    }
+
+    #[test]
+    fn test_vstring_is_safe() {
+        let normal = VString::new("hello");
+        assert!(!normal.is_safe());
+
+        let safe = VSafeString::new("hello");
+        // When viewed as VString, should still report safe
+        let as_vstring: VString = safe.into();
+        assert!(as_vstring.is_safe());
+    }
+
+    #[test]
+    fn test_vstring_into_safe() {
+        // Test inline string promotion
+        let inline = VString::new("hi");
+        assert!(inline.is_inline());
+        let safe = inline.into_safe();
+        assert_eq!(safe.as_str(), "hi");
+
+        // Test heap string conversion
+        let long = "a".repeat(VString::INLINE_LEN_MAX + 10);
+        let heap = VString::new(&long);
+        assert!(!heap.is_inline());
+        let safe_heap = heap.into_safe();
+        assert_eq!(safe_heap.as_str(), long);
+    }
+
+    #[test]
+    fn test_safe_flag_preserved_through_clone() {
+        let safe = VSafeString::new("<b>bold</b>");
+        let value: Value = safe.into();
+        assert!(value.is_safe_string());
+
+        let cloned = value.clone();
+        assert!(cloned.is_safe_string());
+        assert_eq!(cloned.as_string().unwrap().as_str(), "<b>bold</b>");
+    }
+
+    #[test]
+    fn test_value_as_safe_string() {
+        let safe = VSafeString::new("safe content");
+        let value: Value = safe.into();
+
+        // is_string should return true (safe strings ARE strings)
+        assert!(value.is_string());
+        // is_safe_string should also return true
+        assert!(value.is_safe_string());
+        // as_string should work
+        assert_eq!(value.as_string().unwrap().as_str(), "safe content");
+        // as_safe_string should work
+        assert_eq!(value.as_safe_string().unwrap().as_str(), "safe content");
+    }
+
+    #[test]
+    fn test_normal_string_not_safe() {
+        let normal = VString::new("normal");
+        let value: Value = normal.into();
+
+        assert!(value.is_string());
+        assert!(!value.is_safe_string());
+        assert!(value.as_string().is_some());
+        assert!(value.as_safe_string().is_none());
+    }
+
+    #[test]
+    fn test_safe_string_equality() {
+        let a = VSafeString::new("hello");
+        let b = VSafeString::new("hello");
+        let c = VSafeString::new("world");
+
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_eq!(a, "hello");
+
+        // Equality with VString
+        let vstring = VString::new("hello");
+        assert_eq!(a, vstring);
+        assert_eq!(vstring, a);
+    }
+
+    #[test]
+    fn test_safe_string_into_string() {
+        let safe = VSafeString::new("test");
+        let vstring = safe.into_string();
+        assert_eq!(vstring.as_str(), "test");
+        assert!(vstring.is_safe()); // Flag should be preserved
+    }
+
+    #[test]
+    fn test_safe_flag_constant() {
+        // Verify the safe flag uses the high bit
+        assert_eq!(SAFE_FLAG, 1usize << (usize::BITS - 1));
+        // On 64-bit: 0x8000_0000_0000_0000
+        // On 32-bit: 0x8000_0000
+    }
+
+    #[test]
+    fn test_safe_string_long() {
+        // Test with a string that would definitely be heap-allocated anyway
+        let long = "a".repeat(1000);
+        let safe = VSafeString::new(&long);
+        assert_eq!(safe.len(), 1000);
+        assert_eq!(safe.as_str(), long);
+
+        let value: Value = safe.into();
+        assert!(value.is_safe_string());
+        assert_eq!(value.as_string().unwrap().len(), 1000);
     }
 }
 

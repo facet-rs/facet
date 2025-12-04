@@ -55,7 +55,7 @@ use crate::bytes::VBytes;
 use crate::datetime::VDateTime;
 use crate::number::VNumber;
 use crate::object::VObject;
-use crate::string::VString;
+use crate::string::{VSafeString, VString};
 
 /// Alignment for heap-allocated values. Using 8-byte alignment gives us 3 tag bits.
 pub(crate) const ALIGNMENT: usize = 8;
@@ -384,6 +384,33 @@ impl Value {
     pub fn as_string_mut(&mut self) -> Option<&mut VString> {
         if self.is_string() {
             Some(unsafe { &mut *(self as *mut Value as *mut VString) })
+        } else {
+            None
+        }
+    }
+
+    /// Returns `true` if this is a safe string (marked as pre-escaped HTML, etc.).
+    ///
+    /// A safe string is a string with the safe flag set. Inline strings are never safe.
+    #[must_use]
+    pub fn is_safe_string(&self) -> bool {
+        self.as_string().is_some_and(|s| s.is_safe())
+    }
+
+    /// Gets a reference to this value as a `VSafeString`. Returns `None` if not a safe string.
+    #[must_use]
+    pub fn as_safe_string(&self) -> Option<&VSafeString> {
+        if self.is_safe_string() {
+            Some(unsafe { &*(self as *const Value as *const VSafeString) })
+        } else {
+            None
+        }
+    }
+
+    /// Gets a mutable reference to this value as a `VSafeString`.
+    pub fn as_safe_string_mut(&mut self) -> Option<&mut VSafeString> {
+        if self.is_safe_string() {
+            Some(unsafe { &mut *(self as *mut Value as *mut VSafeString) })
         } else {
             None
         }
