@@ -70,6 +70,54 @@ where
     Ok(result)
 }
 
+/// Deserialize YAML from a string slice into an owned type.
+///
+/// This variant does not require the input to outlive the result, making it
+/// suitable for deserializing from temporary buffers (e.g., HTTP request bodies).
+///
+/// Types containing `&str` fields cannot be deserialized with this function;
+/// use `String` or `Cow<str>` instead.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_yaml::from_str_owned;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Config {
+///     name: String,
+///     port: u16,
+/// }
+///
+/// let yaml = "name: myapp\nport: 8080";
+/// let config: Config = from_str_owned(yaml).unwrap();
+/// assert_eq!(config.name, "myapp");
+/// assert_eq!(config.port, 8080);
+/// ```
+pub fn from_str_owned<T: Facet<'static>>(yaml: &str) -> Result<T> {
+    log::trace!(
+        "from_str_owned: parsing YAML for type {}",
+        core::any::type_name::<T>()
+    );
+
+    let mut deserializer = YamlDeserializer::new(yaml)?;
+    let partial = Partial::alloc::<T>()?;
+
+    let partial = deserializer.deserialize_document(partial)?;
+
+    // Check we consumed everything meaningful
+    deserializer.expect_end()?;
+
+    let result = partial
+        .build()
+        .map_err(|e| YamlError::without_span(YamlErrorKind::Reflect(e)).with_source(yaml))?
+        .materialize()
+        .map_err(|e| YamlError::without_span(YamlErrorKind::Reflect(e)).with_source(yaml))?;
+
+    Ok(result)
+}
+
 // ============================================================================
 // Event wrapper with owned strings
 // ============================================================================

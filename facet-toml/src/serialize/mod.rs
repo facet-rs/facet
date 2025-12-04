@@ -16,7 +16,7 @@ pub use error::TomlSerError;
 
 /// Serialize any `Facet` type to a TOML string.
 #[cfg(feature = "alloc")]
-pub fn to_string<'a, T: Facet<'a>>(value: &'a T) -> Result<String, TomlSerError> {
+pub fn to_string<T: Facet<'static>>(value: &T) -> Result<String, TomlSerError> {
     let peek = Peek::new(value);
 
     // Check if the root is a struct with fields that are arrays of tables
@@ -33,7 +33,7 @@ pub fn to_string<'a, T: Facet<'a>>(value: &'a T) -> Result<String, TomlSerError>
 /// Serialize any `Facet` type to a pretty-formatted TOML string.
 /// This is currently a stub that behaves the same as `to_string`.
 #[cfg(feature = "alloc")]
-pub fn to_string_pretty<'a, T: Facet<'a>>(_value: &'a T) -> Result<String, TomlSerError> {
+pub fn to_string_pretty<T: Facet<'static>>(_value: &T) -> Result<String, TomlSerError> {
     // TODO: Implement pretty formatting with better spacing, comments, etc.
     todo!()
 }

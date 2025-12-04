@@ -304,6 +304,57 @@ where
     from_str_with_options(xml_str, options)
 }
 
+/// Deserialize an XML byte slice into an owned type.
+///
+/// This variant does not require the input to outlive the result, making it
+/// suitable for deserializing from temporary buffers (e.g., HTTP request bodies).
+///
+/// Types containing `&str` fields cannot be deserialized with this function;
+/// use `String` or `Cow<str>` instead.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_xml as xml;
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Person {
+///     #[facet(xml::attribute)]
+///     id: u32,
+///     #[facet(xml::element)]
+///     name: String,
+/// }
+///
+/// let xml_bytes = b"<Person id=\"42\"><name>Alice</name></Person>";
+/// let person: Person = xml::from_slice_owned(xml_bytes).unwrap();
+/// assert_eq!(person.name, "Alice");
+/// assert_eq!(person.id, 42);
+/// ```
+pub fn from_slice_owned<T: Facet<'static>>(xml: &[u8]) -> Result<T> {
+    let xml_str = std::str::from_utf8(xml)
+        .map_err(|e| XmlError::new(XmlErrorKind::InvalidUtf8(e.to_string())))?;
+
+    log::trace!(
+        "from_slice_owned: parsing XML for type {}",
+        core::any::type_name::<T>()
+    );
+
+    let options = DeserializeOptions::default();
+    let mut deserializer = XmlDeserializer::new(xml_str, options)?;
+    let partial = Partial::alloc::<T>()?;
+
+    let partial = deserializer.deserialize_document(partial)?;
+
+    let result = partial
+        .build()
+        .map_err(|e| XmlError::new(XmlErrorKind::Reflect(e)).with_source(xml_str))?
+        .materialize()
+        .map_err(|e| XmlError::new(XmlErrorKind::Reflect(e)).with_source(xml_str))?;
+
+    Ok(result)
+}
+
 // ============================================================================
 // Extension trait for XML-specific field attributes
 // ============================================================================

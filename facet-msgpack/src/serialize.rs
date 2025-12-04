@@ -4,14 +4,14 @@ use log::trace;
 use std::io::{self, Write};
 
 /// Serializes any Facet type to MessagePack bytes
-pub fn to_vec<'a, T: Facet<'a>>(value: &'a T) -> Vec<u8> {
+pub fn to_vec<T: Facet<'static>>(value: &T) -> Vec<u8> {
     let mut buffer = Vec::new();
     to_writer(&mut buffer, value).unwrap();
     buffer
 }
 
 /// Serializes any Facet type to MessagePack bytes, writing to the given writer
-pub fn to_writer<'a, T: Facet<'a>, W: Write>(writer: &mut W, value: &'a T) -> io::Result<()> {
+pub fn to_writer<T: Facet<'static>, W: Write>(writer: &mut W, value: &T) -> io::Result<()> {
     let peek = Peek::new(value);
     serialize_value(peek, writer)
 }

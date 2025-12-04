@@ -13,10 +13,23 @@ categories = ["web-programming", "encoding"]
 default = ["json", "form"]
 json = ["facet-json/axum"]
 form = ["facet-urlencoded/axum"]
+yaml = ["facet-yaml/axum"]
+toml = ["facet-toml/axum"]
+xml = ["facet-xml/axum"]
+kdl = ["facet-kdl/axum"]
+msgpack = ["facet-msgpack/axum"]
+postcard = ["facet-postcard/axum"]
+all = ["json", "form", "yaml", "toml", "xml", "kdl", "msgpack", "postcard"]
 
 [dependencies]
 facet-json = { path = "../facet-json", optional = true }
 facet-urlencoded = { path = "../facet-urlencoded", optional = true }
+facet-yaml = { path = "../facet-yaml", optional = true }
+facet-toml = { path = "../facet-toml", optional = true }
+facet-xml = { path = "../facet-xml", optional = true }
+facet-kdl = { path = "../facet-kdl", optional = true }
+facet-msgpack = { path = "../facet-msgpack", optional = true }
+facet-postcard = { path = "../facet-postcard", optional = true }
 
 [dev-dependencies]
 axum = "0.8"

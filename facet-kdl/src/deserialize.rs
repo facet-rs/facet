@@ -2433,3 +2433,16 @@ where
 
     KdlDeserializer::from_str(kdl)
 }
+
+/// Deserialize a KDL string into an owned type.
+///
+/// This variant does not require the input to outlive the result, making it
+/// suitable for deserializing from temporary buffers (e.g., HTTP request bodies).
+///
+/// Types containing `&str` fields cannot be deserialized with this function;
+/// use `String` or `Cow<str>` instead.
+pub fn from_str_owned<T: Facet<'static>>(kdl: &str) -> Result<T> {
+    log::trace!("Entering `from_str_owned` function");
+
+    KdlDeserializer::from_str(kdl)
+}
