@@ -3,9 +3,9 @@ use super::*;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Build
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<'facet> Partial<'facet> {
+impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Builds the value, consuming the Partial.
-    pub fn build(mut self) -> Result<HeapValue<'facet>, ReflectError> {
+    pub fn build(mut self) -> Result<HeapValue<'facet, BORROW>, ReflectError> {
         if self.frames().len() != 1 {
             return Err(ReflectError::InvariantViolation {
                 invariant: "Partial::build() expects a single frame — call end() until that's the case",

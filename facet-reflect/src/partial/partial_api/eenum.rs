@@ -3,7 +3,7 @@ use super::*;
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Enum variant selection
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-impl<'facet> Partial<'facet> {
+impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Get the currently selected variant for an enum
     pub fn selected_variant(&self) -> Option<Variant> {
         let frame = self.frames().last()?;
