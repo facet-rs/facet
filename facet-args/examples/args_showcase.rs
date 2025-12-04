@@ -159,6 +159,7 @@ fn main() {
     showcase_simple_parsing(&mut runner);
     showcase_attached_short_value(&mut runner);
     showcase_bool_equals_value(&mut runner);
+    showcase_short_flag_chaining(&mut runner);
     showcase_subcommand_parsing(&mut runner);
     showcase_nested_subcommands(&mut runner);
 
@@ -186,7 +187,7 @@ fn main() {
 
     scenario_unknown_flag(&mut runner);
     scenario_unknown_flag_suggestion(&mut runner);
-    scenario_invalid_short_flag(&mut runner);
+    scenario_invalid_short_flag_in_chain(&mut runner);
     scenario_triple_dash(&mut runner);
     scenario_single_dash_long_name(&mut runner);
     scenario_missing_value(&mut runner);
@@ -282,6 +283,18 @@ fn showcase_nested_subcommands(runner: &mut ShowcaseRunner) {
             "origin",
             "https://github.com/user/repo",
         ]))
+        .finish();
+}
+
+fn showcase_short_flag_chaining(runner: &mut ShowcaseRunner) {
+    runner
+        .scenario("Short Flag Chaining")
+        .description(
+            "Multiple boolean short flags can be combined: `-sb` is equivalent to `-s -b`.",
+        )
+        .target_type::<GitLikeArgs>()
+        .input(Language::Rust, "from_slice(&[\"status\", \"-sb\"])")
+        .result(&args::from_slice::<GitLikeArgs>(&["status", "-sb"]))
         .finish();
 }
 
@@ -386,12 +399,14 @@ fn scenario_unknown_flag_suggestion(runner: &mut ShowcaseRunner) {
         .finish();
 }
 
-fn scenario_invalid_short_flag(runner: &mut ShowcaseRunner) {
+fn scenario_invalid_short_flag_in_chain(runner: &mut ShowcaseRunner) {
     let result: Result<SimpleArgs, _> = args::from_slice(&["-vxyz", "input.txt"]);
 
     runner
-        .scenario("Invalid Short Flag")
-        .description("Boolean short flags cannot have trailing characters attached.")
+        .scenario("Invalid Short Flag in Chain")
+        .description(
+            "When chaining short flags, an unknown flag is reported with available options.",
+        )
         .target_type::<SimpleArgs>()
         .input(Language::Rust, "from_slice(&[\"-vxyz\", \"input.txt\"])")
         .result(&result)
