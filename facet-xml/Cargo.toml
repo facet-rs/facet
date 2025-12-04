@@ -25,6 +25,7 @@ facet-reflect = { path = "../facet-reflect", default-features = false, features 
 facet-solver = { path = "../facet-solver" }
 miette = "7"
 log = "0.4"
+base64 = "0.22"
 
 [dev-dependencies]
 facet = { path = "../facet" }

@@ -20,7 +20,7 @@ This document specifies requirements for implementing a facet format crate (like
 | `[r.types.char]` char | ✅ | ✅ | ✅ | ✅ |
 | `[r.types.strings]` String | ✅ | ✅ | ✅ | ✅ |
 | `[r.types.strings]` &str zero-copy | ✅ | ❌ | ❌ | ❌ |
-| `[r.types.strings]` Cow<str> | ✅ | ❌ | ❌ | ❌ |
+| `[r.types.strings]` `Cow<str>` | ✅ | ❌ | ❌ | ❌ |
 | **Compound Types** |
 | `[r.types.option]` Option | ✅ | ✅ | ✅ | ✅ |
 | `[r.types.result]` Result | ❓ | ❓ | ❓ | ❌ |
@@ -28,15 +28,15 @@ This document specifies requirements for implementing a facet format crate (like
 | `[r.types.structs]` Tuple structs | ✅ | ❌ | ✅ | ✅ |
 | `[r.types.structs]` Unit structs | ✅ | ❌ | ✅ | ✅ |
 | `[r.types.enums]` Externally tagged | ✅ | ✅ | ✅ | ✅ |
-| `[r.types.enums]` Internally tagged | ✅ | ❓ | ❓ | ❌ |
-| `[r.types.enums]` Adjacently tagged | ✅ | ❓ | ❓ | ❌ |
-| `[r.types.enums]` Untagged | ✅ | ❓ | ❓ | ❌ |
+| `[r.types.enums]` Internally tagged | ✅ | ❓ | ❓ | ✅ |
+| `[r.types.enums]` Adjacently tagged | ✅ | ❓ | ❓ | ✅ |
+| `[r.types.enums]` Untagged | ✅ | ❓ | ❓ | ✅ |
 | `[r.types.collections]` Vec | ✅ | ✅ | ✅ | ✅ |
 | `[r.types.collections]` Arrays | ✅ | ❓ | ✅ | ✅ |
 | `[r.types.collections]` Sets | ✅ | ❓ | ✅ | ✅ |
 | `[r.types.maps]` Maps | ✅ | ❓ | ✅ | ✅ |
 | `[r.types.pointers]` Box/Rc/Arc | ✅ | ❓ | ❓ | ✅ |
-| `[r.types.bytes]` byte slices | ✅ | ❓ | ❓ | ❌ |
+| `[r.types.bytes]` byte slices | ✅ | ❓ | ❓ | ✅ |
 | **Attributes** |
 | `[r.attrs.rename]` rename | ✅ | ✅ | ✅ | ✅ |
 | `[r.attrs.default]` default | ✅ | ✅ | ✅ | ✅ |
@@ -44,15 +44,15 @@ This document specifies requirements for implementing a facet format crate (like
 | `[r.attrs.skip]` skip_deserializing | ✅ | ✅ | ✅ | ✅ |
 | `[r.attrs.skip_if]` skip_serializing_if | ✅ | ✅ | ❓ | ✅ |
 | `[r.attrs.transparent]` transparent | ✅ | ✅ | ✅ | ✅ |
-| `[r.attrs.flatten]` flatten | ✅ | ✅ | ✅ | ❌ |
+| `[r.attrs.flatten]` flatten | ✅ | ✅ | ✅ | ✅ |
 | `[r.attrs.deny_unknown]` deny_unknown | ✅ | ✅ | ✅ | ✅ |
-| `[r.attrs.deser_with]` deserialize_with | ❓ | ❓ | ❓ | ❌ |
-| `[r.attrs.ser_with]` serialize_with | ❓ | ❓ | ❓ | ❌ |
+| `[r.attrs.deser_with]` deserialize_with | ❓ | ❓ | ❓ | ⚠️ |
+| `[r.attrs.ser_with]` serialize_with | ❓ | ❓ | ❓ | ⚠️ |
 | `[r.attrs.type_tag]` type_tag | N/A | ✅ | N/A | ⚠️ |
 | **Spans** |
-| `[r.spans.spanned]` Spanned<T> | ✅ | ✅ | ✅ | ⚠️ |
+| `[r.spans.spanned]` `Spanned<T>` | ✅ | ✅ | ✅ | ⚠️ |
 | **Solver** |
-| `[r.solver]` flatten solver | ✅ | ✅ | ✅ | ❌ |
+| `[r.solver]` flatten solver | ✅ | ✅ | ✅ | ✅ |
 
 Legend: ✅ = implemented, ⚠️ = partial, ❌ = not implemented, ❓ = unknown/untested, N/A = not applicable
 

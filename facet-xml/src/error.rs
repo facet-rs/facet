@@ -126,6 +126,8 @@ pub enum XmlErrorKind {
     },
     /// Invalid UTF-8 in input.
     InvalidUtf8(String),
+    /// Base64 decoding error.
+    Base64Decode(String),
 
     // Serialization errors
     /// IO error during serialization.
@@ -164,6 +166,7 @@ impl XmlErrorKind {
             XmlErrorKind::InvalidAttributeValue { .. } => "xml::invalid_attribute_value",
             XmlErrorKind::UnknownField { .. } => "xml::unknown_field",
             XmlErrorKind::InvalidUtf8(_) => "xml::invalid_utf8",
+            XmlErrorKind::Base64Decode(_) => "xml::base64_decode",
             XmlErrorKind::Io(_) => "xml::io",
             XmlErrorKind::SerializeNotStruct => "xml::serialize_not_struct",
             XmlErrorKind::SerializeNotList => "xml::serialize_not_list",
@@ -241,6 +244,7 @@ impl Display for XmlErrorKind {
                 )
             }
             XmlErrorKind::InvalidUtf8(msg) => write!(f, "invalid UTF-8: {msg}"),
+            XmlErrorKind::Base64Decode(msg) => write!(f, "base64 decode error: {msg}"),
             XmlErrorKind::Io(msg) => write!(f, "IO error: {msg}"),
             XmlErrorKind::SerializeNotStruct => {
                 write!(f, "expected struct for XML document serialization")

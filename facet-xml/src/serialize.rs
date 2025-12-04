@@ -2,7 +2,9 @@
 
 use std::io::Write;
 
-use facet_core::{Facet, StructKind};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use facet_core::{Def, Facet, StructKind};
 use facet_reflect::{HasFields, Peek, is_spanned_shape};
 
 use crate::deserialize::XmlFieldExt;
@@ -123,6 +125,11 @@ impl<W: Write> XmlSerializer<W> {
             return self.serialize_enum_as_element(element_name, enum_peek);
         }
 
+        // Check if this is a byte slice/array - serialize as base64
+        if self.try_serialize_bytes_as_element(element_name, peek)? {
+            return Ok(());
+        }
+
         // Check if this is a list-like type (Vec, array, set)
         if let Ok(list_peek) = peek.into_list_like() {
             return self.serialize_list_as_element(element_name, list_peek);
@@ -148,38 +155,137 @@ impl<W: Write> XmlSerializer<W> {
         element_name: &str,
         enum_peek: facet_reflect::PeekEnum<'mem, 'facet>,
     ) -> Result<()> {
+        let shape = enum_peek.shape();
         let variant_name = enum_peek
             .variant_name_active()
             .map_err(|_| XmlErrorKind::SerializeUnknownElementType)?;
 
         let fields: Vec<_> = enum_peek.fields_for_serialize().collect();
 
-        write!(self.writer, "<{}>", escape_element_name(element_name))
-            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+        // Determine enum tagging strategy
+        let is_untagged = shape.is_untagged();
+        let tag_attr = shape.get_tag_attr();
+        let content_attr = shape.get_content_attr();
 
-        if fields.is_empty() {
-            // Unit variant - just the variant name as an empty element
-            write!(self.writer, "<{}/>", escape_element_name(variant_name))
+        if is_untagged {
+            // Untagged: serialize content directly with element name
+            self.serialize_enum_content(element_name, variant_name, &fields)?;
+        } else if let Some(tag) = tag_attr {
+            if let Some(content) = content_attr {
+                // Adjacently tagged: <Element tag="Variant"><content>...</content></Element>
+                write!(
+                    self.writer,
+                    "<{} {}=\"{}\">",
+                    escape_element_name(element_name),
+                    escape_element_name(tag),
+                    escape_attribute_value(variant_name)
+                )
                 .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
-        } else if fields.len() == 1 && fields[0].0.name.parse::<usize>().is_ok() {
-            // Newtype variant - serialize the inner value with variant name
-            self.serialize_element(variant_name, fields[0].1)?;
+
+                if !fields.is_empty() {
+                    // Wrap content in the content element
+                    write!(self.writer, "<{}>", escape_element_name(content))
+                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                    self.serialize_variant_fields(&fields)?;
+                    write!(self.writer, "</{}>", escape_element_name(content))
+                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                }
+
+                write!(self.writer, "</{}>", escape_element_name(element_name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            } else {
+                // Internally tagged: <Element tag="Variant">...fields...</Element>
+                write!(
+                    self.writer,
+                    "<{} {}=\"{}\">",
+                    escape_element_name(element_name),
+                    escape_element_name(tag),
+                    escape_attribute_value(variant_name)
+                )
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+                // Serialize fields directly (not wrapped in variant element)
+                self.serialize_variant_fields(&fields)?;
+
+                write!(self.writer, "</{}>", escape_element_name(element_name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            }
         } else {
-            // Struct-like variant
-            write!(self.writer, "<{}>", escape_element_name(variant_name))
+            // Externally tagged (default): <Element><Variant>...</Variant></Element>
+            write!(self.writer, "<{}>", escape_element_name(element_name))
                 .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
-            for (field_item, field_peek) in fields {
-                self.serialize_element(field_item.name, field_peek)?;
+            if fields.is_empty() {
+                // Unit variant - just the variant name as an empty element
+                write!(self.writer, "<{}/>", escape_element_name(variant_name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            } else if fields.len() == 1 && fields[0].0.name.parse::<usize>().is_ok() {
+                // Newtype variant - serialize the inner value with variant name
+                self.serialize_element(variant_name, fields[0].1)?;
+            } else {
+                // Struct-like variant
+                write!(self.writer, "<{}>", escape_element_name(variant_name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+                for (field_item, field_peek) in fields {
+                    self.serialize_element(field_item.name, field_peek)?;
+                }
+
+                write!(self.writer, "</{}>", escape_element_name(variant_name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
             }
 
-            write!(self.writer, "</{}>", escape_element_name(variant_name))
+            write!(self.writer, "</{}>", escape_element_name(element_name))
                 .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
         }
 
-        write!(self.writer, "</{}>", escape_element_name(element_name))
-            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+        Ok(())
+    }
 
+    /// Serialize enum content for untagged enums
+    fn serialize_enum_content<'mem, 'facet>(
+        &mut self,
+        element_name: &str,
+        variant_name: &str,
+        fields: &[(facet_reflect::FieldItem, Peek<'mem, 'facet>)],
+    ) -> Result<()> {
+        if fields.is_empty() {
+            // Unit variant - empty element
+            write!(self.writer, "<{}/>", escape_element_name(element_name))
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+        } else if fields.len() == 1 && fields[0].0.name.parse::<usize>().is_ok() {
+            // Newtype variant - serialize inner directly
+            self.serialize_element(element_name, fields[0].1)?;
+        } else {
+            // Struct-like variant - serialize as struct
+            write!(self.writer, "<{}>", escape_element_name(element_name))
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+            for (field_item, field_peek) in fields {
+                // Use variant_name as hint for structs in untagged context
+                let _ = variant_name; // Available if needed for disambiguation
+                self.serialize_element(field_item.name, *field_peek)?;
+            }
+
+            write!(self.writer, "</{}>", escape_element_name(element_name))
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    /// Serialize variant fields without wrapper
+    fn serialize_variant_fields<'mem, 'facet>(
+        &mut self,
+        fields: &[(facet_reflect::FieldItem, Peek<'mem, 'facet>)],
+    ) -> Result<()> {
+        if fields.len() == 1 && fields[0].0.name.parse::<usize>().is_ok() {
+            // Single tuple field - serialize value directly
+            self.serialize_value(fields[0].1)?;
+        } else {
+            for (field_item, field_peek) in fields {
+                self.serialize_element(field_item.name, *field_peek)?;
+            }
+        }
         Ok(())
     }
 
@@ -213,7 +319,7 @@ impl<W: Write> XmlSerializer<W> {
             // Use the key as the element name
             if let Some(key_str) = key.as_str() {
                 self.serialize_element(key_str, value)?;
-            } else if let Some(key_val) = self.value_to_string(key) {
+            } else if let Some(key_val) = value_to_string(key) {
                 self.serialize_element(&key_val, value)?;
             } else {
                 // Fallback: use "entry" as element name with key as text
@@ -228,6 +334,71 @@ impl<W: Write> XmlSerializer<W> {
             .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
         Ok(())
+    }
+
+    /// Try to serialize bytes (Vec<u8>, &[u8], [u8; N]) as base64-encoded element.
+    /// Returns Ok(true) if bytes were handled, Ok(false) if not bytes.
+    fn try_serialize_bytes_as_element<'mem, 'facet>(
+        &mut self,
+        element_name: &str,
+        peek: Peek<'mem, 'facet>,
+    ) -> Result<bool> {
+        let shape = peek.shape();
+
+        // Check for Vec<u8>
+        if let Def::List(ld) = &shape.def {
+            if ld.t().is_type::<u8>() {
+                if let Some(bytes) = peek.as_bytes() {
+                    let encoded = BASE64_STANDARD.encode(bytes);
+                    write!(self.writer, "<{}>", escape_element_name(element_name))
+                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                    write!(self.writer, "{}", escape_text(&encoded))
+                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                    write!(self.writer, "</{}>", escape_element_name(element_name))
+                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                    return Ok(true);
+                }
+            }
+        }
+
+        // Check for [u8; N]
+        if let Def::Array(ad) = &shape.def {
+            if ad.t().is_type::<u8>() {
+                // Collect bytes from the array
+                if let Ok(list_peek) = peek.into_list_like() {
+                    let bytes: Vec<u8> = list_peek
+                        .iter()
+                        .filter_map(|p| p.get::<u8>().ok().copied())
+                        .collect();
+                    let encoded = BASE64_STANDARD.encode(&bytes);
+                    write!(self.writer, "<{}>", escape_element_name(element_name))
+                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                    write!(self.writer, "{}", escape_text(&encoded))
+                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                    write!(self.writer, "</{}>", escape_element_name(element_name))
+                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                    return Ok(true);
+                }
+            }
+        }
+
+        // Check for &[u8]
+        if let Def::Slice(sd) = &shape.def {
+            if sd.t().is_type::<u8>() {
+                if let Some(bytes) = peek.as_bytes() {
+                    let encoded = BASE64_STANDARD.encode(bytes);
+                    write!(self.writer, "<{}>", escape_element_name(element_name))
+                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                    write!(self.writer, "{}", escape_text(&encoded))
+                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                    write!(self.writer, "</{}>", escape_element_name(element_name))
+                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
     }
 
     fn serialize_struct_as_element<'mem, 'facet>(
@@ -272,19 +443,30 @@ impl<W: Write> XmlSerializer<W> {
         // Collect attributes, elements, and text content
         // We store field name (&'static str) instead of &Field to avoid lifetime issues
         let mut attributes: Vec<(&str, String)> = Vec::new();
-        let mut elements: Vec<(&'static str, Peek<'mem, 'facet>)> = Vec::new();
+        let mut elements: Vec<(facet_reflect::FieldItem, Peek<'mem, 'facet>)> = Vec::new();
         let mut elements_list: Vec<Peek<'mem, 'facet>> = Vec::new();
         let mut text_content: Option<Peek<'mem, 'facet>> = None;
 
         for (field_item, field_peek) in struct_peek.fields_for_serialize() {
             let field = &field_item.field;
+
+            // Handle custom serialization for attributes - get value immediately
             if field.is_xml_attribute() {
-                // Serialize attribute value to string
-                if let Some(value) = self.value_to_string(field_peek) {
+                let value = if field.proxy_convert_out_fn().is_some() {
+                    // Get the intermediate representation for serialization
+                    if let Ok(owned) = field_peek.custom_serialization(*field) {
+                        value_to_string(owned.as_peek())
+                    } else {
+                        value_to_string(field_peek)
+                    }
+                } else {
+                    value_to_string(field_peek)
+                };
+                if let Some(value) = value {
                     attributes.push((field_item.name, value));
                 }
             } else if field.is_xml_element() {
-                elements.push((field_item.name, field_peek));
+                elements.push((field_item, field_peek));
             } else if field.is_xml_elements() {
                 elements_list.push(field_peek);
             } else if field.is_xml_text() {
@@ -324,8 +506,17 @@ impl<W: Write> XmlSerializer<W> {
         }
 
         // Write child elements
-        for (field_name, field_peek) in elements {
-            self.serialize_named_element(field_name, field_peek)?;
+        for (field_item, field_peek) in elements {
+            // Handle custom serialization for elements
+            if field_item.field.proxy_convert_out_fn().is_some() {
+                if let Ok(owned) = field_peek.custom_serialization(field_item.field) {
+                    self.serialize_named_element(field_item.name, owned.as_peek())?;
+                } else {
+                    self.serialize_named_element(field_item.name, field_peek)?;
+                }
+            } else {
+                self.serialize_named_element(field_item.name, field_peek)?;
+            }
         }
 
         // Write elements lists
@@ -523,80 +714,81 @@ impl<W: Write> XmlSerializer<W> {
 
         Err(XmlErrorKind::SerializeUnknownValueType.into())
     }
+}
 
-    fn value_to_string<'mem, 'facet>(&self, peek: Peek<'mem, 'facet>) -> Option<String> {
-        // Handle Option<T>
-        if let Ok(opt_peek) = peek.into_option() {
-            if opt_peek.is_none() {
-                return None;
-            }
-            if let Some(inner) = opt_peek.value() {
-                return self.value_to_string(inner);
-            }
+/// Convert a Peek value to a string representation, handling Options, Spanned, and transparent wrappers.
+fn value_to_string<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> Option<String> {
+    // Handle Option<T>
+    if let Ok(opt_peek) = peek.into_option() {
+        if opt_peek.is_none() {
             return None;
         }
+        if let Some(inner) = opt_peek.value() {
+            return value_to_string(inner);
+        }
+        return None;
+    }
 
-        // Handle Spanned<T>
-        if is_spanned_shape(peek.shape()) {
-            if let Ok(struct_peek) = peek.into_struct() {
-                if let Ok(value_peek) = struct_peek.field_by_name("value") {
-                    return self.value_to_string(value_peek);
-                }
+    // Handle Spanned<T>
+    if is_spanned_shape(peek.shape()) {
+        if let Ok(struct_peek) = peek.into_struct() {
+            if let Ok(value_peek) = struct_peek.field_by_name("value") {
+                return value_to_string(value_peek);
             }
         }
-
-        // Unwrap transparent wrappers
-        let peek = peek.innermost_peek();
-
-        // Try string first
-        if let Some(s) = peek.as_str() {
-            return Some(s.to_string());
-        }
-
-        // Try various types
-        if let Ok(v) = peek.get::<bool>() {
-            return Some(v.to_string());
-        }
-
-        if let Ok(v) = peek.get::<i8>() {
-            return Some(v.to_string());
-        }
-        if let Ok(v) = peek.get::<i16>() {
-            return Some(v.to_string());
-        }
-        if let Ok(v) = peek.get::<i32>() {
-            return Some(v.to_string());
-        }
-        if let Ok(v) = peek.get::<i64>() {
-            return Some(v.to_string());
-        }
-
-        if let Ok(v) = peek.get::<u8>() {
-            return Some(v.to_string());
-        }
-        if let Ok(v) = peek.get::<u16>() {
-            return Some(v.to_string());
-        }
-        if let Ok(v) = peek.get::<u32>() {
-            return Some(v.to_string());
-        }
-        if let Ok(v) = peek.get::<u64>() {
-            return Some(v.to_string());
-        }
-
-        if let Ok(v) = peek.get::<f32>() {
-            return Some(v.to_string());
-        }
-        if let Ok(v) = peek.get::<f64>() {
-            return Some(v.to_string());
-        }
-
-        if let Ok(v) = peek.get::<char>() {
-            return Some(v.to_string());
-        }
-
-        None
     }
+
+    // Unwrap transparent wrappers
+    let peek = peek.innermost_peek();
+
+    // Try string first
+    if let Some(s) = peek.as_str() {
+        return Some(s.to_string());
+    }
+
+    // Try various types
+    if let Ok(v) = peek.get::<bool>() {
+        return Some(v.to_string());
+    }
+
+    if let Ok(v) = peek.get::<i8>() {
+        return Some(v.to_string());
+    }
+    if let Ok(v) = peek.get::<i16>() {
+        return Some(v.to_string());
+    }
+    if let Ok(v) = peek.get::<i32>() {
+        return Some(v.to_string());
+    }
+    if let Ok(v) = peek.get::<i64>() {
+        return Some(v.to_string());
+    }
+
+    if let Ok(v) = peek.get::<u8>() {
+        return Some(v.to_string());
+    }
+    if let Ok(v) = peek.get::<u16>() {
+        return Some(v.to_string());
+    }
+    if let Ok(v) = peek.get::<u32>() {
+        return Some(v.to_string());
+    }
+    if let Ok(v) = peek.get::<u64>() {
+        return Some(v.to_string());
+    }
+
+    if let Ok(v) = peek.get::<f32>() {
+        return Some(v.to_string());
+    }
+    if let Ok(v) = peek.get::<f64>() {
+        return Some(v.to_string());
+    }
+
+    if let Ok(v) = peek.get::<char>() {
+        return Some(v.to_string());
+    }
+
+    None
 }
 
 /// Escape special characters in XML text content.

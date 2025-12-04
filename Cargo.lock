@@ -909,6 +909,7 @@ dependencies = [
 name = "facet-xml"
 version = "0.31.0"
 dependencies = [
+ "base64",
  "cargo-husky",
  "facet",
  "facet-core",
