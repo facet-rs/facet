@@ -1,0 +1,33 @@
+# Configuration for actions/labeler (PR labeling based on file paths)
+# See: https://github.com/actions/labeler
+
+# Format crates - use the general "formats" label
+"📁 formats":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "facet-json/**"
+          - "facet-yaml/**"
+          - "facet-toml/**"
+          - "facet-xml/**"
+          - "facet-kdl/**"
+          - "facet-msgpack/**"
+          - "facet-postcard/**"
+          - "facet-csv/**"
+          - "facet-urlencoded/**"
+          - "facet-xdr/**"
+          - "facet-asn1/**"
+          - "facet-args/**"
+
+# Derive macro
+"📜 derive":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "facet-macros/**"
+          - "facet-macros-impl/**"
+
+# Documentation
+"📒 documentation":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/*.md"
+          - "docs/**"

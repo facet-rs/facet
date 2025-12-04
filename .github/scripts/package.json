@@ -1,0 +1,16 @@
+{
+  "name": "facet-github-scripts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "label-issue": "npx tsx label-issue.ts"
+  },
+  "dependencies": {
+    "@octokit/rest": "^21.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}
