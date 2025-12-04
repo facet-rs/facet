@@ -45,7 +45,7 @@ fn test_building_array_in_struct() -> Result<(), IPanic> {
         values: [f32; 3],
     }
 
-    let mut partial = Partial::alloc::<WithArrays>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<WithArrays>()?;
     println!("Allocated WithArrays");
 
     partial = partial.set_field("name", "test array".to_string())?;
@@ -82,7 +82,7 @@ fn test_building_array_in_struct() -> Result<(), IPanic> {
 #[test]
 fn test_too_many_items_in_array() -> Result<(), IPanic> {
     // Try to set more elements than array size
-    let mut partial = Partial::alloc::<[u8; 2]>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<[u8; 2]>()?;
     partial = partial.set_nth_field(0, 1u8)?;
     partial = partial.set_nth_field(1, 2u8)?;
 
@@ -123,7 +123,7 @@ fn test_nested_array_building() -> Result<(), IPanic> {
         matrix: [[i32; 2]; 3], // 3x2 matrix
     }
 
-    let mut partial = Partial::alloc::<NestedArrays>()?;
+    let mut partial: Partial<'_> = Partial::alloc::<NestedArrays>()?;
     println!("Allocated NestedArrays");
 
     partial = partial.set_field("name", "test matrix".to_string())?;
@@ -248,7 +248,7 @@ fn drop_array_partially_initialized() -> Result<(), IPanic> {
     DROP_COUNT.store(0, Ordering::SeqCst);
 
     {
-        let mut partial = Partial::alloc::<[NoisyDrop; 4]>()?;
+        let mut partial: Partial<'_> = Partial::alloc::<[NoisyDrop; 4]>()?;
 
         // Initialize elements 0 and 2
         partial = partial.set_nth_field(0, NoisyDrop { value: 10 })?;

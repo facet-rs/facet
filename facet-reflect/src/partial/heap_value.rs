@@ -6,13 +6,17 @@ use core::{alloc::Layout, marker::PhantomData};
 use facet_core::{Facet, PtrConst, PtrMut, Shape};
 
 /// A type-erased value stored on the heap
-pub struct HeapValue<'facet> {
+///
+/// The `BORROW` const generic indicates whether this value may contain borrowed data:
+/// - `BORROW = true` (default): The value may contain references with lifetime `'facet`
+/// - `BORROW = false`: The value is fully owned and contains no borrowed data
+pub struct HeapValue<'facet, const BORROW: bool = true> {
     pub(crate) guard: Option<Guard>,
     pub(crate) shape: &'static Shape,
     pub(crate) phantom: PhantomData<&'facet ()>,
 }
 
-impl<'facet> Drop for HeapValue<'facet> {
+impl<'facet, const BORROW: bool> Drop for HeapValue<'facet, BORROW> {
     fn drop(&mut self) {
         if let Some(guard) = self.guard.take() {
             if let Some(drop_fn) = self.shape.vtable.drop_in_place {
@@ -23,7 +27,7 @@ impl<'facet> Drop for HeapValue<'facet> {
     }
 }
 
-impl<'facet> HeapValue<'facet> {
+impl<'facet, const BORROW: bool> HeapValue<'facet, BORROW> {
     /// Returns a peek that allows exploring the heap value.
     pub fn peek(&self) -> Peek<'_, 'facet> {
         unsafe { Peek::unchecked_new(PtrConst::new(self.guard.as_ref().unwrap().ptr), self.shape) }
@@ -63,7 +67,7 @@ impl<'facet> HeapValue<'facet> {
     }
 }
 
-impl<'facet> HeapValue<'facet> {
+impl<'facet, const BORROW: bool> HeapValue<'facet, BORROW> {
     /// Formats the value using its Display implementation, if available
     pub fn fmt_display(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(display_fn) = self.shape.vtable.display {
@@ -83,19 +87,19 @@ impl<'facet> HeapValue<'facet> {
     }
 }
 
-impl<'facet> core::fmt::Display for HeapValue<'facet> {
+impl<'facet, const BORROW: bool> core::fmt::Display for HeapValue<'facet, BORROW> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.fmt_display(f)
     }
 }
 
-impl<'facet> core::fmt::Debug for HeapValue<'facet> {
+impl<'facet, const BORROW: bool> core::fmt::Debug for HeapValue<'facet, BORROW> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.fmt_debug(f)
     }
 }
 
-impl<'facet> PartialEq for HeapValue<'facet> {
+impl<'facet, const BORROW: bool> PartialEq for HeapValue<'facet, BORROW> {
     fn eq(&self, other: &Self) -> bool {
         if self.shape != other.shape {
             return false;
@@ -113,7 +117,7 @@ impl<'facet> PartialEq for HeapValue<'facet> {
     }
 }
 
-impl<'facet> PartialOrd for HeapValue<'facet> {
+impl<'facet, const BORROW: bool> PartialOrd for HeapValue<'facet, BORROW> {
     fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
         if self.shape != other.shape {
             return None;
@@ -158,7 +162,7 @@ impl Drop for Guard {
     }
 }
 
-impl<'facet> HeapValue<'facet> {
+impl<'facet, const BORROW: bool> HeapValue<'facet, BORROW> {
     /// Unsafely get a reference to the underlying value as type T.
     ///
     /// # Safety

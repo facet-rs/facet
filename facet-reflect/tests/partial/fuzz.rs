@@ -232,7 +232,8 @@ fn op_sequence_strategy() -> impl Strategy<Value = Vec<PartialOp>> {
 /// Returns Ok if we successfully built something, Err if any operation failed.
 /// The key property: this function should NEVER panic or cause UB.
 fn apply_ops(ops: &[PartialOp]) -> Result<(), String> {
-    let mut partial = Partial::alloc::<FuzzTarget>().map_err(|e| format!("alloc failed: {e}"))?;
+    let mut partial: Partial<'_> =
+        Partial::alloc::<FuzzTarget>().map_err(|e| format!("alloc failed: {e}"))?;
 
     for (i, op) in ops.iter().enumerate() {
         match apply_single_op(partial, op) {
@@ -358,7 +359,7 @@ proptest! {
         values_u32 in prop::collection::vec(any::<u32>(), 10),
         values_str in prop::collection::vec("[a-z]{0,5}", 10),
     ) {
-        let mut partial = Partial::alloc::<SimpleStruct>().unwrap();
+        let mut partial: Partial<'_> = Partial::alloc::<SimpleStruct>().unwrap();
         let mut u32_idx = 0;
         let mut str_idx = 0;
 
@@ -410,7 +411,7 @@ proptest! {
         ),
         values in prop::collection::vec(any::<u32>(), 20),
     ) {
-        let mut partial = Partial::alloc::<WithList>().unwrap();
+        let mut partial: Partial<'_> = Partial::alloc::<WithList>().unwrap();
         let mut idx = 0;
 
         for op in ops {
@@ -462,7 +463,7 @@ proptest! {
         keys in prop::collection::vec("[a-z]{1,5}", 10),
         values in prop::collection::vec(any::<u32>(), 10),
     ) {
-        let mut partial = Partial::alloc::<WithMap>().unwrap();
+        let mut partial: Partial<'_> = Partial::alloc::<WithMap>().unwrap();
         let mut key_idx = 0;
         let mut val_idx = 0;
 
@@ -506,7 +507,7 @@ proptest! {
 #[::core::prelude::v1::test]
 fn wip_fuzz_drop_after_partial_init() {
     // Start building, set some fields, drop without finishing
-    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     let partial = partial.set_field("name", String::from("test")).ok();
     if let Some(partial) = partial {
         let _ = partial.set_field("count", 42u32);
@@ -517,7 +518,7 @@ fn wip_fuzz_drop_after_partial_init() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_drop_mid_nested() {
     // Navigate into nested struct, set a field, drop
-    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     let partial = partial.begin_field("nested").ok();
     if let Some(partial) = partial {
         let _ = partial.set_field("x", 10i32);
@@ -528,7 +529,7 @@ fn wip_fuzz_drop_mid_nested() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_drop_mid_list() {
     // Start building a list, add some items, drop
-    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     if let Ok(partial) = partial.begin_field("items") {
         if let Ok(partial) = partial.begin_list() {
             if let Ok(partial) = partial.push(String::from("item1")) {
@@ -542,7 +543,7 @@ fn wip_fuzz_drop_mid_list() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_drop_mid_map() {
     // Start building a map, add a key, drop before value
-    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     if let Ok(partial) = partial.begin_field("mapping") {
         if let Ok(partial) = partial.begin_map() {
             if let Ok(partial) = partial.begin_key() {
@@ -563,30 +564,30 @@ fn wip_fuzz_invalid_ops_sequence() {
     // Try a bunch of invalid operations - should all return errors, not panic
 
     // Try to end when there's nothing to end
-    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     assert!(partial.end().is_err());
 
     // Try to begin_list on a struct
-    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     assert!(partial.begin_list().is_err());
 
     // Try to set a value on a struct (need to select field first)
-    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     assert!(partial.set(42u32).is_err());
 
     // Try invalid field name
-    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     assert!(partial.begin_field("nonexistent").is_err());
 
     // Try to build incomplete struct
-    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     assert!(partial.build().is_err());
 }
 
 #[::core::prelude::v1::test]
 fn wip_fuzz_deferred_drop_without_finish() {
     // Enter deferred mode, do some work, drop without finish_deferred
-    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     let resolution = Resolution::new();
     let mut partial = partial.begin_deferred(resolution).unwrap();
 
@@ -603,7 +604,7 @@ fn wip_fuzz_deferred_drop_without_finish() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_deferred_interleaved_fields() {
     // Test the re-entry pattern that deferred mode is designed for
-    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     let resolution = Resolution::new();
     let mut partial = partial.begin_deferred(resolution).unwrap();
 
@@ -629,7 +630,7 @@ fn wip_fuzz_deferred_interleaved_fields() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_deferred_double_begin() {
     // Calling begin_deferred twice should return an error on the second call
-    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     let resolution1 = Resolution::new();
     let resolution2 = Resolution::new();
 
@@ -643,7 +644,7 @@ fn wip_fuzz_deferred_double_begin() {
 #[::core::prelude::v1::test]
 fn wip_fuzz_deferred_finish_without_begin() {
     // Calling finish_deferred without begin_deferred
-    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     let result = partial.finish_deferred();
     // Should return an error, not panic
     assert!(result.is_err());
@@ -653,7 +654,7 @@ fn wip_fuzz_deferred_finish_without_begin() {
 /// Operations: BeginField(Name), SetString("aaaaaaaaaaaa")
 #[::core::prelude::v1::test]
 fn wip_fuzz_begin_field_set_string_drop() {
-    let partial = Partial::alloc::<FuzzTarget>().unwrap();
+    let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
     // BeginField(Name)
     if let Ok(partial) = partial.begin_field("name") {
         // SetString("aaaaaaaaaaaa")

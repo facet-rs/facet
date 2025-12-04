@@ -591,11 +591,11 @@ impl<'input> JsonDeserializer<'input> {
     /// - `Field("name")` - navigate into struct field "name"
     /// - `Variant("field", "Variant")` - select enum variant (field already entered by prior Field segment)
     #[allow(dead_code)]
-    fn deserialize_at_path(
+    fn deserialize_at_path<const BORROW: bool>(
         &mut self,
-        mut wip: Partial<'input>,
+        mut wip: Partial<'input, BORROW>,
         field_info: &facet_solver::FieldInfo,
-    ) -> Result<Partial<'input>> {
+    ) -> Result<Partial<'input, BORROW>> {
         let segments = field_info.path.segments();
 
         // Count only Field segments for the unwind depth
@@ -650,7 +650,10 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Main deserialization entry point - deserialize into a Partial.
-    pub fn deserialize_into(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
+    pub fn deserialize_into<const BORROW: bool>(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         let shape = wip.shape();
         log::trace!(
             "deserialize_into: shape={}, def={:?}",
@@ -732,7 +735,10 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Deserialize into a `Spanned<T>` wrapper.
-    fn deserialize_spanned(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
+    fn deserialize_spanned<const BORROW: bool>(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         log::trace!("deserialize_spanned");
 
         // Peek to get the span of the value we're about to parse
@@ -754,7 +760,10 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Deserialize a scalar value.
-    fn deserialize_scalar(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
+    fn deserialize_scalar<const BORROW: bool>(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         let expected_type = wip.shape().type_identifier;
         let token = self.next_expecting(expected_type)?;
         log::trace!("deserialize_scalar: token={:?}", token.value);
@@ -812,7 +821,10 @@ impl<'input> JsonDeserializer<'input> {
     /// Deserialize any JSON value into a DynamicValue type.
     ///
     /// This handles all JSON value types: null, bool, number, string, array, and object.
-    fn deserialize_dynamic_value(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
+    fn deserialize_dynamic_value<const BORROW: bool>(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         let token = self.peek()?;
         log::trace!("deserialize_dynamic_value: token={:?}", token.value);
 
@@ -962,11 +974,11 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Set a string value, handling `&str`, `Cow<str>`, and `String` appropriately.
-    fn set_string_value(
+    fn set_string_value<const BORROW: bool>(
         &mut self,
-        mut wip: Partial<'input>,
+        mut wip: Partial<'input, BORROW>,
         s: Cow<'input, str>,
-    ) -> Result<Partial<'input>> {
+    ) -> Result<Partial<'input, BORROW>> {
         let shape = wip.shape();
 
         // Check if target is &str (shared reference to str)
@@ -1008,12 +1020,12 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Set a numeric value, handling type conversions.
-    fn set_number_f64(
+    fn set_number_f64<const BORROW: bool>(
         &mut self,
-        mut wip: Partial<'input>,
+        mut wip: Partial<'input, BORROW>,
         n: f64,
         span: Span,
-    ) -> Result<Partial<'input>> {
+    ) -> Result<Partial<'input, BORROW>> {
         let shape = wip.shape();
         let ty = match &shape.ty {
             Type::Primitive(PrimitiveType::Numeric(ty)) => ty,
@@ -1079,12 +1091,12 @@ impl<'input> JsonDeserializer<'input> {
         Ok(wip)
     }
 
-    fn set_number_i64(
+    fn set_number_i64<const BORROW: bool>(
         &mut self,
-        mut wip: Partial<'input>,
+        mut wip: Partial<'input, BORROW>,
         n: i64,
         span: Span,
-    ) -> Result<Partial<'input>> {
+    ) -> Result<Partial<'input, BORROW>> {
         let shape = wip.shape();
         let size = match shape.layout {
             ShapeLayout::Sized(layout) => layout.size(),
@@ -1195,12 +1207,12 @@ impl<'input> JsonDeserializer<'input> {
         Ok(wip)
     }
 
-    fn set_number_u64(
+    fn set_number_u64<const BORROW: bool>(
         &mut self,
-        mut wip: Partial<'input>,
+        mut wip: Partial<'input, BORROW>,
         n: u64,
         span: Span,
-    ) -> Result<Partial<'input>> {
+    ) -> Result<Partial<'input, BORROW>> {
         let shape = wip.shape();
         let size = match shape.layout {
             ShapeLayout::Sized(layout) => layout.size(),
@@ -1302,12 +1314,12 @@ impl<'input> JsonDeserializer<'input> {
         Ok(wip)
     }
 
-    fn set_number_i128(
+    fn set_number_i128<const BORROW: bool>(
         &mut self,
-        mut wip: Partial<'input>,
+        mut wip: Partial<'input, BORROW>,
         n: i128,
         span: Span,
-    ) -> Result<Partial<'input>> {
+    ) -> Result<Partial<'input, BORROW>> {
         let shape = wip.shape();
         let size = match shape.layout {
             ShapeLayout::Sized(layout) => layout.size(),
@@ -1340,12 +1352,12 @@ impl<'input> JsonDeserializer<'input> {
         Ok(wip)
     }
 
-    fn set_number_u128(
+    fn set_number_u128<const BORROW: bool>(
         &mut self,
-        mut wip: Partial<'input>,
+        mut wip: Partial<'input, BORROW>,
         n: u128,
         span: Span,
-    ) -> Result<Partial<'input>> {
+    ) -> Result<Partial<'input, BORROW>> {
         let shape = wip.shape();
         let size = match shape.layout {
             ShapeLayout::Sized(layout) => layout.size(),
@@ -1379,7 +1391,10 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Deserialize a struct from a JSON object.
-    fn deserialize_struct(&mut self, wip: Partial<'input>) -> Result<Partial<'input>> {
+    fn deserialize_struct<const BORROW: bool>(
+        &mut self,
+        wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         log::trace!("deserialize_struct: {}", wip.shape().type_identifier);
 
         // Get struct fields to check for flatten
@@ -1402,7 +1417,10 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Deserialize a struct without flattened fields (simple case).
-    fn deserialize_struct_simple(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
+    fn deserialize_struct_simple<const BORROW: bool>(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         // Expect opening brace and track its span
         let open_token = self.next()?;
         let object_start_span = match open_token.value {
@@ -1570,10 +1588,10 @@ impl<'input> JsonDeserializer<'input> {
     /// This uses a two-pass approach:
     /// 1. Peek mode: Scan all keys, feed to solver, record value positions
     /// 2. Deserialize: Use the resolved Configuration to deserialize with proper path handling
-    fn deserialize_struct_with_flatten(
+    fn deserialize_struct_with_flatten<const BORROW: bool>(
         &mut self,
-        mut wip: Partial<'input>,
-    ) -> Result<Partial<'input>> {
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         log::trace!(
             "deserialize_struct_with_flatten: {wip}",
             wip = wip.shape().type_identifier
@@ -1821,7 +1839,10 @@ impl<'input> JsonDeserializer<'input> {
     /// Deserialize an enum.
     ///
     /// Supports externally tagged representation: `{"VariantName": data}` or `"UnitVariant"`
-    fn deserialize_enum(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
+    fn deserialize_enum<const BORROW: bool>(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         log::trace!("deserialize_enum: {}", wip.shape().type_identifier);
 
         let token = self.peek()?;
@@ -2003,10 +2024,10 @@ impl<'input> JsonDeserializer<'input> {
 
     /// Deserialize the content of an enum variant in a flattened context.
     /// Handles both struct variants and tuple variants.
-    fn deserialize_variant_struct_content(
+    fn deserialize_variant_struct_content<const BORROW: bool>(
         &mut self,
-        mut wip: Partial<'input>,
-    ) -> Result<Partial<'input>> {
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         // Check what kind of variant we have
         let variant = wip.selected_variant().ok_or_else(|| {
             JsonError::without_span(JsonErrorKind::InvalidValue {
@@ -2045,11 +2066,11 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Deserialize struct fields of a variant.
-    fn deserialize_variant_struct_fields(
+    fn deserialize_variant_struct_fields<const BORROW: bool>(
         &mut self,
-        mut wip: Partial<'input>,
+        mut wip: Partial<'input, BORROW>,
         fields: &[facet_core::Field],
-    ) -> Result<Partial<'input>> {
+    ) -> Result<Partial<'input, BORROW>> {
         let token = self.next()?;
         if !matches!(token.value, Token::LBrace) {
             return Err(JsonError::new(
@@ -2122,10 +2143,10 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Deserialize tuple fields of a variant.
-    fn deserialize_variant_tuple_fields(
+    fn deserialize_variant_tuple_fields<const BORROW: bool>(
         &mut self,
-        mut wip: Partial<'input>,
-    ) -> Result<Partial<'input>> {
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         let token = self.next()?;
         if !matches!(token.value, Token::LBracket) {
             return Err(JsonError::new(
@@ -2162,7 +2183,10 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Deserialize a list/Vec.
-    fn deserialize_list(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
+    fn deserialize_list<const BORROW: bool>(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         log::trace!("deserialize_list");
 
         let token = self.next()?;
@@ -2200,7 +2224,10 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Deserialize a map.
-    fn deserialize_map(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
+    fn deserialize_map<const BORROW: bool>(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         log::trace!("deserialize_map");
 
         let token = self.next()?;
@@ -2280,7 +2307,10 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Deserialize an Option.
-    fn deserialize_option(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
+    fn deserialize_option<const BORROW: bool>(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         log::trace!("deserialize_option");
 
         let token = self.peek()?;
@@ -2300,7 +2330,10 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Deserialize a smart pointer (Box, Arc, Rc) or reference (&str).
-    fn deserialize_pointer(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
+    fn deserialize_pointer<const BORROW: bool>(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         log::trace!("deserialize_pointer");
 
         // Check what kind of pointer this is BEFORE calling begin_smart_ptr
@@ -2431,7 +2464,10 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Deserialize a fixed-size array.
-    fn deserialize_array(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
+    fn deserialize_array<const BORROW: bool>(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         log::trace!("deserialize_array");
 
         let token = self.next()?;
@@ -2501,7 +2537,10 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Deserialize a set.
-    fn deserialize_set(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
+    fn deserialize_set<const BORROW: bool>(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         log::trace!("deserialize_set");
 
         let token = self.next()?;
@@ -2539,7 +2578,10 @@ impl<'input> JsonDeserializer<'input> {
     }
 
     /// Deserialize a tuple.
-    fn deserialize_tuple(&mut self, mut wip: Partial<'input>) -> Result<Partial<'input>> {
+    fn deserialize_tuple<const BORROW: bool>(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
         log::trace!("deserialize_tuple");
 
         let token = self.next()?;
@@ -2639,7 +2681,7 @@ where
     let mut deserializer = JsonDeserializer::new(input);
     let wip = Partial::alloc::<T>()?;
 
-    let partial = match deserializer.deserialize_into(wip) {
+    let partial = match deserializer.deserialize_into::<true>(wip) {
         Ok(p) => p,
         Err(mut e) => {
             if let Some(src) = source {
@@ -2725,19 +2767,23 @@ fn from_slice_owned_inner<T: Facet<'static>>(input: &[u8], source: Option<&str>)
     // SAFETY: This is safe because:
     // 1. T: Facet<'static> guarantees the type T itself contains no borrowed data
     // 2. allow_borrow: false ensures we error before storing any borrowed references
-    // 3. The transmutes only affect phantom lifetime markers in Partial/HeapValue,
-    //    not actual runtime data
+    // 3. BORROW: false on Partial/HeapValue documents that no borrowing occurs
+    // 4. The transmutes only affect phantom lifetime markers, not actual runtime data
 
     fn inner<'input, T: Facet<'static>>(input: &'input [u8], source: Option<&str>) -> Result<T> {
         let mut deserializer = JsonDeserializer::new_owned(input);
 
-        // Allocate a Partial<'input> for T's shape.
-        // T::SHAPE is 'static, but the Partial needs to be 'input to work with the deserializer.
-        // SAFETY: We're only changing the lifetime marker. The Partial doesn't actually
-        // store any 'input references because allow_borrow is false.
+        // Allocate a Partial<'static, false> - owned mode, no borrowing allowed.
+        // We transmute to Partial<'input, false> to work with the deserializer.
+        // SAFETY: We're only changing the lifetime marker. The Partial<_, false> doesn't
+        // store any 'input references because:
+        // - BORROW=false documents no borrowed data
+        // - allow_borrow=false on deserializer prevents runtime borrowing
         #[allow(unsafe_code)]
-        let wip: Partial<'input> = unsafe {
-            core::mem::transmute::<Partial<'static>, Partial<'input>>(Partial::alloc::<T>()?)
+        let wip: Partial<'input, false> = unsafe {
+            core::mem::transmute::<Partial<'static, false>, Partial<'input, false>>(
+                Partial::alloc_owned::<T>()?,
+            )
         };
 
         let partial = match deserializer.deserialize_into(wip) {
@@ -2775,14 +2821,16 @@ fn from_slice_owned_inner<T: Facet<'static>>(input: &[u8], source: Option<&str>)
             err
         })?;
 
-        // Transmute HeapValue<'input> to HeapValue<'static> so we can materialize to T
-        // SAFETY: The HeapValue contains no borrowed data (allow_borrow was false),
-        // so the lifetime is purely a phantom marker.
+        // Transmute HeapValue<'input, false> to HeapValue<'static, false> so we can materialize to T
+        // SAFETY: The HeapValue contains no borrowed data:
+        // - BORROW=false documents no borrowed data
+        // - allow_borrow=false ensured this at runtime
+        // The transmute only affects the phantom lifetime marker.
         #[allow(unsafe_code)]
-        let heap_value: facet_reflect::HeapValue<'static> = unsafe {
+        let heap_value: facet_reflect::HeapValue<'static, false> = unsafe {
             core::mem::transmute::<
-                facet_reflect::HeapValue<'input>,
-                facet_reflect::HeapValue<'static>,
+                facet_reflect::HeapValue<'input, false>,
+                facet_reflect::HeapValue<'static, false>,
             >(heap_value)
         };
 

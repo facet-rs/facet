@@ -232,7 +232,7 @@ impl FrameMode {
 /// an error is returned: in other words, if you navigate down to a field,
 /// you have to fully initialize it one go. You can't go back up and back down
 /// to it again.
-pub struct Partial<'facet> {
+pub struct Partial<'facet, const BORROW: bool = true> {
     /// Frame management mode (strict or deferred) and associated state.
     mode: FrameMode,
 
@@ -1041,7 +1041,7 @@ impl Frame {
 
 // Convenience methods on Partial for accessing FrameMode internals.
 // These help minimize changes to the rest of the codebase during the refactor.
-impl<'facet> Partial<'facet> {
+impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Get a reference to the frame stack.
     #[inline]
     pub(crate) fn frames(&self) -> &Vec<Frame> {
@@ -1079,7 +1079,7 @@ impl<'facet> Partial<'facet> {
     }
 }
 
-impl<'facet> Drop for Partial<'facet> {
+impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
     fn drop(&mut self) {
         trace!("🧹 Partial is being dropped");
 
