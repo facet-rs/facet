@@ -125,7 +125,9 @@ pub use facet_reflect::{Span, Spanned};
 pub use error::{XmlError, XmlErrorKind};
 
 // Re-export deserialization
-pub use deserialize::{from_slice, from_str};
+pub use deserialize::{
+    DeserializeOptions, from_slice, from_slice_with_options, from_str, from_str_with_options,
+};
 
 // Re-export serialization
 pub use serialize::{to_string, to_writer};
