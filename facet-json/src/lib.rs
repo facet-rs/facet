@@ -1,5 +1,5 @@
 #![warn(missing_docs)]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
 extern crate alloc;
@@ -8,7 +8,10 @@ extern crate alloc;
 pub use facet_reflect::{Span, Spanned};
 
 mod deserialize;
-pub use deserialize::{JsonDeserializer, JsonError, JsonErrorKind, from_slice, from_str};
+pub use deserialize::{
+    JsonDeserializer, JsonError, JsonErrorKind, from_slice, from_slice_owned, from_str,
+    from_str_owned,
+};
 
 mod serialize;
 pub use serialize::*;
