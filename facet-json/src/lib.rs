@@ -24,7 +24,17 @@ pub use scanner::{
 mod adapter;
 pub use adapter::{
     AdapterError, AdapterErrorKind, SliceAdapter, SpannedAdapterToken, Token as AdapterToken,
+    TokenSource,
 };
+
+#[cfg(feature = "streaming")]
+mod streaming;
+#[cfg(feature = "futures-io")]
+pub use streaming::from_async_reader_futures;
+#[cfg(feature = "tokio")]
+pub use streaming::from_async_reader_tokio;
+#[cfg(feature = "streaming")]
+pub use streaming::{StreamingAdapter, from_reader};
 
 mod scan_buffer;
 pub use scan_buffer::ScanBuffer;
@@ -182,4 +192,161 @@ fn top_three_bits_set(value: u128) -> bool {
         & !xor_result
         & 0x80808080808080808080808080808080;
     has_zero == 0
+}
+
+// ============================================================================
+// Test helpers for multi-mode testing
+// ============================================================================
+
+/// Macro to run deserialize tests in both slice and streaming modes.
+///
+/// Generates two test modules that run the same test body with different
+/// deserializers:
+/// - `slice` - uses `from_str` (slice-based parsing)
+/// - `streaming` - uses `from_reader` (streaming from a reader)
+///
+/// # Usage
+///
+/// ```ignore
+/// facet_json::test_modes! {
+///     #[test]
+///     fn my_test() {
+///         #[derive(facet::Facet, Debug, PartialEq)]
+///         struct Foo { x: i32 }
+///
+///         let result: Foo = deserialize(r#"{"x": 42}"#).unwrap();
+///         assert_eq!(result, Foo { x: 42 });
+///     }
+/// }
+/// ```
+///
+/// The macro provides a `deserialize` function that takes `&str` and returns
+/// `Result<T, JsonError>`.
+///
+/// # Skipping streaming mode
+///
+/// Use `#[skip_streaming]` before a test to skip it in streaming mode
+/// (for features like `#[facet(flatten)]` or `RawJson` that aren't supported):
+///
+/// ```ignore
+/// facet_json::test_modes! {
+///     #[skip_streaming]
+///     #[test]
+///     fn test_flatten() {
+///         // This test only runs in slice mode
+///     }
+/// }
+/// ```
+#[macro_export]
+#[cfg(feature = "streaming")]
+macro_rules! test_modes {
+    ($($content:tt)*) => {
+        /// Tests using from_str (slice-based)
+        mod slice {
+            #[allow(unused_imports)]
+            use super::*;
+
+            #[allow(dead_code)]
+            fn deserialize<T: ::facet::Facet<'static>>(input: &str) -> Result<T, $crate::JsonError> {
+                $crate::from_str(input)
+            }
+
+            $crate::__test_modes_inner!(@skip_none $($content)*);
+        }
+
+        /// Tests using from_reader (streaming)
+        mod streaming {
+            #[allow(unused_imports)]
+            use super::*;
+
+            #[allow(dead_code)]
+            fn deserialize<T: ::facet::Facet<'static>>(input: &str) -> Result<T, $crate::JsonError> {
+                $crate::from_reader(::std::io::Cursor::new(input))
+            }
+
+            $crate::__test_modes_inner!(@skip_streaming $($content)*);
+        }
+    };
+}
+
+/// Internal helper macro - emits tests, optionally skipping those marked with #[skip_streaming]
+#[macro_export]
+#[cfg(feature = "streaming")]
+#[doc(hidden)]
+macro_rules! __test_modes_inner {
+    // Skip #[skip_streaming] when in streaming mode
+    (@skip_streaming #[skip_streaming] #[test] fn $name:ident() $body:block $($rest:tt)*) => {
+        $crate::__test_modes_inner!(@skip_streaming $($rest)*);
+    };
+
+    // In non-streaming modes, ignore the #[skip_streaming] attribute
+    (@skip_none #[skip_streaming] #[test] fn $name:ident() $body:block $($rest:tt)*) => {
+        #[test]
+        fn $name() {
+            ::facet_testhelpers::setup();
+            $body
+        }
+        $crate::__test_modes_inner!(@skip_none $($rest)*);
+    };
+
+    // Regular test - emit it
+    (@$mode:ident #[test] fn $name:ident() $body:block $($rest:tt)*) => {
+        #[test]
+        fn $name() {
+            ::facet_testhelpers::setup();
+            $body
+        }
+        $crate::__test_modes_inner!(@$mode $($rest)*);
+    };
+
+    // Base case - done
+    (@$mode:ident) => {};
+}
+
+/// Fallback when streaming is not enabled - just run slice tests
+#[macro_export]
+#[cfg(not(feature = "streaming"))]
+macro_rules! test_modes {
+    ($($content:tt)*) => {
+        /// Tests using from_str (slice-based)
+        mod slice {
+            #[allow(unused_imports)]
+            use super::*;
+
+            #[allow(dead_code)]
+            fn deserialize<T: ::facet::Facet<'static>>(input: &str) -> Result<T, $crate::JsonError> {
+                $crate::from_str(input)
+            }
+
+            $crate::__test_modes_inner!(@skip_none $($content)*);
+        }
+    };
+}
+
+#[macro_export]
+#[cfg(not(feature = "streaming"))]
+#[doc(hidden)]
+macro_rules! __test_modes_inner {
+    // Ignore #[skip_streaming] in non-streaming build
+    (@skip_none #[skip_streaming] #[test] fn $name:ident() $body:block $($rest:tt)*) => {
+        #[test]
+        fn $name() {
+            ::facet_testhelpers::setup();
+            $body
+        }
+        $crate::__test_modes_inner!(@skip_none $($rest)*);
+    };
+
+    // Regular test
+    (@$mode:ident #[test] fn $name:ident() $body:block $($rest:tt)*) => {
+        #[test]
+        fn $name() {
+            ::facet_testhelpers::setup();
+            $body
+        }
+        $crate::__test_modes_inner!(@$mode $($rest)*);
+    };
+
+    // Base case
+    (@$mode:ident) => {};
 }

@@ -487,6 +487,85 @@ struct SpannedSkipToken {
     span: Span,
 }
 
+// ============================================================================
+// TokenSource trait - unifies slice and streaming adapters
+// ============================================================================
+
+use crate::{JsonError, JsonErrorKind};
+
+/// Trait for token sources that can be used by the deserializer.
+///
+/// This trait abstracts over both:
+/// - `SliceAdapter<'input>` implements `TokenSource<'input>` - can borrow from input
+/// - `StreamingAdapter` implements `TokenSource<'static>` - always owned
+///
+/// The lifetime parameter `'input` is the lifetime of the input data,
+/// NOT the lifetime of `self`. This is why we don't need GATs.
+pub trait TokenSource<'input> {
+    /// Get the next token.
+    fn next_token(&mut self) -> Result<SpannedAdapterToken<'input>, JsonError>;
+
+    /// Skip a JSON value without fully decoding it.
+    /// Returns the span of the skipped value.
+    fn skip(&mut self) -> Result<Span, JsonError>;
+
+    /// Get the raw input bytes, if available.
+    ///
+    /// Returns `Some` for slice-based adapters, `None` for streaming.
+    /// Used for features that need direct input access (RawJson, flatten replay).
+    fn input_bytes(&self) -> Option<&'input [u8]> {
+        None
+    }
+
+    /// Create a new adapter starting from the given offset in the input.
+    ///
+    /// Returns `Some` for slice-based adapters, `None` for streaming.
+    /// Used for flatten replay.
+    fn at_offset(&self, offset: usize) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        let _ = offset;
+        None
+    }
+}
+
+impl<'input, const BORROW: bool> TokenSource<'input> for SliceAdapter<'input, BORROW> {
+    fn next_token(&mut self) -> Result<SpannedAdapterToken<'input>, JsonError> {
+        SliceAdapter::next_token(self).map_err(|e| JsonError {
+            kind: JsonErrorKind::Scan(match e.kind {
+                AdapterErrorKind::Scan(s) => s,
+                AdapterErrorKind::NeedMore => {
+                    crate::scanner::ScanErrorKind::UnexpectedEof("need more data")
+                }
+            }),
+            span: Some(e.span),
+            source_code: None,
+        })
+    }
+
+    fn skip(&mut self) -> Result<Span, JsonError> {
+        SliceAdapter::skip(self).map_err(|e| JsonError {
+            kind: JsonErrorKind::Scan(match e.kind {
+                AdapterErrorKind::Scan(s) => s,
+                AdapterErrorKind::NeedMore => {
+                    crate::scanner::ScanErrorKind::UnexpectedEof("need more data")
+                }
+            }),
+            span: Some(e.span),
+            source_code: None,
+        })
+    }
+
+    fn input_bytes(&self) -> Option<&'input [u8]> {
+        Some(self.input)
+    }
+
+    fn at_offset(&self, offset: usize) -> Option<Self> {
+        Some(SliceAdapter::new(&self.input[offset..]))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
