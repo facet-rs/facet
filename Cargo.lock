@@ -609,6 +609,7 @@ dependencies = [
  "chrono",
  "facet-testhelpers",
  "impls",
+ "indexmap",
  "jiff",
  "num-complex",
  "ordered-float",

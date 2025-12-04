@@ -67,6 +67,9 @@ mod impls_num_complex;
 #[cfg(feature = "ruint")]
 mod impls_ruint;
 
+#[cfg(feature = "indexmap")]
+mod impls_indexmap;
+
 // Const type Id
 mod typeid;
 pub use typeid::*;
