@@ -310,18 +310,15 @@ fn test_serialize_namespaced_element() {
     // Should contain xmlns declaration and prefixed element name
     assert!(
         xml_output.contains("xmlns:"),
-        "Should contain xmlns declaration: {}",
-        xml_output
+        "Should contain xmlns declaration: {xml_output}"
     );
     assert!(
         xml_output.contains(":item"),
-        "Should contain prefixed element: {}",
-        xml_output
+        "Should contain prefixed element: {xml_output}"
     );
     assert!(
         xml_output.contains("http://example.com/ns"),
-        "Should contain namespace URI: {}",
-        xml_output
+        "Should contain namespace URI: {xml_output}"
     );
 
     // Round-trip: the serialized XML should deserialize back to the same value
@@ -340,13 +337,11 @@ fn test_serialize_namespaced_attribute() {
     // Should contain xmlns declaration and prefixed attribute
     assert!(
         xml_output.contains("xmlns:"),
-        "Should contain xmlns declaration: {}",
-        xml_output
+        "Should contain xmlns declaration: {xml_output}"
     );
     assert!(
         xml_output.contains(":value="),
-        "Should contain prefixed attribute: {}",
-        xml_output
+        "Should contain prefixed attribute: {xml_output}"
     );
 
     // Round-trip
@@ -366,13 +361,11 @@ fn test_serialize_mixed_namespaces() {
     // plain should not have a prefix, special should
     assert!(
         xml_output.contains("<plain>"),
-        "Plain element should not be prefixed: {}",
-        xml_output
+        "Plain element should not be prefixed: {xml_output}"
     );
     assert!(
         xml_output.contains(":special>"),
-        "Special element should be prefixed: {}",
-        xml_output
+        "Special element should be prefixed: {xml_output}"
     );
 
     // Round-trip
@@ -394,13 +387,11 @@ fn test_serialize_ns_all() {
     // 'other' should use a different prefix
     assert!(
         xml_output.contains("http://example.com/ns"),
-        "Should contain main namespace: {}",
-        xml_output
+        "Should contain main namespace: {xml_output}"
     );
     assert!(
         xml_output.contains("http://other.com/ns"),
-        "Should contain other namespace: {}",
-        xml_output
+        "Should contain other namespace: {xml_output}"
     );
 
     // Round-trip
@@ -420,8 +411,7 @@ fn test_serialize_ns_all_attributes_roundtrip() {
     // Both attributes should be namespaced with the same prefix
     assert!(
         xml_output.contains("xmlns:"),
-        "Should contain xmlns declaration: {}",
-        xml_output
+        "Should contain xmlns declaration: {xml_output}"
     );
 
     // Round-trip
@@ -441,13 +431,11 @@ fn test_serialize_same_local_name_different_namespaces() {
     // Both should be "item" but with different prefixes
     assert!(
         xml_output.contains("http://ns1.com"),
-        "Should contain ns1: {}",
-        xml_output
+        "Should contain ns1: {xml_output}"
     );
     assert!(
         xml_output.contains("http://ns2.com"),
-        "Should contain ns2: {}",
-        xml_output
+        "Should contain ns2: {xml_output}"
     );
 
     // Round-trip
@@ -473,13 +461,11 @@ fn test_serialize_well_known_namespace() {
     // Should use 'xsi' prefix for XMLSchema-instance namespace
     assert!(
         xml_output.contains("xsi:"),
-        "Should use well-known 'xsi' prefix: {}",
-        xml_output
+        "Should use well-known 'xsi' prefix: {xml_output}"
     );
     assert!(
         xml_output.contains("xmlns:xsi="),
-        "Should declare xsi namespace: {}",
-        xml_output
+        "Should declare xsi namespace: {xml_output}"
     );
 }
 
@@ -517,13 +503,11 @@ fn test_serialize_nested_ns_all() {
     // inner_field should use inner namespace
     assert!(
         xml_output.contains("http://outer.com/ns"),
-        "Should contain outer namespace: {}",
-        xml_output
+        "Should contain outer namespace: {xml_output}"
     );
     assert!(
         xml_output.contains("http://inner.com/ns"),
-        "Should contain inner namespace: {}",
-        xml_output
+        "Should contain inner namespace: {xml_output}"
     );
 
     // Round-trip
