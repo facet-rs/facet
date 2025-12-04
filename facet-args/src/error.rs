@@ -104,6 +104,8 @@ pub enum ArgsErrorKind {
         flag: String,
         /// Fields of the struct/variant being parsed
         fields: &'static [Field],
+        /// Precise span for the invalid flag (used for chained short flags like `-axc` where `x` is invalid)
+        precise_span: Option<Span>,
     },
 
     /// Struct/type expected a certain argument to be passed and it wasn't
@@ -137,6 +139,16 @@ pub enum ArgsErrorKind {
 }
 
 impl ArgsErrorKind {
+    /// Returns a precise span override if the error kind has one.
+    /// This is used for errors like `UnknownShortFlag` in chained flags
+    /// where we want to highlight just the invalid character, not the whole arg.
+    pub fn precise_span(&self) -> Option<Span> {
+        match self {
+            ArgsErrorKind::UnknownShortFlag { precise_span, .. } => *precise_span,
+            _ => None,
+        }
+    }
+
     /// Returns an error code for this error kind.
     pub fn code(&self) -> &'static str {
         match self {
@@ -217,7 +229,7 @@ impl ArgsErrorKind {
                 let flags = format_available_flags(fields);
                 Some(Box::new(format!("available options:\n{flags}")))
             }
-            ArgsErrorKind::UnknownShortFlag { flag, fields } => {
+            ArgsErrorKind::UnknownShortFlag { flag, fields, .. } => {
                 // Try to find what flag the user might have meant
                 let short_char = flag.chars().next();
                 if let Some(field) = fields.iter().find(|f| get_short_flag(f) == short_char) {

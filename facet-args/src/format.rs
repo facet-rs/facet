@@ -166,13 +166,16 @@ impl<'input> Context<'input> {
     /// Forward to `work_inner`, converts `ArgsErrorKind` to `ArgsError` (with span)
     fn work(&mut self) -> Result<HeapValue<'static>, ArgsError> {
         self.work_inner().map_err(|kind| {
-            let span = if self.index >= self.args.len() {
-                Span::new(self.flattened_args.len(), 0)
-            } else {
-                let arg = self.args[self.index];
-                let index = self.arg_indices[self.index];
-                Span::new(index, arg.len())
-            };
+            // Use precise span if the error kind has one, otherwise use the whole arg span
+            let span = kind.precise_span().unwrap_or_else(|| {
+                if self.index >= self.args.len() {
+                    Span::new(self.flattened_args.len(), 0)
+                } else {
+                    let arg = self.args[self.index];
+                    let index = self.arg_indices[self.index];
+                    Span::new(index, arg.len())
+                }
+            });
             ArgsError::new(kind, span)
         })
     }
@@ -309,6 +312,7 @@ impl<'input> Context<'input> {
                                 return Err(ArgsErrorKind::UnknownShortFlag {
                                     flag: short_char.to_string(),
                                     fields,
+                                    precise_span: None, // Not chained, use default arg span
                                 });
                             };
                             p = self.handle_field(p, field_index, Some(value))?;
@@ -460,6 +464,7 @@ impl<'input> Context<'input> {
                                 return Err(ArgsErrorKind::UnknownShortFlag {
                                     flag: short_char.to_string(),
                                     fields,
+                                    precise_span: None, // Not chained, use default arg span
                                 });
                             };
                             p = self.handle_field(p, field_index, Some(value))?;
@@ -811,10 +816,12 @@ impl<'input> Context<'input> {
 
         // Look up the field for this character
         let Some(field_index) = find_field_index_with_short_char(fields, first_char_str) else {
-            // Error: unknown flag, report just the first character
+            // Error: unknown flag, report just the first character with precise span
+            let char_span = Span::new(flag_span.start, first_char.len_utf8());
             return Err(ArgsErrorKind::UnknownShortFlag {
                 flag: first_char_str.to_string(),
                 fields,
+                precise_span: Some(char_span),
             });
         };
 
