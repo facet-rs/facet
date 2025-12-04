@@ -41,10 +41,27 @@ cargo install just
 ```bash
 git clone https://github.com/facet-rs/facet
 cd facet
+./scripts/install-hooks  # Install pre-push hook
 just ci
 ```
 
 `just ci` runs locally what CI runs remotely. If it passes, your PR will likely pass CI.
+
+## Git hooks
+
+We provide a pre-push hook that catches common CI failures before you push:
+
+```bash
+./scripts/install-hooks
+```
+
+This installs a hook that runs before each `git push`:
+- `cargo clippy --all-targets --all-features` — catches lint errors
+- `cargo test --doc` — ensures doc examples compile
+
+If clippy fails, the hook will suggest running `cargo clippy --fix` to auto-fix issues.
+
+The hook is optional but recommended — it saves the round-trip of pushing, waiting for CI, and fixing issues.
 
 ## Common commands
 
