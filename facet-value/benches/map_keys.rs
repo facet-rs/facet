@@ -1,5 +1,6 @@
 use divan::{Bencher, black_box};
 use facet_value::{VObject, Value};
+use indexmap::IndexMap;
 use kstring::KString;
 use std::collections::HashMap;
 
@@ -9,7 +10,7 @@ fn main() {
 
 // --- Insert benchmarks (short keys) ----------------------------------------------------------
 
-#[divan::bench(args = [16, 64, 256, 512])]
+#[divan::bench(args = [16, 64, 256, 1024, 4096, 16384])]
 fn insert_vobject_short_keys(bencher: Bencher, entries: usize) {
     run_insert_bench(
         bencher,
@@ -19,7 +20,7 @@ fn insert_vobject_short_keys(bencher: Bencher, entries: usize) {
     );
 }
 
-#[divan::bench(args = [16, 64, 256, 512])]
+#[divan::bench(args = [16, 64, 256, 1024, 4096, 16384])]
 fn insert_string_map_short_keys(bencher: Bencher, entries: usize) {
     run_insert_bench(
         bencher,
@@ -29,7 +30,7 @@ fn insert_string_map_short_keys(bencher: Bencher, entries: usize) {
     );
 }
 
-#[divan::bench(args = [16, 64, 256, 512])]
+#[divan::bench(args = [16, 64, 256, 1024, 4096, 16384])]
 fn insert_kstring_map_short_keys(bencher: Bencher, entries: usize) {
     run_insert_bench(
         bencher,
@@ -41,24 +42,24 @@ fn insert_kstring_map_short_keys(bencher: Bencher, entries: usize) {
 
 // --- Insert benchmarks (long keys) -----------------------------------------------------------
 
-#[divan::bench(args = [16, 64, 256, 512])]
+#[divan::bench(args = [16, 64, 256, 1024, 4096, 16384])]
 fn insert_vobject_long_keys(bencher: Bencher, entries: usize) {
     run_insert_bench(bencher, entries, KeyShape::HeapOnly, MapFlavor::FacetObject);
 }
 
-#[divan::bench(args = [16, 64, 256, 512])]
+#[divan::bench(args = [16, 64, 256, 1024, 4096, 16384])]
 fn insert_string_map_long_keys(bencher: Bencher, entries: usize) {
     run_insert_bench(bencher, entries, KeyShape::HeapOnly, MapFlavor::StdString);
 }
 
-#[divan::bench(args = [16, 64, 256, 512])]
+#[divan::bench(args = [16, 64, 256, 1024, 4096, 16384])]
 fn insert_kstring_map_long_keys(bencher: Bencher, entries: usize) {
     run_insert_bench(bencher, entries, KeyShape::HeapOnly, MapFlavor::KString);
 }
 
 // --- Collect benchmarks (Vec<(key, value)> -> map) ------------------------------------------
 
-#[divan::bench(args = [16, 64, 256, 512])]
+#[divan::bench(args = [16, 64, 256, 1024, 4096, 16384])]
 fn collect_vobject_short_keys(bencher: Bencher, entries: usize) {
     run_collect_bench(
         bencher,
@@ -68,7 +69,7 @@ fn collect_vobject_short_keys(bencher: Bencher, entries: usize) {
     );
 }
 
-#[divan::bench(args = [16, 64, 256, 512])]
+#[divan::bench(args = [16, 64, 256, 1024, 4096, 16384])]
 fn collect_string_map_short_keys(bencher: Bencher, entries: usize) {
     run_collect_bench(
         bencher,
@@ -78,7 +79,7 @@ fn collect_string_map_short_keys(bencher: Bencher, entries: usize) {
     );
 }
 
-#[divan::bench(args = [16, 64, 256, 512])]
+#[divan::bench(args = [16, 64, 256, 1024, 4096, 16384])]
 fn collect_kstring_map_short_keys(bencher: Bencher, entries: usize) {
     run_collect_bench(
         bencher,
@@ -88,19 +89,61 @@ fn collect_kstring_map_short_keys(bencher: Bencher, entries: usize) {
     );
 }
 
-#[divan::bench(args = [16, 64, 256, 512])]
+#[divan::bench(args = [16, 64, 256, 1024, 4096, 16384])]
 fn collect_vobject_long_keys(bencher: Bencher, entries: usize) {
     run_collect_bench(bencher, entries, KeyShape::HeapOnly, MapFlavor::FacetObject);
 }
 
-#[divan::bench(args = [16, 64, 256, 512])]
+#[divan::bench(args = [16, 64, 256, 1024, 4096, 16384])]
 fn collect_string_map_long_keys(bencher: Bencher, entries: usize) {
     run_collect_bench(bencher, entries, KeyShape::HeapOnly, MapFlavor::StdString);
 }
 
-#[divan::bench(args = [16, 64, 256, 512])]
+#[divan::bench(args = [16, 64, 256, 1024, 4096, 16384])]
 fn collect_kstring_map_long_keys(bencher: Bencher, entries: usize) {
     run_collect_bench(bencher, entries, KeyShape::HeapOnly, MapFlavor::KString);
+}
+
+// --- IndexMap benchmarks (order-preserving, fair comparison to VObject) ---
+
+#[divan::bench(args = [16, 64, 256, 1024, 4096, 16384])]
+fn insert_indexmap_short_keys(bencher: Bencher, entries: usize) {
+    run_insert_bench(
+        bencher,
+        entries,
+        KeyShape::InlineFriendly,
+        MapFlavor::IndexMapString,
+    );
+}
+
+#[divan::bench(args = [16, 64, 256, 1024, 4096, 16384])]
+fn insert_indexmap_long_keys(bencher: Bencher, entries: usize) {
+    run_insert_bench(
+        bencher,
+        entries,
+        KeyShape::HeapOnly,
+        MapFlavor::IndexMapString,
+    );
+}
+
+#[divan::bench(args = [16, 64, 256, 1024, 4096, 16384])]
+fn collect_indexmap_short_keys(bencher: Bencher, entries: usize) {
+    run_collect_bench(
+        bencher,
+        entries,
+        KeyShape::InlineFriendly,
+        MapFlavor::IndexMapString,
+    );
+}
+
+#[divan::bench(args = [16, 64, 256, 1024, 4096, 16384])]
+fn collect_indexmap_long_keys(bencher: Bencher, entries: usize) {
+    run_collect_bench(
+        bencher,
+        entries,
+        KeyShape::HeapOnly,
+        MapFlavor::IndexMapString,
+    );
 }
 
 #[derive(Copy, Clone)]
@@ -114,6 +157,7 @@ enum MapFlavor {
     FacetObject,
     StdString,
     KString,
+    IndexMapString,
 }
 
 fn run_insert_bench(bencher: Bencher, entries: usize, shape: KeyShape, flavor: MapFlavor) {
@@ -137,6 +181,13 @@ fn run_insert_bench(bencher: Bencher, entries: usize, shape: KeyShape, flavor: M
             let mut map = HashMap::with_capacity(entries);
             for (idx, key) in keys.iter().enumerate() {
                 map.insert(KString::from(key.clone()), Value::from(idx as i64));
+            }
+            black_box(map);
+        }
+        MapFlavor::IndexMapString => {
+            let mut map = IndexMap::with_capacity(entries);
+            for (idx, key) in keys.iter().enumerate() {
+                map.insert(key.clone(), Value::from(idx as i64));
             }
             black_box(map);
         }
@@ -167,6 +218,14 @@ fn run_collect_bench(bencher: Bencher, entries: usize, shape: KeyShape, flavor: 
                 .iter()
                 .enumerate()
                 .map(|(idx, key)| (KString::from(key.clone()), Value::from(idx as i64)))
+                .collect();
+            black_box(map);
+        }
+        MapFlavor::IndexMapString => {
+            let map: IndexMap<String, Value> = keys
+                .iter()
+                .enumerate()
+                .map(|(idx, key)| (key.clone(), Value::from(idx as i64)))
                 .collect();
             black_box(map);
         }

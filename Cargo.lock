@@ -886,6 +886,7 @@ dependencies = [
  "facet-reflect",
  "facet-showcase",
  "facet-testhelpers",
+ "indexmap",
  "kstring",
  "miette",
  "once_cell",

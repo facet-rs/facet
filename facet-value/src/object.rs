@@ -4,6 +4,8 @@
 use alloc::alloc::{Layout, alloc, dealloc, realloc};
 #[cfg(feature = "alloc")]
 use alloc::borrow::ToOwned;
+#[cfg(feature = "std")]
+use alloc::boxed::Box;
 #[cfg(feature = "alloc")]
 use alloc::collections::BTreeMap;
 use core::fmt::{self, Debug, Formatter};
@@ -13,10 +15,21 @@ use core::ops::{Index, IndexMut};
 use core::{cmp, mem, ptr};
 
 #[cfg(feature = "std")]
+use indexmap::IndexMap;
+#[cfg(feature = "std")]
 use std::collections::HashMap;
 
 use crate::string::VString;
 use crate::value::{TypeTag, Value};
+
+/// Threshold at which we switch from inline array to IndexMap storage.
+/// Below this size, linear search is competitive with hash lookups due to cache locality.
+#[cfg(feature = "std")]
+const LARGE_MODE_THRESHOLD: usize = 32;
+
+/// Sentinel value for capacity indicating large mode (IndexMap storage).
+#[cfg(feature = "std")]
+const LARGE_MODE_CAP_SENTINEL: usize = usize::MAX;
 
 /// A key-value pair.
 #[repr(C)]
@@ -25,21 +38,37 @@ struct KeyValuePair {
     value: Value,
 }
 
-/// Header for heap-allocated objects.
+/// Header for heap-allocated objects in small mode.
 #[repr(C, align(8))]
 struct ObjectHeader {
     /// Number of key-value pairs
     len: usize,
-    /// Capacity
+    /// Capacity (usize::MAX indicates large mode with IndexMap storage)
     cap: usize,
-    // Array of KeyValuePair follows immediately after
+    // Array of KeyValuePair follows immediately after (only in small mode)
+}
+
+/// Wrapper for IndexMap storage in large mode.
+/// Uses the same layout prefix as ObjectHeader so we can detect the mode.
+#[cfg(feature = "std")]
+#[repr(C, align(8))]
+struct LargeModeStorage {
+    /// Unused in large mode, but must be at same offset as ObjectHeader.len
+    _len_unused: usize,
+    /// Sentinel value (usize::MAX) to indicate large mode
+    cap_sentinel: usize,
+    /// The actual IndexMap
+    map: IndexMap<VString, Value>,
 }
 
 /// An object (map) value.
 ///
 /// `VObject` is an ordered map of string keys to `Value`s.
-/// It preserves insertion order and uses linear search for lookups.
-/// This is efficient for small objects (which are common in JSON).
+/// It preserves insertion order.
+///
+/// Storage modes:
+/// - Small mode (default): inline array of KeyValuePair with linear search
+/// - Large mode (std feature, >= 32 entries): IndexMap for O(1) lookups
 #[repr(transparent)]
 #[derive(Clone)]
 pub struct VObject(pub(crate) Value);
@@ -86,35 +115,123 @@ impl VObject {
         }
     }
 
+    /// Returns true if this object is in large mode (IndexMap storage).
+    #[cfg(feature = "std")]
+    #[inline]
+    fn is_large_mode(&self) -> bool {
+        // In large mode, the cap_sentinel field (at same offset as ObjectHeader.cap)
+        // is set to LARGE_MODE_CAP_SENTINEL
+        unsafe {
+            let header = self.0.heap_ptr() as *const ObjectHeader;
+            (*header).cap == LARGE_MODE_CAP_SENTINEL
+        }
+    }
+
+    /// Returns true if this object is in large mode (IndexMap storage).
+    #[cfg(not(feature = "std"))]
+    #[inline]
+    fn is_large_mode(&self) -> bool {
+        // Without std, we never use large mode
+        false
+    }
+
+    /// Returns a reference to the IndexMap (large mode only).
+    #[cfg(feature = "std")]
+    #[inline]
+    fn as_indexmap(&self) -> &IndexMap<VString, Value> {
+        debug_assert!(self.is_large_mode());
+        unsafe {
+            let storage = self.0.heap_ptr() as *const LargeModeStorage;
+            &(*storage).map
+        }
+    }
+
+    /// Returns a mutable reference to the IndexMap (large mode only).
+    #[cfg(feature = "std")]
+    #[inline]
+    fn as_indexmap_mut(&mut self) -> &mut IndexMap<VString, Value> {
+        debug_assert!(self.is_large_mode());
+        unsafe {
+            let storage = self.0.heap_ptr_mut() as *mut LargeModeStorage;
+            &mut (*storage).map
+        }
+    }
+
     fn header(&self) -> &ObjectHeader {
+        debug_assert!(!self.is_large_mode());
         unsafe { &*(self.0.heap_ptr() as *const ObjectHeader) }
     }
 
     fn header_mut(&mut self) -> &mut ObjectHeader {
+        debug_assert!(!self.is_large_mode());
         unsafe { &mut *(self.0.heap_ptr_mut() as *mut ObjectHeader) }
     }
 
     fn items_ptr(&self) -> *const KeyValuePair {
+        debug_assert!(!self.is_large_mode());
         // Go through heap_ptr directly to avoid creating intermediate reference
         // that would limit provenance to just the header
         unsafe { (self.0.heap_ptr() as *const ObjectHeader).add(1).cast() }
     }
 
     fn items_ptr_mut(&mut self) -> *mut KeyValuePair {
+        debug_assert!(!self.is_large_mode());
         // Use heap_ptr_mut directly to preserve mutable provenance
         unsafe { (self.0.heap_ptr_mut() as *mut ObjectHeader).add(1).cast() }
     }
 
     fn items(&self) -> &[KeyValuePair] {
-        unsafe { core::slice::from_raw_parts(self.items_ptr(), self.len()) }
+        debug_assert!(!self.is_large_mode());
+        unsafe { core::slice::from_raw_parts(self.items_ptr(), self.small_len()) }
     }
 
     fn items_mut(&mut self) -> &mut [KeyValuePair] {
-        unsafe { core::slice::from_raw_parts_mut(self.items_ptr_mut(), self.len()) }
+        debug_assert!(!self.is_large_mode());
+        unsafe { core::slice::from_raw_parts_mut(self.items_ptr_mut(), self.small_len()) }
+    }
+
+    /// Returns the length when in small mode.
+    #[inline]
+    fn small_len(&self) -> usize {
+        debug_assert!(!self.is_large_mode());
+        self.header().len
+    }
+
+    /// Converts from small mode to large mode (IndexMap).
+    #[cfg(feature = "std")]
+    fn convert_to_large_mode(&mut self) {
+        debug_assert!(!self.is_large_mode());
+
+        // Build IndexMap from existing items
+        let mut map = IndexMap::with_capacity(self.small_len() + 1);
+        unsafe {
+            let len = self.small_len();
+            let items_ptr = self.items_ptr_mut();
+
+            // Move items into the IndexMap (taking ownership)
+            for i in 0..len {
+                let kv = items_ptr.add(i).read();
+                map.insert(kv.key, kv.value);
+            }
+
+            // Free the old small-mode allocation
+            Self::dealloc_ptr(self.0.heap_ptr_mut().cast());
+
+            // Allocate and store the LargeModeStorage
+            let storage = LargeModeStorage {
+                _len_unused: 0,
+                cap_sentinel: LARGE_MODE_CAP_SENTINEL,
+                map,
+            };
+            let boxed = Box::new(storage);
+            let ptr = Box::into_raw(boxed);
+            self.0.set_ptr(ptr.cast());
+        }
     }
 
     /// Creates a new empty object.
     #[cfg(feature = "alloc")]
+    #[inline]
     #[must_use]
     pub fn new() -> Self {
         Self::with_capacity(0)
@@ -124,6 +241,19 @@ impl VObject {
     #[cfg(feature = "alloc")]
     #[must_use]
     pub fn with_capacity(cap: usize) -> Self {
+        // For large initial capacity with std feature, start directly in large mode
+        #[cfg(feature = "std")]
+        if cap >= LARGE_MODE_THRESHOLD {
+            let storage = LargeModeStorage {
+                _len_unused: 0,
+                cap_sentinel: LARGE_MODE_CAP_SENTINEL,
+                map: IndexMap::with_capacity(cap),
+            };
+            let boxed = Box::new(storage);
+            let ptr = Box::into_raw(boxed);
+            return VObject(unsafe { Value::new_ptr(ptr.cast(), TypeTag::Object) });
+        }
+
         unsafe {
             let ptr = Self::alloc(cap);
             VObject(Value::new_ptr(ptr.cast(), TypeTag::Object))
@@ -131,26 +261,43 @@ impl VObject {
     }
 
     /// Returns the number of entries.
+    #[inline]
     #[must_use]
     pub fn len(&self) -> usize {
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            return self.as_indexmap().len();
+        }
         self.header().len
     }
 
     /// Returns `true` if the object is empty.
+    #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
     /// Returns the capacity.
+    #[inline]
     #[must_use]
     pub fn capacity(&self) -> usize {
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            return self.as_indexmap().capacity();
+        }
         self.header().cap
     }
 
     /// Reserves capacity for at least `additional` more entries.
     #[cfg(feature = "alloc")]
     pub fn reserve(&mut self, additional: usize) {
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            self.as_indexmap_mut().reserve(additional);
+            return;
+        }
+
         let current_cap = self.capacity();
         let desired_cap = self
             .len()
@@ -169,35 +316,56 @@ impl VObject {
         }
     }
 
-    /// Finds the index of a key.
-    fn find_key(&self, key: &str) -> Option<usize> {
-        self.items().iter().position(|kv| kv.key.as_str() == key)
-    }
-
     /// Gets a value by key.
+    #[inline]
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&Value> {
-        self.find_key(key).map(|i| &self.items()[i].value)
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            return self.as_indexmap().get(key);
+        }
+        self.items()
+            .iter()
+            .find(|kv| kv.key.as_str() == key)
+            .map(|kv| &kv.value)
     }
 
     /// Gets a mutable value by key.
+    #[inline]
     pub fn get_mut(&mut self, key: &str) -> Option<&mut Value> {
-        self.find_key(key).map(|i| &mut self.items_mut()[i].value)
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            return self.as_indexmap_mut().get_mut(key);
+        }
+        self.items_mut()
+            .iter_mut()
+            .find(|kv| kv.key.as_str() == key)
+            .map(|kv| &mut kv.value)
     }
 
     /// Gets a key-value pair by key.
+    #[inline]
     #[must_use]
     pub fn get_key_value(&self, key: &str) -> Option<(&VString, &Value)> {
-        self.find_key(key).map(|i| {
-            let kv = &self.items()[i];
-            (&kv.key, &kv.value)
-        })
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            return self.as_indexmap().get_key_value(key);
+        }
+        self.items()
+            .iter()
+            .find(|kv| kv.key.as_str() == key)
+            .map(|kv| (&kv.key, &kv.value))
     }
 
     /// Returns `true` if the object contains the key.
+    #[inline]
     #[must_use]
     pub fn contains_key(&self, key: &str) -> bool {
-        self.find_key(key).is_some()
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            return self.as_indexmap().contains_key(key);
+        }
+        self.items().iter().any(|kv| kv.key.as_str() == key)
     }
 
     /// Inserts a key-value pair. Returns the old value if the key existed.
@@ -206,20 +374,39 @@ impl VObject {
         let key = key.into();
         let value = value.into();
 
-        if let Some(i) = self.find_key(key.as_str()) {
-            // Key exists, replace value
-            Some(mem::replace(&mut self.items_mut()[i].value, value))
-        } else {
-            // New key
-            self.reserve(1);
-            unsafe {
-                let len = self.header().len;
-                let ptr = self.items_ptr_mut().add(len);
-                ptr.write(KeyValuePair { key, value });
-                self.header_mut().len = len + 1;
-            }
-            None
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            return self.as_indexmap_mut().insert(key, value);
         }
+
+        // Check if key exists (linear search in small mode)
+        if let Some(idx) = self
+            .items()
+            .iter()
+            .position(|kv| kv.key.as_str() == key.as_str())
+        {
+            // Key exists, replace value
+            return Some(mem::replace(&mut self.items_mut()[idx].value, value));
+        }
+
+        // Check if we should convert to large mode
+        #[cfg(feature = "std")]
+        if self.small_len() >= LARGE_MODE_THRESHOLD {
+            self.convert_to_large_mode();
+            return self.as_indexmap_mut().insert(key, value);
+        }
+
+        // New key in small mode
+        self.reserve(1);
+        let new_idx = self.header().len;
+
+        unsafe {
+            let ptr = self.items_ptr_mut().add(new_idx);
+            ptr.write(KeyValuePair { key, value });
+            self.header_mut().len = new_idx + 1;
+        }
+
+        None
     }
 
     /// Removes a key-value pair. Returns the value if the key existed.
@@ -229,8 +416,13 @@ impl VObject {
 
     /// Removes and returns a key-value pair.
     pub fn remove_entry(&mut self, key: &str) -> Option<(VString, Value)> {
-        let idx = self.find_key(key)?;
-        let len = self.len();
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            return self.as_indexmap_mut().shift_remove_entry(key);
+        }
+
+        let idx = self.items().iter().position(|kv| kv.key.as_str() == key)?;
+        let len = self.small_len();
 
         unsafe {
             let ptr = self.items_ptr_mut().add(idx);
@@ -242,12 +434,19 @@ impl VObject {
             }
 
             self.header_mut().len = len - 1;
+
             Some((kv.key, kv.value))
         }
     }
 
     /// Clears the object.
     pub fn clear(&mut self) {
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            self.as_indexmap_mut().clear();
+            return;
+        }
+
         while !self.is_empty() {
             unsafe {
                 let len = self.header().len;
@@ -259,37 +458,64 @@ impl VObject {
     }
 
     /// Returns an iterator over keys.
-    pub fn keys(&self) -> impl Iterator<Item = &VString> {
-        self.items().iter().map(|kv| &kv.key)
+    #[inline]
+    pub fn keys(&self) -> Keys<'_> {
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            return Keys(KeysInner::Large(self.as_indexmap().keys()));
+        }
+        Keys(KeysInner::Small(self.items().iter()))
     }
 
     /// Returns an iterator over values.
-    pub fn values(&self) -> impl Iterator<Item = &Value> {
-        self.items().iter().map(|kv| &kv.value)
+    #[inline]
+    pub fn values(&self) -> Values<'_> {
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            return Values(ValuesInner::Large(self.as_indexmap().values()));
+        }
+        Values(ValuesInner::Small(self.items().iter()))
     }
 
     /// Returns an iterator over mutable values.
-    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut Value> {
-        self.items_mut().iter_mut().map(|kv| &mut kv.value)
+    #[inline]
+    pub fn values_mut(&mut self) -> ValuesMut<'_> {
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            return ValuesMut(ValuesMutInner::Large(self.as_indexmap_mut().values_mut()));
+        }
+        ValuesMut(ValuesMutInner::Small(self.items_mut().iter_mut()))
     }
 
     /// Returns an iterator over key-value pairs.
+    #[inline]
     pub fn iter(&self) -> Iter<'_> {
-        Iter {
-            inner: self.items().iter(),
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            return Iter(IterInner::Large(self.as_indexmap().iter()));
         }
+        Iter(IterInner::Small(self.items().iter()))
     }
 
     /// Returns an iterator over mutable key-value pairs.
+    #[inline]
     pub fn iter_mut(&mut self) -> IterMut<'_> {
-        IterMut {
-            inner: self.items_mut().iter_mut(),
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            return IterMut(IterMutInner::Large(self.as_indexmap_mut().iter_mut()));
         }
+        IterMut(IterMutInner::Small(self.items_mut().iter_mut()))
     }
 
     /// Shrinks the capacity to match the length.
     #[cfg(feature = "alloc")]
     pub fn shrink_to_fit(&mut self) {
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            self.as_indexmap_mut().shrink_to_fit();
+            return;
+        }
+
         let len = self.len();
         let cap = self.capacity();
 
@@ -302,6 +528,18 @@ impl VObject {
     }
 
     pub(crate) fn clone_impl(&self) -> Value {
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            let storage = LargeModeStorage {
+                _len_unused: 0,
+                cap_sentinel: LARGE_MODE_CAP_SENTINEL,
+                map: self.as_indexmap().clone(),
+            };
+            let boxed = Box::new(storage);
+            let ptr = Box::into_raw(boxed);
+            return unsafe { Value::new_ptr(ptr.cast(), TypeTag::Object) };
+        }
+
         let mut new = VObject::with_capacity(self.len());
         for kv in self.items() {
             new.insert(kv.key.clone(), kv.value.clone());
@@ -310,6 +548,14 @@ impl VObject {
     }
 
     pub(crate) fn drop_impl(&mut self) {
+        #[cfg(feature = "std")]
+        if self.is_large_mode() {
+            unsafe {
+                drop(Box::from_raw(self.0.heap_ptr_mut() as *mut LargeModeStorage));
+            }
+            return;
+        }
+
         self.clear();
         unsafe {
             Self::dealloc_ptr(self.0.heap_ptr_mut().cast());
@@ -319,39 +565,156 @@ impl VObject {
 
 // === Iterators ===
 
-/// Iterator over `(&VString, &Value)` pairs.
-pub struct Iter<'a> {
-    inner: core::slice::Iter<'a, KeyValuePair>,
+enum KeysInner<'a> {
+    Small(core::slice::Iter<'a, KeyValuePair>),
+    #[cfg(feature = "std")]
+    Large(indexmap::map::Keys<'a, VString, Value>),
 }
+
+/// Iterator over keys.
+pub struct Keys<'a>(KeysInner<'a>);
+
+impl<'a> Iterator for Keys<'a> {
+    type Item = &'a VString;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match &mut self.0 {
+            KeysInner::Small(iter) => iter.next().map(|kv| &kv.key),
+            #[cfg(feature = "std")]
+            KeysInner::Large(iter) => iter.next(),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match &self.0 {
+            KeysInner::Small(iter) => iter.size_hint(),
+            #[cfg(feature = "std")]
+            KeysInner::Large(iter) => iter.size_hint(),
+        }
+    }
+}
+
+impl ExactSizeIterator for Keys<'_> {}
+
+enum ValuesInner<'a> {
+    Small(core::slice::Iter<'a, KeyValuePair>),
+    #[cfg(feature = "std")]
+    Large(indexmap::map::Values<'a, VString, Value>),
+}
+
+/// Iterator over values.
+pub struct Values<'a>(ValuesInner<'a>);
+
+impl<'a> Iterator for Values<'a> {
+    type Item = &'a Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match &mut self.0 {
+            ValuesInner::Small(iter) => iter.next().map(|kv| &kv.value),
+            #[cfg(feature = "std")]
+            ValuesInner::Large(iter) => iter.next(),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match &self.0 {
+            ValuesInner::Small(iter) => iter.size_hint(),
+            #[cfg(feature = "std")]
+            ValuesInner::Large(iter) => iter.size_hint(),
+        }
+    }
+}
+
+impl ExactSizeIterator for Values<'_> {}
+
+enum ValuesMutInner<'a> {
+    Small(core::slice::IterMut<'a, KeyValuePair>),
+    #[cfg(feature = "std")]
+    Large(indexmap::map::ValuesMut<'a, VString, Value>),
+}
+
+/// Iterator over mutable values.
+pub struct ValuesMut<'a>(ValuesMutInner<'a>);
+
+impl<'a> Iterator for ValuesMut<'a> {
+    type Item = &'a mut Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match &mut self.0 {
+            ValuesMutInner::Small(iter) => iter.next().map(|kv| &mut kv.value),
+            #[cfg(feature = "std")]
+            ValuesMutInner::Large(iter) => iter.next(),
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match &self.0 {
+            ValuesMutInner::Small(iter) => iter.size_hint(),
+            #[cfg(feature = "std")]
+            ValuesMutInner::Large(iter) => iter.size_hint(),
+        }
+    }
+}
+
+impl ExactSizeIterator for ValuesMut<'_> {}
+
+enum IterInner<'a> {
+    Small(core::slice::Iter<'a, KeyValuePair>),
+    #[cfg(feature = "std")]
+    Large(indexmap::map::Iter<'a, VString, Value>),
+}
+
+/// Iterator over `(&VString, &Value)` pairs.
+pub struct Iter<'a>(IterInner<'a>);
 
 impl<'a> Iterator for Iter<'a> {
     type Item = (&'a VString, &'a Value);
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|kv| (&kv.key, &kv.value))
+        match &mut self.0 {
+            IterInner::Small(iter) => iter.next().map(|kv| (&kv.key, &kv.value)),
+            #[cfg(feature = "std")]
+            IterInner::Large(iter) => iter.next(),
+        }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
+        match &self.0 {
+            IterInner::Small(iter) => iter.size_hint(),
+            #[cfg(feature = "std")]
+            IterInner::Large(iter) => iter.size_hint(),
+        }
     }
 }
 
 impl ExactSizeIterator for Iter<'_> {}
 
-/// Iterator over `(&VString, &mut Value)` pairs.
-pub struct IterMut<'a> {
-    inner: core::slice::IterMut<'a, KeyValuePair>,
+enum IterMutInner<'a> {
+    Small(core::slice::IterMut<'a, KeyValuePair>),
+    #[cfg(feature = "std")]
+    Large(indexmap::map::IterMut<'a, VString, Value>),
 }
+
+/// Iterator over `(&VString, &mut Value)` pairs.
+pub struct IterMut<'a>(IterMutInner<'a>);
 
 impl<'a> Iterator for IterMut<'a> {
     type Item = (&'a VString, &'a mut Value);
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(|kv| (&kv.key, &mut kv.value))
+        match &mut self.0 {
+            IterMutInner::Small(iter) => iter.next().map(|kv| (&kv.key, &mut kv.value)),
+            #[cfg(feature = "std")]
+            IterMutInner::Large(iter) => iter.next(),
+        }
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.inner.size_hint()
+        match &self.0 {
+            IterMutInner::Small(iter) => iter.size_hint(),
+            #[cfg(feature = "std")]
+            IterMutInner::Large(iter) => iter.size_hint(),
+        }
     }
 }
 
