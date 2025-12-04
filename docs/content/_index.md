@@ -53,7 +53,7 @@ From this single derive, you get:
 
 ## Quick links
 
-- [Format Support Matrix](@/format-crate-matrix.md) — Feature comparison across format crates
-- [Extension Attributes](@/extension-attributes.md) — Format-specific attribute namespaces
+- [Format Support Matrix](@/reference/format-crate-matrix/_index.md) — Feature comparison across format crates
+- [Extension Attributes](@/extend/extension-attributes.md) — Format-specific attribute namespaces
 - [GitHub](https://github.com/facet-rs/facet) — Source code and issues
 - [docs.rs](https://docs.rs/facet) — API documentation
