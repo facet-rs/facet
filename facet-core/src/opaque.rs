@@ -13,7 +13,7 @@ unsafe impl<'facet, T: 'facet> Facet<'facet> for Opaque<T> {
             .def(Def::Scalar)
             // Since T is opaque and could be anything, we can't provide default_in_place here.
             // For fields with #[facet(default)], the grammar's `make_t or $ty::default()` syntax
-            // generates the default function at compile time using the concrete field type.
+            // generates a default function at compile time using the Rust field type's Default impl.
             .vtable(value_vtable!((), |f, _opts| write!(
                 f,
                 "{}",

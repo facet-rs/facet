@@ -80,6 +80,11 @@ pub mod builtin {
             /// Stores a function pointer that produces the default value in-place.
             ///
             /// Usage: `#[facet(default)]` (uses Default trait) or `#[facet(default = expr)]`
+            ///
+            /// When no explicit value is given (`#[facet(default)]`), the Rust field type's
+            /// `Default::default()` is used. This requires the field type to implement Default.
+            /// For opaque fields, this uses the underlying Rust type's Default, not the
+            /// Facet shape's default.
             Default(make_t or $ty::default()),
 
             /// Skips both serialization and deserialization of this field.

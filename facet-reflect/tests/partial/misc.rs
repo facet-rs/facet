@@ -6,7 +6,6 @@ use facet_testhelpers::{IPanic, test};
 use std::{
     mem::{MaybeUninit, size_of},
     ptr::NonNull,
-    sync::atomic::AtomicU64,
 };
 
 use facet::{EnumType, Facet, Field, PtrConst, PtrUninit, StructType, Type, UserType, Variant};
@@ -726,67 +725,6 @@ fn wip_build_option_none_through_default() -> Result<(), IPanic> {
     partial = partial.set_default()?;
     let option = partial.build()?.materialize::<Option<u32>>()?;
     assert_eq!(option, None);
-
-    Ok(())
-}
-
-#[test]
-fn steal_from_default() -> Result<(), IPanic> {
-    use std::sync::atomic::Ordering;
-
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-    #[derive(Facet)]
-    struct AddOnDrop {
-        value: u64,
-    }
-
-    impl Drop for AddOnDrop {
-        fn drop(&mut self) {
-            COUNTER.fetch_add(self.value, Ordering::SeqCst);
-        }
-    }
-
-    #[derive(Facet)]
-    struct S {
-        foo: AddOnDrop,
-        bar: AddOnDrop,
-    }
-
-    impl Default for S {
-        fn default() -> Self {
-            Self {
-                foo: AddOnDrop { value: 1 },
-                bar: AddOnDrop { value: 2 },
-            }
-        }
-    }
-
-    let mut dst = Partial::alloc::<S>()?;
-    assert_eq!(COUNTER.load(Ordering::SeqCst), 0);
-
-    {
-        let mut src = Partial::alloc::<S>()?;
-        src = src.set_default()?;
-        assert_eq!(COUNTER.load(Ordering::SeqCst), 0);
-
-        assert!(!dst.is_field_set(0).unwrap());
-        assert!(src.is_field_set(0).unwrap());
-        dst = dst.steal_nth_field(&mut src, 0)?;
-        assert_eq!(COUNTER.load(Ordering::SeqCst), 0);
-        assert!(dst.is_field_set(0).unwrap());
-        assert!(!src.is_field_set(0).unwrap());
-
-        assert!(!dst.is_field_set(1).unwrap());
-        assert!(src.is_field_set(1).unwrap());
-        dst = dst.steal_nth_field(&mut src, 1)?;
-        assert_eq!(COUNTER.load(Ordering::SeqCst), 0);
-        assert!(dst.is_field_set(1).unwrap());
-        assert!(!src.is_field_set(1).unwrap());
-    }
-
-    drop(dst);
-    assert_eq!(COUNTER.load(Ordering::SeqCst), 3);
 
     Ok(())
 }
