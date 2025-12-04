@@ -326,19 +326,11 @@ impl<W: Write> YamlSerializer<W> {
     ) -> Result<()> {
         let mut first = true;
 
-        for (field, field_peek) in struct_peek.fields() {
-            // Skip fields with skip_serializing attribute (no value check here)
-            if field.has_builtin_attr("skip") || field.has_builtin_attr("skip_serializing") {
-                continue;
-            }
-
-            // Check skip_serializing_if
-            if let Some(_skip_fn) = field.skip_serializing_if_fn() {
-                // Get the raw pointer to the field value
-                // This is tricky - for now, skip this optimization
-                // TODO: implement skip_serializing_if properly
-            }
-
+        // Use fields_for_serialize() which properly handles:
+        // - skip_serializing attribute
+        // - skip_serializing_if predicate
+        // - flatten attribute
+        for (field_item, field_peek) in struct_peek.fields_for_serialize() {
             if first && !is_root {
                 writeln!(self.writer)
                     .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
@@ -351,7 +343,7 @@ impl<W: Write> YamlSerializer<W> {
 
             self.write_indent(indent)?;
             // Use serialized name (respecting rename attribute)
-            let serialized_name = get_serialized_field_name(&field);
+            let serialized_name = get_serialized_field_name(&field_item.field);
             self.write_key(serialized_name)?;
             write!(self.writer, ": ")
                 .map_err(|e| YamlError::without_span(YamlErrorKind::Io(e.to_string())))?;
