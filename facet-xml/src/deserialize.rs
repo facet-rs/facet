@@ -20,6 +20,65 @@ use crate::error::{XmlError, XmlErrorKind};
 
 pub(crate) type Result<T> = std::result::Result<T, XmlError>;
 
+// ============================================================================
+// Deserialize Options
+// ============================================================================
+
+/// Options for controlling XML deserialization behavior.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_xml::{self as xml, DeserializeOptions};
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Person {
+///     #[facet(xml::attribute)]
+///     name: String,
+/// }
+///
+/// let xml_str = r#"<Person name="Alice" extra="unknown"/>"#;
+///
+/// // Without options: unknown attributes are silently ignored
+/// let person: Person = xml::from_str(xml_str).unwrap();
+/// assert_eq!(person.name, "Alice");
+///
+/// // With deny_unknown_fields: unknown attributes cause an error
+/// let options = DeserializeOptions::default().deny_unknown_fields(true);
+/// let result: Result<Person, _> = xml::from_str_with_options(xml_str, &options);
+/// assert!(result.is_err());
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct DeserializeOptions {
+    /// If `true`, reject XML documents with unknown attributes or elements
+    /// that don't correspond to any field in the target struct.
+    ///
+    /// When `false` (the default), unknown attributes and elements are
+    /// silently ignored.
+    ///
+    /// This option is combined with any `#[facet(deny_unknown_fields)]`
+    /// attribute on the struct - if either is set, unknown fields cause
+    /// an error.
+    pub deny_unknown_fields: bool,
+}
+
+impl DeserializeOptions {
+    /// Create new options with default values.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set whether to deny unknown fields.
+    ///
+    /// When enabled, deserialization will fail if the XML contains
+    /// attributes or elements that don't match any field in the struct.
+    pub fn deny_unknown_fields(mut self, deny: bool) -> Self {
+        self.deny_unknown_fields = deny;
+        self
+    }
+}
+
 /// Get the display name for a variant (respecting `rename` attribute).
 fn get_variant_display_name(variant: &Variant) -> &'static str {
     if let Some(attr) = variant.get_builtin_attr("rename") {
@@ -123,12 +182,48 @@ where
     T: Facet<'facet>,
     'input: 'facet,
 {
+    from_str_with_options(xml, &DeserializeOptions::default())
+}
+
+/// Deserialize an XML string into a value of type `T` with custom options.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_xml::{self as xml, DeserializeOptions};
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Person {
+///     #[facet(xml::attribute)]
+///     name: String,
+/// }
+///
+/// // With deny_unknown_fields, unknown attributes cause an error
+/// let options = DeserializeOptions::default().deny_unknown_fields(true);
+/// let xml_str = r#"<Person name="Alice" extra="unknown"/>"#;
+/// let result: Result<Person, _> = xml::from_str_with_options(xml_str, &options);
+/// assert!(result.is_err());
+///
+/// // Valid XML without unknown fields works fine
+/// let xml_str = r#"<Person name="Alice"/>"#;
+/// let person: Person = xml::from_str_with_options(xml_str, &options).unwrap();
+/// assert_eq!(person.name, "Alice");
+/// ```
+pub fn from_str_with_options<'input, 'facet, T>(
+    xml: &'input str,
+    options: &DeserializeOptions,
+) -> Result<T>
+where
+    T: Facet<'facet>,
+    'input: 'facet,
+{
     log::trace!(
-        "from_str: parsing XML for type {}",
+        "from_str_with_options: parsing XML for type {}",
         core::any::type_name::<T>()
     );
 
-    let mut deserializer = XmlDeserializer::new(xml)?;
+    let mut deserializer = XmlDeserializer::new(xml, options.clone())?;
     let partial = Partial::alloc::<T>()?;
 
     let partial = deserializer.deserialize_document(partial)?;
@@ -171,9 +266,42 @@ where
     T: Facet<'facet>,
     'input: 'facet,
 {
+    from_slice_with_options(xml, &DeserializeOptions::default())
+}
+
+/// Deserialize an XML byte slice into a value of type `T` with custom options.
+///
+/// This is a convenience wrapper around [`from_str_with_options`] that first validates
+/// that the input is valid UTF-8.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_xml::{self as xml, DeserializeOptions};
+///
+/// #[derive(Facet, Debug, PartialEq)]
+/// struct Person {
+///     #[facet(xml::attribute)]
+///     name: String,
+/// }
+///
+/// let options = DeserializeOptions::default().deny_unknown_fields(true);
+/// let xml_bytes = b"<Person name=\"Alice\"/>";
+/// let person: Person = xml::from_slice_with_options(xml_bytes, &options).unwrap();
+/// assert_eq!(person.name, "Alice");
+/// ```
+pub fn from_slice_with_options<'input, 'facet, T>(
+    xml: &'input [u8],
+    options: &DeserializeOptions,
+) -> Result<T>
+where
+    T: Facet<'facet>,
+    'input: 'facet,
+{
     let xml_str = std::str::from_utf8(xml)
         .map_err(|e| XmlError::new(XmlErrorKind::InvalidUtf8(e.to_string())))?;
-    from_str(xml_str)
+    from_str_with_options(xml_str, options)
 }
 
 // ============================================================================
@@ -554,11 +682,12 @@ struct XmlDeserializer<'input> {
     input: &'input str,
     events: Vec<SpannedEvent>,
     pos: usize,
+    options: DeserializeOptions,
 }
 
 impl<'input> XmlDeserializer<'input> {
     /// Create a new deserializer by parsing the input and collecting all events.
-    fn new(input: &'input str) -> Result<Self> {
+    fn new(input: &'input str, options: DeserializeOptions) -> Result<Self> {
         let collector = EventCollector::new(input);
         let events = collector.collect_all()?;
 
@@ -566,6 +695,7 @@ impl<'input> XmlDeserializer<'input> {
             input,
             events,
             pos: 0,
+            options,
         })
     }
 
@@ -771,7 +901,9 @@ impl<'input> XmlDeserializer<'input> {
             Type::User(UserType::Struct(struct_def)) => {
                 // Get fields
                 let fields = struct_def.fields;
-                let deny_unknown = shape.has_deny_unknown_fields_attr();
+                // Deny unknown if either the option or the attribute is set
+                let deny_unknown =
+                    self.options.deny_unknown_fields || shape.has_deny_unknown_fields_attr();
 
                 match struct_def.kind {
                     StructKind::Unit => {
@@ -1166,18 +1298,18 @@ impl<'input> XmlDeserializer<'input> {
     ) -> Result<Partial<'facet>> {
         let mut partial = partial;
 
-        // Get container-level default namespace (xml::ns_all)
-        let ns_all = partial.shape().xml_ns_all();
-
         for (attr_name, attr_value) in attributes {
             // Find the field that matches this attribute.
             // Uses namespace-aware matching:
             // - If field has xml::ns, it must match exactly
-            // - Otherwise, if container has xml::ns_all, use that
-            // - Otherwise, match any namespace
+            // - Otherwise, match any namespace (including "no namespace")
+            //
+            // NOTE: Unlike elements, attributes do NOT inherit the default namespace (ns_all).
+            // In XML, unprefixed attributes are always in "no namespace", even when a default
+            // xmlns is declared. Only prefixed attributes (e.g., foo:bar) have a namespace.
+            // See: https://www.w3.org/TR/xml-names/#defaulting
             let field_match = fields.iter().enumerate().find(|(_, f)| {
-                f.is_xml_attribute()
-                    && attr_name.matches(local_name_of(f.name), f.xml_ns().or(ns_all))
+                f.is_xml_attribute() && attr_name.matches(local_name_of(f.name), f.xml_ns())
             });
 
             if let Some((idx, field)) = field_match {

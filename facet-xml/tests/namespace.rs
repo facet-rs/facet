@@ -514,3 +514,137 @@ fn test_serialize_nested_ns_all() {
     let parsed: OuterNsAll = xml::from_str(&xml_output).unwrap();
     assert_eq!(parsed, value);
 }
+
+// ============================================================================
+// Issue #1060: Unprefixed attributes should work with ns_all
+// ============================================================================
+
+/// Regression test for issue #1060.
+///
+/// In XML, unprefixed attributes are ALWAYS in "no namespace", even when
+/// a default xmlns is declared. This is different from elements, which
+/// DO inherit the default namespace.
+///
+/// When a container has `xml::ns_all`, this should only affect elements,
+/// not attributes. Attributes without an explicit `xml::ns` should match
+/// unprefixed attributes (which are in "no namespace").
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename = "svg", xml::ns_all = "http://www.w3.org/2000/svg")]
+struct SvgWithAttributes {
+    /// Unprefixed attributes should match fields without xml::ns
+    #[facet(xml::attribute, rename = "viewBox")]
+    view_box: Option<String>,
+
+    #[facet(xml::attribute)]
+    width: Option<String>,
+
+    #[facet(xml::attribute)]
+    height: Option<String>,
+
+    /// Elements DO inherit the default namespace, so this works with ns_all
+    #[facet(xml::element)]
+    title: Option<String>,
+}
+
+#[test]
+fn test_issue_1060_unprefixed_attributes_with_ns_all() {
+    // This XML has:
+    // - xmlns declaration making http://www.w3.org/2000/svg the default namespace
+    // - Unprefixed attributes (viewBox, width, height) which are in "no namespace"
+    // - An element (title) which inherits the default namespace
+    let xml = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+        <title>My SVG</title>
+    </svg>"#;
+
+    let parsed: SvgWithAttributes = xml::from_str(xml).unwrap();
+
+    // All unprefixed attributes should be parsed correctly
+    assert_eq!(
+        parsed.view_box,
+        Some("0 0 100 100".to_string()),
+        "viewBox attribute should be parsed"
+    );
+    assert_eq!(
+        parsed.width,
+        Some("100".to_string()),
+        "width attribute should be parsed"
+    );
+    assert_eq!(
+        parsed.height,
+        Some("100".to_string()),
+        "height attribute should be parsed"
+    );
+    // Element inherits namespace and should work
+    assert_eq!(
+        parsed.title,
+        Some("My SVG".to_string()),
+        "title element should be parsed"
+    );
+}
+
+#[test]
+fn test_unprefixed_attributes_without_default_xmlns() {
+    // Without any xmlns, elements and attributes are both in "no namespace"
+    let xml = r#"<svg viewBox="0 0 100 100" width="100" height="100">
+        <title>My SVG</title>
+    </svg>"#;
+
+    let parsed: SvgWithAttributes = xml::from_str(xml).unwrap();
+
+    // Attributes should still work
+    assert_eq!(parsed.view_box, Some("0 0 100 100".to_string()));
+    assert_eq!(parsed.width, Some("100".to_string()));
+    assert_eq!(parsed.height, Some("100".to_string()));
+    // Element in "no namespace" won't match ns_all requirement
+    // (it expects http://www.w3.org/2000/svg)
+    assert_eq!(parsed.title, None);
+}
+
+// ============================================================================
+// DeserializeOptions: deny_unknown_fields at runtime
+// ============================================================================
+
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename = "Person")]
+struct PersonNoAttr {
+    #[facet(xml::attribute)]
+    name: String,
+}
+
+#[test]
+fn test_deny_unknown_fields_option_rejects_unknown_attribute() {
+    let xml_str = r#"<Person name="Alice" extra="unknown"/>"#;
+
+    // Without options: unknown attributes are silently ignored
+    let person: PersonNoAttr = xml::from_str(xml_str).unwrap();
+    assert_eq!(person.name, "Alice");
+
+    // With deny_unknown_fields option: unknown attributes cause an error
+    let options = xml::DeserializeOptions::default().deny_unknown_fields(true);
+    let result: Result<PersonNoAttr, _> = xml::from_str_with_options(xml_str, &options);
+    assert!(result.is_err(), "Should reject unknown attribute");
+}
+
+#[test]
+fn test_deny_unknown_fields_option_rejects_unknown_element() {
+    let xml_str = r#"<Person name="Alice"><unknown>value</unknown></Person>"#;
+
+    // Without options: unknown elements are silently ignored
+    let person: PersonNoAttr = xml::from_str(xml_str).unwrap();
+    assert_eq!(person.name, "Alice");
+
+    // With deny_unknown_fields option: unknown elements cause an error
+    let options = xml::DeserializeOptions::default().deny_unknown_fields(true);
+    let result: Result<PersonNoAttr, _> = xml::from_str_with_options(xml_str, &options);
+    assert!(result.is_err(), "Should reject unknown element");
+}
+
+#[test]
+fn test_deny_unknown_fields_option_accepts_valid_xml() {
+    let xml_str = r#"<Person name="Alice"/>"#;
+
+    // With deny_unknown_fields: valid XML should still work
+    let options = xml::DeserializeOptions::default().deny_unknown_fields(true);
+    let person: PersonNoAttr = xml::from_str_with_options(xml_str, &options).unwrap();
+    assert_eq!(person.name, "Alice");
+}
