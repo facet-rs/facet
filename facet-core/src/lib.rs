@@ -1,7 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-// Only enable nightly features when BOTH the "nightly" Cargo feature is enabled
-// AND we're actually on a nightly compiler (detected via build.rs)
-#![cfg_attr(all(feature = "nightly", nightly), feature(portable_simd))]
+// Enable portable_simd when available (detected via autocfg in build.rs)
+#![cfg_attr(has_portable_simd, feature(portable_simd))]
 #![warn(missing_docs)]
 #![warn(clippy::std_instead_of_core)]
 #![warn(clippy::std_instead_of_alloc)]

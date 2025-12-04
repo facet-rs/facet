@@ -602,6 +602,7 @@ dependencies = [
 name = "facet-core"
 version = "0.31.8"
 dependencies = [
+ "autocfg",
  "bitflags",
  "bytes",
  "camino",
@@ -613,7 +614,6 @@ dependencies = [
  "ordered-float",
  "paste",
  "ruint",
- "rustversion",
  "time",
  "ulid",
  "url",
