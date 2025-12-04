@@ -226,8 +226,15 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// Returns None if the value is not a string or couldn't be extracted
     pub fn as_str(&self) -> Option<&'mem str> {
         let peek = self.innermost_peek();
+        // ScalarType::Str matches both bare `str` and `&str`.
+        // For bare `str` (not a pointer), data points to str bytes directly.
+        // For `&str`, let it fall through to the pointer handler below.
         if let Some(ScalarType::Str) = peek.scalar_type() {
-            return unsafe { Some(peek.data.get::<&str>()) };
+            if !matches!(peek.shape.ty, Type::Pointer(_)) {
+                // Bare `str`: data is a wide pointer to str bytes.
+                // get::<str>() creates a &str reference to that data.
+                return unsafe { Some(peek.data.get::<str>()) };
+            }
         }
         #[cfg(feature = "alloc")]
         if let Some(ScalarType::String) = peek.scalar_type() {
@@ -578,5 +585,33 @@ impl<'mem, 'facet> core::hash::Hash for Peek<'mem, 'facet> {
     fn hash<H: core::hash::Hasher>(&self, hasher: &mut H) {
         self.hash(hasher)
             .expect("Hashing is not supported for this shape");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression test for issue #1082: UB in `Peek("").as_str()`
+    /// Previously, `as_str()` used `get::<&str>()` which tried to read a fat pointer
+    /// from the str data, causing UB for empty strings (reading 16 bytes from 0-byte allocation).
+    #[test]
+    fn test_peek_as_str_empty_string() {
+        let peek = Peek::new("");
+        assert_eq!(peek.as_str(), Some(""));
+    }
+
+    #[test]
+    fn test_peek_as_str_non_empty_string() {
+        let peek = Peek::new("hello");
+        assert_eq!(peek.as_str(), Some("hello"));
+    }
+
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_peek_as_str_owned_string() {
+        let s = alloc::string::String::from("owned string");
+        let peek = Peek::new(&s);
+        assert_eq!(peek.as_str(), Some("owned string"));
     }
 }

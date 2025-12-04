@@ -1,5 +1,6 @@
 ---
 source: facet-diff/tests/diff_snapshots.rs
+assertion_line: 1439
 expression: "format_diff_comparison(&a, &b)"
 ---
 ╭Before─────────────────────────────────────╮
@@ -24,11 +25,11 @@ expression: "format_diff_comparison(&a, &b)"
 ╰───────────────────────────────────────────╯
 ╔Diff═══════════════════════════════════════╗
 ║{                                          ║
+║  .. 1 unchanged field                     ║
 ║  address: {                               ║
 ║    .. 1 unchanged field                   ║
 ║    street: "123 Main St" → "456 Oak Ave"  ║
 ║  }                                        ║
 ║  age: 30 → 31                             ║
-║  name: "Alice" → "Alice"                  ║
 ║}                                          ║
 ╚═══════════════════════════════════════════╝
