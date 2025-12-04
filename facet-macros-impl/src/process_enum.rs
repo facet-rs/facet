@@ -622,11 +622,11 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         )
     };
 
-    // Generate match arms to suppress dead_code warnings on enum variants.
+    // Generate constructor expressions to suppress dead_code warnings on enum variants.
     // When variants are constructed via reflection (e.g., facet_args::from_std_args()),
     // the compiler doesn't see them being used and warns about dead code.
-    // This match ensures all variants are "used" from the compiler's perspective.
-    let match_arms: Vec<TokenStream> = pe
+    // This ensures all variants are "constructed" from the compiler's perspective.
+    let variant_constructors: Vec<TokenStream> = pe
         .variants
         .iter()
         .map(|pv| {
@@ -635,9 +635,24 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 IdentOrLiteral::Literal(n) => format_ident!("_{}", n),
             };
             match &pv.kind {
-                PVariantKind::Unit => quote! { #enum_name::#variant_ident => {} },
-                PVariantKind::Tuple { .. } => quote! { #enum_name::#variant_ident(..) => {} },
-                PVariantKind::Struct { .. } => quote! { #enum_name::#variant_ident { .. } => {} },
+                PVariantKind::Unit => quote! { #enum_name::#variant_ident },
+                PVariantKind::Tuple { fields } => {
+                    let todos = fields.iter().map(|_| quote! { todo!() });
+                    quote! { #enum_name::#variant_ident(#(#todos),*) }
+                }
+                PVariantKind::Struct { fields } => {
+                    let field_inits: Vec<TokenStream> = fields
+                        .iter()
+                        .map(|pf| {
+                            let field_name = match &pf.name.raw {
+                                IdentOrLiteral::Ident(id) => id.clone(),
+                                IdentOrLiteral::Literal(n) => format_ident!("_{}", n),
+                            };
+                            quote! { #field_name: todo!() }
+                        })
+                        .collect();
+                    quote! { #enum_name::#variant_ident { #(#field_inits),* } }
+                }
             }
         })
         .collect();
@@ -649,10 +664,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         // Suppress dead_code warnings for enum variants constructed via reflection.
         // See: https://github.com/facet-rs/facet/issues/996
         const _: () = {
-            #[allow(dead_code, clippy::multiple_bound_locations)]
-            fn __facet_use_all_variants #bgp_def (__v: &#enum_name #bgp_without_bounds) #where_clauses_tokens {
-                match *__v {
-                    #(#match_arms)*
+            #[allow(dead_code, unreachable_code, clippy::multiple_bound_locations, clippy::diverging_sub_expression)]
+            fn __facet_construct_all_variants #bgp_def () -> #enum_name #bgp_without_bounds #where_clauses_tokens {
+                loop {
+                    #(let _ = #variant_constructors;)*
                 }
             }
         };
