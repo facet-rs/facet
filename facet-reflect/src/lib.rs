@@ -7,9 +7,6 @@
 extern crate alloc;
 
 #[cfg(doc)]
-pub mod format_matrix;
-
-#[cfg(doc)]
 pub mod deferred_materialization;
 
 mod error;
