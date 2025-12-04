@@ -609,8 +609,11 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         );
         // Use solver when we have flattened fields OR an enum that needs variant
         // disambiguation (presence/shape-based).
+        // BUT: if we already matched a variant by node name (variant_fields is Some),
+        // we don't need solver disambiguation - the node name already told us which variant.
         let is_enum = matches!(partial.shape().ty, Type::User(UserType::Enum(_)));
-        if has_flatten(fields_for_matching) || is_enum {
+        let needs_enum_disambiguation = is_enum && variant_fields.is_none();
+        if has_flatten(fields_for_matching) || needs_enum_disambiguation {
             // Use solver-based deserialization for flattened fields
             log::trace!(" Using solver-based deserialization");
             partial = self.deserialize_entries_with_solver(

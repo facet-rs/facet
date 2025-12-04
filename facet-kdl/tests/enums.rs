@@ -69,6 +69,76 @@ fn enum_child_by_variant_name() {
     );
 }
 
+/// Test Vec<enum> where variants have same fields (issue reproduction)
+/// Node name should be used as the discriminator.
+#[test]
+fn vec_enum_children_same_fields_kebab_case() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    #[facet(rename_all = "kebab-case")]
+    pub enum Command {
+        SaveScreenshot {
+            #[facet(kdl::property)]
+            keys: String,
+        },
+        CopyToClipboard {
+            #[facet(kdl::property)]
+            keys: String,
+        },
+        SelectRegion {
+            #[facet(kdl::argument)]
+            selection: String,
+            #[facet(kdl::property)]
+            keys: String,
+        },
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename_all = "kebab-case")]
+    struct KeyMap {
+        #[facet(kdl::children)]
+        keymap: Vec<Command>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(rename_all = "kebab-case")]
+    struct Config {
+        #[facet(kdl::child)]
+        keymap: KeyMap,
+    }
+
+    let kdl = indoc! {r#"
+        keymap {
+            save-screenshot keys=s
+            select-region "full" keys=<f11>
+            copy-to-clipboard keys=<enter>
+        }
+    "#};
+
+    let config: Config = facet_kdl::from_str(kdl).unwrap();
+
+    assert_eq!(config.keymap.keymap.len(), 3);
+    assert_eq!(
+        config.keymap.keymap[0],
+        Command::SaveScreenshot {
+            keys: "s".to_string()
+        }
+    );
+    assert_eq!(
+        config.keymap.keymap[1],
+        Command::SelectRegion {
+            selection: "full".to_string(),
+            keys: "<f11>".to_string()
+        }
+    );
+    assert_eq!(
+        config.keymap.keymap[2],
+        Command::CopyToClipboard {
+            keys: "<enter>".to_string()
+        }
+    );
+}
+
 /// Test enum child with rename_all to use kebab-case node names.
 #[test]
 fn enum_child_with_rename_all() {
