@@ -24,11 +24,17 @@ rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
 default = ["std"]
 std = ["alloc", "facet-core/std", "facet-reflect/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
+axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
 [dependencies]
 facet-core = { path = "../facet-core", default-features = false }
 facet-reflect = { path = "../facet-reflect", default-features = false }
 log = "0.4"
+
+# Axum integration (optional)
+axum-core = { version = "0.5", optional = true }
+http = { version = "1", optional = true }
+http-body-util = { version = "0.1", optional = true }
 
 [dev-dependencies]
 facet = { path = "../facet" }

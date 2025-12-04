@@ -13,3 +13,11 @@ pub use deserialize::*;
 
 mod serialize;
 pub use serialize::*;
+
+mod msgpack;
+pub use msgpack::MsgPack;
+
+#[cfg(feature = "axum")]
+mod axum;
+#[cfg(feature = "axum")]
+pub use self::axum::MsgPackRejection;

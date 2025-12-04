@@ -13,10 +13,18 @@ pub use facet_reflect::{Span, Spanned};
 pub use error::{KdlError, KdlErrorKind};
 
 // Re-export deserialization
-pub use deserialize::from_str;
+pub use deserialize::{from_str, from_str_owned};
 
 // Re-export serialization
 pub use serialize::{to_string, to_writer};
+
+mod kdl_wrapper;
+pub use kdl_wrapper::Kdl;
+
+#[cfg(feature = "axum")]
+mod axum;
+#[cfg(feature = "axum")]
+pub use self::axum::KdlRejection;
 
 // KDL extension attributes for use with #[facet(kdl::attr)] syntax.
 //

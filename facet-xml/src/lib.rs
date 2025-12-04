@@ -126,11 +126,20 @@ pub use error::{XmlError, XmlErrorKind};
 
 // Re-export deserialization
 pub use deserialize::{
-    DeserializeOptions, from_slice, from_slice_with_options, from_str, from_str_with_options,
+    DeserializeOptions, from_slice, from_slice_owned, from_slice_with_options, from_str,
+    from_str_with_options,
 };
 
 // Re-export serialization
 pub use serialize::{to_string, to_writer};
+
+mod xml;
+pub use xml::Xml;
+
+#[cfg(feature = "axum")]
+mod axum;
+#[cfg(feature = "axum")]
+pub use self::axum::XmlRejection;
 
 // XML extension attributes for use with #[facet(xml::attr)] syntax.
 //

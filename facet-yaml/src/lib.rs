@@ -33,10 +33,18 @@ mod error;
 #[cfg(feature = "std")]
 mod serialize;
 
-pub use deserialize::from_str;
+pub use deserialize::{from_str, from_str_owned};
 pub use error::{YamlError, YamlErrorKind};
 #[cfg(feature = "std")]
 pub use serialize::{to_string, to_writer};
+
+mod yaml;
+pub use yaml::Yaml;
+
+#[cfg(feature = "axum")]
+mod axum;
+#[cfg(feature = "axum")]
+pub use self::axum::YamlRejection;
 
 // Re-export span types from facet-reflect
 pub use facet_reflect::{Span, Spanned};

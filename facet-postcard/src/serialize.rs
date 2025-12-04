@@ -23,7 +23,7 @@ use alloc::{borrow::Cow, string::String, vec::Vec};
 /// let bytes = to_vec(&point).unwrap();
 /// ```
 #[cfg(feature = "alloc")]
-pub fn to_vec<'a, T: Facet<'a>>(value: &'a T) -> Result<Vec<u8>, SerializeError> {
+pub fn to_vec<T: Facet<'static>>(value: &T) -> Result<Vec<u8>, SerializeError> {
     let mut buffer = Vec::new();
     let peek = Peek::new(value);
     serialize_value(peek, &mut buffer)?;
@@ -50,10 +50,7 @@ pub fn to_vec<'a, T: Facet<'a>>(value: &'a T) -> Result<Vec<u8>, SerializeError>
 /// let len = to_slice(&point, &mut buffer).unwrap();
 /// let bytes = &buffer[..len];
 /// ```
-pub fn to_slice<'a, T: Facet<'a>>(
-    value: &'a T,
-    buffer: &mut [u8],
-) -> Result<usize, SerializeError> {
+pub fn to_slice<T: Facet<'static>>(value: &T, buffer: &mut [u8]) -> Result<usize, SerializeError> {
     let peek = Peek::new(value);
     let mut writer = SliceWriter::new(buffer);
     serialize_value(peek, &mut writer)?;

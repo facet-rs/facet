@@ -20,5 +20,13 @@ mod serialize;
 #[cfg(feature = "serialize")]
 pub use serialize::*;
 
+mod toml_wrapper;
+pub use toml_wrapper::Toml;
+
+#[cfg(feature = "axum")]
+mod axum;
+#[cfg(feature = "axum")]
+pub use self::axum::TomlRejection;
+
 // Re-export span types from facet-reflect
 pub use facet_reflect::{Span, Spanned};

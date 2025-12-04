@@ -14,3 +14,11 @@ pub use serialize::*;
 
 mod deserialize;
 pub use deserialize::*;
+
+mod postcard_wrapper;
+pub use postcard_wrapper::Postcard;
+
+#[cfg(feature = "axum")]
+mod axum;
+#[cfg(feature = "axum")]
+pub use self::axum::PostcardRejection;

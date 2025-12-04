@@ -663,7 +663,13 @@ dependencies = [
  "axum",
  "facet",
  "facet-json",
+ "facet-kdl",
+ "facet-msgpack",
+ "facet-postcard",
+ "facet-toml",
  "facet-urlencoded",
+ "facet-xml",
+ "facet-yaml",
  "tokio",
  "tower",
 ]
@@ -761,6 +767,7 @@ dependencies = [
 name = "facet-kdl"
 version = "0.31.0"
 dependencies = [
+ "axum-core",
  "camino",
  "cargo-husky",
  "facet",
@@ -770,6 +777,8 @@ dependencies = [
  "facet-showcase",
  "facet-solver",
  "facet-testhelpers",
+ "http",
+ "http-body-util",
  "indoc",
  "kdl",
  "log",
@@ -803,11 +812,14 @@ dependencies = [
 name = "facet-msgpack"
 version = "0.28.0"
 dependencies = [
+ "axum-core",
  "eyre",
  "facet",
  "facet-core",
  "facet-reflect",
  "facet-testhelpers",
+ "http",
+ "http-body-util",
  "insta",
  "log",
  "rmp-serde",
@@ -818,11 +830,14 @@ dependencies = [
 name = "facet-postcard"
 version = "0.1.0"
 dependencies = [
+ "axum-core",
  "eyre",
  "facet",
  "facet-core",
  "facet-reflect",
  "facet-testhelpers",
+ "http",
+ "http-body-util",
  "log",
  "postcard",
  "serde",
@@ -915,6 +930,7 @@ name = "facet-toml"
 version = "0.30.0"
 dependencies = [
  "ariadne",
+ "axum-core",
  "eyre",
  "facet",
  "facet-assert",
@@ -924,6 +940,8 @@ dependencies = [
  "facet-solver",
  "facet-testhelpers",
  "facet-value",
+ "http",
+ "http-body-util",
  "log",
  "micromap",
  "num-traits",
@@ -988,6 +1006,7 @@ dependencies = [
 name = "facet-xml"
 version = "0.31.0"
 dependencies = [
+ "axum-core",
  "base64",
  "cargo-husky",
  "facet",
@@ -996,6 +1015,8 @@ dependencies = [
  "facet-reflect",
  "facet-solver",
  "facet-testhelpers",
+ "http",
+ "http-body-util",
  "indoc",
  "log",
  "miette",
@@ -1006,6 +1027,7 @@ dependencies = [
 name = "facet-yaml"
 version = "0.31.0"
 dependencies = [
+ "axum-core",
  "boxen",
  "camino",
  "cargo-husky",
@@ -1018,6 +1040,8 @@ dependencies = [
  "facet-solver",
  "facet-testhelpers",
  "flate2",
+ "http",
+ "http-body-util",
  "indoc",
  "log",
  "miette",

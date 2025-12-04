@@ -16,6 +16,7 @@ rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
 std = ["alloc", "facet-core/std", "facet-reflect/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 default = ["std"]
+axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"time\"))"] }
@@ -28,6 +29,11 @@ facet-reflect = { path = "../facet-reflect", default-features = false, features 
 facet-solver = { path = "../facet-solver" }
 miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
 log = "0.4.27"
+
+# Axum integration (optional)
+axum-core = { version = "0.5", optional = true }
+http = { version = "1", optional = true }
+http-body-util = { version = "0.1", optional = true }
 
 [dev-dependencies]
 eyre = "0.6.12"

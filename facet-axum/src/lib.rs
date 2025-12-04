@@ -61,3 +61,27 @@ pub use facet_json::{Json, JsonRejection};
 // Re-export form/query types
 #[cfg(feature = "form")]
 pub use facet_urlencoded::{Form, FormRejection, Query, QueryRejection};
+
+// Re-export YAML types
+#[cfg(feature = "yaml")]
+pub use facet_yaml::{Yaml, YamlRejection};
+
+// Re-export TOML types
+#[cfg(feature = "toml")]
+pub use facet_toml::{Toml, TomlRejection};
+
+// Re-export XML types
+#[cfg(feature = "xml")]
+pub use facet_xml::{Xml, XmlRejection};
+
+// Re-export KDL types
+#[cfg(feature = "kdl")]
+pub use facet_kdl::{Kdl, KdlRejection};
+
+// Re-export MessagePack types
+#[cfg(feature = "msgpack")]
+pub use facet_msgpack::{MsgPack, MsgPackRejection};
+
+// Re-export Postcard types
+#[cfg(feature = "postcard")]
+pub use facet_postcard::{Postcard, PostcardRejection};
