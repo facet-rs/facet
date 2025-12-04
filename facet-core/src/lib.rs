@@ -99,6 +99,10 @@ pub unsafe trait Facet<'facet>: 'facet {
 
 mod shape_util;
 
+// Write trait for serializers
+mod write;
+pub use write::Write;
+
 /// Re-export paste for use in macros
 #[doc(hidden)]
 pub use paste;

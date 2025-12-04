@@ -4,8 +4,6 @@
 
 extern crate alloc;
 
-use alloc::vec::Vec;
-
 // Re-export span types from facet-reflect
 pub use facet_reflect::{Span, Spanned};
 
@@ -20,34 +18,11 @@ mod tokenizer;
 mod raw_json;
 pub use raw_json::RawJson;
 
-/// `no_std` compatible Write trait used by the json serializer.
-pub trait JsonWrite {
-    /// Write all these bytes to the writer.
-    fn write(&mut self, buf: &[u8]);
-
-    /// If the writer supports it, reserve space for `len` additional bytes.
-    fn reserve(&mut self, additional: usize);
-}
-
-impl JsonWrite for &mut Vec<u8> {
-    fn write(&mut self, buf: &[u8]) {
-        self.extend(buf);
-    }
-
-    fn reserve(&mut self, additional: usize) {
-        Vec::reserve(self, additional)
-    }
-}
-
-impl JsonWrite for Vec<u8> {
-    fn write(&mut self, buf: &[u8]) {
-        self.extend(buf);
-    }
-
-    fn reserve(&mut self, additional: usize) {
-        Vec::reserve(self, additional)
-    }
-}
+/// Re-export the `Write` trait from facet-core for backwards compatibility.
+///
+/// This trait is used by the JSON serializer to write output without depending
+/// on `std::io::Write`, enabling `no_std` support.
+pub use facet_core::Write as JsonWrite;
 
 /// Properly escapes and writes a JSON string
 #[inline]
