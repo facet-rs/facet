@@ -489,9 +489,81 @@ struct Record {
 **Use cases for proxy:**
 
 1. **Custom serialization format** — serialize numbers as strings, dates as timestamps, etc.
-2. **Type conversion** — deserialize a string into a parsed type
+2. **Type conversion** — deserialize a string into a parsed type using `FromStr`
 3. **Validation** — reject invalid values during `TryFrom` conversion
 4. **Non-Facet types** — combine with `#[facet(opaque)]` for types that don't implement `Facet`
+
+**Example: Delegate to `FromStr` and `Display`**
+
+A common pattern is parsing string fields using a type's `FromStr` implementation. For example, parsing `"#ff00ff"` into a color struct:
+
+```rust
+use facet::Facet;
+use std::str::FromStr;
+
+/// A color type that can be parsed from hex strings like "#ff00ff"
+#[derive(Debug, PartialEq)]
+struct Color(u8, u8, u8);
+
+impl FromStr for Color {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.strip_prefix('#').unwrap_or(s);
+        if s.len() != 6 {
+            return Err("expected 6 hex digits".into());
+        }
+        let r = u8::from_str_radix(&s[0..2], 16).map_err(|e| e.to_string())?;
+        let g = u8::from_str_radix(&s[2..4], 16).map_err(|e| e.to_string())?;
+        let b = u8::from_str_radix(&s[4..6], 16).map_err(|e| e.to_string())?;
+        Ok(Color(r, g, b))
+    }
+}
+
+impl std::fmt::Display for Color {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#{:02x}{:02x}{:02x}", self.0, self.1, self.2)
+    }
+}
+
+// Step 1: Create a transparent proxy that wraps String
+#[derive(Facet)]
+#[facet(transparent)]
+struct ColorProxy(String);
+
+// Step 2: Implement TryFrom for deserialization (Proxy → Color)
+impl TryFrom<ColorProxy> for Color {
+    type Error = String;
+
+    fn try_from(proxy: ColorProxy) -> Result<Self, Self::Error> {
+        Color::from_str(&proxy.0)  // Delegate to FromStr
+    }
+}
+
+// Step 3: Implement TryFrom for serialization (Color → Proxy)
+impl TryFrom<&Color> for ColorProxy {
+    type Error = std::convert::Infallible;
+
+    fn try_from(color: &Color) -> Result<Self, Self::Error> {
+        Ok(ColorProxy(color.to_string()))  // Delegate to Display
+    }
+}
+
+// Step 4: Use the proxy attribute on your field
+#[derive(Facet)]
+struct Theme {
+    #[facet(proxy = ColorProxy)]
+    foreground: Color,
+
+    #[facet(proxy = ColorProxy)]
+    background: Color,
+}
+
+// Now this JSON can be deserialized:
+// {"foreground": "#ff00ff", "background": "#000000"}
+```
+
+The key insight: `#[facet(transparent)]` on the proxy makes it serialize as just a string (not `{"0": "..."}`), and the `TryFrom` impls handle the conversion in both directions.
 
 **Example: Parse integers from hex strings:**
 
