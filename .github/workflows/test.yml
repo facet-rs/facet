@@ -74,6 +74,21 @@ jobs:
           export CI=true
           just miri
 
+  nightly:
+    runs-on: depot-ubuntu-24.04-32
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: ✨ Run nightly feature tests
+        shell: bash
+        run: |
+          cargo nextest run --package facet-core --features nightly
+
   msrv:
     runs-on: depot-ubuntu-24.04-32
 

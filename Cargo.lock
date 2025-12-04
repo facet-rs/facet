@@ -613,6 +613,7 @@ dependencies = [
  "ordered-float",
  "paste",
  "ruint",
+ "rustversion",
  "time",
  "ulid",
  "url",
