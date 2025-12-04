@@ -12,8 +12,9 @@ use facet_core::{
 use facet_reflect::{Partial, is_spanned_shape};
 use facet_solver::{PathSegment, Schema, Solver};
 use miette::SourceSpan;
-use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
+use quick_xml::name::ResolveResult;
+use quick_xml::reader::NsReader;
 
 use crate::error::{XmlError, XmlErrorKind};
 
@@ -45,6 +46,20 @@ fn get_field_display_name(field: &Field) -> &'static str {
         }
     }
     field.name
+}
+
+/// Extract the local name from a potentially prefixed name.
+///
+/// For example: `"android:name"` -> `"name"`, `"name"` -> `"name"`
+///
+/// This handles the case where field names use `rename = "prefix:localname"`
+/// to match elements/attributes with a specific prefix in the document.
+fn local_name_of(name: &str) -> &str {
+    // Use rsplit_once to handle names with multiple colons correctly
+    // (though that's unusual in XML)
+    name.rsplit_once(':')
+        .map(|(_, local)| local)
+        .unwrap_or(name)
 }
 
 /// Check if a shape can accept an element with the given name.
@@ -178,6 +193,11 @@ pub(crate) trait XmlFieldExt {
     /// Returns true if this field stores the element name.
     #[allow(dead_code)]
     fn is_xml_element_name(&self) -> bool;
+    /// Returns the expected XML namespace URI for this field, if specified.
+    ///
+    /// Returns `Some(ns)` if the field has `#[facet(xml::ns = "...")]`,
+    /// or `None` if no namespace constraint is specified (matches any namespace).
+    fn xml_ns(&self) -> Option<&'static str>;
 }
 
 impl XmlFieldExt for Field {
@@ -200,6 +220,127 @@ impl XmlFieldExt for Field {
     fn is_xml_element_name(&self) -> bool {
         self.has_attr(Some("xml"), "element_name")
     }
+
+    fn xml_ns(&self) -> Option<&'static str> {
+        self.get_attr(Some("xml"), "ns")
+            .and_then(|attr| attr.get_as::<&str>().copied())
+    }
+}
+
+/// Extension trait for Shape to check XML-specific container attributes.
+pub(crate) trait XmlShapeExt {
+    /// Returns the default XML namespace URI for all fields in this container.
+    ///
+    /// Returns `Some(ns)` if the shape has `#[facet(xml::ns_all = "...")]`,
+    /// or `None` if no default namespace is specified.
+    fn xml_ns_all(&self) -> Option<&'static str>;
+}
+
+impl XmlShapeExt for facet_core::Shape {
+    fn xml_ns_all(&self) -> Option<&'static str> {
+        self.attributes
+            .iter()
+            .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
+            .and_then(|attr| attr.get_as::<&str>().copied())
+    }
+}
+
+// ============================================================================
+// Qualified Name (namespace + local name)
+// ============================================================================
+
+/// A qualified XML name with optional namespace URI.
+///
+/// In XML, elements and attributes can be in a namespace. The namespace is
+/// identified by a URI, not the prefix used in the document. For example,
+/// `android:label` and `a:label` are the same if both prefixes resolve to
+/// the same namespace URI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct QName {
+    /// The namespace URI, or `None` for "no namespace".
+    ///
+    /// - Elements without a prefix and no default `xmlns` are in no namespace.
+    /// - Attributes without a prefix are always in no namespace (even with default xmlns).
+    /// - Elements/attributes with a prefix have their namespace resolved via xmlns declarations.
+    namespace: Option<String>,
+    /// The local name (without prefix).
+    local_name: String,
+}
+
+impl QName {
+    /// Create a qualified name with no namespace.
+    fn local(name: impl Into<String>) -> Self {
+        Self {
+            namespace: None,
+            local_name: name.into(),
+        }
+    }
+
+    /// Create a qualified name with a namespace.
+    fn with_ns(namespace: impl Into<String>, local_name: impl Into<String>) -> Self {
+        Self {
+            namespace: Some(namespace.into()),
+            local_name: local_name.into(),
+        }
+    }
+
+    /// Check if this name matches a local name with an optional expected namespace.
+    ///
+    /// If `expected_ns` is `None`, matches any name with the given local name.
+    /// If `expected_ns` is `Some(ns)`, only matches if both local name and namespace match.
+    fn matches(&self, local_name: &str, expected_ns: Option<&str>) -> bool {
+        if self.local_name != local_name {
+            return false;
+        }
+        match expected_ns {
+            None => true, // No namespace constraint - match any namespace (or none)
+            Some(ns) => self.namespace.as_deref() == Some(ns),
+        }
+    }
+
+    /// Check if this name matches exactly (same local name and same namespace presence).
+    ///
+    /// Unlike `matches()`, this requires the namespace to match exactly:
+    /// - expected_ns: None means the element must be in "no namespace"
+    /// - expected_ns: Some(ns) means the element must be in that specific namespace
+    #[allow(dead_code)]
+    fn matches_exact(&self, local_name: &str, expected_ns: Option<&str>) -> bool {
+        self.local_name == local_name && self.namespace.as_deref() == expected_ns
+    }
+}
+
+impl std::fmt::Display for QName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.namespace {
+            Some(ns) => write!(f, "{{{}}}{}", ns, self.local_name),
+            None => write!(f, "{}", self.local_name),
+        }
+    }
+}
+
+/// Compare QName with str by local name only (for backward compatibility).
+impl PartialEq<str> for QName {
+    fn eq(&self, other: &str) -> bool {
+        self.local_name == other
+    }
+}
+
+impl PartialEq<&str> for QName {
+    fn eq(&self, other: &&str) -> bool {
+        self.local_name == *other
+    }
+}
+
+impl PartialEq<QName> for str {
+    fn eq(&self, other: &QName) -> bool {
+        self == other.local_name
+    }
+}
+
+impl PartialEq<QName> for &str {
+    fn eq(&self, other: &QName) -> bool {
+        *self == other.local_name
+    }
 }
 
 // ============================================================================
@@ -209,17 +350,17 @@ impl XmlFieldExt for Field {
 /// An XML event with owned string data and span information.
 #[derive(Debug, Clone)]
 enum OwnedEvent {
-    /// Start of an element with tag name and attributes
+    /// Start of an element with qualified name and attributes
     Start {
-        name: String,
-        attributes: Vec<(String, String)>,
+        name: QName,
+        attributes: Vec<(QName, String)>,
     },
     /// End of an element
-    End { name: String },
+    End { name: QName },
     /// Empty element (self-closing)
     Empty {
-        name: String,
-        attributes: Vec<(String, String)>,
+        name: QName,
+        attributes: Vec<(QName, String)>,
     },
     /// Text content
     Text { content: String },
@@ -248,17 +389,33 @@ impl SpannedEvent {
 // Event Collector
 // ============================================================================
 
-/// Collects all events from the parser upfront.
+/// Collects all events from the parser upfront, resolving namespaces.
 struct EventCollector<'input> {
-    reader: Reader<&'input [u8]>,
+    reader: NsReader<&'input [u8]>,
     input: &'input str,
 }
 
 impl<'input> EventCollector<'input> {
     fn new(input: &'input str) -> Self {
-        let mut reader = Reader::from_str(input);
+        let mut reader = NsReader::from_str(input);
         reader.config_mut().trim_text(true);
         Self { reader, input }
+    }
+
+    /// Convert a ResolveResult to an optional namespace string.
+    fn resolve_ns(resolve: ResolveResult<'_>) -> Option<String> {
+        match resolve {
+            ResolveResult::Bound(ns) => Some(String::from_utf8_lossy(ns.as_ref()).into_owned()),
+            ResolveResult::Unbound => None,
+            ResolveResult::Unknown(prefix) => {
+                // Unknown prefix - treat as unbound but log a warning
+                log::warn!(
+                    "Unknown namespace prefix: {}",
+                    String::from_utf8_lossy(&prefix)
+                );
+                None
+            }
+        }
     }
 
     fn collect_all(mut self) -> Result<Vec<SpannedEvent>> {
@@ -267,25 +424,47 @@ impl<'input> EventCollector<'input> {
 
         loop {
             let offset = self.reader.buffer_position() as usize;
-            let event = self.reader.read_event_into(&mut buf).map_err(|e| {
-                XmlError::new(XmlErrorKind::Parse(e.to_string())).with_source(self.input)
-            })?;
+            let (resolve, event) = self
+                .reader
+                .read_resolved_event_into(&mut buf)
+                .map_err(|e| {
+                    XmlError::new(XmlErrorKind::Parse(e.to_string())).with_source(self.input)
+                })?;
 
             let (owned, len) = match event {
-                Event::Start(e) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
-                    let attributes = self.collect_attributes(&e)?;
+                Event::Start(ref e) => {
+                    // Convert namespace to owned before calling methods on self
+                    let ns = Self::resolve_ns(resolve);
+                    let local = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                    let name = match ns {
+                        Some(uri) => QName::with_ns(uri, local),
+                        None => QName::local(local),
+                    };
+                    let attributes = self.collect_attributes(e)?;
                     let len = self.reader.buffer_position() as usize - offset;
                     (OwnedEvent::Start { name, attributes }, len)
                 }
-                Event::End(e) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+                Event::End(ref e) => {
+                    // For End events, we need to resolve the element name
+                    let (resolve, _) = self.reader.resolve_element(e.name());
+                    let ns = Self::resolve_ns(resolve);
+                    let local = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                    let name = match ns {
+                        Some(uri) => QName::with_ns(uri, local),
+                        None => QName::local(local),
+                    };
                     let len = self.reader.buffer_position() as usize - offset;
                     (OwnedEvent::End { name }, len)
                 }
-                Event::Empty(e) => {
-                    let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
-                    let attributes = self.collect_attributes(&e)?;
+                Event::Empty(ref e) => {
+                    // Convert namespace to owned before calling methods on self
+                    let ns = Self::resolve_ns(resolve);
+                    let local = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                    let name = match ns {
+                        Some(uri) => QName::with_ns(uri, local),
+                        None => QName::local(local),
+                    };
+                    let attributes = self.collect_attributes(e)?;
                     let len = self.reader.buffer_position() as usize - offset;
                     (OwnedEvent::Empty { name, attributes }, len)
                 }
@@ -337,20 +516,30 @@ impl<'input> EventCollector<'input> {
         Ok(events)
     }
 
-    fn collect_attributes(&self, e: &BytesStart<'_>) -> Result<Vec<(String, String)>> {
+    fn collect_attributes(&self, e: &BytesStart<'_>) -> Result<Vec<(QName, String)>> {
         let mut attrs = Vec::new();
         for attr in e.attributes() {
             let attr = attr.map_err(|e| {
                 XmlError::new(XmlErrorKind::Parse(e.to_string())).with_source(self.input)
             })?;
-            let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+
+            // Resolve attribute namespace
+            let (resolve, _) = self.reader.resolve_attribute(attr.key);
+            let ns = Self::resolve_ns(resolve);
+            let local = String::from_utf8_lossy(attr.key.local_name().as_ref()).into_owned();
+            let qname = match ns {
+                Some(uri) => QName::with_ns(uri, local),
+                None => QName::local(local),
+            };
+
             let value = attr
                 .unescape_value()
                 .map_err(|e| {
                     XmlError::new(XmlErrorKind::Parse(e.to_string())).with_source(self.input)
                 })?
                 .into_owned();
-            attrs.push((key, value));
+
+            attrs.push((qname, value));
         }
         Ok(attrs)
     }
@@ -444,8 +633,8 @@ impl<'input> XmlDeserializer<'input> {
     fn deserialize_element<'facet>(
         &mut self,
         partial: Partial<'facet>,
-        element_name: &str,
-        attributes: &[(String, String)],
+        element_name: &QName,
+        attributes: &[(QName, String)],
         span: SourceSpan,
         is_empty: bool,
     ) -> Result<Partial<'facet>> {
@@ -453,7 +642,7 @@ impl<'input> XmlDeserializer<'input> {
         let shape = partial.shape();
 
         log::trace!(
-            "deserialize_element: {} into shape {:?}",
+            "deserialize_element: {:?} into shape {:?}",
             element_name,
             shape.ty
         );
@@ -675,7 +864,10 @@ impl<'input> XmlDeserializer<'input> {
                         .iter()
                         .find(|v| v.name == variant_name)
                         .ok_or_else(|| {
-                            self.err_at(XmlErrorKind::NoMatchingElement(variant_name.clone()), span)
+                            self.err_at(
+                                XmlErrorKind::NoMatchingElement(variant_name.to_string()),
+                                span,
+                            )
                         })?;
 
                     // Select the variant
@@ -879,7 +1071,7 @@ impl<'input> XmlDeserializer<'input> {
                     .find(|v| get_variant_display_name(v) == variant_name)
                     .ok_or_else(|| {
                         self.err_at(
-                            XmlErrorKind::NoMatchingElement(variant_name.clone()),
+                            XmlErrorKind::NoMatchingElement(variant_name.to_string()),
                             variant_span,
                         )
                     })?;
@@ -968,18 +1160,25 @@ impl<'input> XmlDeserializer<'input> {
         &mut self,
         partial: Partial<'facet>,
         fields: &[Field],
-        attributes: &[(String, String)],
+        attributes: &[(QName, String)],
         deny_unknown: bool,
         element_span: SourceSpan,
     ) -> Result<Partial<'facet>> {
         let mut partial = partial;
 
+        // Get container-level default namespace (xml::ns_all)
+        let ns_all = partial.shape().xml_ns_all();
+
         for (attr_name, attr_value) in attributes {
-            // Find the field that matches this attribute
-            let field_match = fields
-                .iter()
-                .enumerate()
-                .find(|(_, f)| f.is_xml_attribute() && f.name == attr_name);
+            // Find the field that matches this attribute.
+            // Uses namespace-aware matching:
+            // - If field has xml::ns, it must match exactly
+            // - Otherwise, if container has xml::ns_all, use that
+            // - Otherwise, match any namespace
+            let field_match = fields.iter().enumerate().find(|(_, f)| {
+                f.is_xml_attribute()
+                    && attr_name.matches(local_name_of(f.name), f.xml_ns().or(ns_all))
+            });
 
             if let Some((idx, field)) = field_match {
                 log::trace!(
@@ -1035,7 +1234,7 @@ impl<'input> XmlDeserializer<'input> {
                     .collect();
                 return Err(self.err_at(
                     XmlErrorKind::UnknownAttribute {
-                        attribute: attr_name.clone(),
+                        attribute: attr_name.to_string(),
                         expected,
                     },
                     element_span,
@@ -1052,7 +1251,7 @@ impl<'input> XmlDeserializer<'input> {
         &mut self,
         partial: Partial<'facet>,
         fields: &[Field],
-        parent_element_name: &str,
+        parent_element_name: &QName,
         deny_unknown: bool,
     ) -> Result<Partial<'facet>> {
         let mut partial = partial;
@@ -1133,7 +1332,7 @@ impl<'input> XmlDeserializer<'input> {
         &mut self,
         partial: Partial<'facet>,
         fields: &[Field],
-        parent_element_name: &str,
+        parent_element_name: &QName,
     ) -> Result<Partial<'facet>> {
         let mut partial = partial;
         let mut field_idx = 0;
@@ -1226,7 +1425,7 @@ impl<'input> XmlDeserializer<'input> {
         &mut self,
         partial: Partial<'facet>,
         array_len: usize,
-        parent_element_name: &str,
+        parent_element_name: &QName,
     ) -> Result<Partial<'facet>> {
         let mut partial = partial;
         let mut idx = 0;
@@ -1302,7 +1501,7 @@ impl<'input> XmlDeserializer<'input> {
     fn deserialize_set_content<'facet>(
         &mut self,
         partial: Partial<'facet>,
-        parent_element_name: &str,
+        parent_element_name: &QName,
     ) -> Result<Partial<'facet>> {
         let mut partial = partial;
         partial = partial.begin_set()?;
@@ -1352,7 +1551,7 @@ impl<'input> XmlDeserializer<'input> {
     fn deserialize_map_content<'facet>(
         &mut self,
         partial: Partial<'facet>,
-        parent_element_name: &str,
+        parent_element_name: &QName,
     ) -> Result<Partial<'facet>> {
         let mut partial = partial;
         partial = partial.begin_map()?;
@@ -1371,7 +1570,7 @@ impl<'input> XmlDeserializer<'input> {
                 OwnedEvent::Start { name, attributes } => {
                     // Map entry: element name is the key, content is the value
                     partial = partial.begin_key()?;
-                    partial = partial.set(name.clone())?;
+                    partial = partial.set(name.local_name.clone())?;
                     partial = partial.end()?; // end key
 
                     partial = partial.begin_value()?;
@@ -1382,7 +1581,7 @@ impl<'input> XmlDeserializer<'input> {
                 OwnedEvent::Empty { name, .. } => {
                     // Empty element as map entry - key is element name, value is default/empty
                     partial = partial.begin_key()?;
-                    partial = partial.set(name.clone())?;
+                    partial = partial.set(name.local_name.clone())?;
                     partial = partial.end()?; // end key
 
                     partial = partial.begin_value()?;
@@ -1426,8 +1625,8 @@ impl<'input> XmlDeserializer<'input> {
     fn deserialize_map_entry_value<'facet>(
         &mut self,
         partial: Partial<'facet>,
-        element_name: &str,
-        _attributes: &[(String, String)],
+        element_name: &QName,
+        _attributes: &[(QName, String)],
     ) -> Result<Partial<'facet>> {
         let mut partial = partial;
         let shape = partial.shape();
@@ -1457,8 +1656,8 @@ impl<'input> XmlDeserializer<'input> {
         &mut self,
         partial: Partial<'facet>,
         fields: &[Field],
-        element_name: &str,
-        attributes: &[(String, String)],
+        element_name: &QName,
+        attributes: &[(QName, String)],
         span: SourceSpan,
         is_empty: bool,
         elements_field_started: &mut Option<usize>,
@@ -1466,12 +1665,17 @@ impl<'input> XmlDeserializer<'input> {
     ) -> Result<Partial<'facet>> {
         let mut partial = partial;
 
-        // First try to find a direct element field match
-        if let Some((idx, field)) = fields
-            .iter()
-            .enumerate()
-            .find(|(_, f)| f.is_xml_element() && f.name == element_name)
-        {
+        // Get container-level default namespace (xml::ns_all)
+        let ns_all = partial.shape().xml_ns_all();
+
+        // First try to find a direct element field match.
+        // Uses namespace-aware matching:
+        // - If field has xml::ns, it must match exactly
+        // - Otherwise, if container has xml::ns_all, use that
+        // - Otherwise, match any namespace
+        if let Some((idx, field)) = fields.iter().enumerate().find(|(_, f)| {
+            f.is_xml_element() && element_name.matches(local_name_of(f.name), f.xml_ns().or(ns_all))
+        }) {
             log::trace!("matched element {} to field {}", element_name, field.name);
 
             // End any open elements list field
@@ -1516,18 +1720,23 @@ impl<'input> XmlDeserializer<'input> {
         // Try to find an elements (list) field that accepts this element
         // We check: 1) if the item type accepts this element name, or
         //           2) if the field name matches the element name (fallback)
+        // Uses namespace-aware matching for field name comparison.
         if let Some((idx, _field)) = fields.iter().enumerate().find(|(_, f)| {
             if !f.is_xml_elements() {
                 return false;
             }
             // First, check if field name matches element name (common case for Vec<T>)
-            if get_field_display_name(f) == element_name {
+            // Uses namespace-aware matching with ns_all fallback.
+            if element_name.matches(
+                local_name_of(get_field_display_name(f)),
+                f.xml_ns().or(ns_all),
+            ) {
                 return true;
             }
             // Otherwise, check if the list item type accepts this element
             let field_shape = (f.shape)();
             if let Some(item_shape) = get_list_item_shape(field_shape) {
-                shape_accepts_element(item_shape, element_name)
+                shape_accepts_element(item_shape, &element_name.local_name)
             } else {
                 // Not a list type - shouldn't happen for xml::elements
                 false
@@ -1614,7 +1823,7 @@ impl<'input> XmlDeserializer<'input> {
     }
 
     /// Read text content until the end tag.
-    fn read_text_until_end(&mut self, element_name: &str) -> Result<String> {
+    fn read_text_until_end(&mut self, element_name: &QName) -> Result<String> {
         let mut text = String::new();
 
         loop {
@@ -1641,7 +1850,7 @@ impl<'input> XmlDeserializer<'input> {
     }
 
     /// Skip an element and all its content.
-    fn skip_element(&mut self, element_name: &str) -> Result<()> {
+    fn skip_element(&mut self, element_name: &QName) -> Result<()> {
         let mut depth = 1;
 
         while depth > 0 {
@@ -1947,7 +2156,7 @@ impl<'input> XmlDeserializer<'input> {
         partial: Partial<'facet>,
         variant: &Variant,
         content_tag: &str,
-        parent_element_name: &str,
+        parent_element_name: &QName,
     ) -> Result<Partial<'facet>> {
         let mut partial = partial;
         let variant_fields = variant.data.fields;
@@ -2041,8 +2250,8 @@ impl<'input> XmlDeserializer<'input> {
         &mut self,
         partial: Partial<'facet>,
         enum_type: &EnumType,
-        element_name: &str,
-        attributes: &[(String, String)],
+        element_name: &QName,
+        attributes: &[(QName, String)],
         span: SourceSpan,
         is_empty: bool,
     ) -> Result<Partial<'facet>> {
@@ -2092,8 +2301,8 @@ impl<'input> XmlDeserializer<'input> {
         &mut self,
         partial: Partial<'facet>,
         variant: &Variant,
-        element_name: &str,
-        attributes: &[(String, String)],
+        element_name: &QName,
+        attributes: &[(QName, String)],
         span: SourceSpan,
         is_empty: bool,
     ) -> Result<Partial<'facet>> {
@@ -2146,8 +2355,8 @@ impl<'input> XmlDeserializer<'input> {
         &mut self,
         partial: Partial<'facet>,
         struct_def: &StructType,
-        element_name: &str,
-        attributes: &[(String, String)],
+        element_name: &QName,
+        attributes: &[(QName, String)],
         span: SourceSpan,
         is_empty: bool,
     ) -> Result<Partial<'facet>> {
@@ -2167,7 +2376,7 @@ impl<'input> XmlDeserializer<'input> {
 
         // Feed attribute names to solver
         for (attr_name, _) in attributes {
-            let key_static: &'static str = Box::leak(attr_name.clone().into_boxed_str());
+            let key_static: &'static str = Box::leak(attr_name.local_name.clone().into_boxed_str());
             let _decision = solver.see_key(key_static);
         }
 
@@ -2191,7 +2400,8 @@ impl<'input> XmlDeserializer<'input> {
                         let elem_pos = self.pos - 1; // We already consumed this event
 
                         // Leak the name for 'static lifetime
-                        let key_static: &'static str = Box::leak(name.clone().into_boxed_str());
+                        let key_static: &'static str =
+                            Box::leak(name.local_name.clone().into_boxed_str());
                         let _decision = solver.see_key(key_static);
                         element_positions.push((key_static, elem_pos));
 
@@ -2231,7 +2441,7 @@ impl<'input> XmlDeserializer<'input> {
 
         // First, handle attributes using the configuration
         for (attr_name, attr_value) in attributes {
-            if let Some(field_info) = config.field(attr_name) {
+            if let Some(field_info) = config.field(&attr_name.local_name) {
                 let segments = field_info.path.segments();
 
                 // Navigate to the field through the path, tracking Option fields
@@ -2303,7 +2513,7 @@ impl<'input> XmlDeserializer<'input> {
                     } => {
                         let is_elem_empty = matches!(event.event, OwnedEvent::Empty { .. });
 
-                        if let Some(field_info) = config.field(name) {
+                        if let Some(field_info) = config.field(&name.local_name) {
                             let segments = field_info.path.segments();
 
                             // Navigate to the field through the path, tracking Option fields
