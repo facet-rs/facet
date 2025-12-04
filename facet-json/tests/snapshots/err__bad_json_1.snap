@@ -1,5 +1,5 @@
 ---
-source: tests/err.rs
+source: facet-json/tests/err.rs
 expression: err
 ---
-unexpected token: got }, expected '{'
+unexpected token: got ObjectEnd, expected '{'

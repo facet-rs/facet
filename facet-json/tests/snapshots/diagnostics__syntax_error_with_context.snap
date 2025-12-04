@@ -1,11 +1,10 @@
 ---
-source: tests/diagnostics.rs
-assertion_line: 52
+source: facet-json/tests/diagnostics.rs
 expression: render_error(&err)
 ---
-[31mjson::token[0m
+[31mjson::scan[0m
 
-  [31m×[0m unexpected character: '@' (while parsing i32)
+  [31m×[0m UnexpectedChar('@') (while parsing i32)
    ╭────
  [2m1[0m │ {"name": "test", "value": @invalid}
    · [35;1m                          ┬[0m

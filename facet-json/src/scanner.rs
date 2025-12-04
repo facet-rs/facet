@@ -75,14 +75,18 @@ pub enum NumberHint {
 /// Spanned token with location information
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpannedToken {
+    /// The token
     pub token: Token,
+    /// Source span
     pub span: Span,
 }
 
 /// Scanner error
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScanError {
+    /// The error kind
     pub kind: ScanErrorKind,
+    /// Source span
     pub span: Span,
 }
 
@@ -293,24 +297,27 @@ impl Scanner {
         type Window = u128;
         type Chunk = [u8; STEP_SIZE];
 
-        while !escape_next {
-            if let Some(Ok(chunk)) = buf
-                .get(self.pos..)
-                .and_then(|s| s.get(..STEP_SIZE))
-                .map(Chunk::try_from)
-            {
-                let window = Window::from_ne_bytes(chunk);
-                let has_quote = contains_byte(window, b'"');
-                let has_backslash = contains_byte(window, b'\\');
+        // SIMD fast path: only if we're not in escape mode
+        if !escape_next {
+            loop {
+                if let Some(Ok(chunk)) = buf
+                    .get(self.pos..)
+                    .and_then(|s| s.get(..STEP_SIZE))
+                    .map(Chunk::try_from)
+                {
+                    let window = Window::from_ne_bytes(chunk);
+                    let has_quote = contains_byte(window, b'"');
+                    let has_backslash = contains_byte(window, b'\\');
 
-                if !has_quote && !has_backslash {
-                    // Fast path: no special chars in this chunk
-                    self.pos += STEP_SIZE;
-                    continue;
+                    if !has_quote && !has_backslash {
+                        // Fast path: no special chars in this chunk
+                        self.pos += STEP_SIZE;
+                        continue;
+                    }
                 }
+                // Fall through to byte-by-byte scanning
+                break;
             }
-            // Fall through to byte-by-byte scanning
-            break;
         }
 
         // Byte-by-byte scanning
@@ -1087,9 +1094,140 @@ mod tests {
             parse_number(b"-42", 0, 3, NumberHint::Signed).unwrap(),
             ParsedNumber::I64(-42)
         );
-        assert_eq!(
-            parse_number(b"3.14", 0, 4, NumberHint::Float).unwrap(),
-            ParsedNumber::F64(3.14)
-        );
+        #[allow(clippy::approx_constant)]
+        {
+            assert_eq!(
+                parse_number(b"3.14", 0, 4, NumberHint::Float).unwrap(),
+                ParsedNumber::F64(3.14)
+            );
+        }
+    }
+}
+
+#[cfg(all(test, feature = "bolero-inline-tests"))]
+#[allow(clippy::while_let_loop, clippy::same_item_push)]
+mod fuzz_tests {
+    use super::*;
+    use bolero::check;
+
+    /// Fuzz the scanner with arbitrary bytes - it should never panic
+    #[test]
+    fn fuzz_scanner_arbitrary_bytes() {
+        check!().for_each(|input: &[u8]| {
+            let mut scanner = Scanner::new();
+            loop {
+                match scanner.next_token(input) {
+                    Ok(spanned) => {
+                        if matches!(spanned.token, Token::Eof | Token::NeedMore { .. }) {
+                            break;
+                        }
+                    }
+                    Err(_) => break, // Errors are fine, panics are not
+                }
+            }
+        });
+    }
+
+    /// Fuzz with valid JSON-like input - scanner should handle it
+    #[test]
+    fn fuzz_scanner_json_like() {
+        check!().for_each(|input: &[u8]| {
+            // Wrap input in array to make it more JSON-like
+            let mut wrapped = Vec::with_capacity(input.len() + 2);
+            wrapped.push(b'[');
+            wrapped.extend_from_slice(input);
+            wrapped.push(b']');
+
+            let mut scanner = Scanner::new();
+            loop {
+                match scanner.next_token(&wrapped) {
+                    Ok(spanned) => {
+                        if matches!(spanned.token, Token::Eof | Token::NeedMore { .. }) {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+
+    /// Fuzz string decoding - should never panic
+    #[test]
+    fn fuzz_decode_string() {
+        check!().for_each(|input: &[u8]| {
+            if input.len() >= 2 {
+                // Try decoding as if it were string content
+                let _ = decode_string_owned(input, 0, input.len());
+            }
+        });
+    }
+
+    /// Fuzz with strings that might have escapes
+    #[test]
+    fn fuzz_scanner_strings() {
+        check!().for_each(|content: &[u8]| {
+            // Build a quoted string
+            let mut input = Vec::with_capacity(content.len() + 2);
+            input.push(b'"');
+            input.extend_from_slice(content);
+            input.push(b'"');
+
+            let mut scanner = Scanner::new();
+            let _ = scanner.next_token(&input);
+        });
+    }
+
+    /// Fuzz with numbers of various formats
+    #[test]
+    fn fuzz_scanner_numbers() {
+        check!().for_each(|content: &[u8]| {
+            // Only try if it looks number-like (starts with digit or minus)
+            if !content.is_empty() && (content[0].is_ascii_digit() || content[0] == b'-') {
+                let mut scanner = Scanner::new();
+                let _ = scanner.next_token(content);
+            }
+        });
+    }
+
+    /// Fuzz number parsing directly
+    #[test]
+    fn fuzz_parse_number() {
+        check!().for_each(|input: &[u8]| {
+            if !input.is_empty() {
+                // Try all hints
+                let _ = parse_number(input, 0, input.len(), NumberHint::Unsigned);
+                let _ = parse_number(input, 0, input.len(), NumberHint::Signed);
+                let _ = parse_number(input, 0, input.len(), NumberHint::Float);
+            }
+        });
+    }
+
+    /// Fuzz with deeply nested structures
+    #[test]
+    fn fuzz_scanner_nested() {
+        check!().for_each(|input: &[u8]| {
+            // Use first byte as depth indicator
+            let depth = input.first().copied().unwrap_or(0) as usize % 100;
+            let mut nested = Vec::new();
+            for _ in 0..depth {
+                nested.push(b'[');
+            }
+            for _ in 0..depth {
+                nested.push(b']');
+            }
+
+            let mut scanner = Scanner::new();
+            loop {
+                match scanner.next_token(&nested) {
+                    Ok(spanned) => {
+                        if matches!(spanned.token, Token::Eof | Token::NeedMore { .. }) {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
     }
 }

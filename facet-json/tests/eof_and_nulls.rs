@@ -11,16 +11,16 @@ fn test_eof_errors() {
     // Empty input produces an unexpected token error (EOF)
     assert!(
         matches!(err.kind, JsonErrorKind::UnexpectedToken { .. })
-            || matches!(err.kind, JsonErrorKind::Token(_))
+            || matches!(err.kind, JsonErrorKind::Scan(_))
     );
 
     // Test partial input for various types
     let result = from_str::<String>("\"hello");
     let err = result.unwrap_err();
-    // Unterminated string should produce a tokenizer error
+    // Unterminated string should produce a scan error
     assert!(
-        matches!(err.kind, JsonErrorKind::Token(_))
-            || matches!(err.kind, JsonErrorKind::TokenWithContext { .. })
+        matches!(err.kind, JsonErrorKind::Scan(_))
+            || matches!(err.kind, JsonErrorKind::ScanWithContext { .. })
     );
 
     let result = from_str::<Vec<i32>>("[1, 2,");
@@ -28,16 +28,16 @@ fn test_eof_errors() {
     // Unexpected EOF in list produces an unexpected token error
     assert!(
         matches!(err.kind, JsonErrorKind::UnexpectedToken { .. })
-            || matches!(err.kind, JsonErrorKind::Token(_))
-            || matches!(err.kind, JsonErrorKind::TokenWithContext { .. })
+            || matches!(err.kind, JsonErrorKind::Scan(_))
+            || matches!(err.kind, JsonErrorKind::ScanWithContext { .. })
     );
 
     let result = from_str::<Vec<i32>>("[");
     let err = result.unwrap_err();
     assert!(
         matches!(err.kind, JsonErrorKind::UnexpectedToken { .. })
-            || matches!(err.kind, JsonErrorKind::Token(_))
-            || matches!(err.kind, JsonErrorKind::TokenWithContext { .. })
+            || matches!(err.kind, JsonErrorKind::Scan(_))
+            || matches!(err.kind, JsonErrorKind::ScanWithContext { .. })
     );
 
     // Test object with EOF after opening {
@@ -50,8 +50,8 @@ fn test_eof_errors() {
     let err = result.unwrap_err();
     assert!(
         matches!(err.kind, JsonErrorKind::UnexpectedToken { .. })
-            || matches!(err.kind, JsonErrorKind::Token(_))
-            || matches!(err.kind, JsonErrorKind::TokenWithContext { .. })
+            || matches!(err.kind, JsonErrorKind::Scan(_))
+            || matches!(err.kind, JsonErrorKind::ScanWithContext { .. })
     );
 
     // Test object with EOF after key
@@ -59,8 +59,8 @@ fn test_eof_errors() {
     let err = result.unwrap_err();
     assert!(
         matches!(err.kind, JsonErrorKind::UnexpectedToken { .. })
-            || matches!(err.kind, JsonErrorKind::Token(_))
-            || matches!(err.kind, JsonErrorKind::TokenWithContext { .. })
+            || matches!(err.kind, JsonErrorKind::Scan(_))
+            || matches!(err.kind, JsonErrorKind::ScanWithContext { .. })
     );
 
     // Test object with EOF after colon
@@ -68,16 +68,16 @@ fn test_eof_errors() {
     let err = result.unwrap_err();
     assert!(
         matches!(err.kind, JsonErrorKind::UnexpectedToken { .. })
-            || matches!(err.kind, JsonErrorKind::Token(_))
-            || matches!(err.kind, JsonErrorKind::TokenWithContext { .. })
+            || matches!(err.kind, JsonErrorKind::Scan(_))
+            || matches!(err.kind, JsonErrorKind::ScanWithContext { .. })
     );
 
     // Test string with escape followed by EOF
     let result = from_str::<String>("\"hello\\");
     let err = result.unwrap_err();
     assert!(
-        matches!(err.kind, JsonErrorKind::Token(_))
-            || matches!(err.kind, JsonErrorKind::TokenWithContext { .. })
+        matches!(err.kind, JsonErrorKind::Scan(_))
+            || matches!(err.kind, JsonErrorKind::ScanWithContext { .. })
     );
 }
 
@@ -97,10 +97,10 @@ fn test_null_handling() {
     // Test with invalid null value - "nul" starts with 'n' but isn't "null"
     let result = from_str::<Option<i32>>("nul");
     let err = result.unwrap_err();
-    // This should be a token error since "nul" isn't a valid token
+    // This should be a scan error since "nul" isn't a valid token
     assert!(
-        matches!(err.kind, JsonErrorKind::Token(_))
-            || matches!(err.kind, JsonErrorKind::TokenWithContext { .. })
+        matches!(err.kind, JsonErrorKind::Scan(_))
+            || matches!(err.kind, JsonErrorKind::ScanWithContext { .. })
     );
 
     // Test with correct null handling

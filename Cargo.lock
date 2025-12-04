@@ -729,6 +729,7 @@ name = "facet-json"
 version = "0.31.0"
 dependencies = [
  "axum-core",
+ "bolero",
  "boxen",
  "bytes",
  "camino",
@@ -743,6 +744,7 @@ dependencies = [
  "facet-testhelpers",
  "facet-value",
  "flate2",
+ "futures-io",
  "http",
  "http-body-util",
  "insta",
@@ -759,6 +761,7 @@ dependencies = [
  "strsim",
  "syntect",
  "time",
+ "tokio",
  "ulid",
  "uuid",
 ]
@@ -1104,6 +1107,12 @@ name = "futures-core"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f29059c0c2090612e8d742178b0580d2dc940c837851ad723096f87af6663e"
+
+[[package]]
+name = "futures-io"
+version = "0.3.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e5c1b78ca4aae1ac06c48a526a655760685149f0d465d21f37abfe57ce075c6"
 
 [[package]]
 name = "futures-task"
@@ -2640,6 +2649,7 @@ version = "1.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff360e02eab121e0bc37a2d3b4d4dc622e6eda3a8e5253d5435ecf5bd4c68408"
 dependencies = [
+ "bytes",
  "libc",
  "mio",
  "pin-project-lite",
