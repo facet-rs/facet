@@ -160,5 +160,20 @@ facet::define_attr_grammar! {
         Text,
         /// Marks a field as storing the XML element name dynamically
         ElementName,
+        /// Specifies the XML namespace URI for this field.
+        ///
+        /// Usage: `#[facet(xml::ns = "http://example.com/ns")]`
+        ///
+        /// When deserializing, the field will only match elements/attributes
+        /// in the specified namespace. When serializing, the element/attribute
+        /// will be emitted with the appropriate namespace prefix.
+        Ns(&'static str),
+        /// Specifies the default XML namespace URI for all fields in this container.
+        ///
+        /// Usage: `#[facet(xml::ns_all = "http://example.com/ns")]`
+        ///
+        /// This sets the default namespace for all fields that don't have their own
+        /// `xml::ns` attribute. Individual fields can override this with `xml::ns`.
+        NsAll(&'static str),
     }
 }
