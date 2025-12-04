@@ -17,8 +17,9 @@ std = ["alloc", "facet-core/std", "facet-reflect/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 default = ["std"]
 axum = ["std", "dep:axum-core", "dep:bytes", "dep:http", "dep:http-body-util", "dep:mime"]
-tokio = ["std", "dep:tokio"]
-futures-io = ["std", "dep:futures-io"]
+tokio = ["std", "dep:tokio", "streaming"]
+futures-io = ["std", "dep:futures-io", "streaming"]
+streaming = ["std", "dep:corosensei"]
 bolero-inline-tests = ["std"]
 
 [dependencies]
@@ -47,6 +48,9 @@ tokio = { version = "1", optional = true, features = ["io-util"] }
 
 # Futures-io integration (optional) - for smol, async-std, etc.
 futures-io = { version = "0.3", optional = true }
+
+# Stackful coroutines for streaming deserialization
+corosensei = { version = "0.3", optional = true }
 
 [dev-dependencies]
 bolero = "0.11"

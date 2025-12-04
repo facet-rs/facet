@@ -206,6 +206,8 @@ pub enum JsonErrorKind {
     InvalidUtf8,
     /// Solver error (for flattened types)
     Solver(String),
+    /// I/O error (for streaming deserialization)
+    Io(String),
 }
 
 impl Display for JsonErrorKind {
@@ -253,6 +255,7 @@ impl Display for JsonErrorKind {
             }
             JsonErrorKind::InvalidUtf8 => write!(f, "invalid UTF-8 sequence"),
             JsonErrorKind::Solver(msg) => write!(f, "solver error: {msg}"),
+            JsonErrorKind::Io(msg) => write!(f, "I/O error: {msg}"),
         }
     }
 }
@@ -274,6 +277,7 @@ impl JsonErrorKind {
             JsonErrorKind::DuplicateKey { .. } => "json::duplicate_key",
             JsonErrorKind::InvalidUtf8 => "json::invalid_utf8",
             JsonErrorKind::Solver(_) => "json::solver",
+            JsonErrorKind::Io(_) => "json::io",
         }
     }
 
@@ -322,6 +326,7 @@ impl JsonErrorKind {
             JsonErrorKind::DuplicateKey { key } => format!("duplicate key '{key}'"),
             JsonErrorKind::InvalidUtf8 => "invalid UTF-8".into(),
             JsonErrorKind::Solver(_) => "solver error".into(),
+            JsonErrorKind::Io(_) => "I/O error".into(),
         }
     }
 }
@@ -379,49 +384,50 @@ fn is_spanned_shape(shape: &Shape) -> bool {
 // Deserializer
 // ============================================================================
 
+use crate::adapter::TokenSource;
+
 /// JSON deserializer using recursive descent.
 ///
-/// The const generic `BORROW` controls string handling:
-/// - `BORROW=true`: strings without escapes are borrowed from input
+/// Generic over a token source `A` which must implement `TokenSource<'input>`.
+/// The const generic `BORROW` controls whether string data can be borrowed:
+/// - `BORROW=true`: strings without escapes are borrowed from input (for slice-based parsing)
 /// - `BORROW=false`: all strings are owned (for streaming or owned output)
-pub struct JsonDeserializer<'input, const BORROW: bool> {
-    input: &'input [u8],
-    adapter: SliceAdapter<'input, BORROW>,
+///
+/// For slice-based parsing, use `SliceAdapter<'input, BORROW>`.
+/// For streaming parsing, use `StreamingAdapter` with `BORROW=false`.
+pub struct JsonDeserializer<'input, const BORROW: bool, A: TokenSource<'input>> {
+    adapter: A,
     /// Peeked token (for lookahead)
     peeked: Option<SpannedAdapterToken<'input>>,
 }
 
-impl<'input> JsonDeserializer<'input, true> {
+impl<'input> JsonDeserializer<'input, true, SliceAdapter<'input, true>> {
     /// Create a new deserializer for the given input.
     /// Strings without escapes will be borrowed from input.
     pub fn new(input: &'input [u8]) -> Self {
         JsonDeserializer {
-            input,
             adapter: SliceAdapter::new(input),
             peeked: None,
         }
     }
 }
 
-impl<'input> JsonDeserializer<'input, false> {
+impl<'input> JsonDeserializer<'input, false, SliceAdapter<'input, false>> {
     /// Create a new deserializer that produces owned strings.
     /// Use this when deserializing into owned types from temporary buffers.
     pub fn new_owned(input: &'input [u8]) -> Self {
         JsonDeserializer {
-            input,
             adapter: SliceAdapter::new(input),
             peeked: None,
         }
     }
 }
 
-impl<'input, const BORROW: bool> JsonDeserializer<'input, BORROW> {
-    /// Create a sub-deserializer starting from a specific byte offset.
-    /// Used for replaying deferred values during flatten deserialization.
-    fn from_offset(input: &'input [u8], offset: usize) -> Self {
+impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input, BORROW, A> {
+    /// Create a deserializer from an existing adapter.
+    pub fn from_adapter(adapter: A) -> Self {
         JsonDeserializer {
-            input,
-            adapter: SliceAdapter::new(&input[offset..]),
+            adapter,
             peeked: None,
         }
     }
@@ -531,7 +537,17 @@ impl<'input, const BORROW: bool> JsonDeserializer<'input, BORROW> {
     ///
     /// This skips the value while tracking its full span, then returns
     /// the raw JSON text.
+    ///
+    /// Note: This requires the adapter to provide input bytes (slice-based parsing).
+    /// For streaming adapters, this will return an error.
     fn capture_raw_value(&mut self) -> Result<&'input str> {
+        // Check if we have access to input bytes
+        let input = self.adapter.input_bytes().ok_or_else(|| {
+            JsonError::without_span(JsonErrorKind::InvalidValue {
+                message: "RawJson capture is not supported in streaming mode".into(),
+            })
+        })?;
+
         let token = self.next()?;
         let start_offset = token.span.offset;
 
@@ -587,7 +603,7 @@ impl<'input, const BORROW: bool> JsonDeserializer<'input, BORROW> {
         };
 
         // Extract the raw bytes and convert to str
-        let raw_bytes = &self.input[start_offset..end_offset];
+        let raw_bytes = &input[start_offset..end_offset];
         core::str::from_utf8(raw_bytes).map_err(|e| {
             JsonError::without_span(JsonErrorKind::InvalidValue {
                 message: format!("invalid UTF-8 in raw JSON: {e}"),
@@ -1771,7 +1787,14 @@ impl<'input, const BORROW: bool> JsonDeserializer<'input, BORROW> {
             }
 
             // Create sub-deserializer and deserialize the value
-            let mut sub = Self::from_offset(self.input, offset);
+            // Note: This requires the adapter to support at_offset (slice-based parsing).
+            // For streaming adapters, flatten is not supported.
+            let sub_adapter = self.adapter.at_offset(offset).ok_or_else(|| {
+                JsonError::without_span(JsonErrorKind::InvalidValue {
+                    message: "flatten is not supported in streaming mode".into(),
+                })
+            })?;
+            let mut sub = Self::from_adapter(sub_adapter);
 
             if ends_with_variant {
                 wip = sub.deserialize_variant_struct_content(wip)?;
