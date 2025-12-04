@@ -9,8 +9,8 @@ pub use facet_reflect::{Span, Spanned};
 
 mod deserialize;
 pub use deserialize::{
-    JsonDeserializer, JsonError, JsonErrorKind, from_slice, from_slice_owned, from_str,
-    from_str_owned,
+    JsonDeserializer, JsonError, JsonErrorKind, from_slice, from_slice_borrowed, from_str,
+    from_str_borrowed,
 };
 
 mod serialize;

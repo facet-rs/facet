@@ -2643,25 +2643,35 @@ impl<'input> JsonDeserializer<'input> {
 // Public API
 // ============================================================================
 
-/// Deserialize JSON from a byte slice.
+/// Deserialize JSON from a byte slice into an owned type.
+///
+/// This is the recommended default for most use cases. The input does not need
+/// to outlive the result, making it suitable for deserializing from temporary
+/// buffers (e.g., HTTP request bodies).
+///
+/// Types containing `&str` fields cannot be deserialized with this function;
+/// use `String` or `Cow<str>` instead. For zero-copy deserialization into
+/// borrowed types, use [`from_slice_borrowed`].
 ///
 /// Note: For rich error diagnostics with source code display, prefer [`from_str`]
 /// which can attach the source string to errors.
-pub fn from_slice<'input, 'facet, T: Facet<'facet>>(input: &'input [u8]) -> Result<T>
-where
-    'input: 'facet,
-{
+pub fn from_slice<T: Facet<'static>>(input: &[u8]) -> Result<T> {
     from_slice_inner(input, None)
 }
 
-/// Deserialize JSON from a UTF-8 string slice.
+/// Deserialize JSON from a UTF-8 string slice into an owned type.
+///
+/// This is the recommended default for most use cases. The input does not need
+/// to outlive the result, making it suitable for deserializing from temporary
+/// buffers (e.g., HTTP request bodies).
+///
+/// Types containing `&str` fields cannot be deserialized with this function;
+/// use `String` or `Cow<str>` instead. For zero-copy deserialization into
+/// borrowed types, use [`from_str_borrowed`].
 ///
 /// Errors from this function include source code context for rich diagnostic display
 /// when using [`miette`]'s reporting features.
-pub fn from_str<'input, 'facet, T: Facet<'facet>>(input: &'input str) -> Result<T>
-where
-    'input: 'facet,
-{
+pub fn from_str<T: Facet<'static>>(input: &str) -> Result<T> {
     let input_bytes = input.as_bytes();
 
     // Handle BOM
@@ -2671,7 +2681,49 @@ where
     from_slice_inner(input_bytes, Some(input))
 }
 
-fn from_slice_inner<'input, 'facet, T: Facet<'facet>>(
+/// Deserialize JSON from a byte slice, allowing zero-copy borrowing.
+///
+/// This variant requires the input to outlive the result (`'input: 'facet`),
+/// enabling zero-copy deserialization of string fields as `&str`.
+///
+/// Use this when you need maximum performance and can guarantee the input
+/// buffer outlives the deserialized value. For most use cases, prefer
+/// [`from_slice`] which doesn't have lifetime requirements.
+///
+/// Note: For rich error diagnostics with source code display, prefer [`from_str_borrowed`]
+/// which can attach the source string to errors.
+pub fn from_slice_borrowed<'input, 'facet, T: Facet<'facet>>(input: &'input [u8]) -> Result<T>
+where
+    'input: 'facet,
+{
+    from_slice_borrowed_inner(input, None)
+}
+
+/// Deserialize JSON from a UTF-8 string slice, allowing zero-copy borrowing.
+///
+/// This variant requires the input to outlive the result (`'input: 'facet`),
+/// enabling zero-copy deserialization of string fields as `&str`.
+///
+/// Use this when you need maximum performance and can guarantee the input
+/// buffer outlives the deserialized value. For most use cases, prefer
+/// [`from_str`] which doesn't have lifetime requirements.
+///
+/// Errors from this function include source code context for rich diagnostic display
+/// when using [`miette`]'s reporting features.
+pub fn from_str_borrowed<'input, 'facet, T: Facet<'facet>>(input: &'input str) -> Result<T>
+where
+    'input: 'facet,
+{
+    let input_bytes = input.as_bytes();
+
+    // Handle BOM
+    if input_bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
+        return from_slice_borrowed_inner(&input_bytes[3..], Some(&input[3..]));
+    }
+    from_slice_borrowed_inner(input_bytes, Some(input))
+}
+
+fn from_slice_borrowed_inner<'input, 'facet, T: Facet<'facet>>(
     input: &'input [u8],
     source: Option<&str>,
 ) -> Result<T>
@@ -2725,38 +2777,7 @@ where
     })
 }
 
-/// Deserialize JSON from a byte slice into an owned type.
-///
-/// This variant does not require the input to outlive the result, making it
-/// suitable for deserializing from temporary buffers (e.g., HTTP request bodies).
-///
-/// Types containing `&str` fields cannot be deserialized with this function;
-/// use `String` or `Cow<str>` instead.
-pub fn from_slice_owned<T: Facet<'static>>(input: &[u8]) -> Result<T> {
-    from_slice_owned_inner(input, None)
-}
-
-/// Deserialize JSON from a UTF-8 string slice into an owned type.
-///
-/// This variant does not require the input to outlive the result, making it
-/// suitable for deserializing from temporary buffers (e.g., HTTP request bodies).
-///
-/// Types containing `&str` fields cannot be deserialized with this function;
-/// use `String` or `Cow<str>` instead.
-///
-/// Errors from this function include source code context for rich diagnostic display
-/// when using [`miette`]'s reporting features.
-pub fn from_str_owned<T: Facet<'static>>(input: &str) -> Result<T> {
-    let input_bytes = input.as_bytes();
-
-    // Handle BOM
-    if input_bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
-        return from_slice_owned_inner(&input_bytes[3..], Some(&input[3..]));
-    }
-    from_slice_owned_inner(input_bytes, Some(input))
-}
-
-fn from_slice_owned_inner<T: Facet<'static>>(input: &[u8], source: Option<&str>) -> Result<T> {
+fn from_slice_inner<T: Facet<'static>>(input: &[u8], source: Option<&str>) -> Result<T> {
     // We need to work around the lifetime constraints in the deserialization machinery.
     // The deserializer and Partial are parameterized by 'input (the input slice lifetime),
     // but we want to produce a T: Facet<'static> that doesn't borrow from input.
