@@ -1,5 +1,5 @@
 use crate::format::{format_value, format_value_with_spans};
-use crate::{value, VArray, VObject, Value};
+use crate::{VArray, VObject, Value, value};
 
 fn json_to_value(json: &serde_json::Value) -> Value {
     match json {
@@ -87,7 +87,13 @@ fn facet_pretty_formatting_preserves_inline_strings() {
         "pretty output should include inline literal"
     );
 
-    let arr = value.as_object().unwrap().get("view").unwrap().as_array().unwrap();
+    let arr = value
+        .as_object()
+        .unwrap()
+        .get("view")
+        .unwrap()
+        .as_array()
+        .unwrap();
     for entry in arr.iter() {
         assert!(
             entry.is_inline_string(),
