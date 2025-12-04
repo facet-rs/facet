@@ -235,8 +235,7 @@ fn test_skip_serializing_if_none() -> Result<()> {
 fn test_skip_serializing_if_custom_predicate() -> Result<()> {
     facet_testhelpers::setup();
 
-    #[allow(clippy::ptr_arg)] // see https://github.com/facet-rs/facet/issues/1036
-    fn is_empty(s: &String) -> bool {
+    fn is_empty(s: &str) -> bool {
         s.is_empty()
     }
 
