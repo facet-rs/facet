@@ -183,8 +183,8 @@ where
             .map_err(axum_core::Error::new)?
             .to_bytes();
 
-        // Deserialize using from_slice_owned to get an owned value
-        let value: T = crate::from_slice_owned(&bytes)?;
+        // Deserialize using from_slice to get an owned value
+        let value: T = crate::from_slice(&bytes)?;
 
         Ok(Json(value))
     }
