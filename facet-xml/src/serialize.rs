@@ -596,7 +596,7 @@ impl<W: Write> XmlSerializer<W> {
         // Write attributes (with prefix if namespaced)
         for (attr, prefix) in attributes.iter().zip(attr_prefixes.iter()) {
             let attr_name = if let Some(p) = prefix {
-                format!("{}:{}", p, attr.name)
+                format!("{p}:{}", attr.name)
             } else {
                 attr.name.to_string()
             };
@@ -683,7 +683,7 @@ impl<W: Write> XmlSerializer<W> {
         // because XML namespace scope is limited to the element and its descendants.
         let (prefixed_name, xmlns_decl) = if let Some(ns_uri) = namespace {
             let prefix = self.get_or_create_prefix(ns_uri);
-            let prefixed = format!("{}:{}", prefix, element_name);
+            let prefixed = format!("{prefix}:{element_name}");
             // Always emit xmlns declaration on this element
             (prefixed, Some((prefix, ns_uri.to_string())))
         } else {
@@ -912,7 +912,7 @@ impl<W: Write> XmlSerializer<W> {
         // Write attributes
         for (attr, prefix) in attributes.iter().zip(attr_prefixes.iter()) {
             let attr_name = if let Some(p) = prefix {
-                format!("{}:{}", p, attr.name)
+                format!("{p}:{}", attr.name)
             } else {
                 attr.name.to_string()
             };
