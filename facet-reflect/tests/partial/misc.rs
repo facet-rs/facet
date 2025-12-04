@@ -80,7 +80,6 @@ fn readme_sample() -> Result<(), IPanic> {
 enum SimpleEnum {
     A,
     B,
-    #[expect(dead_code)]
     C,
 }
 
