@@ -186,6 +186,16 @@ fn format_value_into(ctx: &mut FormatContext, value: &Value, current_path: &[Pat
             // Format using Debug which produces ISO 8601 format
             let _ = write!(ctx.output, "{dt:?}");
         }
+        ValueType::QName => {
+            let qname = value.as_qname().unwrap();
+            // Format using Debug which produces {namespace}local_name format
+            let _ = write!(ctx.output, "{qname:?}");
+        }
+        ValueType::Uuid => {
+            let uuid = value.as_uuid().unwrap();
+            // Format using Debug which produces standard UUID format
+            let _ = write!(ctx.output, "{uuid:?}");
+        }
     }
 
     let end = ctx.len();

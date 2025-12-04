@@ -179,6 +179,8 @@ unsafe fn dyn_get_kind(value: PtrConst<'_>) -> DynValueKind {
             crate::ValueType::Array => DynValueKind::Array,
             crate::ValueType::Object => DynValueKind::Object,
             crate::ValueType::DateTime => DynValueKind::DateTime,
+            crate::ValueType::QName => DynValueKind::QName,
+            crate::ValueType::Uuid => DynValueKind::Uuid,
         }
     }
 }
