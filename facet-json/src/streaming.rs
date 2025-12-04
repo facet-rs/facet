@@ -318,7 +318,7 @@ impl SpannedStreamingToken {
 /// This adapter is used inside the coroutine. When it needs more data, it
 /// suspends the coroutine via the yielder, and the driver refills the buffer.
 pub struct StreamingAdapter<'y> {
-    /// Shared buffer (via Rc<RefCell>)
+    /// Shared buffer (via `Rc<RefCell>`)
     buffer: Rc<RefCell<ScanBuffer>>,
     /// Yielder to suspend coroutine when more data needed
     yielder: &'y corosensei::Yielder<(), ()>,
