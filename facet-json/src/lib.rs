@@ -16,12 +16,27 @@ pub use deserialize::{
 mod serialize;
 pub use serialize::*;
 
-mod tokenizer;
-
 mod scanner;
 pub use scanner::{
     NumberHint, ScanError, ScanErrorKind, Scanner, SpannedToken, Token as ScanToken,
 };
+
+mod adapter;
+pub use adapter::{
+    AdapterError, AdapterErrorKind, SliceAdapter, SpannedAdapterToken, Token as AdapterToken,
+};
+
+mod scan_buffer;
+pub use scan_buffer::ScanBuffer;
+
+#[cfg(feature = "std")]
+mod reader;
+#[cfg(feature = "tokio")]
+pub use reader::AsyncJsonReader;
+#[cfg(feature = "futures-io")]
+pub use reader::FuturesJsonReader;
+#[cfg(feature = "std")]
+pub use reader::{JsonReader, JsonToken, ReaderError, SpannedJsonToken};
 
 mod raw_json;
 pub use raw_json::RawJson;

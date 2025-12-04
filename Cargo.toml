@@ -72,3 +72,10 @@ proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "parsing", "printing"] }
 strsim = "0.11"
+
+# Fuzzing profile for cargo-bolero
+[profile.fuzz]
+inherits = "dev"
+opt-level = 3
+incremental = false
+codegen-units = 1

@@ -17,6 +17,9 @@ std = ["alloc", "facet-core/std", "facet-reflect/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 default = ["std"]
 axum = ["std", "dep:axum-core", "dep:bytes", "dep:http", "dep:http-body-util", "dep:mime"]
+tokio = ["std", "dep:tokio"]
+futures-io = ["std", "dep:futures-io"]
+bolero-inline-tests = ["std"]
 
 [dependencies]
 facet = { path = "../facet", default-features = false }
@@ -39,7 +42,14 @@ http = { version = "1", optional = true }
 http-body-util = { version = "0.1", optional = true }
 mime = { version = "0.3", optional = true }
 
+# Tokio integration (optional)
+tokio = { version = "1", optional = true, features = ["io-util"] }
+
+# Futures-io integration (optional) - for smol, async-std, etc.
+futures-io = { version = "0.3", optional = true }
+
 [dev-dependencies]
+bolero = "0.11"
 bytes = { version = "1.10.1" }
 camino = { version = "1" }
 facet-value = { path = "../facet-value" }
@@ -70,6 +80,7 @@ cargo-husky = { version = "1.5.0", default-features = false, features = [
 ] }
 owo-colors = "4"
 boxen = "0.1"
+tokio = { version = "1", features = ["io-util", "rt", "macros"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"jiff\"))"] }
