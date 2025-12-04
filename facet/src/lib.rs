@@ -80,7 +80,7 @@ pub mod builtin {
             /// Stores a function pointer that produces the default value in-place.
             ///
             /// Usage: `#[facet(default)]` (uses Default trait) or `#[facet(default = expr)]`
-            Default(make_t),
+            Default(make_t or $ty::default()),
 
             /// Skips both serialization and deserialization of this field.
             ///

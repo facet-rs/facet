@@ -207,7 +207,7 @@ struct RssFeed {
     channel: RssChannel,
 }
 
-#[derive(Facet, Debug, PartialEq)]
+#[derive(Facet, Debug, PartialEq, Default)]
 struct RssChannel {
     #[facet(default, xml::element)]
     title: String,
@@ -289,7 +289,7 @@ struct AndroidPermission {
     name: String,
 }
 
-#[derive(Facet, Debug, PartialEq)]
+#[derive(Facet, Debug, PartialEq, Default)]
 struct AndroidApplication {
     #[facet(default, xml::attribute, rename = "android:label")]
     label: Option<String>,
@@ -470,7 +470,7 @@ struct XhtmlDocument {
     body: XhtmlBody,
 }
 
-#[derive(Facet, Debug, PartialEq)]
+#[derive(Facet, Debug, PartialEq, Default)]
 struct XhtmlHead {
     #[facet(default, xml::element)]
     title: String,
@@ -502,7 +502,7 @@ struct XhtmlLink {
     link_type: Option<String>,
 }
 
-#[derive(Facet, Debug, PartialEq)]
+#[derive(Facet, Debug, PartialEq, Default)]
 struct XhtmlBody {
     #[facet(default, xml::attribute)]
     class: Option<String>,
