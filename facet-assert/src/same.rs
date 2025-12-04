@@ -752,6 +752,17 @@ impl Differ {
                     CheckResult::Different
                 }
             }
+            DynValueKind::QName | DynValueKind::Uuid => {
+                // For now, QName and Uuid are compared by formatted representation
+                let dyn_str = Self::format_value(dyn_peek);
+                let other_str = Self::format_value(other);
+                if dyn_str == other_str {
+                    CheckResult::Same
+                } else {
+                    self.record_changed(dyn_peek, other);
+                    CheckResult::Different
+                }
+            }
         }
     }
 

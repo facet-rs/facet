@@ -428,6 +428,11 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     Diff::Replace { from, to }
                 }
             }
+            DynValueKind::QName | DynValueKind::Uuid => {
+                // For QName and Uuid, compare by their raw representation
+                // Since they have the same kind, we can only compare by Replace semantics
+                Diff::Replace { from, to }
+            }
         }
     }
 

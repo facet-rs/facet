@@ -236,6 +236,10 @@ pub enum DynValueKind {
     Object,
     /// DateTime value
     DateTime,
+    /// Qualified name (namespace + local name)
+    QName,
+    /// UUID (128-bit universally unique identifier)
+    Uuid,
 }
 
 /// Get the kind of value stored.

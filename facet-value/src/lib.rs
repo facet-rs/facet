@@ -47,6 +47,9 @@ pub use object::*;
 mod datetime;
 pub use datetime::*;
 
+mod other;
+pub use other::{OtherKind, VQName, VUuid};
+
 #[cfg(feature = "alloc")]
 mod facet_impl;
 #[cfg(feature = "alloc")]

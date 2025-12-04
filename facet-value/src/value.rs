@@ -55,6 +55,7 @@ use crate::bytes::VBytes;
 use crate::datetime::VDateTime;
 use crate::number::VNumber;
 use crate::object::VObject;
+use crate::other::{OtherKind, VQName, VUuid, get_other_kind};
 use crate::string::{VSafeString, VString};
 
 /// Alignment for heap-allocated values. Using 8-byte alignment gives us 3 tag bits.
@@ -78,12 +79,13 @@ pub(crate) enum TypeTag {
     DateTime = 5,
     /// Inline short string payload (data encoded directly in the pointer bits)
     InlineString = 6,
-    // Tag 7 reserved for future use
+    /// Extensible "Other" types with secondary discriminant on the heap
+    Other = 7,
 }
 
 impl From<usize> for TypeTag {
     fn from(other: usize) -> Self {
-        // Safety: We mask to 3 bits, and only use valid values 0-6
+        // Safety: We mask to 3 bits, values 0-7 are all valid
         match other & 0b111 {
             0 => TypeTag::Number,
             1 => TypeTag::StringOrNull,
@@ -92,13 +94,13 @@ impl From<usize> for TypeTag {
             4 => TypeTag::Object,
             5 => TypeTag::DateTime,
             6 => TypeTag::InlineString,
-            // Invalid tags shouldn't occur if we maintain invariants
-            _ => TypeTag::Number, // fallback
+            7 => TypeTag::Other,
+            _ => unreachable!(),
         }
     }
 }
 
-/// Enum distinguishing the eight value types.
+/// Enum distinguishing the value types.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ValueType {
     /// Null value
@@ -117,6 +119,10 @@ pub enum ValueType {
     Object,
     /// DateTime (offset, local datetime, local date, or local time)
     DateTime,
+    /// Qualified name (namespace + local name, for XML namespaces)
+    QName,
+    /// UUID (128-bit universally unique identifier)
+    Uuid,
 }
 
 /// A dynamic value that can represent null, booleans, numbers, strings, bytes, arrays, or objects.
@@ -259,6 +265,13 @@ impl Value {
             (TypeTag::Object, false) => ValueType::Object,
             (TypeTag::DateTime, false) => ValueType::DateTime,
             (TypeTag::InlineString, false) => ValueType::String,
+            (TypeTag::Other, false) => {
+                // Read secondary discriminant from heap
+                match unsafe { get_other_kind(self) } {
+                    OtherKind::QName => ValueType::QName,
+                    OtherKind::Uuid => ValueType::Uuid,
+                }
+            }
 
             // Inline values
             (TypeTag::StringOrNull, true) => ValueType::Null,
@@ -267,9 +280,12 @@ impl Value {
             (TypeTag::InlineString, true) => ValueType::String,
 
             // Invalid states (shouldn't happen)
-            (TypeTag::Number, true) | (TypeTag::Object, true) | (TypeTag::DateTime, true) => {
+            (TypeTag::Number, true)
+            | (TypeTag::Object, true)
+            | (TypeTag::DateTime, true)
+            | (TypeTag::Other, true) => {
                 // These tags require heap pointers
-                unreachable!("invalid inline value with Number, Object, or DateTime tag")
+                unreachable!("invalid inline value with Number, Object, DateTime, or Other tag")
             }
         }
     }
@@ -336,6 +352,18 @@ impl Value {
     #[must_use]
     pub fn is_datetime(&self) -> bool {
         self.type_tag() == TypeTag::DateTime && !self.is_inline()
+    }
+
+    /// Returns `true` if this is a qualified name.
+    #[must_use]
+    pub fn is_qname(&self) -> bool {
+        self.value_type() == ValueType::QName
+    }
+
+    /// Returns `true` if this is a UUID.
+    #[must_use]
+    pub fn is_uuid(&self) -> bool {
+        self.value_type() == ValueType::Uuid
     }
 
     // === Conversions to concrete types ===
@@ -492,6 +520,44 @@ impl Value {
         }
     }
 
+    /// Gets a reference to this value as a `VQName`. Returns `None` if not a qualified name.
+    #[must_use]
+    pub fn as_qname(&self) -> Option<&VQName> {
+        if self.is_qname() {
+            Some(unsafe { &*(self as *const Value as *const VQName) })
+        } else {
+            None
+        }
+    }
+
+    /// Gets a mutable reference to this value as a `VQName`.
+    pub fn as_qname_mut(&mut self) -> Option<&mut VQName> {
+        if self.is_qname() {
+            Some(unsafe { &mut *(self as *mut Value as *mut VQName) })
+        } else {
+            None
+        }
+    }
+
+    /// Gets a reference to this value as a `VUuid`. Returns `None` if not a UUID.
+    #[must_use]
+    pub fn as_uuid(&self) -> Option<&VUuid> {
+        if self.is_uuid() {
+            Some(unsafe { &*(self as *const Value as *const VUuid) })
+        } else {
+            None
+        }
+    }
+
+    /// Gets a mutable reference to this value as a `VUuid`.
+    pub fn as_uuid_mut(&mut self) -> Option<&mut VUuid> {
+        if self.is_uuid() {
+            Some(unsafe { &mut *(self as *mut Value as *mut VUuid) })
+        } else {
+            None
+        }
+    }
+
     /// Takes this value, replacing it with `Value::NULL`.
     pub fn take(&mut self) -> Value {
         mem::replace(self, Value::NULL)
@@ -513,6 +579,8 @@ impl Clone for Value {
             ValueType::Array => unsafe { self.as_array().unwrap_unchecked() }.clone_impl(),
             ValueType::Object => unsafe { self.as_object().unwrap_unchecked() }.clone_impl(),
             ValueType::DateTime => unsafe { self.as_datetime().unwrap_unchecked() }.clone_impl(),
+            ValueType::QName => unsafe { self.as_qname().unwrap_unchecked() }.clone_impl(),
+            ValueType::Uuid => unsafe { self.as_uuid().unwrap_unchecked() }.clone_impl(),
         }
     }
 }
@@ -531,6 +599,8 @@ impl Drop for Value {
             ValueType::Array => unsafe { self.as_array_mut().unwrap_unchecked() }.drop_impl(),
             ValueType::Object => unsafe { self.as_object_mut().unwrap_unchecked() }.drop_impl(),
             ValueType::DateTime => unsafe { self.as_datetime_mut().unwrap_unchecked() }.drop_impl(),
+            ValueType::QName => unsafe { self.as_qname_mut().unwrap_unchecked() }.drop_impl(),
+            ValueType::Uuid => unsafe { self.as_uuid_mut().unwrap_unchecked() }.drop_impl(),
         }
     }
 }
@@ -563,6 +633,12 @@ impl PartialEq for Value {
             },
             ValueType::DateTime => unsafe {
                 self.as_datetime().unwrap_unchecked() == other.as_datetime().unwrap_unchecked()
+            },
+            ValueType::QName => unsafe {
+                self.as_qname().unwrap_unchecked() == other.as_qname().unwrap_unchecked()
+            },
+            ValueType::Uuid => unsafe {
+                self.as_uuid().unwrap_unchecked() == other.as_uuid().unwrap_unchecked()
             },
         }
     }
@@ -615,6 +691,15 @@ impl PartialOrd for Value {
                     .unwrap_unchecked()
                     .partial_cmp(other.as_datetime().unwrap_unchecked())
             },
+            // QNames don't have a natural ordering
+            ValueType::QName => None,
+            // UUIDs can be compared by their byte representation
+            ValueType::Uuid => unsafe {
+                self.as_uuid()
+                    .unwrap_unchecked()
+                    .as_bytes()
+                    .partial_cmp(other.as_uuid().unwrap_unchecked().as_bytes())
+            },
         }
     }
 }
@@ -635,6 +720,8 @@ impl Hash for Value {
             ValueType::Array => unsafe { self.as_array().unwrap_unchecked() }.hash(state),
             ValueType::Object => unsafe { self.as_object().unwrap_unchecked() }.hash(state),
             ValueType::DateTime => unsafe { self.as_datetime().unwrap_unchecked() }.hash(state),
+            ValueType::QName => unsafe { self.as_qname().unwrap_unchecked() }.hash(state),
+            ValueType::Uuid => unsafe { self.as_uuid().unwrap_unchecked() }.hash(state),
         }
     }
 }
@@ -652,6 +739,8 @@ impl Debug for Value {
             ValueType::Array => Debug::fmt(unsafe { self.as_array().unwrap_unchecked() }, f),
             ValueType::Object => Debug::fmt(unsafe { self.as_object().unwrap_unchecked() }, f),
             ValueType::DateTime => Debug::fmt(unsafe { self.as_datetime().unwrap_unchecked() }, f),
+            ValueType::QName => Debug::fmt(unsafe { self.as_qname().unwrap_unchecked() }, f),
+            ValueType::Uuid => Debug::fmt(unsafe { self.as_uuid().unwrap_unchecked() }, f),
         }
     }
 }
@@ -718,6 +807,10 @@ pub enum Destructured {
     Object(VObject),
     /// DateTime value
     DateTime(VDateTime),
+    /// Qualified name value
+    QName(VQName),
+    /// UUID value
+    Uuid(VUuid),
 }
 
 /// Enum for destructuring a `Value` by reference.
@@ -739,6 +832,10 @@ pub enum DestructuredRef<'a> {
     Object(&'a VObject),
     /// DateTime value
     DateTime(&'a VDateTime),
+    /// Qualified name value
+    QName(&'a VQName),
+    /// UUID value
+    Uuid(&'a VUuid),
 }
 
 /// Enum for destructuring a `Value` by mutable reference.
@@ -760,6 +857,10 @@ pub enum DestructuredMut<'a> {
     Object(&'a mut VObject),
     /// DateTime value
     DateTime(&'a mut VDateTime),
+    /// Qualified name value
+    QName(&'a mut VQName),
+    /// UUID value
+    Uuid(&'a mut VUuid),
 }
 
 impl Value {
@@ -775,6 +876,8 @@ impl Value {
             ValueType::Array => Destructured::Array(VArray(self)),
             ValueType::Object => Destructured::Object(VObject(self)),
             ValueType::DateTime => Destructured::DateTime(VDateTime(self)),
+            ValueType::QName => Destructured::QName(VQName(self)),
+            ValueType::Uuid => Destructured::Uuid(VUuid(self)),
         }
     }
 
@@ -802,6 +905,10 @@ impl Value {
             ValueType::DateTime => {
                 DestructuredRef::DateTime(unsafe { self.as_datetime().unwrap_unchecked() })
             }
+            ValueType::QName => {
+                DestructuredRef::QName(unsafe { self.as_qname().unwrap_unchecked() })
+            }
+            ValueType::Uuid => DestructuredRef::Uuid(unsafe { self.as_uuid().unwrap_unchecked() }),
         }
     }
 
@@ -827,6 +934,12 @@ impl Value {
             }
             ValueType::DateTime => {
                 DestructuredMut::DateTime(unsafe { self.as_datetime_mut().unwrap_unchecked() })
+            }
+            ValueType::QName => {
+                DestructuredMut::QName(unsafe { self.as_qname_mut().unwrap_unchecked() })
+            }
+            ValueType::Uuid => {
+                DestructuredMut::Uuid(unsafe { self.as_uuid_mut().unwrap_unchecked() })
             }
         }
     }

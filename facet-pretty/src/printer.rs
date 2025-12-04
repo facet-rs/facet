@@ -822,6 +822,14 @@ impl PrettyPrinter {
                             }
                         }
                     }
+                    DynValueKind::QName => {
+                        // QName formatting is not yet supported via vtable
+                        write!(f, "<qname>")?;
+                    }
+                    DynValueKind::Uuid => {
+                        // UUID formatting is not yet supported via vtable
+                        write!(f, "<uuid>")?;
+                    }
                 }
             }
 
