@@ -84,10 +84,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: ✨ Run nightly feature tests
+      - name: ✨ Run nightly feature tests (simd auto-detected)
         shell: bash
         run: |
-          cargo nextest run --package facet-core --features nightly
+          cargo nextest run --package facet-core
 
   msrv:
     runs-on: depot-ubuntu-24.04-32

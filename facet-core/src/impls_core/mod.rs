@@ -13,6 +13,6 @@ mod scalar;
 mod slice;
 mod tuple;
 
-// Only include SIMD support when both the feature is enabled and we're on nightly
-#[cfg(all(feature = "nightly", nightly))]
+// Include SIMD support when portable_simd is available (detected via autocfg)
+#[cfg(has_portable_simd)]
 mod simd;

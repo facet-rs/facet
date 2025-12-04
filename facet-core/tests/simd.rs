@@ -1,5 +1,5 @@
-// Only run these tests when both the feature is enabled and we're on nightly
-#![cfg(all(feature = "nightly", nightly))]
+// Only run these tests when portable_simd is available (detected via autocfg)
+#![cfg(has_portable_simd)]
 #![feature(portable_simd)]
 
 use core::simd::Simd;

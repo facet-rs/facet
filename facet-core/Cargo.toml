@@ -48,12 +48,8 @@ tuples-12 = []
 # Provide Facet trait implementations for function pointers.
 fn-ptr = []
 
-# Enable nightly-only features (requires nightly Rust compiler).
-# Currently enables: std::simd (portable_simd) support.
-nightly = []
-
 [build-dependencies]
-rustversion = "1.0"
+autocfg = "1.3"
 
 [dependencies]
 url = { version = "2.5.4", optional = true, default-features = false }
