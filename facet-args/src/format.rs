@@ -314,56 +314,9 @@ impl<'input> Context<'input> {
                             p = self.handle_field(p, field_index, Some(value))?;
                         }
                         None => {
-                            // No `=` in the flag. Could be:
-                            // - `-v` (single char bool flag)
-                            // - `-j4` (short flag with attached value)
-                            // - `-vvv` (repeated bool flags - not currently supported)
+                            // No `=` in the flag. Use helper to handle chaining.
                             let fields = self.fields(&p)?;
-
-                            // Get the first character as the flag
-                            let first_char = flag.chars().next().unwrap();
-                            let first_char_str = &flag[..first_char.len_utf8()];
-                            let rest = &flag[first_char.len_utf8()..];
-
-                            tracing::trace!(
-                                "Looking up short flag '{first_char}' (rest: '{rest}')"
-                            );
-
-                            let Some(field_index) =
-                                find_field_index_with_short_char(fields, first_char_str)
-                            else {
-                                return Err(ArgsErrorKind::UnknownShortFlag {
-                                    flag: flag.to_string(),
-                                    fields,
-                                });
-                            };
-
-                            let field = &fields[field_index];
-                            let field_is_bool = field.shape().is_shape(bool::SHAPE);
-
-                            if rest.is_empty() {
-                                // Simple case: `-v` or `-j`
-                                p = self.handle_field(p, field_index, None)?;
-                            } else if field_is_bool {
-                                // Bool flag with trailing chars: `-vxyz`
-                                // Error: bool flags shouldn't have attached values
-                                return Err(ArgsErrorKind::UnknownShortFlag {
-                                    flag: flag.to_string(),
-                                    fields,
-                                });
-                            } else {
-                                // Non-bool flag with attached value: `-j4`
-                                let value_span =
-                                    Span::new(flag_span.start + first_char.len_utf8(), rest.len());
-                                p = self.handle_field(
-                                    p,
-                                    field_index,
-                                    Some(SplitToken {
-                                        s: rest,
-                                        span: value_span,
-                                    }),
-                                )?;
-                            }
+                            p = self.process_short_flag(p, flag, flag_span, fields)?;
                         }
                     }
                 }
@@ -512,52 +465,8 @@ impl<'input> Context<'input> {
                             p = self.handle_field(p, field_index, Some(value))?;
                         }
                         None => {
-                            // No `=` in the flag. Could be:
-                            // - `-v` (single char bool flag)
-                            // - `-j4` (short flag with attached value)
-                            let first_char = flag.chars().next().unwrap();
-                            let first_char_str = &flag[..first_char.len_utf8()];
-                            let rest = &flag[first_char.len_utf8()..];
-
-                            tracing::trace!(
-                                "Looking up short flag '{first_char}' in variant (rest: '{rest}')"
-                            );
-
-                            let Some(field_index) =
-                                find_field_index_with_short_char(fields, first_char_str)
-                            else {
-                                return Err(ArgsErrorKind::UnknownShortFlag {
-                                    flag: flag.to_string(),
-                                    fields,
-                                });
-                            };
-
-                            let field = &fields[field_index];
-                            let field_is_bool = field.shape().is_shape(bool::SHAPE);
-
-                            if rest.is_empty() {
-                                // Simple case: `-v` or `-j`
-                                p = self.handle_field(p, field_index, None)?;
-                            } else if field_is_bool {
-                                // Bool flag with trailing chars: `-vxyz`
-                                // Error: bool flags shouldn't have attached values
-                                return Err(ArgsErrorKind::UnknownShortFlag {
-                                    flag: flag.to_string(),
-                                    fields,
-                                });
-                            } else {
-                                // Non-bool flag with attached value: `-j4`
-                                let value_span =
-                                    Span::new(flag_span.start + first_char.len_utf8(), rest.len());
-                                p = self.handle_field(
-                                    p,
-                                    field_index,
-                                    Some(SplitToken {
-                                        s: rest,
-                                        span: value_span,
-                                    }),
-                                )?;
-                            }
+                            // No `=` in the flag. Use helper to handle chaining.
+                            p = self.process_short_flag(p, flag, flag_span, fields)?;
                         }
                     }
                 }
@@ -874,6 +783,113 @@ fn test_split() {
             },
         ])
     );
+}
+
+impl<'input> Context<'input> {
+    /// Process a short flag that may contain chained flags or an attached value.
+    ///
+    /// This function handles three cases:
+    /// 1. Single flag: `-v` → process as bool or look for value in next arg
+    /// 2. Chained bool flags: `-abc` → recursively process `-a`, then `-bc`, then `-c`
+    /// 3. Attached value: `-j4` → process `-j` with value `4`
+    ///
+    /// The function is recursive for chained flags, maintaining proper span tracking
+    /// and index management. Only increments `self.index` at the leaf of recursion.
+    fn process_short_flag(
+        &mut self,
+        mut p: Partial<'static>,
+        flag: &'input str,
+        flag_span: Span,
+        fields: &'static [Field],
+    ) -> Result<Partial<'static>, ArgsErrorKind> {
+        // Get the first character as the flag
+        let first_char = flag.chars().next().unwrap();
+        let first_char_str = &flag[..first_char.len_utf8()];
+        let rest = &flag[first_char.len_utf8()..];
+
+        tracing::trace!("Looking up short flag '{first_char}' (rest: '{rest}')");
+
+        // Look up the field for this character
+        let Some(field_index) = find_field_index_with_short_char(fields, first_char_str) else {
+            // Error: unknown flag, report just the first character
+            return Err(ArgsErrorKind::UnknownShortFlag {
+                flag: first_char_str.to_string(),
+                fields,
+            });
+        };
+
+        let field = &fields[field_index];
+        let field_shape = field.shape();
+
+        // Check if the field is bool or Vec<bool>
+        let is_bool = field_shape.is_shape(bool::SHAPE);
+        let is_bool_list = if let facet_core::Def::List(list_def) = field_shape.def {
+            list_def.t.is_shape(bool::SHAPE)
+        } else {
+            false
+        };
+
+        if rest.is_empty() {
+            // Leaf case: last character in the chain
+            if is_bool || is_bool_list {
+                // Bool or Vec<bool> at the end of chain
+                p = p.begin_nth_field(field_index)?;
+
+                if is_bool_list {
+                    // For Vec<bool> fields, initialize list and push an item
+                    p = p.begin_list()?;
+                    p = p.begin_list_item()?;
+                    p = p.set(true)?;
+                    p = p.end()?; // end list item
+                } else {
+                    // For simple bool fields, just set to true
+                    p = p.set(true)?;
+                }
+
+                p = p.end()?; // end field
+                self.index += 1; // Move to next arg
+            } else {
+                // Non-bool field: use handle_field which looks for value in next arg
+                p = self.handle_field(p, field_index, None)?;
+            }
+        } else if is_bool || is_bool_list {
+            // Bool flag with trailing chars: could be chaining like `-abc` or `-vvv`
+            // Process current bool flag without going through handle_field
+            // (which would increment index and consume next arg)
+            p = p.begin_nth_field(field_index)?;
+
+            if is_bool_list {
+                // For Vec<bool> fields, we need to initialize the list and push an item
+                p = p.begin_list()?;
+                p = p.begin_list_item()?;
+                p = p.set(true)?;
+                p = p.end()?; // end list item
+            } else {
+                // For simple bool fields, just set to true
+                p = p.set(true)?;
+            }
+
+            p = p.end()?; // end field
+
+            // Recursively process remaining characters as a new short flag chain
+            let rest_span = Span::new(flag_span.start + first_char.len_utf8(), rest.len());
+            p = self.process_short_flag(p, rest, rest_span, fields)?;
+            // Note: index increment happens in the leaf recursion
+        } else {
+            // Non-bool flag with attached value: `-j4`
+            let value_span = Span::new(flag_span.start + first_char.len_utf8(), rest.len());
+            p = self.handle_field(
+                p,
+                field_index,
+                Some(SplitToken {
+                    s: rest,
+                    span: value_span,
+                }),
+            )?;
+        }
+
+        Ok(p)
+    }
 }
 
 /// Given an array of fields, find the field with the given `args::short = 'a'`
