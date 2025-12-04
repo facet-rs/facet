@@ -163,6 +163,68 @@ impl Scanner {
         self.pos = pos;
     }
 
+    /// Finalize any pending token at true EOF.
+    ///
+    /// Call this when the scanner returned `NeedMore` but no more data is available.
+    /// Returns the completed token if one is pending (e.g., a number at EOF),
+    /// or an error if the token is incomplete (e.g., unterminated string).
+    pub fn finalize_at_eof(&mut self, buf: &[u8]) -> ScanResult {
+        match core::mem::take(&mut self.state) {
+            ScanState::Ready => {
+                // Nothing pending
+                Ok(SpannedToken {
+                    token: Token::Eof,
+                    span: Span::new(self.pos, 0),
+                })
+            }
+            ScanState::InNumber { start, hint } => {
+                // Number is complete at EOF (numbers don't need closing delimiter)
+                let end = self.pos;
+                if end == start || (end == start + 1 && buf.get(start) == Some(&b'-')) {
+                    return Err(ScanError {
+                        kind: ScanErrorKind::UnexpectedEof("in number"),
+                        span: Span::new(start, end - start),
+                    });
+                }
+                Ok(SpannedToken {
+                    token: Token::Number { start, end, hint },
+                    span: Span::new(start, end - start),
+                })
+            }
+            ScanState::InString { start, .. } => {
+                // Unterminated string
+                Err(ScanError {
+                    kind: ScanErrorKind::UnexpectedEof("in string"),
+                    span: Span::new(start, self.pos - start),
+                })
+            }
+            ScanState::InLiteral {
+                start,
+                expected,
+                matched,
+            } => {
+                // Check if the literal is complete
+                if matched == expected.len() {
+                    let token = match expected {
+                        b"true" => Token::True,
+                        b"false" => Token::False,
+                        b"null" => Token::Null,
+                        _ => unreachable!(),
+                    };
+                    Ok(SpannedToken {
+                        token,
+                        span: Span::new(start, expected.len()),
+                    })
+                } else {
+                    Err(ScanError {
+                        kind: ScanErrorKind::UnexpectedEof("in literal"),
+                        span: Span::new(start, self.pos - start),
+                    })
+                }
+            }
+        }
+    }
+
     /// Scan the next token from the buffer.
     ///
     /// Returns `Token::NeedMore` if the buffer is exhausted mid-token,
@@ -480,19 +542,15 @@ impl Scanner {
             }
         }
 
-        // Check if we might need more data
-        // Numbers end at whitespace, punctuation, or EOF
-        if let Some(&b) = buf.get(self.pos) {
-            if !matches!(b, b' ' | b'\t' | b'\n' | b'\r' | b',' | b']' | b'}' | b':') {
-                // Might be more number content
-                if self.pos == buf.len() {
-                    self.state = ScanState::InNumber { start, hint };
-                    return Ok(SpannedToken {
-                        token: Token::NeedMore { consumed: start },
-                        span: Span::new(start, self.pos - start),
-                    });
-                }
-            }
+        // Check if we're at end of buffer - might need more data
+        // Numbers end at whitespace, punctuation, or true EOF
+        if self.pos == buf.len() {
+            // At end of buffer - need more data to see terminator
+            self.state = ScanState::InNumber { start, hint };
+            return Ok(SpannedToken {
+                token: Token::NeedMore { consumed: start },
+                span: Span::new(start, self.pos - start),
+            });
         }
 
         let end = self.pos;
@@ -947,8 +1005,8 @@ mod tests {
     fn test_numbers() {
         let mut scanner = Scanner::new();
 
-        // Unsigned
-        let result = scanner.next_token(b"42").unwrap();
+        // Unsigned (with terminator so scanner knows number is complete)
+        let result = scanner.next_token(b"42,").unwrap();
         assert!(matches!(
             result.token,
             Token::Number {
@@ -959,7 +1017,7 @@ mod tests {
 
         // Signed
         scanner.set_pos(0);
-        let result = scanner.next_token(b"-42").unwrap();
+        let result = scanner.next_token(b"-42]").unwrap();
         assert!(matches!(
             result.token,
             Token::Number {
@@ -970,7 +1028,7 @@ mod tests {
 
         // Float
         scanner.set_pos(0);
-        let result = scanner.next_token(b"3.14").unwrap();
+        let result = scanner.next_token(b"3.14}").unwrap();
         assert!(matches!(
             result.token,
             Token::Number {
@@ -981,7 +1039,7 @@ mod tests {
 
         // Exponent
         scanner.set_pos(0);
-        let result = scanner.next_token(b"1e10").unwrap();
+        let result = scanner.next_token(b"1e10 ").unwrap();
         assert!(matches!(
             result.token,
             Token::Number {
@@ -989,21 +1047,27 @@ mod tests {
                 ..
             }
         ));
+
+        // Number at end of buffer returns NeedMore (streaming behavior)
+        scanner.set_pos(0);
+        let result = scanner.next_token(b"42").unwrap();
+        assert!(matches!(result.token, Token::NeedMore { .. }));
     }
 
     #[test]
     fn test_literals() {
         let mut scanner = Scanner::new();
 
-        let result = scanner.next_token(b"true").unwrap();
+        // Literals need terminators too (scanner can't know if "truex" is coming)
+        let result = scanner.next_token(b"true,").unwrap();
         assert!(matches!(result.token, Token::True));
 
         scanner.set_pos(0);
-        let result = scanner.next_token(b"false").unwrap();
+        let result = scanner.next_token(b"false]").unwrap();
         assert!(matches!(result.token, Token::False));
 
         scanner.set_pos(0);
-        let result = scanner.next_token(b"null").unwrap();
+        let result = scanner.next_token(b"null}").unwrap();
         assert!(matches!(result.token, Token::Null));
     }
 
