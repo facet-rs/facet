@@ -227,19 +227,19 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     pub fn as_str(&self) -> Option<&'mem str> {
         let peek = self.innermost_peek();
         if let Some(ScalarType::Str) = peek.scalar_type() {
-            unsafe { Some(peek.data.get::<&str>()) }
-        } else if let Some(ScalarType::String) = peek.scalar_type() {
-            unsafe { Some(peek.data.get::<alloc::string::String>().as_str()) }
-        } else if let Type::Pointer(PointerType::Reference(vpt)) = peek.shape.ty {
+            return unsafe { Some(peek.data.get::<&str>()) };
+        }
+        #[cfg(feature = "alloc")]
+        if let Some(ScalarType::String) = peek.scalar_type() {
+            return unsafe { Some(peek.data.get::<alloc::string::String>().as_str()) };
+        }
+        if let Type::Pointer(PointerType::Reference(vpt)) = peek.shape.ty {
             let target_shape = vpt.target;
             if let Some(ScalarType::Str) = ScalarType::try_from_shape(target_shape) {
-                unsafe { Some(peek.data.get::<&str>()) }
-            } else {
-                None
+                return unsafe { Some(peek.data.get::<&str>()) };
             }
-        } else {
-            None
         }
+        None
     }
 
     /// Try to get the value as a byte slice if it's a &[u8] type
