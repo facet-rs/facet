@@ -62,6 +62,124 @@ pub fn peek_to_writer_pretty<'mem, 'facet, W: crate::JsonWrite>(
     serialize_value(peek, None, &mut writer, Some("  "), 0)
 }
 
+/// Serializes a `Facet` value to JSON and writes it to a `std::io::Write` writer.
+///
+/// This is a convenience function for users who want to write to standard library
+/// writers like `File`, `TcpStream`, or any other `std::io::Write` implementor.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_json::to_writer_std;
+///
+/// #[derive(Facet)]
+/// struct Person {
+///     name: String,
+///     age: u32,
+/// }
+///
+/// let person = Person { name: "Alice".to_string(), age: 30 };
+/// let mut buffer = Vec::new();
+/// to_writer_std(&mut buffer, &person).unwrap();
+/// assert_eq!(buffer, br#"{"name":"Alice","age":30}"#);
+/// ```
+#[cfg(feature = "std")]
+pub fn to_writer_std<'mem, 'facet, W: std::io::Write, T: Facet<'facet>>(
+    writer: W,
+    value: &'mem T,
+) -> std::io::Result<()> {
+    peek_to_writer_std(writer, Peek::new(value))
+}
+
+/// Serializes a `Facet` value to pretty-printed JSON and writes it to a `std::io::Write` writer.
+///
+/// This is a convenience function for users who want to write to standard library
+/// writers like `File`, `TcpStream`, or any other `std::io::Write` implementor.
+#[cfg(feature = "std")]
+pub fn to_writer_std_pretty<'mem, 'facet, W: std::io::Write, T: Facet<'facet>>(
+    writer: W,
+    value: &'mem T,
+) -> std::io::Result<()> {
+    peek_to_writer_std_pretty(writer, Peek::new(value))
+}
+
+/// Serializes a `Peek` value to JSON and writes it to a `std::io::Write` writer.
+#[cfg(feature = "std")]
+pub fn peek_to_writer_std<'mem, 'facet, W: std::io::Write>(
+    writer: W,
+    peek: Peek<'mem, 'facet>,
+) -> std::io::Result<()> {
+    let mut adapter = StdWriteAdapter::new(writer);
+    let _ = peek_to_writer(peek, &mut adapter);
+    adapter.into_result()
+}
+
+/// Serializes a `Peek` value to pretty-printed JSON and writes it to a `std::io::Write` writer.
+#[cfg(feature = "std")]
+pub fn peek_to_writer_std_pretty<'mem, 'facet, W: std::io::Write>(
+    writer: W,
+    peek: Peek<'mem, 'facet>,
+) -> std::io::Result<()> {
+    let mut adapter = StdWriteAdapter::new(writer);
+    let _ = peek_to_writer_pretty(peek, &mut adapter);
+    adapter.into_result()
+}
+
+/// Adapter that wraps a `std::io::Write` to implement `JsonWrite`.
+#[cfg(feature = "std")]
+struct StdWriteAdapter<W> {
+    writer: W,
+    error: Option<std::io::Error>,
+}
+
+#[cfg(feature = "std")]
+impl<W: std::io::Write> StdWriteAdapter<W> {
+    fn new(writer: W) -> Self {
+        Self {
+            writer,
+            error: None,
+        }
+    }
+
+    fn into_result(self) -> std::io::Result<()> {
+        match self.error {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl<W: std::io::Write> crate::JsonWrite for StdWriteAdapter<W> {
+    fn write(&mut self, buf: &[u8]) {
+        if self.error.is_none() {
+            if let Err(e) = self.writer.write_all(buf) {
+                self.error = Some(e);
+            }
+        }
+    }
+
+    fn reserve(&mut self, _additional: usize) {
+        // std::io::Write doesn't have a reserve method, so this is a no-op
+    }
+}
+
+#[cfg(feature = "std")]
+impl<W: std::io::Write> crate::JsonWrite for &mut StdWriteAdapter<W> {
+    fn write(&mut self, buf: &[u8]) {
+        if self.error.is_none() {
+            if let Err(e) = self.writer.write_all(buf) {
+                self.error = Some(e);
+            }
+        }
+    }
+
+    fn reserve(&mut self, _additional: usize) {
+        // std::io::Write doesn't have a reserve method, so this is a no-op
+    }
+}
+
 /// Serialization error for json, which cannot fail.
 #[derive(Debug)]
 pub enum SerializeError {}
