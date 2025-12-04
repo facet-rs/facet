@@ -14,6 +14,14 @@ NC='\033[0m' # No Color
 
 echo -e "${YELLOW}Running pre-push checks...${NC}"
 
+# Check formatting
+echo -e "\n${YELLOW}Running cargo fmt --check...${NC}"
+if ! cargo fmt --check; then
+    echo -e "\n${RED}Formatting check failed!${NC}"
+    echo -e "Try running: ${GREEN}cargo fmt${NC}"
+    exit 1
+fi
+
 # Run clippy on all targets
 echo -e "\n${YELLOW}Running cargo clippy --all-targets --all-features...${NC}"
 if ! cargo clippy --all-targets --all-features -- -D warnings; then
@@ -26,6 +34,13 @@ fi
 echo -e "\n${YELLOW}Running cargo test --doc...${NC}"
 if ! cargo test --doc; then
     echo -e "\n${RED}Doc tests failed!${NC}"
+    exit 1
+fi
+
+# Run MSRV check
+echo -e "\n${YELLOW}Running just msrv...${NC}"
+if ! just msrv; then
+    echo -e "\n${RED}MSRV check failed!${NC}"
     exit 1
 fi
 
