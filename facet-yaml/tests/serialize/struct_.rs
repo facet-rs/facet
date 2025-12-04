@@ -190,3 +190,84 @@ fn test_optional_default_struct_fields() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_skip_serializing_if_none() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Step {
+        name: String,
+        #[facet(default, skip_serializing_if = Option::is_none)]
+        run: Option<String>,
+    }
+
+    // When run is None, it should be omitted from the output
+    let step = Step {
+        name: "Checkout".to_string(),
+        run: None,
+    };
+    let yaml = facet_yaml::to_string(&step)?;
+    assert!(
+        !yaml.contains("run"),
+        "run field should be omitted when None"
+    );
+    assert!(
+        yaml.contains("name: Checkout"),
+        "name field should be present"
+    );
+
+    // When run is Some, it should be included
+    let step_with_run = Step {
+        name: "Build".to_string(),
+        run: Some("cargo build".to_string()),
+    };
+    let yaml_with_run = facet_yaml::to_string(&step_with_run)?;
+    assert!(
+        yaml_with_run.contains("run: cargo build"),
+        "run field should be present when Some"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_skip_serializing_if_custom_predicate() -> Result<()> {
+    facet_testhelpers::setup();
+
+    #[allow(clippy::ptr_arg)] // see https://github.com/facet-rs/facet/issues/1036
+    fn is_empty(s: &String) -> bool {
+        s.is_empty()
+    }
+
+    #[derive(Debug, Facet, PartialEq)]
+    struct Config {
+        name: String,
+        #[facet(default, skip_serializing_if = is_empty)]
+        description: String,
+    }
+
+    // When description is empty, it should be omitted
+    let config = Config {
+        name: "test".to_string(),
+        description: String::new(),
+    };
+    let yaml = facet_yaml::to_string(&config)?;
+    assert!(
+        !yaml.contains("description"),
+        "description should be omitted when empty"
+    );
+
+    // When description is not empty, it should be included
+    let config_with_desc = Config {
+        name: "test".to_string(),
+        description: "A test config".to_string(),
+    };
+    let yaml_with_desc = facet_yaml::to_string(&config_with_desc)?;
+    assert!(
+        yaml_with_desc.contains("description: A test config"),
+        "description should be present when not empty"
+    );
+
+    Ok(())
+}
