@@ -26,7 +26,10 @@ keyword! {
     KCratePath = "crate_path";
     KChar = "char";
     KBuiltin = "builtin";
-    // Note: KIgnoredExpr removed - IgnoredExpr is dead
+    KMakeT = "make_t";
+    KOr = "or";
+    KDefault = "default";
+    KTy = "ty";
 }
 
 operator! {
@@ -44,6 +47,8 @@ operator! {
     Lt = "<";
     /// Greater than >
     Gt = ">";
+    /// Dollar sign $
+    Dollar = "$";
 }
 
 unsynn! {
@@ -172,6 +177,22 @@ unsynn! {
     struct FieldTypeTokens {
         tokens: Any<Cons<Except<Comma>, TokenTree>>,
     }
+
+    /// make_t payload: `make_t` or `make_t or $ty::default()`
+    struct MakeTPayload {
+        _kw: KMakeT,
+        fallback: Option<MakeTFallback>,
+    }
+
+    /// The `or $ty::default()` part of make_t
+    struct MakeTFallback {
+        _or: KOr,
+        _dollar: Dollar,
+        _ty: KTy,
+        _sep: PathSep,
+        _default: KDefault,
+        _parens: ParenthesisGroup,
+    }
 }
 
 // ============================================================================
@@ -198,10 +219,24 @@ struct ParsedEnum {
     variants: Vec<ParsedVariant>,
 }
 
+/// Where an attribute can be used
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum AttrTarget {
+    /// Valid on both fields and containers (default)
+    #[default]
+    Both,
+    /// Only valid on fields (has access to $ty)
+    Field,
+    /// Only valid on containers
+    Container,
+}
+
 struct ParsedVariant {
     attrs: Vec<TokenStream2>,
     name: proc_macro2::Ident,
     kind: VariantKind,
+    /// Where this attribute can be used
+    target: AttrTarget,
 }
 
 enum VariantKind {
@@ -216,8 +251,13 @@ enum VariantKind {
     ArbitraryType(TokenStream2),
     /// Expression that "makes a T" - wrapped in `|ptr| unsafe { ptr.put(#expr) }`.
     /// Generic mechanism for any attribute that needs to produce a value.
-    /// Grammar syntax: `Default(make_t)`
-    MakeT,
+    /// Grammar syntax: `Default(make_t)` or `Default(make_t or $ty::default())`
+    /// When fallback is true, bare usage generates `$ty::default()` where $ty is the field type.
+    MakeT {
+        /// If true, generate `<$ty as ::core::default::Default>::default()` when no value provided.
+        /// This is used for field attributes where $ty refers to the field type.
+        use_ty_default_fallback: bool,
+    },
     /// Predicate function - user provides `fn(&T) -> bool`, wrapped in type-erased closure.
     /// The expression is wrapped in `|ptr| unsafe { expr(ptr.get::<T>()) }`.
     /// Grammar syntax: `SkipSerializingIf(predicate SkipSerializingIfFn)`
@@ -351,12 +391,53 @@ impl EnumVariant {
             }
         };
 
+        // Parse #[target(field)] or #[target(container)] attribute
+        let target = parse_target_attr(&self.attrs)?;
+
+        // Filter out the target attribute from the attrs we pass through
+        let attrs = self
+            .attrs
+            .iter()
+            .filter(|a| !is_target_attr(a))
+            .map(|a| {
+                let content = a.content.0.stream();
+                quote! { #[#content] }
+            })
+            .collect();
+
         Ok(ParsedVariant {
-            attrs: convert_attrs(&self.attrs),
+            attrs,
             name: convert_ident(&self.name),
             kind,
+            target,
         })
     }
+}
+
+/// Check if an outer attribute is #[target(...)]
+fn is_target_attr(attr: &OuterAttr) -> bool {
+    let content = attr.content.0.stream().to_string();
+    content.starts_with("target")
+}
+
+/// Parse the #[target(field)] or #[target(container)] attribute
+fn parse_target_attr(attrs: &[OuterAttr]) -> std::result::Result<AttrTarget, String> {
+    for attr in attrs {
+        let content = attr.content.0.stream().to_string();
+        if content.starts_with("target") {
+            // Parse "target(field)" or "target(container)"
+            if content.contains("field") {
+                return Ok(AttrTarget::Field);
+            } else if content.contains("container") {
+                return Ok(AttrTarget::Container);
+            } else {
+                return Err(format!(
+                    "invalid target attribute: expected #[target(field)] or #[target(container)], got #[{content}]"
+                ));
+            }
+        }
+    }
+    Ok(AttrTarget::Both)
 }
 
 /// Analyze variant payload tokens to determine the variant kind.
@@ -395,9 +476,20 @@ fn analyze_variant_payload(tokens: &[TokenTree]) -> std::result::Result<VariantK
     }
 
     // Check for make_t - expression that "makes a T", wrapped in closure
-    // Syntax: `Default(make_t)`
-    if token_strs.len() == 1 && token_strs[0] == "make_t" {
-        return Ok(VariantKind::MakeT);
+    // Syntax: `Default(make_t)` or `Default(make_t or $ty::default())`
+    // Use proper unsynn parsing instead of string matching
+    {
+        let token_stream: TokenStream2 = tokens.iter().cloned().collect();
+        let mut iter = token_stream.to_token_iter();
+        if let Ok(make_t) = iter.parse::<MakeTPayload>() {
+            // Check that we consumed all tokens
+            if iter.next().is_none() {
+                let use_ty_default_fallback = make_t.fallback.is_some();
+                return Ok(VariantKind::MakeT {
+                    use_ty_default_fallback,
+                });
+            }
+        }
     }
 
     // Check for predicate TypeName - predicate function wrapped in type-erased closure
@@ -581,7 +673,9 @@ impl ParsedGrammar {
         let variant_defs: Vec<_> = variants
             .iter()
             .map(|v| {
-                let ParsedVariant { attrs, name, kind } = v;
+                let ParsedVariant {
+                    attrs, name, kind, ..
+                } = v;
                 match kind {
                     VariantKind::Unit => quote! { #(#attrs)* #name },
                     VariantKind::Newtype(ty) => quote! { #(#attrs)* #name(#ty) },
@@ -591,7 +685,7 @@ impl ParsedGrammar {
                         quote! { #(#attrs)* #name(#struct_name) }
                     }
                     VariantKind::ArbitraryType(ty) => quote! { #(#attrs)* #name(#ty) },
-                    VariantKind::MakeT => {
+                    VariantKind::MakeT { .. } => {
                         quote! { #(#attrs)* #name(Option<DefaultInPlaceFn>) }
                     }
                     VariantKind::Predicate(ty) => {
@@ -695,7 +789,7 @@ impl ParsedGrammar {
                     // Function pointer variants: always return false
                     // Function pointer comparison is unreliable across codegen units,
                     // so we don't even try - two function pointers are never considered equal.
-                    VariantKind::MakeT | VariantKind::Predicate(_) | VariantKind::FnPtr(_) => {
+                    VariantKind::MakeT { .. } | VariantKind::Predicate(_) | VariantKind::FnPtr(_) => {
                         quote! {
                             (Self::#variant_name(_), Self::#variant_name(_)) => false
                         }
@@ -770,7 +864,7 @@ impl ParsedGrammar {
                     VariantKind::NewtypeStr => quote! { #name: newtype_str },
                     VariantKind::NewtypeOptionChar => quote! { #name: newtype_opt_char },
                     VariantKind::ArbitraryType(_) => quote! { #name: arbitrary },
-                    VariantKind::MakeT => quote! { #name: make_t },
+                    VariantKind::MakeT { .. } => quote! { #name: make_t },
                     VariantKind::Struct(struct_name) => {
                         // Find the struct definition
                         let struct_def = struct_map
@@ -961,75 +1055,153 @@ impl ParsedGrammar {
                             }};
                         }
                     }
-                    VariantKind::MakeT => {
+                    VariantKind::MakeT { use_ty_default_fallback } => {
                         // MakeT variants store Option<DefaultInPlaceFn> directly (not wrapped in Attr).
                         // This is necessary because facet-core needs to access default_fn() but can't
                         // import the Attr enum (dependency direction: facet depends on facet-core).
                         //
-                        // - `default` (no args) → None (use Default trait at runtime)
+                        // - `default` (no args) → use $ty::default() if fallback enabled, otherwise None
                         // - `default = expr` → Some(|ptr| ptr.put(expr))
                         let _crate_path = self.crate_path.as_ref().expect(
                             "crate_path is required for make_t variants; add `crate_path ::your_crate;` to the grammar"
                         );
+
+                        let target = v.target;
+
+                        // Generate field-level arms (only if target allows fields)
+                        let field_arms = if target != AttrTarget::Container {
+                            // For field-level no-args: use $ty::default() if fallback enabled, otherwise None
+                            let no_args_body = if *use_ty_default_fallback {
+                                // Use <$ty as Default>::default() - $ty is already a metavariable
+                                // in the generated macro, so it will reference the field type
+                                quote! {
+                                    ::facet::ExtensionAttr {
+                                        ns: #ns_expr,
+                                        key: #key_str,
+                                        data: &const {
+                                            ::core::option::Option::Some(
+                                                (|__ptr: ::facet::PtrUninit<'_>| unsafe {
+                                                    __ptr.put(<$ty as ::core::default::Default>::default())
+                                                }) as ::facet::DefaultInPlaceFn
+                                            )
+                                        } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
+                                        shape: <() as ::facet::Facet>::SHAPE,
+                                    }
+                                }
+                            } else {
+                                // No fallback - use None (runtime Default trait lookup)
+                                quote! {
+                                    ::facet::ExtensionAttr {
+                                        ns: #ns_expr,
+                                        key: #key_str,
+                                        data: &const {
+                                            ::core::option::Option::<::facet::DefaultInPlaceFn>::None
+                                        } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
+                                        shape: <() as ::facet::Facet>::SHAPE,
+                                    }
+                                }
+                            };
+
+                            quote! {
+                                // Field-level: no args
+                                (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
+                                    #no_args_body
+                                }};
+                                // Field-level with `= expr`: wrap in closure
+                                (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $expr:expr }) => {{
+                                    ::facet::ExtensionAttr {
+                                        ns: #ns_expr,
+                                        key: #key_str,
+                                        data: &const {
+                                            ::core::option::Option::Some(
+                                                (|__ptr: ::facet::PtrUninit<'_>| unsafe { __ptr.put($expr) })
+                                                    as ::facet::DefaultInPlaceFn
+                                            )
+                                        } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
+                                        shape: <() as ::facet::Facet>::SHAPE,
+                                    }
+                                }};
+                                // Field-level with just expr (no =): also wrap in closure
+                                (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $expr:expr }) => {{
+                                    ::facet::ExtensionAttr {
+                                        ns: #ns_expr,
+                                        key: #key_str,
+                                        data: &const {
+                                            ::core::option::Option::Some(
+                                                (|__ptr: ::facet::PtrUninit<'_>| unsafe { __ptr.put($expr) })
+                                                    as ::facet::DefaultInPlaceFn
+                                            )
+                                        } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
+                                        shape: <() as ::facet::Facet>::SHAPE,
+                                    }
+                                }};
+                            }
+                        } else {
+                            // Container-only attribute used on field: error
+                            quote! {
+                                (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
+                                    compile_error!(concat!(
+                                        "Attribute `",
+                                        stringify!(#key_ident),
+                                        "` can only be used on containers, not fields"
+                                    ))
+                                }};
+                                (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
+                                    compile_error!(concat!(
+                                        "Attribute `",
+                                        stringify!(#key_ident),
+                                        "` can only be used on containers, not fields"
+                                    ))
+                                }};
+                            }
+                        };
+
+                        // Generate container-level arms (only if target allows containers)
+                        let container_arms = if target != AttrTarget::Field {
+                            quote! {
+                                // Container-level: no args means use Default trait (no fallback - no $ty available)
+                                (@ns { $ns:path } #key_ident { }) => {{
+                                    ::facet::ExtensionAttr {
+                                        ns: #ns_expr,
+                                        key: #key_str,
+                                        data: &const {
+                                            ::core::option::Option::<::facet::DefaultInPlaceFn>::None
+                                        } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
+                                        shape: <() as ::facet::Facet>::SHAPE,
+                                    }
+                                }};
+                                // Container-level with args: not typical, error
+                                (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
+                                    compile_error!(concat!(
+                                        "Container-level `",
+                                        stringify!(#key_ident),
+                                        "` with arguments is not supported"
+                                    ))
+                                }};
+                            }
+                        } else {
+                            // Field-only attribute used on container: error
+                            quote! {
+                                (@ns { $ns:path } #key_ident { }) => {{
+                                    compile_error!(concat!(
+                                        "Attribute `",
+                                        stringify!(#key_ident),
+                                        "` can only be used on fields, not containers"
+                                    ))
+                                }};
+                                (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
+                                    compile_error!(concat!(
+                                        "Attribute `",
+                                        stringify!(#key_ident),
+                                        "` can only be used on fields, not containers"
+                                    ))
+                                }};
+                            }
+                        };
+
                         quote! {
-                            // Field-level: no args means use Default trait
-                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
-                                ::facet::ExtensionAttr {
-                                    ns: #ns_expr,
-                                    key: #key_str,
-                                    data: &const {
-                                        ::core::option::Option::<::facet::DefaultInPlaceFn>::None
-                                    } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
-                                    shape: <() as ::facet::Facet>::SHAPE,
-                                }
-                            }};
-                            // Field-level with `= expr`: wrap in closure
-                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $expr:expr }) => {{
-                                ::facet::ExtensionAttr {
-                                    ns: #ns_expr,
-                                    key: #key_str,
-                                    data: &const {
-                                        ::core::option::Option::Some(
-                                            (|__ptr: ::facet::PtrUninit<'_>| unsafe { __ptr.put($expr) })
-                                                as ::facet::DefaultInPlaceFn
-                                        )
-                                    } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
-                                    shape: <() as ::facet::Facet>::SHAPE,
-                                }
-                            }};
-                            // Field-level with just expr (no =): also wrap in closure
-                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $expr:expr }) => {{
-                                ::facet::ExtensionAttr {
-                                    ns: #ns_expr,
-                                    key: #key_str,
-                                    data: &const {
-                                        ::core::option::Option::Some(
-                                            (|__ptr: ::facet::PtrUninit<'_>| unsafe { __ptr.put($expr) })
-                                                as ::facet::DefaultInPlaceFn
-                                        )
-                                    } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
-                                    shape: <() as ::facet::Facet>::SHAPE,
-                                }
-                            }};
-                            // Container-level: no args means use Default trait
-                            (@ns { $ns:path } #key_ident { }) => {{
-                                ::facet::ExtensionAttr {
-                                    ns: #ns_expr,
-                                    key: #key_str,
-                                    data: &const {
-                                        ::core::option::Option::<::facet::DefaultInPlaceFn>::None
-                                    } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
-                                    shape: <() as ::facet::Facet>::SHAPE,
-                                }
-                            }};
-                            // Container-level with args: not typical, error
-                            (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
-                                compile_error!(concat!(
-                                    "Container-level `",
-                                    stringify!(#key_ident),
-                                    "` with arguments is not supported"
-                                ))
-                            }};
+                            #field_arms
+                            #container_arms
                         }
                     }
                     VariantKind::NewtypeStr => {

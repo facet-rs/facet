@@ -293,3 +293,49 @@ fn test_proxy_attribute_validation_error() {
     let result: Result<Container, _> = facet_json::from_str(data);
     assert!(result.is_err());
 }
+
+/// Test for issue #1075: UB/SIGABRT when using opaque + proxy on Option<T> fields
+#[test]
+fn test_opaque_proxy_option_field() {
+    // Target type that doesn't implement Facet
+    #[derive(Debug, Clone, Default)]
+    pub struct PathData {
+        pub commands: Vec<String>,
+    }
+
+    // Proxy type that implements Facet
+    #[derive(Facet, Clone, Debug)]
+    #[facet(transparent)]
+    pub struct PathDataProxy(pub String);
+
+    // Convert proxy -> Option<PathData> (deserialization)
+    impl From<PathDataProxy> for Option<PathData> {
+        fn from(proxy: PathDataProxy) -> Self {
+            Some(PathData {
+                commands: vec![proxy.0],
+            })
+        }
+    }
+
+    // Convert &Option<PathData> -> proxy (serialization)
+    impl TryFrom<&Option<PathData>> for PathDataProxy {
+        type Error = std::convert::Infallible;
+        fn try_from(v: &Option<PathData>) -> Result<Self, Self::Error> {
+            Ok(PathDataProxy(
+                v.as_ref().map(|d| d.commands.join(",")).unwrap_or_default(),
+            ))
+        }
+    }
+
+    #[derive(Facet, Debug, Clone, Default)]
+    pub struct Path {
+        #[facet(opaque, proxy = PathDataProxy)]
+        pub d: Option<PathData>,
+    }
+
+    // This should work without SIGABRT
+    let data = r#"{"d":"M0,0 L10,10"}"#;
+    let path: Path = facet_json::from_str(data).unwrap();
+    assert!(path.d.is_some());
+    assert_eq!(path.d.unwrap().commands, vec!["M0,0 L10,10".to_string()]);
+}
