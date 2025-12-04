@@ -336,7 +336,7 @@ impl<W: Write> XmlSerializer<W> {
         Ok(())
     }
 
-    /// Try to serialize bytes (Vec<u8>, &[u8], [u8; N]) as base64-encoded element.
+    /// Try to serialize bytes (`Vec<u8>`, `&[u8]`, `[u8; N]`) as base64-encoded element.
     /// Returns Ok(true) if bytes were handled, Ok(false) if not bytes.
     fn try_serialize_bytes_as_element<'mem, 'facet>(
         &mut self,
