@@ -626,6 +626,8 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     // When variants are constructed via reflection (e.g., facet_args::from_std_args()),
     // the compiler doesn't see them being used and warns about dead code.
     // This ensures all variants are "constructed" from the compiler's perspective.
+    // We use explicit type annotations to help inference with const generics and
+    // unused type parameters.
     let variant_constructors: Vec<TokenStream> = pe
         .variants
         .iter()
@@ -635,10 +637,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 IdentOrLiteral::Literal(n) => format_ident!("_{}", n),
             };
             match &pv.kind {
-                PVariantKind::Unit => quote! { #enum_name::#variant_ident },
+                PVariantKind::Unit => quote! { let _: #enum_name #bgp_without_bounds = #enum_name::#variant_ident },
                 PVariantKind::Tuple { fields } => {
                     let todos = fields.iter().map(|_| quote! { todo!() });
-                    quote! { #enum_name::#variant_ident(#(#todos),*) }
+                    quote! { let _: #enum_name #bgp_without_bounds = #enum_name::#variant_ident(#(#todos),*) }
                 }
                 PVariantKind::Struct { fields } => {
                     let field_inits: Vec<TokenStream> = fields
@@ -651,7 +653,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                             quote! { #field_name: todo!() }
                         })
                         .collect();
-                    quote! { #enum_name::#variant_ident { #(#field_inits),* } }
+                    quote! { let _: #enum_name #bgp_without_bounds = #enum_name::#variant_ident { #(#field_inits),* } }
                 }
             }
         })
@@ -667,7 +669,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             #[allow(dead_code, unreachable_code, clippy::multiple_bound_locations, clippy::diverging_sub_expression)]
             fn __facet_construct_all_variants #bgp_def () -> #enum_name #bgp_without_bounds #where_clauses_tokens {
                 loop {
-                    #(let _ = #variant_constructors;)*
+                    #(#variant_constructors;)*
                 }
             }
         };
