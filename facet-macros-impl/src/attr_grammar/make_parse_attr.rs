@@ -895,28 +895,41 @@ impl ParsedGrammar {
                         }
                     }
                     VariantKind::Predicate(target_ty) => {
-                        // For predicate variants, we generate the transmute directly in the attribute macro
+                        // For predicate variants, we generate a wrapper function in the attribute macro
                         // because we need access to $ty which __dispatch_attr doesn't have.
                         //
                         // IMPORTANT: We store the function pointer directly, NOT wrapped in an Attr enum.
                         // This is because the retrieval code (e.g., skip_serializing_if_fn()) uses data_ref
                         // to read the raw function pointer.
+                        //
+                        // We generate a wrapper function instead of transmuting directly so that
+                        // auto-deref works at the call site. This allows users to write:
+                        //   fn is_empty(s: &str) -> bool { ... }
+                        // for a String field, instead of requiring the exact type:
+                        //   fn is_empty(s: &String) -> bool { ... }
                         let _crate_path = self.crate_path.as_ref().expect(
                             "crate_path is required for predicate variants; add `crate_path ::your_crate;` to the grammar"
                         );
                         // Qualify the target type - use ::facet:: since these types are re-exported there
                         let qualified_target_ty = quote! { ::facet::#target_ty };
                         quote! {
-                            // Field-level with args: wrap the user's fn(&T) -> bool in a transmute
+                            // Field-level with args: wrap the user's predicate in a function that
+                            // enables auto-deref at the call site.
                             // Store the function pointer directly (not wrapped in Attr enum)
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
                                 ::facet::ExtensionAttr {
                                     ns: #ns_expr,
                                     key: #key_str,
                                     data: &const {
-                                        unsafe {
-                                            ::core::mem::transmute::<fn(& $ty) -> bool, #qualified_target_ty>(($($args)*))
+                                        // Define a wrapper function that calls the user's predicate.
+                                        // The call site `predicate(ptr.get::<$ty>())` enables auto-deref,
+                                        // so `fn(&str) -> bool` works for a `String` field.
+                                        unsafe fn __predicate_wrapper(ptr: ::facet::PtrConst<'_>) -> bool {
+                                            let predicate = ($($args)*);
+                                            predicate(ptr.get::<$ty>())
                                         }
+                                        // Coerce function item to function pointer
+                                        __predicate_wrapper as #qualified_target_ty
                                     } as *const #qualified_target_ty as *const (),
                                     shape: <() as ::facet::Facet>::SHAPE,
                                 }
