@@ -177,15 +177,6 @@ pub enum ReflectError {
     /// No active frame in Partial
     NoActiveFrame,
 
-    /// steal_nth_field only works if the dst and src shapes
-    /// are the same.
-    HeistCancelledDifferentShapes {
-        /// the shape we're stealing a field from
-        src_shape: &'static Shape,
-        /// the shape we're stealing a field for
-        dst_shape: &'static Shape,
-    },
-
     #[cfg(feature = "alloc")]
     /// Error during custom deserialization
     CustomDeserializationError {
@@ -309,15 +300,6 @@ impl core::fmt::Display for ReflectError {
             }
             ReflectError::NoActiveFrame => {
                 write!(f, "No active frame in Partial")
-            }
-            ReflectError::HeistCancelledDifferentShapes {
-                src_shape,
-                dst_shape,
-            } => {
-                write!(
-                    f,
-                    "Tried to steal_nth_field from {src_shape} into {dst_shape}"
-                )
             }
             #[cfg(feature = "alloc")]
             ReflectError::CustomDeserializationError {

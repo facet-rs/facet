@@ -133,7 +133,7 @@ define_attr_grammar! {
         Rename(&'static str),
         Tag(&'static str),
 
-        // Function-based defaults (uses field type's Default impl as fallback)
+        // Function-based defaults (uses field type's Default impl)
         Default(make_t or $ty::default()),
 
         // Predicate functions for conditional serialization
