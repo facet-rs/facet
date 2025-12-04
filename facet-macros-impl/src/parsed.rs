@@ -795,26 +795,10 @@ impl PStruct {
         // Parse top-level (container) attributes for the struct.
         let attrs = PAttrs::parse(&s.attributes, &mut container_display_name);
 
-        // Error if #[facet(rename = "...")] was used on the container WITHOUT
-        // any namespaced attribute. When used alone, `rename` on a container has no
-        // effect because a container's name is determined by the parent field.
-        //
-        // However, when combined with namespaced attributes like `kdl::child`,
-        // `rename` IS meaningful because it controls how the type appears in that
-        // specific format (e.g., the KDL node name).
-        let mut attrs = attrs;
-        if container_display_name != original_name && !attrs.has_any_namespaced() {
-            let span = attrs
-                .get_builtin_span("rename")
-                .unwrap_or_else(Span::call_site);
-            attrs.errors.push(CompileError {
-                message: "#[facet(rename = \"...\")] cannot be used on a struct definition. \
-                          A struct's serialized name is controlled by the field that contains it, \
-                          not by the struct itself. Did you mean to use #[facet(rename_all = \"...\")]?"
-                    .to_string(),
-                span,
-            });
-        }
+        // Note: #[facet(rename = "...")] on structs is allowed. While for formats like JSON
+        // the container name is determined by the parent field, formats like XML and KDL
+        // use the container's rename as the element/node name (especially for root elements).
+        // See: https://github.com/facet-rs/facet/issues/1018
 
         // Extract the rename_all rule *after* parsing all attributes.
         let rename_all_rule = attrs.rename_all;
