@@ -35,6 +35,9 @@ members = [
     "facet-xdr",
     "facet-asn1",
 
+    # web framework integrations
+    "facet-axum",
+
     # utilities
     "facet-diff",
     "facet-assert",

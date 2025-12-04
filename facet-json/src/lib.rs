@@ -21,6 +21,14 @@ mod tokenizer;
 mod raw_json;
 pub use raw_json::RawJson;
 
+mod json;
+pub use json::Json;
+
+#[cfg(feature = "axum")]
+mod axum;
+#[cfg(feature = "axum")]
+pub use self::axum::JsonRejection;
+
 /// Re-export the `Write` trait from facet-core for backwards compatibility.
 ///
 /// This trait is used by the JSON serializer to write output without depending

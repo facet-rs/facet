@@ -1,0 +1,25 @@
+[package]
+name = "facet-axum"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/facet-rs/facet"
+description = "Axum integration for Facet - extractors and responses using Facet's serialization"
+keywords = ["axum", "web", "json", "serialization", "facet"]
+categories = ["web-programming", "encoding"]
+
+[features]
+default = ["json", "form"]
+json = ["facet-json/axum"]
+form = ["facet-urlencoded/axum"]
+
+[dependencies]
+facet-json = { path = "../facet-json", optional = true }
+facet-urlencoded = { path = "../facet-urlencoded", optional = true }
+
+[dev-dependencies]
+axum = "0.8"
+facet = { path = "../facet" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }

@@ -8,6 +8,17 @@ use log::*;
 #[cfg(test)]
 mod tests;
 
+mod form;
+pub use form::Form;
+
+mod query;
+pub use query::Query;
+
+#[cfg(feature = "axum")]
+mod axum;
+#[cfg(feature = "axum")]
+pub use self::axum::{FormRejection, QueryRejection};
+
 /// Deserializes a URL encoded form data string into a value of type `T` that implements `Facet`.
 ///
 /// This function supports parsing both flat structures and nested structures using the common
@@ -70,6 +81,35 @@ mod tests;
 pub fn from_str<'input: 'facet, 'facet, T: Facet<'facet>>(
     urlencoded: &'input str,
 ) -> Result<T, UrlEncodedError> {
+    let partial = Partial::alloc::<T>()?;
+    let partial = from_str_value(partial, urlencoded)?;
+    let result: T = partial.build()?.materialize()?;
+    Ok(result)
+}
+
+/// Deserializes a URL encoded form data string into an owned value of type `T`.
+///
+/// This is similar to [`from_str`] but works with types that implement `Facet<'static>`,
+/// which means they don't borrow from the input. This is useful when the input is
+/// temporary (e.g., from an HTTP request body) but you need an owned result.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_urlencoded::from_str_owned;
+///
+/// #[derive(Debug, Facet, PartialEq)]
+/// struct SearchParams {
+///     query: String,
+///     page: u64,
+/// }
+///
+/// let query_string = "query=rust&page=1";
+/// let params: SearchParams = from_str_owned(query_string).expect("Failed to parse");
+/// assert_eq!(params, SearchParams { query: "rust".to_string(), page: 1 });
+/// ```
+pub fn from_str_owned<T: Facet<'static>>(urlencoded: &str) -> Result<T, UrlEncodedError> {
     let partial = Partial::alloc::<T>()?;
     let partial = from_str_value(partial, urlencoded)?;
     let result: T = partial.build()?.materialize()?;
