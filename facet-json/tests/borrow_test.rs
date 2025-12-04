@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use facet::Facet;
-use facet_json::from_str;
+use facet_json::{from_slice_owned, from_str, from_str_owned};
 use facet_testhelpers::test;
 
 #[derive(Debug, Facet)]
@@ -81,4 +81,103 @@ fn test_map_cow_str_keys_escaped() {
     let key = result.keys().next().unwrap();
     assert!(matches!(key, Cow::Owned(_)));
     assert_eq!(&**key, "foo\nbar");
+}
+
+// ============================================================================
+// Owned deserialization tests (from_slice_owned / from_str_owned)
+// ============================================================================
+
+/// An owned struct that can be deserialized without borrowing from input
+#[derive(Debug, PartialEq, Facet)]
+struct OwnedPerson {
+    name: String,
+    age: u32,
+}
+
+#[test]
+fn test_from_str_owned_basic() {
+    let json = r#"{"name":"Alice","age":30}"#;
+    let result: OwnedPerson = from_str_owned(json).unwrap();
+    assert_eq!(result.name, "Alice");
+    assert_eq!(result.age, 30);
+}
+
+#[test]
+fn test_from_slice_owned_basic() {
+    let json = br#"{"name":"Bob","age":25}"#;
+    let result: OwnedPerson = from_slice_owned(json).unwrap();
+    assert_eq!(result.name, "Bob");
+    assert_eq!(result.age, 25);
+}
+
+#[test]
+fn test_from_str_owned_with_escapes() {
+    // Escape sequences should work fine with owned deserialization
+    let json = r#"{"name":"Hello\nWorld","age":42}"#;
+    let result: OwnedPerson = from_str_owned(json).unwrap();
+    assert_eq!(result.name, "Hello\nWorld");
+    assert_eq!(result.age, 42);
+}
+
+#[test]
+fn test_from_slice_owned_temporary_buffer() {
+    // This simulates the axum use case: deserializing from a temporary buffer
+    fn parse_request_body(body: &[u8]) -> OwnedPerson {
+        from_slice_owned(body).unwrap()
+    }
+
+    let body = br#"{"name":"Charlie","age":35}"#.to_vec();
+    let person = parse_request_body(&body);
+    // body is dropped here, but person survives because it's fully owned
+    drop(body);
+    assert_eq!(person.name, "Charlie");
+    assert_eq!(person.age, 35);
+}
+
+#[test]
+fn test_from_str_owned_cow_works() {
+    // Cow<'static, str> fields work with from_str_owned
+    #[derive(Debug, Facet)]
+    struct WithCow {
+        value: Cow<'static, str>,
+    }
+
+    let json = r#"{"value":"test"}"#;
+    let result: WithCow = from_str_owned(json).unwrap();
+    // Cow<str> works fine - it can hold either borrowed or owned data
+    // The 'static bound means it doesn't borrow from the input lifetime
+    assert_eq!(&*result.value, "test");
+}
+
+#[test]
+fn test_from_str_owned_nested_struct() {
+    #[derive(Debug, PartialEq, Facet)]
+    struct Address {
+        street: String,
+        city: String,
+    }
+
+    #[derive(Debug, PartialEq, Facet)]
+    struct PersonWithAddress {
+        name: String,
+        address: Address,
+    }
+
+    let json = r#"{"name":"Dave","address":{"street":"123 Main St","city":"Springfield"}}"#;
+    let result: PersonWithAddress = from_str_owned(json).unwrap();
+    assert_eq!(result.name, "Dave");
+    assert_eq!(result.address.street, "123 Main St");
+    assert_eq!(result.address.city, "Springfield");
+}
+
+#[test]
+fn test_from_str_owned_vec() {
+    #[derive(Debug, PartialEq, Facet)]
+    struct Names {
+        items: Vec<String>,
+    }
+
+    let json = r#"{"items":["one","two","three"]}"#;
+    let result: Names = from_str_owned(json).unwrap();
+    assert_eq!(result.items, vec!["one", "two", "three"]);
 }

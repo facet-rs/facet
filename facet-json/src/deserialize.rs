@@ -380,25 +380,42 @@ pub struct JsonDeserializer<'input> {
     tokenizer: Tokenizer<'input>,
     /// Peeked token (for lookahead)
     peeked: Option<Spanned<Token<'input>>>,
+    /// Whether borrowing from input is allowed.
+    /// When false, attempting to deserialize into `&str` will error.
+    allow_borrow: bool,
 }
 
 impl<'input> JsonDeserializer<'input> {
     /// Create a new deserializer for the given input.
+    /// Borrowing from input is allowed by default.
     pub fn new(input: &'input [u8]) -> Self {
         JsonDeserializer {
             input,
             tokenizer: Tokenizer::new(input),
             peeked: None,
+            allow_borrow: true,
+        }
+    }
+
+    /// Create a new deserializer that does not allow borrowing from input.
+    /// Use this when deserializing into owned types from temporary buffers.
+    pub fn new_owned(input: &'input [u8]) -> Self {
+        JsonDeserializer {
+            input,
+            tokenizer: Tokenizer::new(input),
+            peeked: None,
+            allow_borrow: false,
         }
     }
 
     /// Create a sub-deserializer starting from a specific byte offset.
     /// Used for replaying deferred values during flatten deserialization.
-    fn from_offset(input: &'input [u8], offset: usize) -> Self {
+    fn from_offset(input: &'input [u8], offset: usize, allow_borrow: bool) -> Self {
         JsonDeserializer {
             input,
             tokenizer: Tokenizer::new(&input[offset..]),
             peeked: None,
+            allow_borrow,
         }
     }
 
@@ -959,6 +976,12 @@ impl<'input> JsonDeserializer<'input> {
                     .pointee()
                     .is_some_and(|p| p.type_identifier == "str")
             {
+                // In owned mode, we cannot borrow from input at all
+                if !self.allow_borrow {
+                    return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                        message: "cannot deserialize into &str when borrowing is disabled - use String or Cow<str> instead".into(),
+                    }));
+                }
                 match s {
                     Cow::Borrowed(borrowed) => {
                         wip = wip.set(borrowed)?;
@@ -1720,7 +1743,7 @@ impl<'input> JsonDeserializer<'input> {
             }
 
             // Create sub-deserializer and deserialize the value
-            let mut sub = Self::from_offset(self.input, offset);
+            let mut sub = Self::from_offset(self.input, offset, self.allow_borrow);
 
             if ends_with_variant {
                 wip = sub.deserialize_variant_struct_content(wip)?;
@@ -2304,6 +2327,12 @@ impl<'input> JsonDeserializer<'input> {
 
         // Special case: &str can borrow directly from input if no escaping needed
         if is_str_ref {
+            // In owned mode, we cannot borrow from input at all
+            if !self.allow_borrow {
+                return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                    message: "cannot deserialize into &str when borrowing is disabled - use String or Cow<str> instead".into(),
+                }));
+            }
             let token = self.next()?;
             match token.value {
                 Token::String(Cow::Borrowed(s)) => {
@@ -2652,4 +2681,119 @@ where
         }
         err
     })
+}
+
+/// Deserialize JSON from a byte slice into an owned type.
+///
+/// This variant does not require the input to outlive the result, making it
+/// suitable for deserializing from temporary buffers (e.g., HTTP request bodies).
+///
+/// Types containing `&str` fields cannot be deserialized with this function;
+/// use `String` or `Cow<str>` instead.
+pub fn from_slice_owned<T: Facet<'static>>(input: &[u8]) -> Result<T> {
+    from_slice_owned_inner(input, None)
+}
+
+/// Deserialize JSON from a UTF-8 string slice into an owned type.
+///
+/// This variant does not require the input to outlive the result, making it
+/// suitable for deserializing from temporary buffers (e.g., HTTP request bodies).
+///
+/// Types containing `&str` fields cannot be deserialized with this function;
+/// use `String` or `Cow<str>` instead.
+///
+/// Errors from this function include source code context for rich diagnostic display
+/// when using [`miette`]'s reporting features.
+pub fn from_str_owned<T: Facet<'static>>(input: &str) -> Result<T> {
+    let input_bytes = input.as_bytes();
+
+    // Handle BOM
+    if input_bytes.starts_with(&[0xef, 0xbb, 0xbf]) {
+        return from_slice_owned_inner(&input_bytes[3..], Some(&input[3..]));
+    }
+    from_slice_owned_inner(input_bytes, Some(input))
+}
+
+fn from_slice_owned_inner<T: Facet<'static>>(input: &[u8], source: Option<&str>) -> Result<T> {
+    // We need to work around the lifetime constraints in the deserialization machinery.
+    // The deserializer and Partial are parameterized by 'input (the input slice lifetime),
+    // but we want to produce a T: Facet<'static> that doesn't borrow from input.
+    //
+    // The approach: Use an inner function parameterized by 'input that does all the work,
+    // then transmute the result back to the 'static lifetime we need.
+    //
+    // SAFETY: This is safe because:
+    // 1. T: Facet<'static> guarantees the type T itself contains no borrowed data
+    // 2. allow_borrow: false ensures we error before storing any borrowed references
+    // 3. The transmutes only affect phantom lifetime markers in Partial/HeapValue,
+    //    not actual runtime data
+
+    fn inner<'input, T: Facet<'static>>(input: &'input [u8], source: Option<&str>) -> Result<T> {
+        let mut deserializer = JsonDeserializer::new_owned(input);
+
+        // Allocate a Partial<'input> for T's shape.
+        // T::SHAPE is 'static, but the Partial needs to be 'input to work with the deserializer.
+        // SAFETY: We're only changing the lifetime marker. The Partial doesn't actually
+        // store any 'input references because allow_borrow is false.
+        #[allow(unsafe_code)]
+        let wip: Partial<'input> = unsafe {
+            core::mem::transmute::<Partial<'static>, Partial<'input>>(Partial::alloc::<T>()?)
+        };
+
+        let partial = match deserializer.deserialize_into(wip) {
+            Ok(p) => p,
+            Err(mut e) => {
+                if let Some(src) = source {
+                    e.source_code = Some(src.to_string());
+                }
+                return Err(e);
+            }
+        };
+
+        // Check that we've consumed all input (no trailing data after the root value)
+        let trailing = deserializer.peek()?;
+        if !matches!(trailing.value, Token::Eof) {
+            let mut err = JsonError::new(
+                JsonErrorKind::UnexpectedToken {
+                    got: format!("{}", trailing.value),
+                    expected: "end of input",
+                },
+                trailing.span,
+            );
+            if let Some(src) = source {
+                err.source_code = Some(src.to_string());
+            }
+            return Err(err);
+        }
+
+        // Build the Partial into a HeapValue
+        let heap_value = partial.build().map_err(|e| {
+            let mut err = JsonError::from(e);
+            if let Some(src) = source {
+                err.source_code = Some(src.to_string());
+            }
+            err
+        })?;
+
+        // Transmute HeapValue<'input> to HeapValue<'static> so we can materialize to T
+        // SAFETY: The HeapValue contains no borrowed data (allow_borrow was false),
+        // so the lifetime is purely a phantom marker.
+        #[allow(unsafe_code)]
+        let heap_value: facet_reflect::HeapValue<'static> = unsafe {
+            core::mem::transmute::<
+                facet_reflect::HeapValue<'input>,
+                facet_reflect::HeapValue<'static>,
+            >(heap_value)
+        };
+
+        heap_value.materialize::<T>().map_err(|e| {
+            let mut err = JsonError::from(e);
+            if let Some(src) = source {
+                err.source_code = Some(src.to_string());
+            }
+            err
+        })
+    }
+
+    inner::<T>(input, source)
 }
