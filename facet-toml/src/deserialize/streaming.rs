@@ -2384,10 +2384,9 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     | ScalarType::U128
                     | ScalarType::USize => "number",
                     // These types expect strings
-                    ScalarType::IpAddr
-                    | ScalarType::Ipv4Addr
-                    | ScalarType::Ipv6Addr
-                    | ScalarType::SocketAddr => "string",
+                    ScalarType::IpAddr | ScalarType::Ipv4Addr | ScalarType::Ipv6Addr => "string",
+                    #[cfg(feature = "std")]
+                    ScalarType::SocketAddr => "string",
                     _ => "unknown",
                 };
 
