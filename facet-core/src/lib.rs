@@ -74,6 +74,10 @@ mod impls_indexmap;
 mod typeid;
 pub use typeid::*;
 
+// Scalar type identification
+mod scalar;
+pub use scalar::*;
+
 // Type definitions
 mod types;
 #[allow(unused_imports)] // wtf clippy? we're re-exporting?

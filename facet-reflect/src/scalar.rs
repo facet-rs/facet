@@ -1,129 +1,9 @@
-use core::any::TypeId;
-use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+//! Re-export of [`ScalarType`] from `facet_core`.
+//!
+//! This module re-exports scalar type functionality from `facet_core` for backwards
+//! compatibility. New code should import directly from `facet_core`.
 
-use facet_core::{ConstTypeId, Shape};
-
-/// All scalar types supported out of the box by peek and poke.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub enum ScalarType {
-    /// Unit tuple `()`.
-    Unit,
-    /// Primitive type `bool`.
-    Bool,
-    /// Primitive type `char`.
-    Char,
-    /// Primitive type `str`.
-    Str,
-    /// `alloc::string::String`.
-    String,
-    /// `alloc::borrow::Cow<'_, str>`.
-    CowStr,
-    /// Primitive type `f32`.
-    F32,
-    /// Primitive type `f64`.
-    F64,
-    /// Primitive type `u8`.
-    U8,
-    /// Primitive type `u16`.
-    U16,
-    /// Primitive type `u32`.
-    U32,
-    /// Primitive type `u64`.
-    U64,
-    /// Primitive type `u128`.
-    U128,
-    /// Primitive type `usize`.
-    USize,
-    /// Primitive type `i8`.
-    I8,
-    /// Primitive type `i16`.
-    I16,
-    /// Primitive type `i32`.
-    I32,
-    /// Primitive type `i64`.
-    I64,
-    /// Primitive type `i128`.
-    I128,
-    /// Primitive type `isize`.
-    ISize,
-    /// `core::net::SocketAddr`.
-    SocketAddr,
-    /// `core::net::IpAddr`.
-    IpAddr,
-    /// `core::net::Ipv4Addr`.
-    Ipv4Addr,
-    /// `core::net::Ipv6Addr`.
-    Ipv6Addr,
-    /// `facet_core::typeid::ConstTypeId`.
-    ConstTypeId,
-}
-
-impl ScalarType {
-    /// Infer the type from a shape definition.
-    #[inline]
-    pub fn try_from_shape(shape: &Shape) -> Option<Self> {
-        let type_id = shape.id.get();
-
-        #[cfg(feature = "alloc")]
-        if type_id == TypeId::of::<alloc::string::String>() {
-            return Some(ScalarType::String);
-        } else if type_id == TypeId::of::<alloc::borrow::Cow<'_, str>>() {
-            return Some(ScalarType::CowStr);
-        } else if type_id == TypeId::of::<str>() {
-            return Some(ScalarType::Str);
-        } else if type_id == TypeId::of::<core::net::SocketAddr>() {
-            return Some(ScalarType::SocketAddr);
-        }
-
-        if type_id == TypeId::of::<()>() {
-            Some(Self::Unit)
-        } else if type_id == TypeId::of::<bool>() {
-            Some(ScalarType::Bool)
-        } else if type_id == TypeId::of::<char>() {
-            Some(ScalarType::Char)
-        } else if type_id == TypeId::of::<&str>() {
-            Some(ScalarType::Str)
-        } else if type_id == TypeId::of::<f32>() {
-            Some(ScalarType::F32)
-        } else if type_id == TypeId::of::<f64>() {
-            Some(ScalarType::F64)
-        } else if type_id == TypeId::of::<u8>() {
-            Some(ScalarType::U8)
-        } else if type_id == TypeId::of::<u16>() {
-            Some(ScalarType::U16)
-        } else if type_id == TypeId::of::<u32>() {
-            Some(ScalarType::U32)
-        } else if type_id == TypeId::of::<u64>() {
-            Some(ScalarType::U64)
-        } else if type_id == TypeId::of::<u128>() {
-            Some(ScalarType::U128)
-        } else if type_id == TypeId::of::<usize>() {
-            Some(ScalarType::USize)
-        } else if type_id == TypeId::of::<i8>() {
-            Some(ScalarType::I8)
-        } else if type_id == TypeId::of::<i16>() {
-            Some(ScalarType::I16)
-        } else if type_id == TypeId::of::<i32>() {
-            Some(ScalarType::I32)
-        } else if type_id == TypeId::of::<i64>() {
-            Some(ScalarType::I64)
-        } else if type_id == TypeId::of::<i128>() {
-            Some(ScalarType::I128)
-        } else if type_id == TypeId::of::<isize>() {
-            Some(ScalarType::ISize)
-        } else if type_id == TypeId::of::<IpAddr>() {
-            Some(ScalarType::IpAddr)
-        } else if type_id == TypeId::of::<Ipv4Addr>() {
-            Some(ScalarType::Ipv4Addr)
-        } else if type_id == TypeId::of::<Ipv6Addr>() {
-            Some(ScalarType::Ipv6Addr)
-        } else if type_id == TypeId::of::<ConstTypeId>() {
-            Some(ScalarType::ConstTypeId)
-        } else {
-            None
-        }
-    }
-}
+pub use facet_core::ScalarType;
 
 #[cfg(test)]
 mod tests {
@@ -131,9 +11,9 @@ mod tests {
 
     use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    use facet_core::Facet;
+    use facet_core::{ConstTypeId, Facet};
 
-    /// Simple check to ensure every can be loaded from a shape.
+    /// Simple check to ensure every scalar type can be loaded from a shape.
     #[test]
     fn test_ensure_try_from_shape() {
         assert_eq!(
@@ -235,5 +115,20 @@ mod tests {
             ScalarType::ConstTypeId,
             ScalarType::try_from_shape(ConstTypeId::SHAPE).unwrap()
         );
+    }
+
+    /// Test that Shape::scalar_type() method works correctly
+    #[test]
+    fn test_shape_scalar_type_method() {
+        assert_eq!(bool::SHAPE.scalar_type(), Some(ScalarType::Bool));
+        assert_eq!(u32::SHAPE.scalar_type(), Some(ScalarType::U32));
+        assert_eq!(f64::SHAPE.scalar_type(), Some(ScalarType::F64));
+        assert_eq!(<()>::SHAPE.scalar_type(), Some(ScalarType::Unit));
+
+        #[cfg(feature = "std")]
+        assert_eq!(String::SHAPE.scalar_type(), Some(ScalarType::String));
+
+        // Test non-scalar types return None
+        assert_eq!(alloc::vec::Vec::<u8>::SHAPE.scalar_type(), None);
     }
 }
