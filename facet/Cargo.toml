@@ -44,6 +44,9 @@ url = ["facet-core/url"] # Provide Facet trait implementations for url::Url
 ruint = [
     "facet-core/ruint",
 ] # Provide Facet trait implementations for ruint types
+indexmap = [
+    "facet-core/indexmap",
+] # Provide Facet trait implementations for indexmap::IndexMap and indexmap::IndexSet
 
 # Provide Facet trait implementations for tuples up to size 12. Without it,
 # Facet is only implemented for tuples up to size 4.
