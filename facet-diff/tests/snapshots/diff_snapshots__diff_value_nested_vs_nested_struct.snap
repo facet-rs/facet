@@ -1,5 +1,6 @@
 ---
 source: facet-diff/tests/diff_snapshots.rs
+assertion_line: 1418
 expression: "format_diff_comparison(&a, &b)"
 ---
 ╭Before─────────────────────────╮
@@ -24,8 +25,7 @@ expression: "format_diff_comparison(&a, &b)"
 ╰───────────────────────────────╯
 ╔Diff═══════════════════════════╗
 ║{                              ║
-║  .. 1 unchanged field         ║
+║  .. 2 unchanged fields        ║
 ║  address: (structurally equal)║
-║  name: "Alice" → "Alice"      ║
 ║}                              ║
 ╚═══════════════════════════════╝

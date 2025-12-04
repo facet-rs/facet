@@ -33,3 +33,26 @@ fn test_peek_value_twostrings() {
     assert_eq!(av.to_string(), "⟨Option<i32>⟩");
     assert_eq!(format!("{a:?}"), format!("{av:?}"));
 }
+
+/// Regression test for issue #1082: UB in `Peek("").as_str()`
+/// Previously, `as_str()` used `get::<&str>()` which tried to read a fat pointer
+/// from the str data, causing UB for empty strings (reading 16 bytes from 0-byte allocation).
+#[test]
+fn test_peek_as_str_empty_string() {
+    // This used to trigger UB - reading 16 bytes from a 0-byte allocation
+    let peek = Peek::new("");
+    assert_eq!(peek.as_str(), Some(""));
+}
+
+#[test]
+fn test_peek_as_str_non_empty_string() {
+    let peek = Peek::new("hello");
+    assert_eq!(peek.as_str(), Some("hello"));
+}
+
+#[test]
+fn test_peek_as_str_owned_string() {
+    let s = String::from("owned string");
+    let peek = Peek::new(&s);
+    assert_eq!(peek.as_str(), Some("owned string"));
+}
