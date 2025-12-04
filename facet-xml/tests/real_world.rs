@@ -10,14 +10,14 @@ use facet_xml as xml;
 // ============================================================================
 
 #[derive(Facet, Debug, PartialEq)]
-#[facet(rename = "svg")]
+#[facet(rename = "svg", rename_all = "camelCase")]
 struct Svg {
     #[facet(default, xml::attribute)]
     width: Option<String>,
     #[facet(default, xml::attribute)]
     height: Option<String>,
     #[facet(default, xml::attribute)]
-    viewBox: Option<String>,
+    view_box: Option<String>,
     #[facet(default, xml::attribute)]
     xmlns: Option<String>,
     #[facet(xml::elements)]
@@ -117,16 +117,16 @@ fn test_svg_with_groups() {
 // ============================================================================
 
 #[derive(Facet, Debug, PartialEq)]
-#[facet(rename = "project")]
+#[facet(rename = "project", rename_all = "camelCase")]
 struct MavenPom {
     #[facet(default, xml::attribute)]
     xmlns: Option<String>,
     #[facet(default, xml::element)]
-    modelVersion: Option<String>,
+    model_version: Option<String>,
     #[facet(default, xml::element)]
-    groupId: String,
+    group_id: String,
     #[facet(default, xml::element)]
-    artifactId: String,
+    artifact_id: String,
     #[facet(default, xml::element)]
     version: String,
     #[facet(default, xml::element)]
@@ -146,12 +146,12 @@ struct MavenDependencies {
 }
 
 #[derive(Facet, Debug, PartialEq)]
-#[facet(rename = "dependency")]
+#[facet(rename = "dependency", rename_all = "camelCase")]
 struct MavenDependency {
     #[facet(default, xml::element)]
-    groupId: String,
+    group_id: String,
     #[facet(default, xml::element)]
-    artifactId: String,
+    artifact_id: String,
     #[facet(default, xml::element)]
     version: Option<String>,
     #[facet(default, xml::element)]
@@ -183,14 +183,14 @@ fn test_maven_pom() {
     </project>"#;
 
     let pom: MavenPom = xml::from_str(pom_xml).unwrap();
-    assert_eq!(pom.groupId, "com.example");
-    assert_eq!(pom.artifactId, "my-app");
+    assert_eq!(pom.group_id, "com.example");
+    assert_eq!(pom.artifact_id, "my-app");
     assert_eq!(pom.version, "1.0.0");
     assert_eq!(pom.packaging, Some("jar".into()));
 
     let deps = pom.dependencies.unwrap();
     assert_eq!(deps.dependency.len(), 2);
-    assert_eq!(deps.dependency[0].artifactId, "junit-jupiter");
+    assert_eq!(deps.dependency[0].artifact_id, "junit-jupiter");
     assert_eq!(deps.dependency[0].scope, Some("test".into()));
 }
 
@@ -222,7 +222,7 @@ struct RssChannel {
 }
 
 #[derive(Facet, Debug, PartialEq)]
-#[facet(rename = "item")]
+#[facet(rename = "item", rename_all = "camelCase")]
 struct RssItem {
     #[facet(default, xml::element)]
     title: String,
@@ -231,7 +231,7 @@ struct RssItem {
     #[facet(default, xml::element)]
     description: Option<String>,
     #[facet(default, xml::element)]
-    pubDate: Option<String>,
+    pub_date: Option<String>,
     #[facet(default, xml::element)]
     guid: Option<String>,
 }
