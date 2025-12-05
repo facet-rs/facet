@@ -90,7 +90,7 @@ fn get_variant_display_name(variant: &Variant) -> &'static str {
 }
 
 /// Get the display name for a shape (respecting `rename` attribute).
-fn get_shape_display_name(shape: &facet_core::Shape) -> &'static str {
+pub(crate) fn get_shape_display_name(shape: &facet_core::Shape) -> &'static str {
     if let Some(renamed) = shape.get_builtin_attr_value::<&str>("rename") {
         return renamed;
     }

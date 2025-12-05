@@ -268,8 +268,8 @@ pub fn to_writer_with_options<W: Write, T: Facet<'static>>(
     let peek = Peek::new(value);
     let mut serializer = XmlSerializer::new(writer, options.indent_str());
 
-    // Get the type name for the root element
-    let type_name = peek.shape().type_identifier;
+    // Get the type name for the root element, respecting `rename` attribute
+    let type_name = crate::deserialize::get_shape_display_name(peek.shape());
     serializer.serialize_element(type_name, peek)
 }
 
@@ -283,6 +283,9 @@ struct XmlSerializer<'a, W> {
     indent: Option<&'a str>,
     /// Current indentation depth.
     depth: usize,
+    /// The currently active default namespace (from xmlns="..." on an ancestor).
+    /// Child elements in this namespace don't need to re-declare it.
+    current_default_ns: Option<String>,
 }
 
 impl<'a, W: Write> XmlSerializer<'a, W> {
@@ -293,6 +296,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
             next_ns_index: 0,
             indent,
             depth: 0,
+            current_default_ns: None,
         }
     }
 
@@ -832,12 +836,24 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
         write!(self.writer, "<{}", escape_element_name(element_name))
             .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
-        // If ns_all is set, emit default namespace declaration (xmlns="...")
-        // Child elements with the same namespace will be unprefixed.
-        if let Some(ns_uri) = ns_all {
-            write!(self.writer, " xmlns=\"{}\"", escape_attribute_value(ns_uri))
-                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
-        }
+        // If ns_all is set and differs from the current default namespace,
+        // emit a default namespace declaration (xmlns="...").
+        // Child elements with the same namespace will be unprefixed and inherit it.
+        let emitting_new_default_ns = if let Some(ns_uri) = ns_all {
+            let dominated = self
+                .current_default_ns
+                .as_ref()
+                .is_some_and(|current| current == ns_uri);
+            if !dominated {
+                write!(self.writer, " xmlns=\"{}\"", escape_attribute_value(ns_uri))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
 
         // Write xmlns declarations for attributes (only for explicitly namespaced attributes)
         for (prefix, uri) in &xmlns_decls {
@@ -873,6 +889,15 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
         }
 
         write!(self.writer, ">").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+
+        // Save and update the default namespace for children
+        let old_default_ns = if emitting_new_default_ns {
+            let old = self.current_default_ns.take();
+            self.current_default_ns = ns_all.map(|s| s.to_string());
+            old
+        } else {
+            None
+        };
 
         // Write text content if present (no indentation for text content)
         if let Some(text_peek) = text_content {
@@ -927,6 +952,11 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
             self.depth -= 1;
             self.write_newline()?;
             self.write_indent()?;
+        }
+
+        // Restore the old default namespace
+        if emitting_new_default_ns {
+            self.current_default_ns = old_default_ns;
         }
 
         // Write closing tag
