@@ -132,8 +132,8 @@ pub use deserialize::{
 
 // Re-export serialization
 pub use serialize::{
-    SerializeOptions, to_string, to_string_pretty, to_string_with_options, to_writer,
-    to_writer_pretty, to_writer_with_options,
+    FloatFormatter, SerializeOptions, to_string, to_string_pretty, to_string_with_options,
+    to_writer, to_writer_pretty, to_writer_with_options,
 };
 
 mod xml;
