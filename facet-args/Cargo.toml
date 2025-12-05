@@ -24,12 +24,14 @@ owo-colors = "4"
 
 [dev-dependencies]
 eyre = "0.6.12"
-facet = { path = "../facet" }
+facet = { path = "../facet", features = ["net", "nonzero", "doc"] }
 facet-pretty = { path = "../facet-pretty" }
 facet-showcase = { path = "../facet-showcase" }
 insta = "1.44.1"
-miette = { version = "7.6.0", default-features = false, features = ["fancy"] }
+miette = { version = "7.6.0", default-features = false }
 
 [features]
 default = ["rich-diagnostics"]
 rich-diagnostics = []
+# Include doc comments in help generation (enables facet/doc)
+doc = ["facet/doc"]

@@ -34,7 +34,7 @@ use core::cell::RefCell;
 
 use corosensei::{Coroutine, CoroutineResult};
 use facet::Facet;
-use facet_reflect::Span;
+use facet_reflect::{ReflectError, Span};
 
 use crate::adapter::{SpannedAdapterToken, Token, TokenSource};
 use crate::deserialize::JsonDeserializer;
@@ -42,6 +42,26 @@ use crate::scan_buffer::ScanBuffer;
 use crate::scanner::{ParsedNumber, ScanErrorKind, Scanner, Token as ScanToken};
 use crate::{JsonError, JsonErrorKind};
 use facet_reflect::Partial;
+
+#[inline(never)]
+#[cold]
+fn reflect_err(e: ReflectError) -> JsonError {
+    JsonError {
+        kind: JsonErrorKind::Reflect(e),
+        span: None,
+        source_code: None,
+    }
+}
+
+#[inline(never)]
+#[cold]
+fn io_err<E: ToString>(e: E) -> JsonError {
+    JsonError {
+        kind: JsonErrorKind::Io(e.to_string()),
+        span: None,
+        source_code: None,
+    }
+}
 
 /// Deserialize JSON from a synchronous reader.
 ///
@@ -78,11 +98,7 @@ where
     // Initial fill
     {
         let mut buf = buffer.borrow_mut();
-        let n = buf.refill(&mut reader).map_err(|e| JsonError {
-            kind: JsonErrorKind::Io(e.to_string()),
-            span: None,
-            source_code: None,
-        })?;
+        let n = buf.refill(&mut reader).map_err(io_err::<std::io::Error>)?;
         if n == 0 {
             return Err(JsonError {
                 kind: JsonErrorKind::Scan(ScanErrorKind::UnexpectedEof("empty input")),
@@ -112,11 +128,7 @@ where
                     buf.grow();
                 }
 
-                let _n = buf.refill(&mut reader).map_err(|e| JsonError {
-                    kind: JsonErrorKind::Io(e.to_string()),
-                    span: None,
-                    source_code: None,
-                })?;
+                let _n = buf.refill(&mut reader).map_err(io_err::<std::io::Error>)?;
 
                 // EOF is handled by the adapter via is_eof()
             }
@@ -142,11 +154,10 @@ where
     // Initial fill
     {
         let mut buf = buffer.borrow_mut();
-        let n = buf.refill_tokio(&mut reader).await.map_err(|e| JsonError {
-            kind: JsonErrorKind::Io(e.to_string()),
-            span: None,
-            source_code: None,
-        })?;
+        let n = buf
+            .refill_tokio(&mut reader)
+            .await
+            .map_err(io_err::<tokio::io::Error>)?;
         if n == 0 {
             return Err(JsonError {
                 kind: JsonErrorKind::Scan(ScanErrorKind::UnexpectedEof("empty input")),
@@ -174,11 +185,10 @@ where
                     buf.grow();
                 }
 
-                let _n = buf.refill_tokio(&mut reader).await.map_err(|e| JsonError {
-                    kind: JsonErrorKind::Io(e.to_string()),
-                    span: None,
-                    source_code: None,
-                })?;
+                let _n = buf
+                    .refill_tokio(&mut reader)
+                    .await
+                    .map_err(io_err::<tokio::io::Error>)?;
             }
             CoroutineResult::Return(result) => {
                 return result;
@@ -205,11 +215,7 @@ where
         let n = buf
             .refill_futures(&mut reader)
             .await
-            .map_err(|e| JsonError {
-                kind: JsonErrorKind::Io(e.to_string()),
-                span: None,
-                source_code: None,
-            })?;
+            .map_err(io_err::<futures_io::Error>)?;
         if n == 0 {
             return Err(JsonError {
                 kind: JsonErrorKind::Scan(ScanErrorKind::UnexpectedEof("empty input")),
@@ -240,11 +246,7 @@ where
                 let _n = buf
                     .refill_futures(&mut reader)
                     .await
-                    .map_err(|e| JsonError {
-                        kind: JsonErrorKind::Io(e.to_string()),
-                        span: None,
-                        source_code: None,
-                    })?;
+                    .map_err(io_err::<futures_io::Error>)?;
             }
             CoroutineResult::Return(result) => {
                 return result;
@@ -267,28 +269,16 @@ where
     T: Facet<'static>,
 {
     // Allocate a Partial<'static, false> - owned mode, no borrowing.
-    let wip: Partial<'static, false> = Partial::alloc_owned::<T>().map_err(|e| JsonError {
-        kind: JsonErrorKind::Reflect(e),
-        span: None,
-        source_code: None,
-    })?;
+    let wip: Partial<'static, false> = Partial::alloc_owned::<T>().map_err(reflect_err)?;
 
     // Use the generic JsonDeserializer with BORROW=false
     let mut deserializer: JsonDeserializer<'static, false, A> =
         JsonDeserializer::from_adapter(adapter);
     let partial = deserializer.deserialize_into(wip)?;
 
-    let heap_value = partial.build().map_err(|e| JsonError {
-        kind: JsonErrorKind::Reflect(e),
-        span: None,
-        source_code: None,
-    })?;
+    let heap_value = partial.build().map_err(reflect_err)?;
 
-    heap_value.materialize::<T>().map_err(|e| JsonError {
-        kind: JsonErrorKind::Reflect(e),
-        span: None,
-        source_code: None,
-    })
+    heap_value.materialize::<T>().map_err(reflect_err)
 }
 
 /// Spanned token for streaming deserialization.

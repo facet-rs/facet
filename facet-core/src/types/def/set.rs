@@ -13,51 +13,14 @@ pub struct SetDef {
 }
 
 impl SetDef {
-    /// Returns a builder for SetDef
-    pub const fn builder() -> SetDefBuilder {
-        SetDefBuilder::new()
+    /// Construct a `SetDef` from its vtable and element shape.
+    pub const fn new(vtable: &'static SetVTable, t: &'static Shape) -> Self {
+        Self { vtable, t }
     }
 
     /// Returns the shape of the items in the set
     pub const fn t(&self) -> &'static Shape {
         self.t
-    }
-}
-
-/// Builder for SetDef
-pub struct SetDefBuilder {
-    vtable: Option<&'static SetVTable>,
-    t: Option<&'static Shape>,
-}
-
-impl SetDefBuilder {
-    /// Creates a new SetDefBuilder
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            vtable: None,
-            t: None,
-        }
-    }
-
-    /// Sets the vtable for the SetDef
-    pub const fn vtable(mut self, vtable: &'static SetVTable) -> Self {
-        self.vtable = Some(vtable);
-        self
-    }
-
-    /// Sets the value shape for the SetDef
-    pub const fn t(mut self, t: &'static Shape) -> Self {
-        self.t = Some(t);
-        self
-    }
-
-    /// Builds the SetDef
-    pub const fn build(self) -> SetDef {
-        SetDef {
-            vtable: self.vtable.unwrap(),
-            t: self.t.unwrap(),
-        }
     }
 }
 
@@ -117,76 +80,20 @@ pub struct SetVTable {
 }
 
 impl SetVTable {
-    /// Returns a builder for SetVTable
-    pub const fn builder() -> SetVTableBuilder {
-        SetVTableBuilder::new()
-    }
-}
-
-/// Builds a [`SetVTable`]
-pub struct SetVTableBuilder {
-    init_in_place_with_capacity_fn: Option<SetInitInPlaceWithCapacityFn>,
-    insert_fn: Option<SetInsertFn>,
-    len_fn: Option<SetLenFn>,
-    contains_fn: Option<SetContainsFn>,
-    iter_vtable: Option<IterVTable<PtrConst<'static>>>,
-}
-
-impl SetVTableBuilder {
-    /// Creates a new [`SetVTableBuilder`] with all fields set to `None`.
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
+    /// Const ctor for set vtable; all hooks required.
+    pub const fn new(
+        init_in_place_with_capacity_fn: SetInitInPlaceWithCapacityFn,
+        insert_fn: SetInsertFn,
+        len_fn: SetLenFn,
+        contains_fn: SetContainsFn,
+        iter_vtable: IterVTable<PtrConst<'static>>,
+    ) -> Self {
         Self {
-            init_in_place_with_capacity_fn: None,
-            insert_fn: None,
-            len_fn: None,
-            contains_fn: None,
-            iter_vtable: None,
-        }
-    }
-
-    /// Sets the init_in_place_with_capacity_fn field
-    pub const fn init_in_place_with_capacity(mut self, f: SetInitInPlaceWithCapacityFn) -> Self {
-        self.init_in_place_with_capacity_fn = Some(f);
-        self
-    }
-
-    /// Sets the insert_fn field
-    pub const fn insert(mut self, f: SetInsertFn) -> Self {
-        self.insert_fn = Some(f);
-        self
-    }
-
-    /// Sets the len_fn field
-    pub const fn len(mut self, f: SetLenFn) -> Self {
-        self.len_fn = Some(f);
-        self
-    }
-
-    /// Sets the contains_fn field
-    pub const fn contains(mut self, f: SetContainsFn) -> Self {
-        self.contains_fn = Some(f);
-        self
-    }
-
-    /// Sets the iter_vtable field
-    pub const fn iter_vtable(mut self, vtable: IterVTable<PtrConst<'static>>) -> Self {
-        self.iter_vtable = Some(vtable);
-        self
-    }
-
-    /// Builds the [`SetVTable`] from the current state of the builder.
-    ///
-    /// # Panics
-    ///
-    /// This method will panic if any of the required fields are `None`.
-    pub const fn build(self) -> SetVTable {
-        SetVTable {
-            init_in_place_with_capacity_fn: self.init_in_place_with_capacity_fn.unwrap(),
-            insert_fn: self.insert_fn.unwrap(),
-            len_fn: self.len_fn.unwrap(),
-            contains_fn: self.contains_fn.unwrap(),
-            iter_vtable: self.iter_vtable.unwrap(),
+            init_in_place_with_capacity_fn,
+            insert_fn,
+            len_fn,
+            contains_fn,
+            iter_vtable,
         }
     }
 }

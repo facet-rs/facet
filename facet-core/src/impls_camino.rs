@@ -10,8 +10,10 @@ use crate::{
 
 unsafe impl Facet<'_> for Utf8PathBuf {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: {
                 // Define the functions for transparent conversion between Utf8PathBuf and String
                 unsafe fn try_from<'dst>(
                     src_ptr: PtrConst<'_>,
@@ -49,28 +51,37 @@ unsafe impl Facet<'_> for Utf8PathBuf {
                     vtable.try_into_inner = Some(try_into_inner);
                 }
                 vtable
-            })
-            .type_identifier("Utf8PathBuf")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
-            .inner(<String as Facet>::SHAPE)
-            .build()
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::Scalar,
+            type_identifier: "Utf8PathBuf",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: Some(<String as Facet>::SHAPE),
+        }
     };
 }
 
 unsafe impl Facet<'_> for Utf8Path {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_unsized::<Self>()
-            .vtable({
-                value_vtable!(Utf8Path, |f, _opts| write!(
-                    f,
-                    "{}",
-                    Self::SHAPE.type_identifier
-                ))
-            })
-            .type_identifier("Utf8Path")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
-            .build()
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::UNSIZED_LAYOUT,
+            vtable: value_vtable!(Utf8Path, |f, _opts| write!(
+                f,
+                "{}",
+                Self::SHAPE.type_identifier
+            )),
+            ty: Type::User(UserType::Opaque),
+            def: Def::Scalar,
+            type_identifier: "Utf8Path",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
+        }
     };
 }

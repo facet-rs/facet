@@ -19,3 +19,6 @@ tarpaulin-report.html
 **/fuzz/target/
 **/fuzz/corpus/
 **/fuzz/artifacts/
+
+# Profiling
+*.mm_profdata

@@ -5,8 +5,7 @@ use std::collections::HashSet;
 use crate::ptr::{PtrConst, PtrMut};
 
 use crate::{
-    Def, Facet, IterVTable, MarkerTraits, SetDef, SetVTable, Shape, Type, TypeParam, UserType,
-    ValueVTable,
+    Def, Facet, IterVTable, SetDef, SetVTable, Shape, Type, TypeParam, UserType, ValueVTable,
 };
 
 type HashSetIterator<'mem, T> = std::collections::hash_set::Iter<'mem, T>;
@@ -17,32 +16,71 @@ where
     S: Facet<'a> + Default + BuildHasher,
 {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable(
-                ValueVTable::builder::<Self>()
-                    .marker_traits({
-                        MarkerTraits::SEND
-                            .union(MarkerTraits::SYNC)
-                            .union(MarkerTraits::EQ)
-                            .union(MarkerTraits::UNPIN)
-                            .intersection(T::SHAPE.vtable.marker_traits())
-                    })
-                    .type_name(|f, opts| {
-                        write!(f, "{}<", Self::SHAPE.type_identifier)?;
-                        if let Some(opts) = opts.for_children() {
-                            (T::SHAPE.vtable.type_name())(f, opts)?;
-                        } else {
-                            write!(f, "…")?;
-                        }
-                        write!(f, ">")
-                    })
-                    .default_in_place({
-                        Some(|target| unsafe { target.put(Self::default()).into() })
-                    })
-                    .build(),
-            )
-            .type_identifier("HashSet")
-            .type_params(&[
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: ValueVTable {
+                type_name: |f, opts| {
+                    write!(f, "{}<", Self::SHAPE.type_identifier)?;
+                    if let Some(opts) = opts.for_children() {
+                        (T::SHAPE.vtable.type_name())(f, opts)?;
+                    } else {
+                        write!(f, "…")?;
+                    }
+                    write!(f, ">")
+                },
+                drop_in_place: ValueVTable::drop_in_place_for::<Self>(),
+                default_in_place: Some(|target| unsafe { target.put(Self::default()) }),
+                ..ValueVTable::new(|_, _| Ok(()))
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::Set(SetDef::new(
+                &const {
+                    SetVTable::new(
+                        |uninit, capacity| unsafe {
+                            uninit.put(Self::with_capacity_and_hasher(capacity, S::default()))
+                        },
+                        |ptr, item| unsafe {
+                            let set = ptr.as_mut::<HashSet<T>>();
+                            let item = item.read::<T>();
+                            set.insert(item)
+                        },
+                        |ptr| unsafe {
+                            let set = ptr.get::<HashSet<T>>();
+                            set.len()
+                        },
+                        |ptr, item| unsafe {
+                            let set = ptr.get::<HashSet<T>>();
+                            set.contains(item.get())
+                        },
+                        IterVTable {
+                            init_with_value: Some(|ptr| unsafe {
+                                let set = ptr.get::<HashSet<T>>();
+                                let iter: HashSetIterator<'_, T> = set.iter();
+                                let iter_state = Box::new(iter);
+                                PtrMut::new(NonNull::new_unchecked(
+                                    Box::into_raw(iter_state) as *mut u8
+                                ))
+                            }),
+                            next: |iter_ptr| unsafe {
+                                let state = iter_ptr.as_mut::<HashSetIterator<'_, T>>();
+                                state
+                                    .next()
+                                    .map(|value| PtrConst::new(NonNull::from(value)))
+                            },
+                            next_back: None,
+                            size_hint: None,
+                            dealloc: |iter_ptr| unsafe {
+                                drop(Box::from_raw(iter_ptr.as_ptr::<HashSetIterator<'_, T>>()
+                                    as *mut HashSetIterator<'_, T>));
+                            },
+                        },
+                    )
+                },
+                T::SHAPE,
+            )),
+            type_identifier: "HashSet",
+            type_params: &[
                 TypeParam {
                     name: "T",
                     shape: T::SHAPE,
@@ -51,62 +89,12 @@ where
                     name: "S",
                     shape: S::SHAPE,
                 },
-            ])
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Set(
-                SetDef::builder()
-                    .t(T::SHAPE)
-                    .vtable(
-                        &const {
-                            SetVTable::builder()
-                                .init_in_place_with_capacity(|uninit, capacity| unsafe {
-                                    uninit
-                                        .put(Self::with_capacity_and_hasher(capacity, S::default()))
-                                })
-                                .insert(|ptr, item| unsafe {
-                                    let set = ptr.as_mut::<HashSet<T>>();
-                                    let item = item.read::<T>();
-                                    set.insert(item)
-                                })
-                                .len(|ptr| unsafe {
-                                    let set = ptr.get::<HashSet<T>>();
-                                    set.len()
-                                })
-                                .contains(|ptr, item| unsafe {
-                                    let set = ptr.get::<HashSet<T>>();
-                                    set.contains(item.get())
-                                })
-                                .iter_vtable(
-                                    IterVTable::builder()
-                                        .init_with_value(|ptr| unsafe {
-                                            let set = ptr.get::<HashSet<T>>();
-                                            let iter: HashSetIterator<'_, T> = set.iter();
-                                            let iter_state = Box::new(iter);
-                                            PtrMut::new(NonNull::new_unchecked(Box::into_raw(
-                                                iter_state,
-                                            )
-                                                as *mut u8))
-                                        })
-                                        .next(|iter_ptr| unsafe {
-                                            let state = iter_ptr.as_mut::<HashSetIterator<'_, T>>();
-                                            state
-                                                .next()
-                                                .map(|value| PtrConst::new(NonNull::from(value)))
-                                        })
-                                        .dealloc(|iter_ptr| unsafe {
-                                            drop(Box::from_raw(
-                                                iter_ptr.as_ptr::<HashSetIterator<'_, T>>()
-                                                    as *mut HashSetIterator<'_, T>,
-                                            ));
-                                        })
-                                        .build(),
-                                )
-                                .build()
-                        },
-                    )
-                    .build(),
-            ))
-            .build()
+            ],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
+        }
     };
 }
 

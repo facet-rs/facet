@@ -1398,7 +1398,7 @@ impl<'input> XmlDeserializer<'input> {
                     partial = self.set_scalar_value(partial, attr_value)?;
 
                     // End Spanned<T> if needed
-                    if is_spanned_shape((field.shape)()) {
+                    if is_spanned_shape(field.shape()) {
                         partial = partial.end()?; // end value field
                     }
 
@@ -1920,7 +1920,7 @@ impl<'input> XmlDeserializer<'input> {
                 return true;
             }
             // Otherwise, check if the list item type accepts this element
-            let field_shape = (f.shape)();
+            let field_shape = f.shape();
             if let Some(item_shape) = get_list_item_shape(field_shape) {
                 shape_accepts_element(item_shape, &element_name.local_name)
             } else {
@@ -2075,7 +2075,7 @@ impl<'input> XmlDeserializer<'input> {
 
             let field_has_default_flag = field.has_default();
             let field_has_default_fn = field.default_fn().is_some();
-            let field_type_has_default = (field.shape)().is(Characteristic::Default);
+            let field_type_has_default = field.shape().is(Characteristic::Default);
             let should_skip = field.should_skip_deserializing();
 
             if field_has_default_fn

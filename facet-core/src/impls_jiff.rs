@@ -7,8 +7,10 @@ const ZONED_ERROR: &str = "could not parse time-zone aware instant of time";
 
 unsafe impl Facet<'_> for Zoned {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: {
                 let mut vtable = value_vtable!(Zoned, |f, _opts| write!(
                     f,
                     "{}",
@@ -43,15 +45,20 @@ unsafe impl Facet<'_> for Zoned {
                             Ok(unsafe { target.put(parsed) })
                         })
                     };
-                    vtable.display =
+                    vtable.format.display =
                         Some(|value, f| unsafe { write!(f, "{}", value.get::<Zoned>()) });
                 }
                 vtable
-            })
-            .type_identifier("Zoned")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
-            .build()
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::Scalar,
+            type_identifier: "Zoned",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
+        }
     };
 }
 
@@ -59,8 +66,10 @@ const TIMESTAMP_ERROR: &str = "could not parse timestamp";
 
 unsafe impl Facet<'_> for Timestamp {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: {
                 let mut vtable = value_vtable!(Timestamp, |f, _opts| write!(
                     f,
                     "{}",
@@ -98,15 +107,20 @@ unsafe impl Facet<'_> for Timestamp {
                             Ok(unsafe { target.put(parsed) })
                         })
                     };
-                    vtable.display =
+                    vtable.format.display =
                         Some(|value, f| unsafe { write!(f, "{}", value.get::<Timestamp>()) });
                 }
                 vtable
-            })
-            .type_identifier("Timestamp")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
-            .build()
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::Scalar,
+            type_identifier: "Timestamp",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
+        }
     };
 }
 
@@ -114,8 +128,10 @@ const DATETIME_ERROR: &str = "could not parse civil datetime";
 
 unsafe impl Facet<'_> for DateTime {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: {
                 let mut vtable = value_vtable!(DateTime, |f, _opts| write!(
                     f,
                     "{}",
@@ -152,15 +168,20 @@ unsafe impl Facet<'_> for DateTime {
                             Ok(unsafe { target.put(parsed) })
                         })
                     };
-                    vtable.display =
+                    vtable.format.display =
                         Some(|value, f| unsafe { write!(f, "{}", value.get::<DateTime>()) });
                 }
                 vtable
-            })
-            .type_identifier("DateTime")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
-            .build()
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::Scalar,
+            type_identifier: "DateTime",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
+        }
     };
 }
 
@@ -195,16 +216,18 @@ mod tests {
                 .unwrap()
         );
 
-        struct DisplayWrapper<'a>(PtrConst<'a>);
+        {
+            struct DisplayWrapper<'a>(PtrConst<'a>);
 
-        impl fmt::Display for DisplayWrapper<'_> {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                unsafe { (Zoned::SHAPE.vtable.display.unwrap())(self.0, f) }
+            impl fmt::Display for DisplayWrapper<'_> {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    unsafe { (Zoned::SHAPE.vtable.format.display.unwrap())(self.0, f) }
+                }
             }
-        }
 
-        let s = format!("{}", DisplayWrapper(PtrConst::new(NonNull::from(&odt))));
-        assert_eq!(s, "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]");
+            let s = format!("{}", DisplayWrapper(PtrConst::new(NonNull::from(&odt))));
+            assert_eq!(s, "2023-12-31T18:30:00+07:00[Asia/Ho_Chi_Minh]");
+        }
 
         // Deallocate the heap allocation to avoid memory leaks under Miri
         unsafe {
@@ -223,16 +246,18 @@ mod tests {
         let odt: Timestamp = unsafe { target.assume_init().read() };
         assert_eq!(odt, "2024-06-19T15:22:45Z".parse().unwrap());
 
-        struct DisplayWrapper<'a>(PtrConst<'a>);
+        {
+            struct DisplayWrapper<'a>(PtrConst<'a>);
 
-        impl fmt::Display for DisplayWrapper<'_> {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                unsafe { (Timestamp::SHAPE.vtable.display.unwrap())(self.0, f) }
+            impl fmt::Display for DisplayWrapper<'_> {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    unsafe { (Timestamp::SHAPE.vtable.format.display.unwrap())(self.0, f) }
+                }
             }
-        }
 
-        let s = format!("{}", DisplayWrapper(PtrConst::new(NonNull::from(&odt))));
-        assert_eq!(s, "2024-06-19T15:22:45Z");
+            let s = format!("{}", DisplayWrapper(PtrConst::new(NonNull::from(&odt))));
+            assert_eq!(s, "2024-06-19T15:22:45Z");
+        }
 
         // Deallocate the heap allocation to avoid memory leaks under Miri
         unsafe {
@@ -251,16 +276,18 @@ mod tests {
         let odt: DateTime = unsafe { target.assume_init().read() };
         assert_eq!(odt, "2024-06-19T15:22:45".parse().unwrap());
 
-        struct DisplayWrapper<'a>(PtrConst<'a>);
+        {
+            struct DisplayWrapper<'a>(PtrConst<'a>);
 
-        impl fmt::Display for DisplayWrapper<'_> {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                unsafe { (DateTime::SHAPE.vtable.display.unwrap())(self.0, f) }
+            impl fmt::Display for DisplayWrapper<'_> {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    unsafe { (DateTime::SHAPE.vtable.format.display.unwrap())(self.0, f) }
+                }
             }
-        }
 
-        let s = format!("{}", DisplayWrapper(PtrConst::new(NonNull::from(&odt))));
-        assert_eq!(s, "2024-06-19T15:22:45");
+            let s = format!("{}", DisplayWrapper(PtrConst::new(NonNull::from(&odt))));
+            assert_eq!(s, "2024-06-19T15:22:45");
+        }
 
         // Deallocate the heap allocation to avoid memory leaks under Miri
         unsafe {

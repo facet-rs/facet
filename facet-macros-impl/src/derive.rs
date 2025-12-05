@@ -54,7 +54,7 @@ pub(crate) fn build_where_clauses(
         for p in generics.params.iter() {
             match &p.value {
                 GenericParam::Lifetime { name, .. } => {
-                    let facet_lifetime = LifetimeName(quote::format_ident!("{}", "__facet"));
+                    let facet_lifetime = LifetimeName(quote::format_ident!("{}", "ʄ"));
                     let lifetime = LifetimeName(name.name.clone());
                     if has_clauses {
                         where_clause_tokens.extend(quote! { , });
@@ -73,9 +73,9 @@ pub(crate) fn build_where_clauses(
                     }
                     // Only specify lifetime bound for opaque containers
                     if opaque {
-                        where_clause_tokens.extend(quote! { #name: '__facet });
+                        where_clause_tokens.extend(quote! { #name: 'ʄ });
                     } else {
-                        where_clause_tokens.extend(quote! { #name: #facet_crate::Facet<'__facet> });
+                        where_clause_tokens.extend(quote! { #name: #facet_crate::Facet<'ʄ> });
                     }
                     has_clauses = true;
                 }
@@ -90,7 +90,8 @@ pub(crate) fn build_where_clauses(
     }
 }
 
-pub(crate) fn build_type_params(
+/// Build the `.type_params(...)` builder call, returning empty if no type params.
+pub(crate) fn build_type_params_call(
     generics: Option<&GenericParams>,
     opaque: bool,
     facet_crate: &TokenStream,
@@ -164,23 +165,22 @@ pub(crate) fn generate_type_name_fn(
             }
         });
 
-    if let Some(write_generics) = write_generics {
-        quote! {
-            |f, opts| {
-                write!(f, #type_name_str)?;
-                if let Some(opts) = opts.for_children() {
-                    write!(f, "<")?;
-                    #write_generics
-                    write!(f, ">")?;
-                } else {
-                    write!(f, "<…>")?;
+    match write_generics {
+        Some(write_generics) => {
+            quote! {
+                |f, opts| {
+                    write!(f, #type_name_str)?;
+                    if let Some(opts) = opts.for_children() {
+                        write!(f, "<")?;
+                        #write_generics
+                        write!(f, ">")?;
+                    } else {
+                        write!(f, "<…>")?;
+                    }
+                    Ok(())
                 }
-                Ok(())
             }
         }
-    } else {
-        quote! {
-            |f, _opts| ::core::fmt::Write::write_str(f, #type_name_str)
-        }
+        None => quote! { |f, _opts| ::core::fmt::Write::write_str(f, #type_name_str) },
     }
 }

@@ -4,157 +4,170 @@ use alloc::boxed::Box;
 use alloc::rc::{Rc, Weak};
 use alloc::vec::Vec;
 
-use crate::shape_util::vtable_builder_for_ptr;
+use crate::shape_util::vtable_for_ptr;
 use crate::{
     Def, Facet, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrMut, PtrUninit,
-    Shape, SliceBuilderVTable, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type,
-    UserType, value_vtable,
+    Shape, ShapeBuilder, SliceBuilderVTable, TryBorrowInnerError, TryFromError, TryIntoInnerError,
+    Type, UserType, ValueVTable,
 };
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Rc<T> {
     const SHAPE: &'static crate::Shape = &const {
-        crate::Shape::builder_for_sized::<Self>()
-            .vtable({
-                // Define the functions for transparent conversion between Rc<T> and T
-                unsafe fn try_from<'a, 'src, 'dst, T: Facet<'a>>(
-                    src_ptr: PtrConst<'src>,
-                    src_shape: &'static Shape,
-                    dst: PtrUninit<'dst>,
-                ) -> Result<PtrMut<'dst>, TryFromError> {
-                    if src_shape.id != T::SHAPE.id {
-                        return Err(TryFromError::UnsupportedSourceShape {
-                            src_shape,
-                            expected: &[T::SHAPE],
-                        });
-                    }
-                    let t = unsafe { src_ptr.read::<T>() };
-                    let rc = Rc::new(t);
-                    Ok(unsafe { dst.put(rc) })
-                }
+        // Define the functions for transparent conversion between Rc<T> and T
+        unsafe fn try_from<'a, 'src, 'dst, T: Facet<'a>>(
+            src_ptr: PtrConst<'src>,
+            src_shape: &'static Shape,
+            dst: PtrUninit<'dst>,
+        ) -> Result<PtrMut<'dst>, TryFromError> {
+            if src_shape.id != T::SHAPE.id {
+                return Err(TryFromError::UnsupportedSourceShape {
+                    src_shape,
+                    expected: &[T::SHAPE],
+                });
+            }
+            let t = unsafe { src_ptr.read::<T>() };
+            let rc = Rc::new(t);
+            Ok(unsafe { dst.put(rc) })
+        }
 
-                unsafe fn try_into_inner<'a, 'src, 'dst, T: Facet<'a>>(
-                    src_ptr: PtrMut<'src>,
-                    dst: PtrUninit<'dst>,
-                ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
-                    let rc = unsafe { src_ptr.get::<Rc<T>>() };
-                    match Rc::try_unwrap(rc.clone()) {
-                        Ok(t) => Ok(unsafe { dst.put(t) }),
-                        Err(_) => Err(TryIntoInnerError::Unavailable),
-                    }
-                }
+        unsafe fn try_into_inner<'a, 'src, 'dst, T: Facet<'a>>(
+            src_ptr: PtrMut<'src>,
+            dst: PtrUninit<'dst>,
+        ) -> Result<PtrMut<'dst>, TryIntoInnerError> {
+            let rc = unsafe { src_ptr.get::<Rc<T>>() };
+            match Rc::try_unwrap(rc.clone()) {
+                Ok(t) => Ok(unsafe { dst.put(t) }),
+                Err(_) => Err(TryIntoInnerError::Unavailable),
+            }
+        }
 
-                unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a>>(
-                    src_ptr: PtrConst<'src>,
-                ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
-                    let rc = unsafe { src_ptr.get::<Rc<T>>() };
-                    Ok(PtrConst::new(NonNull::from(&**rc)))
-                }
+        unsafe fn try_borrow_inner<'a, 'src, T: Facet<'a>>(
+            src_ptr: PtrConst<'src>,
+        ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
+            let rc = unsafe { src_ptr.get::<Rc<T>>() };
+            Ok(PtrConst::new(NonNull::from(&**rc)))
+        }
 
-                let mut vtable = vtable_builder_for_ptr::<T, Self>()
-                    .type_name(|f, opts| {
-                        write!(f, "{}<", Self::SHAPE.type_identifier)?;
-                        if let Some(opts) = opts.for_children() {
-                            (T::SHAPE.vtable.type_name())(f, opts)?;
-                        } else {
-                            write!(f, "…")?;
-                        }
-                        write!(f, ">")?;
-                        Ok(())
-                    })
-                    .build();
-
-                {
-                    vtable.try_from = Some(try_from::<T>);
-                    vtable.try_into_inner = Some(try_into_inner::<T>);
-                    vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
+        ShapeBuilder::for_sized::<Self>(
+            |f, opts| {
+                write!(f, "{}<", Self::SHAPE.type_identifier)?;
+                if let Some(opts) = opts.for_children() {
+                    (T::SHAPE.vtable.type_name())(f, opts)?;
+                } else {
+                    write!(f, "…")?;
                 }
-                vtable
-            })
-            .type_identifier("Rc")
-            .type_params(&[crate::TypeParam {
-                name: "T",
-                shape: T::SHAPE,
-            }])
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Pointer(
-                PointerDef::builder()
-                    .pointee(T::SHAPE)
-                    .flags(PointerFlags::EMPTY)
-                    .known(KnownPointer::Rc)
-                    .weak(|| <Weak<T> as Facet>::SHAPE)
-                    .vtable(
-                        &const {
-                            PointerVTable::builder()
-                                .borrow_fn(|this| {
-                                    let ptr = Self::as_ptr(unsafe { this.get() });
-                                    PtrConst::new(unsafe { NonNull::new_unchecked(ptr as *mut T) })
-                                })
-                                .new_into_fn(|this, ptr| {
-                                    let t = unsafe { ptr.read::<T>() };
-                                    let rc = Rc::new(t);
-                                    unsafe { this.put(rc) }
-                                })
-                                .downgrade_into_fn(|strong, weak| unsafe {
-                                    weak.put(Rc::downgrade(strong.get::<Self>()))
-                                })
-                                .build()
-                        },
-                    )
-                    .build(),
-            ))
-            .inner(T::SHAPE)
-            .build()
+                write!(f, ">")?;
+                Ok(())
+            },
+            "Rc",
+        )
+        .vtable(ValueVTable {
+            type_name: |f, opts| {
+                write!(f, "{}<", Self::SHAPE.type_identifier)?;
+                if let Some(opts) = opts.for_children() {
+                    (T::SHAPE.vtable.type_name())(f, opts)?;
+                } else {
+                    write!(f, "…")?;
+                }
+                write!(f, ">")?;
+                Ok(())
+            },
+            try_from: Some(try_from::<T>),
+            try_into_inner: Some(try_into_inner::<T>),
+            try_borrow_inner: Some(try_borrow_inner::<T>),
+            ..vtable_for_ptr::<T, Self>()
+        })
+        .ty(Type::User(UserType::Opaque))
+        .def(Def::Pointer(PointerDef {
+            vtable: &const {
+                PointerVTable {
+                    borrow_fn: Some(|this| {
+                        let ptr = Self::as_ptr(unsafe { this.get() });
+                        PtrConst::new(unsafe { NonNull::new_unchecked(ptr as *mut T) })
+                    }),
+                    new_into_fn: Some(|this, ptr| {
+                        let t = unsafe { ptr.read::<T>() };
+                        let rc = Rc::new(t);
+                        unsafe { this.put(rc) }
+                    }),
+                    downgrade_into_fn: Some(|strong, weak| unsafe {
+                        weak.put(Rc::downgrade(strong.get::<Self>()))
+                    }),
+                    ..PointerVTable::new()
+                }
+            },
+            pointee: Some(T::SHAPE),
+            weak: Some(|| <Weak<T> as Facet>::SHAPE),
+            strong: None,
+            flags: PointerFlags::EMPTY,
+            known: Some(KnownPointer::Rc),
+        }))
+        .type_params(&[crate::TypeParam {
+            name: "T",
+            shape: T::SHAPE,
+        }])
+        .inner(T::SHAPE)
+        .build()
     };
 }
 
 unsafe impl<'a> Facet<'a> for Rc<str> {
     const SHAPE: &'static crate::Shape = &const {
-        crate::Shape::builder_for_sized::<Self>()
-            .vtable({
-                vtable_builder_for_ptr::<str, Self>()
-                    .type_name(|f, opts| {
-                        write!(f, "{}", Self::SHAPE.type_identifier)?;
-                        if let Some(opts) = opts.for_children() {
-                            write!(f, "<")?;
-                            (str::SHAPE.vtable.type_name())(f, opts)?;
-                            write!(f, ">")?;
-                        } else {
-                            write!(f, "<…>")?;
-                        }
-                        Ok(())
-                    })
-                    .build()
-            })
-            .type_identifier("Rc")
-            .type_params(&[crate::TypeParam {
-                name: "T",
-                shape: str::SHAPE,
-            }])
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Pointer(
-                PointerDef::builder()
-                    .pointee(str::SHAPE)
-                    .flags(PointerFlags::EMPTY)
-                    .known(KnownPointer::Rc)
-                    .weak(|| <Weak<str> as Facet>::SHAPE)
-                    .vtable(
-                        &const {
-                            PointerVTable::builder()
-                                .borrow_fn(|this| unsafe {
-                                    let concrete = this.get::<Rc<str>>();
-                                    let s: &str = concrete;
-                                    PtrConst::new(NonNull::from(s))
-                                })
-                                .downgrade_into_fn(|strong, weak| unsafe {
-                                    weak.put(Rc::downgrade(strong.get::<Self>()))
-                                })
-                                .build()
-                        },
-                    )
-                    .build(),
-            ))
-            .inner(str::SHAPE)
-            .build()
+        ShapeBuilder::for_sized::<Self>(
+            |f, opts| {
+                write!(f, "{}", Self::SHAPE.type_identifier)?;
+                if let Some(opts) = opts.for_children() {
+                    write!(f, "<")?;
+                    (str::SHAPE.vtable.type_name())(f, opts)?;
+                    write!(f, ">")?;
+                } else {
+                    write!(f, "<…>")?;
+                }
+                Ok(())
+            },
+            "Rc",
+        )
+        .vtable(ValueVTable {
+            type_name: |f, opts| {
+                write!(f, "{}", Self::SHAPE.type_identifier)?;
+                if let Some(opts) = opts.for_children() {
+                    write!(f, "<")?;
+                    (str::SHAPE.vtable.type_name())(f, opts)?;
+                    write!(f, ">")?;
+                } else {
+                    write!(f, "<…>")?;
+                }
+                Ok(())
+            },
+            ..vtable_for_ptr::<str, Self>()
+        })
+        .ty(Type::User(UserType::Opaque))
+        .def(Def::Pointer(PointerDef {
+            vtable: &const {
+                PointerVTable {
+                    borrow_fn: Some(|this| unsafe {
+                        let concrete = this.get::<Rc<str>>();
+                        let s: &str = concrete;
+                        PtrConst::new(NonNull::from(s))
+                    }),
+                    downgrade_into_fn: Some(|strong, weak| unsafe {
+                        weak.put(Rc::downgrade(strong.get::<Self>()))
+                    }),
+                    ..PointerVTable::new()
+                }
+            },
+            pointee: Some(str::SHAPE),
+            weak: Some(|| <Weak<str> as Facet>::SHAPE),
+            strong: None,
+            flags: PointerFlags::EMPTY,
+            known: Some(KnownPointer::Rc),
+        }))
+        .type_params(&[crate::TypeParam {
+            name: "T",
+            shape: str::SHAPE,
+        }])
+        .inner(str::SHAPE)
+        .build()
     };
 }
 
@@ -189,70 +202,93 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Rc<[U]> {
             }
         }
 
-        crate::Shape::builder_for_sized::<Self>()
-            .vtable({
-                vtable_builder_for_ptr::<[U], Self>()
-                    .type_name(|f, opts| {
-                        write!(f, "{}", Self::SHAPE.type_identifier)?;
-                        if let Some(opts) = opts.for_children() {
-                            write!(f, "<")?;
-                            (<[U]>::SHAPE.vtable.type_name())(f, opts)?;
-                            write!(f, ">")?;
-                        } else {
-                            write!(f, "<…>")?;
-                        }
-                        Ok(())
-                    })
-                    .build()
-            })
-            .type_identifier("Rc")
-            .type_params(&[crate::TypeParam {
-                name: "T",
-                shape: <[U]>::SHAPE,
-            }])
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Pointer(
-                PointerDef::builder()
-                    .pointee(<[U]>::SHAPE)
-                    .flags(PointerFlags::EMPTY)
-                    .known(KnownPointer::Rc)
-                    .weak(|| <Weak<[U]> as Facet>::SHAPE)
-                    .vtable(
+        ShapeBuilder::for_sized::<Self>(
+            |f, opts| {
+                write!(f, "{}", Self::SHAPE.type_identifier)?;
+                if let Some(opts) = opts.for_children() {
+                    write!(f, "<")?;
+                    (<[U]>::SHAPE.vtable.type_name())(f, opts)?;
+                    write!(f, ">")?;
+                } else {
+                    write!(f, "<…>")?;
+                }
+                Ok(())
+            },
+            "Rc",
+        )
+        .vtable(ValueVTable {
+            type_name: |f, opts| {
+                write!(f, "{}", Self::SHAPE.type_identifier)?;
+                if let Some(opts) = opts.for_children() {
+                    write!(f, "<")?;
+                    (<[U]>::SHAPE.vtable.type_name())(f, opts)?;
+                    write!(f, ">")?;
+                } else {
+                    write!(f, "<…>")?;
+                }
+                Ok(())
+            },
+            ..vtable_for_ptr::<[U], Self>()
+        })
+        .ty(Type::User(UserType::Opaque))
+        .def(Def::Pointer(PointerDef {
+            vtable: &const {
+                PointerVTable {
+                    borrow_fn: Some(|this| unsafe {
+                        let concrete = this.get::<Rc<[U]>>();
+                        let s: &[U] = concrete;
+                        PtrConst::new(NonNull::from(s))
+                    }),
+                    downgrade_into_fn: Some(|strong, weak| unsafe {
+                        weak.put(Rc::downgrade(strong.get::<Self>()))
+                    }),
+                    slice_builder_vtable: Some(
                         &const {
-                            PointerVTable::builder()
-                                .borrow_fn(|this| unsafe {
-                                    let concrete = this.get::<Rc<[U]>>();
-                                    let s: &[U] = concrete;
-                                    PtrConst::new(NonNull::from(s))
-                                })
-                                .downgrade_into_fn(|strong, weak| unsafe {
-                                    weak.put(Rc::downgrade(strong.get::<Self>()))
-                                })
-                                .slice_builder_vtable(
-                                    &const {
-                                        SliceBuilderVTable::builder()
-                                            .new_fn(slice_builder_new::<U>)
-                                            .push_fn(slice_builder_push::<U>)
-                                            .convert_fn(slice_builder_convert::<U>)
-                                            .free_fn(slice_builder_free::<U>)
-                                            .build()
-                                    },
-                                )
-                                .build()
+                            SliceBuilderVTable::new(
+                                slice_builder_new::<U>,
+                                slice_builder_push::<U>,
+                                slice_builder_convert::<U>,
+                                slice_builder_free::<U>,
+                            )
                         },
-                    )
-                    .build(),
-            ))
-            .inner(<[U]>::SHAPE)
-            .build()
+                    ),
+                    ..PointerVTable::new()
+                }
+            },
+            pointee: Some(<[U]>::SHAPE),
+            weak: Some(|| <Weak<[U]> as Facet>::SHAPE),
+            strong: None,
+            flags: PointerFlags::EMPTY,
+            known: Some(KnownPointer::Rc),
+        }))
+        .type_params(&[crate::TypeParam {
+            name: "T",
+            shape: <[U]>::SHAPE,
+        }])
+        .inner(<[U]>::SHAPE)
+        .build()
     };
 }
 
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
     const SHAPE: &'static crate::Shape = &const {
-        crate::Shape::builder_for_sized::<Self>()
-            .vtable({
-                value_vtable!(alloc::rc::Weak<T>, |f, opts| {
+        ShapeBuilder::for_sized::<Self>(
+            |f, opts| {
+                write!(f, "{}", Self::SHAPE.type_identifier)?;
+                if let Some(opts) = opts.for_children() {
+                    write!(f, "<")?;
+                    T::SHAPE.vtable.type_name()(f, opts)?;
+                    write!(f, ">")?;
+                } else {
+                    write!(f, "<…>")?;
+                }
+                Ok(())
+            },
+            "Weak",
+        )
+        .vtable(
+            const {
+                ValueVTable::builder(|f, opts| {
                     write!(f, "{}", Self::SHAPE.type_identifier)?;
                     if let Some(opts) = opts.for_children() {
                         write!(f, "<")?;
@@ -263,40 +299,57 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
                     }
                     Ok(())
                 })
-            })
-            .type_identifier("Weak")
-            .type_params(&[crate::TypeParam {
-                name: "T",
-                shape: T::SHAPE,
-            }])
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Pointer(
-                PointerDef::builder()
-                    .pointee(T::SHAPE)
-                    .flags(PointerFlags::WEAK)
-                    .known(KnownPointer::RcWeak)
-                    .strong(<Rc<T> as Facet>::SHAPE)
-                    .vtable(
-                        &const {
-                            PointerVTable::builder()
-                                .upgrade_into_fn(|weak, strong| unsafe {
-                                    Some(strong.put(weak.get::<Self>().upgrade()?))
-                                })
-                                .build()
-                        },
-                    )
-                    .build(),
-            ))
-            .inner(T::SHAPE)
-            .build()
+                .drop_in_place(ValueVTable::drop_in_place_for::<alloc::rc::Weak<T>>())
+                .default_in_place(|target| unsafe { target.put(alloc::rc::Weak::<T>::new()) })
+                .clone_into(|src, dst| unsafe { dst.put(src.get::<alloc::rc::Weak<T>>().clone()) })
+                .debug(|_this, f| write!(f, "(Weak)"))
+                .build()
+            },
+        )
+        .ty(Type::User(UserType::Opaque))
+        .def(Def::Pointer(PointerDef {
+            vtable: &const {
+                PointerVTable {
+                    upgrade_into_fn: Some(|weak, strong| unsafe {
+                        Some(strong.put(weak.get::<Self>().upgrade()?))
+                    }),
+                    ..PointerVTable::new()
+                }
+            },
+            pointee: Some(T::SHAPE),
+            weak: None,
+            strong: Some(<Rc<T> as Facet>::SHAPE),
+            flags: PointerFlags::WEAK,
+            known: Some(KnownPointer::RcWeak),
+        }))
+        .type_params(&[crate::TypeParam {
+            name: "T",
+            shape: T::SHAPE,
+        }])
+        .inner(T::SHAPE)
+        .build()
     };
 }
 
 unsafe impl<'a> Facet<'a> for Weak<str> {
     const SHAPE: &'static crate::Shape = &const {
-        crate::Shape::builder_for_sized::<Self>()
-            .vtable({
-                value_vtable!(alloc::rc::Weak<str>, |f, opts| {
+        ShapeBuilder::for_sized::<Self>(
+            |f, opts| {
+                write!(f, "{}", Self::SHAPE.type_identifier)?;
+                if let Some(opts) = opts.for_children() {
+                    write!(f, "<")?;
+                    (str::SHAPE.vtable.type_name())(f, opts)?;
+                    write!(f, ">")?;
+                } else {
+                    write!(f, "<…>")?;
+                }
+                Ok(())
+            },
+            "Weak",
+        )
+        .vtable(
+            const {
+                ValueVTable::builder(|f, opts| {
                     write!(f, "{}", Self::SHAPE.type_identifier)?;
                     if let Some(opts) = opts.for_children() {
                         write!(f, "<")?;
@@ -307,40 +360,58 @@ unsafe impl<'a> Facet<'a> for Weak<str> {
                     }
                     Ok(())
                 })
-            })
-            .type_identifier("Weak")
-            .type_params(&[crate::TypeParam {
-                name: "T",
-                shape: str::SHAPE,
-            }])
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Pointer(
-                PointerDef::builder()
-                    .pointee(str::SHAPE)
-                    .flags(PointerFlags::WEAK)
-                    .known(KnownPointer::RcWeak)
-                    .strong(<Rc<str> as Facet>::SHAPE)
-                    .vtable(
-                        &const {
-                            PointerVTable::builder()
-                                .upgrade_into_fn(|weak, strong| unsafe {
-                                    Some(strong.put(weak.get::<Self>().upgrade()?))
-                                })
-                                .build()
-                        },
-                    )
-                    .build(),
-            ))
-            .inner(str::SHAPE)
-            .build()
+                .drop_in_place(ValueVTable::drop_in_place_for::<Self>())
+                .clone_into(|src, dst| unsafe {
+                    dst.put(src.get::<alloc::rc::Weak<str>>().clone())
+                })
+                .debug(|_this, f| write!(f, "(Weak)"))
+                .build()
+            },
+        )
+        .ty(Type::User(UserType::Opaque))
+        .def(Def::Pointer(PointerDef {
+            vtable: &const {
+                PointerVTable {
+                    upgrade_into_fn: Some(|weak, strong| unsafe {
+                        Some(strong.put(weak.get::<Self>().upgrade()?))
+                    }),
+                    ..PointerVTable::new()
+                }
+            },
+            pointee: Some(str::SHAPE),
+            weak: None,
+            strong: Some(<Rc<str> as Facet>::SHAPE),
+            flags: PointerFlags::WEAK,
+            known: Some(KnownPointer::RcWeak),
+        }))
+        .type_params(&[crate::TypeParam {
+            name: "T",
+            shape: str::SHAPE,
+        }])
+        .inner(str::SHAPE)
+        .build()
     };
 }
 
 unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
     const SHAPE: &'static crate::Shape = &const {
-        crate::Shape::builder_for_sized::<Self>()
-            .vtable({
-                value_vtable!(alloc::rc::Weak<[U]>, |f, opts| {
+        ShapeBuilder::for_sized::<Self>(
+            |f, opts| {
+                write!(f, "{}", Self::SHAPE.type_identifier)?;
+                if let Some(opts) = opts.for_children() {
+                    write!(f, "<")?;
+                    (<[U]>::SHAPE.vtable.type_name())(f, opts)?;
+                    write!(f, ">")?;
+                } else {
+                    write!(f, "<…>")?;
+                }
+                Ok(())
+            },
+            "Weak",
+        )
+        .vtable(
+            const {
+                ValueVTable::builder(|f, opts| {
                     write!(f, "{}", Self::SHAPE.type_identifier)?;
                     if let Some(opts) = opts.for_children() {
                         write!(f, "<")?;
@@ -351,32 +422,36 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
                     }
                     Ok(())
                 })
-            })
-            .type_identifier("Weak")
-            .type_params(&[crate::TypeParam {
-                name: "T",
-                shape: <[U]>::SHAPE,
-            }])
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Pointer(
-                PointerDef::builder()
-                    .pointee(<[U]>::SHAPE)
-                    .flags(PointerFlags::WEAK)
-                    .known(KnownPointer::RcWeak)
-                    .strong(<Rc<[U]> as Facet>::SHAPE)
-                    .vtable(
-                        &const {
-                            PointerVTable::builder()
-                                .upgrade_into_fn(|weak, strong| unsafe {
-                                    Some(strong.put(weak.get::<Self>().upgrade()?))
-                                })
-                                .build()
-                        },
-                    )
-                    .build(),
-            ))
-            .inner(<[U]>::SHAPE)
-            .build()
+                .drop_in_place(ValueVTable::drop_in_place_for::<Self>())
+                .clone_into(|src, dst| unsafe {
+                    dst.put(src.get::<alloc::rc::Weak<[U]>>().clone())
+                })
+                .debug(|_this, f| write!(f, "(Weak)"))
+                .build()
+            },
+        )
+        .ty(Type::User(UserType::Opaque))
+        .def(Def::Pointer(PointerDef {
+            vtable: &const {
+                PointerVTable {
+                    upgrade_into_fn: Some(|weak, strong| unsafe {
+                        Some(strong.put(weak.get::<Self>().upgrade()?))
+                    }),
+                    ..PointerVTable::new()
+                }
+            },
+            pointee: Some(<[U]>::SHAPE),
+            weak: None,
+            strong: Some(<Rc<[U]> as Facet>::SHAPE),
+            flags: PointerFlags::WEAK,
+            known: Some(KnownPointer::RcWeak),
+        }))
+        .type_params(&[crate::TypeParam {
+            name: "T",
+            shape: <[U]>::SHAPE,
+        }])
+        .inner(<[U]>::SHAPE)
+        .build()
     };
 }
 

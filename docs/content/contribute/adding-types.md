@@ -47,15 +47,20 @@ Most third-party types are scalars (atomic values like UUIDs, timestamps, paths)
 
 ```rust
 unsafe impl Facet<'_> for my_crate::MyType {
-    const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable(value_vtable!(my_crate::MyType, |f, _opts| {
-                write!(f, "MyType")
-            }))
-            .type_identifier("MyType")
-            .def(Def::Scalar)
-            .ty(Type::User(UserType::Opaque))
-            .build()
+    const SHAPE: &'static Shape = &Shape {
+        id: Shape::id_of::<Self>(),
+        layout: Shape::layout_of::<Self>(),
+        vtable: value_vtable!(my_crate::MyType, |f, _opts| {
+            write!(f, "MyType")
+        }),
+        type_identifier: "MyType",
+        def: Def::Scalar,
+        ty: Type::User(UserType::Opaque),
+        type_params: &[],
+        doc: &[],
+        attributes: &[],
+        type_tag: None,
+        inner: None,
     };
 }
 ```
@@ -72,26 +77,30 @@ Collections need vtable functions for their operations (push, get, len, etc.):
 
 ```rust
 unsafe impl<T: Facet<'static>> Facet<'_> for MyVec<T> {
-    const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable(value_vtable!(MyVec<T>, |f, opts| {
-                write!(f, "MyVec<")?;
-                (T::SHAPE.vtable.type_name)(f, opts)?;
-                write!(f, ">")
-            }))
-            .type_identifier("MyVec")
-            .def(Def::List(ListDef {
-                vtable: &ListVTable {
-                    init_empty: |target| { /* ... */ },
-                    push: |list, value| { /* ... */ },
-                    len: |list| { /* ... */ },
-                    get: |list, index| { /* ... */ },
-                },
-                item_shape: T::SHAPE,
-            }))
-            .ty(Type::User(UserType::Opaque))
-            .type_params(&[TypeParam { name: "T", shape: T::SHAPE }])
-            .build()
+    const SHAPE: &'static Shape = &Shape {
+        id: Shape::id_of::<Self>(),
+        layout: Shape::layout_of::<Self>(),
+        vtable: value_vtable!(MyVec<T>, |f, opts| {
+            write!(f, "MyVec<")?;
+            (T::SHAPE.vtable.type_name)(f, opts)?;
+            write!(f, ">")
+        }),
+        type_identifier: "MyVec",
+        def: Def::List(ListDef {
+            vtable: &ListVTable {
+                init_empty: |target| { /* ... */ },
+                push: |list, value| { /* ... */ },
+                len: |list| { /* ... */ },
+                get: |list, index| { /* ... */ },
+            },
+            item_shape: T::SHAPE,
+        }),
+        ty: Type::User(UserType::Opaque),
+        type_params: &[TypeParam { name: "T", shape: T::SHAPE }],
+        doc: &[],
+        attributes: &[],
+        type_tag: None,
+        inner: None,
     };
 }
 ```

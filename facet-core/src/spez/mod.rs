@@ -5,7 +5,6 @@
 //! `specialization` feature.
 
 use crate::types::ParseError;
-use crate::{Shape, ShapeBuilder};
 use core::fmt::{self, Debug};
 use core::marker::PhantomData;
 pub use impls::impls;
@@ -38,19 +37,6 @@ impl<T: ?Sized> SpezEmpty<T> {
     /// An instance of [`SpezEmpty`].
     pub const SPEZ: Self = Self(PhantomData);
 }
-
-impl<T> SpezEmpty<T> {
-    /// Sized shape builder of `T`
-    pub const BUILDER: ShapeBuilder = Shape::builder_for_sized::<T>();
-}
-
-/// Specialization proxy for [`core::marker::Sized`]
-pub trait SpezSizedNo {
-    /// Unsized shape builder of `T`
-    const BUILDER: ShapeBuilder = Shape::builder_for_unsized::<Self>();
-}
-
-impl<T: ?Sized> SpezSizedNo for SpezEmpty<T> {}
 
 //////////////////////////////////////////////////////////////////////////////////////
 // Debug 🐛🔍

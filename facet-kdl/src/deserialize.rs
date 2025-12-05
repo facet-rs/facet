@@ -136,7 +136,7 @@ fn find_property_field(
     // Then check flattened struct fields
     for field in fields {
         if field.is_flattened() {
-            let field_shape = (field.shape)();
+            let field_shape = field.shape();
             if let Type::User(UserType::Struct(struct_def)) = &field_shape.ty {
                 for inner_field in struct_def.fields {
                     if inner_field.has_attr(Some("kdl"), "property")
@@ -384,7 +384,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 .iter()
                 .filter(|field| field.is_kdl_child())
                 .find_map(|field| {
-                    let field_shape = (field.shape)();
+                    let field_shape = field.shape();
                     if let Some(enum_type) = get_enum_type(field_shape) {
                         if let Some(variant) = find_variant_by_name(&enum_type, node.name().value())
                         {
@@ -487,7 +487,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
                 // Get the field shape to determine if it's a List or Map
                 let children_field = &fields[field_index];
-                let field_shape = (children_field.shape)();
+                let field_shape = children_field.shape();
 
                 // Check if we need to open a new container:
                 // 1. We're not in any container, or
@@ -673,7 +673,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             .iter()
             .find(|field| field.has_attr(Some("kdl"), "name"))
         {
-            let field_shape = (node_name_field.shape)();
+            let field_shape = node_name_field.shape();
             if is_spanned_shape(field_shape) {
                 // Deserialize as Spanned<String>
                 partial = partial.begin_field(node_name_field.name)?;
@@ -1696,7 +1696,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                     .find(|field| field.is_kdl_child() && field.name == child_name.as_str())
                 {
                     partial = partial.begin_field(child_field.name)?;
-                    let _field_shape = (child_field.shape)();
+                    let _field_shape = child_field.shape();
 
                     // Handle Option wrapper
                     let mut entered_option = false;
@@ -1745,7 +1745,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         .iter()
                         .filter(|field| field.is_kdl_child())
                         .find_map(|field| {
-                            let field_shape = (field.shape)();
+                            let field_shape = field.shape();
                             if let Some(enum_type) = get_enum_type(field_shape) {
                                 if let Some(variant) = find_variant_by_name(&enum_type, &child_name)
                                 {
@@ -2126,7 +2126,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                                 if let Some(field) =
                                     struct_def.fields.iter().find(|f| f.name == *name)
                                 {
-                                    let field_shape = (field.shape)();
+                                    let field_shape = field.shape();
                                     if matches!(field_shape.def, Def::Option(_)) {
                                         log::trace!(
                                             "Field {name} is Option<T>, not entering (enter_new_options=false)"

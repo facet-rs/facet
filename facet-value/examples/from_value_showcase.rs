@@ -3,9 +3,8 @@
 //! Run with: cargo run -p facet-value --example from_value_showcase
 
 use facet::Facet;
-use facet_showcase::{Language, OutputMode, ShowcaseRunner, ansi_to_html};
+use facet_showcase::{Language, ShowcaseRunner};
 use facet_value::{VString, Value, ValueError, from_value, value};
-use owo_colors::OwoColorize;
 use std::collections::HashMap;
 
 // ============================================================================
@@ -251,34 +250,11 @@ fn print_error_scenario(
     description: &str,
     error: ValueError,
 ) {
-    let mode = runner.mode();
     let report = error.into_report();
-    let rendered = report.render();
-
-    match mode {
-        OutputMode::Terminal => {
-            println!();
-            println!("{}", "═".repeat(78).dimmed());
-            println!("{} {}", "SCENARIO:".bold().cyan(), name.bold().white());
-            println!("{}", "─".repeat(78).dimmed());
-            println!("{}", description.dimmed());
-            println!("{}", "═".repeat(78).dimmed());
-            println!();
-            print!("{rendered}");
-        }
-        OutputMode::Markdown => {
-            println!();
-            println!("### {name}");
-            println!();
-            println!("<section class=\"scenario\">");
-            println!("<p class=\"description\">{description}</p>");
-            println!("<div class=\"error\">");
-            println!("<h4>Error</h4>");
-            println!("<pre><code>{}</code></pre>", ansi_to_html(&rendered));
-            println!("</div>");
-            println!("</section>");
-        }
-    }
+    runner
+        .scenario(name)
+        .description(description)
+        .error(&report);
 }
 
 fn showcase_error_type_mismatch(runner: &mut ShowcaseRunner) {

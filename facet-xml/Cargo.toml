@@ -24,7 +24,7 @@ facet = { path = "../facet", default-features = false }
 facet-core = { path = "../facet-core", default-features = false }
 facet-reflect = { path = "../facet-reflect", default-features = false, features = ["miette"] }
 facet-solver = { path = "../facet-solver" }
-miette = "7"
+miette = { version = "7", default-features = false }
 log = "0.4"
 base64 = "0.22"
 
@@ -38,6 +38,6 @@ facet = { path = "../facet" }
 facet-core = { path = "../facet-core" }
 facet-pretty = { path = "../facet-pretty" }
 facet-testhelpers = { path = "../facet-testhelpers" }
-miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
+miette = { version = "7", default-features = false }
 indoc = "2"
 cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }

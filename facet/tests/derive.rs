@@ -106,6 +106,7 @@ fn struct_repr_c() {
 }
 
 #[test]
+#[cfg(feature = "doc")]
 fn struct_doc_comment() {
     #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
     /// yes
@@ -115,6 +116,7 @@ fn struct_doc_comment() {
 }
 
 #[test]
+#[cfg(feature = "doc")]
 fn struct_doc_comment2() {
     #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
     /// yes
@@ -125,6 +127,7 @@ fn struct_doc_comment2() {
 }
 
 #[test]
+#[cfg(feature = "doc")]
 fn struct_doc_comment3() {
     #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
     /// yes 😄
@@ -135,6 +138,7 @@ fn struct_doc_comment3() {
 }
 
 #[test]
+#[cfg(feature = "doc")]
 fn struct_doc_comment4() {
     #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
     /// what about "quotes"
@@ -144,6 +148,7 @@ fn struct_doc_comment4() {
 }
 
 #[test]
+#[cfg(feature = "doc")]
 fn struct_field_doc_comment() {
     #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
     struct Foo {
@@ -159,6 +164,7 @@ fn struct_field_doc_comment() {
 }
 
 #[test]
+#[cfg(feature = "doc")]
 fn tuple_struct_field_doc_comment_test() {
     #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
     struct MyTupleStruct(
@@ -180,6 +186,7 @@ fn tuple_struct_field_doc_comment_test() {
 }
 
 #[test]
+#[cfg(feature = "doc")]
 fn enum_variants_with_comments() {
     #[derive(Clone, Hash, PartialEq, Eq, Facet)]
     #[repr(u8)]
@@ -257,6 +264,7 @@ fn tuple_struct_repr_transparent() {
 }
 
 #[test]
+#[cfg(feature = "doc")]
 fn tuple_struct_doc_comment() {
     #[derive(Clone, Hash, PartialEq, Eq, ::facet::Facet)]
     #[repr(transparent)]

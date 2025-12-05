@@ -24,7 +24,7 @@ facet-reflect = { path = "../facet-reflect", features = ["miette"] }
 facet-singularize = { path = "../facet-singularize" }
 facet-solver = { path = "../facet-solver" }
 kdl = "6.5.0"
-miette = "7"
+miette = { version = "7", default-features = false }
 
 # Axum integration (optional)
 axum-core = { version = "0.5", optional = true }
@@ -39,6 +39,6 @@ facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 tempfile = "3"
 camino = "1"
-miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
+miette = { version = "7", default-features = false }
 indoc = "2.0.7"
 cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }

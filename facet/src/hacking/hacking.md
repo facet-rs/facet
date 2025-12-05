@@ -89,12 +89,12 @@ fn create_array_shape<'a, T: Facet<'a>>() {
     let vtable = {
         // Implementation of partial_ord for arrays
         let partial_ord = {
-            if T::SHAPE.vtable.partial_ord.is_some() {
+            if T::SHAPE.vtable.cmp.partial_ord.is_some() {
                 Some(|a: PtrConst, b: PtrConst| {
                     let a = unsafe { a.get::<[T; 1]>() };
                     let b = unsafe { b.get::<[T; 1]>() };
                     unsafe {
-                        T::SHAPE.vtable.partial_ord.unwrap_unchecked()(
+                        T::SHAPE.vtable.cmp.partial_ord.unwrap_unchecked()(
                             PtrConst::new(NonNull::from(&a[0])),
                             PtrConst::new(NonNull::from(&b[0])),
                         )
@@ -121,15 +121,14 @@ Here's what's happening:
 
 For non-generic types, we use the `value_vtable` macro which leverages auto-deref specialization:
 
-```rust
-# // This is a simplified version of what happens in the actual code
-# use facet::PtrConst;
+```rust,ignore
+// This is a simplified version of what happens in the actual code
+use facet::PtrConst;
 
-# #[macro_export]
-# macro_rules! value_vtable {
-#     ($type_name:ty) => {
-#         {
-#             // Other vtable fields would be here...
+macro_rules! value_vtable {
+    ($type_name:ty) => {
+        {
+            // Other vtable fields would be here...
             let partial_ord = if facet::spez::impls!($type_name: core::cmp::PartialOrd) {
                 Some(|left: PtrConst, right: PtrConst| {
                     use facet::spez::*;
@@ -139,16 +138,16 @@ For non-generic types, we use the `value_vtable` macro which leverages auto-dere
             } else {
                 None
             };
-#             // Return the vtable
-#             partial_ord
-#         }
-#     };
-# }
-#
-# fn main() {
-#     let _vtable = value_vtable!(u32);
-#     println!("Generated vtable for u32");
-# }
+            // Return the vtable
+            partial_ord
+        }
+    };
+}
+
+fn main() {
+    let _vtable = value_vtable!(u32);
+    println!("Generated vtable for u32");
+}
 ```
 
 Here's what's happening:

@@ -5,10 +5,7 @@ use alloc::collections::BTreeSet;
 
 use crate::ptr::{PtrConst, PtrMut};
 
-use crate::{
-    Def, Facet, IterVTable, MarkerTraits, SetDef, SetVTable, Shape, Type, TypeParam, UserType,
-    ValueVTable,
-};
+use crate::{Def, Facet, IterVTable, SetDef, SetVTable, ShapeBuilder, TypeParam, ValueVTable};
 
 type BTreeSetIterator<'mem, T> = alloc::collections::btree_set::Iter<'mem, T>;
 
@@ -16,101 +13,74 @@ unsafe impl<'a, T> Facet<'a> for BTreeSet<T>
 where
     T: Facet<'a> + core::cmp::Eq + core::cmp::Ord,
 {
-    const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
-                ValueVTable::builder::<Self>()
-                    .marker_traits({
-                        MarkerTraits::SEND
-                            .union(MarkerTraits::SYNC)
-                            .union(MarkerTraits::EQ)
-                            .union(MarkerTraits::UNPIN)
-                            .intersection(T::SHAPE.vtable.marker_traits())
-                    })
-                    .type_name(|f, opts| {
-                        write!(f, "{}<", Self::SHAPE.type_identifier)?;
-                        if let Some(opts) = opts.for_children() {
-                            T::SHAPE.vtable.type_name()(f, opts)?;
-                        } else {
-                            write!(f, "…")?;
-                        }
-                        write!(f, ">")
-                    })
-                    .default_in_place({
-                        Some(|target| unsafe { target.put(Self::default()).into() })
-                    })
-                    .build()
-            })
-            .type_identifier("BTreeSet")
-            .type_params(&[TypeParam {
-                name: "T",
-                shape: T::SHAPE,
-            }])
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Set(
-                SetDef::builder()
-                    .t(T::SHAPE)
-                    .vtable(
-                        &const {
-                            SetVTable::builder()
-                                .init_in_place_with_capacity(|uninit, _capacity| unsafe {
-                                    uninit.put(Self::new())
-                                })
-                                .insert(|ptr, item| unsafe {
-                                    let set = ptr.as_mut::<BTreeSet<T>>();
-                                    let item = item.read::<T>();
-                                    set.insert(item)
-                                })
-                                .len(|ptr| unsafe {
-                                    let set = ptr.get::<BTreeSet<T>>();
-                                    set.len()
-                                })
-                                .contains(|ptr, item| unsafe {
-                                    let set = ptr.get::<BTreeSet<T>>();
-                                    set.contains(item.get())
-                                })
-                                .iter_vtable(
-                                    IterVTable::builder()
-                                        .init_with_value(|ptr| {
-                                            let set = unsafe { ptr.get::<BTreeSet<T>>() };
-                                            let iter: BTreeSetIterator<'_, T> = set.iter();
-                                            let iter_state = Box::new(iter);
-                                            PtrMut::new(unsafe {
-                                                NonNull::new_unchecked(
-                                                    Box::into_raw(iter_state) as *mut u8
-                                                )
-                                            })
-                                        })
-                                        .next(|iter_ptr| {
-                                            let state = unsafe {
-                                                iter_ptr.as_mut::<BTreeSetIterator<'_, T>>()
-                                            };
-                                            state
-                                                .next()
-                                                .map(|value| PtrConst::new(NonNull::from(value)))
-                                        })
-                                        .next_back(|iter_ptr| {
-                                            let state = unsafe {
-                                                iter_ptr.as_mut::<BTreeSetIterator<'_, T>>()
-                                            };
-                                            state
-                                                .next_back()
-                                                .map(|value| PtrConst::new(NonNull::from(value)))
-                                        })
-                                        .dealloc(|iter_ptr| unsafe {
-                                            drop(Box::from_raw(
-                                                iter_ptr.as_ptr::<BTreeSetIterator<'_, T>>()
-                                                    as *mut BTreeSetIterator<'_, T>,
-                                            ));
-                                        })
-                                        .build(),
-                                )
-                                .build()
+    const SHAPE: &'static crate::Shape = &const {
+        ShapeBuilder::for_sized::<Self>(
+            |f, opts| {
+                write!(f, "{}<", Self::SHAPE.type_identifier)?;
+                if let Some(opts) = opts.for_children() {
+                    T::SHAPE.vtable.type_name()(f, opts)?;
+                } else {
+                    write!(f, "…")?;
+                }
+                write!(f, ">")
+            },
+            "BTreeSet",
+        )
+        .drop_in_place(ValueVTable::drop_in_place_for::<Self>())
+        .default_in_place(|target| unsafe { target.put(Self::default()) })
+        .def(Def::Set(SetDef::new(
+            &const {
+                SetVTable::new(
+                    |uninit, _capacity| unsafe { uninit.put(Self::new()) },
+                    |ptr, item| unsafe {
+                        let set = ptr.as_mut::<BTreeSet<T>>();
+                        let item = item.read::<T>();
+                        set.insert(item)
+                    },
+                    |ptr| unsafe {
+                        let set = ptr.get::<BTreeSet<T>>();
+                        set.len()
+                    },
+                    |ptr, item| unsafe {
+                        let set = ptr.get::<BTreeSet<T>>();
+                        set.contains(item.get())
+                    },
+                    IterVTable {
+                        init_with_value: Some(|ptr| {
+                            let set = unsafe { ptr.get::<BTreeSet<T>>() };
+                            let iter: BTreeSetIterator<'_, T> = set.iter();
+                            let iter_state = Box::new(iter);
+                            PtrMut::new(unsafe {
+                                NonNull::new_unchecked(Box::into_raw(iter_state) as *mut u8)
+                            })
+                        }),
+                        next: |iter_ptr| {
+                            let state = unsafe { iter_ptr.as_mut::<BTreeSetIterator<'_, T>>() };
+                            state
+                                .next()
+                                .map(|value| PtrConst::new(NonNull::from(value)))
                         },
-                    )
-                    .build(),
-            ))
-            .build()
+                        next_back: Some(|iter_ptr| {
+                            let state = unsafe { iter_ptr.as_mut::<BTreeSetIterator<'_, T>>() };
+                            state
+                                .next_back()
+                                .map(|value| PtrConst::new(NonNull::from(value)))
+                        }),
+                        size_hint: None,
+                        dealloc: |iter_ptr| unsafe {
+                            drop(Box::from_raw(iter_ptr.as_ptr::<BTreeSetIterator<'_, T>>()
+                                as *mut BTreeSetIterator<'_, T>));
+                        },
+                    },
+                )
+            },
+            T::SHAPE,
+        )))
+        .type_params(&[TypeParam {
+            name: "T",
+            shape: T::SHAPE,
+        }])
+        .build()
     };
 }
 

@@ -114,7 +114,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// `false` if equality comparison is not supported for this scalar type
     #[inline]
     pub fn partial_eq(&self, other: &Peek<'_, '_>) -> Result<bool, ReflectError> {
-        if let Some(f) = self.vtable().partial_eq {
+        if let Some(f) = self.vtable().cmp.partial_eq {
             if self.shape == other.shape {
                 return Ok(unsafe { f(self.data, other.data) });
             } else {
@@ -138,7 +138,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// `None` if comparison is not supported for this scalar type
     #[inline]
     pub fn partial_cmp(&self, other: &Peek<'_, '_>) -> Result<Option<Ordering>, ReflectError> {
-        if let Some(f) = self.vtable().partial_ord {
+        if let Some(f) = self.vtable().cmp.partial_ord {
             if self.shape == other.shape {
                 return Ok(unsafe { f(self.data, other.data) });
             } else {
@@ -154,6 +154,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
             operation: "partial_cmp",
         })
     }
+
     /// Hashes this scalar
     ///
     /// # Returns
@@ -161,7 +162,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// `Err` if hashing is not supported for this scalar type, `Ok` otherwise
     #[inline(always)]
     pub fn hash(&self, hasher: &mut dyn core::hash::Hasher) -> Result<(), ReflectError> {
-        if let Some(hash_fn) = self.vtable().hash {
+        if let Some(hash_fn) = self.vtable().hash.hash {
             unsafe {
                 hash_fn(self.data, hasher);
                 return Ok(());
@@ -573,7 +574,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
 impl<'mem, 'facet> core::fmt::Display for Peek<'mem, 'facet> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(display_fn) = self.vtable().display {
+        if let Some(display_fn) = self.vtable().format.display {
             return unsafe { display_fn(self.data, f) };
         }
         write!(f, "⟨{}⟩", self.shape)
@@ -582,7 +583,7 @@ impl<'mem, 'facet> core::fmt::Display for Peek<'mem, 'facet> {
 
 impl<'mem, 'facet> core::fmt::Debug for Peek<'mem, 'facet> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(debug_fn) = self.vtable().debug {
+        if let Some(debug_fn) = self.vtable().format.debug {
             return unsafe { debug_fn(self.data, f) };
         }
 

@@ -1,27 +1,11 @@
 use core::fmt;
 
-use super::{MarkerTraits, Shape, TypeNameOpts};
+use super::{Shape, TypeNameOpts};
 
 /// A characteristic a shape can have
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(C)]
 pub enum Characteristic {
-    // Marker traits
-    /// Implements Send
-    Send,
-
-    /// Implements Sync
-    Sync,
-
-    /// Implements Copy
-    Copy,
-
-    /// Implements Eq
-    Eq,
-
-    /// Implements Unpin
-    Unpin,
-
     // Functionality traits
     /// Implements Clone
     Clone,
@@ -162,13 +146,6 @@ impl Shape {
     #[inline]
     pub const fn is(&self, characteristic: Characteristic) -> bool {
         match characteristic {
-            // Marker traits
-            Characteristic::Send => self.vtable.marker_traits().contains(MarkerTraits::SEND),
-            Characteristic::Sync => self.vtable.marker_traits().contains(MarkerTraits::SYNC),
-            Characteristic::Copy => self.vtable.marker_traits().contains(MarkerTraits::COPY),
-            Characteristic::Eq => self.vtable.marker_traits().contains(MarkerTraits::EQ),
-            Characteristic::Unpin => self.vtable.marker_traits().contains(MarkerTraits::UNPIN),
-
             // Functionality traits
             Characteristic::Clone => self.vtable.has_clone_into(),
             Characteristic::Display => self.vtable.has_display(),
@@ -180,30 +157,6 @@ impl Shape {
             Characteristic::Default => self.vtable.has_default_in_place(),
             Characteristic::FromStr => self.vtable.has_parse(),
         }
-    }
-
-    /// Check if this shape implements the Send trait
-    #[inline]
-    pub const fn is_send(&self) -> bool {
-        self.is(Characteristic::Send)
-    }
-
-    /// Check if this shape implements the Sync trait
-    #[inline]
-    pub const fn is_sync(&self) -> bool {
-        self.is(Characteristic::Sync)
-    }
-
-    /// Check if this shape implements the Copy trait
-    #[inline]
-    pub const fn is_copy(&self) -> bool {
-        self.is(Characteristic::Copy)
-    }
-
-    /// Check if this shape implements the Eq trait
-    #[inline]
-    pub const fn is_eq(&self) -> bool {
-        self.is(Characteristic::Eq)
     }
 
     /// Check if this shape implements the Clone trait

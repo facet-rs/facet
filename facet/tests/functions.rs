@@ -225,7 +225,7 @@ fn function_shape_clone() {
 //     assert_eq!(shape.param_names, &["data"]);
 // }
 
-#[cfg(feature = "function")]
+#[cfg(all(feature = "function", feature = "doc"))]
 #[test]
 fn function_with_single_doc_comment() {
     /// Single line documentation
@@ -248,7 +248,7 @@ fn function_with_single_doc_comment() {
     assert_eq!(shape.documentation[0], " Single line documentation");
 }
 
-#[cfg(feature = "function")]
+#[cfg(all(feature = "function", feature = "doc"))]
 #[test]
 fn function_with_multiple_doc_comments() {
     /// This is a test function
@@ -273,7 +273,7 @@ fn function_with_multiple_doc_comments() {
     assert_eq!(shape.documentation[1], " that does addition of two numbers");
 }
 
-#[cfg(feature = "function")]
+#[cfg(all(feature = "function", feature = "doc"))]
 #[test]
 fn function_with_doc_comments_and_quotes() {
     /// Hello "world", if that is your real name

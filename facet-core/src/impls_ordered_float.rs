@@ -8,8 +8,10 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
     ($float:ty) => {
         unsafe impl<'a> Facet<'a> for OrderedFloat<$float> {
             const SHAPE: &'static Shape = &const {
-                Shape::builder_for_sized::<Self>()
-                    .vtable({
+                Shape {
+                    id: Shape::id_of::<Self>(),
+                    layout: Shape::layout_of::<Self>(),
+                    vtable: {
                         // Define conversion functions for transparency
                         unsafe fn try_from<'dst>(
                             src_ptr: PtrConst<'_>,
@@ -78,25 +80,29 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                             vtable.try_borrow_inner = Some(try_borrow_inner);
                         }
                         vtable
-                    })
-                    .type_identifier("OrderedFloat")
-                    .ty(Type::User(UserType::Struct(
-                        StructType::builder()
-                            .repr(Repr::transparent())
-                            .fields(&const { [field_in_type!(Self, 0)] })
-                            .kind(crate::StructKind::Tuple)
-                            .build(),
-                    )))
-                    .def(Def::Scalar)
-                    .inner(<$float as Facet>::SHAPE)
-                    .build()
+                    },
+                    ty: Type::User(UserType::Struct(StructType {
+                        repr: Repr::transparent(),
+                        fields: &const { [field_in_type!(Self, 0, $float)] },
+                        kind: crate::StructKind::Tuple,
+                    })),
+                    def: Def::Scalar,
+                    type_identifier: "OrderedFloat",
+                    type_params: &[],
+                    doc: &[],
+                    attributes: &[],
+                    type_tag: None,
+                    inner: Some(<$float as Facet>::SHAPE),
+                }
             };
         }
 
         unsafe impl<'a> Facet<'a> for NotNan<$float> {
             const SHAPE: &'static Shape = &const {
-                Shape::builder_for_sized::<Self>()
-                    .vtable({
+                Shape {
+                    id: Shape::id_of::<Self>(),
+                    layout: Shape::layout_of::<Self>(),
+                    vtable: {
                         // Conversion from inner float type to NotNan<$float>
                         unsafe fn try_from<'dst>(
                             src_ptr: PtrConst<'_>,
@@ -178,12 +184,16 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                             vtable.try_borrow_inner = Some(try_borrow_inner);
                         }
                         vtable
-                    })
-                    .type_identifier("NotNan")
-                    .ty(Type::User(UserType::Opaque))
-                    .def(Def::Scalar)
-                    .inner(<$float as Facet>::SHAPE)
-                    .build()
+                    },
+                    ty: Type::User(UserType::Opaque),
+                    def: Def::Scalar,
+                    type_identifier: "NotNan",
+                    type_params: &[],
+                    doc: &[],
+                    attributes: &[],
+                    type_tag: None,
+                    inner: Some(<$float as Facet>::SHAPE),
+                }
             };
         }
     };

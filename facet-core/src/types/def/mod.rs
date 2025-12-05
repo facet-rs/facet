@@ -210,4 +210,19 @@ impl Def {
             _ => Err(self),
         }
     }
+
+    /// Returns the default `Type` for this `Def`.
+    ///
+    /// This is used by `ShapeBuilder` to infer the `ty` field from `def`.
+    /// For most `Def` variants, this returns `Type::User(UserType::Opaque)`.
+    /// Array and Slice have corresponding `Type::Sequence` variants.
+    pub const fn default_type(&self) -> Type {
+        match self {
+            Self::Array(arr) => {
+                Type::Sequence(SequenceType::Array(ArrayType { t: arr.t, n: arr.n }))
+            }
+            Self::Slice(slice) => Type::Sequence(SequenceType::Slice(SliceType { t: slice.t })),
+            _ => Type::User(UserType::Opaque),
+        }
+    }
 }

@@ -10,8 +10,10 @@ use crate::{
 
 unsafe impl Facet<'_> for Url {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: {
                 // Custom parse impl with detailed errors
                 unsafe fn parse<'target>(
                     s: &str,
@@ -32,7 +34,7 @@ unsafe impl Facet<'_> for Url {
                                 "relative URL with a cannot-be-a-base base"
                             }
                             url::ParseError::SetHostOnCannotBeABaseUrl => {
-                                "a cannot-be-a-base URL doesn’t have a host to set"
+                                "a cannot-be-a-base URL doesn't have a host to set"
                             }
                             url::ParseError::Overflow => "URLs more than 4 GB are not supported",
                             _ => "failed to parse URL",
@@ -65,11 +67,15 @@ unsafe impl Facet<'_> for Url {
                     vtable.try_borrow_inner = Some(try_borrow_inner);
                 }
                 vtable
-            })
-            .type_identifier("Url")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
-            .inner(<String as Facet>::SHAPE)
-            .build()
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::Scalar,
+            type_identifier: "Url",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: Some(<String as Facet>::SHAPE),
+        }
     };
 }

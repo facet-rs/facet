@@ -10,8 +10,10 @@ use crate::{
 
 unsafe impl Facet<'_> for Uuid {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: {
                 // Functions to transparently convert between Uuid and String
                 unsafe fn try_from<'dst>(
                     src_ptr: PtrConst<'_>,
@@ -58,11 +60,15 @@ unsafe impl Facet<'_> for Uuid {
                     vtable.try_into_inner = Some(try_into_inner);
                 }
                 vtable
-            })
-            .type_identifier("Uuid")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
-            .inner(<String as Facet>::SHAPE)
-            .build()
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::Scalar,
+            type_identifier: "Uuid",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: Some(<String as Facet>::SHAPE),
+        }
     };
 }

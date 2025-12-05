@@ -60,71 +60,14 @@ pub struct IterVTable<T: IterItem> {
 }
 
 impl<T: IterItem> IterVTable<T> {
-    /// Returns a builder for [`IterVTable`]
-    pub const fn builder() -> IterVTableBuilder<T> {
-        IterVTableBuilder::new()
-    }
-}
-
-/// Builds an [`IterVTable`]
-pub struct IterVTableBuilder<T: IterItem> {
-    init_with_value: Option<IterInitWithValueFn>,
-    next: Option<IterNextFn<T>>,
-    next_back: Option<IterNextBackFn<T>>,
-    size_hint: Option<IterSizeHintFn>,
-    dealloc: Option<IterDeallocFn>,
-}
-
-impl<T: IterItem> IterVTableBuilder<T> {
-    /// Creates a new [`IterVTableBuilder`] with all fields set to `None`.
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
+    /// Const ctor; required: `next`, `dealloc`. Others default to `None`.
+    pub const fn new(next: IterNextFn<T>, dealloc: IterDeallocFn) -> Self {
         Self {
             init_with_value: None,
-            next: None,
+            next,
             next_back: None,
             size_hint: None,
-            dealloc: None,
-        }
-    }
-
-    /// Sets the `init_with_value` function
-    pub const fn init_with_value(mut self, f: IterInitWithValueFn) -> Self {
-        self.init_with_value = Some(f);
-        self
-    }
-
-    /// Sets the `next` function
-    pub const fn next(mut self, f: IterNextFn<T>) -> Self {
-        self.next = Some(f);
-        self
-    }
-
-    /// Sets the `next_back` function
-    pub const fn next_back(mut self, f: IterNextBackFn<T>) -> Self {
-        self.next_back = Some(f);
-        self
-    }
-
-    /// Sets the `dealloc` function
-    pub const fn dealloc(mut self, f: IterDeallocFn) -> Self {
-        self.dealloc = Some(f);
-        self
-    }
-
-    /// Builds the [`IterVTable`] from the current state of the builder.
-    ///
-    /// # Panics
-    ///
-    /// Panic if any of the required fields (init_with_value, next, dealloc) are `None`.
-    pub const fn build(self) -> IterVTable<T> {
-        assert!(self.init_with_value.is_some());
-        IterVTable {
-            init_with_value: self.init_with_value,
-            next: self.next.unwrap(),
-            next_back: self.next_back,
-            size_hint: self.size_hint,
-            dealloc: self.dealloc.unwrap(),
+            dealloc,
         }
     }
 }

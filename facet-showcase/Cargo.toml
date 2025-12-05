@@ -17,7 +17,7 @@ syntect = "5.3"
 owo-colors = "4"
 
 # Error diagnostics
-miette = { version = "7", features = ["syntect-highlighter"] }
+miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
 
 # Facet integration
 facet = { version = "0.31", path = "../facet" }

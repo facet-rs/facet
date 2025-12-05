@@ -3,25 +3,26 @@
 // For a full list of overridable settings, and general information on folder-specific settings,
 // see the documentation: https://zed.dev/docs/configuring-zed#settings-files
 {
-  "lsp": {
-    "rust-analyzer": {
-      "initialization_options": {
-        "check": {
-          "command": "clippy",
-          "workspace": true
-        },
-        "diagnostics": {
-          "experimental": {
-            // "enable": true
-          },
-          "styleLints": {
-            "enable": true
-          }
-        },
-        "cargo": {
-          "features": "all"
+    "lsp": {
+        "rust-analyzer": {
+            "initialization_options": {
+                "check": {
+                    "command": "clippy",
+                    "workspace": true,
+                    "allTargets": true
+                },
+                "diagnostics": {
+                    "experimental": {
+                        // "enable": true
+                    },
+                    "styleLints": {
+                        "enable": true
+                    }
+                },
+                "cargo": {
+                    "features": "all"
+                }
+            }
         }
-      }
     }
-  }
 }

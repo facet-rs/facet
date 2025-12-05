@@ -28,7 +28,7 @@ facet-core = { path = "../facet-core", default-features = false }
 facet-reflect = { path = "../facet-reflect", default-features = false }
 facet-solver = { path = "../facet-solver" }
 
-miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
+miette = { version = "7", default-features = false }
 strsim = "0.11"
 itoa = "1.0.15"
 lexical-parse-float = "1.0.5"
@@ -66,6 +66,8 @@ facet = { path = "../facet", features = [
     "uuid",
     "jiff02",
     "ordered-float",
+    "net",
+    "nonzero",
 ] }
 facet-pretty = { path = "../facet-pretty" }
 facet-showcase = { path = "../facet-showcase" }

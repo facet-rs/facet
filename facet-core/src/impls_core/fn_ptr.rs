@@ -1,8 +1,8 @@
 use core::{fmt, hash::Hash, ptr::fn_addr_eq};
 
 use crate::{
-    Facet, FunctionAbi, FunctionPointerDef, MarkerTraits, PointerType, Shape, Type, TypeNameOpts,
-    TypeParam, ValueVTable,
+    Facet, FunctionAbi, FunctionPointerDef, MarkerTraits, PointerType, Shape, ShapeBuilder, Type,
+    TypeNameOpts, TypeParam, ValueVTable,
 };
 
 #[inline(always)]
@@ -64,51 +64,39 @@ macro_rules! impl_facet_for_fn_ptr {
             R: Facet<'a>,
         {
             const SHAPE: &'static Shape = &const {
-                Shape::builder_for_sized::<Self>()
-                    .type_identifier("fn")
-                    .vtable(
-                        ValueVTable::builder::<Self>()
-                            .type_name(|f, opts| {
-                                write_type_name_list(f, opts, $abi, &[$($args::SHAPE),*], R::SHAPE)
-                            })
-                            .debug(Some(|data, f| fmt::Debug::fmt(data.get(), f)))
-                            .clone_into(Some(|src, dst| unsafe { dst.put(src.get().clone()).into() }))
-                            .marker_traits(
-                                MarkerTraits::EQ
-                                    .union(MarkerTraits::SEND)
-                                    .union(MarkerTraits::SYNC)
-                                    .union(MarkerTraits::COPY)
-                                    .union(MarkerTraits::UNPIN)
-                                    .union(MarkerTraits::UNWIND_SAFE)
-                                    .union(MarkerTraits::REF_UNWIND_SAFE)
-                            )
-                            .partial_eq(Some(|left, right| {
-                                fn_addr_eq(*left.get(), *right.get())
-                            }))
-                            .partial_ord(Some(|left, right| {
-                                #[allow(unpredictable_function_pointer_comparisons)]
-                                left.get().partial_cmp(right.get())
-                            }))
-                            .ord(Some(|left, right| {
-                                #[allow(unpredictable_function_pointer_comparisons)]
-                                left.get().cmp(right.get())
-                            }))
-                            .hash(Some(|value, hasher| {
-                                value.get().hash(&mut { hasher })
-                            }))
-                            .build()
-                    )
-                    .type_params(&[
-                        $(TypeParam { name: stringify!($args), shape: $args::SHAPE },)*
-                    ])
-                    .ty(Type::Pointer(PointerType::Function(({
-                        FunctionPointerDef::builder()
-                            .parameter_types(&const { [$($args::SHAPE),*] })
-                            .return_type(R::SHAPE)
-                            .abi($abi)
-                            .build()
-                    }))))
-                    .build()
+                ShapeBuilder::for_sized::<Self>(
+                    |f, opts| write_type_name_list(f, opts, $abi, &[$($args::SHAPE),*], R::SHAPE),
+                    "fn",
+                )
+                .ty(Type::Pointer(PointerType::Function(
+                    FunctionPointerDef::new($abi, &const { [$($args::SHAPE),*] }, R::SHAPE)
+                )))
+                .type_params(&[
+                    $(TypeParam { name: stringify!($args), shape: $args::SHAPE },)*
+                ])
+                .vtable(
+                    ValueVTable::builder(|f, opts| write_type_name_list(f, opts, $abi, &[$($args::SHAPE),*], R::SHAPE))
+                        .drop_in_place(ValueVTable::drop_in_place_for::<Self>())
+                        .clone_into(|src, dst| unsafe { dst.put(src.get::<Self>().clone()).into() })
+                        .debug(|data, f| unsafe { fmt::Debug::fmt(data.get::<Self>(), f) })
+                        .partial_eq(|left, right| unsafe {
+                            fn_addr_eq(*left.get::<Self>(), *right.get::<Self>())
+                        })
+                        .partial_ord(|left, right| unsafe {
+                            #[allow(unpredictable_function_pointer_comparisons)]
+                            left.get::<Self>().partial_cmp(right.get::<Self>())
+                        })
+                        .ord(|left, right| unsafe {
+                            #[allow(unpredictable_function_pointer_comparisons)]
+                            left.get::<Self>().cmp(right.get::<Self>())
+                        })
+                        .hash(|value, hasher| unsafe {
+                            value.get::<Self>().hash(&mut { hasher })
+                        })
+                        .markers(MarkerTraits::EMPTY.with_eq().with_copy())
+                        .build(),
+                )
+                .build()
             };
         }
         impl_facet_for_fn_ptr! {

@@ -13,51 +13,14 @@ pub struct ListDef {
 }
 
 impl ListDef {
-    /// Returns a builder for ListDef
-    pub const fn builder() -> ListDefBuilder {
-        ListDefBuilder::new()
+    /// Construct a `ListDef` from its vtable and element shape.
+    pub const fn new(vtable: &'static ListVTable, t: &'static Shape) -> Self {
+        Self { vtable, t }
     }
 
     /// Returns the shape of the items in the list
     pub const fn t(&self) -> &'static Shape {
         self.t
-    }
-}
-
-/// Builder for ListDef
-pub struct ListDefBuilder {
-    vtable: Option<&'static ListVTable>,
-    t: Option<&'static Shape>,
-}
-
-impl ListDefBuilder {
-    /// Creates a new ListDefBuilder
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            vtable: None,
-            t: None,
-        }
-    }
-
-    /// Sets the vtable for the ListDef
-    pub const fn vtable(mut self, vtable: &'static ListVTable) -> Self {
-        self.vtable = Some(vtable);
-        self
-    }
-
-    /// Sets the item shape for the ListDef
-    pub const fn t(mut self, t: &'static Shape) -> Self {
-        self.t = Some(t);
-        self
-    }
-
-    /// Builds the ListDef
-    pub const fn build(self) -> ListDef {
-        ListDef {
-            vtable: self.vtable.unwrap(),
-            t: self.t.unwrap(),
-        }
     }
 }
 
@@ -151,105 +114,4 @@ pub struct ListVTable {
     pub iter_vtable: IterVTable<PtrConst<'static>>,
 }
 
-impl ListVTable {
-    /// Returns a builder for ListVTable
-    pub const fn builder() -> ListVTableBuilder {
-        ListVTableBuilder::new()
-    }
-}
-
-/// Builds a [`ListVTable`]
-pub struct ListVTableBuilder {
-    init_in_place_with_capacity: Option<ListInitInPlaceWithCapacityFn>,
-    push: Option<ListPushFn>,
-    len: Option<ListLenFn>,
-    get: Option<ListGetFn>,
-    get_mut: Option<ListGetMutFn>,
-    as_ptr: Option<ListAsPtrFn>,
-    as_mut_ptr: Option<ListAsMutPtrFn>,
-    iter_vtable: Option<IterVTable<PtrConst<'static>>>,
-}
-
-impl ListVTableBuilder {
-    /// Creates a new [`ListVTableBuilder`] with all fields set to `None`.
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            init_in_place_with_capacity: None,
-            push: None,
-            len: None,
-            get: None,
-            get_mut: None,
-            as_ptr: None,
-            as_mut_ptr: None,
-            iter_vtable: None,
-        }
-    }
-
-    /// Sets the init_in_place_with_capacity field
-    pub const fn init_in_place_with_capacity(mut self, f: ListInitInPlaceWithCapacityFn) -> Self {
-        self.init_in_place_with_capacity = Some(f);
-        self
-    }
-
-    /// Sets the push field
-    pub const fn push(mut self, f: ListPushFn) -> Self {
-        self.push = Some(f);
-        self
-    }
-
-    /// Sets the len field
-    pub const fn len(mut self, f: ListLenFn) -> Self {
-        self.len = Some(f);
-        self
-    }
-
-    /// Sets the get field
-    pub const fn get(mut self, f: ListGetFn) -> Self {
-        self.get = Some(f);
-        self
-    }
-
-    /// Sets the get_mut field
-    pub const fn get_mut(mut self, f: ListGetMutFn) -> Self {
-        self.get_mut = Some(f);
-        self
-    }
-
-    /// Sets the as_ptr field
-    pub const fn as_ptr(mut self, f: ListAsPtrFn) -> Self {
-        self.as_ptr = Some(f);
-        self
-    }
-
-    /// Sets the as_mut_ptr field
-    pub const fn as_mut_ptr(mut self, f: ListAsMutPtrFn) -> Self {
-        self.as_mut_ptr = Some(f);
-        self
-    }
-
-    /// Sets the iter_vtable field
-    pub const fn iter_vtable(mut self, vtable: IterVTable<PtrConst<'static>>) -> Self {
-        self.iter_vtable = Some(vtable);
-        self
-    }
-
-    /// Builds the [`ListVTable`] from the current state of the builder.
-    ///
-    /// # Panics
-    ///
-    /// Panic if any of the required fields (len, get, as_ptr, iter_vtable) are `None`.
-    pub const fn build(self) -> ListVTable {
-        assert!(self.as_ptr.is_some());
-        ListVTable {
-            init_in_place_with_capacity: self.init_in_place_with_capacity,
-            push: self.push,
-            len: self.len.unwrap(),
-            get: self.get.unwrap(),
-            get_mut: self.get_mut,
-            as_ptr: self.as_ptr,
-            as_mut_ptr: self.as_mut_ptr,
-            iter_vtable: self.iter_vtable.unwrap(),
-        }
-    }
-}
+impl ListVTable {}

@@ -44,33 +44,42 @@ pub struct Repr {
 }
 
 impl Repr {
+    /// Default Rust representation (unpacked)
+    pub const RUST: Self = Self {
+        base: BaseRepr::Rust,
+        packed: false,
+    };
+
+    /// C representation (unpacked)
+    pub const C: Self = Self {
+        base: BaseRepr::C,
+        packed: false,
+    };
+
+    /// Transparent representation
+    pub const TRANSPARENT: Self = Self {
+        base: BaseRepr::Transparent,
+        packed: false,
+    };
+
     /// Create default representation for a user type
     ///
     /// This will be Rust representation with no packing
     #[inline]
     pub const fn default() -> Self {
-        Self {
-            base: BaseRepr::Rust,
-            packed: false,
-        }
+        Self::RUST
     }
 
     /// Build unpacked C representation
     #[inline]
     pub const fn c() -> Self {
-        Self {
-            base: BaseRepr::C,
-            packed: false,
-        }
+        Self::C
     }
 
     /// Builds transparent representation
     #[inline]
     pub const fn transparent() -> Self {
-        Self {
-            base: BaseRepr::Transparent,
-            packed: false,
-        }
+        Self::TRANSPARENT
     }
 }
 

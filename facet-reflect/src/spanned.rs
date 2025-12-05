@@ -3,7 +3,7 @@
 use core::{mem, ops::Deref};
 
 use facet_core::{
-    Facet, Field, MarkerTraits, Shape, StructType, Type, TypeParam, UserType, ValueVTable,
+    Def, Facet, Field, Shape, ShapeRef, StructType, Type, TypeParam, UserType, ValueVTable,
 };
 
 /// Source span with offset and length.
@@ -54,51 +54,48 @@ impl From<miette::SourceSpan> for Span {
 
 // SAFETY: Span is a simple struct with two usize fields, properly laid out
 unsafe impl Facet<'_> for Span {
-    const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable(
-                ValueVTable::builder::<Self>()
-                    .type_name(|f, _opts| write!(f, "Span"))
-                    .marker_traits(
-                        MarkerTraits::SEND
-                            .union(MarkerTraits::SYNC)
-                            .union(MarkerTraits::EQ)
-                            .union(MarkerTraits::COPY)
-                            .union(MarkerTraits::UNPIN),
-                    )
-                    .default_in_place(Some(|target| unsafe { target.put(Span::default()).into() }))
-                    .clone_into(Some(|src, dst| unsafe { dst.put(*src.get()).into() }))
-                    .debug(Some(|this, f| {
-                        let span = this.get();
-                        write!(f, "Span {{ offset: {}, len: {} }}", span.offset, span.len)
-                    }))
-                    .partial_eq(Some(|a, b| a.get() == b.get()))
-                    .build(),
-            )
-            .type_identifier("Span")
-            .ty(Type::User(UserType::Struct(
-                StructType::builder()
-                    .kind(facet_core::StructKind::Struct)
-                    .repr(facet_core::Repr::default())
-                    .fields(
-                        &const {
-                            [
-                                Field::builder()
-                                    .name("offset")
-                                    .shape(|| <usize as Facet>::SHAPE)
-                                    .offset(mem::offset_of!(Span, offset))
-                                    .build(),
-                                Field::builder()
-                                    .name("len")
-                                    .shape(|| <usize as Facet>::SHAPE)
-                                    .offset(mem::offset_of!(Span, len))
-                                    .build(),
-                            ]
-                        },
-                    )
-                    .build(),
-            )))
-            .build()
+    const SHAPE: &'static Shape = &Shape {
+        id: Shape::id_of::<Self>(),
+        layout: Shape::layout_of::<Self>(),
+        vtable: ValueVTable::builder(|f, _opts| write!(f, "Span"))
+            .drop_in_place(ValueVTable::drop_in_place_for::<Self>())
+            .default_in_place(|target| unsafe { target.put(Span::default()) })
+            .clone_into(|src, dst| unsafe { dst.put(*src.get::<Span>()) })
+            .debug(|this, f| {
+                let span = unsafe { this.get::<Span>() };
+                write!(f, "Span {{ offset: {}, len: {} }}", span.offset, span.len)
+            })
+            .partial_eq(|a, b| unsafe { a.get::<Span>() == b.get::<Span>() })
+            .build(),
+        type_identifier: "Span",
+        ty: Type::User(UserType::Struct(StructType {
+            kind: facet_core::StructKind::Struct,
+            repr: facet_core::Repr::default(),
+            fields: &const {
+                [
+                    Field {
+                        name: "offset",
+                        shape: ShapeRef::Static(<usize as Facet>::SHAPE),
+                        offset: mem::offset_of!(Span, offset),
+                        attributes: &[],
+                        doc: &[],
+                    },
+                    Field {
+                        name: "len",
+                        shape: ShapeRef::Static(<usize as Facet>::SHAPE),
+                        offset: mem::offset_of!(Span, len),
+                        attributes: &[],
+                        doc: &[],
+                    },
+                ]
+            },
+        })),
+        def: Def::Undefined,
+        type_params: &[],
+        doc: &[],
+        attributes: &[],
+        type_tag: None,
+        inner: None,
     };
 }
 
@@ -173,51 +170,56 @@ impl<T: Eq> Eq for Spanned<T> {}
 
 // SAFETY: Spanned<T> is a simple struct with a value and span field, properly laid out
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Spanned<T> {
-    const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable(
-                ValueVTable::builder::<Self>()
-                    .type_name(|f, opts| {
-                        write!(f, "Spanned")?;
-                        if let Some(opts) = opts.for_children() {
-                            write!(f, "<")?;
-                            T::SHAPE.vtable.type_name()(f, opts)?;
-                            write!(f, ">")?;
-                        } else {
-                            write!(f, "<…>")?;
-                        }
-                        Ok(())
-                    })
-                    .build(),
-            )
-            .type_identifier("Spanned")
-            .type_params(&[TypeParam {
-                name: "T",
-                shape: T::SHAPE,
-            }])
-            .ty(Type::User(UserType::Struct(
-                StructType::builder()
-                    .kind(facet_core::StructKind::Struct)
-                    .repr(facet_core::Repr::default())
-                    .fields(
-                        &const {
-                            [
-                                Field::builder()
-                                    .name("value")
-                                    .shape(|| T::SHAPE)
-                                    .offset(mem::offset_of!(Spanned<T>, value))
-                                    .build(),
-                                Field::builder()
-                                    .name("span")
-                                    .shape(|| Span::SHAPE)
-                                    .offset(mem::offset_of!(Spanned<T>, span))
-                                    .build(),
-                            ]
-                        },
-                    )
-                    .build(),
-            )))
-            .build()
+    const SHAPE: &'static Shape = &Shape {
+        id: Shape::id_of::<Self>(),
+        layout: Shape::layout_of::<Self>(),
+        vtable: ValueVTable {
+            type_name: |f, opts| {
+                write!(f, "Spanned")?;
+                if let Some(opts) = opts.for_children() {
+                    write!(f, "<")?;
+                    T::SHAPE.vtable.type_name()(f, opts)?;
+                    write!(f, ">")?;
+                } else {
+                    write!(f, "<…>")?;
+                }
+                Ok(())
+            },
+            drop_in_place: ValueVTable::drop_in_place_for::<Self>(),
+            ..ValueVTable::new(|_, _| Ok(()))
+        },
+        type_identifier: "Spanned",
+        type_params: &[TypeParam {
+            name: "T",
+            shape: T::SHAPE,
+        }],
+        ty: Type::User(UserType::Struct(StructType {
+            kind: facet_core::StructKind::Struct,
+            repr: facet_core::Repr::default(),
+            fields: &const {
+                [
+                    Field {
+                        name: "value",
+                        shape: ShapeRef::Static(T::SHAPE),
+                        offset: mem::offset_of!(Spanned<T>, value),
+                        attributes: &[],
+                        doc: &[],
+                    },
+                    Field {
+                        name: "span",
+                        shape: ShapeRef::Static(Span::SHAPE),
+                        offset: mem::offset_of!(Spanned<T>, span),
+                        attributes: &[],
+                        doc: &[],
+                    },
+                ]
+            },
+        })),
+        def: Def::Undefined,
+        doc: &[],
+        attributes: &[],
+        type_tag: None,
+        inner: None,
     };
 }
 

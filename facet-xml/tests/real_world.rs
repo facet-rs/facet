@@ -20,7 +20,7 @@ struct Svg {
     view_box: Option<String>,
     #[facet(default, xml::attribute)]
     xmlns: Option<String>,
-    #[facet(xml::elements)]
+    #[facet(recursive_type, xml::elements)]
     children: Vec<SvgElement>,
 }
 
@@ -81,7 +81,7 @@ struct SvgGroup {
     id: Option<String>,
     #[facet(default, xml::attribute)]
     transform: Option<String>,
-    #[facet(xml::elements)]
+    #[facet(recursive_type, xml::elements)]
     children: Vec<SvgElement>,
 }
 
@@ -506,7 +506,7 @@ struct XhtmlLink {
 struct XhtmlBody {
     #[facet(default, xml::attribute)]
     class: Option<String>,
-    #[facet(xml::elements)]
+    #[facet(recursive_type, xml::elements)]
     children: Vec<XhtmlBodyElement>,
 }
 
@@ -537,7 +537,7 @@ struct XhtmlDiv {
     class: Option<String>,
     #[facet(default, xml::attribute)]
     id: Option<String>,
-    #[facet(xml::elements)]
+    #[facet(recursive_type, xml::elements)]
     children: Vec<XhtmlBodyElement>,
 }
 

@@ -414,6 +414,121 @@ pub struct CompileError {
     pub span: Span,
 }
 
+/// Tracks which standard derives are visible on the type.
+/// This allows us to skip `impls!` checks for traits we know are derived.
+#[derive(Clone, Default)]
+pub struct KnownDerives {
+    /// Type has `#[derive(Debug)]`
+    pub debug: bool,
+    /// Type has `#[derive(Clone)]`
+    pub clone: bool,
+    /// Type has `#[derive(Copy)]`
+    pub copy: bool,
+    /// Type has `#[derive(PartialEq)]`
+    pub partial_eq: bool,
+    /// Type has `#[derive(Eq)]`
+    pub eq: bool,
+    /// Type has `#[derive(PartialOrd)]`
+    pub partial_ord: bool,
+    /// Type has `#[derive(Ord)]`
+    pub ord: bool,
+    /// Type has `#[derive(Hash)]`
+    pub hash: bool,
+    /// Type has `#[derive(Default)]`
+    pub default: bool,
+}
+
+/// Tracks which traits are explicitly declared via `#[facet(traits(...))]`.
+///
+/// When this is present, we skip all `impls!` checks and only generate
+/// vtable entries for the declared traits.
+#[derive(Clone, Default)]
+pub struct DeclaredTraits {
+    /// Display trait declared
+    pub display: bool,
+    /// Debug trait declared
+    pub debug: bool,
+    /// Clone trait declared
+    pub clone: bool,
+    /// Copy trait declared (marker)
+    pub copy: bool,
+    /// PartialEq trait declared
+    pub partial_eq: bool,
+    /// Eq trait declared (marker)
+    pub eq: bool,
+    /// PartialOrd trait declared
+    pub partial_ord: bool,
+    /// Ord trait declared
+    pub ord: bool,
+    /// Hash trait declared
+    pub hash: bool,
+    /// Default trait declared
+    pub default: bool,
+    /// Send trait declared (marker)
+    pub send: bool,
+    /// Sync trait declared (marker)
+    pub sync: bool,
+    /// Unpin trait declared (marker)
+    pub unpin: bool,
+}
+
+impl DeclaredTraits {
+    /// Returns true if any trait is declared
+    pub fn has_any(&self) -> bool {
+        self.display
+            || self.debug
+            || self.clone
+            || self.copy
+            || self.partial_eq
+            || self.eq
+            || self.partial_ord
+            || self.ord
+            || self.hash
+            || self.default
+            || self.send
+            || self.sync
+            || self.unpin
+    }
+
+    /// Parse traits from a token stream like `Debug, PartialEq, Clone, Send`
+    pub fn parse_from_tokens(tokens: &TokenStream, errors: &mut Vec<CompileError>) -> Self {
+        let mut result = DeclaredTraits::default();
+
+        for token in tokens.clone() {
+            if let proc_macro2::TokenTree::Ident(ident) = token {
+                let name = ident.to_string();
+                match name.as_str() {
+                    "Display" => result.display = true,
+                    "Debug" => result.debug = true,
+                    "Clone" => result.clone = true,
+                    "Copy" => result.copy = true,
+                    "PartialEq" => result.partial_eq = true,
+                    "Eq" => result.eq = true,
+                    "PartialOrd" => result.partial_ord = true,
+                    "Ord" => result.ord = true,
+                    "Hash" => result.hash = true,
+                    "Default" => result.default = true,
+                    "Send" => result.send = true,
+                    "Sync" => result.sync = true,
+                    "Unpin" => result.unpin = true,
+                    unknown => {
+                        errors.push(CompileError {
+                            message: format!(
+                                "unknown trait `{unknown}` in #[facet(traits(...))]. \
+                                 Valid traits: Display, Debug, Clone, Copy, PartialEq, Eq, \
+                                 PartialOrd, Ord, Hash, Default, Send, Sync, Unpin"
+                            ),
+                            span: ident.span(),
+                        });
+                    }
+                }
+            }
+        }
+
+        result
+    }
+}
+
 /// Parsed attributes
 #[derive(Clone)]
 pub struct PAttrs {
@@ -434,6 +549,19 @@ pub struct PAttrs {
 
     /// Errors to be emitted as compile_error! during code generation
     pub errors: Vec<CompileError>,
+
+    /// Known derives visible on the type (allows skipping impls! checks)
+    pub known_derives: KnownDerives,
+
+    /// Explicitly declared traits via `#[facet(traits(...))]`
+    /// When present, we skip all `impls!` checks and only generate vtable
+    /// entries for the declared traits.
+    pub declared_traits: Option<DeclaredTraits>,
+
+    /// Whether `#[facet(auto_traits)]` is present
+    /// When true, we use the old specialization-based detection.
+    /// When false (and no declared_traits), we generate an empty vtable.
+    pub auto_traits: bool,
 }
 
 impl PAttrs {
@@ -444,6 +572,7 @@ impl PAttrs {
         let mut rename_all: Option<RenameRule> = None;
         let mut crate_path: Option<TokenStream> = None;
         let mut errors: Vec<CompileError> = Vec::new();
+        let mut known_derives = KnownDerives::default();
 
         for attr in attrs {
             match &attr.body.content {
@@ -476,13 +605,17 @@ impl PAttrs {
                 crate::AttributeInner::Facet(facet_attr) => {
                     PFacetAttr::parse(facet_attr, &mut facet_attrs);
                 }
-                _ => {
-                    // Ignore unknown AttributeInner types
+                crate::AttributeInner::Any(tokens) => {
+                    // Check for #[derive(...)] attributes
+                    Self::parse_derive_attr(tokens, &mut known_derives);
                 }
             }
         }
 
-        // Extract rename, rename_all, and crate from parsed attrs
+        // Extract rename, rename_all, crate, traits, and auto_traits from parsed attrs
+        let mut declared_traits: Option<DeclaredTraits> = None;
+        let mut auto_traits = false;
+
         for attr in &facet_attrs {
             if attr.is_builtin() {
                 match attr.key_str().as_str() {
@@ -511,8 +644,33 @@ impl PAttrs {
                         // Store the crate path tokens directly
                         crate_path = Some(attr.args.clone());
                     }
+                    "traits" => {
+                        // Parse #[facet(traits(Debug, PartialEq, Clone, ...))]
+                        declared_traits =
+                            Some(DeclaredTraits::parse_from_tokens(&attr.args, &mut errors));
+                    }
+                    "auto_traits" => {
+                        // #[facet(auto_traits)] enables specialization-based detection
+                        auto_traits = true;
+                    }
                     _ => {}
                 }
+            }
+        }
+
+        // Validate: traits(...) and auto_traits are mutually exclusive
+        if declared_traits.is_some() && auto_traits {
+            if let Some(span) = facet_attrs
+                .iter()
+                .find(|a| a.is_builtin() && a.key_str() == "auto_traits")
+                .map(|a| a.key.span())
+            {
+                errors.push(CompileError {
+                    message: "cannot use both #[facet(traits(...))] and #[facet(auto_traits)] \
+                              on the same type"
+                        .to_string(),
+                    span,
+                });
             }
         }
 
@@ -523,6 +681,48 @@ impl PAttrs {
             rename_all,
             crate_path,
             errors,
+            known_derives,
+            declared_traits,
+            auto_traits,
+        }
+    }
+
+    /// Parse derive attributes like `#[derive(Debug, Clone, PartialEq)]`
+    /// and update the known_derives flags accordingly.
+    fn parse_derive_attr(tokens: &[proc_macro2::TokenTree], known_derives: &mut KnownDerives) {
+        // Check if this looks like derive(...)
+        let mut iter = tokens.iter();
+
+        // First token should be "derive"
+        let Some(proc_macro2::TokenTree::Ident(ident)) = iter.next() else {
+            return;
+        };
+        if ident != "derive" {
+            return;
+        }
+
+        // Next should be a group containing the derive list
+        let Some(proc_macro2::TokenTree::Group(group)) = iter.next() else {
+            return;
+        };
+
+        // Parse the derive names from the group
+        for token in group.stream() {
+            if let proc_macro2::TokenTree::Ident(derive_name) = token {
+                let name = derive_name.to_string();
+                match name.as_str() {
+                    "Debug" => known_derives.debug = true,
+                    "Clone" => known_derives.clone = true,
+                    "Copy" => known_derives.copy = true,
+                    "PartialEq" => known_derives.partial_eq = true,
+                    "Eq" => known_derives.eq = true,
+                    "PartialOrd" => known_derives.partial_ord = true,
+                    "Ord" => known_derives.ord = true,
+                    "Hash" => known_derives.hash = true,
+                    "Default" => known_derives.default = true,
+                    _ => {}
+                }
+            }
         }
     }
 

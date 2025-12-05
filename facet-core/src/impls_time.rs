@@ -5,8 +5,10 @@ use crate::{Def, Facet, ParseError, PtrConst, PtrUninit, Shape, Type, UserType, 
 
 unsafe impl Facet<'_> for UtcDateTime {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: {
                 let mut vtable = value_vtable!(UtcDateTime, |f, _opts| write!(
                     f,
                     "{}",
@@ -48,29 +50,34 @@ unsafe impl Facet<'_> for UtcDateTime {
                             Ok(unsafe { target.put(parsed) })
                         })
                     };
-                    vtable.display = {
-                        Some(|value, f| unsafe {
-                            let udt = value.get::<UtcDateTime>();
-                            match udt.format(&time::format_description::well_known::Rfc3339) {
-                                Ok(s) => write!(f, "{s}"),
-                                Err(_) => write!(f, "<invalid UtcDateTime>"),
-                            }
-                        })
-                    };
+                    vtable.format.display = Some(|value, f| unsafe {
+                        let udt = value.get::<UtcDateTime>();
+                        match udt.format(&time::format_description::well_known::Rfc3339) {
+                            Ok(s) => write!(f, "{s}"),
+                            Err(_) => write!(f, "<invalid UtcDateTime>"),
+                        }
+                    });
                 }
                 vtable
-            })
-            .type_identifier("UtcDateTime")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
-            .build()
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::Scalar,
+            type_identifier: "UtcDateTime",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
+        }
     };
 }
 
 unsafe impl Facet<'_> for OffsetDateTime {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: {
                 let mut vtable = value_vtable!(OffsetDateTime, |f, _opts| write!(
                     f,
                     "{}",
@@ -112,22 +119,25 @@ unsafe impl Facet<'_> for OffsetDateTime {
                             Ok(unsafe { target.put(parsed) })
                         })
                     };
-                    vtable.display = {
-                        Some(|value, f| unsafe {
-                            let odt = value.get::<OffsetDateTime>();
-                            match odt.format(&time::format_description::well_known::Rfc3339) {
-                                Ok(s) => write!(f, "{s}"),
-                                Err(_) => write!(f, "<invalid OffsetDateTime>"),
-                            }
-                        })
-                    };
+                    vtable.format.display = Some(|value, f| unsafe {
+                        let odt = value.get::<OffsetDateTime>();
+                        match odt.format(&time::format_description::well_known::Rfc3339) {
+                            Ok(s) => write!(f, "{s}"),
+                            Err(_) => write!(f, "<invalid OffsetDateTime>"),
+                        }
+                    });
                 }
                 vtable
-            })
-            .type_identifier("OffsetDateTime")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
-            .build()
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::Scalar,
+            type_identifier: "OffsetDateTime",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
+        }
     };
 }
 
@@ -157,16 +167,18 @@ mod tests {
             .unwrap()
         );
 
-        struct DisplayWrapper<'a>(PtrConst<'a>);
+        {
+            struct DisplayWrapper<'a>(PtrConst<'a>);
 
-        impl fmt::Display for DisplayWrapper<'_> {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                unsafe { (OffsetDateTime::SHAPE.vtable.display.unwrap())(self.0, f) }
+            impl fmt::Display for DisplayWrapper<'_> {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    unsafe { (OffsetDateTime::SHAPE.vtable.format.display.unwrap())(self.0, f) }
+                }
             }
-        }
 
-        let s = format!("{}", DisplayWrapper(PtrConst::new((&odt).into())));
-        assert_eq!(s, "2023-03-14T15:09:26Z");
+            let s = format!("{}", DisplayWrapper(PtrConst::new((&odt).into())));
+            assert_eq!(s, "2023-03-14T15:09:26Z");
+        }
 
         // Deallocate the heap allocation to avoid memory leaks under Miri
         unsafe {

@@ -14,12 +14,14 @@ features = ["std", "reflect", "camino", "ordered-float"]
 rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
 
 [features]
-default = ["std"]
+default = ["std", "helpful-derive"]
 function = ["facet-macros/function"] # Enable function shape introspection
 reflect = ["dep:facet-reflect"] # Enable reflection via Peek and Poke types
 testfeat = [] # Does nothing, only used for tests
 std = ["facet-core/std", "alloc"] # Enable standard library support
 alloc = ["facet-core/alloc"] # Enable allocation support for no_std environments
+nonzero = ["facet-core/nonzero"] # Provide Facet trait implementations for NonZero<T> types
+net = ["facet-core/net"] # Provide Facet trait implementations for network types (SocketAddr, IpAddr, etc.)
 bytes = [
     "facet-core/bytes",
 ] # Provide Facet trait implementations for bytes::Bytes and bytes::BytesMut
@@ -47,6 +49,9 @@ ruint = [
 indexmap = [
     "facet-core/indexmap",
 ] # Provide Facet trait implementations for indexmap::IndexMap and indexmap::IndexSet
+num-complex = [
+    "facet-core/num-complex",
+] # Provide Facet trait implementations for num_complex::Complex
 
 # Provide Facet trait implementations for tuples up to size 12. Without it,
 # Facet is only implemented for tuples up to size 4.
@@ -55,9 +60,15 @@ tuples-12 = ["facet-core/tuples-12"]
 # Provide Facet trait implementations for function pointers.
 fn-ptr = ["facet-core/fn-ptr"]
 
+# Include doc comments in generated Shape/Field/Variant definitions
+doc = ["facet-macros/doc"]
+
+# Enable typo suggestions for unknown attributes/fields (uses strsim)
+helpful-derive = ["facet-macros/helpful-derive"]
+
 [dependencies]
 facet-core = { path = "../facet-core", version = "=0.31.8", default-features = false }
-facet-macros = { path = "../facet-macros", version = "=0.31.8" }
+facet-macros = { path = "../facet-macros", version = "=0.31.8", default-features = false }
 facet-reflect = { path = "../facet-reflect", version = "=0.31.8", optional = true }
 static_assertions = "1.1.0"
 
@@ -69,4 +80,5 @@ eyre = { version = "0.6.12", default-features = false }
 facet-reflect = { path = "../facet-reflect" }
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
+num-complex = "0.4.6"
 owo-colors = "4.2.2"

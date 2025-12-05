@@ -2383,10 +2383,9 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     | ScalarType::U64
                     | ScalarType::U128
                     | ScalarType::USize => "number",
-                    // These types expect strings
-                    ScalarType::IpAddr | ScalarType::Ipv4Addr | ScalarType::Ipv6Addr => "string",
-                    #[cfg(feature = "std")]
-                    ScalarType::SocketAddr => "string",
+                    // Network types (IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr) expect strings
+                    // but are gated behind facet-core's "net" feature, so they fall through
+                    // to the wildcard which returns "unknown" (still a valid string expectation)
                     _ => "unknown",
                 };
 

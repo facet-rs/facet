@@ -1,5 +1,4 @@
 use crate::{PtrConst, PtrMut, PtrUninit, TypedPtrConst, TypedPtrMut, TypedPtrUninit};
-use bitflags::bitflags;
 use core::{cmp::Ordering, marker::PhantomData, mem};
 
 use crate::Shape;
@@ -425,46 +424,6 @@ impl core::hash::Hasher for HasherProxy<'_> {
     }
 }
 
-//======== Marker Traits ========
-
-bitflags! {
-    /// Bitflags for common marker traits that a type may implement
-    ///
-    /// Note: facet is not able to see negative impls, so it might mistakenly think a struct `S`
-    /// is `Send` because all its fields are, ignoring that there is an `impl !Send for S`.
-    ///
-    /// Similarly, it might think a struct `S` is `!Send` just because one of the fields is an
-    /// `UnsafeCell` (which is `!Send`), ignoring that there is an `unsafe impl Send for S`.
-    ///
-    /// The reason facet's determination of `Send` or `!Send` is based on fields is because structs
-    /// can be generic, in which case our specialization trick does not work.
-    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-    pub struct MarkerTraits: u8 {
-        /// Indicates that the type implements the [`Eq`] marker trait
-        const EQ = 1 << 0;
-        /// Indicates that the type implements the [`Send`] marker trait.
-        ///
-        /// Note: this is a best-effort guess, see the documentation about negative impls in [MarkerTraits].
-        const SEND = 1 << 1;
-        /// Indicates that the type implements the [`Sync`] marker trait
-        ///
-        /// Note: this is a best-effort guess, see the documentation about negative impls in [MarkerTraits].
-        const SYNC = 1 << 2;
-        /// Indicates that the type implements the [`Copy`] marker trait
-        const COPY = 1 << 3;
-        /// Indicates that the type implements the [`Unpin`] marker trait
-        const UNPIN = 1 << 4;
-        /// Indicates that the type implements the [`UnwindSafe`](core::panic::UnwindSafe) marker trait
-        ///
-        /// Note: this is a best-effort guess, see the documentation about negative impls in [MarkerTraits].
-        const UNWIND_SAFE = 1 << 5;
-        /// Indicates that the type implements the [`RefUnwindSafe`](core::panic::RefUnwindSafe) marker trait
-        ///
-        /// Note: this is a best-effort guess, see the documentation about negative impls in [MarkerTraits].
-        const REF_UNWIND_SAFE = 1 << 6;
-    }
-}
-
 //======== Display and Debug ========
 
 /// Function to format a value for display
@@ -488,6 +447,253 @@ pub type DisplayFnTyped<T> =
 pub type DebugFn =
     for<'mem> unsafe fn(value: PtrConst<'mem>, f: &mut core::fmt::Formatter) -> core::fmt::Result;
 
+//======== Grouped VTable Sub-structs ========
+
+/// VTable for formatting traits (Display, Debug)
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct FormatVTable {
+    /// cf. [`DisplayFn`]
+    pub display: Option<DisplayFn>,
+    /// cf. [`DebugFn`]
+    pub debug: Option<DebugFn>,
+}
+
+impl FormatVTable {
+    /// Create a new FormatVTable with all fields set to None
+    pub const EMPTY: Self = Self {
+        display: None,
+        debug: None,
+    };
+
+    /// Set the display function
+    #[inline]
+    pub const fn with_display(mut self, f: DisplayFn) -> Self {
+        self.display = Some(f);
+        self
+    }
+
+    /// Set the debug function
+    #[inline]
+    pub const fn with_debug(mut self, f: DebugFn) -> Self {
+        self.debug = Some(f);
+        self
+    }
+}
+
+impl Default for FormatVTable {
+    fn default() -> Self {
+        Self::EMPTY
+    }
+}
+
+/// VTable for comparison traits (PartialEq, PartialOrd, Ord)
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct CmpVTable {
+    /// cf. [`PartialEqFn`]
+    pub partial_eq: Option<PartialEqFn>,
+    /// cf. [`PartialOrdFn`]
+    pub partial_ord: Option<PartialOrdFn>,
+    /// cf. [`CmpFn`]
+    pub ord: Option<CmpFn>,
+}
+
+impl CmpVTable {
+    /// Create a new CmpVTable with all fields set to None
+    pub const EMPTY: Self = Self {
+        partial_eq: None,
+        partial_ord: None,
+        ord: None,
+    };
+
+    /// Set the partial_eq function
+    #[inline]
+    pub const fn with_partial_eq(mut self, f: PartialEqFn) -> Self {
+        self.partial_eq = Some(f);
+        self
+    }
+
+    /// Set the partial_ord function
+    #[inline]
+    pub const fn with_partial_ord(mut self, f: PartialOrdFn) -> Self {
+        self.partial_ord = Some(f);
+        self
+    }
+
+    /// Set the ord function
+    #[inline]
+    pub const fn with_ord(mut self, f: CmpFn) -> Self {
+        self.ord = Some(f);
+        self
+    }
+}
+
+impl Default for CmpVTable {
+    fn default() -> Self {
+        Self::EMPTY
+    }
+}
+
+/// VTable for Hash trait
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct HashVTable {
+    /// cf. [`HashFn`]
+    pub hash: Option<HashFn>,
+}
+
+impl HashVTable {
+    /// Create a new HashVTable with all fields set to None
+    pub const EMPTY: Self = Self { hash: None };
+
+    /// Set the hash function
+    #[inline]
+    pub const fn with_hash(mut self, f: HashFn) -> Self {
+        self.hash = Some(f);
+        self
+    }
+}
+
+impl Default for HashVTable {
+    fn default() -> Self {
+        Self::EMPTY
+    }
+}
+
+/// Bitflags for marker traits
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(transparent)]
+pub struct MarkerTraits(u8);
+
+impl MarkerTraits {
+    /// No marker traits
+    pub const EMPTY: Self = Self(0);
+
+    /// Type implements Copy
+    pub const COPY: Self = Self(0b0000_0001);
+    /// Type implements Send
+    pub const SEND: Self = Self(0b0000_0010);
+    /// Type implements Sync
+    pub const SYNC: Self = Self(0b0000_0100);
+    /// Type implements Eq (not just PartialEq)
+    pub const EQ: Self = Self(0b0000_1000);
+    /// Type implements Unpin
+    pub const UNPIN: Self = Self(0b0001_0000);
+    /// Type implements UnwindSafe
+    pub const UNWIND_SAFE: Self = Self(0b0010_0000);
+    /// Type implements RefUnwindSafe
+    pub const REF_UNWIND_SAFE: Self = Self(0b0100_0000);
+
+    /// Create marker traits from raw bits
+    #[inline]
+    pub const fn from_bits(bits: u8) -> Self {
+        Self(bits)
+    }
+
+    /// Get the raw bits
+    #[inline]
+    pub const fn bits(self) -> u8 {
+        self.0
+    }
+
+    /// Check if a marker trait is set
+    #[inline]
+    pub const fn contains(self, other: Self) -> bool {
+        (self.0 & other.0) == other.0
+    }
+
+    /// Set a marker trait
+    #[inline]
+    pub const fn insert(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    /// Check if Copy is implemented
+    #[inline]
+    pub const fn is_copy(self) -> bool {
+        self.contains(Self::COPY)
+    }
+
+    /// Check if Send is implemented
+    #[inline]
+    pub const fn is_send(self) -> bool {
+        self.contains(Self::SEND)
+    }
+
+    /// Check if Sync is implemented
+    #[inline]
+    pub const fn is_sync(self) -> bool {
+        self.contains(Self::SYNC)
+    }
+
+    /// Check if Eq is implemented
+    #[inline]
+    pub const fn is_eq(self) -> bool {
+        self.contains(Self::EQ)
+    }
+
+    /// Check if Unpin is implemented
+    #[inline]
+    pub const fn is_unpin(self) -> bool {
+        self.contains(Self::UNPIN)
+    }
+
+    /// Check if UnwindSafe is implemented
+    #[inline]
+    pub const fn is_unwind_safe(self) -> bool {
+        self.contains(Self::UNWIND_SAFE)
+    }
+
+    /// Check if RefUnwindSafe is implemented
+    #[inline]
+    pub const fn is_ref_unwind_safe(self) -> bool {
+        self.contains(Self::REF_UNWIND_SAFE)
+    }
+
+    /// Add Copy marker
+    #[inline]
+    pub const fn with_copy(self) -> Self {
+        self.insert(Self::COPY)
+    }
+
+    /// Add Send marker
+    #[inline]
+    pub const fn with_send(self) -> Self {
+        self.insert(Self::SEND)
+    }
+
+    /// Add Sync marker
+    #[inline]
+    pub const fn with_sync(self) -> Self {
+        self.insert(Self::SYNC)
+    }
+
+    /// Add Eq marker
+    #[inline]
+    pub const fn with_eq(self) -> Self {
+        self.insert(Self::EQ)
+    }
+
+    /// Add Unpin marker
+    #[inline]
+    pub const fn with_unpin(self) -> Self {
+        self.insert(Self::UNPIN)
+    }
+
+    /// Add UnwindSafe marker
+    #[inline]
+    pub const fn with_unwind_safe(self) -> Self {
+        self.insert(Self::UNWIND_SAFE)
+    }
+
+    /// Add RefUnwindSafe marker
+    #[inline]
+    pub const fn with_ref_unwind_safe(self) -> Self {
+        self.insert(Self::REF_UNWIND_SAFE)
+    }
+}
+
 /// Function to format a value for debug.
 /// If this returns None, the shape did not implement Debug.
 pub type DebugFnTyped<T> =
@@ -496,15 +702,19 @@ pub type DebugFnTyped<T> =
 /// A vtable representing the operations that can be performed on a type,
 /// either for sized or unsized types.
 ///
-/// This enum encapsulates the specific vtables allowing generic type-agnostic
+/// This struct encapsulates the specific vtables allowing generic type-agnostic
 /// dynamic dispatch for core capabilities (clone, drop, compare, hash, etc).
+///
+/// Trait-related fields are grouped into sub-structs:
+/// - [`FormatVTable`] for Display and Debug
+/// - [`CmpVTable`] for PartialEq, PartialOrd, and Ord
+/// - [`HashVTable`] for Hash
+/// - [`MarkerTraits`] for Copy, Send, Sync, Eq, Unpin, UnwindSafe, RefUnwindSafe
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct ValueVTable {
     /// cf. [`TypeNameFn`]
     pub type_name: TypeNameFn,
-    /// Marker traits implemented by the type
-    pub marker_traits: MarkerTraits,
 
     /// cf. [`DropInPlaceFn`] — if None, drops without side-effects
     pub drop_in_place: Option<DropInPlaceFn>,
@@ -512,29 +722,11 @@ pub struct ValueVTable {
     /// cf. [`InvariantsFn`]
     pub invariants: Option<InvariantsFn>,
 
-    /// cf. [`DisplayFn`]
-    pub display: Option<DisplayFn>,
-
-    /// cf. [`DebugFn`]
-    pub debug: Option<DebugFn>,
-
     /// cf. [`DefaultInPlaceFn`]
     pub default_in_place: Option<DefaultInPlaceFn>,
 
     /// cf. [`CloneIntoFn`]
     pub clone_into: Option<CloneIntoFn>,
-
-    /// cf. [`PartialEqFn`] for equality comparison
-    pub partial_eq: Option<PartialEqFn>,
-
-    /// cf. [`PartialOrdFn`] for partial ordering comparison
-    pub partial_ord: Option<PartialOrdFn>,
-
-    /// cf. [`CmpFn`] for total ordering
-    pub ord: Option<CmpFn>,
-
-    /// cf. [`HashFn`]
-    pub hash: Option<HashFn>,
 
     /// cf. [`ParseFn`]
     pub parse: Option<ParseFn>,
@@ -562,125 +754,398 @@ pub struct ValueVTable {
     ///
     /// This is used by transparent types to efficiently access the inner value without copying.
     pub try_borrow_inner: Option<TryBorrowInnerFn>,
-}
 
-macro_rules! has_fn {
-    ($self:expr, $name:tt) => {
-        $self.$name.is_some()
-    };
+    /// Formatting traits (Display, Debug)
+    pub format: FormatVTable,
+
+    /// Comparison traits (PartialEq, PartialOrd, Ord)
+    pub cmp: CmpVTable,
+
+    /// Hash trait
+    pub hash: HashVTable,
+
+    /// Marker traits (Copy, Send, Sync, Eq, Unpin, UnwindSafe, RefUnwindSafe)
+    pub markers: MarkerTraits,
 }
 
 impl ValueVTable {
-    /// Get the marker traits implemented for the type
-    #[inline]
-    pub const fn marker_traits(&self) -> MarkerTraits {
-        self.marker_traits
-    }
-
     /// Get the type name fn of the type
     #[inline]
     pub const fn type_name(&self) -> TypeNameFn {
         self.type_name
     }
 
-    /// Check if the type implements the [`Eq`] marker trait
-    #[inline]
-    pub const fn is_eq(&self) -> bool {
-        self.marker_traits().contains(MarkerTraits::EQ)
-    }
-
-    /// Check if the type implements the [`Send`] marker trait
-    #[inline]
-    pub const fn is_send(&self) -> bool {
-        self.marker_traits().contains(MarkerTraits::SEND)
-    }
-
-    /// Check if the type implements the [`Sync`] marker trait
-    #[inline]
-    pub const fn is_sync(&self) -> bool {
-        self.marker_traits().contains(MarkerTraits::SYNC)
-    }
-
-    /// Check if the type implements the [`Copy`] marker trait
-    #[inline]
-    pub const fn is_copy(&self) -> bool {
-        self.marker_traits().contains(MarkerTraits::COPY)
-    }
-
-    /// Check if the type implements the [`Unpin`] marker trait
-    #[inline]
-    pub const fn is_unpin(&self) -> bool {
-        self.marker_traits().contains(MarkerTraits::UNPIN)
-    }
-
-    /// Check if the type implements the [`UnwindSafe`](core::panic::UnwindSafe) marker trait
-    #[inline]
-    pub const fn is_unwind_safe(&self) -> bool {
-        self.marker_traits().contains(MarkerTraits::UNWIND_SAFE)
-    }
-
-    /// Check if the type implements the [`RefUnwindSafe`](core::panic::RefUnwindSafe) marker trait
-    #[inline]
-    pub const fn is_ref_unwind_safe(&self) -> bool {
-        self.marker_traits().contains(MarkerTraits::REF_UNWIND_SAFE)
-    }
-
     /// Returns `true` if the type implements the [`Display`](core::fmt::Display) trait and the `display` function is available in the vtable.
     #[inline]
     pub const fn has_display(&self) -> bool {
-        has_fn!(self, display)
+        self.format.display.is_some()
     }
 
     /// Returns `true` if the type implements the [`Debug`] trait and the `debug` function is available in the vtable.
     #[inline]
     pub const fn has_debug(&self) -> bool {
-        has_fn!(self, debug)
+        self.format.debug.is_some()
     }
 
     /// Returns `true` if the type implements the [`PartialEq`] trait and the `partial_eq` function is available in the vtable.
     #[inline]
     pub const fn has_partial_eq(&self) -> bool {
-        has_fn!(self, partial_eq)
+        self.cmp.partial_eq.is_some()
     }
 
     /// Returns `true` if the type implements the [`PartialOrd`] trait and the `partial_ord` function is available in the vtable.
     #[inline]
     pub const fn has_partial_ord(&self) -> bool {
-        has_fn!(self, partial_ord)
+        self.cmp.partial_ord.is_some()
     }
 
     /// Returns `true` if the type implements the [`Ord`] trait and the `ord` function is available in the vtable.
     #[inline]
     pub const fn has_ord(&self) -> bool {
-        has_fn!(self, ord)
+        self.cmp.ord.is_some()
     }
 
     /// Returns `true` if the type implements the [`Hash`] trait and the `hash` function is available in the vtable.
     #[inline]
     pub const fn has_hash(&self) -> bool {
-        has_fn!(self, hash)
+        self.hash.hash.is_some()
     }
 
     /// Returns `true` if the type supports default-in-place construction via the vtable.
     #[inline]
     pub const fn has_default_in_place(&self) -> bool {
-        has_fn!(self, default_in_place)
+        self.default_in_place.is_some()
     }
 
     /// Returns `true` if the type supports in-place cloning via the vtable.
     #[inline]
     pub const fn has_clone_into(&self) -> bool {
-        has_fn!(self, clone_into)
+        self.clone_into.is_some()
     }
 
     /// Returns `true` if the type supports parsing from a string via the vtable.
     #[inline]
     pub const fn has_parse(&self) -> bool {
-        has_fn!(self, parse)
+        self.parse.is_some()
     }
-    /// Creates a new [`ValueVTableBuilder`]
-    pub const fn builder<T: ?Sized>() -> ValueVTableBuilder<T> {
-        ValueVTableBuilder::new()
+
+    /// Returns a `ValueVTable` with all fields set to `None`/empty except `type_name`.
+    /// Use struct literal syntax with `..ValueVTable::new(type_name_fn)` for the rest.
+    pub const fn new(type_name: TypeNameFn) -> Self {
+        Self {
+            type_name,
+            drop_in_place: None,
+            invariants: None,
+            default_in_place: None,
+            clone_into: None,
+            parse: None,
+            try_from: None,
+            try_into_inner: None,
+            try_borrow_inner: None,
+            format: FormatVTable::EMPTY,
+            cmp: CmpVTable::EMPTY,
+            hash: HashVTable::EMPTY,
+            markers: MarkerTraits::EMPTY,
+        }
+    }
+
+    /// Returns the appropriate `drop_in_place` function for type `T`.
+    /// Returns `None` if the type doesn't need dropping.
+    pub const fn drop_in_place_for<T: ?Sized>() -> Option<DropInPlaceFn> {
+        if mem::needs_drop::<T>() {
+            Some(|value| unsafe { value.drop_in_place::<T>() })
+        } else {
+            None
+        }
+    }
+
+    /// Create a builder for constructing a `ValueVTable`.
+    ///
+    /// This builder pattern allows constructing vtables in a way that's
+    /// compatible with feature-gated fields. Methods for feature-gated
+    /// fields become no-ops when their feature is disabled.
+    #[inline]
+    pub const fn builder(type_name: TypeNameFn) -> ValueVTableBuilder {
+        ValueVTableBuilder::new(type_name)
+    }
+}
+
+/// Builder for [`ValueVTable`].
+///
+/// This builder allows constructing vtables incrementally.
+#[derive(Clone, Copy)]
+pub struct ValueVTableBuilder {
+    type_name: TypeNameFn,
+    drop_in_place: Option<DropInPlaceFn>,
+    invariants: Option<InvariantsFn>,
+    default_in_place: Option<DefaultInPlaceFn>,
+    clone_into: Option<CloneIntoFn>,
+    parse: Option<ParseFn>,
+    try_from: Option<TryFromFn>,
+    try_into_inner: Option<TryIntoInnerFn>,
+    try_borrow_inner: Option<TryBorrowInnerFn>,
+    format: FormatVTable,
+    cmp: CmpVTable,
+    hash: HashVTable,
+    markers: MarkerTraits,
+}
+
+impl ValueVTableBuilder {
+    /// Create a new builder with the given type name function.
+    #[inline]
+    pub const fn new(type_name: TypeNameFn) -> Self {
+        Self {
+            type_name,
+            drop_in_place: None,
+            invariants: None,
+            default_in_place: None,
+            clone_into: None,
+            parse: None,
+            try_from: None,
+            try_into_inner: None,
+            try_borrow_inner: None,
+            format: FormatVTable::EMPTY,
+            cmp: CmpVTable::EMPTY,
+            hash: HashVTable::EMPTY,
+            markers: MarkerTraits::EMPTY,
+        }
+    }
+
+    /// Set the drop_in_place function (takes Option because drop_in_place_for returns Option).
+    #[inline]
+    pub const fn drop_in_place(mut self, f: Option<DropInPlaceFn>) -> Self {
+        self.drop_in_place = f;
+        self
+    }
+
+    /// Set the invariants function.
+    #[inline]
+    pub const fn invariants(mut self, f: InvariantsFn) -> Self {
+        self.invariants = Some(f);
+        self
+    }
+
+    /// Conditionally set the invariants function.
+    #[inline]
+    pub const fn invariants_opt(mut self, f: Option<InvariantsFn>) -> Self {
+        self.invariants = f;
+        self
+    }
+
+    /// Set the display function.
+    #[inline]
+    pub const fn display(mut self, f: DisplayFn) -> Self {
+        self.format.display = Some(f);
+        self
+    }
+
+    /// Conditionally set the display function.
+    #[inline]
+    pub const fn display_opt(mut self, f: Option<DisplayFn>) -> Self {
+        self.format.display = f;
+        self
+    }
+
+    /// Set the debug function.
+    #[inline]
+    pub const fn debug(mut self, f: DebugFn) -> Self {
+        self.format.debug = Some(f);
+        self
+    }
+
+    /// Conditionally set the debug function.
+    #[inline]
+    pub const fn debug_opt(mut self, f: Option<DebugFn>) -> Self {
+        self.format.debug = f;
+        self
+    }
+
+    /// Set the entire format vtable.
+    #[inline]
+    pub const fn format(mut self, f: FormatVTable) -> Self {
+        self.format = f;
+        self
+    }
+
+    /// Set the default_in_place function.
+    #[inline]
+    pub const fn default_in_place(mut self, f: DefaultInPlaceFn) -> Self {
+        self.default_in_place = Some(f);
+        self
+    }
+
+    /// Conditionally set the default_in_place function.
+    #[inline]
+    pub const fn default_in_place_opt(mut self, f: Option<DefaultInPlaceFn>) -> Self {
+        self.default_in_place = f;
+        self
+    }
+
+    /// Set the clone_into function.
+    #[inline]
+    pub const fn clone_into(mut self, f: CloneIntoFn) -> Self {
+        self.clone_into = Some(f);
+        self
+    }
+
+    /// Conditionally set the clone_into function.
+    #[inline]
+    pub const fn clone_into_opt(mut self, f: Option<CloneIntoFn>) -> Self {
+        self.clone_into = f;
+        self
+    }
+
+    /// Set the partial_eq function.
+    #[inline]
+    pub const fn partial_eq(mut self, f: PartialEqFn) -> Self {
+        self.cmp.partial_eq = Some(f);
+        self
+    }
+
+    /// Conditionally set the partial_eq function.
+    #[inline]
+    pub const fn partial_eq_opt(mut self, f: Option<PartialEqFn>) -> Self {
+        self.cmp.partial_eq = f;
+        self
+    }
+
+    /// Set the partial_ord function.
+    #[inline]
+    pub const fn partial_ord(mut self, f: PartialOrdFn) -> Self {
+        self.cmp.partial_ord = Some(f);
+        self
+    }
+
+    /// Conditionally set the partial_ord function.
+    #[inline]
+    pub const fn partial_ord_opt(mut self, f: Option<PartialOrdFn>) -> Self {
+        self.cmp.partial_ord = f;
+        self
+    }
+
+    /// Set the ord function.
+    #[inline]
+    pub const fn ord(mut self, f: CmpFn) -> Self {
+        self.cmp.ord = Some(f);
+        self
+    }
+
+    /// Conditionally set the ord function.
+    #[inline]
+    pub const fn ord_opt(mut self, f: Option<CmpFn>) -> Self {
+        self.cmp.ord = f;
+        self
+    }
+
+    /// Set the entire comparison vtable.
+    #[inline]
+    pub const fn cmp(mut self, c: CmpVTable) -> Self {
+        self.cmp = c;
+        self
+    }
+
+    /// Set the hash function.
+    #[inline]
+    pub const fn hash(mut self, f: HashFn) -> Self {
+        self.hash.hash = Some(f);
+        self
+    }
+
+    /// Conditionally set the hash function.
+    #[inline]
+    pub const fn hash_opt(mut self, f: Option<HashFn>) -> Self {
+        self.hash.hash = f;
+        self
+    }
+
+    /// Set the entire hash vtable.
+    #[inline]
+    pub const fn hash_vtable(mut self, h: HashVTable) -> Self {
+        self.hash = h;
+        self
+    }
+
+    /// Set the marker traits.
+    #[inline]
+    pub const fn markers(mut self, m: MarkerTraits) -> Self {
+        self.markers = m;
+        self
+    }
+
+    /// Set the parse function.
+    #[inline]
+    pub const fn parse(mut self, f: ParseFn) -> Self {
+        self.parse = Some(f);
+        self
+    }
+
+    /// Conditionally set the parse function.
+    #[inline]
+    pub const fn parse_opt(mut self, f: Option<ParseFn>) -> Self {
+        self.parse = f;
+        self
+    }
+
+    /// Set the try_from function.
+    #[inline]
+    pub const fn try_from(mut self, f: TryFromFn) -> Self {
+        self.try_from = Some(f);
+        self
+    }
+
+    /// Conditionally set the try_from function.
+    #[inline]
+    pub const fn try_from_opt(mut self, f: Option<TryFromFn>) -> Self {
+        self.try_from = f;
+        self
+    }
+
+    /// Set the try_into_inner function.
+    #[inline]
+    pub const fn try_into_inner(mut self, f: TryIntoInnerFn) -> Self {
+        self.try_into_inner = Some(f);
+        self
+    }
+
+    /// Conditionally set the try_into_inner function.
+    #[inline]
+    pub const fn try_into_inner_opt(mut self, f: Option<TryIntoInnerFn>) -> Self {
+        self.try_into_inner = f;
+        self
+    }
+
+    /// Set the try_borrow_inner function.
+    #[inline]
+    pub const fn try_borrow_inner(mut self, f: TryBorrowInnerFn) -> Self {
+        self.try_borrow_inner = Some(f);
+        self
+    }
+
+    /// Conditionally set the try_borrow_inner function.
+    #[inline]
+    pub const fn try_borrow_inner_opt(mut self, f: Option<TryBorrowInnerFn>) -> Self {
+        self.try_borrow_inner = f;
+        self
+    }
+
+    /// Build the `ValueVTable`.
+    #[inline]
+    pub const fn build(self) -> ValueVTable {
+        ValueVTable {
+            type_name: self.type_name,
+            drop_in_place: self.drop_in_place,
+            invariants: self.invariants,
+            default_in_place: self.default_in_place,
+            clone_into: self.clone_into,
+            parse: self.parse,
+            try_from: self.try_from,
+            try_into_inner: self.try_into_inner,
+            try_borrow_inner: self.try_borrow_inner,
+            format: self.format,
+            cmp: self.cmp,
+            hash: self.hash,
+            markers: self.markers,
+        }
     }
 }
 
@@ -700,12 +1165,6 @@ impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<&'a T> {
     pub fn of_deref() -> Self {
         Self(const { &T::SHAPE.vtable }, PhantomData)
     }
-}
-
-macro_rules! get_fn {
-    ($self:expr, $name:tt) => {
-        $self.0.$name.map(|f| unsafe { mem::transmute(f) })
-    };
 }
 
 impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<T> {
@@ -733,43 +1192,49 @@ impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<T> {
     /// cf. [`InvariantsFn`]
     #[inline(always)]
     pub fn invariants(&self) -> Option<InvariantsFnTyped<T>> {
-        get_fn!(self, invariants)
+        self.0.invariants.map(|f| unsafe { mem::transmute(f) })
     }
 
     /// cf. [`DisplayFn`]
     #[inline(always)]
     pub fn display(&self) -> Option<DisplayFnTyped<T>> {
-        get_fn!(self, display)
+        self.0.format.display.map(|f| unsafe { mem::transmute(f) })
     }
 
     /// cf. [`DebugFn`]
     #[inline(always)]
     pub fn debug(&self) -> Option<DebugFnTyped<T>> {
-        get_fn!(self, debug)
+        self.0.format.debug.map(|f| unsafe { mem::transmute(f) })
     }
 
     /// cf. [`PartialEqFn`] for equality comparison
     #[inline(always)]
     pub fn partial_eq(&self) -> Option<PartialEqFnTyped<T>> {
-        get_fn!(self, partial_eq)
+        self.0.cmp.partial_eq.map(|f| unsafe { mem::transmute(f) })
     }
 
     /// cf. [`PartialOrdFn`] for partial ordering comparison
     #[inline(always)]
     pub fn partial_ord(&self) -> Option<PartialOrdFnTyped<T>> {
-        get_fn!(self, partial_ord)
+        self.0.cmp.partial_ord.map(|f| unsafe { mem::transmute(f) })
     }
 
     /// cf. [`CmpFn`] for total ordering
     #[inline(always)]
     pub fn ord(&self) -> Option<CmpFnTyped<T>> {
-        get_fn!(self, ord)
+        self.0.cmp.ord.map(|f| unsafe { mem::transmute(f) })
     }
 
     /// cf. [`HashFn`]
     #[inline(always)]
     pub fn hash(&self) -> Option<HashFnTyped<T>> {
-        get_fn!(self, hash)
+        self.0.hash.hash.map(|f| unsafe { mem::transmute(f) })
+    }
+
+    /// Get the marker traits
+    #[inline(always)]
+    pub const fn markers(&self) -> MarkerTraits {
+        self.0.markers
     }
 
     /// cf. [`TryBorrowInnerFn`]
@@ -777,7 +1242,9 @@ impl<'a, T: crate::Facet<'a> + ?Sized> VTableView<T> {
     /// This is used by transparent types to efficiently access the inner value without copying.
     #[inline(always)]
     pub fn try_borrow_inner(&self) -> Option<TryBorrowInnerFnTyped<T>> {
-        get_fn!(self, try_borrow_inner)
+        self.0
+            .try_borrow_inner
+            .map(|f| unsafe { mem::transmute(f) })
     }
 }
 
@@ -833,201 +1300,5 @@ impl<'a, T: crate::Facet<'a>> VTableView<T> {
         self.0.try_into_inner.map(|try_into_inner| unsafe {
             mem::transmute::<TryIntoInnerFn, TryIntoInnerFnTyped<T>>(try_into_inner)
         })
-    }
-}
-/// Builds a [`ValueVTable`]
-pub struct ValueVTableBuilder<T: ?Sized> {
-    type_name: Option<TypeNameFn>,
-    display: Option<DisplayFn>,
-    debug: Option<DebugFn>,
-    default_in_place: Option<DefaultInPlaceFn>,
-    clone_into: Option<CloneIntoFn>,
-    marker_traits: MarkerTraits,
-    partial_eq: Option<PartialEqFn>,
-    partial_ord: Option<PartialOrdFn>,
-    ord: Option<CmpFn>,
-    hash: Option<HashFn>,
-    drop_in_place: Option<DropInPlaceFn>,
-    invariants: Option<InvariantsFn>,
-    parse: Option<ParseFn>,
-    try_from: Option<TryFromFn>,
-    try_into_inner: Option<TryIntoInnerFn>,
-    try_borrow_inner: Option<TryBorrowInnerFn>,
-    _pd: PhantomData<T>,
-}
-
-impl<T: ?Sized> ValueVTableBuilder<T> {
-    /// Creates a new [`ValueVTableBuilder`] with all fields set to `None`.
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            type_name: None,
-            display: None,
-            debug: None,
-            default_in_place: None,
-            clone_into: None,
-            marker_traits: MarkerTraits::empty(),
-            partial_eq: None,
-            partial_ord: None,
-            ord: None,
-            hash: None,
-            drop_in_place: if mem::needs_drop::<T>() {
-                Some(|value| unsafe { value.drop_in_place::<T>() })
-            } else {
-                None
-            },
-            invariants: None,
-            parse: None,
-            try_from: None,
-            try_into_inner: None,
-            try_borrow_inner: None,
-            _pd: PhantomData,
-        }
-    }
-
-    /// Sets the type name function for this builder.
-    pub const fn type_name(mut self, type_name: TypeNameFn) -> Self {
-        self.type_name = Some(type_name);
-        self
-    }
-
-    /// Sets the display function for this builder.
-    pub const fn display(mut self, display: Option<DisplayFnTyped<T>>) -> Self {
-        self.display =
-            unsafe { mem::transmute::<Option<DisplayFnTyped<T>>, Option<DisplayFn>>(display) };
-        self
-    }
-
-    /// Sets the debug function for this builder.
-    pub const fn debug(mut self, debug: Option<DebugFnTyped<T>>) -> Self {
-        self.debug = unsafe { mem::transmute::<Option<DebugFnTyped<T>>, Option<DebugFn>>(debug) };
-        self
-    }
-
-    /// Sets the default_in_place function for this builder.
-    pub const fn default_in_place(
-        mut self,
-        default_in_place: Option<DefaultInPlaceFnTyped<T>>,
-    ) -> Self {
-        self.default_in_place = unsafe {
-            mem::transmute::<Option<DefaultInPlaceFnTyped<T>>, Option<DefaultInPlaceFn>>(
-                default_in_place,
-            )
-        };
-        self
-    }
-
-    /// Sets the clone_into function for this builder.
-    pub const fn clone_into(mut self, clone_into: Option<CloneIntoFnTyped<T>>) -> Self {
-        self.clone_into = unsafe {
-            mem::transmute::<Option<CloneIntoFnTyped<T>>, Option<CloneIntoFn>>(clone_into)
-        };
-        self
-    }
-
-    /// Sets the marker traits for this builder.
-    pub const fn marker_traits(mut self, marker_traits: MarkerTraits) -> Self {
-        self.marker_traits = marker_traits;
-        self
-    }
-
-    /// Sets the partial_eq function for this builder.
-    pub const fn partial_eq(mut self, partial_eq: Option<PartialEqFnTyped<T>>) -> Self {
-        self.partial_eq = unsafe {
-            mem::transmute::<Option<PartialEqFnTyped<T>>, Option<PartialEqFn>>(partial_eq)
-        };
-        self
-    }
-
-    /// Sets the partial_ord function for this builder.
-    pub const fn partial_ord(mut self, partial_ord: Option<PartialOrdFnTyped<T>>) -> Self {
-        self.partial_ord = unsafe {
-            mem::transmute::<Option<PartialOrdFnTyped<T>>, Option<PartialOrdFn>>(partial_ord)
-        };
-        self
-    }
-
-    /// Sets the ord function for this builder.
-    pub const fn ord(mut self, ord: Option<CmpFnTyped<T>>) -> Self {
-        self.ord = unsafe { mem::transmute::<Option<CmpFnTyped<T>>, Option<CmpFn>>(ord) };
-        self
-    }
-
-    /// Sets the hash function for this builder.
-    pub const fn hash(mut self, hash: Option<HashFnTyped<T>>) -> Self {
-        self.hash = unsafe { mem::transmute::<Option<HashFnTyped<T>>, Option<HashFn>>(hash) };
-        self
-    }
-
-    /// Overwrites the drop_in_place function for this builder.
-    ///
-    /// This is usually not necessary, the builder builder will default this to the appropriate type.
-    pub const fn drop_in_place(mut self, drop_in_place: Option<DropInPlaceFn>) -> Self {
-        self.drop_in_place = drop_in_place;
-        self
-    }
-
-    /// Sets the invariants function for this builder.
-    pub const fn invariants(mut self, invariants: Option<InvariantsFnTyped<T>>) -> Self {
-        self.invariants = unsafe {
-            mem::transmute::<Option<InvariantsFnTyped<T>>, Option<InvariantsFn>>(invariants)
-        };
-        self
-    }
-
-    /// Sets the parse function for this builder.
-    pub const fn parse(mut self, parse: Option<ParseFnTyped<T>>) -> Self {
-        self.parse = unsafe { mem::transmute::<Option<ParseFnTyped<T>>, Option<ParseFn>>(parse) };
-        self
-    }
-
-    /// Sets the try_from function for this builder.
-    pub const fn try_from(mut self, try_from: Option<TryFromFnTyped<T>>) -> Self {
-        self.try_from =
-            unsafe { mem::transmute::<Option<TryFromFnTyped<T>>, Option<TryFromFn>>(try_from) };
-        self
-    }
-
-    /// Sets the try_into_inner function for this builder.
-    pub const fn try_into_inner(mut self, try_into_inner: Option<TryIntoInnerFnTyped<T>>) -> Self {
-        self.try_into_inner = unsafe {
-            mem::transmute::<Option<TryIntoInnerFnTyped<T>>, Option<TryIntoInnerFn>>(try_into_inner)
-        };
-        self
-    }
-
-    /// Sets the borrow_inner function for this builder.
-    pub const fn try_borrow_inner(
-        mut self,
-        try_borrow_inner: Option<TryBorrowInnerFnTyped<T>>,
-    ) -> Self {
-        self.try_borrow_inner = unsafe {
-            mem::transmute::<Option<TryBorrowInnerFnTyped<T>>, Option<TryBorrowInnerFn>>(
-                try_borrow_inner,
-            )
-        };
-        self
-    }
-
-    /// Builds the [`ValueVTable`] from the current state of the builder.
-    pub const fn build(self) -> ValueVTable {
-        ValueVTable {
-            type_name: self.type_name.unwrap(),
-            marker_traits: self.marker_traits,
-            invariants: self.invariants,
-            display: self.display,
-            debug: self.debug,
-            default_in_place: self.default_in_place,
-            clone_into: self.clone_into,
-            partial_eq: self.partial_eq,
-            partial_ord: self.partial_ord,
-            ord: self.ord,
-            hash: self.hash,
-            parse: self.parse,
-            try_from: self.try_from,
-            try_into_inner: self.try_into_inner,
-            try_borrow_inner: self.try_borrow_inner,
-            drop_in_place: self.drop_in_place,
-        }
     }
 }

@@ -160,20 +160,50 @@ pub mod builtin {
             ///
             /// Usage: `#[facet(proxy = MyProxyType)]`
             Proxy(shape_type),
+
+            /// Marks a field as having a recursive type that needs lazy shape resolution.
+            ///
+            /// Use this on fields where the type recursively contains the parent type,
+            /// such as `Vec<Self>`, `Box<Self>`, `Option<Arc<Self>>`, etc.
+            ///
+            /// Without this attribute, such recursive types would cause a compile-time cycle.
+            /// With this attribute, the field's shape is resolved lazily via a closure.
+            ///
+            /// Usage: `#[facet(recursive_type)]`
+            ///
+            /// # Example
+            ///
+            /// ```ignore
+            /// #[derive(Facet)]
+            /// struct Node {
+            ///     value: i32,
+            ///     #[facet(recursive_type)]
+            ///     children: Vec<Node>,
+            /// }
+            /// ```
+            RecursiveType,
+
+            // Note: `traits(...)` and `auto_traits` are compile-time-only directives
+            // processed by the derive macro. They are not stored as runtime attributes.
+            // See DeclaredTraits in facet-macros-impl/src/parsed.rs for their handling.
         }
     }
 
     // Manual Facet impl for Attr since we can't use the derive macro inside the facet crate.
     // This is a simplified opaque implementation.
     unsafe impl crate::Facet<'_> for Attr {
-        const SHAPE: &'static crate::Shape = &const {
-            crate::Shape::builder_for_sized::<Self>()
-                .vtable(crate::value_vtable!(Self, |_f, _o| {
-                    core::fmt::Result::Ok(())
-                }))
-                .type_identifier("facet::builtin::Attr")
-                .ty(crate::Type::User(crate::UserType::Opaque))
-                .build()
+        const SHAPE: &'static crate::Shape = &crate::Shape {
+            id: crate::Shape::id_of::<Self>(),
+            layout: crate::Shape::layout_of::<Self>(),
+            vtable: crate::value_vtable!(Self, |_f, _o| { core::fmt::Result::Ok(()) }),
+            type_identifier: "facet::builtin::Attr",
+            ty: crate::Type::User(crate::UserType::Opaque),
+            def: crate::Def::Undefined,
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
         };
     }
 }

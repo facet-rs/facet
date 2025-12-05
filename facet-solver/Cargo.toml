@@ -26,7 +26,7 @@ facet-testhelpers = { path = "../facet-testhelpers" }
 json-event-parser = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
+miette = { version = "7", default-features = false }
 thiserror = "2"
 divan = "0.1"
 

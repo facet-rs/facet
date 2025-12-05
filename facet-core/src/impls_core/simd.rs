@@ -12,16 +12,23 @@ macro_rules! impl_facet_for_simd {
     ($elem:ty, $lanes:expr, $alias:ident) => {
         unsafe impl Facet<'_> for Simd<$elem, $lanes> {
             const SHAPE: &'static Shape = &const {
-                Shape::builder_for_sized::<Self>()
-                    .vtable(value_vtable!(Simd<$elem, $lanes>, |f, _opts| write!(
+                Shape {
+                    id: Shape::id_of::<Self>(),
+                    layout: Shape::layout_of::<Self>(),
+                    vtable: value_vtable!(Simd<$elem, $lanes>, |f, _opts| write!(
                         f,
                         "{}",
                         stringify!($alias)
-                    )))
-                    .type_identifier(stringify!($alias))
-                    .ty(Type::User(UserType::Opaque))
-                    .def(Def::Scalar)
-                    .build()
+                    )),
+                    ty: Type::User(UserType::Opaque),
+                    def: Def::Scalar,
+                    type_identifier: stringify!($alias),
+                    type_params: &[],
+                    doc: &[],
+                    attributes: &[],
+                    type_tag: None,
+                    inner: None,
+                }
             };
         }
     };

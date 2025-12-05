@@ -4,8 +4,7 @@ use core::ptr::NonNull;
 
 use facet_core::{
     ConstTypeId, Def, DynDateTimeKind, DynValueKind, DynamicValueDef, DynamicValueVTable, Facet,
-    MarkerTraits, PtrConst, PtrMut, PtrUninit, Shape, ShapeLayout, Type, TypeNameOpts, UserType,
-    ValueVTable,
+    PtrConst, PtrMut, PtrUninit, Shape, ShapeLayout, Type, TypeNameOpts, UserType, ValueVTable,
 };
 
 use crate::{DateTimeKind, VArray, VBytes, VDateTime, VNumber, VObject, VString, Value};
@@ -321,38 +320,38 @@ unsafe fn dyn_object_get_mut<'a>(value: PtrMut<'a>, key: &str) -> Option<PtrMut<
 // VTable and Shape
 // ============================================================================
 
-static DYNAMIC_VALUE_VTABLE: DynamicValueVTable = DynamicValueVTable::builder()
-    .set_null(dyn_set_null)
-    .set_bool(dyn_set_bool)
-    .set_i64(dyn_set_i64)
-    .set_u64(dyn_set_u64)
-    .set_f64(dyn_set_f64)
-    .set_str(dyn_set_str)
-    .set_bytes(dyn_set_bytes)
-    .set_datetime(dyn_set_datetime)
-    .begin_array(dyn_begin_array)
-    .push_array_element(dyn_push_array_element)
-    .begin_object(dyn_begin_object)
-    .insert_object_entry(dyn_insert_object_entry)
-    .get_kind(dyn_get_kind)
-    .get_bool(dyn_get_bool)
-    .get_i64(dyn_get_i64)
-    .get_u64(dyn_get_u64)
-    .get_f64(dyn_get_f64)
-    .get_str(dyn_get_str)
-    .get_bytes(dyn_get_bytes)
-    .get_datetime(dyn_get_datetime)
-    .array_len(dyn_array_len)
-    .array_get(dyn_array_get)
-    .object_len(dyn_object_len)
-    .object_get_entry(dyn_object_get_entry)
-    .object_get(dyn_object_get)
-    .object_get_mut(dyn_object_get_mut)
-    .build();
+static DYNAMIC_VALUE_VTABLE: DynamicValueVTable = DynamicValueVTable {
+    set_null: dyn_set_null,
+    set_bool: dyn_set_bool,
+    set_i64: dyn_set_i64,
+    set_u64: dyn_set_u64,
+    set_f64: dyn_set_f64,
+    set_str: dyn_set_str,
+    set_bytes: Some(dyn_set_bytes),
+    set_datetime: Some(dyn_set_datetime),
+    begin_array: dyn_begin_array,
+    push_array_element: dyn_push_array_element,
+    end_array: None,
+    begin_object: dyn_begin_object,
+    insert_object_entry: dyn_insert_object_entry,
+    end_object: None,
+    get_kind: dyn_get_kind,
+    get_bool: dyn_get_bool,
+    get_i64: dyn_get_i64,
+    get_u64: dyn_get_u64,
+    get_f64: dyn_get_f64,
+    get_str: dyn_get_str,
+    get_bytes: Some(dyn_get_bytes),
+    get_datetime: Some(dyn_get_datetime),
+    array_len: dyn_array_len,
+    array_get: dyn_array_get,
+    object_len: dyn_object_len,
+    object_get_entry: dyn_object_get_entry,
+    object_get: dyn_object_get,
+    object_get_mut: Some(dyn_object_get_mut),
+};
 
-static DYNAMIC_VALUE_DEF: DynamicValueDef = DynamicValueDef::builder()
-    .vtable(&DYNAMIC_VALUE_VTABLE)
-    .build();
+static DYNAMIC_VALUE_DEF: DynamicValueDef = DynamicValueDef::new(&DYNAMIC_VALUE_VTABLE);
 
 // Value vtable functions for the standard Facet machinery
 
@@ -421,24 +420,14 @@ fn value_type_name(f: &mut core::fmt::Formatter<'_>, _opts: TypeNameOpts) -> cor
     write!(f, "Value")
 }
 
-static VALUE_VTABLE: ValueVTable = ValueVTable {
-    type_name: value_type_name,
-    marker_traits: MarkerTraits::SEND.union(MarkerTraits::SYNC),
-    drop_in_place: Some(value_drop_in_place),
-    invariants: None,
-    display: None,
-    debug: Some(value_debug),
-    default_in_place: Some(value_default_in_place),
-    clone_into: Some(value_clone_into),
-    partial_eq: Some(value_partial_eq),
-    partial_ord: None,
-    ord: None,
-    hash: Some(value_hash),
-    parse: None,
-    try_from: None,
-    try_into_inner: None,
-    try_borrow_inner: None,
-};
+static VALUE_VTABLE: ValueVTable = ValueVTable::builder(value_type_name)
+    .drop_in_place(Some(value_drop_in_place))
+    .debug(value_debug)
+    .default_in_place(value_default_in_place)
+    .clone_into(value_clone_into)
+    .partial_eq(value_partial_eq)
+    .hash(value_hash)
+    .build();
 
 /// The static shape for `Value`.
 pub static VALUE_SHAPE: Shape = Shape {

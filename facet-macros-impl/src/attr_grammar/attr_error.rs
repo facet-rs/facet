@@ -70,20 +70,24 @@ pub fn attr_error(input: TokenStream2) -> TokenStream2 {
     let got_name_str = got_name.to_string();
     let got_span = got_name.span();
 
-    // Find best suggestion using strsim
-    let mut best_suggestion: Option<(&Ident, f64)> = None;
-    for known in &known_attrs {
-        let score = strsim::jaro_winkler(&got_name_str, &known.to_string());
-        if score > 0.7 {
-            match &best_suggestion {
-                None => best_suggestion = Some((known, score)),
-                Some((_, best_score)) if score > *best_score => {
-                    best_suggestion = Some((known, score))
+    // Find best suggestion using strsim (if helpful-derive feature is enabled)
+    #[cfg(feature = "helpful-derive")]
+    let best_suggestion: Option<(&Ident, f64)> = {
+        let mut best: Option<(&Ident, f64)> = None;
+        for known in &known_attrs {
+            let score = strsim::jaro_winkler(&got_name_str, &known.to_string());
+            if score > 0.7 {
+                match &best {
+                    None => best = Some((known, score)),
+                    Some((_, best_score)) if score > *best_score => best = Some((known, score)),
+                    _ => {}
                 }
-                _ => {}
             }
         }
-    }
+        best
+    };
+    #[cfg(not(feature = "helpful-derive"))]
+    let best_suggestion: Option<(&Ident, f64)> = None;
 
     let known_list: Vec<_> = known_attrs.iter().map(|i| i.to_string()).collect();
     let known_str = known_list.join(", ");

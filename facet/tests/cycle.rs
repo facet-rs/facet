@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 #[derive(Facet)]
 struct Recursive {
+    #[facet(recursive_type)]
     next: Option<Arc<Recursive>>,
+    #[facet(recursive_type)]
     others: Vec<Recursive>,
 }
 

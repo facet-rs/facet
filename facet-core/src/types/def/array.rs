@@ -17,60 +17,14 @@ pub struct ArrayDef {
 }
 
 impl ArrayDef {
-    /// Returns a builder for ArrayDef
-    pub const fn builder() -> ArrayDefBuilder {
-        ArrayDefBuilder::new()
+    /// Construct an `ArrayDef` from its vtable, element shape, and length.
+    pub const fn new(vtable: &'static ArrayVTable, t: &'static Shape, n: usize) -> Self {
+        Self { vtable, t, n }
     }
 
     /// Returns the shape of the items in the array
     pub const fn t(&self) -> &'static Shape {
         self.t
-    }
-}
-
-/// Builder for ArrayDef
-pub struct ArrayDefBuilder {
-    vtable: Option<&'static ArrayVTable>,
-    t: Option<&'static Shape>,
-    n: Option<usize>,
-}
-
-impl ArrayDefBuilder {
-    /// Creates a new ArrayDefBuilder
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            vtable: None,
-            t: None,
-            n: None,
-        }
-    }
-
-    /// Sets the vtable for the ArrayDef
-    pub const fn vtable(mut self, vtable: &'static ArrayVTable) -> Self {
-        self.vtable = Some(vtable);
-        self
-    }
-
-    /// Sets the item shape for the ArrayDef
-    pub const fn t(mut self, t: &'static Shape) -> Self {
-        self.t = Some(t);
-        self
-    }
-
-    /// Sets the length for the ArrayDef (added method)
-    pub const fn n(mut self, n: usize) -> Self {
-        self.n = Some(n);
-        self
-    }
-
-    /// Builds the ArrayDef
-    pub const fn build(self) -> ArrayDef {
-        ArrayDef {
-            vtable: self.vtable.unwrap(),
-            t: self.t.unwrap(),
-            n: self.n.unwrap(),
-        }
     }
 }
 
@@ -100,49 +54,8 @@ pub struct ArrayVTable {
 }
 
 impl ArrayVTable {
-    /// Returns a builder for ListVTable
-    pub const fn builder() -> ArrayVTableBuilder {
-        ArrayVTableBuilder::new()
-    }
-}
-
-/// Builds a [`ArrayVTable`]
-pub struct ArrayVTableBuilder {
-    as_ptr_fn: Option<ArrayAsPtrFn>,
-    as_mut_ptr_fn: Option<ArrayAsMutPtrFn>,
-}
-
-impl ArrayVTableBuilder {
-    /// Creates a new [`ArrayVTableBuilder`] with all fields set to `None`.
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            as_ptr_fn: None,
-            as_mut_ptr_fn: None,
-        }
-    }
-
-    /// Sets the as_ptr field
-    pub const fn as_ptr(mut self, f: ArrayAsPtrFn) -> Self {
-        self.as_ptr_fn = Some(f);
-        self
-    }
-
-    /// Sets the as_mut_ptr field
-    pub const fn as_mut_ptr(mut self, f: ArrayAsMutPtrFn) -> Self {
-        self.as_mut_ptr_fn = Some(f);
-        self
-    }
-
-    /// Builds the [`ArrayVTable`] from the current state of the builder.
-    ///
-    /// # Panics
-    ///
-    /// This method will panic if any of the required fields are `None`.
-    pub const fn build(self) -> ArrayVTable {
-        ArrayVTable {
-            as_ptr: self.as_ptr_fn.unwrap(),
-            as_mut_ptr: self.as_mut_ptr_fn.unwrap(),
-        }
+    /// Const ctor for array vtable.
+    pub const fn new(as_ptr: ArrayAsPtrFn, as_mut_ptr: ArrayAsMutPtrFn) -> Self {
+        Self { as_ptr, as_mut_ptr }
     }
 }

@@ -4,8 +4,8 @@ use alloc::boxed::Box;
 
 use crate::{
     Def, Facet, KnownPointer, PointerDef, PointerFlags, PointerVTable, PtrConst, PtrMut, PtrUninit,
-    Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType,
-    shape_util::vtable_builder_for_ptr,
+    Shape, TryBorrowInnerError, TryFromError, TryIntoInnerError, Type, UserType, ValueVTable,
+    shape_util::vtable_for_ptr,
 };
 
 // Define the functions for transparent conversion between Box<T> and T
@@ -50,65 +50,76 @@ unsafe fn try_into_inner<'a, 'src, 'dst, T: ?Sized + Facet<'a>>(
 }
 unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for Box<T> {
     const SHAPE: &'static crate::Shape = &const {
-        crate::Shape::builder_for_sized::<Self>()
-            .vtable({
-                unsafe fn try_borrow_inner<'a, 'src, T: ?Sized + Facet<'a>>(
-                    src_ptr: PtrConst<'src>,
-                ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
-                    let boxed = unsafe { src_ptr.get::<Box<T>>() };
-                    Ok(PtrConst::new(NonNull::from(&**boxed)))
-                }
+        unsafe fn try_borrow_inner<'a, 'src, T: ?Sized + Facet<'a>>(
+            src_ptr: PtrConst<'src>,
+        ) -> Result<PtrConst<'src>, TryBorrowInnerError> {
+            let boxed = unsafe { src_ptr.get::<Box<T>>() };
+            Ok(PtrConst::new(NonNull::from(&**boxed)))
+        }
 
-                let mut vtable = vtable_builder_for_ptr::<T, Self>()
-                    .type_name(|f, opts| {
-                        write!(f, "{}", Self::SHAPE.type_identifier)?;
-                        if let Some(opts) = opts.for_children() {
-                            write!(f, "<")?;
-                            (T::SHAPE.vtable.type_name())(f, opts)?;
-                            write!(f, ">")?;
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: ValueVTable {
+                type_name: |f, opts| {
+                    write!(f, "{}", Self::SHAPE.type_identifier)?;
+                    if let Some(opts) = opts.for_children() {
+                        write!(f, "<")?;
+                        (T::SHAPE.vtable.type_name())(f, opts)?;
+                        write!(f, ">")?;
+                    } else {
+                        write!(f, "<…>")?;
+                    }
+                    Ok(())
+                },
+                try_from: if size_of::<*const T>() == size_of::<*const ()>() {
+                    Some(try_from)
+                } else {
+                    None
+                },
+                try_into_inner: if size_of::<*const T>() == size_of::<*const ()>() {
+                    Some(try_into_inner::<T>)
+                } else {
+                    None
+                },
+                try_borrow_inner: Some(try_borrow_inner::<T>),
+                ..vtable_for_ptr::<T, Self>()
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::Pointer(PointerDef {
+                vtable: &const {
+                    PointerVTable {
+                        borrow_fn: Some(|this| unsafe {
+                            let concrete = this.get::<Box<T>>();
+                            let t: &T = concrete.as_ref();
+                            PtrConst::new(NonNull::from(t))
+                        }),
+                        new_into_fn: if size_of::<*const T>() == size_of::<*const ()>() {
+                            Some(|this, ptr| unsafe {
+                                try_from(ptr.as_const(), T::SHAPE, this).unwrap()
+                            })
                         } else {
-                            write!(f, "<…>")?;
-                        }
-                        Ok(())
-                    })
-                    .build();
-                if size_of::<*const T>() == size_of::<*const ()>() {
-                    vtable.try_from = Some(try_from);
-                    vtable.try_into_inner = Some(try_into_inner::<T>);
-                }
-                vtable.try_borrow_inner = Some(try_borrow_inner::<T>);
-                vtable
-            })
-            .type_identifier("Box")
-            .type_params(&[crate::TypeParam {
+                            None
+                        },
+                        ..PointerVTable::new()
+                    }
+                },
+                pointee: Some(T::SHAPE),
+                weak: None,
+                strong: None,
+                flags: PointerFlags::EMPTY,
+                known: Some(KnownPointer::Box),
+            }),
+            type_identifier: "Box",
+            type_params: &[crate::TypeParam {
                 name: "T",
                 shape: T::SHAPE,
-            }])
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Pointer(
-                PointerDef::builder()
-                    .pointee(T::SHAPE)
-                    .flags(PointerFlags::EMPTY)
-                    .known(KnownPointer::Box)
-                    .vtable(
-                        &const {
-                            let mut vtable = PointerVTable::builder().borrow_fn(|this| unsafe {
-                                let concrete = this.get::<Box<T>>();
-                                let t: &T = concrete.as_ref();
-                                PtrConst::new(NonNull::from(t))
-                            });
-                            if size_of::<*const T>() == size_of::<*const ()>() {
-                                vtable = vtable.new_into_fn(|this, ptr| unsafe {
-                                    try_from(ptr.as_const(), T::SHAPE, this).unwrap()
-                                })
-                            }
-                            vtable.build()
-                        },
-                    )
-                    .build(),
-            ))
-            .inner(T::SHAPE)
-            .build()
+            }],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: Some(T::SHAPE),
+        }
     };
 }
 

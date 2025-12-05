@@ -40,54 +40,16 @@ impl FunctionAbi {
 }
 
 impl FunctionPointerDef {
-    /// Returns a builder for FunctionPointerDef
-    pub const fn builder() -> FunctionPointerDefBuilder {
-        FunctionPointerDefBuilder::new()
-    }
-}
-
-/// Builder for FunctionPointerDef
-pub struct FunctionPointerDefBuilder {
-    abi: Option<FunctionAbi>,
-    parameters: &'static [&'static Shape],
-    return_type: Option<&'static Shape>,
-}
-
-impl FunctionPointerDefBuilder {
-    /// Creates a new FunctionPointerDefBuilder
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
+    /// Construct a `FunctionPointerDef` from its components.
+    pub const fn new(
+        abi: FunctionAbi,
+        parameters: &'static [&'static Shape],
+        return_type: &'static Shape,
+    ) -> Self {
         Self {
-            parameters: &[],
-            abi: None,
-            return_type: None,
-        }
-    }
-
-    /// Sets the abi for the FunctionPointerDef
-    pub const fn abi(mut self, abi: FunctionAbi) -> Self {
-        self.abi = Some(abi);
-        self
-    }
-
-    /// Sets the parameters for the FunctionPointerDef
-    pub const fn parameter_types(mut self, parameters: &'static [&'static Shape]) -> Self {
-        self.parameters = parameters;
-        self
-    }
-
-    /// Sets the return type for the FunctionPointerDef
-    pub const fn return_type(mut self, ty: &'static Shape) -> Self {
-        self.return_type = Some(ty);
-        self
-    }
-
-    /// Builds the FunctionPointerDef
-    pub const fn build(self) -> FunctionPointerDef {
-        FunctionPointerDef {
-            parameters: self.parameters,
-            return_type: self.return_type.unwrap(),
-            abi: self.abi.unwrap(),
+            abi,
+            parameters,
+            return_type,
         }
     }
 }

@@ -52,10 +52,10 @@ log = { version = "0.4.27", optional = true }
 camino = { version = "1", optional = true }
 uuid = { version = "1.17.0", optional = true }
 ulid = { version = "1.2.1", optional = true }
-miette = { version = "7", optional = true }
+miette = { version = "7", optional = true, default-features = false }
 
 [dev-dependencies]
-facet = { path = "../facet" }
+facet = { path = "../facet", features = ["net", "nonzero"] }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-value = { path = "../facet-value" }
 insta = "1.43.1"

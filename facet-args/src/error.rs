@@ -247,7 +247,7 @@ impl ArgsErrorKind {
             }
             ArgsErrorKind::MissingArgument { field } => {
                 let kebab = field.name.to_kebab_case();
-                let type_name = (field.shape)().type_identifier;
+                let type_name = field.shape().type_identifier;
                 let positional = field.has_attr(Some("args"), "positional");
                 if positional {
                     Some(Box::new(format!("provide a value for `<{kebab}>`")))

@@ -15,73 +15,14 @@ pub struct StructType {
 }
 
 impl StructType {
-    /// Returns a builder for StructType
-    pub const fn builder() -> StructBuilder {
-        StructBuilder::new()
-    }
-}
-
-/// Builder for StructType
-pub struct StructBuilder {
-    repr: Option<Repr>,
-    kind: Option<StructKind>,
-    fields: &'static [Field],
-}
-
-impl StructBuilder {
-    /// Creates a new StructBuilder
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            repr: None,
-            kind: None,
-            fields: &[],
-        }
-    }
-    /// Sets the kind to Unit and returns self
-    pub const fn unit(mut self) -> Self {
-        self.kind = Some(StructKind::Unit);
-        self
-    }
-
-    /// Sets the kind to Tuple and returns self
-    pub const fn tuple(mut self) -> Self {
-        self.kind = Some(StructKind::Tuple);
-        self
-    }
-
-    /// Sets the kind to Struct and returns self
-    pub const fn struct_(mut self) -> Self {
-        self.kind = Some(StructKind::Struct);
-        self
-    }
-
-    /// Sets the repr for the StructType
-    pub const fn repr(mut self, repr: Repr) -> Self {
-        self.repr = Some(repr);
-        self
-    }
-
-    /// Sets the kind for the StructType
-    pub const fn kind(mut self, kind: StructKind) -> Self {
-        self.kind = Some(kind);
-        self
-    }
-
-    /// Sets the fields for the StructType
-    pub const fn fields(mut self, fields: &'static [Field]) -> Self {
-        self.fields = fields;
-        self
-    }
-
-    /// Builds the StructType
-    pub const fn build(self) -> StructType {
-        StructType {
-            repr: self.repr.unwrap(),
-            kind: self.kind.unwrap(),
-            fields: self.fields,
-        }
-    }
+    /// A unit struct type with default C representation and no fields.
+    ///
+    /// This is a pre-built constant for the common case of unit enum variants.
+    pub const UNIT: Self = Self {
+        repr: Repr::C,
+        kind: StructKind::Unit,
+        fields: &[],
+    };
 }
 
 /// Describes the kind of struct (useful for deserializing)
@@ -99,4 +40,51 @@ pub enum StructKind {
 
     /// (T0, T1)
     Tuple,
+}
+
+/// Builder for [`StructType`] to enable shorter derive macro output
+///
+/// # Example
+/// ```
+/// use facet_core::{StructTypeBuilder, StructKind, Field, StructType};
+/// const FIELDS: &[Field] = &[];
+/// const STRUCT_TYPE: StructType =
+///     StructTypeBuilder::new(StructKind::Struct, FIELDS).build();
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct StructTypeBuilder {
+    repr: Repr,
+    kind: StructKind,
+    fields: &'static [Field],
+}
+
+impl StructTypeBuilder {
+    /// Create a new StructTypeBuilder with the given kind and fields
+    ///
+    /// The representation defaults to `Repr::c()` if not explicitly set via [`Self::repr`]
+    #[inline]
+    pub const fn new(kind: StructKind, fields: &'static [Field]) -> Self {
+        Self {
+            repr: Repr::c(),
+            kind,
+            fields,
+        }
+    }
+
+    /// Set the representation for the struct type
+    #[inline]
+    pub const fn repr(mut self, repr: Repr) -> Self {
+        self.repr = repr;
+        self
+    }
+
+    /// Build the final StructType
+    #[inline]
+    pub const fn build(self) -> StructType {
+        StructType {
+            repr: self.repr,
+            kind: self.kind,
+            fields: self.fields,
+        }
+    }
 }

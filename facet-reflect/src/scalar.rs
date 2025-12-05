@@ -94,7 +94,6 @@ mod tests {
             ScalarType::ISize,
             ScalarType::try_from_shape(isize::SHAPE).unwrap()
         );
-        #[cfg(feature = "std")]
         assert_eq!(
             ScalarType::SocketAddr,
             ScalarType::try_from_shape(core::net::SocketAddr::SHAPE).unwrap()

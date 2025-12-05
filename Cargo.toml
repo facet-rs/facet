@@ -48,6 +48,7 @@ members = [
     "facet-showcase",
 
     # dev tooling
+    "facet-bloatbench",
     "xtask",
 ]
 exclude = [

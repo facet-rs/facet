@@ -1,14 +1,10 @@
 use std::alloc::Layout;
 use std::fmt::Debug;
-use std::net::Ipv4Addr;
-use std::panic::{RefUnwindSafe, UnwindSafe};
 use std::ptr::NonNull;
 use std::rc::Rc;
-use std::{cmp::Ordering, collections::BTreeSet, marker::PhantomData};
+use std::{cmp::Ordering, collections::BTreeSet};
 
-use facet_core::{
-    DropInPlaceFn, Facet, MarkerTraits, PtrConst, PtrMut, PtrUninit, VTableView, ValueVTable,
-};
+use facet_core::{DropInPlaceFn, Facet, PtrConst, PtrMut, PtrUninit, VTableView, ValueVTable};
 use facet_macros::Facet;
 use facet_testhelpers::test;
 use owo_colors::{OwoColorize, Style};
@@ -114,7 +110,7 @@ unsafe fn debug(vtable: &'static ValueVTable, ptr: PtrConst) -> impl Debug {
 
     impl<'a> Debug for Debugger<'a> {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            match self.0.display {
+            match self.0.format.display {
                 Some(fun) => unsafe { fun(self.1, f) },
                 None => write!(f, "???"),
             }
@@ -140,12 +136,12 @@ where
     let mut facts: BTreeSet<Fact> = BTreeSet::new();
     let value_vtable = T::SHAPE.vtable;
     let traits = [
-        ("Debug", value_vtable.debug.is_some()),
-        ("Display", value_vtable.display.is_some()),
+        ("Debug", value_vtable.format.debug.is_some()),
+        ("Display", value_vtable.format.display.is_some()),
         ("Default", value_vtable.default_in_place.is_some()),
-        ("PartialEq", value_vtable.partial_eq.is_some()),
-        ("Ord", value_vtable.ord.is_some()),
-        ("PartialOrd", value_vtable.partial_ord.is_some()),
+        ("PartialEq", value_vtable.cmp.partial_eq.is_some()),
+        ("Ord", value_vtable.cmp.ord.is_some()),
+        ("PartialOrd", value_vtable.cmp.partial_ord.is_some()),
         ("Clone", value_vtable.clone_into.is_some()),
     ];
     let trait_str = traits
@@ -256,15 +252,6 @@ where
         );
     }
 
-    // Marker traits
-    facts.extend(
-        T::SHAPE
-            .vtable
-            .marker_traits()
-            .iter()
-            .map(Fact::MarkerTrait),
-    );
-
     facts
 }
 
@@ -308,12 +295,8 @@ fn report_maybe_mismatch<'a, T>(
 }
 
 #[track_caller]
-fn check_facts<'a, 'b: 'a, T>(
-    val1: &'b T,
-    val2: &'b T,
-    mut expected_facts: BTreeSet<Fact>,
-    marker_traits: TypedMarkerTraits<T>,
-) where
+fn check_facts<'a, 'b: 'a, T>(val1: &'b T, val2: &'b T, expected_facts: BTreeSet<Fact>)
+where
     T: Facet<'a> + ?Sized,
 {
     let name = format!("{}", T::SHAPE);
@@ -321,27 +304,19 @@ fn check_facts<'a, 'b: 'a, T>(
 
     let facts = collect_facts(val1, val2);
 
-    expected_facts.extend(marker_traits.marker_traits.iter().map(Fact::MarkerTrait));
-
-    dbg!(T::SHAPE.vtable.marker_traits());
-
     report_maybe_mismatch(val1, val2, expected_facts, facts);
 }
 
 // slightly different version to overwrite the equality parts as miri juggles the addresses
 #[cfg(feature = "fn-ptr")]
 #[track_caller]
-fn check_facts_no_cmp<'a, 'b: 'a, T>(
-    val1: &'b T,
-    val2: &'b T,
-    expected_facts: BTreeSet<Fact>,
-    marker_traits: TypedMarkerTraits<T>,
-) where
+fn check_facts_no_cmp<'a, 'b: 'a, T>(val1: &'b T, val2: &'b T, expected_facts: BTreeSet<Fact>)
+where
     T: Facet<'a> + ?Sized,
 {
     #[cfg(not(miri))]
     {
-        check_facts(val1, val2, expected_facts, marker_traits)
+        check_facts(val1, val2, expected_facts)
     }
 
     #[cfg(miri)]
@@ -358,8 +333,6 @@ fn check_facts_no_cmp<'a, 'b: 'a, T>(
                 expected_facts.insert(fact);
             }
         }
-
-        expected_facts.extend(marker_traits.marker_traits.iter().map(Fact::MarkerTrait));
 
         report_maybe_mismatch(val1, val2, expected_facts, facts);
     }
@@ -447,84 +420,6 @@ impl FactBuilder {
     }
 }
 
-#[derive(Debug)]
-struct TypedMarkerTraits<T: ?Sized> {
-    marker_traits: MarkerTraits,
-    phantom: PhantomData<T>,
-}
-
-impl<T: ?Sized> Clone for TypedMarkerTraits<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T: ?Sized> Copy for TypedMarkerTraits<T> {}
-
-impl<T: ?Sized> TypedMarkerTraits<T> {
-    fn new() -> Self {
-        Self {
-            marker_traits: MarkerTraits::empty(),
-            phantom: PhantomData,
-        }
-    }
-
-    fn eq(mut self) -> Self
-    where
-        T: Eq,
-    {
-        self.marker_traits |= MarkerTraits::EQ;
-        self
-    }
-
-    fn send(mut self) -> Self
-    where
-        T: Send,
-    {
-        self.marker_traits |= MarkerTraits::SEND;
-        self
-    }
-
-    fn sync(mut self) -> Self
-    where
-        T: Sync,
-    {
-        self.marker_traits |= MarkerTraits::SYNC;
-        self
-    }
-
-    fn copy(mut self) -> Self
-    where
-        T: Copy,
-    {
-        self.marker_traits |= MarkerTraits::COPY;
-        self
-    }
-
-    fn unpin(mut self) -> Self
-    where
-        T: Unpin,
-    {
-        self.marker_traits |= MarkerTraits::UNPIN;
-        self
-    }
-
-    fn unwind_safe(mut self) -> Self
-    where
-        T: UnwindSafe,
-    {
-        self.marker_traits |= MarkerTraits::UNWIND_SAFE;
-        self
-    }
-
-    fn ref_unwind_safe(mut self) -> Self
-    where
-        T: RefUnwindSafe,
-    {
-        self.marker_traits |= MarkerTraits::REF_UNWIND_SAFE;
-        self
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Fact {
     Debug,
@@ -534,7 +429,6 @@ enum Fact {
     PartialOrdAnd { l_ord_r: Option<Ordering> },
     Default,
     Clone,
-    MarkerTrait(MarkerTraits),
 }
 
 use core::fmt::{Display, Formatter, Result};
@@ -568,22 +462,12 @@ impl Display for Fact {
             }
             Fact::Default => write!(f, "impl Default"),
             Fact::Clone => write!(f, "impl Clone"),
-            Fact::MarkerTrait(marker_trait) => write!(f, "impl {marker_trait:?}"),
         }
     }
 }
 
 #[test]
 fn test_integer_traits() {
-    let marker_traits = TypedMarkerTraits::new()
-        .eq()
-        .send()
-        .sync()
-        .copy()
-        .unpin()
-        .unwind_safe()
-        .ref_unwind_safe();
-
     // i32 implements Debug, PartialEq, and Ord
     check_facts(
         &42,
@@ -596,7 +480,6 @@ fn test_integer_traits() {
             .default()
             .clone()
             .build(),
-        marker_traits,
     );
 
     // Test equal i32 values
@@ -611,7 +494,6 @@ fn test_integer_traits() {
             .default()
             .clone()
             .build(),
-        marker_traits,
     );
 
     // Test i32::MIN and i32::MAX
@@ -626,7 +508,6 @@ fn test_integer_traits() {
             .default()
             .clone()
             .build(),
-        marker_traits,
     );
 
     // Test i32 with 0
@@ -641,7 +522,6 @@ fn test_integer_traits() {
             .default()
             .clone()
             .build(),
-        marker_traits,
     );
 
     // Test negative i32 values
@@ -656,21 +536,11 @@ fn test_integer_traits() {
             .default()
             .clone()
             .build(),
-        marker_traits,
     );
 }
 
 #[test]
 fn test_boolean_traits() {
-    let marker_traits = TypedMarkerTraits::new()
-        .eq()
-        .send()
-        .sync()
-        .copy()
-        .unpin()
-        .unwind_safe()
-        .ref_unwind_safe();
-
     // bool implements Debug, PartialEq, Ord, and Display
     check_facts(
         &true,
@@ -683,7 +553,6 @@ fn test_boolean_traits() {
             .default()
             .clone()
             .build(),
-        marker_traits,
     );
 
     check_facts(
@@ -697,7 +566,6 @@ fn test_boolean_traits() {
             .default()
             .clone()
             .build(),
-        marker_traits,
     );
 
     check_facts(
@@ -711,7 +579,6 @@ fn test_boolean_traits() {
             .default()
             .clone()
             .build(),
-        marker_traits,
     );
 
     check_facts(
@@ -725,7 +592,6 @@ fn test_boolean_traits() {
             .default()
             .clone()
             .build(),
-        marker_traits,
     );
 }
 
@@ -743,13 +609,6 @@ fn test_floating_traits() {
             .default()
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     check_facts(
@@ -763,13 +622,6 @@ fn test_floating_traits() {
             .default()
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     check_facts(
@@ -783,13 +635,6 @@ fn test_floating_traits() {
             .default()
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 }
 
@@ -807,13 +652,6 @@ fn test_string_traits() {
             .default()
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     // &str implements Debug, PartialEq, and Ord
@@ -827,14 +665,6 @@ fn test_string_traits() {
             .correct_ord_and(Ordering::Less)
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     // Cow<'a, str> implements Debug, PartialEq, and Ord
@@ -850,13 +680,6 @@ fn test_string_traits() {
             .clone()
             .default()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
     check_facts(
         &Cow::<str>::Owned("hello".to_string()),
@@ -869,13 +692,6 @@ fn test_string_traits() {
             .clone()
             .default()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
     check_facts(
         &Cow::Borrowed("same"),
@@ -888,13 +704,6 @@ fn test_string_traits() {
             .clone()
             .default()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 }
 
@@ -909,13 +718,6 @@ fn test_str_traits() {
             .partial_eq_and(true)
             .correct_ord_and(Ordering::Equal)
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     check_facts(
@@ -927,13 +729,6 @@ fn test_str_traits() {
             .partial_eq_and(false)
             .correct_ord_and(Ordering::Less)
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     let s = String::from("abc");
@@ -948,13 +743,6 @@ fn test_str_traits() {
             .partial_eq_and(true)
             .correct_ord_and(Ordering::Equal)
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 }
 
@@ -968,13 +756,6 @@ fn test_slice_traits() {
             .partial_eq_and(false)
             .correct_ord_and(Ordering::Less)
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     check_facts(
@@ -985,13 +766,6 @@ fn test_slice_traits() {
             .partial_eq_and(false)
             .correct_ord_and(Ordering::Greater)
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 }
 
@@ -1007,14 +781,6 @@ fn test_slice_ref_traits() {
             .correct_ord_and(Ordering::Less)
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     // &[&str] implements Debug, PartialEq, and Ord
@@ -1027,33 +793,13 @@ fn test_slice_ref_traits() {
             .correct_ord_and(Ordering::Greater)
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 }
 
 #[test]
 fn test_array_traits() {
     // [i32; 1] implements Debug, PartialEq, Ord, Default, and Clone
-    check_facts(
-        &[42],
-        &[24],
-        FactBuilder::new().default().clone().build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
-    );
+    check_facts(&[42], &[24], FactBuilder::new().default().clone().build());
 }
 
 #[test]
@@ -1067,13 +813,6 @@ fn test_vecs() {
             .correct_ord_and(Ordering::Less)
             .default()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 }
 
@@ -1081,6 +820,7 @@ fn test_vecs() {
 fn test_custom_structs() {
     // Struct with no trait implementations
     #[derive(Facet)]
+    #[facet(auto_traits)]
     struct StructNoTraits {
         value: i32,
     }
@@ -1088,16 +828,11 @@ fn test_custom_structs() {
         &StructNoTraits { value: 42 },
         &StructNoTraits { value: 24 },
         FactBuilder::new().build(),
-        TypedMarkerTraits::new()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     // Struct with Debug only
     #[derive(Facet, Debug)]
+    #[facet(auto_traits)]
     struct StructDebug {
         value: i32,
     }
@@ -1105,16 +840,11 @@ fn test_custom_structs() {
         &StructDebug { value: 42 },
         &StructDebug { value: 24 },
         FactBuilder::new().debug().build(),
-        TypedMarkerTraits::new()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     // Struct with Debug and PartialEq
     #[derive(Facet, Debug, PartialEq)]
+    #[facet(auto_traits)]
     struct StructDebugEq {
         value: i32,
     }
@@ -1122,16 +852,11 @@ fn test_custom_structs() {
         &StructDebugEq { value: 42 },
         &StructDebugEq { value: 24 },
         FactBuilder::new().debug().partial_eq_and(false).build(),
-        TypedMarkerTraits::new()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     // Struct with all traits
     #[derive(Facet, Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+    #[facet(auto_traits)]
     struct StructAll {
         value: i32,
     }
@@ -1144,14 +869,6 @@ fn test_custom_structs() {
             .correct_ord_and(Ordering::Greater)
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
     check_facts(
         &StructAll { value: 10 },
@@ -1162,14 +879,6 @@ fn test_custom_structs() {
             .correct_ord_and(Ordering::Less)
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
     check_facts(
         &StructAll { value: 69 },
@@ -1180,14 +889,6 @@ fn test_custom_structs() {
             .correct_ord_and(Ordering::Equal)
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 }
 
@@ -1195,53 +896,39 @@ fn test_custom_structs() {
 fn test_tuple_structs() {
     // Tuple struct with no trait implementations
     #[derive(Facet)]
+    #[facet(auto_traits)]
     #[allow(dead_code)]
     struct TupleNoTraits(i32, String);
     check_facts(
         &TupleNoTraits(42, "Hello".to_string()),
         &TupleNoTraits(24, "World".to_string()),
         FactBuilder::new().build(),
-        TypedMarkerTraits::new()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     // Tuple struct with Debug only
     #[derive(Facet, Debug)]
+    #[facet(auto_traits)]
     #[allow(dead_code)]
     struct TupleDebug(i32, String);
     check_facts(
         &TupleDebug(42, "Hello".to_string()),
         &TupleDebug(24, "World".to_string()),
         FactBuilder::new().debug().build(),
-        TypedMarkerTraits::new()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     // Tuple struct with EQ only
     #[derive(Facet, PartialEq)]
+    #[facet(auto_traits)]
     struct TupleEq(i32, String);
     check_facts(
         &TupleEq(42, "Hello".to_string()),
         &TupleEq(24, "World".to_string()),
         FactBuilder::new().partial_eq_and(false).build(),
-        TypedMarkerTraits::new()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     // Tuple struct with all traits
     #[derive(Facet, Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+    #[facet(auto_traits)]
     struct TupleAll(i32, String);
     check_facts(
         &TupleAll(42, "Hello".to_string()),
@@ -1252,19 +939,13 @@ fn test_tuple_structs() {
             .correct_ord_and(Ordering::Greater)
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 }
 
 #[test]
 fn test_enums() {
     #[derive(Facet, Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+    #[facet(auto_traits)]
     #[repr(u8)]
     enum TestEnum {
         Variant1,
@@ -1282,13 +963,6 @@ fn test_enums() {
             .correct_ord_and(Ordering::Equal)
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     // Tuple variant with different values
@@ -1301,13 +975,6 @@ fn test_enums() {
             .correct_ord_and(Ordering::Greater)
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     // Struct variant with different values
@@ -1324,19 +991,13 @@ fn test_enums() {
             .correct_ord_and(Ordering::Less)
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 }
 
 #[test]
 fn test_weird_cmp() {
     #[derive(Facet)]
+    #[facet(auto_traits)]
     struct WeirdCmp;
 
     impl PartialEq for WeirdCmp {
@@ -1373,13 +1034,6 @@ fn test_weird_cmp() {
             .partial_ord_and(Some(Ordering::Equal))
             .ord_and(Ordering::Greater)
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 }
 
@@ -1398,14 +1052,6 @@ fn test_fn_ptr() {
             .correct_ord_and(Ordering::Equal)
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     extern "C" fn foo(_: usize) -> u32 {
@@ -1423,14 +1069,6 @@ fn test_fn_ptr() {
             .correct_ord_and(Ordering::Equal)
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     let l = (|_| 0) as fn(_) -> _;
@@ -1447,14 +1085,6 @@ fn test_fn_ptr() {
             )
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 }
 
@@ -1473,12 +1103,6 @@ fn test_ptr() {
             .ord_and(Ordering::Equal)
             .partial_ord_and(Some(Ordering::Equal))
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     check_facts(
@@ -1491,12 +1115,6 @@ fn test_ptr() {
             .ord_and(Ordering::Equal)
             .partial_ord_and(Some(Ordering::Equal))
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     let s = "abc";
@@ -1512,12 +1130,6 @@ fn test_ptr() {
             .ord_and(Ordering::Equal)
             .partial_ord_and(Some(Ordering::Equal))
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     check_facts(
@@ -1530,12 +1142,6 @@ fn test_ptr() {
             .ord_and(Ordering::Equal)
             .partial_ord_and(Some(Ordering::Equal))
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     check_facts(
@@ -1547,12 +1153,6 @@ fn test_ptr() {
             .partial_eq_and(false)
             .correct_ord_and(ptr.cmp(&&raw const s[..1]))
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     check_facts(
@@ -1564,12 +1164,6 @@ fn test_ptr() {
             .partial_eq_and(false)
             .correct_ord_and(ptr.cmp(&&raw const s[..1]))
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 }
 
@@ -1585,14 +1179,6 @@ fn test_ref() {
             .partial_ord_and(Some(Ordering::Equal))
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 
     let unit = ();
@@ -1608,12 +1194,6 @@ fn test_ref() {
             .partial_ord_and(Some(Ordering::Equal))
             .clone()
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .copy()
-            .unpin()
-            .unwind_safe()
-            .ref_unwind_safe(),
     );
 }
 
@@ -1628,12 +1208,6 @@ fn test_mut_ref() {
             .ord_and(Ordering::Equal)
             .partial_ord_and(Some(Ordering::Equal))
             .build(),
-        TypedMarkerTraits::new()
-            .eq()
-            .send()
-            .sync()
-            .unpin()
-            .ref_unwind_safe(),
     );
 
     let unit = ();
@@ -1651,7 +1225,6 @@ fn test_mut_ref() {
             .ord_and(Ordering::Equal)
             .partial_ord_and(Some(Ordering::Equal))
             .build(),
-        TypedMarkerTraits::new().eq().unpin().ref_unwind_safe(),
     );
 }
 
@@ -1665,22 +1238,11 @@ fn test_rc_weak() {
         &w1,
         &w2,
         FactBuilder::new().clone().debug().default().build(),
-        TypedMarkerTraits::new().unpin(),
     );
 
-    check_facts(
-        &&w1,
-        &&w2,
-        FactBuilder::new().clone().debug().build(),
-        TypedMarkerTraits::new().copy().unpin(),
-    );
+    check_facts(&&w1, &&w2, FactBuilder::new().clone().debug().build());
 
-    check_facts(
-        &&mut w1,
-        &&mut w2,
-        FactBuilder::new().debug().build(),
-        TypedMarkerTraits::new().unpin(),
-    );
+    check_facts(&&mut w1, &&mut w2, FactBuilder::new().debug().build());
 
     let ptr = &raw const w1;
 
@@ -1693,7 +1255,6 @@ fn test_rc_weak() {
             .partial_eq_and(true)
             .correct_ord_and(Ordering::Equal)
             .build(),
-        TypedMarkerTraits::new().eq().copy().unpin(),
     );
 
     check_facts(
@@ -1705,12 +1266,13 @@ fn test_rc_weak() {
             .partial_eq_and(true)
             .correct_ord_and(Ordering::Equal)
             .build(),
-        TypedMarkerTraits::new().eq().copy().unpin(),
     );
 }
 
 #[test]
+#[cfg(feature = "net")]
 fn test_ipv4_addr_parse_from_str() {
+    use core::net::Ipv4Addr;
     use facet_reflect::Partial;
 
     // Test that Ipv4Addr can be parsed from a string using facet reflection
@@ -1741,5 +1303,35 @@ fn test_ipv4_addr_parse_from_str() {
     assert!(
         parse_fn.is_some(),
         "Ipv4Addr should have a parse function in vtable"
+    );
+}
+
+#[test]
+#[cfg(feature = "num-complex")]
+fn test_complex_default() {
+    use num_complex::Complex;
+
+    // Test Complex<f64> - it has default_in_place because f64 does
+    check_facts(
+        &Complex::new(1.0f64, 2.0f64),
+        &Complex::new(3.0f64, 4.0f64),
+        FactBuilder::new()
+            .debug()
+            .display()
+            .partial_eq_and(false)
+            .default()
+            .build(),
+    );
+
+    // Test Complex<f32>
+    check_facts(
+        &Complex::new(1.0f32, 2.0f32),
+        &Complex::new(1.0f32, 2.0f32),
+        FactBuilder::new()
+            .debug()
+            .display()
+            .partial_eq_and(true)
+            .default()
+            .build(),
     );
 }

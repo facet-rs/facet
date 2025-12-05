@@ -1,0 +1,24 @@
+[package]
+name = "facet-bloatbench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+facet = { path = "../facet", optional = true }
+facet-macros = { path = "../facet-macros", optional = true }
+facet-json = { path = "../facet-json", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+
+[features]
+default = []
+facet = ["dep:facet", "dep:facet-macros"]
+serde = ["dep:serde"]
+facet_json = ["dep:facet-json"]
+serde_json = ["dep:serde_json"]
+json = ["facet_json", "serde_json"]
+
+[[bin]]
+name = "facet-bloatbench"
+path = "src/main.rs"

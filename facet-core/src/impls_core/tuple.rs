@@ -1,8 +1,8 @@
 use core::{fmt, mem};
 
 use crate::{
-    Characteristic, Facet, MarkerTraits, Repr, Shape, StructKind, StructType, Type, TypeNameOpts,
-    UserType, VTableView, ValueVTable, types::field_in_type,
+    Characteristic, Def, Facet, Repr, Shape, StructKind, StructType, Type, TypeNameOpts, UserType,
+    ValueVTable, types::field_in_type,
 };
 
 #[inline(always)]
@@ -62,54 +62,58 @@ macro_rules! impl_facet_for_tuple {
         {
 
             const SHAPE: &'static Shape = &const {
-                Shape::builder_for_sized::<Self>()
-                    .vtable(
-                        ValueVTable::builder::<Self>()
-                            .type_name(|f, opts| {
-                                write_type_name_list(f, opts, "(", ", ", ")", &[$($elems::SHAPE),+])
-                            })
-                            .drop_in_place(Some(|data| unsafe { data.drop_in_place::<Self>() }))
-                            .marker_traits(                                MarkerTraits::all()
-                                    $(.intersection($elems::SHAPE.vtable.marker_traits()))+
-                            )
-                            .default_in_place({
-                                let elem_shapes = const { &[$($elems::SHAPE),+] };
-                                if Characteristic::all_default(elem_shapes) {
-                                    Some(|mut dst| {
-                                        $(
-                                            unsafe {
-                                                (<VTableView<$elems>>::of().default_in_place().unwrap())(
-                                                    dst.field_uninit_at(mem::offset_of!(Self, $idx))
-                                                );
-                                            }
-                                        )+
+                Shape {
+                    id: Shape::id_of::<Self>(),
+                    layout: Shape::layout_of::<Self>(),
+                    vtable: ValueVTable {
+                        type_name: |f, opts| {
+                            write_type_name_list(f, opts, "(", ", ", ")", &[$($elems::SHAPE),+])
+                        },
+                        drop_in_place: ValueVTable::drop_in_place_for::<Self>(),
+                        default_in_place: {
+                            let elem_shapes = const { &[$($elems::SHAPE),+] };
+                            if Characteristic::all_default(elem_shapes) {
+                                Some(|dst| {
+                                    $(
+                                        unsafe {
+                                            ($elems::SHAPE.vtable.default_in_place.unwrap())(
+                                                dst.field_uninit_at(mem::offset_of!(Self, $idx))
+                                            );
+                                        }
+                                    )+
 
-                                        unsafe { dst.assume_init().into() }
-                                    })
-                                } else {
-                                    None
-                                }
-                            })
-                            .build()
-                    )
-                    .type_identifier(const {
+                                    unsafe { dst.assume_init().into() }
+                                })
+                            } else {
+                                None
+                            }
+                        },
+                        ..ValueVTable::new(|_, _| Ok(()))
+                    },
+                    ty: Type::User(UserType::Struct(StructType {
+                        repr: Repr::default(),
+                        kind: StructKind::Tuple,
+                        fields: &const {[
+                            $(field_in_type!(Self, $idx, $elems),)+
+                        ]}
+                    })),
+                    def: Def::Undefined,
+                    type_identifier: const {
                         let fields = [
-                            $(field_in_type!(Self, $idx),)+
+                            $(field_in_type!(Self, $idx, $elems),)+
                         ];
                         if fields.len() == 1 {
                             "(_)"
                         } else {
                             "(…)"
                         }
-                    })
-                    .ty(Type::User(UserType::Struct(StructType {
-                        repr: Repr::default(),
-                        kind: StructKind::Tuple,
-                        fields: &const {[
-                            $(field_in_type!(Self, $idx),)+
-                        ]}
-                    })))
-                    .build()
+                    },
+                    type_params: &[],
+                    doc: &[],
+                    attributes: &[],
+                    type_tag: None,
+                    inner: None,
+                }
             };
         }
 

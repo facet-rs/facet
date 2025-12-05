@@ -33,6 +33,7 @@ If you also need YAML/TOML/KDL/etc., add `facet-yaml`, `facet-toml`, `facet-kdl`
 
 ### Optional feature flags
 - Time/UUID: enable the matching features on the format crate (check the crate docs).
+- `doc`: include doc comments in generated shapes (needed for CLI help text with facet-args).
 - `no_std`: use `facet-core` with `alloc`; most format crates require `std`.
 
 ## Derive `Facet` on your types
