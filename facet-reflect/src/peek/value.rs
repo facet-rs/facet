@@ -240,9 +240,26 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         if let Some(ScalarType::String) = peek.scalar_type() {
             return unsafe { Some(peek.data.get::<alloc::string::String>().as_str()) };
         }
+
+        // Handle references, including nested references like &&str
         if let Type::Pointer(PointerType::Reference(vpt)) = peek.shape.ty {
             let target_shape = vpt.target;
-            if let Some(ScalarType::Str) = ScalarType::try_from_shape(target_shape) {
+
+            // Check if this is a nested reference (&&str) first
+            if let Type::Pointer(PointerType::Reference(inner_vpt)) = target_shape.ty {
+                let inner_target_shape = inner_vpt.target;
+                if let Some(ScalarType::Str) = ScalarType::try_from_shape(inner_target_shape) {
+                    // For &&str, we need to dereference twice.
+                    // Read the outer reference (8 bytes) as a pointer to &str, then dereference
+                    let outer_ptr: *const *const &str =
+                        unsafe { peek.data.as_ptr::<*const &str>() };
+                    let inner_ref: &str = unsafe { **outer_ptr };
+                    return Some(inner_ref);
+                }
+            } else if let Some(ScalarType::Str) = ScalarType::try_from_shape(target_shape)
+                && !matches!(target_shape.ty, Type::Pointer(_))
+            {
+                // Simple case: &str (but only if target is not a pointer itself)
                 return unsafe { Some(peek.data.get::<&str>()) };
             }
         }
@@ -613,5 +630,14 @@ mod tests {
         let s = alloc::string::String::from("owned string");
         let peek = Peek::new(&s);
         assert_eq!(peek.as_str(), Some("owned string"));
+    }
+
+    /// Regression test for issue #794: Peek::as_str() with double reference
+    /// Previously, this would cause UB when trying to read &&str as &str
+    #[test]
+    fn test_peek_as_str_double_reference() {
+        let value = &"hello";
+        let peek = Peek::new(&value);
+        assert_eq!(peek.as_str(), Some("hello"));
     }
 }
