@@ -243,7 +243,7 @@ enum VariantKind {
     Unit,
     Newtype(TokenStream2),
     /// Newtype holding `&'static str` - stored directly for facet-core access.
-    /// Used for attributes like `tag`, `content`, `rename`, `rename_all`.
+    /// Used for attributes like `tag`, `content`, `rename`, `rename_all`, `alias`.
     NewtypeStr,
     NewtypeOptionChar,
     Struct(proc_macro2::Ident),
