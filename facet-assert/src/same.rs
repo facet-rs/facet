@@ -206,7 +206,9 @@ impl Differ {
     }
 
     fn format_value(peek: Peek<'_, '_>) -> String {
-        let printer = PrettyPrinter::default().with_colors(false);
+        let printer = PrettyPrinter::default()
+            .with_colors(false)
+            .with_minimal_option_names(true);
         printer.format_peek(peek).to_string()
     }
 

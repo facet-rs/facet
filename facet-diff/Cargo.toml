@@ -19,5 +19,7 @@ owo-colors = "4"
 [dev-dependencies]
 boxen = "0.1"
 insta = "1.43.1"
+owo-colors = "4"
 facet-value = { path = "../facet-value" }
 facet-testhelpers = { path = "../facet-testhelpers" }
+facet-showcase = { path = "../facet-showcase" }
