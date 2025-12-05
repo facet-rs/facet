@@ -126,6 +126,13 @@ pub mod builtin {
             /// kebab-case, SCREAMING-KEBAB-CASE
             RenameAll(&'static str),
 
+            /// Aliases a field or variant during deserialization.
+            ///
+            /// Usage: `#[facet(alias = "additional_name")]`
+            ///
+            /// Allows for deserializing a field from either the alias or the original name.
+            Alias(&'static str),
+
             /// For internally/adjacently tagged enums: the field name for the tag.
             ///
             /// Usage: `#[facet(tag = "type")]`

@@ -354,6 +354,12 @@ impl Shape {
         self.get_builtin_attr_value::<&'static str>("rename_all")
     }
 
+    /// Returns the `alias`ed name if present.
+    #[inline]
+    pub fn get_alias_attr(&self) -> Option<&'static str> {
+        self.get_builtin_attr_value::<&'static str>("alias")
+    }
+
     /// Returns true if this enum is untagged.
     #[inline]
     pub fn is_untagged(&self) -> bool {
