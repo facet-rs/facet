@@ -50,6 +50,8 @@ members = [
     # dev tooling
     "facet-bloatbench",
     "xtask",
+
+    "facet-shapelike"
 ]
 exclude = [
     # proto-attr experiment uses nightly features

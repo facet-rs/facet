@@ -950,6 +950,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-shapelike"
+version = "0.1.0"
+dependencies = [
+ "bitflags",
+ "facet",
+ "facet-args",
+ "facet-assert",
+ "facet-core",
+ "facet-json",
+ "facet-kdl",
+ "facet-macros",
+ "facet-postcard",
+ "facet-reflect",
+ "facet-xml",
+]
+
+[[package]]
 name = "facet-showcase"
 version = "0.1.0"
 dependencies = [

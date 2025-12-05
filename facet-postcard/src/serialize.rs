@@ -24,8 +24,14 @@ use alloc::{borrow::Cow, string::String, vec::Vec};
 /// ```
 #[cfg(feature = "alloc")]
 pub fn to_vec<T: Facet<'static>>(value: &T) -> Result<Vec<u8>, SerializeError> {
-    let mut buffer = Vec::new();
     let peek = Peek::new(value);
+    ptr_to_vec(peek)
+}
+
+/// Serializes any Facet Reflect Peek to postcard bytes.
+#[cfg(feature = "alloc")]
+pub fn ptr_to_vec<'mem>(peek: Peek<'mem, 'static>) -> Result<Vec<u8>, SerializeError> {
+    let mut buffer = Vec::new();
     serialize_value(peek, &mut buffer)?;
     Ok(buffer)
 }
