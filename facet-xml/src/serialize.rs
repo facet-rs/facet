@@ -11,13 +11,23 @@ use facet_reflect::{HasFields, Peek, is_spanned_shape};
 use crate::deserialize::{XmlFieldExt, XmlShapeExt};
 use crate::error::{XmlError, XmlErrorKind};
 
+/// A function that formats a floating-point number to a writer.
+///
+/// This is used to customize how `f32` and `f64` values are serialized to XML.
+/// The function receives the value (as `f64`, with `f32` values upcast) and
+/// a writer to write the formatted output to.
+pub type FloatFormatter = fn(f64, &mut dyn Write) -> std::io::Result<()>;
+
 /// Options for XML serialization.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SerializeOptions {
     /// Whether to pretty-print with indentation (default: false)
     pub pretty: bool,
     /// Indentation string for pretty-printing (default: "  ")
     pub indent: &'static str,
+    /// Custom formatter for floating-point numbers (f32 and f64).
+    /// If `None`, uses the default `Display` implementation.
+    pub float_formatter: Option<FloatFormatter>,
 }
 
 impl Default for SerializeOptions {
@@ -25,7 +35,18 @@ impl Default for SerializeOptions {
         Self {
             pretty: false,
             indent: "  ",
+            float_formatter: None,
         }
+    }
+}
+
+impl std::fmt::Debug for SerializeOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SerializeOptions")
+            .field("pretty", &self.pretty)
+            .field("indent", &self.indent)
+            .field("float_formatter", &self.float_formatter.map(|_| "..."))
+            .finish()
     }
 }
 
@@ -51,6 +72,43 @@ impl SerializeOptions {
     /// Get the indent string if pretty-printing is enabled, otherwise None.
     fn indent_str(&self) -> Option<&str> {
         if self.pretty { Some(self.indent) } else { None }
+    }
+
+    /// Set a custom formatter for floating-point numbers (f32 and f64).
+    ///
+    /// The formatter function receives the value as `f64` (f32 values are upcast)
+    /// and writes the formatted output to the provided writer.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use facet::Facet;
+    /// # use facet_xml as xml;
+    /// # use facet_xml::{to_string_with_options, SerializeOptions};
+    /// # use std::io::Write;
+    /// fn fmt_g(value: f64, w: &mut dyn Write) -> std::io::Result<()> {
+    ///     // Format like C's %g: 6 significant digits, trim trailing zeros
+    ///     let s = format!("{:.6}", value);
+    ///     let s = s.trim_end_matches('0').trim_end_matches('.');
+    ///     write!(w, "{}", s)
+    /// }
+    ///
+    /// #[derive(Facet)]
+    /// struct Point {
+    ///     #[facet(xml::attribute)]
+    ///     x: f64,
+    ///     #[facet(xml::attribute)]
+    ///     y: f64,
+    /// }
+    ///
+    /// let point = Point { x: 1.5, y: 2.0 };
+    /// let options = SerializeOptions::new().float_formatter(fmt_g);
+    /// let xml = to_string_with_options(&point, &options).unwrap();
+    /// assert_eq!(xml, r#"<Point x="1.5" y="2"/>"#);
+    /// ```
+    pub fn float_formatter(mut self, formatter: FloatFormatter) -> Self {
+        self.float_formatter = Some(formatter);
+        self
     }
 }
 
@@ -266,7 +324,7 @@ pub fn to_writer_with_options<W: Write, T: Facet<'static>>(
     options: &SerializeOptions,
 ) -> Result<()> {
     let peek = Peek::new(value);
-    let mut serializer = XmlSerializer::new(writer, options.indent_str());
+    let mut serializer = XmlSerializer::new(writer, options.indent_str(), options.float_formatter);
 
     // Get the type name for the root element, respecting `rename` attribute
     let type_name = crate::deserialize::get_shape_display_name(peek.shape());
@@ -286,10 +344,12 @@ struct XmlSerializer<'a, W> {
     /// The currently active default namespace (from xmlns="..." on an ancestor).
     /// Child elements in this namespace don't need to re-declare it.
     current_default_ns: Option<String>,
+    /// Custom formatter for floating-point numbers.
+    float_formatter: Option<FloatFormatter>,
 }
 
 impl<'a, W: Write> XmlSerializer<'a, W> {
-    fn new(writer: W, indent: Option<&'a str>) -> Self {
+    fn new(writer: W, indent: Option<&'a str>, float_formatter: Option<FloatFormatter>) -> Self {
         Self {
             writer,
             declared_namespaces: HashMap::new(),
@@ -297,6 +357,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
             indent,
             depth: 0,
             current_default_ns: None,
+            float_formatter,
         }
     }
 
@@ -634,7 +695,7 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
             // Use the key as the element name
             if let Some(key_str) = key.as_str() {
                 self.serialize_element(key_str, value)?;
-            } else if let Some(key_val) = value_to_string(key) {
+            } else if let Some(key_val) = value_to_string(key, self.float_formatter) {
                 self.serialize_element(&key_val, value)?;
             } else {
                 // Fallback: use "entry" as element name with key as text
@@ -784,12 +845,12 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
                 let value = if field.proxy_convert_out_fn().is_some() {
                     // Get the intermediate representation for serialization
                     if let Ok(owned) = field_peek.custom_serialization(*field) {
-                        value_to_string(owned.as_peek())
+                        value_to_string(owned.as_peek(), self.float_formatter)
                     } else {
-                        value_to_string(field_peek)
+                        value_to_string(field_peek, self.float_formatter)
                     }
                 } else {
-                    value_to_string(field_peek)
+                    value_to_string(field_peek, self.float_formatter)
                 };
                 if let Some(value) = value {
                     // Pass is_attribute=true so ns_all is NOT applied
@@ -1168,12 +1229,12 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
             if field.is_xml_attribute() {
                 let value = if field.proxy_convert_out_fn().is_some() {
                     if let Ok(owned) = field_peek.custom_serialization(*field) {
-                        value_to_string(owned.as_peek())
+                        value_to_string(owned.as_peek(), self.float_formatter)
                     } else {
-                        value_to_string(field_peek)
+                        value_to_string(field_peek, self.float_formatter)
                     }
                 } else {
-                    value_to_string(field_peek)
+                    value_to_string(field_peek, self.float_formatter)
                 };
                 if let Some(value) = value {
                     // Pass is_attribute=true so ns_all is NOT applied
@@ -1611,11 +1672,20 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
         }
 
         if let Ok(v) = peek.get::<f32>() {
-            write!(self.writer, "{v}").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            if let Some(fmt) = self.float_formatter {
+                fmt(f64::from(*v), &mut self.writer)
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            } else {
+                write!(self.writer, "{v}").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            }
             return Ok(());
         }
         if let Ok(v) = peek.get::<f64>() {
-            write!(self.writer, "{v}").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            if let Some(fmt) = self.float_formatter {
+                fmt(*v, &mut self.writer).map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            } else {
+                write!(self.writer, "{v}").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            }
             return Ok(());
         }
 
@@ -1630,14 +1700,17 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
 }
 
 /// Convert a Peek value to a string representation, handling Options, Spanned, and transparent wrappers.
-fn value_to_string<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> Option<String> {
+fn value_to_string<'mem, 'facet>(
+    peek: Peek<'mem, 'facet>,
+    float_formatter: Option<FloatFormatter>,
+) -> Option<String> {
     // Handle Option<T>
     if let Ok(opt_peek) = peek.into_option() {
         if opt_peek.is_none() {
             return None;
         }
         if let Some(inner) = opt_peek.value() {
-            return value_to_string(inner);
+            return value_to_string(inner, float_formatter);
         }
         return None;
     }
@@ -1646,7 +1719,7 @@ fn value_to_string<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> Option<String> {
     if is_spanned_shape(peek.shape()) {
         if let Ok(struct_peek) = peek.into_struct() {
             if let Ok(value_peek) = struct_peek.field_by_name("value") {
-                return value_to_string(value_peek);
+                return value_to_string(value_peek, float_formatter);
             }
         }
     }
@@ -1691,9 +1764,21 @@ fn value_to_string<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> Option<String> {
     }
 
     if let Ok(v) = peek.get::<f32>() {
+        if let Some(fmt) = float_formatter {
+            let mut buf = Vec::new();
+            if fmt(f64::from(*v), &mut buf).is_ok() {
+                return String::from_utf8(buf).ok();
+            }
+        }
         return Some(v.to_string());
     }
     if let Ok(v) = peek.get::<f64>() {
+        if let Some(fmt) = float_formatter {
+            let mut buf = Vec::new();
+            if fmt(*v, &mut buf).is_ok() {
+                return String::from_utf8(buf).ok();
+            }
+        }
         return Some(v.to_string());
     }
 
