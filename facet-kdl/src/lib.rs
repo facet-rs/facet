@@ -64,6 +64,9 @@ facet::define_attr_grammar! {
         /// - Simple `s`: `item` → `items`
         /// - `ies` ending: `dependency` → `dependencies`
         /// - `es` ending: `box` → `boxes`
+        ///
+        /// To override automatic singularization, use `node_name`:
+        /// - `#[facet(kdl::children, kdl::node_name = "kiddo")]` matches nodes named `kiddo`
         Children,
         /// Marks a field as a KDL property (key=value)
         Property,
@@ -71,7 +74,23 @@ facet::define_attr_grammar! {
         Argument,
         /// Marks a field as collecting all KDL positional arguments
         Arguments,
-        /// Marks a field as storing the KDL node name
-        NodeName,
+        /// Marks a field as storing the KDL node name during deserialization.
+        /// Use this to capture the name of the current node into a field.
+        ///
+        /// Example:
+        /// ```ignore
+        /// #[derive(Facet)]
+        /// struct Node {
+        ///     #[facet(kdl::name)]
+        ///     name: String,
+        /// }
+        /// ```
+        Name,
+        /// Override the expected node name for matching children in `kdl::children` fields.
+        /// By default, nodes are matched by singularizing the field name.
+        /// Use this alongside `kdl::children` to specify a custom node name.
+        ///
+        /// Example: `#[facet(kdl::children, kdl::node_name = "kiddo")]`
+        NodeName(&'static str),
     }
 }

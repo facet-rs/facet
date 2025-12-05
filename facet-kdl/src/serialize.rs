@@ -288,7 +288,7 @@ impl<W: Write> KdlSerializer<W> {
 
         // First pass: serialize arguments and properties inline
         for (field, field_peek) in enum_peek.fields() {
-            if field.has_attr(Some("kdl"), "node_name") {
+            if field.has_attr(Some("kdl"), "name") {
                 // Skip node_name field - it's used for the node name itself
                 continue;
             }
@@ -342,7 +342,7 @@ impl<W: Write> KdlSerializer<W> {
 
         // First pass: serialize arguments and properties inline
         for (field, field_peek) in struct_peek.fields() {
-            if field.has_attr(Some("kdl"), "node_name") {
+            if field.has_attr(Some("kdl"), "name") {
                 // Skip node_name field - it's used for the node name itself
                 continue;
             }
@@ -606,7 +606,7 @@ impl<W: Write> KdlSerializer<W> {
         type_name: Option<&'static str>,
     ) -> Result<String> {
         for (field, field_peek) in struct_peek.fields() {
-            if field.has_attr(Some("kdl"), "node_name") {
+            if field.has_attr(Some("kdl"), "name") {
                 // Try direct string first
                 if let Some(s) = field_peek.as_str() {
                     return Ok(s.to_string());
