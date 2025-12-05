@@ -482,8 +482,17 @@ impl TryFrom<&CustomId> for CustomIdProxy {
 #[derive(Facet)]
 struct Record {
     #[facet(proxy = CustomIdProxy)]
-    id: CustomId,  // JSON: "ID-12345"
+    id: CustomId,
 }
+
+// Serialization: actual type → proxy → JSON
+let record = Record { id: CustomId(12345) };
+let json = facet_json::to_string(&record);
+assert_eq!(json, r#"{"id":"ID-12345"}"#);
+
+// Deserialization: JSON → proxy → actual type
+let parsed: Record = facet_json::from_str(&json).unwrap();
+assert_eq!(parsed.id.0, 12345);
 ```
 
 **Use cases for proxy:**
@@ -559,8 +568,17 @@ struct Theme {
     background: Color,
 }
 
-// Now this JSON can be deserialized:
-// {"foreground": "#ff00ff", "background": "#000000"}
+// Serialization works in both directions:
+let theme = Theme {
+    foreground: Color(255, 0, 255),
+    background: Color(0, 0, 0),
+};
+let json = facet_json::to_string(&theme);
+assert_eq!(json, r#"{"foreground":"#ff00ff","background":"#000000"}"#);
+
+// And deserialization:
+let parsed: Theme = facet_json::from_str(&json).unwrap();
+assert_eq!(parsed.foreground, Color(255, 0, 255));
 ```
 
 The key insight: `#[facet(transparent)]` on the proxy makes it serialize as just a string (not `{"0": "..."}`), and the `TryFrom` impls handle the conversion in both directions.
@@ -590,8 +608,17 @@ impl TryFrom<&u64> for HexU64 {
 #[derive(Facet)]
 struct Pointer {
     #[facet(proxy = HexU64)]
-    address: u64,  // JSON: "0x7fff5fbff8c0"
+    address: u64,
 }
+
+// Serialization: the address is formatted as hex
+let ptr = Pointer { address: 0x7fff5fbff8c0 };
+let json = facet_json::to_string(&ptr);
+assert_eq!(json, r#"{"address":"0x7fff5fbff8c0"}"#);
+
+// Deserialization: hex string is parsed back to u64
+let parsed: Pointer = facet_json::from_str(&json).unwrap();
+assert_eq!(parsed.address, 0x7fff5fbff8c0);
 ```
 
 **Example: Nested proxy with opaque type:**
@@ -618,8 +645,17 @@ impl TryFrom<&std::sync::Arc<u64>> for ArcU64Proxy {
 #[derive(Facet)]
 struct Container {
     #[facet(opaque, proxy = ArcU64Proxy)]
-    counter: std::sync::Arc<u64>,  // JSON: {"val": 42}
+    counter: std::sync::Arc<u64>,
 }
+
+// Serialization: Arc<u64> → ArcU64Proxy → JSON object
+let container = Container { counter: std::sync::Arc::new(42) };
+let json = facet_json::to_string(&container);
+assert_eq!(json, r#"{"counter":{"val":42}}"#);
+
+// Deserialization: JSON object → ArcU64Proxy → Arc<u64>
+let parsed: Container = facet_json::from_str(&json).unwrap();
+assert_eq!(*parsed.counter, 42);
 ```
 
 ## Extension attributes

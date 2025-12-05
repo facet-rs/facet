@@ -37,6 +37,17 @@ Yes. [`facet-core`](https://docs.rs/facet-core) is `no_std` compatible. Format c
 
 facet targets the latest stable Rust. Check the CI configuration for the current MSRV (minimum supported Rust version).
 
+### Why doesn't `Shape` implement `Facet`?
+
+`Shape` contains types that cannot be serialized or deserialized:
+
+1. **Function pointers** — stored in attributes like `default`, `skip_serializing_if`, and `invariants`
+2. **`ConstTypeId`** — compile-time type identifiers that have no meaningful serialized form
+
+If you're looking for a generic value type that can hold any facet-compatible data, use [`facet_value::Value`](https://docs.rs/facet-value).
+
+If you genuinely need to compare, diff, or store shapes at runtime, see the [WIP shapelike PR](https://github.com/facet-rs/facet/pull/1105).
+
 ## Usage
 
 ### How do I deserialize from JSON?

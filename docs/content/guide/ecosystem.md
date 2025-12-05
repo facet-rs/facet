@@ -221,8 +221,19 @@ impl TryFrom<&ExternalType> for ExternalTypeProxy {
 struct MyWrapper {
     name: String,
     #[facet(opaque, proxy = ExternalTypeProxy)]
-    internal: ExternalType,  // Serializes via the proxy
+    internal: ExternalType,
 }
+
+// Serialization: ExternalType → proxy → JSON string
+let wrapper = MyWrapper {
+    name: "example".into(),
+    internal: ExternalType::new(),
+};
+let json = facet_json::to_string(&wrapper);
+// {"name":"example","internal":"...serialized form..."}
+
+// Deserialization: JSON → proxy → ExternalType
+let parsed: MyWrapper = facet_json::from_str(&json).unwrap();
 ```
 
 See the [Attributes Reference](@/guide/attributes.md#opaque) for details on `opaque` and `proxy`.
