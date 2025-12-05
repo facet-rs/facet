@@ -52,11 +52,6 @@ impl Log for SimpleLogger {
 pub fn setup() {
     let is_nextest = std::env::var("NEXTEST").as_deref() == Ok("1");
     if !is_nextest {
-        eprintln!("Environment variables:");
-        for (key, value) in std::env::vars() {
-            eprintln!("  {key}: {value}");
-        }
-
         let command = if cfg!(miri) {
             "cargo miri nextest run"
         } else {

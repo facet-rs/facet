@@ -7,11 +7,12 @@ use std::{
 
 use facet_reflect::ReflectError;
 use kdl::KdlError as KdlParseError;
-use miette::{ReportHandler, SourceSpan};
+use miette::SourceSpan;
 
 use facet_core::Def;
 
 /// Error type for KDL deserialization.
+#[derive(Clone)]
 pub struct KdlError {
     /// The specific kind of error
     pub(crate) kind: KdlErrorKind,
@@ -60,8 +61,8 @@ impl Error for KdlError {}
 
 impl Debug for KdlError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Use miette's NarratableReportHandler for accessible diagnostic output
-        miette::NarratableReportHandler::new().debug(self, f)
+        // Build a miette::Report and forward to its Debug impl to use the global hook
+        write!(f, "{:?}", miette::Report::new_boxed(Box::new(self.clone())))
     }
 }
 
@@ -72,7 +73,7 @@ impl<K: Into<KdlErrorKind>> From<K> for KdlError {
 }
 
 /// Detailed classification of KDL errors.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum KdlErrorKind {
     // Deserialization errors

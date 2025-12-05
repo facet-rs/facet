@@ -234,7 +234,7 @@ impl fmt::Display for SchemaError {
 impl std::error::Error for SchemaError {}
 
 /// Errors that can occur during flatten resolution.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SolverError {
     /// No configuration matches the input fields
     NoMatch {
