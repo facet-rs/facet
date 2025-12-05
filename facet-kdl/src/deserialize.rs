@@ -37,11 +37,24 @@ impl KdlFieldExt for Field {
 pub(crate) trait KdlChildrenFieldExt {
     /// Returns true if this field has the kdl::children attribute
     fn is_kdl_children(&self) -> bool;
+
+    /// Returns the custom node_name from #[facet(kdl::children(node_name = "..."))]
+    /// if specified, otherwise None.
+    fn kdl_children_node_name(&self) -> Option<&'static str>;
 }
 
 impl KdlChildrenFieldExt for Field {
     fn is_kdl_children(&self) -> bool {
         self.has_attr(Some("kdl"), "children")
+    }
+
+    fn kdl_children_node_name(&self) -> Option<&'static str> {
+        // Get the kdl::node_name attribute if present (separate from kdl::children)
+        self.get_attr(Some("kdl"), "node_name").map(|attr| {
+            // SAFETY: We know the attribute data is of type &'static str because
+            // kdl::node_name is a newtype_str variant
+            unsafe { *attr.data_ref::<&'static str>() }
+        })
     }
 }
 
@@ -59,9 +72,12 @@ fn find_variant_by_name(enum_type: &EnumType, name: &str) -> Option<&'static fac
     enum_type.variants.iter().find(|v| v.name == name)
 }
 
-/// Check if a node name matches a field name for a `kdl::children` field.
+/// Check if a node name matches a `kdl::children` field.
 ///
-/// Uses `facet_singularize` to check if the node name is the singular form
+/// If `custom_node_name` is provided (from `#[facet(kdl::children(node_name = "..."))]`),
+/// that is used for exact matching.
+///
+/// Otherwise, uses `facet_singularize` to check if the node name is the singular form
 /// of the field name. For example:
 /// - "dependency" matches "dependencies"
 /// - "child" matches "children"
@@ -69,8 +85,18 @@ fn find_variant_by_name(enum_type: &EnumType, name: &str) -> Option<&'static fac
 ///
 /// This handles irregular plurals (children, people, mice, etc.) as well as
 /// standard plural rules (-s, -es, -ies, -ves).
-fn node_name_matches_children_field(node_name: &str, field_name: &str) -> bool {
-    facet_singularize::is_singular_of(node_name, field_name)
+fn node_name_matches_children_field(
+    node_name: &str,
+    field_name: &str,
+    custom_node_name: Option<&str>,
+) -> bool {
+    if let Some(expected) = custom_node_name {
+        // Exact match with the custom node name
+        node_name == expected
+    } else {
+        // Use singularization to match node name to field name
+        facet_singularize::is_singular_of(node_name, field_name)
+    }
 }
 
 /// Result of finding a property field, possibly inside a flattened struct
@@ -396,10 +422,16 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 _ => {
                     // Multiple children fields: match by node name (singular-to-plural)
                     // e.g., "dependency" matches field "dependencies"
+                    // If the field has a custom node_name, use that for exact matching.
                     children_fields
                         .into_iter()
                         .find(|(_, field)| {
-                            node_name_matches_children_field(node.name().value(), field.name)
+                            let custom_node_name = field.kdl_children_node_name();
+                            node_name_matches_children_field(
+                                node.name().value(),
+                                field.name,
+                                custom_node_name,
+                            )
                         })
                         .map(|(idx, field)| FieldMatchResult::ChildrenContainer {
                             field_name: field.name,
@@ -636,10 +668,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             &[]
         };
 
-        // Handle node_name attribute
+        // Handle kdl::name attribute (stores the node name into a field)
         if let Some(node_name_field) = fields_for_matching
             .iter()
-            .find(|field| field.has_attr(Some("kdl"), "node_name"))
+            .find(|field| field.has_attr(Some("kdl"), "name"))
         {
             let field_shape = (node_name_field.shape)();
             if is_spanned_shape(field_shape) {

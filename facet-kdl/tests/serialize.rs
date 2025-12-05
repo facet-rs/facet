@@ -221,7 +221,7 @@ fn serialize_node_name_children() {
 
     #[derive(Facet, PartialEq, Debug)]
     struct Setting {
-        #[facet(kdl::node_name)]
+        #[facet(kdl::name)]
         key: String,
         #[facet(kdl::argument)]
         value: String,

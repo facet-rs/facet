@@ -141,7 +141,7 @@ fn miette_multiple_validation_errors() {
 
     #[derive(Facet, Debug)]
     struct Task {
-        #[facet(kdl::node_name)]
+        #[facet(kdl::name)]
         name: String,
         #[facet(kdl::property)]
         #[facet(default)]

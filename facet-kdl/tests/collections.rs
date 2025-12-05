@@ -468,3 +468,116 @@ fn multiple_children_fields_deny_unknown() {
         "Should fail on unknown node when deny_unknown_fields is set"
     );
 }
+
+/// Test custom node_name override for kdl::children
+/// This allows using node names that don't follow standard singular/plural patterns
+#[test]
+fn multiple_children_fields_custom_node_name() {
+    #[derive(Facet, Debug)]
+    struct Family {
+        #[facet(kdl::children, kdl::node_name = "kiddo", default)]
+        children: Vec<Child>,
+
+        #[facet(kdl::children, kdl::node_name = "grownup", default)]
+        adults: Vec<Adult>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Child {
+        #[facet(kdl::argument)]
+        name: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Adult {
+        #[facet(kdl::argument)]
+        name: String,
+    }
+
+    let kdl = indoc! {r#"
+        kiddo "Alice"
+        grownup "Bob"
+        kiddo "Charlie"
+    "#};
+
+    let family: Family = facet_kdl::from_str(kdl).unwrap();
+
+    assert_eq!(family.children.len(), 2);
+    assert_eq!(
+        family.children[0],
+        Child {
+            name: "Alice".to_string()
+        }
+    );
+    assert_eq!(
+        family.children[1],
+        Child {
+            name: "Charlie".to_string()
+        }
+    );
+
+    assert_eq!(family.adults.len(), 1);
+    assert_eq!(
+        family.adults[0],
+        Adult {
+            name: "Bob".to_string()
+        }
+    );
+}
+
+/// Test mixing custom node_name with automatic singularization
+#[test]
+fn multiple_children_fields_mixed_node_name() {
+    #[derive(Facet, Debug)]
+    struct Config {
+        // Uses automatic singularization: "dependency" -> "dependencies"
+        #[facet(kdl::children, default)]
+        dependencies: Vec<Dependency>,
+
+        // Uses custom node name
+        #[facet(kdl::children, kdl::node_name = "extra", default)]
+        extras: Vec<Extra>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Dependency {
+        #[facet(kdl::argument)]
+        name: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Extra {
+        #[facet(kdl::argument)]
+        value: String,
+    }
+
+    let kdl = indoc! {r#"
+        dependency "serde"
+        extra "debug-mode"
+        dependency "tokio"
+    "#};
+
+    let config: Config = facet_kdl::from_str(kdl).unwrap();
+
+    assert_eq!(config.dependencies.len(), 2);
+    assert_eq!(
+        config.dependencies[0],
+        Dependency {
+            name: "serde".to_string()
+        }
+    );
+    assert_eq!(
+        config.dependencies[1],
+        Dependency {
+            name: "tokio".to_string()
+        }
+    );
+
+    assert_eq!(config.extras.len(), 1);
+    assert_eq!(
+        config.extras[0],
+        Extra {
+            value: "debug-mode".to_string()
+        }
+    );
+}
