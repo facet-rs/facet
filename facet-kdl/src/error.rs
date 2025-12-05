@@ -2,17 +2,16 @@
 
 use std::{
     error::Error,
-    fmt::{self, Display},
+    fmt::{self, Debug, Display},
 };
 
 use facet_reflect::ReflectError;
 use kdl::KdlError as KdlParseError;
-use miette::SourceSpan;
+use miette::{ReportHandler, SourceSpan};
 
 use facet_core::Def;
 
 /// Error type for KDL deserialization.
-#[derive(Debug)]
 pub struct KdlError {
     /// The specific kind of error
     pub(crate) kind: KdlErrorKind,
@@ -58,6 +57,13 @@ impl Display for KdlError {
 }
 
 impl Error for KdlError {}
+
+impl Debug for KdlError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Use miette's NarratableReportHandler for accessible diagnostic output
+        miette::NarratableReportHandler::new().debug(self, f)
+    }
+}
 
 impl<K: Into<KdlErrorKind>> From<K> for KdlError {
     fn from(value: K) -> Self {
