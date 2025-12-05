@@ -74,3 +74,10 @@ All formats support `String`, `&str` (with best-effort borrowing), and `Cow<str>
 | `Box<T>` | <span title="test_deserialize_boxed_struct, test_serialize_boxed_struct, test_roundtrip_box_str">✅</span> | <span title="box_scalar_value, box_string_value, box_struct_child">✅</span> | ✅ | 🚫 | 🟡 | 🟡 | <span title="box_tests">✅</span> | 🟡 | 🟡 | 🟡 | 🚫 | 🟡 |
 | `Rc<T>` | <span title="test_roundtrip_rc_str">✅</span> | <span title="rc_scalar_value">✅</span> | ✅ | 🚫 | 🟡 | 🟡 | <span title="rc_tests">✅</span> | 🟡 | 🟡 | 🟡 | 🚫 | 🟡 |
 | `Arc<T>` | <span title="test_deserialize_struct_with_arc_field, test_roundtrip_arc_foobar, test_roundtrip_arc_str">✅</span> | <span title="arc_scalar_value, arc_struct_child">✅</span> | <span title="test_deserialize_arc_slice_i32, test_deserialize_arc_slice_string">✅</span> | 🚫 | 🟡 | 🟡 | <span title="arc_tests">✅</span> | 🟡 | 🟡 | 🟡 | 🚫 | 🟡 |
+
+## Attributes
+
+| Attribute | json | kdl | yaml | toml | xml | msgp | pcrd | asn1 | xdr | args | urlenc | csv |
+|-----------|------|-----|------|------|-----|------|------|------|-----|------|--------|-----|
+| `opaque` | <span title="test_opaque_with_proxy_option">✅</span> | ✅ | 🚫 | 🚫 | <span title="test_opaque_with_proxy_option_simple">✅</span> | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
+| `proxy` | <span title="test_proxy_without_opaque, test_proxy_for_validation">✅</span> | ✅ | 🚫 | 🚫 | <span title="test_proxy_without_opaque, test_proxy_for_validation">✅</span> | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 | 🚫 |
