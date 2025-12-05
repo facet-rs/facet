@@ -11,6 +11,49 @@ use facet_reflect::{HasFields, Peek, is_spanned_shape};
 use crate::deserialize::{XmlFieldExt, XmlShapeExt};
 use crate::error::{XmlError, XmlErrorKind};
 
+/// Options for XML serialization.
+#[derive(Debug, Clone)]
+pub struct SerializeOptions {
+    /// Whether to pretty-print with indentation (default: false)
+    pub pretty: bool,
+    /// Indentation string for pretty-printing (default: "  ")
+    pub indent: &'static str,
+}
+
+impl Default for SerializeOptions {
+    fn default() -> Self {
+        Self {
+            pretty: false,
+            indent: "  ",
+        }
+    }
+}
+
+impl SerializeOptions {
+    /// Create new default options (compact output).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enable pretty-printing with default indentation.
+    pub fn pretty(mut self) -> Self {
+        self.pretty = true;
+        self
+    }
+
+    /// Set a custom indentation string (implies pretty-printing).
+    pub fn indent(mut self, indent: &'static str) -> Self {
+        self.indent = indent;
+        self.pretty = true;
+        self
+    }
+
+    /// Get the indent string if pretty-printing is enabled, otherwise None.
+    fn indent_str(&self) -> Option<&str> {
+        if self.pretty { Some(self.indent) } else { None }
+    }
+}
+
 /// Well-known XML namespace URIs and their conventional prefixes.
 const WELL_KNOWN_NAMESPACES: &[(&str, &str)] = &[
     ("http://www.w3.org/2001/XMLSchema-instance", "xsi"),
@@ -52,8 +95,71 @@ pub(crate) type Result<T> = std::result::Result<T, XmlError>;
 /// # }
 /// ```
 pub fn to_string<T: Facet<'static>>(value: &T) -> Result<String> {
+    to_string_with_options(value, &SerializeOptions::default())
+}
+
+/// Serialize a value of type `T` to a pretty-printed XML string.
+///
+/// This is a convenience function that enables pretty-printing with default indentation.
+///
+/// # Example
+/// ```
+/// # use facet::Facet;
+/// # use facet_xml as xml;
+/// # use facet_xml::to_string_pretty;
+/// #[derive(Facet)]
+/// struct Person {
+///     #[facet(xml::attribute)]
+///     id: u32,
+///     #[facet(xml::element)]
+///     name: String,
+/// }
+///
+/// # fn main() -> Result<(), facet_xml::XmlError> {
+/// let person = Person { id: 42, name: "Alice".into() };
+/// let xml = to_string_pretty(&person)?;
+/// // Output will have newlines and indentation
+/// # Ok(())
+/// # }
+/// ```
+pub fn to_string_pretty<T: Facet<'static>>(value: &T) -> Result<String> {
+    to_string_with_options(value, &SerializeOptions::default().pretty())
+}
+
+/// Serialize a value of type `T` to an XML string with custom options.
+///
+/// # Example
+///
+/// ```
+/// # use facet::Facet;
+/// # use facet_xml as xml;
+/// # use facet_xml::{to_string_with_options, SerializeOptions};
+/// #[derive(Facet)]
+/// struct Person {
+///     #[facet(xml::attribute)]
+///     id: u32,
+///     #[facet(xml::element)]
+///     name: String,
+/// }
+///
+/// # fn main() -> Result<(), facet_xml::XmlError> {
+/// let person = Person { id: 42, name: "Alice".into() };
+///
+/// // Compact output
+/// let xml = to_string_with_options(&person, &SerializeOptions::default())?;
+/// assert_eq!(xml, r#"<Person id="42"><name>Alice</name></Person>"#);
+///
+/// // Pretty output with tabs
+/// let xml = to_string_with_options(&person, &SerializeOptions::default().indent("\t"))?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn to_string_with_options<T: Facet<'static>>(
+    value: &T,
+    options: &SerializeOptions,
+) -> Result<String> {
     let mut output = Vec::new();
-    to_writer(&mut output, value)?;
+    to_writer_with_options(&mut output, value, options)?;
     Ok(String::from_utf8(output).expect("XML output should be valid UTF-8"))
 }
 
@@ -87,29 +193,129 @@ pub fn to_string<T: Facet<'static>>(value: &T) -> Result<String> {
 /// # }
 /// ```
 pub fn to_writer<W: Write, T: Facet<'static>>(writer: &mut W, value: &T) -> Result<()> {
+    to_writer_with_options(writer, value, &SerializeOptions::default())
+}
+
+/// Serialize a value of type `T` to a writer as pretty-printed XML.
+///
+/// This is a convenience function that enables pretty-printing with default indentation.
+///
+/// # Example
+///
+/// ```
+/// # use facet::Facet;
+/// # use facet_xml as xml;
+/// # use facet_xml::to_writer_pretty;
+/// #[derive(Facet)]
+/// struct Person {
+///     #[facet(xml::attribute)]
+///     id: u32,
+///     #[facet(xml::element)]
+///     name: String,
+/// }
+///
+/// # fn main() -> Result<(), facet_xml::XmlError> {
+/// let person = Person { id: 42, name: "Alice".into() };
+/// let mut buffer = Vec::new();
+/// to_writer_pretty(&mut buffer, &person)?;
+/// // Output will have newlines and indentation
+/// # Ok(())
+/// # }
+/// ```
+pub fn to_writer_pretty<W: Write, T: Facet<'static>>(writer: &mut W, value: &T) -> Result<()> {
+    to_writer_with_options(writer, value, &SerializeOptions::default().pretty())
+}
+
+/// Serialize a value of type `T` to a writer as XML with custom options.
+///
+/// # Example
+///
+/// ```
+/// # use facet::Facet;
+/// # use facet_xml as xml;
+/// # use facet_xml::{to_writer_with_options, SerializeOptions};
+/// #[derive(Facet)]
+/// struct Person {
+///     #[facet(xml::attribute)]
+///     id: u32,
+///     #[facet(xml::element)]
+///     name: String,
+/// }
+///
+/// # fn main() -> Result<(), facet_xml::XmlError> {
+/// let person = Person { id: 42, name: "Alice".into() };
+///
+/// // Compact output (default)
+/// let mut buffer = Vec::new();
+/// to_writer_with_options(&mut buffer, &person, &SerializeOptions::default())?;
+/// assert_eq!(buffer, br#"<Person id="42"><name>Alice</name></Person>"#);
+///
+/// // Pretty output with default indent
+/// let mut buffer = Vec::new();
+/// to_writer_with_options(&mut buffer, &person, &SerializeOptions::default().pretty())?;
+///
+/// // Pretty output with custom indent (tabs)
+/// let mut buffer = Vec::new();
+/// to_writer_with_options(&mut buffer, &person, &SerializeOptions::default().indent("\t"))?;
+/// # Ok(())
+/// # }
+/// ```
+pub fn to_writer_with_options<W: Write, T: Facet<'static>>(
+    writer: &mut W,
+    value: &T,
+    options: &SerializeOptions,
+) -> Result<()> {
     let peek = Peek::new(value);
-    let mut serializer = XmlSerializer::new(writer);
+    let mut serializer = XmlSerializer::new(writer, options.indent_str());
 
     // Get the type name for the root element
     let type_name = peek.shape().type_identifier;
     serializer.serialize_element(type_name, peek)
 }
 
-struct XmlSerializer<W> {
+struct XmlSerializer<'a, W> {
     writer: W,
     /// Namespace URI -> prefix mapping for already-declared namespaces.
     declared_namespaces: HashMap<String, String>,
     /// Counter for auto-generating namespace prefixes (ns0, ns1, ...).
     next_ns_index: usize,
+    /// Indentation string for pretty-printing (None for compact output).
+    indent: Option<&'a str>,
+    /// Current indentation depth.
+    depth: usize,
 }
 
-impl<W: Write> XmlSerializer<W> {
-    fn new(writer: W) -> Self {
+impl<'a, W: Write> XmlSerializer<'a, W> {
+    fn new(writer: W, indent: Option<&'a str>) -> Self {
         Self {
             writer,
             declared_namespaces: HashMap::new(),
             next_ns_index: 0,
+            indent,
+            depth: 0,
         }
+    }
+
+    /// Write indentation for the current depth.
+    fn write_indent(&mut self) -> Result<()> {
+        if let Some(indent_str) = self.indent {
+            for _ in 0..self.depth {
+                self.writer
+                    .write_all(indent_str.as_bytes())
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Write a newline if pretty-printing is enabled.
+    fn write_newline(&mut self) -> Result<()> {
+        if self.indent.is_some() {
+            self.writer
+                .write_all(b"\n")
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+        }
+        Ok(())
     }
 
     /// Get or create a prefix for the given namespace URI.
@@ -382,8 +588,21 @@ impl<W: Write> XmlSerializer<W> {
         write!(self.writer, "<{}>", escape_element_name(element_name))
             .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
+        let has_items = list_peek.iter().next().is_some();
+        if has_items {
+            self.depth += 1;
+        }
+
         for item in list_peek.iter() {
+            self.write_newline()?;
+            self.write_indent()?;
             self.serialize_list_item_element(item)?;
+        }
+
+        if has_items {
+            self.depth -= 1;
+            self.write_newline()?;
+            self.write_indent()?;
         }
 
         write!(self.writer, "</{}>", escape_element_name(element_name))
@@ -400,7 +619,14 @@ impl<W: Write> XmlSerializer<W> {
         write!(self.writer, "<{}>", escape_element_name(element_name))
             .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
+        let has_items = map_peek.iter().next().is_some();
+        if has_items {
+            self.depth += 1;
+        }
+
         for (key, value) in map_peek.iter() {
+            self.write_newline()?;
+            self.write_indent()?;
             // Use the key as the element name
             if let Some(key_str) = key.as_str() {
                 self.serialize_element(key_str, value)?;
@@ -413,6 +639,12 @@ impl<W: Write> XmlSerializer<W> {
                 self.serialize_value(value)?;
                 write!(self.writer, "</entry>").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
             }
+        }
+
+        if has_items {
+            self.depth -= 1;
+            self.write_newline()?;
+            self.write_indent()?;
         }
 
         write!(self.writer, "</{}>", escape_element_name(element_name))
@@ -642,17 +874,27 @@ impl<W: Write> XmlSerializer<W> {
 
         write!(self.writer, ">").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
-        // Write text content if present
+        // Write text content if present (no indentation for text content)
         if let Some(text_peek) = text_content {
             self.serialize_text_value(text_peek)?;
         }
 
+        // Check if we have child elements (for indentation purposes)
+        let has_child_elements = !elements.is_empty() || !elements_list.is_empty();
+
         // Write child elements (with namespace support)
         // Pass ns_all as the default namespace so child elements with matching
         // namespace use unprefixed form (they inherit the default xmlns).
+        if has_child_elements {
+            self.depth += 1;
+        }
+
         for (field_item, field_peek) in elements {
             // Pass is_attribute=false for elements
             let field_ns = Self::get_field_namespace(&field_item.field, ns_all, false);
+
+            self.write_newline()?;
+            self.write_indent()?;
 
             // Handle custom serialization for elements
             if field_item.field.proxy_convert_out_fn().is_some() {
@@ -679,6 +921,12 @@ impl<W: Write> XmlSerializer<W> {
         // Write elements lists
         for field_peek in elements_list {
             self.serialize_elements_list(field_peek)?;
+        }
+
+        if has_child_elements {
+            self.depth -= 1;
+            self.write_newline()?;
+            self.write_indent()?;
         }
 
         // Write closing tag
@@ -988,9 +1236,19 @@ impl<W: Write> XmlSerializer<W> {
             self.serialize_text_value(text_peek)?;
         }
 
+        // Check if we have child elements (for indentation purposes)
+        let has_child_elements = !elements.is_empty() || !elements_list.is_empty();
+
+        if has_child_elements {
+            self.depth += 1;
+        }
+
         for (field_item, field_peek) in elements {
             // Pass is_attribute=false for elements
             let field_ns = Self::get_field_namespace(&field_item.field, ns_all, false);
+
+            self.write_newline()?;
+            self.write_indent()?;
 
             if field_item.field.proxy_convert_out_fn().is_some() {
                 if let Ok(owned) = field_peek.custom_serialization(field_item.field) {
@@ -1020,6 +1278,12 @@ impl<W: Write> XmlSerializer<W> {
 
         for field_peek in elements_list {
             self.serialize_elements_list(field_peek)?;
+        }
+
+        if has_child_elements {
+            self.depth -= 1;
+            self.write_newline()?;
+            self.write_indent()?;
         }
 
         write!(self.writer, "</{}>", escape_element_name(element_name))
@@ -1173,6 +1437,8 @@ impl<W: Write> XmlSerializer<W> {
             .map_err(|_| XmlErrorKind::SerializeNotList)?;
 
         for item_peek in list_peek.iter() {
+            self.write_newline()?;
+            self.write_indent()?;
             self.serialize_list_item_element(item_peek)?;
         }
 
