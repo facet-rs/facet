@@ -792,6 +792,7 @@ dependencies = [
  "facet-pretty",
  "facet-reflect",
  "facet-showcase",
+ "facet-singularize",
  "facet-solver",
  "facet-testhelpers",
  "http",
@@ -905,6 +906,10 @@ dependencies = [
  "owo-colors",
  "syntect",
 ]
+
+[[package]]
+name = "facet-singularize"
+version = "0.1.0"
 
 [[package]]
 name = "facet-solver"

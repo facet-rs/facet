@@ -49,7 +49,21 @@ facet::define_attr_grammar! {
     pub enum Attr {
         /// Marks a field as a single KDL child node
         Child,
-        /// Marks a field as collecting multiple KDL children
+        /// Marks a field as collecting multiple KDL children into a Vec, HashMap, or Set.
+        ///
+        /// When a struct has a single `#[facet(kdl::children)]` field, all child nodes
+        /// are collected into that field (catch-all behavior).
+        ///
+        /// When a struct has multiple `#[facet(kdl::children)]` fields, nodes are routed
+        /// based on matching the node name to the singular form of the field name:
+        /// - `dependency` nodes → `dependencies` field
+        /// - `sample` nodes → `samples` field
+        /// - `item` nodes → `items` field
+        ///
+        /// Supported pluralization patterns:
+        /// - Simple `s`: `item` → `items`
+        /// - `ies` ending: `dependency` → `dependencies`
+        /// - `es` ending: `box` → `boxes`
         Children,
         /// Marks a field as a KDL property (key=value)
         Property,

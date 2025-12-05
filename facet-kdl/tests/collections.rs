@@ -210,3 +210,261 @@ fn btreeset_children() {
     let levels: Vec<_> = config.priorities.iter().map(|p| p.level).collect();
     assert_eq!(levels, vec![1, 2, 3]);
 }
+
+// ============================================================================
+// Multiple kdl::children fields (issue #1096)
+// ============================================================================
+
+/// Test that multiple `#[facet(kdl::children)]` fields can coexist,
+/// with nodes routed to the correct field based on node name matching
+/// the singular form of the field name.
+#[test]
+fn multiple_children_fields_by_node_name() {
+    #[derive(Facet, Debug)]
+    struct Config {
+        #[facet(kdl::children)]
+        dependencies: Vec<Dependency>,
+
+        #[facet(kdl::children)]
+        samples: Vec<Sample>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Dependency {
+        #[facet(kdl::argument)]
+        name: String,
+
+        #[facet(kdl::property)]
+        version: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Sample {
+        #[facet(kdl::argument)]
+        path: String,
+
+        #[facet(kdl::property, default)]
+        description: Option<String>,
+    }
+
+    // KDL with both dependency and sample nodes intermixed
+    let kdl = indoc! {r#"
+        dependency "serde" version="1.0"
+        sample "test.txt" description="A test file"
+        dependency "tokio" version="1.0"
+        sample "example.txt"
+    "#};
+
+    let config: Config = facet_kdl::from_str(kdl).unwrap();
+
+    // Should have 2 dependencies
+    assert_eq!(config.dependencies.len(), 2);
+    assert_eq!(
+        config.dependencies[0],
+        Dependency {
+            name: "serde".to_string(),
+            version: "1.0".to_string()
+        }
+    );
+    assert_eq!(
+        config.dependencies[1],
+        Dependency {
+            name: "tokio".to_string(),
+            version: "1.0".to_string()
+        }
+    );
+
+    // Should have 2 samples
+    assert_eq!(config.samples.len(), 2);
+    assert_eq!(
+        config.samples[0],
+        Sample {
+            path: "test.txt".to_string(),
+            description: Some("A test file".to_string())
+        }
+    );
+    assert_eq!(
+        config.samples[1],
+        Sample {
+            path: "example.txt".to_string(),
+            description: None
+        }
+    );
+}
+
+/// Test multiple children fields where only one type of node is present
+#[test]
+fn multiple_children_fields_partial() {
+    #[derive(Facet, Debug)]
+    struct Config {
+        #[facet(kdl::children, default)]
+        dependencies: Vec<Dependency>,
+
+        #[facet(kdl::children, default)]
+        samples: Vec<Sample>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Dependency {
+        #[facet(kdl::argument)]
+        name: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Sample {
+        #[facet(kdl::argument)]
+        path: String,
+    }
+
+    // Only samples, no dependencies
+    let kdl = indoc! {r#"
+        sample "test.txt"
+        sample "example.txt"
+    "#};
+
+    let config: Config = facet_kdl::from_str(kdl).unwrap();
+
+    assert_eq!(config.dependencies.len(), 0);
+    assert_eq!(config.samples.len(), 2);
+    assert_eq!(
+        config.samples[0],
+        Sample {
+            path: "test.txt".to_string()
+        }
+    );
+}
+
+// Note: Multiple kdl::children fields with HashMap is not a well-supported use case.
+// With HashMap, the node name becomes the map key, but with multiple fields,
+// the node name is also used to route to the correct field.
+// This creates a conflict where all nodes matching one field would have the same key.
+// Use Vec for multiple children fields, or use a single HashMap field as a catch-all.
+
+/// Test irregular plurals like children → child
+#[test]
+fn multiple_children_fields_irregular_plural() {
+    #[derive(Facet, Debug)]
+    struct Family {
+        #[facet(kdl::children, default)]
+        children: Vec<Child>,
+
+        #[facet(kdl::children, default)]
+        people: Vec<Person>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Child {
+        #[facet(kdl::argument)]
+        name: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Person {
+        #[facet(kdl::argument)]
+        name: String,
+    }
+
+    let kdl = indoc! {r#"
+        child "Alice"
+        person "Bob"
+        child "Charlie"
+    "#};
+
+    let family: Family = facet_kdl::from_str(kdl).unwrap();
+
+    assert_eq!(family.children.len(), 2);
+    assert_eq!(
+        family.children[0],
+        Child {
+            name: "Alice".to_string()
+        }
+    );
+    assert_eq!(
+        family.children[1],
+        Child {
+            name: "Charlie".to_string()
+        }
+    );
+
+    assert_eq!(family.people.len(), 1);
+    assert_eq!(
+        family.people[0],
+        Person {
+            name: "Bob".to_string()
+        }
+    );
+}
+
+/// Test that unknown nodes are skipped when there are multiple children fields
+/// (unless deny_unknown_fields is set)
+#[test]
+fn multiple_children_fields_unknown_node_skipped() {
+    #[derive(Facet, Debug)]
+    struct Config {
+        #[facet(kdl::children, default)]
+        dependencies: Vec<Dependency>,
+
+        #[facet(kdl::children, default)]
+        samples: Vec<Sample>,
+    }
+
+    #[derive(Facet, Debug)]
+    struct Dependency {
+        #[facet(kdl::argument)]
+        name: String,
+    }
+
+    #[derive(Facet, Debug)]
+    struct Sample {
+        #[facet(kdl::argument)]
+        path: String,
+    }
+
+    // Unknown node type - should be skipped (default behavior)
+    let kdl = indoc! {r#"
+        unknown_node "test"
+        sample "test.txt"
+    "#};
+
+    let config: Config = facet_kdl::from_str(kdl).unwrap();
+    assert_eq!(config.dependencies.len(), 0);
+    assert_eq!(config.samples.len(), 1);
+}
+
+/// Test that unknown nodes error when deny_unknown_fields is set
+/// and there are multiple children fields
+#[test]
+fn multiple_children_fields_deny_unknown() {
+    #[derive(Facet, Debug)]
+    #[facet(deny_unknown_fields)]
+    struct Config {
+        #[facet(kdl::children, default)]
+        dependencies: Vec<Dependency>,
+
+        #[facet(kdl::children, default)]
+        samples: Vec<Sample>,
+    }
+
+    #[derive(Facet, Debug)]
+    struct Dependency {
+        #[facet(kdl::argument)]
+        name: String,
+    }
+
+    #[derive(Facet, Debug)]
+    struct Sample {
+        #[facet(kdl::argument)]
+        path: String,
+    }
+
+    // Unknown node type - should fail with deny_unknown_fields
+    let kdl = indoc! {r#"
+        unknown_node "test"
+    "#};
+
+    let result: Result<Config, _> = facet_kdl::from_str(kdl);
+    assert!(
+        result.is_err(),
+        "Should fail on unknown node when deny_unknown_fields is set"
+    );
+}

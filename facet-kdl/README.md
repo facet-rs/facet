@@ -50,6 +50,61 @@ fn main() -> Result<(), facet_kdl::KdlError> {
 - `#[facet(flatten)]` merges nested structs/enums; the solver uses property/child presence to choose variants.
 - `Spanned<T>` is supported: properties/arguments can be captured with `miette::SourceSpan` data.
 
+## Multiple children fields
+
+When a struct has a single `#[facet(kdl::children)]` field, all child nodes are collected into that field.
+
+When a struct has **multiple** `#[facet(kdl::children)]` fields, nodes are routed based on matching
+the node name to the singular form of the field name:
+
+```rust
+use facet::Facet;
+use facet_kdl as kdl;
+
+#[derive(Facet, Debug)]
+struct Config {
+    #[facet(kdl::children, default)]
+    dependencies: Vec<Dependency>,
+
+    #[facet(kdl::children, default)]
+    samples: Vec<Sample>,
+}
+
+#[derive(Facet, Debug)]
+struct Dependency {
+    #[facet(kdl::argument)]
+    name: String,
+    #[facet(kdl::property)]
+    version: String,
+}
+
+#[derive(Facet, Debug)]
+struct Sample {
+    #[facet(kdl::argument)]
+    path: String,
+}
+```
+
+With this KDL:
+
+```kdl
+dependency "serde" version="1.0"
+sample "test.txt"
+dependency "tokio" version="1.0"
+sample "example.txt"
+```
+
+The nodes are routed based on name matching:
+- `dependency` nodes → `dependencies` field (singular matches plural)
+- `sample` nodes → `samples` field
+
+Supported pluralization patterns:
+- Simple `s`: `item` → `items`
+- `ies` ending: `dependency` → `dependencies`
+- `es` ending: `box` → `boxes`
+
+Note: Use `#[facet(default)]` on children fields to allow them to be empty when no matching nodes are present.
+
 ## KDL syntax: arguments vs properties
 
 A common source of confusion is the difference between **arguments** and **properties** in KDL:

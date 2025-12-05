@@ -33,6 +33,18 @@ impl KdlFieldExt for Field {
     }
 }
 
+/// Extension trait for checking kdl::children attribute
+pub(crate) trait KdlChildrenFieldExt {
+    /// Returns true if this field has the kdl::children attribute
+    fn is_kdl_children(&self) -> bool;
+}
+
+impl KdlChildrenFieldExt for Field {
+    fn is_kdl_children(&self) -> bool {
+        self.has_attr(Some("kdl"), "children")
+    }
+}
+
 /// Check if a shape is an enum type and return its definition if so.
 fn get_enum_type(shape: &Shape) -> Option<EnumType> {
     match &shape.ty {
@@ -45,6 +57,20 @@ fn get_enum_type(shape: &Shape) -> Option<EnumType> {
 /// Returns a 'static reference since `EnumType.variants` is `&'static [Variant]`.
 fn find_variant_by_name(enum_type: &EnumType, name: &str) -> Option<&'static facet_core::Variant> {
     enum_type.variants.iter().find(|v| v.name == name)
+}
+
+/// Check if a node name matches a field name for a `kdl::children` field.
+///
+/// Uses `facet_singularize` to check if the node name is the singular form
+/// of the field name. For example:
+/// - "dependency" matches "dependencies"
+/// - "child" matches "children"
+/// - "box" matches "boxes"
+///
+/// This handles irregular plurals (children, people, mice, etc.) as well as
+/// standard plural rules (-s, -es, -ies, -ves).
+fn node_name_matches_children_field(node_name: &str, field_name: &str) -> bool {
+    facet_singularize::is_singular_of(node_name, field_name)
 }
 
 /// Result of finding a property field, possibly inside a flattened struct
@@ -142,12 +168,24 @@ enum FieldMatchResult {
 enum ChildrenContainerState {
     /// Not currently in a children container
     None,
-    /// In a list container (`Vec<T>`)
-    List,
-    /// In a map container (`HashMap<K, V>` or `BTreeMap<K, V>`)
-    Map,
-    /// In a set container (`HashSet<T>` or `BTreeSet<T>`)
-    Set,
+    /// In a list container (`Vec<T>`) for a specific field
+    List { field_index: usize },
+    /// In a map container (`HashMap<K, V>` or `BTreeMap<K, V>`) for a specific field
+    Map { field_index: usize },
+    /// In a set container (`HashSet<T>` or `BTreeSet<T>`) for a specific field
+    Set { field_index: usize },
+}
+
+impl ChildrenContainerState {
+    /// Returns the field index if we're in a container, None otherwise
+    fn field_index(&self) -> Option<usize> {
+        match self {
+            ChildrenContainerState::None => None,
+            ChildrenContainerState::List { field_index }
+            | ChildrenContainerState::Map { field_index }
+            | ChildrenContainerState::Set { field_index } => Some(*field_index),
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -272,7 +310,8 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         };
 
         for (idx, field) in fields.iter().enumerate() {
-            if field.is_kdl_child()
+            // Handle both kdl::child and kdl::children fields
+            if (field.is_kdl_child() || field.is_kdl_children())
                 && !partial.is_field_set(idx)?
                 && (field.has_default() || field.should_skip_deserializing())
             {
@@ -337,18 +376,37 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             }
 
             // Third, try to match as a children container element
-            if let Some((idx, children_field)) = fields
+            // Collect all fields with kdl::children attribute
+            let children_fields: Vec<_> = fields
                 .iter()
                 .enumerate()
-                .find(|(_, field)| field.has_attr(Some("kdl"), "children"))
-            {
-                return Some(FieldMatchResult::ChildrenContainer {
-                    field_name: children_field.name,
-                    field_index: idx,
-                });
-            }
+                .filter(|(_, field)| field.has_attr(Some("kdl"), "children"))
+                .collect();
 
-            None
+            match children_fields.len() {
+                0 => None,
+                1 => {
+                    // Single children field: use it as a catch-all (original behavior)
+                    let (idx, field) = children_fields[0];
+                    Some(FieldMatchResult::ChildrenContainer {
+                        field_name: field.name,
+                        field_index: idx,
+                    })
+                }
+                _ => {
+                    // Multiple children fields: match by node name (singular-to-plural)
+                    // e.g., "dependency" matches field "dependencies"
+                    children_fields
+                        .into_iter()
+                        .find(|(_, field)| {
+                            node_name_matches_children_field(node.name().value(), field.name)
+                        })
+                        .map(|(idx, field)| FieldMatchResult::ChildrenContainer {
+                            field_name: field.name,
+                            field_index: idx,
+                        })
+                }
+            }
         };
 
         // Use override_fields if provided, otherwise get fields from document_shape
@@ -393,40 +451,51 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 field_name,
                 field_index,
             }) => {
-                log::trace!("Node matched children container");
+                log::trace!("Node matched children container for field {field_name}");
 
                 // Get the field shape to determine if it's a List or Map
                 let children_field = &fields[field_index];
                 let field_shape = (children_field.shape)();
 
-                if *children_container_state == ChildrenContainerState::None {
-                    if partial.is_field_set(field_index)? {
-                        return Err(KdlErrorKind::UnsupportedShape(
-                            "cannot reopen children container that was already completed".into(),
-                        )
-                        .into());
+                // Check if we need to open a new container:
+                // 1. We're not in any container, or
+                // 2. We're in a container for a different field (switching fields)
+                let current_field = children_container_state.field_index();
+                let need_new_container =
+                    current_field.is_none() || current_field != Some(field_index);
+
+                if need_new_container {
+                    // Close the previous container if we were in one
+                    if *children_container_state != ChildrenContainerState::None {
+                        partial = partial.end()?;
+                        *children_container_state = ChildrenContainerState::None;
                     }
+
+                    // For children containers, we allow reopening because nodes
+                    // can be intermixed in the KDL document (e.g., dependency, sample, dependency)
+                    // So we don't check is_field_set here - we'll continue adding to the existing list
                     partial = partial.begin_field(field_name)?;
 
                     // Check if it's a Map, Set, or List type
                     match field_shape.def {
                         Def::Map(_) => {
                             partial = partial.begin_map()?;
-                            *children_container_state = ChildrenContainerState::Map;
+                            *children_container_state = ChildrenContainerState::Map { field_index };
                         }
                         Def::Set(_) => {
                             partial = partial.begin_set()?;
-                            *children_container_state = ChildrenContainerState::Set;
+                            *children_container_state = ChildrenContainerState::Set { field_index };
                         }
                         _ => {
                             partial = partial.begin_list()?;
-                            *children_container_state = ChildrenContainerState::List;
+                            *children_container_state =
+                                ChildrenContainerState::List { field_index };
                         }
                     }
                 }
 
                 match *children_container_state {
-                    ChildrenContainerState::Map => {
+                    ChildrenContainerState::Map { .. } => {
                         // For maps, use node name as key
                         partial = partial.begin_key()?;
                         // For transparent types (like Utf8PathBuf), we need to use begin_inner
@@ -463,7 +532,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         }
                         // For struct values, continue with normal processing below
                     }
-                    ChildrenContainerState::List => {
+                    ChildrenContainerState::List { .. } => {
                         partial = partial.begin_list_item()?;
 
                         // After beginning the list item, check if it's an enum type
@@ -480,7 +549,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                             }
                         }
                     }
-                    ChildrenContainerState::Set => {
+                    ChildrenContainerState::Set { .. } => {
                         partial = partial.begin_set_item()?;
 
                         // After beginning the set item, check if it's an enum type

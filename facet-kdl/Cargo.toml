@@ -21,6 +21,7 @@ log = "0.4"
 facet = { path = "../facet" }
 facet-core = { path = "../facet-core" }
 facet-reflect = { path = "../facet-reflect", features = ["miette"] }
+facet-singularize = { path = "../facet-singularize" }
 facet-solver = { path = "../facet-solver" }
 kdl = "6.5.0"
 miette = "7"
