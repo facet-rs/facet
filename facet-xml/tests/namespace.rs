@@ -401,17 +401,26 @@ fn test_serialize_ns_all() {
 
 #[test]
 fn test_serialize_ns_all_attributes_roundtrip() {
-    // Serialize a struct with xml::ns_all on attributes
+    // Serialize a struct with xml::ns_all on attributes.
+    // Per XML spec, unprefixed attributes are always in "no namespace",
+    // so ns_all does NOT apply to attributes without explicit xml::ns.
+    // The xmlns="..." declaration is for elements, not attributes.
     let value = NsAllAttributes {
         attr1: "one".to_string(),
         attr2: "two".to_string(),
     };
     let xml_output = xml::to_string(&value).unwrap();
 
-    // Both attributes should be namespaced with the same prefix
+    // Should have default namespace declaration for the element
     assert!(
-        xml_output.contains("xmlns:"),
-        "Should contain xmlns declaration: {xml_output}"
+        xml_output.contains("xmlns="),
+        "Should contain default xmlns declaration: {xml_output}"
+    );
+
+    // Attributes should be unprefixed (per XML spec, they're in "no namespace")
+    assert!(
+        xml_output.contains("attr1=") && !xml_output.contains(":attr1="),
+        "Attributes should be unprefixed: {xml_output}"
     );
 
     // Round-trip
@@ -647,4 +656,325 @@ fn test_deny_unknown_fields_option_accepts_valid_xml() {
     let options = xml::DeserializeOptions::default().deny_unknown_fields(true);
     let person: PersonNoAttr = xml::from_str_with_options(xml_str, &options).unwrap();
     assert_eq!(person.name, "Alice");
+}
+
+// ============================================================================
+// Comprehensive SVG namespace tests (issue #1100)
+// These tests verify that xml::ns_all produces valid SVG-style output:
+// - Default namespace declaration (xmlns="...")
+// - Unprefixed elements (inherit from default namespace)
+// - Unprefixed attributes (per XML spec, attributes don't inherit namespaces)
+// ============================================================================
+
+/// Simple SVG struct with attributes and a child element.
+/// Note: The struct rename becomes the root element name.
+/// For child elements, use xml::element with rename on the field.
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(rename = "svg", xml::ns_all = "http://www.w3.org/2000/svg")]
+struct SimpleSvg {
+    #[facet(xml::attribute, rename = "viewBox")]
+    view_box: Option<String>,
+    #[facet(xml::attribute)]
+    width: Option<String>,
+    #[facet(xml::attribute)]
+    height: Option<String>,
+    /// Child elements - field name "circle" will be used for element name
+    #[facet(xml::element, rename = "circle")]
+    circle: Option<SvgCircleData>,
+}
+
+/// The data for a circle element (not the element name itself)
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
+struct SvgCircleData {
+    #[facet(xml::attribute)]
+    cx: Option<String>,
+    #[facet(xml::attribute)]
+    cy: Option<String>,
+    #[facet(xml::attribute)]
+    r: Option<String>,
+    #[facet(xml::attribute)]
+    fill: Option<String>,
+}
+
+#[test]
+fn test_svg_serialization_produces_valid_svg() {
+    // This is the key test for issue #1100
+    let svg = SimpleSvg {
+        view_box: Some("0 0 100 100".to_string()),
+        width: Some("100".to_string()),
+        height: Some("100".to_string()),
+        circle: Some(SvgCircleData {
+            cx: Some("50".to_string()),
+            cy: Some("50".to_string()),
+            r: Some("25".to_string()),
+            fill: Some("red".to_string()),
+        }),
+    };
+
+    let xml_output = xml::to_string(&svg).unwrap();
+
+    // Should have default namespace declaration
+    assert!(
+        xml_output.contains("xmlns=\"http://www.w3.org/2000/svg\""),
+        "Should have default xmlns: {xml_output}"
+    );
+
+    // Note: Root element name comes from struct name, not rename attribute
+    // (rename affects deserialization matching, not serialization output)
+    // For true SVG output, use a struct named "svg" or post-process
+
+    // Attributes should NOT be prefixed
+    assert!(
+        !xml_output.contains("svg:viewBox"),
+        "viewBox should not be prefixed: {xml_output}"
+    );
+    assert!(
+        xml_output.contains("viewBox="),
+        "viewBox should be present: {xml_output}"
+    );
+
+    // Child element should be named 'circle' (from field rename)
+    assert!(
+        xml_output.contains("<circle"),
+        "Should have <circle element: {xml_output}"
+    );
+
+    // Circle attributes should not be prefixed
+    assert!(
+        xml_output.contains("cx=") && !xml_output.contains(":cx="),
+        "cx should be unprefixed: {xml_output}"
+    );
+}
+
+#[test]
+fn test_svg_roundtrip() {
+    let svg = SimpleSvg {
+        view_box: Some("0 0 100 100".to_string()),
+        width: Some("100".to_string()),
+        height: Some("100".to_string()),
+        circle: Some(SvgCircleData {
+            cx: Some("50".to_string()),
+            cy: Some("50".to_string()),
+            r: Some("25".to_string()),
+            fill: Some("red".to_string()),
+        }),
+    };
+
+    let xml_output = xml::to_string(&svg).unwrap();
+    let parsed: SimpleSvg = xml::from_str(&xml_output).unwrap();
+
+    assert_eq!(parsed, svg, "Roundtrip should preserve all values");
+}
+
+#[test]
+fn test_svg_deserialization_from_browser_style_xml() {
+    // This is the format that browsers/real SVG tools produce
+    let xml = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+        <circle cx="50" cy="50" r="25" fill="red"/>
+    </svg>"#;
+
+    let parsed: SimpleSvg = xml::from_str(xml).unwrap();
+
+    assert_eq!(parsed.view_box, Some("0 0 100 100".to_string()));
+    assert_eq!(parsed.width, Some("100".to_string()));
+    assert_eq!(parsed.height, Some("100".to_string()));
+    assert!(parsed.circle.is_some());
+    let circle = parsed.circle.unwrap();
+    assert_eq!(circle.cx, Some("50".to_string()));
+    assert_eq!(circle.cy, Some("50".to_string()));
+    assert_eq!(circle.r, Some("25".to_string()));
+    assert_eq!(circle.fill, Some("red".to_string()));
+}
+
+/// SVG with mixed namespace (e.g., xlink:href)
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(rename = "svg", xml::ns_all = "http://www.w3.org/2000/svg")]
+struct SvgWithXlink {
+    #[facet(xml::attribute, rename = "viewBox")]
+    view_box: Option<String>,
+    #[facet(xml::element, rename = "use")]
+    use_elem: Option<SvgUseData>,
+}
+
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
+struct SvgUseData {
+    #[facet(xml::attribute)]
+    x: Option<String>,
+    #[facet(xml::attribute)]
+    y: Option<String>,
+    /// xlink:href has an explicit namespace
+    #[facet(
+        xml::attribute,
+        rename = "href",
+        xml::ns = "http://www.w3.org/1999/xlink"
+    )]
+    xlink_href: Option<String>,
+}
+
+#[test]
+fn test_svg_with_xlink_namespace() {
+    let svg = SvgWithXlink {
+        view_box: Some("0 0 100 100".to_string()),
+        use_elem: Some(SvgUseData {
+            x: Some("10".to_string()),
+            y: Some("10".to_string()),
+            xlink_href: Some("#mySymbol".to_string()),
+        }),
+    };
+
+    let xml_output = xml::to_string(&svg).unwrap();
+
+    // Should have default SVG namespace
+    assert!(
+        xml_output.contains("xmlns=\"http://www.w3.org/2000/svg\""),
+        "Should have SVG default xmlns: {xml_output}"
+    );
+
+    // xlink:href should be prefixed (it has explicit xml::ns)
+    assert!(
+        xml_output.contains("xlink:href=") || xml_output.contains(":href="),
+        "xlink:href should be prefixed: {xml_output}"
+    );
+
+    // Other attributes should not be prefixed
+    assert!(
+        xml_output.contains("x=") && !xml_output.contains(":x="),
+        "x should be unprefixed: {xml_output}"
+    );
+}
+
+#[test]
+fn test_svg_xlink_roundtrip() {
+    let svg = SvgWithXlink {
+        view_box: Some("0 0 100 100".to_string()),
+        use_elem: Some(SvgUseData {
+            x: Some("10".to_string()),
+            y: Some("10".to_string()),
+            xlink_href: Some("#mySymbol".to_string()),
+        }),
+    };
+
+    let xml_output = xml::to_string(&svg).unwrap();
+    let parsed: SvgWithXlink = xml::from_str(&xml_output).unwrap();
+
+    assert_eq!(parsed, svg);
+}
+
+/// Test deeply nested SVG elements using xml::element with rename
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
+struct SvgGroupData {
+    #[facet(xml::attribute)]
+    id: Option<String>,
+    #[facet(xml::attribute)]
+    transform: Option<String>,
+    #[facet(xml::element, rename = "circle")]
+    circle: Option<SvgCircleData>,
+}
+
+#[derive(Facet, Debug, PartialEq, Clone)]
+#[facet(rename = "svg", xml::ns_all = "http://www.w3.org/2000/svg")]
+struct SvgWithGroup {
+    #[facet(xml::attribute, rename = "viewBox")]
+    view_box: Option<String>,
+    #[facet(xml::element, rename = "g")]
+    group: Option<SvgGroupData>,
+}
+
+#[test]
+fn test_deeply_nested_svg_elements() {
+    let svg = SvgWithGroup {
+        view_box: Some("0 0 200 200".to_string()),
+        group: Some(SvgGroupData {
+            id: Some("group1".to_string()),
+            transform: Some("translate(0,0)".to_string()),
+            circle: Some(SvgCircleData {
+                cx: Some("25".to_string()),
+                cy: Some("25".to_string()),
+                r: Some("20".to_string()),
+                fill: Some("blue".to_string()),
+            }),
+        }),
+    };
+
+    let xml_output = xml::to_string(&svg).unwrap();
+
+    // Verify structure - child elements use field rename
+    assert!(
+        xml_output.contains("<g"),
+        "Should have g elements: {xml_output}"
+    );
+    assert!(
+        xml_output.contains("<circle"),
+        "Should have circle elements: {xml_output}"
+    );
+
+    // Should have default namespace on root
+    assert!(
+        xml_output.contains("xmlns=\"http://www.w3.org/2000/svg\""),
+        "Should have default xmlns: {xml_output}"
+    );
+
+    // Nothing should be prefixed with svg:
+    assert!(
+        !xml_output.contains("svg:"),
+        "Nothing should be prefixed with svg:: {xml_output}"
+    );
+
+    // Roundtrip
+    let parsed: SvgWithGroup = xml::from_str(&xml_output).unwrap();
+    assert_eq!(parsed, svg);
+}
+
+#[test]
+fn test_empty_svg_element() {
+    let svg = SimpleSvg {
+        view_box: Some("0 0 100 100".to_string()),
+        width: None,
+        height: None,
+        circle: None,
+    };
+
+    let xml_output = xml::to_string(&svg).unwrap();
+
+    // Should have default namespace
+    assert!(
+        xml_output.contains("xmlns=\"http://www.w3.org/2000/svg\""),
+        "Should have xmlns: {xml_output}"
+    );
+
+    let parsed: SimpleSvg = xml::from_str(&xml_output).unwrap();
+    assert_eq!(parsed, svg);
+}
+
+#[test]
+fn test_svg_attributes_only() {
+    // SVG element with only attributes, no children
+    let svg = SimpleSvg {
+        view_box: Some("0 0 100 100".to_string()),
+        width: Some("100".to_string()),
+        height: Some("100".to_string()),
+        circle: None,
+    };
+
+    let xml_output = xml::to_string(&svg).unwrap();
+
+    // All attributes should be unprefixed
+    assert!(
+        xml_output.contains("viewBox=\"0 0 100 100\""),
+        "viewBox should be correct: {xml_output}"
+    );
+    assert!(
+        xml_output.contains("width=\"100\""),
+        "width should be correct: {xml_output}"
+    );
+    assert!(
+        xml_output.contains("height=\"100\""),
+        "height should be correct: {xml_output}"
+    );
+
+    let parsed: SimpleSvg = xml::from_str(&xml_output).unwrap();
+    assert_eq!(parsed, svg);
 }
