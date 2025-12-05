@@ -164,6 +164,84 @@ fn test_opaque_proxy_option_attribute_nested_enum() {
     assert!(path.d.is_none());
 }
 
+/// Test for issue #1112: proxy without opaque should work
+/// Previously this failed with "not currently processing a field" because
+/// begin_custom_deserialization was called after begin_some(), losing the field context.
+#[test]
+fn test_proxy_without_opaque() {
+    // Target type that DOES implement Facet
+    #[derive(Facet, Debug, Clone, Default, PartialEq)]
+    pub struct StyleData {
+        pub value: String,
+    }
+
+    // Proxy type that implements Facet
+    #[derive(Facet, Clone, Debug)]
+    #[facet(transparent)]
+    pub struct StyleProxy(pub String);
+
+    // Convert proxy -> Option<StyleData> (deserialization)
+    impl From<StyleProxy> for Option<StyleData> {
+        fn from(proxy: StyleProxy) -> Self {
+            if proxy.0.is_empty() {
+                None
+            } else {
+                Some(StyleData { value: proxy.0 })
+            }
+        }
+    }
+
+    // Convert &Option<StyleData> -> proxy (serialization)
+    impl TryFrom<&Option<StyleData>> for StyleProxy {
+        type Error = std::convert::Infallible;
+        fn try_from(v: &Option<StyleData>) -> Result<Self, Self::Error> {
+            Ok(StyleProxy(
+                v.as_ref().map(|d| d.value.clone()).unwrap_or_default(),
+            ))
+        }
+    }
+
+    #[derive(Facet, Debug, Clone, Default, PartialEq)]
+    pub struct Element {
+        // Note: NO opaque attribute! Just proxy. This used to fail.
+        #[facet(default, xml::attribute, proxy = StyleProxy)]
+        pub style: Option<StyleData>,
+    }
+
+    // Test with attribute present
+    let xml = r#"<Element style="color:red"/>"#;
+    let elem: Element = xml::from_str(xml).unwrap();
+    assert_eq!(
+        elem.style,
+        Some(StyleData {
+            value: "color:red".to_string()
+        })
+    );
+
+    // Test with absent attribute (uses default)
+    let xml2 = r#"<Element/>"#;
+    let elem2: Element = xml::from_str(xml2).unwrap();
+    assert!(elem2.style.is_none());
+
+    // Test with empty attribute
+    let xml3 = r#"<Element style=""/>"#;
+    let elem3: Element = xml::from_str(xml3).unwrap();
+    // Empty string converts to None based on our proxy impl
+    assert!(elem3.style.is_none());
+
+    // Test serialization roundtrip
+    let elem4 = Element {
+        style: Some(StyleData {
+            value: "font-size:12px".to_string(),
+        }),
+    };
+    let serialized = xml::to_string(&elem4).unwrap();
+    assert_eq!(serialized, r#"<Element style="font-size:12px"/>"#);
+
+    let deserialized: Element = xml::from_str(&serialized).unwrap();
+    assert_eq!(elem4, deserialized);
+}
+
 // ============================================================================
 // Pretty-printing tests
 // ============================================================================

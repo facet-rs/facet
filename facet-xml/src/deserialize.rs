@@ -1372,39 +1372,40 @@ impl<'input> XmlDeserializer<'input> {
 
                 partial = partial.begin_nth_field(idx)?;
 
-                // Handle Option<T>
-                let is_option = matches!(&partial.shape().def, Def::Option(_));
-                if is_option {
-                    partial = partial.begin_some()?;
-                }
-
-                // Handle Spanned<T>
-                if is_spanned_shape(partial.shape()) {
-                    partial = partial.begin_field("value")?;
-                }
-
-                // Check if field has custom deserialization
+                // Check if field has custom deserialization - must check BEFORE navigating
+                // into Option/Spanned wrappers, because begin_custom_deserialization needs
+                // the field context (parent_field()) to access proxy_shape().
                 let has_custom_deser = field.proxy_convert_in_fn().is_some();
                 if has_custom_deser {
+                    // When using proxy, the proxy type handles the full conversion including
+                    // any Option/Spanned wrappers, so we deserialize directly into the proxy.
                     partial = partial.begin_custom_deserialization()?;
-                }
+                    partial = self.set_scalar_value(partial, attr_value)?;
+                    partial = partial.end()?; // end custom deserialization
+                } else {
+                    // No proxy - handle Option<T> and Spanned<T> wrappers manually
+                    let is_option = matches!(&partial.shape().def, Def::Option(_));
+                    if is_option {
+                        partial = partial.begin_some()?;
+                    }
 
-                // Deserialize the value
-                partial = self.set_scalar_value(partial, attr_value)?;
+                    // Handle Spanned<T>
+                    if is_spanned_shape(partial.shape()) {
+                        partial = partial.begin_field("value")?;
+                    }
 
-                // End custom deserialization if used (calls the conversion function)
-                if has_custom_deser {
-                    partial = partial.end()?;
-                }
+                    // Deserialize the value
+                    partial = self.set_scalar_value(partial, attr_value)?;
 
-                // End Spanned<T> if needed
-                if is_spanned_shape((field.shape)()) {
-                    partial = partial.end()?; // end value field
-                }
+                    // End Spanned<T> if needed
+                    if is_spanned_shape((field.shape)()) {
+                        partial = partial.end()?; // end value field
+                    }
 
-                // End Option<T> if needed
-                if is_option {
-                    partial = partial.end()?; // end Some
+                    // End Option<T> if needed
+                    if is_option {
+                        partial = partial.end()?; // end Some
+                    }
                 }
 
                 partial = partial.end()?; // end field
@@ -1870,30 +1871,32 @@ impl<'input> XmlDeserializer<'input> {
 
             partial = partial.begin_nth_field(idx)?;
 
-            // Handle Option<T>
-            let is_option = matches!(&partial.shape().def, Def::Option(_));
-            if is_option {
-                partial = partial.begin_some()?;
-            }
-
-            // Check if field has custom deserialization
+            // Check if field has custom deserialization - must check BEFORE navigating
+            // into Option wrappers, because begin_custom_deserialization needs
+            // the field context (parent_field()) to access proxy_shape().
             let has_custom_deser = field.proxy_convert_in_fn().is_some();
             if has_custom_deser {
+                // When using proxy, the proxy type handles the full conversion including
+                // any Option wrappers, so we deserialize directly into the proxy.
                 partial = partial.begin_custom_deserialization()?;
-            }
+                partial =
+                    self.deserialize_element(partial, element_name, attributes, span, is_empty)?;
+                partial = partial.end()?; // end custom deserialization
+            } else {
+                // No proxy - handle Option<T> wrapper manually
+                let is_option = matches!(&partial.shape().def, Def::Option(_));
+                if is_option {
+                    partial = partial.begin_some()?;
+                }
 
-            // Deserialize the element content
-            partial =
-                self.deserialize_element(partial, element_name, attributes, span, is_empty)?;
+                // Deserialize the element content
+                partial =
+                    self.deserialize_element(partial, element_name, attributes, span, is_empty)?;
 
-            // End custom deserialization if used (calls the conversion function)
-            if has_custom_deser {
-                partial = partial.end()?;
-            }
-
-            // End Option<T> if needed
-            if is_option {
-                partial = partial.end()?; // end Some
+                // End Option<T> if needed
+                if is_option {
+                    partial = partial.end()?; // end Some
+                }
             }
 
             partial = partial.end()?; // end field
