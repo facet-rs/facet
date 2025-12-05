@@ -153,8 +153,25 @@ impl<W: Write> XmlSerializer<W> {
 
     /// Get the effective namespace for a field, considering field-level xml::ns
     /// and container-level xml::ns_all.
-    fn get_field_namespace(field: &Field, ns_all: Option<&'static str>) -> Option<&'static str> {
-        field.xml_ns().or(ns_all)
+    ///
+    /// For attributes: `ns_all` is NOT applied because unprefixed attributes in XML
+    /// are always in "no namespace", regardless of any default xmlns declaration.
+    /// Only explicit `xml::ns` on the attribute field is used.
+    ///
+    /// For elements: Both `xml::ns` and `ns_all` are considered.
+    fn get_field_namespace(
+        field: &Field,
+        ns_all: Option<&'static str>,
+        is_attribute: bool,
+    ) -> Option<&'static str> {
+        if is_attribute {
+            // Attributes only use explicit xml::ns, not ns_all
+            // Per XML spec: unprefixed attributes are in "no namespace"
+            field.xml_ns()
+        } else {
+            // Elements use xml::ns or fall back to ns_all
+            field.xml_ns().or(ns_all)
+        }
     }
 
     fn serialize_element<'mem, 'facet>(
@@ -539,7 +556,8 @@ impl<W: Write> XmlSerializer<W> {
                     value_to_string(field_peek)
                 };
                 if let Some(value) = value {
-                    let namespace = Self::get_field_namespace(field, ns_all);
+                    // Pass is_attribute=true so ns_all is NOT applied
+                    let namespace = Self::get_field_namespace(field, ns_all, true);
                     attributes.push(AttrInfo {
                         name: field_item.name,
                         value,
@@ -582,7 +600,14 @@ impl<W: Write> XmlSerializer<W> {
         write!(self.writer, "<{}", escape_element_name(element_name))
             .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
-        // Write xmlns declarations for attributes
+        // If ns_all is set, emit default namespace declaration (xmlns="...")
+        // Child elements with the same namespace will be unprefixed.
+        if let Some(ns_uri) = ns_all {
+            write!(self.writer, " xmlns=\"{}\"", escape_attribute_value(ns_uri))
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+        }
+
+        // Write xmlns declarations for attributes (only for explicitly namespaced attributes)
         for (prefix, uri) in &xmlns_decls {
             write!(
                 self.writer,
@@ -623,18 +648,31 @@ impl<W: Write> XmlSerializer<W> {
         }
 
         // Write child elements (with namespace support)
+        // Pass ns_all as the default namespace so child elements with matching
+        // namespace use unprefixed form (they inherit the default xmlns).
         for (field_item, field_peek) in elements {
-            let field_ns = Self::get_field_namespace(&field_item.field, ns_all);
+            // Pass is_attribute=false for elements
+            let field_ns = Self::get_field_namespace(&field_item.field, ns_all, false);
 
             // Handle custom serialization for elements
             if field_item.field.proxy_convert_out_fn().is_some() {
                 if let Ok(owned) = field_peek.custom_serialization(field_item.field) {
-                    self.serialize_namespaced_element(field_item.name, owned.as_peek(), field_ns)?;
+                    self.serialize_namespaced_element(
+                        field_item.name,
+                        owned.as_peek(),
+                        field_ns,
+                        ns_all,
+                    )?;
                 } else {
-                    self.serialize_namespaced_element(field_item.name, field_peek, field_ns)?;
+                    self.serialize_namespaced_element(
+                        field_item.name,
+                        field_peek,
+                        field_ns,
+                        ns_all,
+                    )?;
                 }
             } else {
-                self.serialize_namespaced_element(field_item.name, field_peek, field_ns)?;
+                self.serialize_namespaced_element(field_item.name, field_peek, field_ns, ns_all)?;
             }
         }
 
@@ -651,12 +689,19 @@ impl<W: Write> XmlSerializer<W> {
     }
 
     /// Serialize an element with optional namespace.
-    /// If namespace is provided, uses a prefix and emits xmlns declaration if needed.
+    ///
+    /// - `namespace`: The namespace this element should be in
+    /// - `default_ns`: The currently active default namespace (from parent's xmlns="...")
+    ///
+    /// If the element's namespace matches the default namespace, we use an unprefixed
+    /// element name (the element inherits the default namespace).
+    /// Otherwise, we use a prefix and emit an xmlns:prefix declaration.
     fn serialize_namespaced_element<'mem, 'facet>(
         &mut self,
         element_name: &str,
         peek: Peek<'mem, 'facet>,
         namespace: Option<&str>,
+        default_ns: Option<&str>,
     ) -> Result<()> {
         // Handle Option<T> - skip if None
         if let Ok(opt_peek) = peek.into_option() {
@@ -664,7 +709,12 @@ impl<W: Write> XmlSerializer<W> {
                 return Ok(());
             }
             if let Some(inner) = opt_peek.value() {
-                return self.serialize_namespaced_element(element_name, inner, namespace);
+                return self.serialize_namespaced_element(
+                    element_name,
+                    inner,
+                    namespace,
+                    default_ns,
+                );
             }
             return Ok(());
         }
@@ -673,19 +723,29 @@ impl<W: Write> XmlSerializer<W> {
         if is_spanned_shape(peek.shape()) {
             if let Ok(struct_peek) = peek.into_struct() {
                 if let Ok(value_field) = struct_peek.field_by_name("value") {
-                    return self.serialize_namespaced_element(element_name, value_field, namespace);
+                    return self.serialize_namespaced_element(
+                        element_name,
+                        value_field,
+                        namespace,
+                        default_ns,
+                    );
                 }
             }
         }
 
-        // Determine prefixed name and xmlns declaration
-        // We always emit xmlns declarations on each element that uses a prefix,
-        // because XML namespace scope is limited to the element and its descendants.
-        let (prefixed_name, xmlns_decl) = if let Some(ns_uri) = namespace {
-            let prefix = self.get_or_create_prefix(ns_uri);
-            let prefixed = format!("{prefix}:{element_name}");
-            // Always emit xmlns declaration on this element
-            (prefixed, Some((prefix, ns_uri.to_string())))
+        // Determine element name and xmlns declaration
+        // If namespace matches the current default, use unprefixed form (inherit default).
+        // Otherwise, use a prefix and emit xmlns:prefix declaration.
+        let (final_name, xmlns_decl) = if let Some(ns_uri) = namespace {
+            if default_ns == Some(ns_uri) {
+                // Element is in the default namespace - use unprefixed form
+                (element_name.to_string(), None)
+            } else {
+                // Element is in a different namespace - use prefix
+                let prefix = self.get_or_create_prefix(ns_uri);
+                let prefixed = format!("{prefix}:{element_name}");
+                (prefixed, Some((prefix, ns_uri.to_string())))
+            }
         } else {
             (element_name.to_string(), None)
         };
@@ -694,24 +754,21 @@ impl<W: Write> XmlSerializer<W> {
         let shape = peek.shape();
         if let Ok(struct_peek) = peek.into_struct() {
             return self.serialize_struct_as_namespaced_element(
-                &prefixed_name,
+                &final_name,
                 struct_peek,
                 xmlns_decl,
                 shape,
+                default_ns,
             );
         }
 
         // Check if this is an enum
         if let Ok(enum_peek) = peek.into_enum() {
-            return self.serialize_enum_as_namespaced_element(
-                &prefixed_name,
-                enum_peek,
-                xmlns_decl,
-            );
+            return self.serialize_enum_as_namespaced_element(&final_name, enum_peek, xmlns_decl);
         }
 
         // For scalars/primitives, serialize as element with text content
-        write!(self.writer, "<{}", escape_element_name(&prefixed_name))
+        write!(self.writer, "<{}", escape_element_name(&final_name))
             .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
         // Add xmlns declaration if needed
@@ -727,29 +784,28 @@ impl<W: Write> XmlSerializer<W> {
 
         write!(self.writer, ">").map_err(|e| XmlErrorKind::Io(e.to_string()))?;
         self.serialize_value(peek)?;
-        write!(self.writer, "</{}>", escape_element_name(&prefixed_name))
+        write!(self.writer, "</{}>", escape_element_name(&final_name))
             .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
         Ok(())
     }
 
     /// Serialize a struct as an element with optional xmlns declaration on the opening tag.
+    ///
+    /// - `parent_default_ns`: The default namespace inherited from the parent element
     fn serialize_struct_as_namespaced_element<'mem, 'facet>(
         &mut self,
-        prefixed_element_name: &str,
+        element_name: &str,
         struct_peek: facet_reflect::PeekStruct<'mem, 'facet>,
         xmlns_decl: Option<(String, String)>,
         shape: &'static Shape,
+        parent_default_ns: Option<&str>,
     ) -> Result<()> {
         match struct_peek.ty().kind {
             StructKind::Unit => {
                 // Unit struct - just output empty element with xmlns if needed
-                write!(
-                    self.writer,
-                    "<{}",
-                    escape_element_name(prefixed_element_name)
-                )
-                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                write!(self.writer, "<{}", escape_element_name(element_name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
                 if let Some((prefix, uri)) = xmlns_decl {
                     write!(
                         self.writer,
@@ -766,12 +822,8 @@ impl<W: Write> XmlSerializer<W> {
                 // Tuple struct - serialize fields in order as child elements
                 let fields: Vec<_> = struct_peek.fields_for_serialize().collect();
                 if fields.is_empty() {
-                    write!(
-                        self.writer,
-                        "<{}",
-                        escape_element_name(prefixed_element_name)
-                    )
-                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                    write!(self.writer, "<{}", escape_element_name(element_name))
+                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
                     if let Some((prefix, uri)) = xmlns_decl {
                         write!(
                             self.writer,
@@ -785,12 +837,8 @@ impl<W: Write> XmlSerializer<W> {
                     return Ok(());
                 }
 
-                write!(
-                    self.writer,
-                    "<{}",
-                    escape_element_name(prefixed_element_name)
-                )
-                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                write!(self.writer, "<{}", escape_element_name(element_name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
                 if let Some((prefix, uri)) = xmlns_decl {
                     write!(
                         self.writer,
@@ -807,12 +855,8 @@ impl<W: Write> XmlSerializer<W> {
                     self.serialize_element(&field_name, field_peek)?;
                 }
 
-                write!(
-                    self.writer,
-                    "</{}>",
-                    escape_element_name(prefixed_element_name)
-                )
-                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                write!(self.writer, "</{}>", escape_element_name(element_name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
                 return Ok(());
             }
             StructKind::Struct => {
@@ -822,6 +866,12 @@ impl<W: Write> XmlSerializer<W> {
 
         // Get container-level namespace default for the nested struct
         let ns_all = shape.xml_ns_all();
+
+        // The actual default namespace in the XML is inherited from parent.
+        // We don't emit xmlns="..." on nested elements because that would
+        // change the element's own namespace. Child elements in a different
+        // namespace will use prefixed form.
+        let effective_default_ns: Option<&str> = parent_default_ns;
 
         // Collect attributes, elements, and text content
         struct AttrInfo<'a> {
@@ -848,7 +898,8 @@ impl<W: Write> XmlSerializer<W> {
                     value_to_string(field_peek)
                 };
                 if let Some(value) = value {
-                    let namespace = Self::get_field_namespace(field, ns_all);
+                    // Pass is_attribute=true so ns_all is NOT applied
+                    let namespace = Self::get_field_namespace(field, ns_all, true);
                     attributes.push(AttrInfo {
                         name: field_item.name,
                         value,
@@ -872,7 +923,7 @@ impl<W: Write> XmlSerializer<W> {
         let mut xmlns_decls: Vec<(String, String)> = Vec::new();
         let mut attr_prefixes: Vec<Option<String>> = Vec::new();
 
-        // Start with the element's own xmlns declaration if any
+        // Start with the element's own xmlns declaration if any (from prefixed form)
         if let Some((prefix, uri)) = xmlns_decl {
             xmlns_decls.push((prefix, uri));
         }
@@ -891,14 +942,15 @@ impl<W: Write> XmlSerializer<W> {
         }
 
         // Write opening tag
-        write!(
-            self.writer,
-            "<{}",
-            escape_element_name(prefixed_element_name)
-        )
-        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+        write!(self.writer, "<{}", escape_element_name(element_name))
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
-        // Write all xmlns declarations
+        // NOTE: We intentionally do NOT emit xmlns="..." on nested struct elements here.
+        // The element itself is in the parent's namespace (determined by the context
+        // where it's used). Only the struct's CHILD elements are affected by ns_all.
+        // Child elements in a different namespace will use prefixed form.
+
+        // Write prefixed xmlns declarations (for explicitly namespaced attributes)
         for (prefix, uri) in &xmlns_decls {
             write!(
                 self.writer,
@@ -937,16 +989,32 @@ impl<W: Write> XmlSerializer<W> {
         }
 
         for (field_item, field_peek) in elements {
-            let field_ns = Self::get_field_namespace(&field_item.field, ns_all);
+            // Pass is_attribute=false for elements
+            let field_ns = Self::get_field_namespace(&field_item.field, ns_all, false);
 
             if field_item.field.proxy_convert_out_fn().is_some() {
                 if let Ok(owned) = field_peek.custom_serialization(field_item.field) {
-                    self.serialize_namespaced_element(field_item.name, owned.as_peek(), field_ns)?;
+                    self.serialize_namespaced_element(
+                        field_item.name,
+                        owned.as_peek(),
+                        field_ns,
+                        effective_default_ns,
+                    )?;
                 } else {
-                    self.serialize_namespaced_element(field_item.name, field_peek, field_ns)?;
+                    self.serialize_namespaced_element(
+                        field_item.name,
+                        field_peek,
+                        field_ns,
+                        effective_default_ns,
+                    )?;
                 }
             } else {
-                self.serialize_namespaced_element(field_item.name, field_peek, field_ns)?;
+                self.serialize_namespaced_element(
+                    field_item.name,
+                    field_peek,
+                    field_ns,
+                    effective_default_ns,
+                )?;
             }
         }
 
@@ -954,12 +1022,8 @@ impl<W: Write> XmlSerializer<W> {
             self.serialize_elements_list(field_peek)?;
         }
 
-        write!(
-            self.writer,
-            "</{}>",
-            escape_element_name(prefixed_element_name)
-        )
-        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+        write!(self.writer, "</{}>", escape_element_name(element_name))
+            .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
 
         Ok(())
     }
