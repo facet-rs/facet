@@ -8,7 +8,10 @@
 
 set dotenv-load
 
-default: precommit prepush
+default: list
+
+list:
+    just --list
 
 precommit: gen
 
@@ -107,9 +110,9 @@ miri *args:
     #!/usr/bin/env -S bash -euo pipefail
     export RUSTUP_TOOLCHAIN=nightly-2025-06-29
     export MIRIFLAGS="-Zmiri-strict-provenance -Zmiri-env-forward=NEXTEST"
-    rustup toolchain install nightly-2025-06-29
-    rustup +nightly-2025-06-29 component add miri rust-src
-    cargo +nightly-2025-06-29 miri nextest run --target-dir target/miri -p facet-reflect -p facet-core -p facet-value --lib {{args}}
+    rustup toolchain install "${RUSTUP_TOOLCHAIN}"
+    rustup "+${RUSTUP_TOOLCHAIN}" component add miri rust-src
+    cargo "+${RUSTUP_TOOLCHAIN}" miri nextest run --target-dir target/miri -p facet-reflect -p facet-core -p facet-value --lib {{args}}
 
 miri-ci *args:
     #!/usr/bin/env -S bash -euxo pipefail
@@ -182,7 +185,7 @@ docker-build-push-linux-amd64:
     docker build \
         --push \
         --platform linux/amd64 \
-        --build-arg BASE_IMAGE=rust:1.88-slim-bookworm \
+        --build-arg BASE_IMAGE=rust:1.88-slim-trixie \
         --build-arg RUSTUP_TOOLCHAIN=1.88 \
         -t "${IMAGE_NAME}:${TAG}-amd64" \
         -t "${IMAGE_NAME}:latest-amd64" \
@@ -201,3 +204,4 @@ docker-build-push-linux-amd64:
         -t "${IMAGE_NAME}:latest-miri-amd64" \
         -f Dockerfile \
         .
+
