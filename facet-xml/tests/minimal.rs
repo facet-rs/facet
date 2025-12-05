@@ -161,3 +161,101 @@ fn test_opaque_proxy_option_attribute_nested_enum() {
     // This should be None - before the fix, it triggered UB
     assert!(path.d.is_none());
 }
+
+// ============================================================================
+// Pretty-printing tests
+// ============================================================================
+
+#[derive(Facet, Debug, PartialEq)]
+struct Person {
+    #[facet(xml::attribute)]
+    id: u32,
+    #[facet(xml::element)]
+    name: String,
+    #[facet(xml::element)]
+    age: u32,
+}
+
+#[test]
+fn test_to_string_compact() {
+    let person = Person {
+        id: 42,
+        name: "Alice".to_string(),
+        age: 30,
+    };
+    let xml_output = xml::to_string(&person).unwrap();
+    // Compact output: no newlines or indentation
+    assert_eq!(
+        xml_output,
+        r#"<Person id="42"><name>Alice</name><age>30</age></Person>"#
+    );
+}
+
+#[test]
+fn test_to_string_pretty() {
+    let person = Person {
+        id: 42,
+        name: "Alice".to_string(),
+        age: 30,
+    };
+    let xml_output = xml::to_string_pretty(&person).unwrap();
+    // Pretty output: newlines and default indentation (2 spaces)
+    let expected = r#"<Person id="42">
+  <name>Alice</name>
+  <age>30</age>
+</Person>"#;
+    assert_eq!(xml_output, expected);
+}
+
+#[test]
+fn test_to_string_with_options_custom_indent() {
+    let person = Person {
+        id: 42,
+        name: "Alice".to_string(),
+        age: 30,
+    };
+    let xml_output =
+        xml::to_string_with_options(&person, &xml::SerializeOptions::default().indent("\t"))
+            .unwrap();
+    // Pretty output with tabs
+    let expected = "<Person id=\"42\">\n\t<name>Alice</name>\n\t<age>30</age>\n</Person>";
+    assert_eq!(xml_output, expected);
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct Nested {
+    #[facet(xml::element)]
+    person: Person,
+}
+
+#[test]
+fn test_pretty_nested_elements() {
+    let nested = Nested {
+        person: Person {
+            id: 1,
+            name: "Bob".to_string(),
+            age: 25,
+        },
+    };
+    let xml_output = xml::to_string_pretty(&nested).unwrap();
+    let expected = r#"<Nested>
+  <person id="1">
+    <name>Bob</name>
+    <age>25</age>
+  </person>
+</Nested>"#;
+    assert_eq!(xml_output, expected);
+}
+
+#[test]
+fn test_pretty_roundtrip() {
+    let person = Person {
+        id: 42,
+        name: "Alice".to_string(),
+        age: 30,
+    };
+    // Pretty-print, then parse back
+    let xml_output = xml::to_string_pretty(&person).unwrap();
+    let parsed: Person = xml::from_str(&xml_output).unwrap();
+    assert_eq!(parsed, person);
+}
