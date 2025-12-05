@@ -20,7 +20,7 @@ bolero-inline-tests = ["alloc"]
 facet-core = { path = "../facet-core", version = "0.31.8", default-features = false }
 facet-pretty = { path = "../facet-pretty", version = "0.31.0", optional = true }
 facet-reflect = { path = "../facet-reflect", version = "0.31.8", default-features = false, optional = true }
-miette = { version = "7", optional = true, features = ["fancy"] }
+miette = { version = "7", optional = true, default-features = false }
 syntect = { version = "5.3", optional = true }
 once_cell = { version = "1", optional = true }
 indexmap = { version = "2", optional = true }
@@ -34,7 +34,7 @@ facet-reflect = { path = "../facet-reflect" }
 facet-showcase = { path = "../facet-showcase" }
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
-miette = { version = "7", features = ["fancy"] }
+miette = { version = "7", default-features = false }
 owo-colors = "4"
 bolero = "0.11"
 serde_json = "1"

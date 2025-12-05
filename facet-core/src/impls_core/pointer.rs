@@ -2,64 +2,65 @@ use core::fmt;
 use core::hash::Hash;
 
 use crate::{
-    Facet, MarkerTraits, PointerType, Shape, Type, TypeParam, ValuePointerType, ValueVTable,
+    CmpVTable, Def, Facet, FormatVTable, HashVTable, MarkerTraits, PointerType, Shape, Type,
+    TypeParam, ValuePointerType, ValueVTable,
 };
 
 // *const pointers
 unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *const T {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable(
-                ValueVTable::builder::<Self>()
-                    .marker_traits({
-                        let mut marker_traits = MarkerTraits::EQ
-                            .union(MarkerTraits::COPY)
-                            .union(MarkerTraits::UNPIN);
-
-                        if T::SHAPE
-                            .vtable
-                            .marker_traits()
-                            .contains(MarkerTraits::REF_UNWIND_SAFE)
-                        {
-                            marker_traits = marker_traits
-                                .union(MarkerTraits::UNWIND_SAFE)
-                                .union(MarkerTraits::REF_UNWIND_SAFE);
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: ValueVTable {
+                type_name: |f, opts| {
+                    if let Some(opts) = opts.for_children() {
+                        write!(f, "*const ")?;
+                        (T::SHAPE.vtable.type_name())(f, opts)
+                    } else {
+                        write!(f, "*const …")
+                    }
+                },
+                drop_in_place: ValueVTable::drop_in_place_for::<Self>(),
+                default_in_place: None,
+                clone_into: Some(|src, dst| unsafe { dst.put(*src.get::<Self>()) }),
+                parse: None,
+                invariants: None,
+                try_from: None,
+                try_into_inner: None,
+                try_borrow_inner: None,
+                format: FormatVTable {
+                    display: None,
+                    debug: Some(|p, f| fmt::Debug::fmt(unsafe { p.get::<Self>() }, f)),
+                },
+                cmp: CmpVTable {
+                    partial_eq: Some(|a, b| {
+                        #[allow(ambiguous_wide_pointer_comparisons)]
+                        unsafe {
+                            *a.get::<Self>() == *b.get::<Self>()
                         }
-
-                        marker_traits
-                    })
-                    .debug(Some(|p, f| fmt::Debug::fmt(p.get(), f)))
-                    .partial_eq(Some(|a, b| {
+                    }),
+                    partial_ord: Some(|a, b| {
                         #[allow(ambiguous_wide_pointer_comparisons)]
-                        (*a.get() == *b.get())
-                    }))
-                    .partial_ord(Some(|a, b| {
-                        #[allow(ambiguous_wide_pointer_comparisons)]
-                        (a.get().partial_cmp(b.get()))
-                    }))
-                    .ord(Some(|a, b| {
-                        #[allow(ambiguous_wide_pointer_comparisons)]
-                        (a.get().cmp(b.get()))
-                    }))
-                    .hash(Some(|value, hasher| value.get().hash(&mut { hasher })))
-                    .clone_into(Some(|src, dst| unsafe { dst.put(*src.get()).into() }))
-                    .type_name(|f, opts| {
-                        if let Some(opts) = opts.for_children() {
-                            write!(f, "*const ")?;
-                            (T::SHAPE.vtable.type_name())(f, opts)
-                        } else {
-                            write!(f, "*const …")
+                        unsafe {
+                            a.get::<Self>().partial_cmp(b.get::<Self>())
                         }
-                    })
-                    .build(),
-            )
-            .inner(T::SHAPE)
-            .type_identifier("*const _")
-            .type_params(&[TypeParam {
-                name: "T",
-                shape: T::SHAPE,
-            }])
-            .ty({
+                    }),
+                    ord: Some(|a, b| {
+                        #[allow(ambiguous_wide_pointer_comparisons)]
+                        unsafe {
+                            a.get::<Self>().cmp(b.get::<Self>())
+                        }
+                    }),
+                },
+                hash: HashVTable {
+                    hash: Some(|value, hasher| unsafe {
+                        value.get::<Self>().hash(&mut { hasher })
+                    }),
+                },
+                markers: MarkerTraits::EMPTY.with_eq().with_copy(),
+            },
+            ty: {
                 let is_wide = ::core::mem::size_of::<Self>() != ::core::mem::size_of::<*const ()>();
                 let vpt = ValuePointerType {
                     mutable: false,
@@ -68,66 +69,76 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *const T {
                 };
 
                 Type::Pointer(PointerType::Raw(vpt))
-            })
-            .build()
+            },
+            def: Def::Scalar,
+            type_identifier: "*const _",
+            type_params: &[TypeParam {
+                name: "T",
+                shape: T::SHAPE,
+            }],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: Some(T::SHAPE),
+        }
     };
 }
 
 // *mut pointers
 unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable(
-                ValueVTable::builder::<Self>()
-                    .marker_traits({
-                        let mut marker_traits = MarkerTraits::EQ
-                            .union(MarkerTraits::COPY)
-                            .union(MarkerTraits::UNPIN);
-
-                        if T::SHAPE
-                            .vtable
-                            .marker_traits()
-                            .contains(MarkerTraits::REF_UNWIND_SAFE)
-                        {
-                            marker_traits = marker_traits
-                                .union(MarkerTraits::UNWIND_SAFE)
-                                .union(MarkerTraits::REF_UNWIND_SAFE);
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: ValueVTable {
+                type_name: |f, opts| {
+                    if let Some(opts) = opts.for_children() {
+                        write!(f, "*mut ")?;
+                        (T::SHAPE.vtable.type_name())(f, opts)
+                    } else {
+                        write!(f, "*mut …")
+                    }
+                },
+                drop_in_place: ValueVTable::drop_in_place_for::<Self>(),
+                default_in_place: None,
+                clone_into: Some(|src, dst| unsafe { dst.put(*src.get::<Self>()) }),
+                parse: None,
+                invariants: None,
+                try_from: None,
+                try_into_inner: None,
+                try_borrow_inner: None,
+                format: FormatVTable {
+                    display: None,
+                    debug: Some(|p, f| fmt::Debug::fmt(unsafe { p.get::<Self>() }, f)),
+                },
+                cmp: CmpVTable {
+                    partial_eq: Some(|a, b| {
+                        #[allow(ambiguous_wide_pointer_comparisons)]
+                        unsafe {
+                            *a.get::<Self>() == *b.get::<Self>()
                         }
-
-                        marker_traits
-                    })
-                    .partial_eq(Some(|a, b| {
+                    }),
+                    partial_ord: Some(|a, b| {
                         #[allow(ambiguous_wide_pointer_comparisons)]
-                        (*a.get() == *b.get())
-                    }))
-                    .partial_ord(Some(|a, b| {
-                        #[allow(ambiguous_wide_pointer_comparisons)]
-                        (a.get().partial_cmp(b.get()))
-                    }))
-                    .ord(Some(|a, b| {
-                        #[allow(ambiguous_wide_pointer_comparisons)]
-                        (a.get().cmp(b.get()))
-                    }))
-                    .hash(Some(|value, hasher| value.get().hash(&mut { hasher })))
-                    .debug(Some(|p, f| fmt::Debug::fmt(p.get(), f)))
-                    .clone_into(Some(|src, dst| unsafe { dst.put(*src.get()).into() }))
-                    .type_name(|f, opts| {
-                        if let Some(opts) = opts.for_children() {
-                            write!(f, "*mut ")?;
-                            (T::SHAPE.vtable.type_name())(f, opts)
-                        } else {
-                            write!(f, "*mut …")
+                        unsafe {
+                            a.get::<Self>().partial_cmp(b.get::<Self>())
                         }
-                    })
-                    .build(),
-            )
-            .inner(T::SHAPE)
-            .type_identifier("*mut _")
-            .type_params(&[TypeParam {
-                name: "T",
-                shape: T::SHAPE,
-            }])
-            .ty({
+                    }),
+                    ord: Some(|a, b| {
+                        #[allow(ambiguous_wide_pointer_comparisons)]
+                        unsafe {
+                            a.get::<Self>().cmp(b.get::<Self>())
+                        }
+                    }),
+                },
+                hash: HashVTable {
+                    hash: Some(|value, hasher| unsafe {
+                        value.get::<Self>().hash(&mut { hasher })
+                    }),
+                },
+                markers: MarkerTraits::EMPTY.with_eq().with_copy(),
+            },
+            ty: {
                 let is_wide = ::core::mem::size_of::<Self>() != ::core::mem::size_of::<*const ()>();
                 let vpt = ValuePointerType {
                     mutable: true,
@@ -136,8 +147,18 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
                 };
 
                 Type::Pointer(PointerType::Raw(vpt))
-            })
-            .build()
+            },
+            def: Def::Scalar,
+            type_identifier: "*mut _",
+            type_params: &[TypeParam {
+                name: "T",
+                shape: T::SHAPE,
+            }],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: Some(T::SHAPE),
+        }
     };
 }
 

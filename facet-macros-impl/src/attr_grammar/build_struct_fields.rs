@@ -1275,6 +1275,7 @@ fn parse_i64_list(stream: &TokenStream2) -> std::result::Result<Vec<i64>, Spanne
     Ok(items)
 }
 
+#[cfg(feature = "helpful-derive")]
 fn find_closest<'a>(target: &str, candidates: &'a [String]) -> Option<&'a str> {
     candidates
         .iter()
@@ -1288,4 +1289,9 @@ fn find_closest<'a>(target: &str, candidates: &'a [String]) -> Option<&'a str> {
         })
         .min_by_key(|(_, d)| *d)
         .map(|(s, _)| s)
+}
+
+#[cfg(not(feature = "helpful-derive"))]
+fn find_closest<'a>(_target: &str, _candidates: &'a [String]) -> Option<&'a str> {
+    None
 }

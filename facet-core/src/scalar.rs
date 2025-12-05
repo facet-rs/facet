@@ -1,6 +1,7 @@
 //! Scalar type identification for shapes.
 
 use core::any::TypeId;
+#[cfg(feature = "net")]
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use crate::{ConstTypeId, Shape};
@@ -65,13 +66,16 @@ pub enum ScalarType {
     /// Primitive type `isize`.
     ISize,
     /// `core::net::SocketAddr`.
-    #[cfg(feature = "std")]
+    #[cfg(feature = "net")]
     SocketAddr,
     /// `core::net::IpAddr`.
+    #[cfg(feature = "net")]
     IpAddr,
     /// `core::net::Ipv4Addr`.
+    #[cfg(feature = "net")]
     Ipv4Addr,
     /// `core::net::Ipv6Addr`.
+    #[cfg(feature = "net")]
     Ipv6Addr,
     /// `facet_core::ConstTypeId`.
     ConstTypeId,
@@ -117,7 +121,7 @@ impl Shape {
             }
         }
 
-        #[cfg(feature = "std")]
+        #[cfg(feature = "net")]
         if type_id == TypeId::of::<core::net::SocketAddr>() {
             return Some(ScalarType::SocketAddr);
         }
@@ -128,50 +132,55 @@ impl Shape {
         }
 
         if type_id == TypeId::of::<()>() {
-            Some(ScalarType::Unit)
+            return Some(ScalarType::Unit);
         } else if type_id == TypeId::of::<bool>() {
-            Some(ScalarType::Bool)
+            return Some(ScalarType::Bool);
         } else if type_id == TypeId::of::<char>() {
-            Some(ScalarType::Char)
+            return Some(ScalarType::Char);
         } else if type_id == TypeId::of::<f32>() {
-            Some(ScalarType::F32)
+            return Some(ScalarType::F32);
         } else if type_id == TypeId::of::<f64>() {
-            Some(ScalarType::F64)
+            return Some(ScalarType::F64);
         } else if type_id == TypeId::of::<u8>() {
-            Some(ScalarType::U8)
+            return Some(ScalarType::U8);
         } else if type_id == TypeId::of::<u16>() {
-            Some(ScalarType::U16)
+            return Some(ScalarType::U16);
         } else if type_id == TypeId::of::<u32>() {
-            Some(ScalarType::U32)
+            return Some(ScalarType::U32);
         } else if type_id == TypeId::of::<u64>() {
-            Some(ScalarType::U64)
+            return Some(ScalarType::U64);
         } else if type_id == TypeId::of::<u128>() {
-            Some(ScalarType::U128)
+            return Some(ScalarType::U128);
         } else if type_id == TypeId::of::<usize>() {
-            Some(ScalarType::USize)
+            return Some(ScalarType::USize);
         } else if type_id == TypeId::of::<i8>() {
-            Some(ScalarType::I8)
+            return Some(ScalarType::I8);
         } else if type_id == TypeId::of::<i16>() {
-            Some(ScalarType::I16)
+            return Some(ScalarType::I16);
         } else if type_id == TypeId::of::<i32>() {
-            Some(ScalarType::I32)
+            return Some(ScalarType::I32);
         } else if type_id == TypeId::of::<i64>() {
-            Some(ScalarType::I64)
+            return Some(ScalarType::I64);
         } else if type_id == TypeId::of::<i128>() {
-            Some(ScalarType::I128)
+            return Some(ScalarType::I128);
         } else if type_id == TypeId::of::<isize>() {
-            Some(ScalarType::ISize)
-        } else if type_id == TypeId::of::<IpAddr>() {
-            Some(ScalarType::IpAddr)
-        } else if type_id == TypeId::of::<Ipv4Addr>() {
-            Some(ScalarType::Ipv4Addr)
-        } else if type_id == TypeId::of::<Ipv6Addr>() {
-            Some(ScalarType::Ipv6Addr)
+            return Some(ScalarType::ISize);
         } else if type_id == TypeId::of::<ConstTypeId>() {
-            Some(ScalarType::ConstTypeId)
-        } else {
-            None
+            return Some(ScalarType::ConstTypeId);
         }
+
+        #[cfg(feature = "net")]
+        {
+            if type_id == TypeId::of::<IpAddr>() {
+                return Some(ScalarType::IpAddr);
+            } else if type_id == TypeId::of::<Ipv4Addr>() {
+                return Some(ScalarType::Ipv4Addr);
+            } else if type_id == TypeId::of::<Ipv6Addr>() {
+                return Some(ScalarType::Ipv6Addr);
+            }
+        }
+
+        None
     }
 }
 
@@ -206,16 +215,12 @@ mod tests {
         assert_eq!(isize::SHAPE.scalar_type(), Some(ScalarType::ISize));
     }
 
+    #[cfg(feature = "net")]
     #[test]
     fn test_scalar_type_network() {
         assert_eq!(IpAddr::SHAPE.scalar_type(), Some(ScalarType::IpAddr));
         assert_eq!(Ipv4Addr::SHAPE.scalar_type(), Some(ScalarType::Ipv4Addr));
         assert_eq!(Ipv6Addr::SHAPE.scalar_type(), Some(ScalarType::Ipv6Addr));
-    }
-
-    #[cfg(feature = "std")]
-    #[test]
-    fn test_scalar_type_std() {
         assert_eq!(
             core::net::SocketAddr::SHAPE.scalar_type(),
             Some(ScalarType::SocketAddr)

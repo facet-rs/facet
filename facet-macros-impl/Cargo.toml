@@ -16,14 +16,19 @@ keywords = [
 categories = ["development-tools", "encoding"]
 
 [features]
+default = ["helpful-derive"]
 slow-tests = [] # Enable slow tests (compile tests)
 function = []
+# Include doc comments in generated Shape/Field/Variant definitions
+doc = []
+# Enable typo suggestions for unknown attributes/fields (uses strsim)
+helpful-derive = ["dep:strsim"]
 
 [dependencies]
 unsynn = "0.3.0"
 proc-macro2 = "1.0.95"
 quote = "1.0.40"
-strsim = "0.11"
+strsim = { version = "0.11", optional = true }
 
 [dev-dependencies]
 insta = { version = "1.43.1" }

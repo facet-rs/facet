@@ -815,7 +815,7 @@ fn serialize_map_key<W: crate::JsonWrite>(
         }
         _ => {
             // Fallback: use Display if available
-            if peek.shape().vtable.display.is_some() {
+            if peek.shape().vtable.format.display.is_some() {
                 crate::write_json_string(writer, &alloc::format!("{peek}"));
             } else {
                 panic!("Unsupported map key type: {}", peek.shape())
@@ -914,7 +914,7 @@ fn serialize_scalar<W: crate::JsonWrite>(
         }
         None => {
             // Try Display formatting if available
-            if peek.shape().vtable.display.is_some() {
+            if peek.shape().vtable.format.display.is_some() {
                 crate::write_json_string(writer, &alloc::format!("{peek}"));
             } else {
                 panic!("Unsupported shape (no display): {}", peek.shape())

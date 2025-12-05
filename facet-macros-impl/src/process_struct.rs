@@ -1,6 +1,556 @@
+//! Struct processing and vtable generation for the Facet derive macro.
+//!
+//! # Vtable Trait Detection
+//!
+//! The vtable contains function pointers for various trait implementations (Debug, Clone,
+//! PartialEq, etc.). There are three ways these can be populated:
+//!
+//! ## 1. Derive Detection (Fastest - No Specialization)
+//!
+//! When `#[derive(Debug, Clone, Facet)]` is used, the macro can see the other derives
+//! and knows those traits are implemented. It generates direct function pointers without
+//! any specialization overhead.
+//!
+//! ```ignore
+//! #[derive(Debug, Clone, Facet)]  // Debug and Clone detected from derives
+//! struct Foo { ... }
+//! ```
+//!
+//! ## 2. Explicit Declaration (No Specialization)
+//!
+//! For traits that are implemented manually (not via derive), use `#[facet(traits(...))]`:
+//!
+//! ```ignore
+//! #[derive(Facet)]
+//! #[facet(traits(Debug, PartialEq))]  // Explicit declaration
+//! struct Foo { ... }
+//!
+//! impl Debug for Foo { ... }  // Manual implementation
+//! impl PartialEq for Foo { ... }
+//! ```
+//!
+//! This generates compile-time assertions to verify the traits are actually implemented.
+//!
+//! ## 3. Auto-Detection (Uses Specialization)
+//!
+//! For backward compatibility or when you don't want to list traits manually, use
+//! `#[facet(auto_traits)]`. This uses the `impls!` macro to detect traits at compile
+//! time via specialization tricks:
+//!
+//! ```ignore
+//! #[derive(Debug, Facet)]
+//! #[facet(auto_traits)]  // Auto-detect all other traits
+//! struct Foo { ... }
+//! ```
+//!
+//! **Note:** Auto-detection is slower to compile because it generates specialization
+//! code for each trait. Use derive detection or explicit declaration when possible.
+//!
+//! ## Layered Resolution
+//!
+//! For each vtable entry, the macro checks sources in order:
+//! 1. Is the trait in `#[derive(...)]`? → Use direct impl
+//! 2. Is the trait in `#[facet(traits(...))]`? → Use direct impl
+//! 3. Is `#[facet(auto_traits)]` present? → Use `impls!` detection
+//! 4. Otherwise → Set to `None`
+//!
+//! Note: `#[facet(traits(...))]` and `#[facet(auto_traits)]` are mutually exclusive.
+//! You can combine derives with either one:
+//! ```ignore
+//! #[derive(Debug, Clone, Facet)]  // Debug, Clone detected from derives
+//! #[facet(traits(Display))]       // Display declared explicitly (manual impl)
+//! struct Foo { ... }
+//! ```
+
 use quote::{format_ident, quote, quote_spanned};
 
 use super::*;
+use crate::parsed::{DeclaredTraits, KnownDerives, PAttrs};
+
+/// Sources of trait information for vtable generation.
+///
+/// The vtable generation uses a layered approach:
+/// 1. **Derives** - traits detected from `#[derive(...)]` next to `#[derive(Facet)]`
+/// 2. **Declared** - traits explicitly listed in `#[facet(traits(...))]`
+/// 3. **Implied** - traits implied by other attributes (e.g., `#[facet(default)]` implies Default)
+/// 4. **Auto** - if `#[facet(auto_traits)]` is present, use `impls!` for remaining traits
+/// 5. **None** - if none of the above apply, emit `None` for that trait
+pub(crate) struct TraitSources<'a> {
+    /// Traits detected from #[derive(...)] attributes
+    pub known_derives: &'a KnownDerives,
+    /// Traits explicitly declared via #[facet(traits(...))]
+    pub declared_traits: Option<&'a DeclaredTraits>,
+    /// Whether to auto-detect remaining traits via specialization
+    pub auto_traits: bool,
+    /// Whether `#[facet(default)]` is present (implies Default trait)
+    pub facet_default: bool,
+}
+
+impl<'a> TraitSources<'a> {
+    /// Create trait sources from parsed attributes
+    pub fn from_attrs(attrs: &'a PAttrs) -> Self {
+        Self {
+            known_derives: &attrs.known_derives,
+            declared_traits: attrs.declared_traits.as_ref(),
+            auto_traits: attrs.auto_traits,
+            facet_default: attrs.has_builtin("default"),
+        }
+    }
+
+    /// Check if a trait is known from derives
+    fn has_derive(&self, check: impl FnOnce(&KnownDerives) -> bool) -> bool {
+        check(self.known_derives)
+    }
+
+    /// Check if a trait is explicitly declared
+    fn has_declared(&self, check: impl FnOnce(&DeclaredTraits) -> bool) -> bool {
+        self.declared_traits.is_some_and(check)
+    }
+
+    /// Check if we should use auto-detection for this trait
+    fn should_auto(&self) -> bool {
+        self.auto_traits
+    }
+}
+
+/// Generates the vtable for a type based on trait sources.
+///
+/// Uses a layered approach for each trait:
+/// 1. If known from derives → direct impl (no specialization)
+/// 2. If explicitly declared → direct impl (no specialization)
+/// 3. If auto_traits enabled → use `impls!` macro for detection
+/// 4. Otherwise → None
+pub(crate) fn gen_vtable(
+    facet_crate: &TokenStream,
+    type_name_fn: &TokenStream,
+    sources: &TraitSources<'_>,
+) -> TokenStream {
+    // Helper to generate a direct implementation (no specialization)
+    let direct_display = quote! {
+        Some(|data, f| {
+            let data = unsafe { data.get::<Self>() };
+            core::fmt::Display::fmt(data, f)
+        })
+    };
+    let direct_debug = quote! {
+        Some(|data, f| {
+            let data = unsafe { data.get::<Self>() };
+            core::fmt::Debug::fmt(data, f)
+        })
+    };
+    let direct_default = quote! {
+        Some(|target| unsafe {
+            target.put(<Self as core::default::Default>::default())
+        })
+    };
+    let direct_clone = quote! {
+        Some(|src, dst| unsafe {
+            let src = src.get::<Self>();
+            dst.put(<Self as core::clone::Clone>::clone(src))
+        })
+    };
+    let direct_partial_eq = quote! {
+        Some(|left, right| {
+            let left = unsafe { left.get::<Self>() };
+            let right = unsafe { right.get::<Self>() };
+            <Self as core::cmp::PartialEq>::eq(left, right)
+        })
+    };
+    let direct_partial_ord = quote! {
+        Some(|left, right| {
+            let left = unsafe { left.get::<Self>() };
+            let right = unsafe { right.get::<Self>() };
+            <Self as core::cmp::PartialOrd>::partial_cmp(left, right)
+        })
+    };
+    let direct_ord = quote! {
+        Some(|left, right| {
+            let left = unsafe { left.get::<Self>() };
+            let right = unsafe { right.get::<Self>() };
+            <Self as core::cmp::Ord>::cmp(left, right)
+        })
+    };
+    let direct_hash = quote! {
+        Some(|value, hasher| {
+            let value = unsafe { value.get::<Self>() };
+            <Self as core::hash::Hash>::hash(value, hasher)
+        })
+    };
+
+    // Auto-detection versions using spez
+    let auto_display = quote! {
+        if #facet_crate::spez::impls!(Self: core::fmt::Display) {
+            Some(|data, f| {
+                let data = unsafe { data.get::<Self>() };
+                use #facet_crate::spez::*;
+                (&&Spez(data)).spez_display(f)
+            })
+        } else {
+            None
+        }
+    };
+    let auto_debug = quote! {
+        if #facet_crate::spez::impls!(Self: core::fmt::Debug) {
+            Some(|data, f| {
+                let data = unsafe { data.get::<Self>() };
+                use #facet_crate::spez::*;
+                (&&Spez(data)).spez_debug(f)
+            })
+        } else {
+            None
+        }
+    };
+    let auto_default = quote! {
+        if #facet_crate::spez::impls!(Self: core::default::Default) {
+            Some(|target| unsafe {
+                use #facet_crate::spez::*;
+                (&&SpezEmpty::<Self>::SPEZ).spez_default_in_place(target)
+            })
+        } else {
+            None
+        }
+    };
+    let auto_clone = quote! {
+        if #facet_crate::spez::impls!(Self: core::clone::Clone) {
+            Some(|src, dst| unsafe {
+                use #facet_crate::spez::*;
+                let src = src.get::<Self>();
+                (&&Spez(src)).spez_clone_into(dst)
+            })
+        } else {
+            None
+        }
+    };
+    let auto_partial_eq = quote! {
+        if #facet_crate::spez::impls!(Self: core::cmp::PartialEq) {
+            Some(|left, right| {
+                let left = unsafe { left.get::<Self>() };
+                let right = unsafe { right.get::<Self>() };
+                use #facet_crate::spez::*;
+                (&&Spez(left)).spez_partial_eq(&&Spez(right))
+            })
+        } else {
+            None
+        }
+    };
+    let auto_partial_ord = quote! {
+        if #facet_crate::spez::impls!(Self: core::cmp::PartialOrd) {
+            Some(|left, right| {
+                let left = unsafe { left.get::<Self>() };
+                let right = unsafe { right.get::<Self>() };
+                use #facet_crate::spez::*;
+                (&&Spez(left)).spez_partial_cmp(&&Spez(right))
+            })
+        } else {
+            None
+        }
+    };
+    let auto_ord = quote! {
+        if #facet_crate::spez::impls!(Self: core::cmp::Ord) {
+            Some(|left, right| {
+                let left = unsafe { left.get::<Self>() };
+                let right = unsafe { right.get::<Self>() };
+                use #facet_crate::spez::*;
+                (&&Spez(left)).spez_cmp(&&Spez(right))
+            })
+        } else {
+            None
+        }
+    };
+    let auto_hash = quote! {
+        if #facet_crate::spez::impls!(Self: core::hash::Hash) {
+            Some(|value, hasher| {
+                let value = unsafe { value.get::<Self>() };
+                use #facet_crate::spez::*;
+                (&&Spez(value)).spez_hash(&mut { hasher })
+            })
+        } else {
+            None
+        }
+    };
+    let auto_parse = quote! {
+        if #facet_crate::spez::impls!(Self: core::str::FromStr) {
+            Some(|s, target| {
+                use #facet_crate::spez::*;
+                unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target) }
+            })
+        } else {
+            None
+        }
+    };
+
+    // For each trait: derive > declared > auto > none
+    // Only emit the builder call if we have a value (not None)
+
+    // Display: no derive exists, so check declared then auto
+    let display_call = if sources.has_declared(|d| d.display) {
+        quote! { .display_opt(#direct_display) }
+    } else if sources.should_auto() {
+        quote! { .display_opt(#auto_display) }
+    } else {
+        quote! {}
+    };
+
+    // Debug: check derive, then declared, then auto
+    let debug_call = if sources.has_derive(|d| d.debug) || sources.has_declared(|d| d.debug) {
+        quote! { .debug_opt(#direct_debug) }
+    } else if sources.should_auto() {
+        quote! { .debug_opt(#auto_debug) }
+    } else {
+        quote! {}
+    };
+
+    // Default: check derive, then declared, then facet(default), then auto
+    // Note: #[facet(default)] implies the type implements Default
+    let default_call = if sources.has_derive(|d| d.default)
+        || sources.has_declared(|d| d.default)
+        || sources.facet_default
+    {
+        quote! { .default_in_place_opt(#direct_default) }
+    } else if sources.should_auto() {
+        quote! { .default_in_place_opt(#auto_default) }
+    } else {
+        quote! {}
+    };
+
+    // Clone: check derive (including Copy which implies Clone), then declared, then auto
+    let clone_call = if sources.has_derive(|d| d.clone || d.copy)
+        || sources.has_declared(|d| d.clone || d.copy)
+    {
+        quote! { .clone_into_opt(#direct_clone) }
+    } else if sources.should_auto() {
+        quote! { .clone_into_opt(#auto_clone) }
+    } else {
+        quote! {}
+    };
+
+    // PartialEq: check derive, then declared, then auto
+    let partial_eq_call =
+        if sources.has_derive(|d| d.partial_eq) || sources.has_declared(|d| d.partial_eq) {
+            quote! { .partial_eq_opt(#direct_partial_eq) }
+        } else if sources.should_auto() {
+            quote! { .partial_eq_opt(#auto_partial_eq) }
+        } else {
+            quote! {}
+        };
+
+    // PartialOrd: check derive, then declared, then auto
+    let partial_ord_call =
+        if sources.has_derive(|d| d.partial_ord) || sources.has_declared(|d| d.partial_ord) {
+            quote! { .partial_ord_opt(#direct_partial_ord) }
+        } else if sources.should_auto() {
+            quote! { .partial_ord_opt(#auto_partial_ord) }
+        } else {
+            quote! {}
+        };
+
+    // Ord: check derive, then declared, then auto
+    let ord_call = if sources.has_derive(|d| d.ord) || sources.has_declared(|d| d.ord) {
+        quote! { .ord_opt(#direct_ord) }
+    } else if sources.should_auto() {
+        quote! { .ord_opt(#auto_ord) }
+    } else {
+        quote! {}
+    };
+
+    // Hash: check derive, then declared, then auto
+    let hash_call = if sources.has_derive(|d| d.hash) || sources.has_declared(|d| d.hash) {
+        quote! { .hash_opt(#direct_hash) }
+    } else if sources.should_auto() {
+        quote! { .hash_opt(#auto_hash) }
+    } else {
+        quote! {}
+    };
+
+    // Parse (FromStr): no derive exists, only auto-detect if enabled
+    let parse_call = if sources.should_auto() {
+        quote! { .parse_opt(#auto_parse) }
+    } else {
+        quote! {}
+    };
+
+    // Marker traits - these set bitflags in MarkerTraits
+    // Copy: derive (Copy implies Clone), declared, or auto
+    let has_copy =
+        sources.has_derive(|d| d.copy) || sources.has_declared(|d| d.copy) || sources.auto_traits;
+    // Send: declared or auto (no standard derive for Send)
+    let has_send = sources.has_declared(|d| d.send) || sources.auto_traits;
+    // Sync: declared or auto (no standard derive for Sync)
+    let has_sync = sources.has_declared(|d| d.sync) || sources.auto_traits;
+    // Eq: derive (PartialEq + Eq), declared, or auto
+    let has_eq =
+        sources.has_derive(|d| d.eq) || sources.has_declared(|d| d.eq) || sources.auto_traits;
+    // Unpin: declared or auto (no standard derive for Unpin)
+    let has_unpin = sources.has_declared(|d| d.unpin) || sources.auto_traits;
+
+    // Build markers expression
+    let markers_entry = if has_copy || has_send || has_sync || has_eq || has_unpin {
+        // At least one marker trait might be set
+        let copy_check = if has_copy
+            && sources.auto_traits
+            && !sources.has_derive(|d| d.copy)
+            && !sources.has_declared(|d| d.copy)
+        {
+            // Auto-detect Copy
+            quote! {
+                if #facet_crate::spez::impls!(Self: core::marker::Copy) {
+                    markers = markers.with_copy();
+                }
+            }
+        } else if sources.has_derive(|d| d.copy) || sources.has_declared(|d| d.copy) {
+            // Directly known to be Copy
+            quote! { markers = markers.with_copy(); }
+        } else {
+            quote! {}
+        };
+
+        let send_check = if has_send && sources.auto_traits && !sources.has_declared(|d| d.send) {
+            quote! {
+                if #facet_crate::spez::impls!(Self: core::marker::Send) {
+                    markers = markers.with_send();
+                }
+            }
+        } else if sources.has_declared(|d| d.send) {
+            quote! { markers = markers.with_send(); }
+        } else {
+            quote! {}
+        };
+
+        let sync_check = if has_sync && sources.auto_traits && !sources.has_declared(|d| d.sync) {
+            quote! {
+                if #facet_crate::spez::impls!(Self: core::marker::Sync) {
+                    markers = markers.with_sync();
+                }
+            }
+        } else if sources.has_declared(|d| d.sync) {
+            quote! { markers = markers.with_sync(); }
+        } else {
+            quote! {}
+        };
+
+        let eq_check = if has_eq
+            && sources.auto_traits
+            && !sources.has_derive(|d| d.eq)
+            && !sources.has_declared(|d| d.eq)
+        {
+            quote! {
+                if #facet_crate::spez::impls!(Self: core::cmp::Eq) {
+                    markers = markers.with_eq();
+                }
+            }
+        } else if sources.has_derive(|d| d.eq) || sources.has_declared(|d| d.eq) {
+            quote! { markers = markers.with_eq(); }
+        } else {
+            quote! {}
+        };
+
+        let unpin_check = if has_unpin && sources.auto_traits && !sources.has_declared(|d| d.unpin)
+        {
+            quote! {
+                if #facet_crate::spez::impls!(Self: core::marker::Unpin) {
+                    markers = markers.with_unpin();
+                }
+            }
+        } else if sources.has_declared(|d| d.unpin) {
+            quote! { markers = markers.with_unpin(); }
+        } else {
+            quote! {}
+        };
+
+        quote! {{
+            let mut markers = #facet_crate::MarkerTraits::EMPTY;
+            #copy_check
+            #send_check
+            #sync_check
+            #eq_check
+            #unpin_check
+            markers
+        }}
+    } else {
+        quote! { #facet_crate::MarkerTraits::EMPTY }
+    };
+
+    quote! {
+        #facet_crate::ValueVTable::builder(#type_name_fn)
+            .drop_in_place(#facet_crate::ValueVTable::drop_in_place_for::<Self>())
+            #display_call
+            #debug_call
+            #default_call
+            #clone_call
+            #partial_eq_call
+            #partial_ord_call
+            #ord_call
+            #hash_call
+            #parse_call
+            .markers(#markers_entry)
+            .build()
+    }
+}
+
+/// Generate trait bounds for static assertions.
+/// Returns a TokenStream of bounds like `core::fmt::Debug + core::clone::Clone`
+/// that can be used in a where clause.
+///
+/// `facet_default` is true when `#[facet(default)]` is present, which implies Default.
+pub(crate) fn gen_trait_bounds(
+    declared: Option<&DeclaredTraits>,
+    facet_default: bool,
+) -> Option<TokenStream> {
+    let mut bounds = Vec::new();
+
+    if let Some(declared) = declared {
+        if declared.display {
+            bounds.push(quote! { core::fmt::Display });
+        }
+        if declared.debug {
+            bounds.push(quote! { core::fmt::Debug });
+        }
+        if declared.clone {
+            bounds.push(quote! { core::clone::Clone });
+        }
+        if declared.copy {
+            bounds.push(quote! { core::marker::Copy });
+        }
+        if declared.partial_eq {
+            bounds.push(quote! { core::cmp::PartialEq });
+        }
+        if declared.eq {
+            bounds.push(quote! { core::cmp::Eq });
+        }
+        if declared.partial_ord {
+            bounds.push(quote! { core::cmp::PartialOrd });
+        }
+        if declared.ord {
+            bounds.push(quote! { core::cmp::Ord });
+        }
+        if declared.hash {
+            bounds.push(quote! { core::hash::Hash });
+        }
+        if declared.default {
+            bounds.push(quote! { core::default::Default });
+        }
+        if declared.send {
+            bounds.push(quote! { core::marker::Send });
+        }
+        if declared.sync {
+            bounds.push(quote! { core::marker::Sync });
+        }
+        if declared.unpin {
+            bounds.push(quote! { core::marker::Unpin });
+        }
+    }
+
+    // #[facet(default)] implies Default trait
+    if facet_default && !declared.is_some_and(|d| d.default) {
+        bounds.push(quote! { core::default::Default });
+    }
+
+    if bounds.is_empty() {
+        None
+    } else {
+        Some(quote! { #(#bounds)+* })
+    }
+}
 
 /// Generates the `::facet::Field` definition `TokenStream` from a `PStructField`.
 pub(crate) fn gen_field_from_pfield(
@@ -16,19 +566,26 @@ pub(crate) fn gen_field_from_pfield(
 
     let bgp_without_bounds = bgp.display_without_bounds();
 
+    #[cfg(feature = "doc")]
     let doc_lines: Vec<String> = field
         .attrs
         .doc
         .iter()
         .map(|doc| doc.as_str().replace("\\\"", "\""))
         .collect();
+    #[cfg(not(feature = "doc"))]
+    let doc_lines: Vec<String> = Vec::new();
 
-    // Check for opaque attribute to determine shape_of variant
-    // (Required at compile time - shape_of requires Facet, shape_of_opaque wraps in Opaque)
-    let shape_of = if field.attrs.has_builtin("opaque") {
-        quote! { shape_of_opaque }
+    // Check if this field is marked as a recursive type
+    let is_recursive = field.attrs.has_builtin("recursive_type");
+
+    // Generate the shape expression directly using the field type
+    // For opaque fields, wrap in Opaque<T>
+    // NOTE: Uses short alias from `use #facet_crate::𝟋::*` in the enclosing const block
+    let shape_expr = if field.attrs.has_builtin("opaque") {
+        quote! { <#facet_crate::Opaque<#field_type> as 𝟋Fct>::SHAPE }
     } else {
-        quote! { shape_of }
+        quote! { <#field_type as 𝟋Fct>::SHAPE }
     };
 
     // All attributes go through grammar dispatch
@@ -101,15 +658,15 @@ pub(crate) fn gen_field_from_pfield(
     }
 
     let maybe_attributes = if attribute_list.is_empty() {
-        quote! {}
+        quote! { &[] }
     } else {
-        quote! { .attributes(&const { [#(#attribute_list),*] }) }
+        quote! { &const {[#(#attribute_list),*]} }
     };
 
     let maybe_field_doc = if doc_lines.is_empty() {
-        quote! {}
+        quote! { &[] }
     } else {
-        quote! { .doc(&[#(#doc_lines),*]) }
+        quote! { &[#(#doc_lines),*] }
     };
 
     // Calculate the final offset, incorporating the base_offset if present
@@ -122,18 +679,42 @@ pub(crate) fn gen_field_from_pfield(
         }
     };
 
-    quote! {
-        {
-            #facet_crate::Field::builder()
-                // Use the effective name (after rename rules) for metadata
-                .name(#field_name_effective)
-                // Use the raw field name/index TokenStream for shape_of and offset_of
-                .shape(|| #facet_crate::#shape_of(&|s: &#struct_name #bgp_without_bounds| &s.#field_name_raw))
-                .offset(#final_offset)
-                #maybe_attributes
-                #maybe_field_doc
-                .build()
+    // Use FieldBuilder for more compact generated code
+    // NOTE: Uses short alias from `use #facet_crate::𝟋::*` in the enclosing const block
+    //
+    // For most fields, use `new` with a direct shape reference (more efficient).
+    // For recursive type fields (marked with #[facet(recursive_type)]), use `new_lazy`
+    // with a closure to break cycles.
+    let builder = if is_recursive {
+        quote! {
+            𝟋FldB::new_lazy(
+                #field_name_effective,
+                || #shape_expr,
+                #final_offset,
+            )
         }
+    } else {
+        quote! {
+            𝟋FldB::new(
+                #field_name_effective,
+                #shape_expr,
+                #final_offset,
+            )
+        }
+    };
+
+    // Only chain .attributes() and .doc() if they have values
+    let has_attrs = !attribute_list.is_empty();
+    let has_doc = !doc_lines.is_empty();
+
+    if has_attrs && has_doc {
+        quote! { #builder.attributes(#maybe_attributes).doc(#maybe_field_doc).build() }
+    } else if has_attrs {
+        quote! { #builder.attributes(#maybe_attributes).build() }
+    } else if has_doc {
+        quote! { #builder.doc(#maybe_field_doc).build() }
+    } else {
+        quote! { #builder.build() }
     }
 }
 
@@ -171,11 +752,17 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let type_name_fn =
         generate_type_name_fn(struct_name, parsed.generics.as_ref(), opaque, &facet_crate);
 
+    // Determine trait sources and generate vtable accordingly
+    let trait_sources = TraitSources::from_attrs(&ps.container.attrs);
+    let vtable_code = gen_vtable(&facet_crate, &type_name_fn, &trait_sources);
+    let vtable_init = quote! { const { #vtable_code } };
+
     // TODO: I assume the `PrimitiveRepr` is only relevant for enums, and does not need to be preserved?
+    // NOTE: Uses short aliases from `use #facet_crate::𝟋::*` in the const block
     let repr = match &ps.container.attrs.repr {
-        PRepr::Transparent => quote! { #facet_crate::Repr::transparent() },
-        PRepr::Rust(_) => quote! { #facet_crate::Repr::default() },
-        PRepr::C(_) => quote! { #facet_crate::Repr::c() },
+        PRepr::Transparent => quote! { 𝟋Repr::TRANSPARENT },
+        PRepr::Rust(_) => quote! { 𝟋Repr::RUST },
+        PRepr::C(_) => quote! { 𝟋Repr::C },
         PRepr::RustcWillCatch => {
             // rustc will emit an error for the invalid repr.
             // Return empty TokenStream so we don't add misleading errors.
@@ -186,7 +773,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     // Use PStruct for kind and fields
     let (kind, fields_vec) = match &ps.kind {
         PStructKind::Struct { fields } => {
-            let kind = quote!(#facet_crate::StructKind::Struct);
+            let kind = quote!(𝟋Sk::Struct);
             let fields_vec = fields
                 .iter()
                 .map(|field| {
@@ -196,7 +783,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             (kind, fields_vec)
         }
         PStructKind::TupleStruct { fields } => {
-            let kind = quote!(#facet_crate::StructKind::TupleStruct);
+            let kind = quote!(𝟋Sk::TupleStruct);
             let fields_vec = fields
                 .iter()
                 .map(|field| {
@@ -206,7 +793,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             (kind, fields_vec)
         }
         PStructKind::UnitStruct => {
-            let kind = quote!(#facet_crate::StructKind::Unit);
+            let kind = quote!(𝟋Sk::Unit);
             (kind, vec![])
         }
     };
@@ -223,7 +810,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         opaque,
         &facet_crate,
     );
-    let type_params = build_type_params(parsed.generics.as_ref(), opaque, &facet_crate);
+    let type_params_call = build_type_params_call(parsed.generics.as_ref(), opaque, &facet_crate);
 
     // Static decl using PStruct BGP
     let static_decl = if ps.container.bgp.params.is_empty() {
@@ -232,27 +819,42 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         TokenStream::new()
     };
 
-    // Doc comments from PStruct
-    let maybe_container_doc = if ps.container.attrs.doc.is_empty() {
+    // Doc comments from PStruct - returns value for struct literal
+    // doc call - only emit if there are doc comments and doc feature is enabled
+    #[cfg(feature = "doc")]
+    let doc_call = if ps.container.attrs.doc.is_empty() {
         quote! {}
     } else {
         let doc_lines = ps.container.attrs.doc.iter().map(|s| quote!(#s));
         quote! { .doc(&[#(#doc_lines),*]) }
     };
+    #[cfg(not(feature = "doc"))]
+    let doc_call = quote! {};
 
     // Container attributes - most go through grammar dispatch
     // Filter out `invariants` and `crate` since they're handled specially
-    let container_attributes_tokens = {
+    // Returns builder call only if there are attributes
+    let attributes_call = {
         let items: Vec<TokenStream> = ps
             .container
             .attrs
             .facet
             .iter()
             .filter(|attr| {
-                // invariants is handled specially - it populates vtable.invariants
-                // crate is handled specially - it sets the facet crate path
-                !(attr.is_builtin()
-                    && (attr.key_str() == "invariants" || attr.key_str() == "crate"))
+                // These attributes are handled specially and not emitted to runtime:
+                // - invariants: populates vtable.invariants
+                // - crate: sets the facet crate path
+                // - traits: compile-time directive for vtable generation
+                // - auto_traits: compile-time directive for vtable generation
+                if attr.is_builtin() {
+                    let key = attr.key_str();
+                    !matches!(
+                        key.as_str(),
+                        "invariants" | "crate" | "traits" | "auto_traits"
+                    )
+                } else {
+                    true
+                }
             })
             .map(|attr| {
                 let ext_attr = emit_attr(attr, &facet_crate);
@@ -263,12 +865,12 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         if items.is_empty() {
             quote! {}
         } else {
-            quote! { .attributes(&const { [#(#items),*] }) }
+            quote! { .attributes(&const {[#(#items),*]}) }
         }
     };
 
-    // Type tag from PStruct
-    let type_tag_maybe = {
+    // Type tag from PStruct - returns builder call only if present
+    let type_tag_call = {
         if let Some(type_tag) = ps.container.attrs.get_builtin_args("type_tag") {
             quote! { .type_tag(#type_tag) }
         } else {
@@ -433,8 +1035,9 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         quote! {} // Not transparent
     };
 
-    // Generate the inner shape function for transparent types
-    let inner_setter = if ps.container.attrs.has_builtin("transparent") {
+    // Generate the inner shape field value for transparent types
+    // inner call - only emit for transparent types
+    let inner_call = if ps.container.attrs.has_builtin("transparent") {
         let inner_shape_val = if let Some(inner_field) = &inner_field {
             let ty = &inner_field.ty;
             if inner_field.attrs.has_builtin("opaque") {
@@ -455,31 +1058,39 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let facet_bgp = ps
         .container
         .bgp
-        .with_lifetime(LifetimeName(format_ident!("__facet")));
+        .with_lifetime(LifetimeName(format_ident!("ʄ")));
     let bgp_def = facet_bgp.display_with_bounds();
     let bgp_without_bounds = ps.container.bgp.display_without_bounds();
 
-    let (ty, fields) = if opaque {
+    let (ty_field, fields) = if opaque {
         (
             quote! {
-                .ty(#facet_crate::Type::User(#facet_crate::UserType::Opaque))
+                #facet_crate::Type::User(#facet_crate::UserType::Opaque)
             },
             quote! {},
         )
     } else {
-        (
-            quote! {
-                .ty(#facet_crate::Type::User(#facet_crate::UserType::Struct(#facet_crate::StructType::builder()
-                    .repr(#repr)
-                    .kind(#kind)
-                    .fields(fields)
-                    .build()
-                )))
-            },
-            quote! {
-                let fields: &'static [#facet_crate::Field] = &const {[#(#fields_vec),*]};
-            },
-        )
+        // Optimize: use &[] for empty fields to avoid const block overhead
+        if fields_vec.is_empty() {
+            (
+                quote! {
+                    𝟋Ty::User(𝟋UTy::Struct(
+                        𝟋STyB::new(#kind, &[]).repr(#repr).build()
+                    ))
+                },
+                quote! {},
+            )
+        } else {
+            // Inline the const block directly into the builder call
+            (
+                quote! {
+                    𝟋Ty::User(𝟋UTy::Struct(
+                        𝟋STyB::new(#kind, &const {[#(#fields_vec),*]}).repr(#repr).build()
+                    ))
+                },
+                quote! {},
+            )
+        }
     };
 
     // Generate code to suppress dead_code warnings on structs constructed via reflection.
@@ -496,31 +1107,74 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         };
     };
 
+    // Generate static assertions for declared traits (catches lies at compile time)
+    // We put this in a generic function outside the const block so it can reference generic parameters
+    let facet_default = ps.container.attrs.has_builtin("default");
+    let trait_assertion_fn = if let Some(bounds) =
+        gen_trait_bounds(ps.container.attrs.declared_traits.as_ref(), facet_default)
+    {
+        // Note: where_clauses already includes "where" keyword if non-empty
+        // We need to add the trait bounds as an additional constraint
+        quote! {
+            const _: () = {
+                #[allow(dead_code, clippy::multiple_bound_locations)]
+                fn __facet_assert_traits #bgp_def (_: &#struct_name_ident #bgp_without_bounds)
+                where
+                    #struct_name_ident #bgp_without_bounds: #bounds
+                {}
+            };
+        }
+    } else {
+        quote! {}
+    };
+
+    // Check if we need vtable mutations (invariants or transparent type functions)
+    let has_invariants = ps
+        .container
+        .attrs
+        .facet
+        .iter()
+        .any(|attr| attr.is_builtin() && attr.key_str() == "invariants");
+    let is_transparent = ps.container.attrs.has_builtin("transparent");
+    let needs_vtable_mutations = has_invariants || is_transparent;
+
+    // Generate vtable field - use simpler form when no mutations needed
+    let vtable_field = if needs_vtable_mutations {
+        quote! {
+            {
+                let mut vtable = #vtable_init;
+                #invariant_maybe
+                #try_from_inner_code
+                vtable
+            }
+        }
+    } else {
+        quote! { #vtable_init }
+    };
+
     // Final quote block using refactored parts
     let result = quote! {
         #static_decl
 
         #dead_code_suppression
 
+        #trait_assertion_fn
+
         #[automatically_derived]
-        unsafe impl #bgp_def #facet_crate::Facet<'__facet> for #struct_name_ident #bgp_without_bounds #where_clauses {
+        unsafe impl #bgp_def #facet_crate::Facet<'ʄ> for #struct_name_ident #bgp_without_bounds #where_clauses {
             const SHAPE: &'static #facet_crate::Shape = &const {
+                use #facet_crate::𝟋::*;
                 #fields
 
-                #facet_crate::Shape::builder_for_sized::<Self>()
-                    .vtable({
-                        let mut vtable = #facet_crate::value_vtable!(Self, #type_name_fn);
-                        #invariant_maybe
-                        #try_from_inner_code // Use the generated code for transparent types
-                        vtable
-                    })
-                    .type_identifier(#struct_name_str)
-                    #type_params // Still from parsed.generics
-                    #ty
-                    #inner_setter // Use transparency flag from PStruct
-                    #maybe_container_doc // From ps.container.attrs.doc
-                    #container_attributes_tokens // From ps.container.attrs.facet
-                    #type_tag_maybe
+                𝟋ShpB::for_sized::<Self>(#type_name_fn, #struct_name_str)
+                    .vtable(#vtable_field)
+                    .ty(#ty_field)
+                    .def(𝟋Def::Undefined)
+                    #type_params_call
+                    #doc_call
+                    #attributes_call
+                    #type_tag_call
+                    #inner_call
                     .build()
             };
         }

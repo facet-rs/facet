@@ -626,6 +626,7 @@ dependencies = [
  "facet-reflect",
  "facet-showcase",
  "facet-testhelpers",
+ "num-complex",
  "owo-colors",
  "static_assertions",
 ]
@@ -685,6 +686,17 @@ dependencies = [
  "facet-yaml",
  "tokio",
  "tower",
+]
+
+[[package]]
+name = "facet-bloatbench"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "facet-json",
+ "facet-macros",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

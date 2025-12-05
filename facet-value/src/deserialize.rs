@@ -325,15 +325,6 @@ impl ValueErrorReport {
 
         Self { error, related }
     }
-
-    /// Render this report as a string
-    pub fn render(&self) -> String {
-        use miette::{GraphicalReportHandler, GraphicalTheme};
-        let mut output = String::new();
-        let handler = GraphicalReportHandler::new_themed(GraphicalTheme::unicode());
-        let _ = handler.render_report(&mut output, self);
-        output
-    }
 }
 
 #[cfg(feature = "diagnostics")]

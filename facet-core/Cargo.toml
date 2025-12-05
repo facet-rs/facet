@@ -18,6 +18,10 @@ default = ["std"]
 std = ["alloc"]
 # Enable allocation support for no_std environments
 alloc = []
+# Provide Facet trait implementations for NonZero<T> types
+nonzero = []
+# Provide Facet trait implementations for network types (SocketAddr, IpAddr, etc.)
+net = []
 # Provide Facet trait implementations for camino::Utf8Path and camino::Utf8PathBuf
 camino = ["dep:camino", "alloc"]
 # Provide Facet trait implementations for ordered_float types

@@ -13,51 +13,14 @@ pub struct NdArrayDef {
 }
 
 impl NdArrayDef {
-    /// Returns a builder for NdArrayDef
-    pub const fn builder() -> NdArrayDefBuilder {
-        NdArrayDefBuilder::new()
+    /// Construct a `NdArrayDef` from its vtable and element shape.
+    pub const fn new(vtable: &'static NdArrayVTable, t: &'static Shape) -> Self {
+        Self { vtable, t }
     }
 
     /// Returns the shape of the items in the array
     pub const fn t(&self) -> &'static Shape {
         self.t
-    }
-}
-
-/// Builder for NdArrayDef
-pub struct NdArrayDefBuilder {
-    vtable: Option<&'static NdArrayVTable>,
-    t: Option<&'static Shape>,
-}
-
-impl NdArrayDefBuilder {
-    /// Creates a new NdArrayDefBuilder
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            vtable: None,
-            t: None,
-        }
-    }
-
-    /// Sets the vtable for the NdArrayDef
-    pub const fn vtable(mut self, vtable: &'static NdArrayVTable) -> Self {
-        self.vtable = Some(vtable);
-        self
-    }
-
-    /// Sets the item shape for the NdArrayDef
-    pub const fn t(mut self, t: &'static Shape) -> Self {
-        self.t = Some(t);
-        self
-    }
-
-    /// Builds the NdArrayDef
-    pub const fn build(self) -> NdArrayDef {
-        NdArrayDef {
-            vtable: self.vtable.unwrap(),
-            t: self.t.unwrap(),
-        }
     }
 }
 
@@ -161,101 +124,4 @@ pub struct NdArrayVTable {
     /// cf. [`NdArrayAsMutPtrFn`]
     /// Only available for types that can be accessed as a strided array
     pub as_mut_ptr: Option<NdArrayAsMutPtrFn>,
-}
-
-impl NdArrayVTable {
-    /// Returns a builder for NdArrayVTable
-    pub const fn builder() -> NdArrayVTableBuilder {
-        NdArrayVTableBuilder::new()
-    }
-}
-
-/// Builds a [`NdArrayVTable`]
-pub struct NdArrayVTableBuilder {
-    count: Option<NdArrayCountFn>,
-    n_dim: Option<NdArrayNDimFn>,
-    dim: Option<NdArrayDimFn>,
-    get: Option<NdArrayGetFn>,
-    get_mut: Option<NdArrayGetMutFn>,
-    byte_stride: Option<NdArrayByteStrideFn>,
-    as_ptr: Option<NdArrayAsPtrFn>,
-    as_mut_ptr: Option<NdArrayAsMutPtrFn>,
-}
-
-impl NdArrayVTableBuilder {
-    /// Creates a new [`NdArrayVTableBuilder`] with all fields set to `None`.
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            count: None,
-            n_dim: None,
-            dim: None,
-            get: None,
-            get_mut: None,
-            byte_stride: None,
-            as_ptr: None,
-            as_mut_ptr: None,
-        }
-    }
-
-    /// Sets the `n_dim` field
-    pub const fn n_dim(mut self, f: NdArrayNDimFn) -> Self {
-        self.n_dim = Some(f);
-        self
-    }
-
-    /// Sets the `dim` field
-    pub const fn dim(mut self, f: NdArrayDimFn) -> Self {
-        self.dim = Some(f);
-        self
-    }
-
-    /// Sets the `get` field
-    pub const fn get(mut self, f: NdArrayGetFn) -> Self {
-        self.get = Some(f);
-        self
-    }
-
-    /// Sets the `get_mut` field
-    pub const fn get_mut(mut self, f: NdArrayGetMutFn) -> Self {
-        self.get_mut = Some(f);
-        self
-    }
-
-    /// Sets the `byte_stride` field
-    pub const fn byte_stride(mut self, f: NdArrayByteStrideFn) -> Self {
-        self.byte_stride = Some(f);
-        self
-    }
-
-    /// Sets the `as_ptr` field
-    pub const fn as_ptr(mut self, f: NdArrayAsPtrFn) -> Self {
-        self.as_ptr = Some(f);
-        self
-    }
-
-    /// Sets the `as_mut_ptr` field
-    pub const fn as_mut_ptr(mut self, f: NdArrayAsMutPtrFn) -> Self {
-        self.as_mut_ptr = Some(f);
-        self
-    }
-
-    /// Builds the [`NdArrayVTable`] from the current state of the builder.
-    ///
-    /// # Panics
-    ///
-    /// Panic if any of the required fields (len, get, as_ptr, iter_vtable) are `None`.
-    pub const fn build(self) -> NdArrayVTable {
-        assert!(self.as_ptr.is_some());
-        NdArrayVTable {
-            count: self.count.unwrap(),
-            n_dim: self.n_dim.unwrap(),
-            dim: self.dim.unwrap(),
-            get: self.get.unwrap(),
-            get_mut: self.get_mut,
-            byte_stride: self.byte_stride,
-            as_ptr: self.as_ptr,
-            as_mut_ptr: self.as_mut_ptr,
-        }
-    }
 }

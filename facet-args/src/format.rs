@@ -626,7 +626,7 @@ impl<'input> Context<'input> {
             if field.has_default() {
                 tracing::trace!("Setting #{field_index} field to default: {field:?}");
                 p = p.set_nth_field_to_default(field_index)?;
-            } else if (field.shape)().is_shape(bool::SHAPE) {
+            } else if field.shape().is_shape(bool::SHAPE) {
                 // bools are just set to false
                 p = p.set_nth_field(field_index, false)?;
             } else {
@@ -650,7 +650,7 @@ impl<'input> Context<'input> {
             if field.has_default() {
                 tracing::trace!("Setting variant field #{field_index} to default: {field:?}");
                 p = p.set_nth_field_to_default(field_index)?;
-            } else if (field.shape)().is_shape(bool::SHAPE) {
+            } else if field.shape().is_shape(bool::SHAPE) {
                 p = p.set_nth_field(field_index, false)?;
             } else {
                 return Err(ArgsErrorKind::MissingArgument { field });

@@ -1,4 +1,5 @@
 #![warn(missing_docs)]
+#![allow(uncommon_codepoints)]
 #![doc = include_str!("../README.md")]
 
 // ============================================================================

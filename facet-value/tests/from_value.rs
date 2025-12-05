@@ -193,6 +193,7 @@ fn deserialize_box() {
     #[derive(Debug, Facet, PartialEq)]
     struct Node {
         value: i32,
+        #[facet(recursive_type)]
         next: Option<Box<Node>>,
     }
 

@@ -220,7 +220,7 @@ impl PrettyPrinter {
                 UserType::Struct(ty) => {
                     let mut sum = 0usize;
                     for field in ty.fields {
-                        sum = sum.saturating_add(Self::shape_chunkiness((field.shape)()));
+                        sum = sum.saturating_add(Self::shape_chunkiness(field.shape()));
                     }
                     sum
                 }
@@ -230,7 +230,7 @@ impl PrettyPrinter {
                         max = Ord::max(max, {
                             let mut sum = 0usize;
                             for field in variant.data.fields {
-                                sum = sum.saturating_add(Self::shape_chunkiness((field.shape)()));
+                                sum = sum.saturating_add(Self::shape_chunkiness(field.shape()));
                             }
                             sum
                         })

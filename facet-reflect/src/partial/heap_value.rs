@@ -70,20 +70,18 @@ impl<'facet, const BORROW: bool> HeapValue<'facet, BORROW> {
 impl<'facet, const BORROW: bool> HeapValue<'facet, BORROW> {
     /// Formats the value using its Display implementation, if available
     pub fn fmt_display(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(display_fn) = self.shape.vtable.display {
-            unsafe { display_fn(PtrConst::new(self.guard.as_ref().unwrap().ptr), f) }
-        } else {
-            write!(f, "⟨{}⟩", self.shape)
+        if let Some(display_fn) = self.shape.vtable.format.display {
+            return unsafe { display_fn(PtrConst::new(self.guard.as_ref().unwrap().ptr), f) };
         }
+        write!(f, "⟨{}⟩", self.shape)
     }
 
     /// Formats the value using its Debug implementation, if available
     pub fn fmt_debug(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(debug_fn) = self.shape.vtable.debug {
-            unsafe { debug_fn(PtrConst::new(self.guard.as_ref().unwrap().ptr), f) }
-        } else {
-            write!(f, "⟨{}⟩", self.shape)
+        if let Some(debug_fn) = self.shape.vtable.format.debug {
+            return unsafe { debug_fn(PtrConst::new(self.guard.as_ref().unwrap().ptr), f) };
         }
+        write!(f, "⟨{}⟩", self.shape)
     }
 }
 
@@ -104,16 +102,15 @@ impl<'facet, const BORROW: bool> PartialEq for HeapValue<'facet, BORROW> {
         if self.shape != other.shape {
             return false;
         }
-        if let Some(eq_fn) = self.shape.vtable.partial_eq {
-            unsafe {
+        if let Some(eq_fn) = self.shape.vtable.cmp.partial_eq {
+            return unsafe {
                 eq_fn(
                     PtrConst::new(self.guard.as_ref().unwrap().ptr),
                     PtrConst::new(other.guard.as_ref().unwrap().ptr),
                 )
-            }
-        } else {
-            false
+            };
         }
+        false
     }
 }
 
@@ -122,16 +119,15 @@ impl<'facet, const BORROW: bool> PartialOrd for HeapValue<'facet, BORROW> {
         if self.shape != other.shape {
             return None;
         }
-        if let Some(partial_ord_fn) = self.shape.vtable.partial_ord {
-            unsafe {
+        if let Some(partial_ord_fn) = self.shape.vtable.cmp.partial_ord {
+            return unsafe {
                 partial_ord_fn(
                     PtrConst::new(self.guard.as_ref().unwrap().ptr),
                     PtrConst::new(other.guard.as_ref().unwrap().ptr),
                 )
-            }
-        } else {
-            None
+            };
         }
+        None
     }
 }
 

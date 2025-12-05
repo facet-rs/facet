@@ -26,8 +26,8 @@ owo-colors = "4"
 
 [dev-dependencies]
 camino = "1.1.10"
-facet = { path = "../facet" }
+facet = { path = "../facet", features = ["doc"] }
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = "1.43.1"
-miette = "7"
+miette = { version = "7", default-features = false }

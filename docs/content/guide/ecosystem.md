@@ -92,6 +92,57 @@ Enable `fn-ptr` for `Facet` implementations on function pointer types:
 facet = { version = "{{ data.versions.facet }}", features = ["fn-ptr"] }
 ```
 
+## Standard library type support
+
+Some standard library types require feature flags:
+
+| Feature | Types |
+|---------|-------|
+| `nonzero` | `NonZero<T>` types (`NonZeroU8`, `NonZeroI32`, etc.) |
+| `net` | `SocketAddr`, `IpAddr`, `Ipv4Addr`, `Ipv6Addr`, `SocketAddrV4`, `SocketAddrV6` |
+
+```toml
+[dependencies]
+facet = { version = "{{ data.versions.facet }}", features = ["nonzero", "net"] }
+```
+
+## Doc comment extraction
+
+By default, doc comments (`/// ...`) are **not** included in generated `Shape`, `Field`, and `Variant` definitions to reduce compile times and binary size. Enable the `doc` feature to include them:
+
+```toml
+[dependencies]
+facet = { version = "{{ data.versions.facet }}", features = ["doc"] }
+```
+
+This is useful for:
+- **facet-args**: Including doc comments in CLI help text generation
+- **facet-pretty**: Showing doc comments in pretty-printed output
+- **Custom tooling**: Building documentation generators or IDE integrations
+
+Without this feature, `.doc` fields will be empty slices (`&[]`).
+
+## Typo suggestions in derive errors
+
+By default, when you mistype an attribute name in `#[facet(...)]`, the derive macro suggests corrections using string similarity matching. This requires the `strsim` dependency.
+
+To disable this and reduce compile times slightly, turn off the `helpful-derive` feature:
+
+```toml
+[dependencies]
+facet = { version = "{{ data.versions.facet }}", default-features = false, features = ["std"] }
+```
+
+With `helpful-derive` enabled (default):
+```
+error: unknown attribute `renam`, did you mean `rename`?
+```
+
+Without it:
+```
+error: unknown attribute `renam`; expected one of: rename, skip, default, ...
+```
+
 ## facet-args: CLI argument parsing
 
 Beyond basic argument parsing, `facet-args` provides utilities for help generation and shell completions.

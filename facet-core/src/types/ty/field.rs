@@ -4,6 +4,43 @@ use crate::{PtrMut, PtrUninit};
 
 use super::{DefaultInPlaceFn, InvariantsFn, Shape};
 
+/// A reference to a [`Shape`], either direct or lazy.
+///
+/// Most fields use [`ShapeRef::Static`] for direct `&'static Shape` references,
+/// which is more efficient (no function call overhead).
+///
+/// For recursive types (e.g., a struct containing `Vec<Self>`), use
+/// [`ShapeRef::Lazy`] with a closure to break the cycle. Mark such fields
+/// with `#[facet(recursive_type)]` in the derive macro.
+#[derive(Clone, Copy)]
+pub enum ShapeRef {
+    /// Direct reference to a shape (default, most efficient)
+    Static(&'static Shape),
+    /// Lazy reference via closure (for recursive types)
+    Lazy(fn() -> &'static Shape),
+}
+
+impl ShapeRef {
+    /// Get the referenced shape.
+    ///
+    /// For [`ShapeRef::Static`], returns the reference directly.
+    /// For [`ShapeRef::Lazy`], calls the closure to get the shape.
+    #[inline]
+    pub fn get(&self) -> &'static Shape {
+        match self {
+            ShapeRef::Static(shape) => shape,
+            ShapeRef::Lazy(f) => f(),
+        }
+    }
+}
+
+impl core::fmt::Debug for ShapeRef {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Just debug the shape itself, not the wrapper
+        write!(f, "{:?}", self.get())
+    }
+}
+
 /// Describes a field in a struct or tuple
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -13,8 +50,9 @@ pub struct Field {
 
     /// shape of the inner type
     ///
-    /// the layer of indirection allows for cyclic type definitions
-    pub shape: fn() -> &'static Shape,
+    /// Use [`ShapeRef::Static`] for most fields (direct reference, more efficient).
+    /// Use [`ShapeRef::Lazy`] for recursive types to break cycles.
+    pub shape: ShapeRef,
 
     /// offset of the field in the struct (obtained through `core::mem::offset_of`)
     pub offset: usize,
@@ -107,13 +145,9 @@ pub type ProxyConvertOutFn = for<'mem> unsafe fn(
 
 impl Field {
     /// Returns the shape of the inner type
+    #[inline]
     pub fn shape(&self) -> &'static Shape {
-        (self.shape)()
-    }
-
-    /// Returns a builder for Field
-    pub const fn builder() -> FieldBuilder {
-        FieldBuilder::new()
+        self.shape.get()
     }
 
     /// Checks whether the `Field` has an attribute with the given namespace and key.
@@ -219,70 +253,6 @@ impl Field {
 /// This is now just an alias for `ExtensionAttr` - all attributes use the same representation.
 pub type FieldAttribute = super::ExtensionAttr;
 
-/// Builder for Field
-pub struct FieldBuilder {
-    name: Option<&'static str>,
-    shape: Option<fn() -> &'static Shape>,
-    offset: Option<usize>,
-    attributes: &'static [FieldAttribute],
-    doc: &'static [&'static str],
-}
-
-impl FieldBuilder {
-    /// Creates a new FieldBuilder
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            name: None,
-            shape: None,
-            offset: None,
-            attributes: &[],
-            doc: &[],
-        }
-    }
-
-    /// Sets the name for the Field
-    pub const fn name(mut self, name: &'static str) -> Self {
-        self.name = Some(name);
-        self
-    }
-
-    /// Sets the shape for the Field
-    pub const fn shape(mut self, shape: fn() -> &'static Shape) -> Self {
-        self.shape = Some(shape);
-        self
-    }
-
-    /// Sets the offset for the Field
-    pub const fn offset(mut self, offset: usize) -> Self {
-        self.offset = Some(offset);
-        self
-    }
-
-    /// Sets the attributes for the Field
-    pub const fn attributes(mut self, attributes: &'static [FieldAttribute]) -> Self {
-        self.attributes = attributes;
-        self
-    }
-
-    /// Sets the doc comments for the Field
-    pub const fn doc(mut self, doc: &'static [&'static str]) -> Self {
-        self.doc = doc;
-        self
-    }
-
-    /// Builds the Field
-    pub const fn build(self) -> Field {
-        Field {
-            name: self.name.unwrap(),
-            shape: self.shape.unwrap(),
-            offset: self.offset.unwrap(),
-            attributes: self.attributes,
-            doc: self.doc,
-        }
-    }
-}
-
 /// Errors encountered when calling `field_by_index` or `field_by_name`
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FieldError {
@@ -333,13 +303,106 @@ impl core::fmt::Display for FieldError {
 }
 
 macro_rules! field_in_type {
-    ($container:ty, $field:tt) => {
-        $crate::Field::builder()
-            .name(stringify!($field))
-            .shape(|| $crate::shape_of(&|t: &Self| &t.$field))
-            .offset(::core::mem::offset_of!(Self, $field))
-            .build()
+    ($container:ty, $field:tt, $field_ty:ty) => {
+        $crate::Field {
+            name: stringify!($field),
+            shape: $crate::ShapeRef::Static(<$field_ty as $crate::Facet>::SHAPE),
+            offset: ::core::mem::offset_of!(Self, $field),
+            attributes: &[],
+            doc: &[],
+        }
     };
 }
 
 pub(crate) use field_in_type;
+
+/// Builder for constructing `Field` instances in const contexts.
+///
+/// This builder is primarily used by derive macros to generate more compact code.
+/// All methods are `const fn` to allow usage in static/const contexts.
+///
+/// # Example
+///
+/// ```ignore
+/// // For normal fields (default, most efficient):
+/// const FIELD: Field = FieldBuilder::new(
+///     "field_name",
+///     <T as Facet>::SHAPE,
+///     offset_of!(MyStruct, field_name)
+/// ).build();
+///
+/// // For recursive type fields (use lazy to break cycles):
+/// const FIELD: Field = FieldBuilder::new_lazy(
+///     "children",
+///     || <Vec<Self> as Facet>::SHAPE,
+///     offset_of!(MyStruct, children)
+/// ).build();
+/// ```
+pub struct FieldBuilder {
+    name: &'static str,
+    shape: ShapeRef,
+    offset: usize,
+    attributes: &'static [FieldAttribute],
+    doc: &'static [&'static str],
+}
+
+impl FieldBuilder {
+    /// Creates a new `FieldBuilder` with a static shape reference (default, most efficient).
+    ///
+    /// Use this for most fields. The `attributes` and `doc` fields default to empty slices.
+    #[inline]
+    pub const fn new(name: &'static str, shape: &'static Shape, offset: usize) -> Self {
+        Self {
+            name,
+            shape: ShapeRef::Static(shape),
+            offset,
+            attributes: &[],
+            doc: &[],
+        }
+    }
+
+    /// Creates a new `FieldBuilder` with a lazy shape reference (for recursive types).
+    ///
+    /// Use this for fields with recursive types (e.g., `Vec<Self>`) to break cycles.
+    /// Mark such fields with `#[facet(recursive_type)]` in the derive macro.
+    #[inline]
+    pub const fn new_lazy(
+        name: &'static str,
+        shape: fn() -> &'static Shape,
+        offset: usize,
+    ) -> Self {
+        Self {
+            name,
+            shape: ShapeRef::Lazy(shape),
+            offset,
+            attributes: &[],
+            doc: &[],
+        }
+    }
+
+    /// Sets the attributes for this field.
+    #[inline]
+    pub const fn attributes(mut self, attributes: &'static [FieldAttribute]) -> Self {
+        self.attributes = attributes;
+        self
+    }
+
+    /// Sets the documentation for this field.
+    #[inline]
+    pub const fn doc(mut self, doc: &'static [&'static str]) -> Self {
+        self.doc = doc;
+        self
+    }
+
+    /// Builds the final `Field` instance.
+    #[inline]
+    pub const fn build(self) -> Field {
+        Field {
+            name: self.name,
+            shape: self.shape,
+            offset: self.offset,
+            attributes: self.attributes,
+            doc: self.doc,
+        }
+    }
+}

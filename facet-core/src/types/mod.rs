@@ -1,5 +1,6 @@
 //! structs and vtable definitions used by Facet
 
+use crate::PtrConst;
 #[cfg(feature = "alloc")]
 use crate::PtrMut;
 
@@ -20,7 +21,7 @@ pub use def::*;
 mod ty;
 pub use ty::*;
 
-use crate::{ConstTypeId, Facet, PtrConst};
+use crate::{ConstTypeId, Facet};
 
 /// Schema for reflection of a type
 #[derive(Clone, Copy)]
@@ -283,7 +284,7 @@ impl core::fmt::Debug for ExtensionAttr {
         };
 
         // Try to use the shape's debug function if available
-        if let Some(debug_fn) = self.shape.vtable.debug {
+        if let Some(debug_fn) = self.shape.vtable.format.debug {
             write!(f, " = ")?;
             // SAFETY: self.data is a valid pointer to static data of the correct shape
             unsafe {
@@ -308,17 +309,20 @@ impl PartialEq for ExtensionAttr {
 pub type ShapeAttribute = ExtensionAttr;
 
 impl Shape {
-    /// Returns a builder for a shape for some type `T`.
-    pub const fn builder_for_sized<T>() -> ShapeBuilder {
-        ShapeBuilder::new()
-            .layout(Layout::new::<T>())
-            .id(ConstTypeId::of::<T>())
+    /// Returns a const type ID for type `T`.
+    #[inline]
+    pub const fn id_of<T: ?Sized>() -> ConstTypeId {
+        ConstTypeId::of::<T>()
     }
 
-    /// Returns a builder for a shape for some type `T`.
-    pub const fn builder_for_unsized<T: ?Sized>() -> ShapeBuilder {
-        ShapeBuilder::new().set_unsized().id(ConstTypeId::of::<T>())
+    /// Returns the sized layout for type `T`.
+    #[inline]
+    pub const fn layout_of<T>() -> ShapeLayout {
+        ShapeLayout::Sized(Layout::new::<T>())
     }
+
+    /// Returns the unsized layout marker.
+    pub const UNSIZED_LAYOUT: ShapeLayout = ShapeLayout::Unsized;
 
     /// Check if this shape is of the given type
     pub fn is_type<'facet, Other: Facet<'facet>>(&self) -> bool {
@@ -402,153 +406,6 @@ impl Shape {
                 None
             }
         })
-    }
-}
-
-/// Builder for [`Shape`]
-pub struct ShapeBuilder {
-    id: Option<ConstTypeId>,
-    layout: Option<ShapeLayout>,
-    vtable: Option<ValueVTable>,
-    def: Def,
-    ty: Option<Type>,
-    type_identifier: Option<&'static str>,
-    type_params: &'static [TypeParam],
-    doc: &'static [&'static str],
-    attributes: &'static [ShapeAttribute],
-    type_tag: Option<&'static str>,
-    inner: Option<&'static Shape>,
-}
-
-impl ShapeBuilder {
-    /// Creates a new `ShapeBuilder` with all fields set to `None`.
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            id: None,
-            layout: None,
-            vtable: None,
-            def: Def::Undefined,
-            ty: None,
-            type_identifier: None,
-            type_params: &[],
-            doc: &[],
-            attributes: &[],
-            type_tag: None,
-            inner: None,
-        }
-    }
-
-    /// Sets the `id` field of the `ShapeBuilder`.
-    #[inline]
-    pub const fn id(mut self, id: ConstTypeId) -> Self {
-        self.id = Some(id);
-        self
-    }
-
-    /// Sets the `vtable` field of the `ShapeBuilder`.
-    #[inline]
-    pub const fn vtable(mut self, vtable: ValueVTable) -> Self {
-        self.vtable = Some(vtable);
-        self
-    }
-
-    /// Sets the `layout` field of the `ShapeBuilder`.
-    #[inline]
-    pub const fn layout(mut self, layout: Layout) -> Self {
-        self.layout = Some(ShapeLayout::Sized(layout));
-        self
-    }
-
-    /// Sets the type as unsized
-    #[inline]
-    pub const fn set_unsized(mut self) -> Self {
-        self.layout = Some(ShapeLayout::Unsized);
-        self
-    }
-
-    /// Sets the `def` field of the `ShapeBuilder`.
-    #[inline]
-    pub const fn def(mut self, def: Def) -> Self {
-        self.def = def;
-        self
-    }
-
-    /// Sets the `ty` field of the `ShapeBuilder`.
-    #[inline]
-    pub const fn ty(mut self, ty: Type) -> Self {
-        self.ty = Some(ty);
-        self
-    }
-
-    /// Sets the `type_identifier` field of the `ShapeBuilder`.
-    #[inline]
-    pub const fn type_identifier(mut self, type_identifier: &'static str) -> Self {
-        self.type_identifier = Some(type_identifier);
-        self
-    }
-
-    /// Sets the `type_params` field of the `ShapeBuilder`.
-    #[inline]
-    pub const fn type_params(mut self, type_params: &'static [TypeParam]) -> Self {
-        self.type_params = type_params;
-        self
-    }
-
-    /// Sets the `doc` field of the `ShapeBuilder`.
-    #[inline]
-    pub const fn doc(mut self, doc: &'static [&'static str]) -> Self {
-        self.doc = doc;
-        self
-    }
-
-    /// Sets the `attributes` field of the `ShapeBuilder`.
-    #[inline]
-    pub const fn attributes(mut self, attributes: &'static [ShapeAttribute]) -> Self {
-        self.attributes = attributes;
-        self
-    }
-
-    /// Sets the `type_tag` field of the `ShapeBuilder`.
-    #[inline]
-    pub const fn type_tag(mut self, type_tag: &'static str) -> Self {
-        self.type_tag = Some(type_tag);
-        self
-    }
-
-    /// Sets the `inner` field of the `ShapeBuilder`.
-    ///
-    /// This indicates that this shape is a transparent wrapper for another shape,
-    /// like a newtype or smart pointer, and should be treated as such for serialization
-    /// and deserialization.
-    ///
-    /// The `inner_shape` parameter should be the static shape of the inner type.
-    #[inline]
-    pub const fn inner(mut self, inner_shape: &'static Shape) -> Self {
-        self.inner = Some(inner_shape);
-        self
-    }
-
-    /// Builds a `Shape` from the `ShapeBuilder`.
-    ///
-    /// # Panics
-    ///
-    /// This method will panic if any of the required fields (`id`, `layout`, `type_identifier`, or `ty`) are `None`.
-    #[inline]
-    pub const fn build(self) -> Shape {
-        Shape {
-            id: self.id.unwrap(),
-            layout: self.layout.unwrap(),
-            vtable: self.vtable.unwrap(),
-            type_identifier: self.type_identifier.unwrap(),
-            type_params: self.type_params,
-            def: self.def,
-            ty: self.ty.unwrap(),
-            doc: self.doc,
-            attributes: self.attributes,
-            type_tag: self.type_tag,
-            inner: self.inner,
-        }
     }
 }
 
@@ -822,5 +679,322 @@ impl TypeParam {
     #[inline]
     pub const fn shape(&self) -> &'static Shape {
         self.shape
+    }
+}
+
+/// Builder for creating [`Shape`] instances.
+///
+/// This builder provides a convenient way to construct Shape values with
+/// sensible defaults. Many fields can be inferred or have reasonable defaults:
+///
+/// ```ignore
+/// Shape::builder::<MyType>(|f, _| write!(f, "MyType"))
+///     .def(Def::Scalar)
+///     .build()
+/// ```
+pub struct ShapeBuilder {
+    id: ConstTypeId,
+    layout: ShapeLayout,
+    vtable: ValueVTable,
+    ty: Option<Type>,
+    def: Def,
+    type_identifier: &'static str,
+    type_params: &'static [TypeParam],
+    doc: &'static [&'static str],
+    attributes: &'static [ShapeAttribute],
+    type_tag: Option<&'static str>,
+    inner: Option<&'static Shape>,
+}
+
+impl ShapeBuilder {
+    /// Create a new builder for a sized type.
+    ///
+    /// The `id` and `layout` are derived from the type parameter.
+    /// The `type_name` function is used for the vtable.
+    #[inline]
+    pub const fn for_sized<T>(type_name: TypeNameFn, type_identifier: &'static str) -> Self {
+        Self {
+            id: ConstTypeId::of::<T>(),
+            layout: ShapeLayout::Sized(Layout::new::<T>()),
+            vtable: ValueVTable::new(type_name),
+            ty: None,
+            def: Def::Scalar,
+            type_identifier,
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
+        }
+    }
+
+    /// Create a new builder for an unsized type.
+    #[inline]
+    pub const fn for_unsized<T: ?Sized>(
+        type_name: TypeNameFn,
+        type_identifier: &'static str,
+    ) -> Self {
+        Self {
+            id: ConstTypeId::of::<T>(),
+            layout: ShapeLayout::Unsized,
+            vtable: ValueVTable::new(type_name),
+            ty: None,
+            def: Def::Scalar,
+            type_identifier,
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
+        }
+    }
+
+    /// Set the vtable.
+    #[inline]
+    pub const fn vtable(mut self, vtable: ValueVTable) -> Self {
+        self.vtable = vtable;
+        self
+    }
+
+    /// Set the type.
+    #[inline]
+    pub const fn ty(mut self, ty: Type) -> Self {
+        self.ty = Some(ty);
+        self
+    }
+
+    /// Set the definition.
+    #[inline]
+    pub const fn def(mut self, def: Def) -> Self {
+        self.def = def;
+        self
+    }
+
+    /// Set the type parameters.
+    #[inline]
+    pub const fn type_params(mut self, type_params: &'static [TypeParam]) -> Self {
+        self.type_params = type_params;
+        self
+    }
+
+    /// Set the documentation.
+    #[inline]
+    pub const fn doc(mut self, doc: &'static [&'static str]) -> Self {
+        self.doc = doc;
+        self
+    }
+
+    /// Set the attributes.
+    #[inline]
+    pub const fn attributes(mut self, attributes: &'static [ShapeAttribute]) -> Self {
+        self.attributes = attributes;
+        self
+    }
+
+    /// Set the type tag.
+    #[inline]
+    pub const fn type_tag(mut self, type_tag: &'static str) -> Self {
+        self.type_tag = Some(type_tag);
+        self
+    }
+
+    /// Set the inner shape (for transparent/newtype wrappers).
+    #[inline]
+    pub const fn inner(mut self, inner: &'static Shape) -> Self {
+        self.inner = Some(inner);
+        self
+    }
+
+    // ========== Direct vtable field setters ==========
+    // These allow modifying the vtable without creating a separate ValueVTableBuilder,
+    // reusing the type_name that was already set in for_sized/for_unsized.
+    //
+    // Each setter has two variants:
+    // - `foo(f)` takes the function directly (ergonomic for unconditional use)
+    // - `foo_opt(f)` takes Option<Fn> (for conditional availability based on inner type)
+
+    /// Set the drop_in_place function. Use `ValueVTable::drop_in_place_for::<T>()`.
+    #[inline]
+    pub const fn drop_in_place(mut self, f: Option<DropInPlaceFn>) -> Self {
+        self.vtable.drop_in_place = f;
+        self
+    }
+
+    /// Set the invariants function.
+    #[inline]
+    pub const fn invariants(mut self, f: InvariantsFn) -> Self {
+        self.vtable.invariants = Some(f);
+        self
+    }
+
+    /// Set the default_in_place function.
+    #[inline]
+    pub const fn default_in_place(mut self, f: DefaultInPlaceFn) -> Self {
+        self.vtable.default_in_place = Some(f);
+        self
+    }
+
+    /// Conditionally set default_in_place.
+    #[inline]
+    pub const fn default_in_place_opt(mut self, f: Option<DefaultInPlaceFn>) -> Self {
+        self.vtable.default_in_place = f;
+        self
+    }
+
+    /// Set the clone_into function.
+    #[inline]
+    pub const fn clone_into(mut self, f: CloneIntoFn) -> Self {
+        self.vtable.clone_into = Some(f);
+        self
+    }
+
+    /// Conditionally set clone_into.
+    #[inline]
+    pub const fn clone_into_opt(mut self, f: Option<CloneIntoFn>) -> Self {
+        self.vtable.clone_into = f;
+        self
+    }
+
+    /// Set the parse function.
+    #[inline]
+    pub const fn parse(mut self, f: ParseFn) -> Self {
+        self.vtable.parse = Some(f);
+        self
+    }
+
+    /// Set the try_from function.
+    #[inline]
+    pub const fn try_from(mut self, f: TryFromFn) -> Self {
+        self.vtable.try_from = Some(f);
+        self
+    }
+
+    /// Set the try_into_inner function.
+    #[inline]
+    pub const fn try_into_inner(mut self, f: TryIntoInnerFn) -> Self {
+        self.vtable.try_into_inner = Some(f);
+        self
+    }
+
+    /// Set the try_borrow_inner function.
+    #[inline]
+    pub const fn try_borrow_inner(mut self, f: TryBorrowInnerFn) -> Self {
+        self.vtable.try_borrow_inner = Some(f);
+        self
+    }
+
+    /// Set the display function.
+    #[inline]
+    pub const fn display(mut self, f: DisplayFn) -> Self {
+        self.vtable.format.display = Some(f);
+        self
+    }
+
+    /// Conditionally set display.
+    #[inline]
+    pub const fn display_opt(mut self, f: Option<DisplayFn>) -> Self {
+        self.vtable.format.display = f;
+        self
+    }
+
+    /// Set the debug function.
+    #[inline]
+    pub const fn debug(mut self, f: DebugFn) -> Self {
+        self.vtable.format.debug = Some(f);
+        self
+    }
+
+    /// Conditionally set debug.
+    #[inline]
+    pub const fn debug_opt(mut self, f: Option<DebugFn>) -> Self {
+        self.vtable.format.debug = f;
+        self
+    }
+
+    /// Set the partial_eq function.
+    #[inline]
+    pub const fn partial_eq(mut self, f: PartialEqFn) -> Self {
+        self.vtable.cmp.partial_eq = Some(f);
+        self
+    }
+
+    /// Conditionally set partial_eq.
+    #[inline]
+    pub const fn partial_eq_opt(mut self, f: Option<PartialEqFn>) -> Self {
+        self.vtable.cmp.partial_eq = f;
+        self
+    }
+
+    /// Set the partial_ord function.
+    #[inline]
+    pub const fn partial_ord(mut self, f: PartialOrdFn) -> Self {
+        self.vtable.cmp.partial_ord = Some(f);
+        self
+    }
+
+    /// Conditionally set partial_ord.
+    #[inline]
+    pub const fn partial_ord_opt(mut self, f: Option<PartialOrdFn>) -> Self {
+        self.vtable.cmp.partial_ord = f;
+        self
+    }
+
+    /// Set the ord function.
+    #[inline]
+    pub const fn ord(mut self, f: CmpFn) -> Self {
+        self.vtable.cmp.ord = Some(f);
+        self
+    }
+
+    /// Conditionally set ord.
+    #[inline]
+    pub const fn ord_opt(mut self, f: Option<CmpFn>) -> Self {
+        self.vtable.cmp.ord = f;
+        self
+    }
+
+    /// Set the hash function.
+    #[inline]
+    pub const fn hash(mut self, f: HashFn) -> Self {
+        self.vtable.hash.hash = Some(f);
+        self
+    }
+
+    /// Conditionally set hash.
+    #[inline]
+    pub const fn hash_opt(mut self, f: Option<HashFn>) -> Self {
+        self.vtable.hash.hash = f;
+        self
+    }
+
+    /// Set the marker traits.
+    #[inline]
+    pub const fn markers(mut self, m: MarkerTraits) -> Self {
+        self.vtable.markers = m;
+        self
+    }
+
+    /// Build the Shape.
+    ///
+    /// If `ty` was not explicitly set, it will be inferred from `def`.
+    #[inline]
+    pub const fn build(self) -> Shape {
+        let ty = match self.ty {
+            Some(ty) => ty,
+            None => self.def.default_type(),
+        };
+        Shape {
+            id: self.id,
+            layout: self.layout,
+            vtable: self.vtable,
+            ty,
+            def: self.def,
+            type_identifier: self.type_identifier,
+            type_params: self.type_params,
+            doc: self.doc,
+            attributes: self.attributes,
+            type_tag: self.type_tag,
+            inner: self.inner,
+        }
     }
 }

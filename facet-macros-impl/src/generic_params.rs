@@ -69,6 +69,16 @@ pub struct AsPhantomData<'a>(&'a BoundedGenericParams);
 
 impl quote::ToTokens for AsPhantomData<'_> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
+        // Optimization: if there's exactly one parameter and it's a lifetime,
+        // use the short 𝟋Ph<'lifetime> alias from the prelude
+        if self.0.params.len() == 1 {
+            if let GenericParamName::Lifetime(name) = &self.0.params[0].param {
+                tokens.extend(quote! { 𝟋Ph<#name> });
+                return;
+            }
+        }
+
+        // General case: build PhantomData<(...)> with all parameters
         let mut temp = TokenStream::new();
 
         {
@@ -454,7 +464,7 @@ mod tests {
             ":: core :: marker :: PhantomData < (()) >"
         );
 
-        // Single lifetime
+        // Single lifetime - uses short 𝟋Ph alias
         let lifetime = BoundedGenericParams {
             params: vec![BoundedGenericParam {
                 param: GenericParamName::Lifetime(LifetimeName(quote::format_ident!("a"))),
@@ -463,7 +473,7 @@ mod tests {
         };
         assert_eq!(
             render_to_string(lifetime.display_as_phantom_data()),
-            ":: core :: marker :: PhantomData < (* mut & 'a ()) >"
+            "𝟋Ph < 'a >"
         );
 
         // Single type

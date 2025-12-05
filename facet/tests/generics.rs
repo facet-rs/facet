@@ -127,7 +127,7 @@ fn opaque_struct() {
     struct NonFacet;
 
     #[derive(Facet, Debug)]
-    #[facet(opaque)]
+    #[facet(opaque, traits(Debug))]
     struct GenStruct<T: core::fmt::Debug>(T);
 
     let shape = GenStruct::<NonFacet>::SHAPE;
@@ -138,7 +138,7 @@ fn opaque_struct() {
         _ => unreachable!(),
     }
 
-    assert!(shape.vtable.debug.is_some());
+    assert!(shape.vtable.format.debug.is_some());
     assert_eq!(shape.type_params.len(), 0);
 }
 
@@ -148,7 +148,7 @@ fn opaque_enum() {
     struct NonFacet;
 
     #[derive(Facet, Debug)]
-    #[facet(opaque)]
+    #[facet(opaque, traits(Debug))]
     struct GenEnum<T: core::fmt::Debug>(T);
 
     let shape = GenEnum::<NonFacet>::SHAPE;
@@ -159,7 +159,7 @@ fn opaque_enum() {
         _ => unreachable!(),
     }
 
-    assert!(shape.vtable.debug.is_some());
+    assert!(shape.vtable.format.debug.is_some());
     assert_eq!(shape.type_params.len(), 0);
 }
 

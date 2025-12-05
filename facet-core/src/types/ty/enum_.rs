@@ -14,59 +14,6 @@ pub struct EnumType {
     pub variants: &'static [Variant],
 }
 
-impl EnumType {
-    /// Returns a builder for EnumDef
-    pub const fn builder() -> EnumDefBuilder {
-        EnumDefBuilder::new()
-    }
-}
-
-/// Builder for EnumDef
-pub struct EnumDefBuilder {
-    repr: Option<Repr>,
-    enum_repr: Option<EnumRepr>,
-    variants: Option<&'static [Variant]>,
-}
-
-impl EnumDefBuilder {
-    /// Creates a new EnumDefBuilder
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            repr: None,
-            enum_repr: None,
-            variants: None,
-        }
-    }
-
-    /// Sets the representation for the EnumDef
-    pub const fn repr(mut self, repr: Repr) -> Self {
-        self.repr = Some(repr);
-        self
-    }
-
-    /// Sets the discriminant representation for the EnumDef
-    pub const fn enum_repr(mut self, enum_repr: EnumRepr) -> Self {
-        self.enum_repr = Some(enum_repr);
-        self
-    }
-
-    /// Sets the variants for the EnumDef
-    pub const fn variants(mut self, variants: &'static [Variant]) -> Self {
-        self.variants = Some(variants);
-        self
-    }
-
-    /// Builds the EnumDef
-    pub const fn build(self) -> EnumType {
-        EnumType {
-            repr: self.repr.unwrap(),
-            enum_repr: self.enum_repr.unwrap(),
-            variants: self.variants.unwrap(),
-        }
-    }
-}
-
 /// Describes a variant of an enum
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -90,11 +37,6 @@ pub struct Variant {
 }
 
 impl Variant {
-    /// Returns a builder for Variant
-    pub const fn builder() -> VariantBuilder {
-        VariantBuilder::new()
-    }
-
     /// Checks whether the `Variant` has an attribute with the given namespace and key.
     ///
     /// Use `None` for builtin attributes, `Some("ns")` for namespaced attributes.
@@ -125,70 +67,6 @@ impl Variant {
     #[inline]
     pub fn get_builtin_attr(&self, key: &str) -> Option<&super::ExtensionAttr> {
         self.get_attr(None, key)
-    }
-}
-
-/// Builder for Variant
-pub struct VariantBuilder {
-    name: Option<&'static str>,
-    discriminant: Option<i64>,
-    attributes: &'static [VariantAttribute],
-    data: Option<StructType>,
-    doc: &'static [&'static str],
-}
-
-impl VariantBuilder {
-    /// Creates a new VariantBuilder
-    #[allow(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            name: None,
-            discriminant: None,
-            attributes: &[],
-            data: None,
-            doc: &[],
-        }
-    }
-
-    /// Sets the name for the Variant
-    pub const fn name(mut self, name: &'static str) -> Self {
-        self.name = Some(name);
-        self
-    }
-
-    /// Sets the discriminant for the Variant
-    pub const fn discriminant(mut self, discriminant: i64) -> Self {
-        self.discriminant = Some(discriminant);
-        self
-    }
-
-    /// Sets the attributes for the variant
-    pub const fn attributes(mut self, attributes: &'static [VariantAttribute]) -> Self {
-        self.attributes = attributes;
-        self
-    }
-
-    /// Sets the fields for the Variant
-    pub const fn data(mut self, data: StructType) -> Self {
-        self.data = Some(data);
-        self
-    }
-
-    /// Sets the doc comment for the Variant
-    pub const fn doc(mut self, doc: &'static [&'static str]) -> Self {
-        self.doc = doc;
-        self
-    }
-
-    /// Builds the Variant
-    pub const fn build(self) -> Variant {
-        Variant {
-            name: self.name.unwrap(),
-            discriminant: self.discriminant,
-            attributes: self.attributes,
-            data: self.data.unwrap(),
-            doc: self.doc,
-        }
     }
 }
 
@@ -241,6 +119,147 @@ impl EnumRepr {
             4 => EnumRepr::U32,
             8 => EnumRepr::U64,
             _ => panic!("Invalid enum size"),
+        }
+    }
+}
+
+/// Builder for constructing [`Variant`] instances in const contexts.
+///
+/// This builder enables shorter derive macro output by providing a fluent API
+/// for constructing variants with default values for optional fields.
+///
+/// # Example
+///
+/// ```
+/// use facet_core::{VariantBuilder, StructTypeBuilder, StructKind, Variant};
+///
+/// const VARIANT: Variant = VariantBuilder::new(
+///     "Foo",
+///     StructTypeBuilder::new(StructKind::Unit, &[]).build()
+/// )
+/// .discriminant(Some(42))
+/// .build();
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct VariantBuilder {
+    name: &'static str,
+    discriminant: Option<i64>,
+    attributes: &'static [VariantAttribute],
+    data: StructType,
+    doc: &'static [&'static str],
+}
+
+impl VariantBuilder {
+    /// Creates a new `VariantBuilder` with the required fields.
+    ///
+    /// # Parameters
+    ///
+    /// - `name`: The name of the variant
+    /// - `data`: The struct type representing the variant's fields
+    #[inline]
+    pub const fn new(name: &'static str, data: StructType) -> Self {
+        Self {
+            name,
+            discriminant: None,
+            attributes: &[],
+            data,
+            doc: &[],
+        }
+    }
+
+    /// Sets the discriminant value for this variant.
+    ///
+    /// Defaults to `None` if not called.
+    #[inline]
+    pub const fn discriminant(mut self, discriminant: Option<i64>) -> Self {
+        self.discriminant = discriminant;
+        self
+    }
+
+    /// Sets the attributes for this variant.
+    ///
+    /// Defaults to an empty slice if not called.
+    #[inline]
+    pub const fn attributes(mut self, attributes: &'static [VariantAttribute]) -> Self {
+        self.attributes = attributes;
+        self
+    }
+
+    /// Sets the documentation for this variant.
+    ///
+    /// Defaults to an empty slice if not called.
+    #[inline]
+    pub const fn doc(mut self, doc: &'static [&'static str]) -> Self {
+        self.doc = doc;
+        self
+    }
+
+    /// Builds the final [`Variant`] instance.
+    #[inline]
+    pub const fn build(self) -> Variant {
+        Variant {
+            name: self.name,
+            discriminant: self.discriminant,
+            attributes: self.attributes,
+            data: self.data,
+            doc: self.doc,
+        }
+    }
+}
+
+/// Builder for constructing [`EnumType`] instances in const contexts.
+///
+/// This builder enables shorter derive macro output by providing a fluent API
+/// for constructing enum types with default values for optional fields.
+///
+/// # Example
+///
+/// ```
+/// use facet_core::{EnumTypeBuilder, EnumRepr, Repr, EnumType};
+///
+/// const ENUM: EnumType = EnumTypeBuilder::new(EnumRepr::U8, &[])
+///     .repr(Repr::c())
+///     .build();
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct EnumTypeBuilder {
+    repr: Repr,
+    enum_repr: EnumRepr,
+    variants: &'static [Variant],
+}
+
+impl EnumTypeBuilder {
+    /// Creates a new `EnumTypeBuilder` with the required fields.
+    ///
+    /// # Parameters
+    ///
+    /// - `enum_repr`: The representation of the enum's discriminant
+    /// - `variants`: All variants for this enum
+    #[inline]
+    pub const fn new(enum_repr: EnumRepr, variants: &'static [Variant]) -> Self {
+        Self {
+            repr: Repr::c(),
+            enum_repr,
+            variants,
+        }
+    }
+
+    /// Sets the representation of the enum's data.
+    ///
+    /// Defaults to `Repr::c()` if not called.
+    #[inline]
+    pub const fn repr(mut self, repr: Repr) -> Self {
+        self.repr = repr;
+        self
+    }
+
+    /// Builds the final [`EnumType`] instance.
+    #[inline]
+    pub const fn build(self) -> EnumType {
+        EnumType {
+            repr: self.repr,
+            enum_repr: self.enum_repr,
+            variants: self.variants,
         }
     }
 }

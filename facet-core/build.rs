@@ -15,4 +15,6 @@ fn main() {
     {
         println!("cargo::rustc-cfg=has_portable_simd");
     }
+
+    println!("cargo::rerun-if-changed=build.rs");
 }

@@ -32,19 +32,6 @@ pub struct PointerDef {
 }
 
 impl PointerDef {
-    /// Creates a new `PointerDefBuilder` with all fields set to `None`.
-    #[must_use]
-    pub const fn builder() -> PointerDefBuilder {
-        PointerDefBuilder {
-            vtable: None,
-            pointee: None,
-            flags: None,
-            known: None,
-            weak: None,
-            strong: None,
-        }
-    }
-
     /// Returns shape of the inner type of the pointer, if not opaque
     pub fn pointee(&self) -> Option<&'static Shape> {
         self.pointee
@@ -67,92 +54,6 @@ impl PointerDef {
                 self.known,
                 Some(KnownPointer::Box | KnownPointer::Rc | KnownPointer::Arc)
             )
-    }
-}
-
-/// Builder for creating a `PointerDef`.
-#[derive(Debug)]
-pub struct PointerDefBuilder {
-    vtable: Option<&'static PointerVTable>,
-    pointee: Option<&'static Shape>,
-    flags: Option<PointerFlags>,
-    known: Option<KnownPointer>,
-    weak: Option<fn() -> &'static Shape>,
-    strong: Option<&'static Shape>,
-}
-
-impl PointerDefBuilder {
-    /// Creates a new `PointerDefBuilder` with all fields set to `None`.
-    #[must_use]
-    #[expect(clippy::new_without_default)]
-    pub const fn new() -> Self {
-        Self {
-            vtable: None,
-            pointee: None,
-            flags: None,
-            known: None,
-            weak: None,
-            strong: None,
-        }
-    }
-
-    /// Sets the vtable for the pointer.
-    #[must_use]
-    pub const fn vtable(mut self, vtable: &'static PointerVTable) -> Self {
-        self.vtable = Some(vtable);
-        self
-    }
-
-    /// Sets the shape of the inner type of the pointer.
-    #[must_use]
-    pub const fn pointee(mut self, pointee: &'static Shape) -> Self {
-        self.pointee = Some(pointee);
-        self
-    }
-
-    /// Sets the flags for the pointer.
-    #[must_use]
-    pub const fn flags(mut self, flags: PointerFlags) -> Self {
-        self.flags = Some(flags);
-        self
-    }
-
-    /// Sets the known pointer type.
-    #[must_use]
-    pub const fn known(mut self, known: KnownPointer) -> Self {
-        self.known = Some(known);
-        self
-    }
-
-    /// Sets the shape of the corresponding weak pointer, if this pointer is strong.
-    #[must_use]
-    pub const fn weak(mut self, weak: fn() -> &'static Shape) -> Self {
-        self.weak = Some(weak);
-        self
-    }
-
-    /// Sets the shape of the corresponding strong pointer, if this pointer is weak
-    #[must_use]
-    pub const fn strong(mut self, strong: &'static Shape) -> Self {
-        self.strong = Some(strong);
-        self
-    }
-
-    /// Builds a `PointerDef` from the provided configuration.
-    ///
-    /// # Panics
-    ///
-    /// Panics if any required field (vtable, flags) is not set.
-    #[must_use]
-    pub const fn build(self) -> PointerDef {
-        PointerDef {
-            vtable: self.vtable.unwrap(),
-            pointee: self.pointee,
-            weak: self.weak,
-            strong: self.strong,
-            flags: self.flags.unwrap(),
-            known: self.known,
-        }
     }
 }
 
@@ -322,76 +223,19 @@ pub struct SliceBuilderVTable {
 }
 
 impl SliceBuilderVTable {
-    /// Creates a new `SliceBuilderVTableBuilder` with all fields set to `None`.
+    /// Const ctor for slice builder vtable; all hooks required.
     #[must_use]
-    pub const fn builder() -> SliceBuilderVTableBuilder {
-        SliceBuilderVTableBuilder {
-            new_fn: None,
-            push_fn: None,
-            convert_fn: None,
-            free_fn: None,
-        }
-    }
-}
-
-/// Builder for creating a `SliceBuilderVTable`.
-#[derive(Debug)]
-pub struct SliceBuilderVTableBuilder {
-    new_fn: Option<SliceBuilderNewFn>,
-    push_fn: Option<SliceBuilderPushFn>,
-    convert_fn: Option<SliceBuilderConvertFn>,
-    free_fn: Option<SliceBuilderFreeFn>,
-}
-
-impl SliceBuilderVTableBuilder {
-    /// Creates a new `SliceBuilderVTableBuilder` with all fields set to `None`.
-    #[must_use]
-    #[expect(clippy::new_without_default)]
-    pub const fn new() -> Self {
+    pub const fn new(
+        new_fn: SliceBuilderNewFn,
+        push_fn: SliceBuilderPushFn,
+        convert_fn: SliceBuilderConvertFn,
+        free_fn: SliceBuilderFreeFn,
+    ) -> Self {
         Self {
-            new_fn: None,
-            push_fn: None,
-            convert_fn: None,
-            free_fn: None,
-        }
-    }
-
-    /// Sets the `new` function for the slice builder.
-    #[must_use]
-    pub const fn new_fn(mut self, new_fn: SliceBuilderNewFn) -> Self {
-        self.new_fn = Some(new_fn);
-        self
-    }
-
-    /// Sets the `push` function for the slice builder.
-    #[must_use]
-    pub const fn push_fn(mut self, push_fn: SliceBuilderPushFn) -> Self {
-        self.push_fn = Some(push_fn);
-        self
-    }
-
-    /// Sets the `convert` function for the slice builder.
-    #[must_use]
-    pub const fn convert_fn(mut self, convert_fn: SliceBuilderConvertFn) -> Self {
-        self.convert_fn = Some(convert_fn);
-        self
-    }
-
-    /// Sets the `free` function for the slice builder.
-    #[must_use]
-    pub const fn free_fn(mut self, free_fn: SliceBuilderFreeFn) -> Self {
-        self.free_fn = Some(free_fn);
-        self
-    }
-
-    /// Builds a `SliceBuilderVTable` from the provided configuration.
-    #[must_use]
-    pub const fn build(self) -> SliceBuilderVTable {
-        SliceBuilderVTable {
-            new_fn: self.new_fn.expect("new_fn must be set"),
-            push_fn: self.push_fn.expect("push_fn must be set"),
-            convert_fn: self.convert_fn.expect("convert_fn must be set"),
-            free_fn: self.free_fn.expect("free_fn must be set"),
+            new_fn,
+            push_fn,
+            convert_fn,
+            free_fn,
         }
     }
 }
@@ -424,40 +268,15 @@ pub struct PointerVTable {
     pub slice_builder_vtable: Option<&'static SliceBuilderVTable>,
 }
 
-impl PointerVTable {
-    /// Creates a new `PointerVTableBuilder` with all fields set to `None`.
-    #[must_use]
-    pub const fn builder() -> PointerVTableBuilder {
-        PointerVTableBuilder {
-            upgrade_into_fn: None,
-            downgrade_into_fn: None,
-            borrow_fn: None,
-            new_into_fn: None,
-            lock_fn: None,
-            read_fn: None,
-            write_fn: None,
-            slice_builder_vtable: None,
-        }
+impl Default for PointerVTable {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-/// Builder for creating a `PointerVTable`.
-#[derive(Debug)]
-pub struct PointerVTableBuilder {
-    upgrade_into_fn: Option<UpgradeIntoFn>,
-    downgrade_into_fn: Option<DowngradeIntoFn>,
-    borrow_fn: Option<BorrowFn>,
-    new_into_fn: Option<NewIntoFn>,
-    lock_fn: Option<LockFn>,
-    read_fn: Option<ReadFn>,
-    write_fn: Option<WriteFn>,
-    slice_builder_vtable: Option<&'static SliceBuilderVTable>,
-}
-
-impl PointerVTableBuilder {
-    /// Creates a new `PointerVTableBuilder` with all fields set to `None`.
+impl PointerVTable {
+    /// Const ctor with all entries set to `None`.
     #[must_use]
-    #[expect(clippy::new_without_default)]
     pub const fn new() -> Self {
         Self {
             upgrade_into_fn: None,
@@ -468,80 +287,6 @@ impl PointerVTableBuilder {
             read_fn: None,
             write_fn: None,
             slice_builder_vtable: None,
-        }
-    }
-
-    /// Sets the `try_upgrade` function.
-    #[must_use]
-    pub const fn upgrade_into_fn(mut self, upgrade_into_fn: UpgradeIntoFn) -> Self {
-        self.upgrade_into_fn = Some(upgrade_into_fn);
-        self
-    }
-
-    /// Sets the `downgrade` function.
-    #[must_use]
-    pub const fn downgrade_into_fn(mut self, downgrade_into_fn: DowngradeIntoFn) -> Self {
-        self.downgrade_into_fn = Some(downgrade_into_fn);
-        self
-    }
-
-    /// Sets the `borrow` function.
-    #[must_use]
-    pub const fn borrow_fn(mut self, borrow_fn: BorrowFn) -> Self {
-        self.borrow_fn = Some(borrow_fn);
-        self
-    }
-
-    /// Sets the `new_into` function.
-    #[must_use]
-    pub const fn new_into_fn(mut self, new_into_fn: NewIntoFn) -> Self {
-        self.new_into_fn = Some(new_into_fn);
-        self
-    }
-
-    /// Sets the `lock` function.
-    #[must_use]
-    pub const fn lock_fn(mut self, lock_fn: LockFn) -> Self {
-        self.lock_fn = Some(lock_fn);
-        self
-    }
-
-    /// Sets the `read` function.
-    #[must_use]
-    pub const fn read_fn(mut self, read_fn: ReadFn) -> Self {
-        self.read_fn = Some(read_fn);
-        self
-    }
-
-    /// Sets the `write` function.
-    #[must_use]
-    pub const fn write_fn(mut self, write_fn: WriteFn) -> Self {
-        self.write_fn = Some(write_fn);
-        self
-    }
-
-    /// Sets the `slice_builder_vtable` function.
-    #[must_use]
-    pub const fn slice_builder_vtable(
-        mut self,
-        slice_builder_vtable: &'static SliceBuilderVTable,
-    ) -> Self {
-        self.slice_builder_vtable = Some(slice_builder_vtable);
-        self
-    }
-
-    /// Builds a `PointerVTable` from the provided configuration.
-    #[must_use]
-    pub const fn build(self) -> PointerVTable {
-        PointerVTable {
-            upgrade_into_fn: self.upgrade_into_fn,
-            downgrade_into_fn: self.downgrade_into_fn,
-            borrow_fn: self.borrow_fn,
-            new_into_fn: self.new_into_fn,
-            lock_fn: self.lock_fn,
-            read_fn: self.read_fn,
-            write_fn: self.write_fn,
-            slice_builder_vtable: self.slice_builder_vtable,
         }
     }
 }

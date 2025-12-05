@@ -10,6 +10,7 @@ fn peek_opaque_custom_serialize() -> Result<(), IPanic> {
 
     // Proxy type that derives Facet
     #[derive(Facet, Copy, Clone)]
+    #[facet(auto_traits)]
     pub struct NotDerivingFacetProxy(u64);
 
     impl TryFrom<NotDerivingFacetProxy> for NotDerivingFacet {
@@ -27,6 +28,7 @@ fn peek_opaque_custom_serialize() -> Result<(), IPanic> {
     }
 
     #[derive(Facet)]
+    #[facet(auto_traits)]
     pub struct Container {
         #[facet(opaque, proxy = NotDerivingFacetProxy)]
         inner: NotDerivingFacet,
@@ -66,12 +68,14 @@ fn peek_opaque_custom_serialize() -> Result<(), IPanic> {
 #[test]
 fn peek_shaped_custom_serialize() -> Result<(), IPanic> {
     #[derive(Facet, Copy, Clone, Debug, Eq, PartialEq)]
+    #[facet(auto_traits)]
     pub struct Struct1 {
         val: u64,
     }
 
     // Proxy type for serialization
     #[derive(Facet)]
+    #[facet(auto_traits)]
     pub struct Struct1Proxy {
         sum: String,
     }
@@ -95,6 +99,7 @@ fn peek_shaped_custom_serialize() -> Result<(), IPanic> {
     }
 
     #[derive(Facet)]
+    #[facet(auto_traits)]
     pub struct Container {
         #[facet(opaque, proxy = Struct1Proxy)]
         inner: Struct1,
@@ -138,6 +143,7 @@ fn peek_opaque_custom_serialize_enum_tuple() -> Result<(), IPanic> {
 
     // Proxy type that derives Facet
     #[derive(Facet, Copy, Clone)]
+    #[facet(auto_traits)]
     pub struct NotDerivingFacetProxy(u64);
 
     impl TryFrom<NotDerivingFacetProxy> for NotDerivingFacet {
@@ -156,6 +162,7 @@ fn peek_opaque_custom_serialize_enum_tuple() -> Result<(), IPanic> {
 
     #[allow(dead_code)]
     #[derive(Facet)]
+    #[facet(auto_traits)]
     #[repr(u8)]
     pub enum Choices {
         Opaque(#[facet(opaque, proxy = NotDerivingFacetProxy)] NotDerivingFacet),
@@ -206,6 +213,7 @@ fn peek_opaque_custom_serialize_enum_feels() -> Result<(), IPanic> {
 
     // Proxy type that derives Facet
     #[derive(Facet, Copy, Clone)]
+    #[facet(auto_traits)]
     pub struct NotDerivingFacetProxy(u64);
 
     impl TryFrom<NotDerivingFacetProxy> for NotDerivingFacet {
@@ -224,6 +232,7 @@ fn peek_opaque_custom_serialize_enum_feels() -> Result<(), IPanic> {
 
     #[allow(dead_code)]
     #[derive(Facet)]
+    #[facet(auto_traits)]
     #[repr(u8)]
     pub enum Choices {
         Opaque {
@@ -275,12 +284,14 @@ fn peek_opaque_custom_serialize_enum_feels() -> Result<(), IPanic> {
 #[test]
 fn peek_shaped_custom_serialize_pointers() -> Result<(), IPanic> {
     #[derive(Facet, Copy, Clone, Debug, Eq, PartialEq)]
+    #[facet(auto_traits)]
     pub struct Struct1 {
         val: u64,
     }
 
     // Proxy type for serialization
     #[derive(Facet)]
+    #[facet(auto_traits)]
     pub struct ArcStruct1Proxy {
         sum: String,
     }
@@ -304,6 +315,7 @@ fn peek_shaped_custom_serialize_pointers() -> Result<(), IPanic> {
     }
 
     #[derive(Facet)]
+    #[facet(auto_traits)]
     pub struct Container {
         #[facet(opaque, proxy = ArcStruct1Proxy)]
         inner: std::sync::Arc<Struct1>,
@@ -347,6 +359,7 @@ fn peek_custom_serialize_errors() -> Result<(), IPanic> {
 
     // Proxy type that derives Facet
     #[derive(Facet, Copy, Clone)]
+    #[facet(auto_traits)]
     pub struct NotDerivingFacetProxy(u64);
 
     impl TryFrom<NotDerivingFacetProxy> for NotDerivingFacet {
@@ -368,6 +381,7 @@ fn peek_custom_serialize_errors() -> Result<(), IPanic> {
     }
 
     #[derive(Facet)]
+    #[facet(auto_traits)]
     pub struct Container {
         #[facet(opaque, proxy = NotDerivingFacetProxy)]
         inner: NotDerivingFacet,
@@ -414,6 +428,7 @@ fn peek_custom_serialize_errors() -> Result<(), IPanic> {
 fn peek_custom_serialize_zst() -> Result<(), IPanic> {
     // Proxy type for () (ZST)
     #[derive(Facet)]
+    #[facet(auto_traits)]
     pub struct UnitProxy(u64);
 
     impl TryFrom<UnitProxy> for () {
@@ -431,6 +446,7 @@ fn peek_custom_serialize_zst() -> Result<(), IPanic> {
     }
 
     #[derive(Facet)]
+    #[facet(auto_traits)]
     pub struct Container {
         #[facet(proxy = UnitProxy)]
         inner: (),

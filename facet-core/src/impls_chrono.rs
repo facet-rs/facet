@@ -5,8 +5,10 @@ use crate::{Def, Facet, ParseError, PtrConst, PtrUninit, Shape, Type, UserType, 
 
 unsafe impl Facet<'_> for DateTime<Utc> {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: {
                 let mut vtable = value_vtable!(DateTime<Utc>, |f, _opts| write!(
                     f,
                     "{}",
@@ -44,28 +46,33 @@ unsafe impl Facet<'_> for DateTime<Utc> {
                             Ok(unsafe { target.put(parsed) })
                         })
                     };
-                    vtable.display = {
-                        Some(|value, f| unsafe {
-                            let dt = value.get::<DateTime<Utc>>();
-                            use chrono::SecondsFormat;
-                            let s = dt.to_rfc3339_opts(SecondsFormat::Secs, true);
-                            write!(f, "{s}")
-                        })
-                    };
+                    vtable.format.display = Some(|value, f| unsafe {
+                        let dt = value.get::<DateTime<Utc>>();
+                        use chrono::SecondsFormat;
+                        let s = dt.to_rfc3339_opts(SecondsFormat::Secs, true);
+                        write!(f, "{s}")
+                    });
                 }
                 vtable
-            })
-            .type_identifier("DateTime<Utc>")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
-            .build()
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::Scalar,
+            type_identifier: "DateTime<Utc>",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
+        }
     };
 }
 
 unsafe impl Facet<'_> for DateTime<FixedOffset> {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: {
                 let mut vtable = value_vtable!(DateTime<FixedOffset>, |f, _opts| write!(
                     f,
                     "{}",
@@ -101,27 +108,32 @@ unsafe impl Facet<'_> for DateTime<FixedOffset> {
                             Ok(unsafe { target.put(parsed) })
                         })
                     };
-                    vtable.display = {
-                        Some(|value, f| unsafe {
-                            let dt = value.get::<DateTime<FixedOffset>>();
-                            use chrono::SecondsFormat;
-                            write!(f, "{}", dt.to_rfc3339_opts(SecondsFormat::Secs, true))
-                        })
-                    };
+                    vtable.format.display = Some(|value, f| unsafe {
+                        let dt = value.get::<DateTime<FixedOffset>>();
+                        use chrono::SecondsFormat;
+                        write!(f, "{}", dt.to_rfc3339_opts(SecondsFormat::Secs, true))
+                    });
                 }
                 vtable
-            })
-            .type_identifier("DateTime<FixedOffset>")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
-            .build()
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::Scalar,
+            type_identifier: "DateTime<FixedOffset>",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
+        }
     };
 }
 
 unsafe impl Facet<'_> for DateTime<Local> {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: {
                 let mut vtable = value_vtable!(DateTime<Local>, |f, _opts| write!(
                     f,
                     "{}",
@@ -159,27 +171,32 @@ unsafe impl Facet<'_> for DateTime<Local> {
                             Ok(unsafe { target.put(parsed) })
                         })
                     };
-                    vtable.display = {
-                        Some(|value, f| unsafe {
-                            let dt = value.get::<DateTime<Local>>();
-                            use chrono::SecondsFormat;
-                            write!(f, "{}", dt.to_rfc3339_opts(SecondsFormat::Secs, true))
-                        })
-                    };
+                    vtable.format.display = Some(|value, f| unsafe {
+                        let dt = value.get::<DateTime<Local>>();
+                        use chrono::SecondsFormat;
+                        write!(f, "{}", dt.to_rfc3339_opts(SecondsFormat::Secs, true))
+                    });
                 }
                 vtable
-            })
-            .type_identifier("DateTime<Local>")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
-            .build()
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::Scalar,
+            type_identifier: "DateTime<Local>",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
+        }
     };
 }
 
 unsafe impl Facet<'_> for NaiveDateTime {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: {
                 let mut vtable = value_vtable!(NaiveDateTime, |f, _opts| write!(
                     f,
                     "{}",
@@ -225,27 +242,32 @@ unsafe impl Facet<'_> for NaiveDateTime {
                             Ok(unsafe { target.put(parsed) })
                         })
                     };
-                    vtable.display = {
-                        Some(|value, f| unsafe {
-                            let dt = value.get::<NaiveDateTime>();
-                            let formatted = dt.format("%Y-%m-%dT%H:%M:%S").to_string();
-                            write!(f, "{formatted}")
-                        })
-                    };
+                    vtable.format.display = Some(|value, f| unsafe {
+                        let dt = value.get::<NaiveDateTime>();
+                        let formatted = dt.format("%Y-%m-%dT%H:%M:%S").to_string();
+                        write!(f, "{formatted}")
+                    });
                 }
                 vtable
-            })
-            .type_identifier("NaiveDateTime")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
-            .build()
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::Scalar,
+            type_identifier: "NaiveDateTime",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
+        }
     };
 }
 
 unsafe impl Facet<'_> for NaiveDate {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: {
                 let mut vtable = value_vtable!(NaiveDate, |f, _opts| write!(
                     f,
                     "{}",
@@ -281,27 +303,32 @@ unsafe impl Facet<'_> for NaiveDate {
                             Ok(unsafe { target.put(parsed) })
                         })
                     };
-                    vtable.display = {
-                        Some(|value, f| unsafe {
-                            let dt = value.get::<NaiveDate>();
-                            let formatted = dt.format("%Y-%m-%d").to_string();
-                            write!(f, "{formatted}")
-                        })
-                    };
+                    vtable.format.display = Some(|value, f| unsafe {
+                        let dt = value.get::<NaiveDate>();
+                        let formatted = dt.format("%Y-%m-%d").to_string();
+                        write!(f, "{formatted}")
+                    });
                 }
                 vtable
-            })
-            .type_identifier("NaiveDate")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
-            .build()
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::Scalar,
+            type_identifier: "NaiveDate",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
+        }
     };
 }
 
 unsafe impl Facet<'_> for NaiveTime {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: {
                 let mut vtable = value_vtable!(NaiveTime, |f, _opts| write!(
                     f,
                     "{}",
@@ -341,19 +368,22 @@ unsafe impl Facet<'_> for NaiveTime {
                             Ok(unsafe { target.put(parsed) })
                         })
                     };
-                    vtable.display = {
-                        Some(|value, f| unsafe {
-                            let dt = value.get::<NaiveTime>();
-                            let formatted = dt.format("%H:%M:%S").to_string();
-                            write!(f, "{formatted}")
-                        })
-                    };
+                    vtable.format.display = Some(|value, f| unsafe {
+                        let dt = value.get::<NaiveTime>();
+                        let formatted = dt.format("%H:%M:%S").to_string();
+                        write!(f, "{formatted}")
+                    });
                 }
                 vtable
-            })
-            .type_identifier("NaiveTime")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::Scalar)
-            .build()
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::Scalar,
+            type_identifier: "NaiveTime",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
+        }
     };
 }

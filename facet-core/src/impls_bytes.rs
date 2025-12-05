@@ -13,8 +13,10 @@ type BytesIterator<'mem> = core::slice::Iter<'mem, u8>;
 
 unsafe impl Facet<'_> for Bytes {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: {
                 let mut vtable = value_vtable!(Bytes, |f, _opts| write!(
                     f,
                     "{}",
@@ -40,156 +42,147 @@ unsafe impl Facet<'_> for Bytes {
                 }
 
                 vtable
-            })
-            .ty(Type::User(UserType::Opaque))
-            .type_identifier("Bytes")
-            .inner(BytesMut::SHAPE)
-            .def(Def::List(
-                ListDef::builder()
-                    .vtable(
-                        &const {
-                            ListVTable::builder()
-                                .len(|ptr| unsafe {
-                                    let bytes = ptr.get::<Self>();
-                                    bytes.len()
-                                })
-                                .get(|ptr, index| unsafe {
-                                    let bytes = ptr.get::<Self>();
-                                    let item = bytes.get(index)?;
-                                    Some(PtrConst::new(item.into()))
-                                })
-                                .as_ptr(|ptr| unsafe {
-                                    let bytes: &Self = ptr.get::<Self>();
-                                    PtrConst::new(core::ptr::NonNull::new_unchecked(
-                                        bytes.as_ptr() as *mut u8
-                                    ))
-                                })
-                                .iter_vtable(
-                                    IterVTable::builder()
-                                        .init_with_value(|ptr| unsafe {
-                                            let bytes = ptr.get::<Self>();
-                                            let iter: BytesIterator = bytes.iter();
-                                            let iter_state = Box::new(iter);
-                                            PtrMut::new(NonNull::new_unchecked(Box::into_raw(
-                                                iter_state,
-                                            )
-                                                as *mut u8))
-                                        })
-                                        .next(|iter_ptr| unsafe {
-                                            let state = iter_ptr.as_mut::<BytesIterator<'_>>();
-                                            state.next().map(|value| PtrConst::new(value.into()))
-                                        })
-                                        .next_back(|iter_ptr| unsafe {
-                                            let state = iter_ptr.as_mut::<BytesIterator<'_>>();
-                                            state
-                                                .next_back()
-                                                .map(|value| PtrConst::new(value.into()))
-                                        })
-                                        .dealloc(|iter_ptr| unsafe {
-                                            drop(Box::from_raw(
-                                                iter_ptr.as_ptr::<BytesIterator<'_>>()
-                                                    as *mut BytesIterator<'_>,
-                                            ));
-                                        })
-                                        .build(),
-                                )
-                                .build()
+            },
+            ty: Type::User(UserType::Opaque),
+            def: Def::List(ListDef::new(
+                &const {
+                    ListVTable {
+                        init_in_place_with_capacity: None,
+                        push: None,
+                        len: |ptr| unsafe {
+                            let bytes = ptr.get::<Self>();
+                            bytes.len()
                         },
-                    )
-                    .t(u8::SHAPE)
-                    .build(),
-            ))
-            .build()
+                        get: |ptr, index| unsafe {
+                            let bytes = ptr.get::<Self>();
+                            let item = bytes.get(index)?;
+                            Some(PtrConst::new(item.into()))
+                        },
+                        get_mut: None,
+                        as_ptr: Some(|ptr| unsafe {
+                            let bytes: &Self = ptr.get::<Self>();
+                            PtrConst::new(core::ptr::NonNull::new_unchecked(
+                                bytes.as_ptr() as *mut u8
+                            ))
+                        }),
+                        as_mut_ptr: None,
+                        iter_vtable: IterVTable {
+                            init_with_value: Some(|ptr| unsafe {
+                                let bytes = ptr.get::<Self>();
+                                let iter: BytesIterator = bytes.iter();
+                                let iter_state = Box::new(iter);
+                                PtrMut::new(NonNull::new_unchecked(
+                                    Box::into_raw(iter_state) as *mut u8
+                                ))
+                            }),
+                            next: |iter_ptr| unsafe {
+                                let state = iter_ptr.as_mut::<BytesIterator<'_>>();
+                                state.next().map(|value| PtrConst::new(value.into()))
+                            },
+                            next_back: Some(|iter_ptr| unsafe {
+                                let state = iter_ptr.as_mut::<BytesIterator<'_>>();
+                                state.next_back().map(|value| PtrConst::new(value.into()))
+                            }),
+                            size_hint: None,
+                            dealloc: |iter_ptr| unsafe {
+                                drop(Box::from_raw(iter_ptr.as_ptr::<BytesIterator<'_>>()
+                                    as *mut BytesIterator<'_>));
+                            },
+                        },
+                    }
+                },
+                u8::SHAPE,
+            )),
+            type_identifier: "Bytes",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: Some(BytesMut::SHAPE),
+        }
     };
 }
 
 unsafe impl Facet<'_> for BytesMut {
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
-                value_vtable!(BytesMut, |f, _opts| write!(
-                    f,
-                    "{}",
-                    Self::SHAPE.type_identifier
-                ))
-            })
-            .type_identifier("BytesMut")
-            .ty(Type::User(UserType::Opaque))
-            .def(Def::List(
-                ListDef::builder()
-                    .vtable(
-                        &const {
-                            ListVTable::builder()
-                                .init_in_place_with_capacity(|data, capacity| unsafe {
-                                    data.put(Self::with_capacity(capacity))
-                                })
-                                .push(|ptr, item| unsafe {
-                                    let bytes = ptr.as_mut::<Self>();
-                                    let item = item.read::<u8>();
-                                    (*bytes).put_u8(item);
-                                })
-                                .len(|ptr| unsafe {
-                                    let bytes = ptr.get::<Self>();
-                                    bytes.len()
-                                })
-                                .get(|ptr, index| unsafe {
-                                    let bytes = ptr.get::<Self>();
-                                    let item = bytes.get(index)?;
-                                    Some(PtrConst::new(item.into()))
-                                })
-                                .get_mut(|ptr, index| unsafe {
-                                    let bytes = ptr.as_mut::<Self>();
-                                    let item = bytes.get_mut(index)?;
-                                    Some(PtrMut::new(item.into()))
-                                })
-                                .as_ptr(|ptr| unsafe {
-                                    let bytes = ptr.get::<Self>();
-                                    PtrConst::new(core::ptr::NonNull::new_unchecked(
-                                        bytes.as_ptr() as *mut u8
-                                    ))
-                                })
-                                .as_mut_ptr(|ptr| unsafe {
-                                    let bytes = ptr.as_mut::<Self>();
-                                    PtrMut::new(core::ptr::NonNull::new_unchecked(
-                                        bytes.as_mut_ptr(),
-                                    ))
-                                })
-                                .iter_vtable(
-                                    IterVTable::builder()
-                                        .init_with_value(|ptr| unsafe {
-                                            let bytes = ptr.get::<Self>();
-                                            let iter: BytesIterator = bytes.iter();
-                                            let iter_state = Box::new(iter);
-                                            PtrMut::new(NonNull::new_unchecked(Box::into_raw(
-                                                iter_state,
-                                            )
-                                                as *mut u8))
-                                        })
-                                        .next(|iter_ptr| unsafe {
-                                            let state = iter_ptr.as_mut::<BytesIterator<'_>>();
-                                            state.next().map(|value| PtrConst::new(value.into()))
-                                        })
-                                        .next_back(|iter_ptr| unsafe {
-                                            let state = iter_ptr.as_mut::<BytesIterator<'_>>();
-                                            state
-                                                .next_back()
-                                                .map(|value| PtrConst::new(value.into()))
-                                        })
-                                        .dealloc(|iter_ptr| unsafe {
-                                            drop(Box::from_raw(
-                                                iter_ptr.as_ptr::<BytesIterator<'_>>()
-                                                    as *mut BytesIterator<'_>,
-                                            ));
-                                        })
-                                        .build(),
-                                )
-                                .build()
+        Shape {
+            id: Shape::id_of::<Self>(),
+            layout: Shape::layout_of::<Self>(),
+            vtable: value_vtable!(BytesMut, |f, _opts| write!(
+                f,
+                "{}",
+                Self::SHAPE.type_identifier
+            )),
+            ty: Type::User(UserType::Opaque),
+            def: Def::List(ListDef::new(
+                &const {
+                    ListVTable {
+                        init_in_place_with_capacity: Some(|data, capacity| unsafe {
+                            data.put(Self::with_capacity(capacity))
+                        }),
+                        push: Some(|ptr, item| unsafe {
+                            let bytes = ptr.as_mut::<Self>();
+                            let item = item.read::<u8>();
+                            (*bytes).put_u8(item);
+                        }),
+                        len: |ptr| unsafe {
+                            let bytes = ptr.get::<Self>();
+                            bytes.len()
                         },
-                    )
-                    .t(u8::SHAPE)
-                    .build(),
-            ))
-            .build()
+                        get: |ptr, index| unsafe {
+                            let bytes = ptr.get::<Self>();
+                            let item = bytes.get(index)?;
+                            Some(PtrConst::new(item.into()))
+                        },
+                        get_mut: Some(|ptr, index| unsafe {
+                            let bytes = ptr.as_mut::<Self>();
+                            let item = bytes.get_mut(index)?;
+                            Some(PtrMut::new(item.into()))
+                        }),
+                        as_ptr: Some(|ptr| unsafe {
+                            let bytes = ptr.get::<Self>();
+                            PtrConst::new(core::ptr::NonNull::new_unchecked(
+                                bytes.as_ptr() as *mut u8
+                            ))
+                        }),
+                        as_mut_ptr: Some(|ptr| unsafe {
+                            let bytes = ptr.as_mut::<Self>();
+                            PtrMut::new(core::ptr::NonNull::new_unchecked(bytes.as_mut_ptr()))
+                        }),
+                        iter_vtable: IterVTable {
+                            init_with_value: Some(|ptr| unsafe {
+                                let bytes = ptr.get::<Self>();
+                                let iter: BytesIterator = bytes.iter();
+                                let iter_state = Box::new(iter);
+                                PtrMut::new(NonNull::new_unchecked(
+                                    Box::into_raw(iter_state) as *mut u8
+                                ))
+                            }),
+                            next: |iter_ptr| unsafe {
+                                let state = iter_ptr.as_mut::<BytesIterator<'_>>();
+                                state.next().map(|value| PtrConst::new(value.into()))
+                            },
+                            next_back: Some(|iter_ptr| unsafe {
+                                let state = iter_ptr.as_mut::<BytesIterator<'_>>();
+                                state.next_back().map(|value| PtrConst::new(value.into()))
+                            }),
+                            size_hint: None,
+                            dealloc: |iter_ptr| unsafe {
+                                drop(Box::from_raw(iter_ptr.as_ptr::<BytesIterator<'_>>()
+                                    as *mut BytesIterator<'_>));
+                            },
+                        },
+                    }
+                },
+                u8::SHAPE,
+            )),
+            type_identifier: "BytesMut",
+            type_params: &[],
+            doc: &[],
+            attributes: &[],
+            type_tag: None,
+            inner: None,
+        }
     };
 }
 

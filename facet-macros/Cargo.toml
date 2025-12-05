@@ -19,10 +19,15 @@ categories = ["development-tools", "encoding"]
 proc-macro = true
 
 [features]
+default = ["helpful-derive"]
 function = ["facet-macros-impl/function"]
+# Include doc comments in generated Shape/Field/Variant definitions
+doc = ["facet-macros-impl/doc"]
+# Enable typo suggestions for unknown attributes/fields (uses strsim)
+helpful-derive = ["facet-macros-impl/helpful-derive"]
 
 [dependencies]
-facet-macros-impl = { version = "0.31.8", path = "../facet-macros-impl" }
+facet-macros-impl = { version = "0.31.8", path = "../facet-macros-impl", default-features = false }
 
 # cf. https://hachyderm.io/@epage/114141126315983016
 [target.'cfg(any())'.dependencies]

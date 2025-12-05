@@ -1,6 +1,7 @@
 use facet::{Facet, Type, UserType};
 
 #[test]
+#[cfg(feature = "doc")]
 fn enum_doc_comment() {
     #[derive(Clone, Hash, PartialEq, Eq, Facet)]
     #[repr(u8)]

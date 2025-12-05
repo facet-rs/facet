@@ -9,6 +9,9 @@ description = "Diffing capabilities for types implementing the Facet trait"
 keywords = ["facet", "diff", "comparison", "reflection", "data-structures"]
 categories = ["development-tools", "data-structures"]
 
+[features]
+default = []
+
 [dependencies]
 facet = { path = "../facet" }
 facet-core = { path = "../facet-core" }

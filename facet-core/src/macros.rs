@@ -1,32 +1,4 @@
-use crate::{Facet, Opaque, Shape};
-
-/// Helper for the derive macro to infer the shape of a struct field.
-///
-/// This function is never actually called at runtime — it exists purely to let
-/// the compiler infer `TField` from a field accessor closure like `|s: &MyStruct| &s.field`.
-/// By passing a reference to that closure, the compiler resolves `TField` and we can
-/// return `TField::SHAPE` at compile time.
-#[doc(hidden)]
-pub const fn shape_of<'facet, TStruct, TField: Facet<'facet>>(
-    _f: &dyn Fn(&TStruct) -> &TField,
-) -> &'static Shape {
-    TField::SHAPE
-}
-
-/// Helper for the derive macro to infer the shape of an opaque struct field.
-///
-/// Similar to [`shape_of`], but wraps the field type in [`Opaque`] for types that
-/// don't implement `Facet` directly. The closure `|s: &MyStruct| &s.field` lets the
-/// compiler infer `TField`, and we return `Opaque::<TField>::SHAPE`.
-#[doc(hidden)]
-pub const fn shape_of_opaque<'a, TStruct, TField>(
-    _f: &dyn Fn(&TStruct) -> &TField,
-) -> &'static Shape
-where
-    Opaque<TField>: Facet<'a>,
-{
-    Opaque::<TField>::SHAPE
-}
+use crate::TypeNameFn;
 
 /// Creates a `ValueVTable` for a given type.
 ///
@@ -48,6 +20,9 @@ where
 /// let vtable = value_vtable!(String, |f: &mut Formatter<'_>, _opts: TypeNameOpts| write!(f, "String"));
 /// ```
 ///
+/// For simple, non-generic types that don't need custom formatting, prefer `type_name_fn::<T>()`
+/// which uses `core::any::type_name::<T>()` and avoids emitting another formatting closure.
+///
 /// This cannot be used for a generic type because the `impls!` thing depends on type bounds.
 /// If you have a generic type, you need to do specialization yourself, like we do for slices,
 /// arrays, etc. — essentially, this macro is only useful for 1) scalars, 2) inside a derive macro
@@ -55,134 +30,103 @@ where
 macro_rules! value_vtable {
     ($type_name:ty, $type_name_fn:expr $(,)?) => {
         const {
-            $crate::ValueVTable::builder::<$type_name>()
-                .type_name($type_name_fn)
-                .display({
+            $crate::ValueVTable::builder($type_name_fn)
+                .drop_in_place($crate::ValueVTable::drop_in_place_for::<$type_name>())
+                .display_opt($crate::vtable_fmt!({
                     if $crate::spez::impls!($type_name: core::fmt::Display) {
-                        Some(|data: $crate::TypedPtrConst<'_, _>, f| {
-                            let data = data.get();
+                        Some(|data, f| {
+                            let data = unsafe { data.get::<$type_name>() };
                             use $crate::spez::*;
                             (&&Spez(data)).spez_display(f)
                         })
                     } else {
                         None
                     }
-                })
-                .debug({
+                }))
+                .debug_opt($crate::vtable_fmt!({
                     if $crate::spez::impls!($type_name: core::fmt::Debug) {
-                        Some(|data: $crate::TypedPtrConst<'_, _>, f| {
-                            let data = data.get();
+                        Some(|data, f| {
+                            let data = unsafe { data.get::<$type_name>() };
                             use $crate::spez::*;
                             (&&Spez(data)).spez_debug(f)
                         })
                     } else {
                         None
                     }
-                })
-                .default_in_place({
+                }))
+                .default_in_place_opt({
                     if $crate::spez::impls!($type_name: core::default::Default) {
-                        Some(|target: $crate::TypedPtrUninit<'_, _>| unsafe {
+                        Some(|target| unsafe {
                             use $crate::spez::*;
-                            $crate::TypedPtrMut::new((&&SpezEmpty::<$type_name>::SPEZ).spez_default_in_place(target.into()).as_mut())
+                            (&&SpezEmpty::<$type_name>::SPEZ).spez_default_in_place(target)
                         })
                     } else {
                         None
                     }
                 })
-                .clone_into({
+                .clone_into_opt({
                     if $crate::spez::impls!($type_name: core::clone::Clone) {
-                        Some(|src: $crate::TypedPtrConst<'_, _>, dst: $crate::TypedPtrUninit<'_, _>| unsafe {
+                        Some(|src, dst| unsafe {
                             use $crate::spez::*;
-                            let src = src.get();
-                            $crate::TypedPtrMut::new((&&Spez(src)).spez_clone_into(dst.into()).as_mut())
+                            let src = src.get::<$type_name>();
+                            (&&Spez(src)).spez_clone_into(dst)
                         })
                     } else {
                         None
                     }
                 })
-                .marker_traits({
-                    let mut traits = $crate::MarkerTraits::empty();
-                    if $crate::spez::impls!($type_name: core::cmp::Eq) {
-                        traits = traits.union($crate::MarkerTraits::EQ);
-                    }
-                    if $crate::spez::impls!($type_name: core::marker::Send) {
-                        traits = traits.union($crate::MarkerTraits::SEND);
-                    }
-                    if $crate::spez::impls!($type_name: core::marker::Sync) {
-                        traits = traits.union($crate::MarkerTraits::SYNC);
-                    }
-                    if $crate::spez::impls!($type_name: core::marker::Copy) {
-                        traits = traits.union($crate::MarkerTraits::COPY);
-                    }
-                    if $crate::spez::impls!($type_name: core::marker::Unpin) {
-                        traits = traits.union($crate::MarkerTraits::UNPIN);
-                    }
-                    if $crate::spez::impls!($type_name: core::panic::UnwindSafe) {
-                        traits = traits.union($crate::MarkerTraits::UNWIND_SAFE);
-                    }
-                    if $crate::spez::impls!($type_name: core::panic::RefUnwindSafe) {
-                        traits = traits.union($crate::MarkerTraits::REF_UNWIND_SAFE);
-                    }
-
-                    traits
-                })
-                .partial_eq({
+                .partial_eq_opt($crate::vtable_cmp!({
                     if $crate::spez::impls!($type_name: core::cmp::PartialEq) {
-                        Some(|left: $crate::TypedPtrConst<'_, _>, right: $crate::TypedPtrConst<'_, _>| {
-                            let left = left.get();
-                            let right = right.get();
+                        Some(|left, right| {
+                            let left = unsafe { left.get::<$type_name>() };
+                            let right = unsafe { right.get::<$type_name>() };
                             use $crate::spez::*;
-                            (&&Spez(left))
-                                .spez_partial_eq(&&Spez(right))
+                            (&&Spez(left)).spez_partial_eq(&&Spez(right))
                         })
                     } else {
                         None
                     }
-                })
-                .partial_ord({
+                }))
+                .partial_ord_opt($crate::vtable_cmp!({
                     if $crate::spez::impls!($type_name: core::cmp::PartialOrd) {
-                        Some(|left: $crate::TypedPtrConst<'_, _>, right: $crate::TypedPtrConst<'_, _>| {
-                            let left = left.get();
-                            let right = right.get();
+                        Some(|left, right| {
+                            let left = unsafe { left.get::<$type_name>() };
+                            let right = unsafe { right.get::<$type_name>() };
                             use $crate::spez::*;
-                            (&&Spez(left))
-                                .spez_partial_cmp(&&Spez(right))
+                            (&&Spez(left)).spez_partial_cmp(&&Spez(right))
                         })
                     } else {
                         None
                     }
-                })
-                .ord({
+                }))
+                .ord_opt($crate::vtable_cmp!({
                     if $crate::spez::impls!($type_name: core::cmp::Ord) {
-                        Some(|left: $crate::TypedPtrConst<'_, _>, right: $crate::TypedPtrConst<'_, _>| {
-                            let left = left.get();
-                            let right = right.get();
+                        Some(|left, right| {
+                            let left = unsafe { left.get::<$type_name>() };
+                            let right = unsafe { right.get::<$type_name>() };
                             use $crate::spez::*;
-                            (&&Spez(left))
-                                .spez_cmp(&&Spez(right))
+                            (&&Spez(left)).spez_cmp(&&Spez(right))
                         })
                     } else {
                         None
                     }
-                })
-                .hash({
+                }))
+                .hash_opt($crate::vtable_hash!({
                     if $crate::spez::impls!($type_name: core::hash::Hash) {
-                        Some(|value: $crate::TypedPtrConst<'_, _>, hasher| {
-                            let value = value.get();
+                        Some(|value, hasher| {
+                            let value = unsafe { value.get::<$type_name>() };
                             use $crate::spez::*;
-                            (&&Spez(value))
-                                .spez_hash(&mut { hasher })
+                            (&&Spez(value)).spez_hash(&mut { hasher })
                         })
                     } else {
                         None
                     }
-                })
-                .parse({
+                }))
+                .parse_opt({
                     if $crate::spez::impls!($type_name: core::str::FromStr) {
-                        Some(|s, target: $crate::TypedPtrUninit<'_, _>| {
+                        Some(|s, target| {
                             use $crate::spez::*;
-                            let res = unsafe { (&&SpezEmpty::<$type_name>::SPEZ).spez_parse(s, target.into()) };
-                            res.map(|res| unsafe { $crate::TypedPtrMut::new(res.as_mut()) })
+                            unsafe { (&&SpezEmpty::<$type_name>::SPEZ).spez_parse(s, target) }
                         })
                     } else {
                         None
@@ -193,13 +137,11 @@ macro_rules! value_vtable {
     };
 }
 
-/// Creates a `ShapeBuilder` for a given type.
-#[macro_export]
-macro_rules! shape_builder {
-    ($type_name:ty $(,)?) => {
-        const {
-            use $crate::spez::*;
-            SpezEmpty::<$type_name>::BUILDER
-        }
-    };
+/// Default type-name formatter using `core::any::type_name::<T>()`.
+///
+/// This is useful for non-generic scalars or when generic parameter pretty-printing
+/// isn't needed; it avoids emitting a fresh formatting closure per type.
+#[inline(always)]
+pub const fn type_name_fn<T>() -> TypeNameFn {
+    |f, _opts| ::core::fmt::Write::write_str(f, ::core::any::type_name::<T>())
 }

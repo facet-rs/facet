@@ -1,30 +1,43 @@
-use crate::{Def, Facet, Shape, Type, UserType, value_vtable};
+use crate::{Facet, MarkerTraits, Shape, ShapeBuilder, ValueVTable};
 use alloc::string::ToString;
 
 #[cfg(feature = "alloc")]
 unsafe impl Facet<'_> for alloc::string::String {
+    // String implements: Display, Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash
     const SHAPE: &'static Shape = &const {
-        Shape::builder_for_sized::<Self>()
-            .vtable({
-                let mut vtable = value_vtable!(alloc::string::String, |f, _opts| write!(
-                    f,
-                    "{}",
-                    Self::SHAPE.type_identifier
-                ));
-
-                let vtable_sized = &mut vtable;
-                vtable_sized.parse = {
-                    Some(|s, target| {
-                        // For String, parsing from a string is just copying the string
-                        Ok(unsafe { target.put(s.to_string()) })
-                    })
-                };
-
-                vtable
+        ShapeBuilder::for_sized::<alloc::string::String>(|f, _opts| write!(f, "String"), "String")
+            .drop_in_place(ValueVTable::drop_in_place_for::<alloc::string::String>())
+            .default_in_place(|target| unsafe { target.put(alloc::string::String::new()) })
+            .clone_into(|src, dst| unsafe { dst.put(src.get::<alloc::string::String>().clone()) })
+            .parse(|s, target| {
+                // For String, parsing from a string is just copying the string
+                Ok(unsafe { target.put(s.to_string()) })
             })
-            .def(Def::Scalar)
-            .type_identifier("String")
-            .ty(Type::User(UserType::Opaque))
+            .display(|data, f| {
+                let data = unsafe { data.get::<alloc::string::String>() };
+                core::fmt::Display::fmt(data, f)
+            })
+            .debug(|data, f| {
+                let data = unsafe { data.get::<alloc::string::String>() };
+                core::fmt::Debug::fmt(data, f)
+            })
+            .partial_eq(|left, right| unsafe {
+                *left.get::<alloc::string::String>() == *right.get::<alloc::string::String>()
+            })
+            .partial_ord(|left, right| unsafe {
+                left.get::<alloc::string::String>()
+                    .partial_cmp(right.get::<alloc::string::String>())
+            })
+            .ord(|left, right| unsafe {
+                left.get::<alloc::string::String>()
+                    .cmp(right.get::<alloc::string::String>())
+            })
+            .hash(|value, hasher| {
+                use core::hash::Hash;
+                let value = unsafe { value.get::<alloc::string::String>() };
+                value.hash(&mut { hasher })
+            })
+            .markers(MarkerTraits::EMPTY.with_eq())
             .build()
     };
 }

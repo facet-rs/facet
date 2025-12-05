@@ -105,7 +105,7 @@ fn ber_tag_for_shape(shape: &Shape) -> Result<Option<u8>, Asn1TagForShapeError> 
             UserType::Struct(st) => match st.kind {
                 StructKind::Unit => Ok(Some(type_tag.unwrap_or(ASN1_TYPE_TAG_NULL))),
                 StructKind::TupleStruct if st.fields.len() == 1 && shape.is_transparent() => {
-                    Ok(type_tag.or(ber_tag_for_shape((st.fields[0].shape)())?))
+                    Ok(type_tag.or(ber_tag_for_shape(st.fields[0].shape())?))
                 }
                 StructKind::TupleStruct | StructKind::Struct | StructKind::Tuple => Ok(Some(
                     type_tag.unwrap_or(ASN1_TYPE_TAG_SEQUENCE) | ASN1_FORM_CONSTRUCTED,
@@ -797,7 +797,7 @@ impl<'input> Asn1DeserializerStack<'input> {
                             for v in et.variants {
                                 if let Some(variant_tag) = match v.data.kind {
                                     StructKind::Tuple if v.data.fields.len() == 1 => {
-                                        ber_tag_for_shape((v.data.fields[0].shape)())?
+                                        ber_tag_for_shape(v.data.fields[0].shape())?
                                     }
                                     StructKind::Unit
                                     | StructKind::TupleStruct
@@ -884,7 +884,7 @@ impl<'input> Asn1DeserializerStack<'input> {
                                 }
                             }
                             StructKind::Tuple if v.data.fields.len() == 1 => {
-                                let inner_tag = ber_tag_for_shape((v.data.fields[0].shape)())?;
+                                let inner_tag = ber_tag_for_shape(v.data.fields[0].shape())?;
                                 if inner_tag.is_some_and(|vtag| vtag == tag) {
                                     let wip = wip.select_nth_variant(i).unwrap();
                                     self.stack.push(DeserializeTask::Pop(PopReason::ObjectVal));

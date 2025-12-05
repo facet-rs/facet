@@ -27,7 +27,7 @@ facet = { path = "../facet", default-features = false }
 facet-core = { path = "../facet-core", default-features = false }
 facet-reflect = { path = "../facet-reflect", default-features = false, features = ["miette"] }
 facet-solver = { path = "../facet-solver" }
-miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
+miette = { version = "7", default-features = false }
 log = "0.4.27"
 
 # Axum integration (optional)
@@ -36,6 +36,7 @@ http = { version = "1", optional = true }
 http-body-util = { version = "0.1", optional = true }
 
 [dev-dependencies]
+facet = { path = "../facet", features = ["net", "nonzero"] }
 eyre = "0.6.12"
 ulid = "1.2.1"
 time = { version = "0.3.41", features = ["macros", "parsing", "formatting"] }

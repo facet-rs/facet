@@ -134,6 +134,15 @@ impl JsonError {
     }
 }
 
+#[inline(never)]
+#[cold]
+fn attach_source_cold(mut err: JsonError, source: Option<&str>) -> JsonError {
+    if let Some(src) = source {
+        err.source_code = Some(src.to_string());
+    }
+    err
+}
+
 /// Specific error kinds for JSON deserialization
 #[derive(Debug)]
 pub enum JsonErrorKind {
@@ -2768,12 +2777,7 @@ where
 
     let partial = match deserializer.deserialize_into(wip) {
         Ok(p) => p,
-        Err(mut e) => {
-            if let Some(src) = source {
-                e.source_code = Some(src.to_string());
-            }
-            return Err(e);
-        }
+        Err(e) => return Err(attach_source_cold(e, source)),
     };
 
     // Check that we've consumed all input (no trailing data after the root value)
@@ -2793,21 +2797,15 @@ where
     }
 
     // Build and materialize the Partial into the target type
-    let heap_value = partial.build().map_err(|e| {
-        let mut err = JsonError::from(e);
-        if let Some(src) = source {
-            err.source_code = Some(src.to_string());
-        }
-        err
-    })?;
+    let heap_value = match partial.build() {
+        Ok(v) => v,
+        Err(e) => return Err(attach_source_cold(JsonError::from(e), source)),
+    };
 
-    heap_value.materialize::<T>().map_err(|e| {
-        let mut err = JsonError::from(e);
-        if let Some(src) = source {
-            err.source_code = Some(src.to_string());
-        }
-        err
-    })
+    match heap_value.materialize::<T>() {
+        Ok(v) => Ok(v),
+        Err(e) => Err(attach_source_cold(JsonError::from(e), source)),
+    }
 }
 
 fn from_slice_inner<T: Facet<'static>>(input: &[u8], source: Option<&str>) -> Result<T> {
@@ -2842,12 +2840,7 @@ fn from_slice_inner<T: Facet<'static>>(input: &[u8], source: Option<&str>) -> Re
 
         let partial = match deserializer.deserialize_into(wip) {
             Ok(p) => p,
-            Err(mut e) => {
-                if let Some(src) = source {
-                    e.source_code = Some(src.to_string());
-                }
-                return Err(e);
-            }
+            Err(e) => return Err(attach_source_cold(e, source)),
         };
 
         // Check that we've consumed all input (no trailing data after the root value)
@@ -2867,13 +2860,10 @@ fn from_slice_inner<T: Facet<'static>>(input: &[u8], source: Option<&str>) -> Re
         }
 
         // Build the Partial into a HeapValue
-        let heap_value = partial.build().map_err(|e| {
-            let mut err = JsonError::from(e);
-            if let Some(src) = source {
-                err.source_code = Some(src.to_string());
-            }
-            err
-        })?;
+        let heap_value = match partial.build() {
+            Ok(v) => v,
+            Err(e) => return Err(attach_source_cold(JsonError::from(e), source)),
+        };
 
         // Transmute HeapValue<'input, false> to HeapValue<'static, false> so we can materialize to T
         // SAFETY: The HeapValue contains no borrowed data:
@@ -2888,13 +2878,10 @@ fn from_slice_inner<T: Facet<'static>>(input: &[u8], source: Option<&str>) -> Re
             >(heap_value)
         };
 
-        heap_value.materialize::<T>().map_err(|e| {
-            let mut err = JsonError::from(e);
-            if let Some(src) = source {
-                err.source_code = Some(src.to_string());
-            }
-            err
-        })
+        match heap_value.materialize::<T>() {
+            Ok(v) => Ok(v),
+            Err(e) => Err(attach_source_cold(JsonError::from(e), source)),
+        }
     }
 
     inner::<T>(input, source)
