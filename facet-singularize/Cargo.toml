@@ -1,0 +1,17 @@
+[package]
+name = "facet-singularize"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.88.0"
+repository = "https://github.com/facet-rs/facet"
+description = "Fast, no-regex English singularization for the facet ecosystem"
+keywords = ["singular", "plural", "inflection", "facet"]
+categories = ["text-processing"]
+
+[features]
+default = ["std"]
+std = ["alloc"]
+alloc = []
+
+[dev-dependencies]
