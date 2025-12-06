@@ -54,6 +54,11 @@ members = [
 exclude = [
     # proto-attr experiment uses nightly features
     "proto-attr",
+    # plugin registry experiment
+    "experiments/plugin-test/registry",
+    "experiments/plugin-test/plugin-a",
+    "experiments/plugin-test/plugin-b",
+    "experiments/plugin-test/user-crate",
 ]
 resolver = "3"
 

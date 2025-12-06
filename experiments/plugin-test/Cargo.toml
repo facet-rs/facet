@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "registry",
+    "plugin-a",
+    "plugin-b",
+    "user-crate",
+]
+resolver = "2"
