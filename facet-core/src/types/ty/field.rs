@@ -41,6 +41,46 @@ impl core::fmt::Debug for ShapeRef {
     }
 }
 
+crate::bitflags! {
+    /// Bit flags for common field attributes.
+    ///
+    /// These provide O(1) access to frequently-checked boolean attributes,
+    /// avoiding the O(n) linear scan through the attributes slice.
+    pub struct FieldFlags: u16 {
+        /// Field contains sensitive data (redacted in debug output).
+        /// Set by `#[facet(sensitive)]`.
+        const SENSITIVE = 1 << 0;
+
+        /// Field is flattened into its parent structure.
+        /// Set by `#[facet(flatten)]`.
+        const FLATTEN = 1 << 1;
+
+        /// Field is skipped during both serialization and deserialization.
+        /// Set by `#[facet(skip)]`.
+        const SKIP = 1 << 2;
+
+        /// Field is skipped during serialization only.
+        /// Set by `#[facet(skip_serializing)]`.
+        const SKIP_SERIALIZING = 1 << 3;
+
+        /// Field is skipped during deserialization only.
+        /// Set by `#[facet(skip_deserializing)]`.
+        const SKIP_DESERIALIZING = 1 << 4;
+
+        /// Field is a child node (for hierarchical formats like KDL/XML).
+        /// Set by `#[facet(child)]`.
+        const CHILD = 1 << 5;
+
+        /// Field has a recursive type that needs lazy shape resolution.
+        /// Set by `#[facet(recursive_type)]`.
+        const RECURSIVE_TYPE = 1 << 6;
+
+        /// Field has a default value (either via Default trait or custom expression).
+        /// Set by `#[facet(default)]` or `#[facet(default = expr)]`.
+        const HAS_DEFAULT = 1 << 7;
+    }
+}
+
 /// Describes a field in a struct or tuple
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -57,7 +97,31 @@ pub struct Field {
     /// offset of the field in the struct (obtained through `core::mem::offset_of`)
     pub offset: usize,
 
+    /// Bit flags for common boolean attributes.
+    ///
+    /// Provides O(1) access to frequently-checked attributes like `sensitive`,
+    /// `flatten`, `skip`, etc. These are set by the derive macro based on
+    /// `#[facet(...)]` attributes with `#[storage(flag)]` in the grammar.
+    pub flags: FieldFlags,
+
+    /// Renamed field name for serialization/deserialization.
+    ///
+    /// Set by `#[facet(rename = "name")]`. When present, serializers/deserializers
+    /// should use this name instead of the field's actual name.
+    pub rename: Option<&'static str>,
+
+    /// Alternative name(s) accepted during deserialization.
+    ///
+    /// Set by `#[facet(alias = "name")]`. During deserialization, this name
+    /// is accepted in addition to the primary name (or renamed name).
+    // TODO: This should probably be `&'static [&'static str]` to support multiple aliases
+    pub alias: Option<&'static str>,
+
     /// arbitrary attributes set via the derive macro
+    ///
+    /// This slice contains extension attributes that don't have dedicated storage.
+    /// Builtin attributes with `#[storage(flag)]` or `#[storage(field)]` are stored
+    /// in their dedicated fields instead.
     pub attributes: &'static [FieldAttribute],
 
     /// doc comments
@@ -67,13 +131,15 @@ pub struct Field {
 impl Field {
     /// Returns true if the field should be skipped during serialization.
     ///
-    /// This checks for `#[facet(skip)]` or `#[facet(skip_serializing)]` attributes,
-    /// or if `skip_serializing_if` function returns true.
+    /// This checks the `SKIP` and `SKIP_SERIALIZING` flags (O(1)),
+    /// then the `skip_serializing_if` function if present.
     ///
     /// # Safety
     /// The ptr should correspond to a value of the same type as this field
     pub unsafe fn should_skip_serializing(&self, ptr: PtrConst<'_>) -> bool {
-        if self.has_builtin_attr("skip") || self.has_builtin_attr("skip_serializing") {
+        if self.flags.contains(FieldFlags::SKIP)
+            || self.flags.contains(FieldFlags::SKIP_SERIALIZING)
+        {
             return true;
         }
         if let Some(skip_serializing_if) = self.skip_serializing_if_fn() {
@@ -84,42 +150,50 @@ impl Field {
 
     /// Returns true if this field should be skipped during deserialization.
     ///
-    /// This checks for `#[facet(skip)]` or `#[facet(skip_deserializing)]` attributes.
+    /// This checks the `SKIP` and `SKIP_DESERIALIZING` flags (O(1)).
     #[inline]
     pub fn should_skip_deserializing(&self) -> bool {
-        self.has_builtin_attr("skip") || self.has_builtin_attr("skip_deserializing")
+        self.flags.contains(FieldFlags::SKIP) || self.flags.contains(FieldFlags::SKIP_DESERIALIZING)
     }
 
     /// Returns true if this field is flattened.
     ///
-    /// This checks for `#[facet(flatten)]` attribute.
+    /// This checks the `FLATTEN` flag (O(1)).
     #[inline]
     pub fn is_flattened(&self) -> bool {
-        self.has_builtin_attr("flatten")
+        self.flags.contains(FieldFlags::FLATTEN)
     }
 
     /// Returns true if this field is marked as sensitive.
     ///
-    /// This checks for `#[facet(sensitive)]` attribute.
+    /// This checks the `SENSITIVE` flag (O(1)).
     #[inline]
     pub fn is_sensitive(&self) -> bool {
-        self.has_builtin_attr("sensitive")
+        self.flags.contains(FieldFlags::SENSITIVE)
     }
 
     /// Returns true if this field has a default value.
     ///
-    /// This checks for `#[facet(default)]` or `#[facet(default = expr)]` attributes.
+    /// This checks the `HAS_DEFAULT` flag (O(1)).
     #[inline]
     pub fn has_default(&self) -> bool {
-        self.has_builtin_attr("default")
+        self.flags.contains(FieldFlags::HAS_DEFAULT)
     }
 
     /// Returns true if this field is a child (for KDL/XML formats).
     ///
-    /// This checks for `#[facet(child)]` attribute.
+    /// This checks the `CHILD` flag (O(1)).
     #[inline]
     pub fn is_child(&self) -> bool {
-        self.has_builtin_attr("child")
+        self.flags.contains(FieldFlags::CHILD)
+    }
+
+    /// Returns the effective name for this field during serialization/deserialization.
+    ///
+    /// Returns `rename` if set, otherwise returns the field's actual name.
+    #[inline]
+    pub fn effective_name(&self) -> &'static str {
+        self.rename.unwrap_or(self.name)
     }
 }
 
@@ -308,6 +382,9 @@ macro_rules! field_in_type {
             name: stringify!($field),
             shape: $crate::ShapeRef::Static(<$field_ty as $crate::Facet>::SHAPE),
             offset: ::core::mem::offset_of!(Self, $field),
+            flags: $crate::FieldFlags::empty(),
+            rename: None,
+            alias: None,
             attributes: &[],
             doc: &[],
         }
@@ -342,6 +419,9 @@ pub struct FieldBuilder {
     name: &'static str,
     shape: ShapeRef,
     offset: usize,
+    flags: FieldFlags,
+    rename: Option<&'static str>,
+    alias: Option<&'static str>,
     attributes: &'static [FieldAttribute],
     doc: &'static [&'static str],
 }
@@ -356,6 +436,9 @@ impl FieldBuilder {
             name,
             shape: ShapeRef::Static(shape),
             offset,
+            flags: FieldFlags::empty(),
+            rename: None,
+            alias: None,
             attributes: &[],
             doc: &[],
         }
@@ -375,6 +458,9 @@ impl FieldBuilder {
             name,
             shape: ShapeRef::Lazy(shape),
             offset,
+            flags: FieldFlags::empty(),
+            rename: None,
+            alias: None,
             attributes: &[],
             doc: &[],
         }
@@ -394,6 +480,27 @@ impl FieldBuilder {
         self
     }
 
+    /// Sets the flags for this field.
+    #[inline]
+    pub const fn flags(mut self, flags: FieldFlags) -> Self {
+        self.flags = flags;
+        self
+    }
+
+    /// Sets the rename for this field.
+    #[inline]
+    pub const fn rename(mut self, rename: &'static str) -> Self {
+        self.rename = Some(rename);
+        self
+    }
+
+    /// Sets the alias for this field.
+    #[inline]
+    pub const fn alias(mut self, alias: &'static str) -> Self {
+        self.alias = Some(alias);
+        self
+    }
+
     /// Builds the final `Field` instance.
     #[inline]
     pub const fn build(self) -> Field {
@@ -401,6 +508,9 @@ impl FieldBuilder {
             name: self.name,
             shape: self.shape,
             offset: self.offset,
+            flags: self.flags,
+            rename: self.rename,
+            alias: self.alias,
             attributes: self.attributes,
             doc: self.doc,
         }

@@ -1,10 +1,10 @@
 use core::{cmp::Ordering, hash::Hash, mem::MaybeUninit, ptr::NonNull};
 
 use crate::{
-    Def, EnumRepr, EnumType, Facet, Field, OptionDef, OptionVTable, PtrConst, PtrMut, PtrUninit,
-    Repr, Shape, ShapeBuilder, ShapeRef, StructKind, StructType, TryBorrowInnerError, TryFromError,
-    TryIntoInnerError, Type, TypeParam, TypedPtrUninit, UserType, VTableView, Variant, shape_util,
-    value_vtable,
+    Def, EnumRepr, EnumType, Facet, Field, FieldFlags, OptionDef, OptionVTable, PtrConst, PtrMut,
+    PtrUninit, Repr, Shape, ShapeBuilder, ShapeRef, StructKind, StructType, TryBorrowInnerError,
+    TryFromError, TryIntoInnerError, Type, TypeParam, TypedPtrUninit, UserType, VTableView,
+    Variant, shape_util, value_vtable,
 };
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
     const SHAPE: &'static Shape = &const {
@@ -224,6 +224,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                                             name: "0",
                                             shape: ShapeRef::Static(T::SHAPE),
                                             offset: 0,
+                                            flags: FieldFlags::empty(),
+                                            rename: None,
+                                            alias: None,
                                             attributes: &[],
                                             doc: &[],
                                         }]

@@ -588,18 +588,78 @@ pub(crate) fn gen_field_from_pfield(
         quote! { <#field_type as 𝟋Fct>::SHAPE }
     };
 
-    // All attributes go through grammar dispatch
-    // Note: deserialize_with and serialize_with have been REMOVED from the grammar.
-    // Use #[facet(proxy = Type)] for custom serialization instead.
-    let mut attribute_list: Vec<TokenStream> = field
-        .attrs
-        .facet
-        .iter()
-        .map(|attr| {
+    // Process attributes, separating flag attrs and field attrs from the attribute slice.
+    // Attributes with #[storage(flag)] go into FieldFlags for O(1) access.
+    // Attributes with #[storage(field)] go into dedicated Field struct fields.
+    // Everything else goes into the attributes slice.
+    //
+    // Flag attrs: sensitive, flatten, child, skip, skip_serializing, skip_deserializing
+    // Field attrs: rename, alias
+    // Note: default also sets HAS_DEFAULT flag (handled below)
+
+    let mut flags: Vec<TokenStream> = Vec::new();
+    let mut rename_value: Option<TokenStream> = None;
+    let mut alias_value: Option<TokenStream> = None;
+    let mut attribute_list: Vec<TokenStream> = Vec::new();
+
+    for attr in &field.attrs.facet {
+        if attr.is_builtin() {
+            let key = attr.key_str();
+            match key.as_str() {
+                // Flag attrs - set bit in FieldFlags, don't add to attribute_list
+                "sensitive" => {
+                    flags.push(quote! { 𝟋FF::SENSITIVE });
+                }
+                "flatten" => {
+                    flags.push(quote! { 𝟋FF::FLATTEN });
+                }
+                "child" => {
+                    flags.push(quote! { 𝟋FF::CHILD });
+                }
+                "skip" => {
+                    flags.push(quote! { 𝟋FF::SKIP });
+                }
+                "skip_serializing" => {
+                    flags.push(quote! { 𝟋FF::SKIP_SERIALIZING });
+                }
+                "skip_deserializing" => {
+                    flags.push(quote! { 𝟋FF::SKIP_DESERIALIZING });
+                }
+                "default" => {
+                    // Default sets the HAS_DEFAULT flag AND goes into attributes
+                    flags.push(quote! { 𝟋FF::HAS_DEFAULT });
+                    let ext_attr =
+                        emit_attr_for_field(attr, field_name_raw, field_type, facet_crate);
+                    attribute_list.push(quote! { #ext_attr });
+                }
+                "recursive_type" => {
+                    // recursive_type sets a flag
+                    flags.push(quote! { 𝟋FF::RECURSIVE_TYPE });
+                }
+                // Field attrs - store in dedicated field, don't add to attribute_list
+                "rename" => {
+                    // Extract the string literal from args
+                    let args = &attr.args;
+                    rename_value = Some(quote! { #args });
+                }
+                "alias" => {
+                    // Extract the string literal from args
+                    let args = &attr.args;
+                    alias_value = Some(quote! { #args });
+                }
+                // Everything else goes to attributes slice
+                _ => {
+                    let ext_attr =
+                        emit_attr_for_field(attr, field_name_raw, field_type, facet_crate);
+                    attribute_list.push(quote! { #ext_attr });
+                }
+            }
+        } else {
+            // Non-builtin (namespaced) attrs always go to attributes slice
             let ext_attr = emit_attr_for_field(attr, field_name_raw, field_type, facet_crate);
-            quote! { #ext_attr }
-        })
-        .collect();
+            attribute_list.push(quote! { #ext_attr });
+        }
+    }
 
     // Generate proxy conversion function pointers when proxy attribute is present
     if let Some(attr) = field
@@ -703,19 +763,45 @@ pub(crate) fn gen_field_from_pfield(
         }
     };
 
-    // Only chain .attributes() and .doc() if they have values
-    let has_attrs = !attribute_list.is_empty();
-    let has_doc = !doc_lines.is_empty();
+    // Build the chain of builder method calls
+    let mut builder_chain = builder;
 
-    if has_attrs && has_doc {
-        quote! { #builder.attributes(#maybe_attributes).doc(#maybe_field_doc).build() }
-    } else if has_attrs {
-        quote! { #builder.attributes(#maybe_attributes).build() }
-    } else if has_doc {
-        quote! { #builder.doc(#maybe_field_doc).build() }
-    } else {
-        quote! { #builder.build() }
+    // Add flags if any were collected
+    if !flags.is_empty() {
+        let flags_expr = if flags.len() == 1 {
+            let f = &flags[0];
+            quote! { #f }
+        } else {
+            // Union multiple flags together
+            let first = &flags[0];
+            let rest = &flags[1..];
+            quote! { #first #(.union(#rest))* }
+        };
+        builder_chain = quote! { #builder_chain.flags(#flags_expr) };
     }
+
+    // Add rename if present
+    if let Some(rename) = &rename_value {
+        builder_chain = quote! { #builder_chain.rename(#rename) };
+    }
+
+    // Add alias if present
+    if let Some(alias) = &alias_value {
+        builder_chain = quote! { #builder_chain.alias(#alias) };
+    }
+
+    // Add attributes if any
+    if !attribute_list.is_empty() {
+        builder_chain = quote! { #builder_chain.attributes(#maybe_attributes) };
+    }
+
+    // Add doc if present
+    if !doc_lines.is_empty() {
+        builder_chain = quote! { #builder_chain.doc(#maybe_field_doc) };
+    }
+
+    // Finally call build
+    quote! { #builder_chain.build() }
 }
 
 /// Processes a regular struct to implement Facet
