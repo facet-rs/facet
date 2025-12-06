@@ -14,6 +14,10 @@ pub enum RenameRule {
     KebabCase,
     /// Rename to SCREAMING-KEBAB-CASE: `foo_bar` -> `FOO-BAR`
     ScreamingKebabCase,
+    /// Rename to lowercase: `foo_bar` -> `foobar`
+    Lowercase,
+    /// Rename to UPPERCASE: `foo_bar` -> `FOOBAR`
+    Uppercase,
 }
 
 impl RenameRule {
@@ -26,6 +30,8 @@ impl RenameRule {
             "SCREAMING_SNAKE_CASE" => Some(RenameRule::ScreamingSnakeCase),
             "kebab-case" => Some(RenameRule::KebabCase),
             "SCREAMING-KEBAB-CASE" => Some(RenameRule::ScreamingKebabCase),
+            "lowercase" => Some(RenameRule::Lowercase),
+            "UPPERCASE" => Some(RenameRule::Uppercase),
             _ => None,
         }
     }
@@ -39,6 +45,8 @@ impl RenameRule {
             RenameRule::ScreamingSnakeCase => to_screaming_snake_case(input),
             RenameRule::KebabCase => to_kebab_case(input),
             RenameRule::ScreamingKebabCase => to_screaming_kebab_case(input),
+            RenameRule::Lowercase => to_lowercase(input),
+            RenameRule::Uppercase => to_uppercase(input),
         }
     }
 }
@@ -113,6 +121,26 @@ fn to_screaming_kebab_case(input: &str) -> String {
         .map(|word| word.to_uppercase())
         .collect::<Vec<_>>()
         .join("-")
+}
+
+/// Converts a string to lowercase: `foo_bar` -> `foobar`
+fn to_lowercase(input: &str) -> String {
+    let words = split_into_words(input);
+    words
+        .iter()
+        .map(|word| word.to_lowercase())
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+/// Converts a string to UPPERCASE: `foo_bar` -> `FOOBAR`
+fn to_uppercase(input: &str) -> String {
+    let words = split_into_words(input);
+    words
+        .iter()
+        .map(|word| word.to_uppercase())
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 /// Splits a string into words based on case and separators
@@ -276,5 +304,52 @@ mod tests {
         assert_eq!(RenameRule::SnakeCase.apply("FooBARBaz"), "foo_bar_baz");
         // Empty input keeps empty
         assert_eq!(RenameRule::SnakeCase.apply(""), "");
+    }
+
+    #[test]
+    fn test_rename_rule_lowercase() {
+        use super::RenameRule;
+        // Snake case input becomes lowercase without separators
+        assert_eq!(RenameRule::Lowercase.apply("foo_bar_baz"), "foobarbaz");
+        // CamelCase input becomes lowercase
+        assert_eq!(RenameRule::Lowercase.apply("fooBarBaz"), "foobarbaz");
+        // PascalCase input becomes lowercase
+        assert_eq!(RenameRule::Lowercase.apply("FooBarBaz"), "foobarbaz");
+        // SCREAMING_SNAKE_CASE input becomes lowercase
+        assert_eq!(RenameRule::Lowercase.apply("FOO_BAR_BAZ"), "foobarbaz");
+        // kebab-case input becomes lowercase
+        assert_eq!(RenameRule::Lowercase.apply("foo-bar-baz"), "foobarbaz");
+        // Mixed case and separator input
+        assert_eq!(
+            RenameRule::Lowercase.apply("theHTTPServer"),
+            "thehttpserver"
+        );
+        // Empty input keeps empty
+        assert_eq!(RenameRule::Lowercase.apply(""), "");
+    }
+
+    #[test]
+    fn test_rename_rule_uppercase() {
+        use super::RenameRule;
+        // Snake case input becomes UPPERCASE without separators
+        assert_eq!(RenameRule::Uppercase.apply("foo_bar_baz"), "FOOBARBAZ");
+        // CamelCase input becomes UPPERCASE
+        assert_eq!(RenameRule::Uppercase.apply("fooBarBaz"), "FOOBARBAZ");
+        // PascalCase input becomes UPPERCASE
+        assert_eq!(RenameRule::Uppercase.apply("FooBarBaz"), "FOOBARBAZ");
+        // SCREAMING_SNAKE_CASE input becomes UPPERCASE without separators
+        assert_eq!(RenameRule::Uppercase.apply("FOO_BAR_BAZ"), "FOOBARBAZ");
+        // kebab-case input becomes UPPERCASE
+        assert_eq!(RenameRule::Uppercase.apply("foo-bar-baz"), "FOOBARBAZ");
+        // Mixed case and separator input
+        assert_eq!(
+            RenameRule::Uppercase.apply("theHTTPServer"),
+            "THEHTTPSERVER"
+        );
+        // Typical use case: max_size -> MAXSIZE
+        assert_eq!(RenameRule::Uppercase.apply("max_size"), "MAXSIZE");
+        assert_eq!(RenameRule::Uppercase.apply("min_value"), "MINVALUE");
+        // Empty input keeps empty
+        assert_eq!(RenameRule::Uppercase.apply(""), "");
     }
 }
