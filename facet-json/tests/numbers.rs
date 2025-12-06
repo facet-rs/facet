@@ -56,3 +56,37 @@ fn json_read_more_types() {
     assert!((test_struct.f32_val - std::f32::consts::PI).abs() < f32::EPSILON);
     assert!((test_struct.f64_val - std::f64::consts::PI).abs() < f64::EPSILON);
 }
+
+#[test]
+fn json_read_usize_isize() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct TestStructWithSize {
+        usize_val: usize,
+        isize_val: isize,
+    }
+
+    let json = r#"{"usize_val": 42, "isize_val": -17}"#;
+    let test_struct: TestStructWithSize = from_str(json).unwrap();
+
+    assert_eq!(test_struct.usize_val, 42);
+    assert_eq!(test_struct.isize_val, -17);
+}
+
+#[test]
+fn json_roundtrip_usize_isize() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct TestStructWithSize {
+        usize_val: usize,
+        isize_val: isize,
+    }
+
+    let original = TestStructWithSize {
+        usize_val: 12345,
+        isize_val: -6789,
+    };
+
+    let json = facet_json::to_string(&original);
+    let deserialized: TestStructWithSize = from_str(&json).unwrap();
+
+    assert_eq!(original, deserialized);
+}

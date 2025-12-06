@@ -9,8 +9,8 @@ use core::fmt::{self, Display};
 use alloc::collections::BTreeSet;
 
 use facet_core::{
-    Characteristic, Def, Facet, KnownPointer, NumericType, PrimitiveType, SequenceType, Shape,
-    ShapeLayout, StructKind, Type, UserType,
+    Characteristic, Def, Facet, KnownPointer, NumericType, PrimitiveType, ScalarType, SequenceType,
+    Shape, ShapeLayout, StructKind, Type, UserType,
 };
 use facet_reflect::{Partial, ReflectError};
 use facet_solver::{PathSegment, Schema, Solver};
@@ -1177,18 +1177,46 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
                         wip = wip.set(v)?;
                     }
                     8 => {
-                        wip = wip.set(n)?;
+                        // Check if the target is isize (which has size 8 on 64-bit)
+                        if shape.scalar_type() == Some(ScalarType::ISize) {
+                            let v = isize::try_from(n).map_err(|_| {
+                                JsonError::new(
+                                    JsonErrorKind::NumberOutOfRange {
+                                        value: n.to_string(),
+                                        target_type: "isize",
+                                    },
+                                    span,
+                                )
+                            })?;
+                            wip = wip.set(v)?;
+                        } else {
+                            wip = wip.set(n)?;
+                        }
                     }
                     16 => {
                         wip = wip.set(n as i128)?;
                     }
                     _ => {
-                        return Err(JsonError::new(
-                            JsonErrorKind::InvalidValue {
-                                message: format!("unexpected integer size: {size}"),
-                            },
-                            span,
-                        ));
+                        // Handle isize on 32-bit platforms (size 4)
+                        if shape.scalar_type() == Some(ScalarType::ISize) {
+                            let v = isize::try_from(n).map_err(|_| {
+                                JsonError::new(
+                                    JsonErrorKind::NumberOutOfRange {
+                                        value: n.to_string(),
+                                        target_type: "isize",
+                                    },
+                                    span,
+                                )
+                            })?;
+                            wip = wip.set(v)?;
+                        } else {
+                            return Err(JsonError::new(
+                                JsonErrorKind::InvalidValue {
+                                    message: format!("unexpected integer size: {size}"),
+                                },
+                                span,
+                            ));
+                        }
                     }
                 }
             }
@@ -1292,18 +1320,46 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
                         wip = wip.set(v)?;
                     }
                     8 => {
-                        wip = wip.set(n)?;
+                        // Check if the target is usize (which has size 8 on 64-bit)
+                        if shape.scalar_type() == Some(ScalarType::USize) {
+                            let v = usize::try_from(n).map_err(|_| {
+                                JsonError::new(
+                                    JsonErrorKind::NumberOutOfRange {
+                                        value: n.to_string(),
+                                        target_type: "usize",
+                                    },
+                                    span,
+                                )
+                            })?;
+                            wip = wip.set(v)?;
+                        } else {
+                            wip = wip.set(n)?;
+                        }
                     }
                     16 => {
                         wip = wip.set(n as u128)?;
                     }
                     _ => {
-                        return Err(JsonError::new(
-                            JsonErrorKind::InvalidValue {
-                                message: format!("unexpected integer size: {size}"),
-                            },
-                            span,
-                        ));
+                        // Handle usize on 32-bit platforms (size 4)
+                        if shape.scalar_type() == Some(ScalarType::USize) {
+                            let v = usize::try_from(n).map_err(|_| {
+                                JsonError::new(
+                                    JsonErrorKind::NumberOutOfRange {
+                                        value: n.to_string(),
+                                        target_type: "usize",
+                                    },
+                                    span,
+                                )
+                            })?;
+                            wip = wip.set(v)?;
+                        } else {
+                            return Err(JsonError::new(
+                                JsonErrorKind::InvalidValue {
+                                    message: format!("unexpected integer size: {size}"),
+                                },
+                                span,
+                            ));
+                        }
                     }
                 }
             }
