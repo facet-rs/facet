@@ -1,30 +1,39 @@
 use proc_macro::TokenStream;
-use std::ffi::{CStr, c_char};
 
-extern "C" {
-    fn registry_count() -> usize;
-    fn registry_get_name(index: usize) -> *const c_char;
-    fn registry_get_value(index: usize) -> *const c_char;
+type CodegenFn = fn(&str) -> String;
+
+extern "Rust" {
+    fn registry_list() -> Vec<(&'static str, CodegenFn)>;
 }
 
 #[proc_macro]
-pub fn invoke_b(_input: TokenStream) -> TokenStream {
-    eprintln!("[plugin-b] invoke_b called, checking registry...");
+pub fn invoke_b(input: TokenStream) -> TokenStream {
+    let type_name = input.to_string();
+    let type_name = if type_name.is_empty() {
+        "MyError"
+    } else {
+        &type_name
+    };
 
-    unsafe {
-        let count = registry_count();
-        for i in 0..count {
-            let name = CStr::from_ptr(registry_get_name(i)).to_str().unwrap_or("?");
-            let value = CStr::from_ptr(registry_get_value(i))
-                .to_str()
-                .unwrap_or("?");
-            eprintln!("[plugin-b] found plugin: {} = {}", name, value);
-        }
+    eprintln!("[plugin-b] invoke_b called for type '{}'", type_name);
 
-        if count == 0 {
-            eprintln!("[plugin-b] NO PLUGINS FOUND - registry not shared!");
-        }
+    let codegens = unsafe { registry_list() };
+
+    if codegens.is_empty() {
+        eprintln!("[plugin-b] NO CODEGENS FOUND - registry not shared!");
+        return TokenStream::new();
     }
 
-    TokenStream::new()
+    let mut output = String::new();
+    for (name, codegen) in &codegens {
+        eprintln!("[plugin-b] running codegen: {}", name);
+        let code = codegen(type_name);
+        eprintln!("[plugin-b] generated:\n{}", code);
+        output.push_str(&code);
+    }
+
+    output.parse().unwrap_or_else(|e| {
+        eprintln!("[plugin-b] parse error: {}", e);
+        TokenStream::new()
+    })
 }
