@@ -15,6 +15,9 @@ tarpaulin-report.html
 
 **/node_modules/
 
+# Profiling
+*.mm_profdata
+
 # Fuzzing
 **/fuzz/target/
 **/fuzz/corpus/
