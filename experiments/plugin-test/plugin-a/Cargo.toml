@@ -7,5 +7,5 @@ edition = "2021"
 proc-macro = true
 
 [dependencies]
-registry = { path = "../registry" }
 ctor = "0.6"
+

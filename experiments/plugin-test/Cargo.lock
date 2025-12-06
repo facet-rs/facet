@@ -38,15 +38,11 @@ name = "plugin-a"
 version = "0.1.0"
 dependencies = [
  "ctor",
- "registry",
 ]
 
 [[package]]
 name = "plugin-b"
 version = "0.1.0"
-dependencies = [
- "registry",
-]
 
 [[package]]
 name = "registry"

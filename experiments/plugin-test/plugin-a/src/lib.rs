@@ -1,9 +1,15 @@
 use proc_macro::TokenStream;
+use std::ffi::c_char;
 
-// Register when this proc-macro is loaded
+extern "C" {
+    fn registry_register(name: *const c_char, value: *const c_char);
+}
+
 #[ctor::ctor]
 fn init() {
-    registry::register_plugin("plugin-a", || "hello from plugin-a");
+    unsafe {
+        registry_register(c"plugin-a".as_ptr(), c"hello from plugin-a".as_ptr());
+    }
 }
 
 #[proc_macro]
