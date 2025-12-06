@@ -18,6 +18,22 @@ fn main() {
 
     #[cfg(not(feature = "json"))]
     {
-        println!("facet-bloatbench built without JSON features; nothing to run.");
+        // Still force monomorphization of all types even without JSON
+        #[cfg(feature = "facet")]
+        {
+            use facet_bloatbench::facet_types::*;
+            // Touch all struct types to force codegen
+            let _ = std::hint::black_box(Struct000::default());
+            let _ = std::hint::black_box(Struct001::default());
+            let _ = std::hint::black_box(Struct002::default());
+        }
+        #[cfg(feature = "serde")]
+        {
+            use facet_bloatbench::serde_types::*;
+            let _ = std::hint::black_box(Struct000::default());
+            let _ = std::hint::black_box(Struct001::default());
+            let _ = std::hint::black_box(Struct002::default());
+        }
+        println!("facet-bloatbench built without JSON features; touched types for codegen.");
     }
 }
