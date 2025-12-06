@@ -127,20 +127,28 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Complex<T> {
 }
 
 const fn complex_fields<'facet, T: Facet<'facet>>() -> &'static [Field; 2] {
-    &[
-        Field {
-            name: "re",
-            shape: ShapeRef::Static(T::SHAPE),
-            offset: offset_of!(Complex<T>, re),
-            attributes: &[],
-            doc: &["Real portion of the complex number"],
-        },
-        Field {
-            name: "im",
-            shape: ShapeRef::Static(T::SHAPE),
-            offset: offset_of!(Complex<T>, im),
-            attributes: &[],
-            doc: &["Imaginary portion of the complex number"],
-        },
-    ]
+    &const {
+        [
+            Field {
+                name: "re",
+                shape: ShapeRef::Static(T::SHAPE),
+                offset: offset_of!(Complex<T>, re),
+                flags: FieldFlags::empty(),
+                rename: None,
+                alias: None,
+                attributes: &[],
+                doc: &["Real portion of the complex number"],
+            },
+            Field {
+                name: "im",
+                shape: ShapeRef::Static(T::SHAPE),
+                offset: offset_of!(Complex<T>, im),
+                flags: FieldFlags::empty(),
+                rename: None,
+                alias: None,
+                attributes: &[],
+                doc: &["Imaginary portion of the complex number"],
+            },
+        ]
+    }
 }

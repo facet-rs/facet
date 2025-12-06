@@ -394,6 +394,9 @@ macro_rules! impl_facet_for_nonzero {
                                 name: "0",
                                 shape: ShapeRef::Static(<$type>::SHAPE),
                                 offset: 0,
+                                flags: FieldFlags::empty(),
+                                rename: None,
+                                alias: None,
                                 attributes: &[],
                                 doc: &[],
                             }]

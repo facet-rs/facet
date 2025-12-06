@@ -1,4 +1,6 @@
-use crate::{Def, Facet, Field, Shape, ShapeRef, StructType, Type, VTableView, ValueVTable};
+use crate::{
+    Def, Facet, Field, FieldFlags, Shape, ShapeRef, StructType, Type, VTableView, ValueVTable,
+};
 use core::mem;
 
 unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
@@ -41,6 +43,9 @@ unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
                             name: "start",
                             shape: ShapeRef::Static(Idx::SHAPE),
                             offset: mem::offset_of!(core::ops::Range<Idx>, start),
+                            flags: FieldFlags::empty(),
+                            rename: None,
+                            alias: None,
                             attributes: &[],
                             doc: &[],
                         },
@@ -48,6 +53,9 @@ unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
                             name: "end",
                             shape: ShapeRef::Static(Idx::SHAPE),
                             offset: mem::offset_of!(core::ops::Range<Idx>, end),
+                            flags: FieldFlags::empty(),
+                            rename: None,
+                            alias: None,
                             attributes: &[],
                             doc: &[],
                         },

@@ -1,5 +1,7 @@
 use super::*;
 
+mod bitflags;
+
 mod field;
 pub use field::*;
 

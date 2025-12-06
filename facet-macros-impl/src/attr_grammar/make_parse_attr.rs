@@ -231,12 +231,34 @@ enum AttrTarget {
     Container,
 }
 
+/// How an attribute should be stored at runtime.
+///
+/// By default, attributes go into the `attributes` slice which requires O(n) lookup.
+/// With `#[storage(...)]` annotations, attributes can be stored in dedicated fields
+/// for O(1) access.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Storage {
+    /// Store in the attributes slice (default, O(n) lookup)
+    #[default]
+    Attr,
+    /// Store as a flag bit in `FieldFlags` (O(1) lookup, for Unit variants only)
+    Flag,
+    /// Store in a dedicated field on `Field` struct (O(1) lookup)
+    /// The field name is derived from the variant name (snake_case)
+    Field,
+}
+
 struct ParsedVariant {
     attrs: Vec<TokenStream2>,
     name: proc_macro2::Ident,
     kind: VariantKind,
     /// Where this attribute can be used
     target: AttrTarget,
+    /// How this attribute should be stored
+    /// Note: Currently used for documentation/validation only. The actual
+    /// storage routing is hardcoded in process_struct.rs for builtin attrs.
+    #[allow(dead_code)]
+    storage: Storage,
 }
 
 enum VariantKind {
@@ -394,11 +416,22 @@ impl EnumVariant {
         // Parse #[target(field)] or #[target(container)] attribute
         let target = parse_target_attr(&self.attrs)?;
 
-        // Filter out the target attribute from the attrs we pass through
+        // Parse #[storage(flag)] or #[storage(field)] attribute
+        let storage = parse_storage_attr(&self.attrs)?;
+
+        // Validate storage attribute compatibility with variant kind
+        if storage == Storage::Flag && !matches!(kind, VariantKind::Unit) {
+            return Err(format!(
+                "#[storage(flag)] can only be used with unit variants, but {} has a payload",
+                self.name
+            ));
+        }
+
+        // Filter out the target and storage attributes from the attrs we pass through
         let attrs = self
             .attrs
             .iter()
-            .filter(|a| !is_target_attr(a))
+            .filter(|a| !is_target_attr(a) && !is_storage_attr(a))
             .map(|a| {
                 let content = a.content.0.stream();
                 quote! { #[#content] }
@@ -410,6 +443,7 @@ impl EnumVariant {
             name: convert_ident(&self.name),
             kind,
             target,
+            storage,
         })
     }
 }
@@ -418,6 +452,12 @@ impl EnumVariant {
 fn is_target_attr(attr: &OuterAttr) -> bool {
     let content = attr.content.0.stream().to_string();
     content.starts_with("target")
+}
+
+/// Check if an outer attribute is #[storage(...)]
+fn is_storage_attr(attr: &OuterAttr) -> bool {
+    let content = attr.content.0.stream().to_string();
+    content.starts_with("storage")
 }
 
 /// Parse the #[target(field)] or #[target(container)] attribute
@@ -438,6 +478,26 @@ fn parse_target_attr(attrs: &[OuterAttr]) -> std::result::Result<AttrTarget, Str
         }
     }
     Ok(AttrTarget::Both)
+}
+
+/// Parse the #[storage(flag)] or #[storage(field)] attribute
+fn parse_storage_attr(attrs: &[OuterAttr]) -> std::result::Result<Storage, String> {
+    for attr in attrs {
+        let content = attr.content.0.stream().to_string();
+        if content.starts_with("storage") {
+            // Parse "storage(flag)" or "storage(field)"
+            if content.contains("flag") {
+                return Ok(Storage::Flag);
+            } else if content.contains("field") {
+                return Ok(Storage::Field);
+            } else {
+                return Err(format!(
+                    "invalid storage attribute: expected #[storage(flag)] or #[storage(field)], got #[{content}]"
+                ));
+            }
+        }
+    }
+    Ok(Storage::Attr)
 }
 
 /// Analyze variant payload tokens to determine the variant kind.

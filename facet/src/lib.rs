@@ -44,10 +44,15 @@ pub mod builtin {
         ///
         /// These represent the runtime-queryable built-in attributes.
         /// Attributes with function pointers store the actual function reference.
+        ///
+        /// Attributes annotated with `#[storage(flag)]` are stored in `FieldFlags` for O(1) access.
+        /// Attributes annotated with `#[storage(field)]` are stored in dedicated `Field` struct fields.
+        /// Attributes without `#[storage(...)]` are stored in the `attributes` slice (O(n) lookup).
         pub enum Attr {
             /// Marks a field as containing sensitive data that should be redacted in debug output.
             ///
             /// Usage: `#[facet(sensitive)]`
+            #[storage(flag)]
             Sensitive,
 
             /// Marks a container as opaque - its inner fields don't need to implement Facet.
@@ -64,11 +69,13 @@ pub mod builtin {
             /// Marks a field to be flattened into its parent structure.
             ///
             /// Usage: `#[facet(flatten)]`
+            #[storage(flag)]
             Flatten,
 
             /// Marks a field as a child node (for hierarchical formats like KDL/XML).
             ///
             /// Usage: `#[facet(child)]`
+            #[storage(flag)]
             Child,
 
             /// Denies unknown fields during deserialization.
@@ -85,16 +92,20 @@ pub mod builtin {
             /// `Default::default()` is used. This requires the field type to implement Default.
             /// For opaque fields, this uses the underlying Rust type's Default, not the
             /// Facet shape's default.
+            ///
+            /// Note: The HAS_DEFAULT flag is also set when this attribute is present.
             Default(make_t or $ty::default()),
 
             /// Skips both serialization and deserialization of this field.
             ///
             /// Usage: `#[facet(skip)]`
+            #[storage(flag)]
             Skip,
 
             /// Skips serialization of this field.
             ///
             /// Usage: `#[facet(skip_serializing)]`
+            #[storage(flag)]
             SkipSerializing,
 
             /// Conditionally skips serialization based on a predicate function.
@@ -106,6 +117,7 @@ pub mod builtin {
             /// Skips deserialization of this field (uses default value).
             ///
             /// Usage: `#[facet(skip_deserializing)]`
+            #[storage(flag)]
             SkipDeserializing,
 
             /// For enums: variants are serialized without a discriminator tag.
@@ -116,6 +128,7 @@ pub mod builtin {
             /// Renames a field or variant during serialization/deserialization.
             ///
             /// Usage: `#[facet(rename = "new_name")]`
+            #[storage(field)]
             Rename(&'static str),
 
             /// Renames all fields/variants using a case conversion rule.
@@ -131,6 +144,7 @@ pub mod builtin {
             /// Usage: `#[facet(alias = "additional_name")]`
             ///
             /// Allows for deserializing a field from either the alias or the original name.
+            #[storage(field)]
             Alias(&'static str),
 
             /// For internally/adjacently tagged enums: the field name for the tag.

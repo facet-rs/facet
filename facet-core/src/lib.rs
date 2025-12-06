@@ -150,6 +150,7 @@ pub mod 𝟋 {
     pub use crate::EnumType as 𝟋ETy;
     pub use crate::Facet as 𝟋Fct;
     pub use crate::Field as 𝟋Fld;
+    pub use crate::FieldFlags as 𝟋FF;
     pub use crate::MarkerTraits as 𝟋Mt;
     pub use crate::Repr as 𝟋Repr;
     pub use crate::Shape as 𝟋Shp;
@@ -184,6 +185,8 @@ pub mod 𝟋 {
     pub const 𝟋NOAT: &[crate::FieldAttribute] = &[];
     /// Empty doc slice
     pub const 𝟋NODOC: &[&str] = &[];
+    /// Empty flags
+    pub const 𝟋NOFL: crate::FieldFlags = crate::FieldFlags::empty();
 
     // === Type Aliases ===
     /// PhantomData type for shadow structs, invariant in lifetime `'a`.

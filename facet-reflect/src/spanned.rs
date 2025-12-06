@@ -3,7 +3,8 @@
 use core::{mem, ops::Deref};
 
 use facet_core::{
-    Def, Facet, Field, Shape, ShapeRef, StructType, Type, TypeParam, UserType, ValueVTable,
+    Def, Facet, Field, FieldFlags, Shape, ShapeRef, StructType, Type, TypeParam, UserType,
+    ValueVTable,
 };
 
 /// Source span with offset and length.
@@ -77,6 +78,9 @@ unsafe impl Facet<'_> for Span {
                         name: "offset",
                         shape: ShapeRef::Static(<usize as Facet>::SHAPE),
                         offset: mem::offset_of!(Span, offset),
+                        flags: FieldFlags::empty(),
+                        rename: None,
+                        alias: None,
                         attributes: &[],
                         doc: &[],
                     },
@@ -84,6 +88,9 @@ unsafe impl Facet<'_> for Span {
                         name: "len",
                         shape: ShapeRef::Static(<usize as Facet>::SHAPE),
                         offset: mem::offset_of!(Span, len),
+                        flags: FieldFlags::empty(),
+                        rename: None,
+                        alias: None,
                         attributes: &[],
                         doc: &[],
                     },
@@ -202,6 +209,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Spanned<T> {
                         name: "value",
                         shape: ShapeRef::Static(T::SHAPE),
                         offset: mem::offset_of!(Spanned<T>, value),
+                        flags: FieldFlags::empty(),
+                        rename: None,
+                        alias: None,
                         attributes: &[],
                         doc: &[],
                     },
@@ -209,6 +219,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Spanned<T> {
                         name: "span",
                         shape: ShapeRef::Static(Span::SHAPE),
                         offset: mem::offset_of!(Spanned<T>, span),
+                        flags: FieldFlags::empty(),
+                        rename: None,
+                        alias: None,
                         attributes: &[],
                         doc: &[],
                     },
