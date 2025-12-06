@@ -1,6 +1,6 @@
 use alloc::string::String;
 use alloc::vec::Vec;
-use facet_core::{Def, Facet, PointerType, StructKind, Type, UserType};
+use facet_core::{Def, DynValueKind, Facet, PointerType, StructKind, Type, UserType};
 use facet_reflect::{FieldItem, HasFields, Peek, ScalarType};
 use log::trace;
 
@@ -699,6 +699,10 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
                 }
             }
         }
+        (Def::DynamicValue(_), _) => {
+            let dyn_val = peek.into_dynamic_value().unwrap();
+            serialize_dynamic_value(dyn_val, writer, indent, depth)?;
+        }
         (_, Type::Pointer(pointer_type)) => {
             if let Some(str_value) = peek.as_str() {
                 crate::write_json_string(writer, str_value);
@@ -724,6 +728,182 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
         }
     }
 
+    Ok(())
+}
+
+/// Serialize a dynamic value (like `facet_value::Value`) to JSON
+fn serialize_dynamic_value<'mem, 'facet, W: crate::JsonWrite>(
+    dyn_val: facet_reflect::PeekDynamicValue<'mem, 'facet>,
+    writer: &mut W,
+    indent: Option<&str>,
+    depth: usize,
+) -> Result<(), SerializeError> {
+    match dyn_val.kind() {
+        DynValueKind::Null => {
+            writer.write(b"null");
+        }
+        DynValueKind::Bool => {
+            if let Some(b) = dyn_val.as_bool() {
+                writer.write(if b { b"true" } else { b"false" });
+            } else {
+                writer.write(b"null");
+            }
+        }
+        DynValueKind::Number => {
+            // Try i64 first (most common for integers), then u64 (for large unsigned), then f64
+            if let Some(n) = dyn_val.as_i64() {
+                writer.write(itoa::Buffer::new().format(n).as_bytes());
+            } else if let Some(n) = dyn_val.as_u64() {
+                writer.write(itoa::Buffer::new().format(n).as_bytes());
+            } else if let Some(n) = dyn_val.as_f64() {
+                let mut buf = ryu::Buffer::new();
+                writer.write(buf.format(n).as_bytes());
+            } else {
+                writer.write(b"null");
+            }
+        }
+        DynValueKind::String => {
+            if let Some(s) = dyn_val.as_str() {
+                crate::write_json_string(writer, s);
+            } else {
+                writer.write(b"null");
+            }
+        }
+        DynValueKind::Bytes => {
+            // Serialize bytes as an array of numbers (JSON doesn't have native bytes)
+            if let Some(bytes) = dyn_val.as_bytes() {
+                serialize_byte_array(bytes, writer, indent, depth)?;
+            } else {
+                writer.write(b"null");
+            }
+        }
+        DynValueKind::Array => {
+            let len = dyn_val.array_len().unwrap_or(0);
+            if len == 0 {
+                writer.write(b"[]");
+            } else {
+                writer.write(b"[");
+                for idx in 0..len {
+                    if idx > 0 {
+                        writer.write(b",");
+                    }
+                    write_newline(writer, indent);
+                    write_indent(writer, indent, depth + 1);
+                    if let Some(elem) = dyn_val.array_get(idx) {
+                        serialize_value(elem, None, writer, indent, depth + 1)?;
+                    } else {
+                        writer.write(b"null");
+                    }
+                }
+                write_newline(writer, indent);
+                write_indent(writer, indent, depth);
+                writer.write(b"]");
+            }
+        }
+        DynValueKind::Object => {
+            let len = dyn_val.object_len().unwrap_or(0);
+            if len == 0 {
+                writer.write(b"{}");
+            } else {
+                writer.write(b"{");
+                for idx in 0..len {
+                    if idx > 0 {
+                        writer.write(b",");
+                    }
+                    write_newline(writer, indent);
+                    write_indent(writer, indent, depth + 1);
+                    if let Some((key, val)) = dyn_val.object_get_entry(idx) {
+                        crate::write_json_string(writer, key);
+                        write_colon(writer, indent);
+                        serialize_value(val, None, writer, indent, depth + 1)?;
+                    }
+                }
+                write_newline(writer, indent);
+                write_indent(writer, indent, depth);
+                writer.write(b"}");
+            }
+        }
+        DynValueKind::DateTime => {
+            // Serialize datetime as ISO 8601 string
+            if let Some((year, month, day, hour, minute, second, nanos, kind)) =
+                dyn_val.as_datetime()
+            {
+                use facet_core::DynDateTimeKind;
+                let mut buf = String::new();
+                use core::fmt::Write;
+
+                match kind {
+                    DynDateTimeKind::LocalDate => {
+                        write!(buf, "{year:04}-{month:02}-{day:02}").unwrap();
+                    }
+                    DynDateTimeKind::LocalTime => {
+                        if nanos > 0 {
+                            write!(buf, "{hour:02}:{minute:02}:{second:02}.{nanos:09}").unwrap();
+                            // Trim trailing zeros from nanos
+                            while buf.ends_with('0') {
+                                buf.pop();
+                            }
+                        } else {
+                            write!(buf, "{hour:02}:{minute:02}:{second:02}").unwrap();
+                        }
+                    }
+                    DynDateTimeKind::LocalDateTime => {
+                        if nanos > 0 {
+                            write!(
+                                buf,
+                                "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{nanos:09}"
+                            )
+                            .unwrap();
+                            while buf.ends_with('0') {
+                                buf.pop();
+                            }
+                        } else {
+                            write!(
+                                buf,
+                                "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}"
+                            )
+                            .unwrap();
+                        }
+                    }
+                    DynDateTimeKind::Offset { offset_minutes } => {
+                        if nanos > 0 {
+                            write!(
+                                buf,
+                                "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{nanos:09}"
+                            )
+                            .unwrap();
+                            while buf.ends_with('0') {
+                                buf.pop();
+                            }
+                        } else {
+                            write!(
+                                buf,
+                                "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}"
+                            )
+                            .unwrap();
+                        }
+                        if offset_minutes == 0 {
+                            buf.push('Z');
+                        } else {
+                            let sign = if offset_minutes >= 0 { '+' } else { '-' };
+                            let abs_offset = offset_minutes.abs();
+                            let offset_hours = abs_offset / 60;
+                            let offset_mins = abs_offset % 60;
+                            write!(buf, "{sign}{offset_hours:02}:{offset_mins:02}").unwrap();
+                        }
+                    }
+                }
+                crate::write_json_string(writer, &buf);
+            } else {
+                writer.write(b"null");
+            }
+        }
+        DynValueKind::QName | DynValueKind::Uuid => {
+            // These are typically string-like; try to get a string representation
+            // For now, serialize as null since we don't have a standard getter
+            writer.write(b"null");
+        }
+    }
     Ok(())
 }
 
