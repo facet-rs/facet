@@ -634,7 +634,8 @@ impl PAttrs {
                                 message: format!(
                                     "unknown #[facet(rename_all = \"...\")] rule: `{rule_str}`. \
                                      Valid options: camelCase, snake_case, kebab-case, \
-                                     PascalCase, SCREAMING_SNAKE_CASE"
+                                     PascalCase, SCREAMING_SNAKE_CASE, SCREAMING-KEBAB-CASE, \
+                                     lowercase, UPPERCASE"
                                 ),
                                 span: attr.key.span(),
                             });
