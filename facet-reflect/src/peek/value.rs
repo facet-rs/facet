@@ -217,7 +217,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     ///
     /// Panics if the shape doesn't match the type `T`.
     #[inline]
-    pub fn get<T: Facet<'facet> + ?Sized>(&self) -> Result<&T, ReflectError> {
+    pub fn get<T: Facet<'facet> + ?Sized>(&self) -> Result<&'mem T, ReflectError> {
         if self.shape != T::SHAPE {
             Err(ReflectError::WrongShape {
                 expected: self.shape,
