@@ -1,3 +1,4 @@
+mod covariance;
 mod dst;
 mod enum_;
 mod list;
