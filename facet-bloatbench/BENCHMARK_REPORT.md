@@ -183,3 +183,157 @@ cargo llvm-lines -p facet-bloatbench --lib --features serde,json --release
     462 (2.0%, 38.8%)    1 (0.1%,  5.3%)  Struct002::visit_seq
     357 (1.6%, 40.3%)    1 (0.1%,  5.4%)  facet_bloatbench::serde_json_roundtrip
 ```
+
+---
+
+## Root Cause Analysis
+
+### The Triple Monomorphization Problem
+
+The core issue is a combination of three factors:
+
+1. **Generic Type Parameter**: Each `Option<T>`, `Vec<T>`, etc. is a unique monomorphization
+2. **Closure Captures**: Each closure captures `T::SHAPE`, which is type-specific
+3. **Const Block Lifetime Promotion**: To put closures in `&'static` positions, Rust must evaluate the const block, which requires instantiating all generic code
+
+### Primary Bloat Sources
+
+#### 1. Option<T>::SHAPE Closures (10.2% of IR)
+
+**File:** `facet-core/src/impls_core/option.rs`
+
+The `Option<T>` implementation defines **6+ conditional closures inside a const block**:
+
+```rust
+const SHAPE: &'static Shape = &const {
+    let mut vtable = value_vtable!(...);
+    vtable.debug = if T::SHAPE.is_debug() {
+        Some(|this, f| { /* Debug impl */ })
+    } else { None };
+    vtable.hash = if T::SHAPE.is_hash() {
+        Some(|this, hasher| { /* Hash impl */ })
+    } else { None };
+    // ... repeat for partial_eq, partial_ord, ord, parse, try_from/into/borrow
+};
+```
+
+Each closure gets monomorphized for every `Option<T>` instantiation, creating:
+- 427 copies of inner const closures
+- 176 copies of outer closures
+- ~28 IR lines per copy
+
+#### 2. Vec<T>::SHAPE Closures (6.8% of IR)
+
+**File:** `facet-core/src/impls_alloc/vec.rs`
+
+Similar pattern to Option, plus calls to `vtable_for_list::<T, Self>()` which generates additional closures for list operations (push, get, iter, etc.).
+
+#### 3. FnOnce::call_once Explosion (21.4% of IR)
+
+**Root cause:** Every closure in Rust generates an `impl FnOnce`. With 6+ closures per Option/Vec × ~160 types = 2,000+ unique closures, each requiring its own `FnOnce::call_once` instance.
+
+#### 4. Pointer Utilities (7.4% of IR)
+
+**File:** `facet-core/src/ptr.rs`
+
+`PtrUninit::put` and `transmute_copy` are called from every type's initialization code:
+
+```rust
+pub const unsafe fn put<T>(self, value: T) -> PtrMut<'mem> {
+    core::ptr::write(self.ptr.to_ptr::<T>(), value);
+    self.assume_init()
+}
+```
+
+With 370 copies of `transmute_copy` and 248 copies of `put`, these small functions contribute significant bloat.
+
+---
+
+## Proposed Solutions
+
+### High Impact
+
+#### 1. Replace Closures with Function Pointers
+
+Instead of conditional closures:
+```rust
+// Current (bloated)
+vtable.debug = if T::SHAPE.is_debug() {
+    Some(|this, f| { /* impl */ })
+} else { None };
+```
+
+Use extern functions:
+```rust
+// Proposed
+unsafe extern "C" fn debug_option<T: Facet>(ptr: PtrConst, f: &mut Formatter) -> Result { ... }
+
+vtable.debug = if T::SHAPE.is_debug() {
+    Some(debug_option::<T>)
+} else { None };
+```
+
+**Impact:** Reduces closure overhead; single monomorphization per type instead of per-closure.
+
+#### 2. Gate Comparison/Hash Behind Feature Flags
+
+```rust
+#[cfg(feature = "facet-cmp")]
+pub struct CmpVTable { partial_eq: Option<...>, ... }
+
+#[cfg(not(feature = "facet-cmp"))]
+pub struct CmpVTable; // ZST - zero code generated
+```
+
+**Impact:** Users who don't need comparison traits save ~30% binary size.
+
+#### 3. Type-Erase Collection Implementations
+
+Create shared implementations that don't require full monomorphization:
+
+```rust
+// Instead of full generic impl
+pub struct ListShapeImpl<T: Facet> { ... }
+
+// Use type-erased core with thin generic wrapper
+struct ListShapeCore { /* type-erased operations */ }
+pub struct ListShapeImpl<T> { core: &'static ListShapeCore, _t: PhantomData<T> }
+```
+
+**Impact:** Single implementation for list operations, parametric over T.
+
+### Medium Impact
+
+#### 4. Hoist Conditional Logic Out of Const Blocks
+
+Move closure creation to regular functions that can be better optimized:
+
+```rust
+fn make_option_vtable<'a, T: Facet<'a>>() -> ValueVTable {
+    ValueVTable {
+        debug: if T::SHAPE.is_debug() { Some(/* closure */) } else { None },
+        ...
+    }
+}
+
+const SHAPE: &'static Shape = &const {
+    let vtable = make_option_vtable::<T>();
+    ...
+};
+```
+
+#### 5. Inline vtable_for_list
+
+Replace the helper function with direct struct construction to avoid the extra monomorphization boundary.
+
+### Estimated Reduction
+
+| Optimization | Current | Est. Reduction |
+|--------------|---------|----------------|
+| Function pointers vs closures | 2,092 FnOnce copies | -20% |
+| Feature-gate CmpVTable | 1,240 copies | -30% (if disabled) |
+| Type-erase list helpers | 637 copies | -40% |
+| Hoist conditional logic | - | -15% |
+| **Total** | 299K lines | **-20-30%** |
+
+**Realistic Target:** Reduce from 13x to ~8-10x of Serde's code size.
