@@ -1,0 +1,8 @@
+[package]
+name = "user-crate"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+plugin-a = { path = "../plugin-a" }
+plugin-b = { path = "../plugin-b" }
