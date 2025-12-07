@@ -69,6 +69,7 @@ unsafe impl Facet<'_> for Uuid {
             attributes: &[],
             type_tag: None,
             inner: Some(<String as Facet>::SHAPE),
+            proxy: None,
         }
     };
 }

@@ -68,6 +68,7 @@ unsafe impl Facet<'_> for UtcDateTime {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }
@@ -137,6 +138,7 @@ unsafe impl Facet<'_> for OffsetDateTime {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }

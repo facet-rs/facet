@@ -93,6 +93,7 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                     attributes: &[],
                     type_tag: None,
                     inner: Some(<$float as Facet>::SHAPE),
+                    proxy: None,
                 }
             };
         }
@@ -193,6 +194,7 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                     attributes: &[],
                     type_tag: None,
                     inner: Some(<$float as Facet>::SHAPE),
+                    proxy: None,
                 }
             };
         }

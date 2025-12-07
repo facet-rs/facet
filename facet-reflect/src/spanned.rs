@@ -103,6 +103,7 @@ unsafe impl Facet<'_> for Span {
         attributes: &[],
         type_tag: None,
         inner: None,
+        proxy: None,
     };
 }
 
@@ -233,6 +234,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Spanned<T> {
         attributes: &[],
         type_tag: None,
         inner: None,
+        proxy: None,
     };
 }
 

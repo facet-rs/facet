@@ -119,6 +119,7 @@ unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for Box<T> {
             attributes: &[],
             type_tag: None,
             inner: Some(T::SHAPE),
+            proxy: None,
         }
     };
 }

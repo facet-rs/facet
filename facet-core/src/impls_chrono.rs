@@ -63,6 +63,7 @@ unsafe impl Facet<'_> for DateTime<Utc> {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }
@@ -124,6 +125,7 @@ unsafe impl Facet<'_> for DateTime<FixedOffset> {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }
@@ -187,6 +189,7 @@ unsafe impl Facet<'_> for DateTime<Local> {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }
@@ -258,6 +261,7 @@ unsafe impl Facet<'_> for NaiveDateTime {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }
@@ -319,6 +323,7 @@ unsafe impl Facet<'_> for NaiveDate {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }
@@ -384,6 +389,7 @@ unsafe impl Facet<'_> for NaiveTime {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }

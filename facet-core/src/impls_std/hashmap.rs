@@ -111,6 +111,7 @@ where
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }
@@ -129,6 +130,7 @@ unsafe impl Facet<'_> for RandomState {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }

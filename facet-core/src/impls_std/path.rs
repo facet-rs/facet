@@ -18,6 +18,7 @@ unsafe impl Facet<'_> for std::path::PathBuf {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }
@@ -40,6 +41,7 @@ unsafe impl Facet<'_> for std::path::Path {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }

@@ -80,6 +80,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *const T {
             attributes: &[],
             type_tag: None,
             inner: Some(T::SHAPE),
+            proxy: None,
         }
     };
 }
@@ -158,6 +159,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
             attributes: &[],
             type_tag: None,
             inner: Some(T::SHAPE),
+            proxy: None,
         }
     };
 }

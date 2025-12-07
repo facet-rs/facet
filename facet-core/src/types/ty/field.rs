@@ -217,6 +217,29 @@ pub type ProxyConvertOutFn = for<'mem> unsafe fn(
     proxy_ptr: PtrUninit<'mem>,
 ) -> Result<PtrMut<'mem>, alloc::string::String>;
 
+#[cfg(feature = "alloc")]
+/// Definition of a proxy type for serialization/deserialization.
+///
+/// This is used when `#[facet(proxy = ProxyType)]` is applied at the container level
+/// (struct or enum). It stores everything needed to convert values to/from the proxy type.
+///
+/// The user must implement:
+/// - `TryFrom<ProxyType> for OriginalType` (for deserialization: proxy → original)
+/// - `TryFrom<&OriginalType> for ProxyType` (for serialization: original → proxy)
+#[derive(Clone, Copy)]
+pub struct ProxyDef {
+    /// The shape of the proxy type.
+    pub shape: &'static super::Shape,
+
+    /// Function to convert FROM proxy type INTO the original type.
+    /// Used during deserialization.
+    pub convert_in: ProxyConvertInFn,
+
+    /// Function to convert FROM original type OUT TO proxy type.
+    /// Used during serialization.
+    pub convert_out: ProxyConvertOutFn,
+}
+
 impl Field {
     /// Returns the shape of the inner type
     #[inline]

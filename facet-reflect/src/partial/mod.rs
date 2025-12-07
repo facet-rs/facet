@@ -307,6 +307,11 @@ pub(crate) struct Frame {
 
     /// Whether this frame is for a custom deserialization pipeline
     pub(crate) using_custom_deserialization: bool,
+
+    /// If this frame was created for shape-level proxy deserialization,
+    /// this stores the ProxyDef for the conversion in end().
+    #[cfg(feature = "alloc")]
+    pub(crate) shape_level_proxy: Option<&'static facet_core::ProxyDef>,
 }
 
 #[derive(Debug)]
@@ -488,6 +493,8 @@ impl Frame {
             tracker: Tracker::Scalar,
             ownership,
             using_custom_deserialization: false,
+            #[cfg(feature = "alloc")]
+            shape_level_proxy: None,
         }
     }
 

@@ -190,4 +190,38 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             })
         }
     }
+
+    /// Begin building the source shape for custom deserialization using container-level proxy.
+    ///
+    /// Unlike `begin_custom_deserialization` which uses field-level proxy info, this method
+    /// uses the shape's own proxy definition (from `#[facet(proxy = ...)]` at container level).
+    ///
+    /// Returns `Ok((self, true))` if the shape has a container-level proxy and we've begun
+    /// custom deserialization, `Ok((self, false))` if not (self is returned unchanged).
+    pub fn begin_custom_deserialization_from_shape(mut self) -> Result<(Self, bool), ReflectError> {
+        let current_frame = self.frames().last().unwrap();
+        let target_shape = current_frame.shape;
+        trace!("begin_custom_deserialization_from_shape: target_shape={target_shape}");
+
+        let Some(proxy_def) = target_shape.proxy() else {
+            return Ok((self, false));
+        };
+
+        let source_shape = proxy_def.shape;
+        let source_data = source_shape.allocate().map_err(|_| ReflectError::Unsized {
+            shape: target_shape,
+            operation: "Not a Sized type",
+        })?;
+
+        trace!(
+            "begin_custom_deserialization_from_shape: Creating frame for deserialization type {source_shape}"
+        );
+        let mut new_frame = Frame::new(source_data, source_shape, FrameOwnership::Owned);
+        new_frame.using_custom_deserialization = true;
+        // Store the target shape's proxy in the frame so end() can use it for conversion
+        new_frame.shape_level_proxy = Some(proxy_def);
+        self.frames_mut().push(new_frame);
+
+        Ok((self, true))
+    }
 }

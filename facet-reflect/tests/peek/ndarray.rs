@@ -150,6 +150,7 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Mat<T> {
         doc: &[],
         attributes: &[],
         inner: None,
+        proxy: None,
     };
 }
 

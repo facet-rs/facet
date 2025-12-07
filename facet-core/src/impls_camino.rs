@@ -60,6 +60,7 @@ unsafe impl Facet<'_> for Utf8PathBuf {
             attributes: &[],
             type_tag: None,
             inner: Some(<String as Facet>::SHAPE),
+            proxy: None,
         }
     };
 }
@@ -82,6 +83,7 @@ unsafe impl Facet<'_> for Utf8Path {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }

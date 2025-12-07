@@ -109,7 +109,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             // - auto_traits: compile-time directive for vtable generation
             if attr.is_builtin() {
                 let key = attr.key_str();
-                if matches!(key.as_str(), "crate" | "traits" | "auto_traits") {
+                if matches!(key.as_str(), "crate" | "traits" | "auto_traits" | "proxy") {
                     continue;
                 }
             }
@@ -129,6 +129,57 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     let type_tag_call = {
         if let Some(type_tag) = pe.container.attrs.get_builtin_args("type_tag") {
             quote! { .type_tag(#type_tag) }
+        } else {
+            quote! {}
+        }
+    };
+
+    // Container-level proxy from PEnum - generates ProxyDef with conversion functions
+    let proxy_call = {
+        if let Some(attr) = pe
+            .container
+            .attrs
+            .facet
+            .iter()
+            .find(|a| a.is_builtin() && a.key_str() == "proxy")
+        {
+            let proxy_type = &attr.args;
+            let enum_type = &enum_name;
+            let bgp_display = pe.container.bgp.display_without_bounds();
+
+            quote! {
+                .proxy(&const {
+                    extern crate alloc as __alloc;
+
+                    unsafe fn __proxy_convert_in<'mem>(
+                        proxy_ptr: #facet_crate::PtrConst<'mem>,
+                        field_ptr: #facet_crate::PtrUninit<'mem>,
+                    ) -> ::core::result::Result<#facet_crate::PtrMut<'mem>, __alloc::string::String> {
+                        let proxy: #proxy_type = proxy_ptr.read();
+                        match <#enum_type #bgp_display as ::core::convert::TryFrom<#proxy_type>>::try_from(proxy) {
+                            ::core::result::Result::Ok(value) => ::core::result::Result::Ok(field_ptr.put(value)),
+                            ::core::result::Result::Err(e) => ::core::result::Result::Err(__alloc::string::ToString::to_string(&e)),
+                        }
+                    }
+
+                    unsafe fn __proxy_convert_out<'mem>(
+                        field_ptr: #facet_crate::PtrConst<'mem>,
+                        proxy_ptr: #facet_crate::PtrUninit<'mem>,
+                    ) -> ::core::result::Result<#facet_crate::PtrMut<'mem>, __alloc::string::String> {
+                        let field_ref: &#enum_type #bgp_display = field_ptr.get();
+                        match <#proxy_type as ::core::convert::TryFrom<&#enum_type #bgp_display>>::try_from(field_ref) {
+                            ::core::result::Result::Ok(proxy) => ::core::result::Result::Ok(proxy_ptr.put(proxy)),
+                            ::core::result::Result::Err(e) => ::core::result::Result::Err(__alloc::string::ToString::to_string(&e)),
+                        }
+                    }
+
+                    #facet_crate::ProxyDef {
+                        shape: <#proxy_type as #facet_crate::Facet>::SHAPE,
+                        convert_in: __proxy_convert_in,
+                        convert_out: __proxy_convert_out,
+                    }
+                })
+            }
         } else {
             quote! {}
         }
@@ -758,6 +809,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     #doc_call
                     #attributes_call
                     #type_tag_call
+                    #proxy_call
                     .build()
             };
         }

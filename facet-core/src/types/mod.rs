@@ -90,6 +90,19 @@ pub struct Shape {
     ///
     /// See Partial's `innermost_shape` function (and its support in `put`).
     pub inner: Option<&'static Shape>,
+
+    /// Default proxy type for this shape, if any.
+    ///
+    /// When `#[facet(proxy = ProxyType)]` is applied at the container level (struct/enum),
+    /// this stores a reference to the proxy definition. This allows any value of this type
+    /// to be automatically converted through the proxy during serialization/deserialization,
+    /// even when nested inside generic containers like `Vec<T>` or `Option<T>`.
+    ///
+    /// Field-level `#[facet(proxy = ...)]` takes precedence over this container-level proxy.
+    ///
+    /// This is stored as an opaque pointer to avoid conditional compilation on all Shape
+    /// constructors. Use the `proxy()` method to access it with proper typing.
+    pub proxy: Option<&'static ()>,
 }
 
 impl PartialOrd for Shape {
@@ -413,6 +426,20 @@ impl Shape {
             }
         })
     }
+
+    /// Returns the container-level proxy definition, if any.
+    ///
+    /// This is set when `#[facet(proxy = ProxyType)]` is applied at the struct/enum level.
+    /// When present, values of this type will automatically be converted through the proxy
+    /// during serialization/deserialization.
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub fn proxy(&self) -> Option<&'static ProxyDef> {
+        // SAFETY: When alloc is enabled, the proxy field is only set via
+        // ShapeBuilder::proxy() which takes &'static ProxyDef
+        self.proxy
+            .map(|p| unsafe { &*(p as *const () as *const ProxyDef) })
+    }
 }
 
 impl PartialEq for Shape {
@@ -494,6 +521,7 @@ impl core::fmt::Debug for Shape {
             attributes: _,
             type_tag: _,
             inner: _,
+            proxy: _, // omit by default
         } = self;
 
         if f.alternate() {
@@ -710,6 +738,7 @@ pub struct ShapeBuilder {
     attributes: &'static [ShapeAttribute],
     type_tag: Option<&'static str>,
     inner: Option<&'static Shape>,
+    proxy: Option<&'static ()>,
 }
 
 impl ShapeBuilder {
@@ -731,6 +760,7 @@ impl ShapeBuilder {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     }
 
@@ -752,6 +782,7 @@ impl ShapeBuilder {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     }
 
@@ -808,6 +839,19 @@ impl ShapeBuilder {
     #[inline]
     pub const fn inner(mut self, inner: &'static Shape) -> Self {
         self.inner = Some(inner);
+        self
+    }
+
+    /// Set the container-level proxy definition.
+    ///
+    /// When set, values of this type will automatically be converted through
+    /// the proxy during serialization/deserialization, even when nested inside
+    /// generic containers like `Vec<T>` or `Option<T>`.
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub const fn proxy(mut self, proxy: &'static ProxyDef) -> Self {
+        // Store as opaque pointer - will be cast back in Shape::proxy()
+        self.proxy = Some(unsafe { &*(proxy as *const ProxyDef as *const ()) });
         self
     }
 
@@ -1001,6 +1045,7 @@ impl ShapeBuilder {
             attributes: self.attributes,
             type_tag: self.type_tag,
             inner: self.inner,
+            proxy: self.proxy,
         }
     }
 }
