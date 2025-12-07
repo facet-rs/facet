@@ -1,0 +1,14 @@
+[package]
+name = "facet-macro-types"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared parsed type representations for facet macro ecosystem"
+keywords = ["reflection", "macros", "derive"]
+categories = ["development-tools"]
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"

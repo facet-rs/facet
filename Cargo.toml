@@ -8,6 +8,10 @@ members = [
     "facet-macros-impl",
     "facet-macros",
 
+    # macro ecosystem (plugin support)
+    "facet-macro-types",
+    "facet-macro-template",
+
     # reflection
     "facet-reflect",
 
