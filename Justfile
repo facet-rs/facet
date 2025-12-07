@@ -82,6 +82,12 @@ asan-facet-value-ci:
     rustup toolchain install nightly
     cmd_group "cargo +nightly test -Zsanitizer=address -p facet-value --lib --tests -- --test-threads=1"
 
+valgrind-cranelift:
+    node ci.mjs valgrind-cranelift
+
+valgrind-cranelift-ci:
+    node ci.mjs valgrind-cranelift
+
 fuzz-smoke-value:
     cargo fuzz run fuzz_value -- -runs=1000
 

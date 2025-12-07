@@ -74,6 +74,24 @@ jobs:
           export CI=true
           just miri
 
+  valgrind:
+    runs-on: depot-ubuntu-24.04-32
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install valgrind and nodejs
+        run: apt-get update && apt-get install -y valgrind nodejs
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: ✨ Run cranelift tests under valgrind
+        shell: bash
+        run: |
+          just valgrind-cranelift-ci
+
   nightly:
     runs-on: depot-ubuntu-24.04-32
 

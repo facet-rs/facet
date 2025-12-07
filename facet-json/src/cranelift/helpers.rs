@@ -1262,6 +1262,362 @@ pub unsafe extern "C" fn jitson_parse_nested_struct(
     deser(input, len, pos, out)
 }
 
+/// Parse an Option<T> field.
+///
+/// This uses facet's OptionVTable to properly initialize the Option.
+/// - If JSON value is `null`, initializes as None
+/// - Otherwise, parses the inner value and initializes as Some(value)
+///
+/// Parameters:
+/// - input, len, pos: standard JSON input parameters
+/// - out: pointer to uninitialized Option<T>
+/// - option_shape: pointer to the Shape of Option<T> (used to get vtable and inner type)
+/// - inner_deser_fn: optional function pointer to deserialize inner value (can be null for fallback)
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jitson_parse_option(
+    input: *const u8,
+    len: usize,
+    pos: usize,
+    out: *mut u8,
+    option_shape: *const facet_core::Shape,
+    inner_deser_fn: *const u8, // nullable - if null, we dispatch on inner type
+) -> ParseResult {
+    use facet_core::{
+        Def, NumericType, PrimitiveType, PtrConst, PtrMut, PtrUninit, Type, UserType,
+    };
+    use std::ptr::NonNull;
+
+    let bytes = slice(input, len, pos);
+    let mut i = 0;
+
+    // Skip whitespace
+    skip_ws_inline(bytes, &mut i);
+
+    if i >= bytes.len() {
+        return ERR_UNEXPECTED_EOF;
+    }
+
+    // Get the OptionDef from the shape
+    let shape = &*option_shape;
+    let Def::Option(option_def) = shape.def else {
+        // This shouldn't happen if called correctly
+        return ERR_UNEXPECTED_EOF;
+    };
+
+    let vtable = option_def.vtable;
+    let inner_shape = option_def.t();
+
+    // Check for null
+    if bytes.len() - i >= 4 && &bytes[i..i + 4] == b"null" {
+        // Initialize as None
+        let out_uninit = PtrUninit::new(NonNull::new_unchecked(out));
+        (vtable.init_none_fn)(out_uninit);
+        return (pos + i + 4) as isize;
+    }
+
+    // Not null - need to parse the inner value
+    // Get the inner type's size and alignment for allocation
+    let inner_layout = inner_shape
+        .layout
+        .sized_layout()
+        .expect("Option inner type must be sized");
+
+    // Allocate temporary buffer for inner value
+    let inner_buf = if inner_layout.size() > 0 {
+        std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
+            inner_layout.size(),
+            inner_layout.align(),
+        ))
+    } else {
+        // For ZSTs, use a non-null dangling pointer
+        inner_layout.align() as *mut u8
+    };
+
+    // Parse the inner value based on the inner type
+    let inner_result = if !inner_deser_fn.is_null() {
+        // Use JIT-compiled deserializer for inner value (for structs)
+        type DeserFn = unsafe extern "C" fn(*const u8, usize, usize, *mut u8) -> isize;
+        let deser: DeserFn = std::mem::transmute(inner_deser_fn);
+        deser(input, len, pos + i, inner_buf)
+    } else {
+        // Dispatch based on inner type
+        match &inner_shape.ty {
+            Type::Primitive(PrimitiveType::Numeric(NumericType::Float)) => {
+                match inner_layout.size() {
+                    8 => jitson_parse_f64(input, len, pos + i, inner_buf.cast()),
+                    4 => jitson_parse_f32(input, len, pos + i, inner_buf.cast()),
+                    _ => ERR_UNEXPECTED_EOF,
+                }
+            }
+            Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: true })) => {
+                match inner_layout.size() {
+                    8 => jitson_parse_i64(input, len, pos + i, inner_buf.cast()),
+                    4 => jitson_parse_i32(input, len, pos + i, inner_buf.cast()),
+                    2 => jitson_parse_i16(input, len, pos + i, inner_buf.cast()),
+                    1 => jitson_parse_i8(input, len, pos + i, inner_buf.cast()),
+                    _ => ERR_UNEXPECTED_EOF,
+                }
+            }
+            Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: false })) => {
+                match inner_layout.size() {
+                    8 => jitson_parse_u64(input, len, pos + i, inner_buf.cast()),
+                    4 => jitson_parse_u32(input, len, pos + i, inner_buf.cast()),
+                    2 => jitson_parse_u16(input, len, pos + i, inner_buf.cast()),
+                    1 => jitson_parse_u8(input, len, pos + i, inner_buf.cast()),
+                    _ => ERR_UNEXPECTED_EOF,
+                }
+            }
+            Type::Primitive(PrimitiveType::Boolean) => {
+                jitson_parse_bool(input, len, pos + i, inner_buf.cast())
+            }
+            Type::User(UserType::Opaque) if inner_shape.type_identifier == "String" => {
+                jitson_parse_string(input, len, pos + i, inner_buf.cast())
+            }
+            Type::User(UserType::Opaque) if inner_shape.type_identifier == "Box" => {
+                // Handle Box<T> - parse the inner value and box it
+                if let Def::Pointer(ptr_def) = inner_shape.def {
+                    if let Some(pointee_shape) = ptr_def.pointee {
+                        if let Some(new_into_fn) = ptr_def.vtable.new_into_fn {
+                            let pointee_layout = pointee_shape
+                                .layout
+                                .sized_layout()
+                                .expect("Box pointee must be sized");
+
+                            // Allocate temp buffer for pointee
+                            let pointee_buf = if pointee_layout.size() > 0 {
+                                std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
+                                    pointee_layout.size(),
+                                    pointee_layout.align(),
+                                ))
+                            } else {
+                                pointee_layout.align() as *mut u8
+                            };
+
+                            // Recursively parse inner value - reuse jitson_parse_option if inner is Option
+                            let pointee_result = if let Def::Option(_) = pointee_shape.def {
+                                jitson_parse_option(
+                                    input,
+                                    len,
+                                    pos + i,
+                                    pointee_buf,
+                                    pointee_shape,
+                                    std::ptr::null(),
+                                )
+                            } else {
+                                // Try to parse as primitive or fail
+                                match &pointee_shape.ty {
+                                    Type::Primitive(PrimitiveType::Numeric(
+                                        NumericType::Integer { signed: false },
+                                    )) => match pointee_layout.size() {
+                                        8 => jitson_parse_u64(
+                                            input,
+                                            len,
+                                            pos + i,
+                                            pointee_buf.cast(),
+                                        ),
+                                        4 => jitson_parse_u32(
+                                            input,
+                                            len,
+                                            pos + i,
+                                            pointee_buf.cast(),
+                                        ),
+                                        2 => jitson_parse_u16(
+                                            input,
+                                            len,
+                                            pos + i,
+                                            pointee_buf.cast(),
+                                        ),
+                                        1 => {
+                                            jitson_parse_u8(input, len, pos + i, pointee_buf.cast())
+                                        }
+                                        _ => ERR_UNEXPECTED_EOF,
+                                    },
+                                    Type::Primitive(PrimitiveType::Numeric(
+                                        NumericType::Integer { signed: true },
+                                    )) => match pointee_layout.size() {
+                                        8 => jitson_parse_i64(
+                                            input,
+                                            len,
+                                            pos + i,
+                                            pointee_buf.cast(),
+                                        ),
+                                        4 => jitson_parse_i32(
+                                            input,
+                                            len,
+                                            pos + i,
+                                            pointee_buf.cast(),
+                                        ),
+                                        2 => jitson_parse_i16(
+                                            input,
+                                            len,
+                                            pos + i,
+                                            pointee_buf.cast(),
+                                        ),
+                                        1 => {
+                                            jitson_parse_i8(input, len, pos + i, pointee_buf.cast())
+                                        }
+                                        _ => ERR_UNEXPECTED_EOF,
+                                    },
+                                    Type::Primitive(PrimitiveType::Numeric(NumericType::Float)) => {
+                                        match pointee_layout.size() {
+                                            8 => jitson_parse_f64(
+                                                input,
+                                                len,
+                                                pos + i,
+                                                pointee_buf.cast(),
+                                            ),
+                                            4 => jitson_parse_f32(
+                                                input,
+                                                len,
+                                                pos + i,
+                                                pointee_buf.cast(),
+                                            ),
+                                            _ => ERR_UNEXPECTED_EOF,
+                                        }
+                                    }
+                                    Type::Primitive(PrimitiveType::Boolean) => {
+                                        jitson_parse_bool(input, len, pos + i, pointee_buf.cast())
+                                    }
+                                    Type::User(UserType::Opaque)
+                                        if pointee_shape.type_identifier == "String" =>
+                                    {
+                                        jitson_parse_string(input, len, pos + i, pointee_buf.cast())
+                                    }
+                                    _ => ERR_UNEXPECTED_EOF,
+                                }
+                            };
+
+                            if pointee_result < 0 {
+                                if pointee_layout.size() > 0 {
+                                    std::alloc::dealloc(
+                                        pointee_buf,
+                                        std::alloc::Layout::from_size_align_unchecked(
+                                            pointee_layout.size(),
+                                            pointee_layout.align(),
+                                        ),
+                                    );
+                                }
+                                // Cleanup outer buffer too
+                                if inner_layout.size() > 0 {
+                                    std::alloc::dealloc(
+                                        inner_buf,
+                                        std::alloc::Layout::from_size_align_unchecked(
+                                            inner_layout.size(),
+                                            inner_layout.align(),
+                                        ),
+                                    );
+                                }
+                                return pointee_result;
+                            }
+
+                            // Create the Box using new_into_fn
+                            let inner_uninit = PtrUninit::new(NonNull::new_unchecked(inner_buf));
+                            let pointee_ptr = PtrMut::new(NonNull::new_unchecked(pointee_buf));
+                            new_into_fn(inner_uninit, pointee_ptr);
+
+                            // Deallocate pointee buffer (value moved into Box)
+                            if pointee_layout.size() > 0 {
+                                std::alloc::dealloc(
+                                    pointee_buf,
+                                    std::alloc::Layout::from_size_align_unchecked(
+                                        pointee_layout.size(),
+                                        pointee_layout.align(),
+                                    ),
+                                );
+                            }
+
+                            pointee_result
+                        } else {
+                            ERR_UNEXPECTED_EOF
+                        }
+                    } else {
+                        ERR_UNEXPECTED_EOF
+                    }
+                } else {
+                    ERR_UNEXPECTED_EOF
+                }
+            }
+            Type::User(UserType::Struct(_)) => {
+                // Look up pre-compiled deserializer from cache
+                if let Some(func) = crate::cranelift::cache::get_by_shape(inner_shape) {
+                    type DeserFn = unsafe extern "C" fn(*const u8, usize, usize, *mut u8) -> isize;
+                    let deser: DeserFn = std::mem::transmute(func.ptr());
+                    deser(input, len, pos + i, inner_buf)
+                } else {
+                    if inner_layout.size() > 0 {
+                        std::alloc::dealloc(
+                            inner_buf,
+                            std::alloc::Layout::from_size_align_unchecked(
+                                inner_layout.size(),
+                                inner_layout.align(),
+                            ),
+                        );
+                    }
+                    return ERR_UNEXPECTED_EOF;
+                }
+            }
+            _ => {
+                // Check if it's a nested Option
+                if let Def::Option(_) = inner_shape.def {
+                    // Recursively handle nested Option
+                    jitson_parse_option(
+                        input,
+                        len,
+                        pos + i,
+                        inner_buf,
+                        inner_shape,
+                        std::ptr::null(),
+                    )
+                } else {
+                    // Unsupported inner type - cleanup and fail
+                    if inner_layout.size() > 0 {
+                        std::alloc::dealloc(
+                            inner_buf,
+                            std::alloc::Layout::from_size_align_unchecked(
+                                inner_layout.size(),
+                                inner_layout.align(),
+                            ),
+                        );
+                    }
+                    return ERR_UNEXPECTED_EOF;
+                }
+            }
+        }
+    };
+
+    if inner_result < 0 {
+        // Cleanup on error
+        if inner_layout.size() > 0 {
+            std::alloc::dealloc(
+                inner_buf,
+                std::alloc::Layout::from_size_align_unchecked(
+                    inner_layout.size(),
+                    inner_layout.align(),
+                ),
+            );
+        }
+        return inner_result;
+    }
+
+    // Initialize Option as Some with the parsed inner value
+    let out_uninit = PtrUninit::new(NonNull::new_unchecked(out));
+    let inner_ptr = PtrConst::new(NonNull::new_unchecked(inner_buf));
+    (vtable.init_some_fn)(out_uninit, inner_ptr);
+
+    // Deallocate the temporary buffer (value has been moved into Option)
+    if inner_layout.size() > 0 {
+        std::alloc::dealloc(
+            inner_buf,
+            std::alloc::Layout::from_size_align_unchecked(
+                inner_layout.size(),
+                inner_layout.align(),
+            ),
+        );
+    }
+
+    inner_result
+}
+
 // =============================================================================
 // Helper registration for Cranelift
 // =============================================================================
@@ -1299,5 +1655,6 @@ pub fn register_helpers(builder: &mut cranelift_jit::JITBuilder) {
         "jitson_parse_nested_struct",
         jitson_parse_nested_struct as *const u8,
     );
+    builder.symbol("jitson_parse_option", jitson_parse_option as *const u8);
     builder.symbol("jitson_skip_value", jitson_skip_value as *const u8);
 }
