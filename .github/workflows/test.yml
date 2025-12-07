@@ -87,10 +87,10 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: ✨ Run cranelift tests under valgrind
+      - name: ✨ Run facet-json tests under valgrind
         shell: bash
         run: |
-          just valgrind-cranelift-ci
+          just valgrind-facet-json
 
   nightly:
     runs-on: depot-ubuntu-24.04-32

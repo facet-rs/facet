@@ -837,7 +837,7 @@ impl JitCompiler {
                     let inner_func_ptr = nested_func_ptrs
                         .get(&(inner_shape as *const Shape))
                         .copied()
-                        .unwrap_or(std::ptr::null() as *const u8);
+                        .unwrap_or(std::ptr::null());
 
                     let option_shape_val = builder
                         .ins()
