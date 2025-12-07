@@ -220,12 +220,13 @@ fn top_three_bits_set(value: u128) -> bool {
 // Test helpers for multi-mode testing
 // ============================================================================
 
-/// Macro to run deserialize tests in both slice and streaming modes.
+/// Macro to run deserialize tests in multiple modes (slice, streaming, cranelift).
 ///
-/// Generates two test modules that run the same test body with different
+/// Generates test modules that run the same test body with different
 /// deserializers:
-/// - `slice` - uses `from_str` (slice-based parsing)
-/// - `streaming` - uses `from_reader` (streaming from a reader)
+/// - `slice` - uses `from_str` (slice-based parsing) - always enabled
+/// - `streaming` - uses `from_reader` (streaming from a reader) - requires `streaming` feature
+/// - `cranelift` - uses `cranelift::from_str` (JIT-compiled) - requires `cranelift` feature
 ///
 /// # Usage
 ///
@@ -247,7 +248,7 @@ fn top_three_bits_set(value: u128) -> bool {
 ///
 /// # Skipping streaming mode
 ///
-/// Use `#[skip_streaming]` before a test to skip it in streaming mode
+/// Use `#[skip_streaming]` to skip a test in streaming mode
 /// (for features like `#[facet(flatten)]` or `RawJson` that aren't supported):
 ///
 /// ```ignore
@@ -255,12 +256,15 @@ fn top_three_bits_set(value: u128) -> bool {
 ///     #[skip_streaming]
 ///     #[test]
 ///     fn test_flatten() {
-///         // This test only runs in slice mode
+///         // This test only runs in slice and cranelift modes
 ///     }
 /// }
 /// ```
+// =============================================================================
+// Case 1: Both streaming and cranelift features enabled
+// =============================================================================
 #[macro_export]
-#[cfg(feature = "streaming")]
+#[cfg(all(feature = "streaming", feature = "cranelift"))]
 macro_rules! test_modes {
     ($($content:tt)*) => {
         /// Tests using from_str (slice-based)
@@ -288,12 +292,24 @@ macro_rules! test_modes {
 
             $crate::__test_modes_inner!(@skip_streaming $($content)*);
         }
+
+        /// Tests using JIT-compiled deserializer
+        mod cranelift {
+            #[allow(unused_imports)]
+            use super::*;
+
+            #[allow(dead_code)]
+            fn deserialize<T: ::facet::Facet<'static>>(input: &str) -> Result<T, $crate::JsonError> {
+                $crate::cranelift::from_str(input)
+            }
+
+            $crate::__test_modes_inner!(@skip_none $($content)*);
+        }
     };
 }
 
-/// Internal helper macro - emits tests, optionally skipping those marked with #[skip_streaming]
 #[macro_export]
-#[cfg(feature = "streaming")]
+#[cfg(all(feature = "streaming", feature = "cranelift"))]
 #[doc(hidden)]
 macro_rules! __test_modes_inner {
     // Skip #[skip_streaming] when in streaming mode
@@ -325,9 +341,145 @@ macro_rules! __test_modes_inner {
     (@$mode:ident) => {};
 }
 
-/// Fallback when streaming is not enabled - just run slice tests
+// =============================================================================
+// Case 2: Only streaming feature enabled (no cranelift)
+// =============================================================================
+/// See the main `test_modes` documentation above.
 #[macro_export]
-#[cfg(not(feature = "streaming"))]
+#[cfg(all(feature = "streaming", not(feature = "cranelift")))]
+macro_rules! test_modes {
+    ($($content:tt)*) => {
+        /// Tests using from_str (slice-based)
+        mod slice {
+            #[allow(unused_imports)]
+            use super::*;
+
+            #[allow(dead_code)]
+            fn deserialize<T: ::facet::Facet<'static>>(input: &str) -> Result<T, $crate::JsonError> {
+                $crate::from_str(input)
+            }
+
+            $crate::__test_modes_inner!(@skip_none $($content)*);
+        }
+
+        /// Tests using from_reader (streaming)
+        mod streaming {
+            #[allow(unused_imports)]
+            use super::*;
+
+            #[allow(dead_code)]
+            fn deserialize<T: ::facet::Facet<'static>>(input: &str) -> Result<T, $crate::JsonError> {
+                $crate::from_reader(::std::io::Cursor::new(input))
+            }
+
+            $crate::__test_modes_inner!(@skip_streaming $($content)*);
+        }
+    };
+}
+
+#[macro_export]
+#[cfg(all(feature = "streaming", not(feature = "cranelift")))]
+#[doc(hidden)]
+macro_rules! __test_modes_inner {
+    // Skip #[skip_streaming] when in streaming mode
+    (@skip_streaming #[skip_streaming] #[test] fn $name:ident() $body:block $($rest:tt)*) => {
+        $crate::__test_modes_inner!(@skip_streaming $($rest)*);
+    };
+
+    // In non-streaming modes, ignore the #[skip_streaming] attribute
+    (@skip_none #[skip_streaming] #[test] fn $name:ident() $body:block $($rest:tt)*) => {
+        #[test]
+        fn $name() {
+            ::facet_testhelpers::setup();
+            $body
+        }
+        $crate::__test_modes_inner!(@skip_none $($rest)*);
+    };
+
+    // Regular test - emit it
+    (@$mode:ident #[test] fn $name:ident() $body:block $($rest:tt)*) => {
+        #[test]
+        fn $name() {
+            ::facet_testhelpers::setup();
+            $body
+        }
+        $crate::__test_modes_inner!(@$mode $($rest)*);
+    };
+
+    // Base case - done
+    (@$mode:ident) => {};
+}
+
+// =============================================================================
+// Case 3: Only cranelift feature enabled (no streaming)
+// =============================================================================
+/// See the main `test_modes` documentation above.
+#[macro_export]
+#[cfg(all(not(feature = "streaming"), feature = "cranelift"))]
+macro_rules! test_modes {
+    ($($content:tt)*) => {
+        /// Tests using from_str (slice-based)
+        mod slice {
+            #[allow(unused_imports)]
+            use super::*;
+
+            #[allow(dead_code)]
+            fn deserialize<T: ::facet::Facet<'static>>(input: &str) -> Result<T, $crate::JsonError> {
+                $crate::from_str(input)
+            }
+
+            $crate::__test_modes_inner!(@skip_none $($content)*);
+        }
+
+        /// Tests using JIT-compiled deserializer
+        mod cranelift {
+            #[allow(unused_imports)]
+            use super::*;
+
+            #[allow(dead_code)]
+            fn deserialize<T: ::facet::Facet<'static>>(input: &str) -> Result<T, $crate::JsonError> {
+                $crate::cranelift::from_str(input)
+            }
+
+            $crate::__test_modes_inner!(@skip_none $($content)*);
+        }
+    };
+}
+
+#[macro_export]
+#[cfg(all(not(feature = "streaming"), feature = "cranelift"))]
+#[doc(hidden)]
+macro_rules! __test_modes_inner {
+    // Ignore #[skip_streaming] when not in streaming mode
+    (@skip_none #[skip_streaming] #[test] fn $name:ident() $body:block $($rest:tt)*) => {
+        #[test]
+        fn $name() {
+            ::facet_testhelpers::setup();
+            $body
+        }
+        $crate::__test_modes_inner!(@skip_none $($rest)*);
+    };
+
+    // Regular test - emit it
+    (@$mode:ident #[test] fn $name:ident() $body:block $($rest:tt)*) => {
+        #[test]
+        fn $name() {
+            ::facet_testhelpers::setup();
+            $body
+        }
+        $crate::__test_modes_inner!(@$mode $($rest)*);
+    };
+
+    // Base case - done
+    (@$mode:ident) => {};
+}
+
+// =============================================================================
+// Case 4: Neither streaming nor cranelift features enabled (slice only)
+// =============================================================================
+/// See the main `test_modes` documentation above.
+#[macro_export]
+#[cfg(all(not(feature = "streaming"), not(feature = "cranelift")))]
 macro_rules! test_modes {
     ($($content:tt)*) => {
         /// Tests using from_str (slice-based)
@@ -346,7 +498,7 @@ macro_rules! test_modes {
 }
 
 #[macro_export]
-#[cfg(not(feature = "streaming"))]
+#[cfg(all(not(feature = "streaming"), not(feature = "cranelift")))]
 #[doc(hidden)]
 macro_rules! __test_modes_inner {
     // Ignore #[skip_streaming] in non-streaming build
