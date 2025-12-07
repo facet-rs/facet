@@ -11,7 +11,7 @@ members = [
     # macro ecosystem (plugin support)
     "facet-macro-types",
     "facet-macro-parse",
-    "facet-macro-template",
+    # "facet-macro-template",  # TODO: re-enable when plugin system is ready
 
     # reflection
     "facet-reflect",

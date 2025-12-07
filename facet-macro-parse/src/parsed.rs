@@ -1,4 +1,4 @@
-use crate::{BoundedGenericParams, RenameRule, unescaping::unescape};
+use crate::{BoundedGenericParams, RenameRule, unescape};
 use crate::{Ident, ReprInner, ToTokens, TokenStream};
 use proc_macro2::Span;
 use quote::{quote, quote_spanned};
@@ -565,7 +565,8 @@ pub struct PAttrs {
 }
 
 impl PAttrs {
-    fn parse(attrs: &[crate::Attribute], display_name: &mut String) -> Self {
+    /// Parse attributes from a list of `Attribute`s
+    pub fn parse(attrs: &[crate::Attribute], display_name: &mut String) -> Self {
         let mut doc_lines: Vec<String> = Vec::new();
         let mut facet_attrs: Vec<PFacetAttr> = Vec::new();
         let mut repr: Option<PRepr> = None;
@@ -627,7 +628,7 @@ impl PAttrs {
                     "rename_all" => {
                         let s = attr.args.to_string();
                         let rule_str = s.trim().trim_matches('"');
-                        if let Some(rule) = RenameRule::from_str(rule_str) {
+                        if let Some(rule) = RenameRule::parse(rule_str) {
                             rename_all = Some(rule);
                         } else {
                             errors.push(CompileError {
@@ -852,12 +853,9 @@ pub struct PStructField {
 
 impl PStructField {
     /// Parse a named struct field (usual struct).
-    pub(crate) fn from_struct_field(
-        f: &crate::StructField,
-        rename_all_rule: Option<RenameRule>,
-    ) -> Self {
+    pub fn from_struct_field(f: &crate::StructField, rename_all_rule: Option<RenameRule>) -> Self {
         use crate::ToTokens;
-        Self::parse(
+        Self::parse_field(
             &f.attributes,
             IdentOrLiteral::Ident(f.name.clone()),
             f.typ.to_token_stream(),
@@ -867,7 +865,7 @@ impl PStructField {
 
     /// Parse a tuple (unnamed) field for tuple structs or enum tuple variants.
     /// The index is converted to an identifier like `_0`, `_1`, etc.
-    pub(crate) fn from_enum_field(
+    pub fn from_enum_field(
         attrs: &[crate::Attribute],
         idx: usize,
         typ: &crate::VerbatimUntil<crate::Comma>,
@@ -876,11 +874,11 @@ impl PStructField {
         use crate::ToTokens;
         // Create an Ident from the index, using `_` prefix convention for tuple fields
         let ty = typ.to_token_stream(); // Convert to TokenStream
-        Self::parse(attrs, IdentOrLiteral::Literal(idx), ty, rename_all_rule)
+        Self::parse_field(attrs, IdentOrLiteral::Literal(idx), ty, rename_all_rule)
     }
 
     /// Central parse function used by both `from_struct_field` and `from_enum_field`.
-    fn parse(
+    fn parse_field(
         attrs: &[crate::Attribute],
         name: IdentOrLiteral,
         ty: TokenStream,

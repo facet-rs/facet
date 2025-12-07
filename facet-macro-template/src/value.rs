@@ -1,6 +1,6 @@
 //! Template values
 
-use facet_macro_types::{PEnum, PStruct, PStructField, PVariant};
+use facet_macro_parse::{PEnum, PStruct, PStructField, PVariant};
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use std::collections::HashMap;

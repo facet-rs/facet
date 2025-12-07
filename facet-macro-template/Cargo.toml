@@ -10,7 +10,7 @@ keywords = ["reflection", "macros", "template", "codegen"]
 categories = ["development-tools"]
 
 [dependencies]
-facet-macro-types = { path = "../facet-macro-types" }
+facet-macro-parse = { path = "../facet-macro-parse" }
 proc-macro2 = "1"
 quote = "1"
 

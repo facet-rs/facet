@@ -2,9 +2,9 @@ use proc_macro2::TokenStream;
 use unsynn::*;
 
 // Re-use the types from our other modules
+use super::func_params::Parameter;
 use super::generics::GenericParams;
-use crate::func_params::Parameter;
-use crate::ret_type::ReturnType;
+use super::ret_type::ReturnType;
 use crate::{Attribute, AttributeInner};
 
 keyword! {
@@ -91,7 +91,7 @@ pub fn parse_function_signature(input: TokenStream) -> FunctionSignature {
                     TokenStream::new()
                 }
             };
-            let parameters = crate::func_params::parse_fn_parameters(params_content);
+            let parameters = super::func_params::parse_fn_parameters(params_content);
 
             // Extract generics if present
             let generics = sig.generics.map(|g| g.to_token_stream());

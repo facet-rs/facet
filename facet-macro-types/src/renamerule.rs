@@ -22,7 +22,7 @@ pub enum RenameRule {
 
 impl RenameRule {
     /// Parse a string into a `RenameRule`
-    pub(crate) fn from_str(rule: &str) -> Option<Self> {
+    pub fn parse(rule: &str) -> Option<Self> {
         match rule {
             "PascalCase" => Some(RenameRule::PascalCase),
             "camelCase" => Some(RenameRule::CamelCase),
@@ -37,7 +37,7 @@ impl RenameRule {
     }
 
     /// Apply this renaming rule to a string
-    pub(crate) fn apply(self, input: &str) -> String {
+    pub fn apply(self, input: &str) -> String {
         match self {
             RenameRule::PascalCase => to_pascal_case(input),
             RenameRule::CamelCase => to_camel_case(input),

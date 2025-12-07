@@ -1,8 +1,5 @@
 use super::*;
-use crate::{
-    parsed::{IdentOrLiteral, PRepr, PVariantKind, PrimitiveRepr},
-    process_struct::{TraitSources, gen_field_from_pfield, gen_trait_bounds, gen_vtable},
-};
+use crate::process_struct::{TraitSources, gen_field_from_pfield, gen_trait_bounds, gen_vtable};
 use quote::{format_ident, quote, quote_spanned};
 
 /// Generate a Variant using VariantBuilder for more compact output.
