@@ -12,6 +12,8 @@
 //! For this POC, we simulate the templating with direct codegen.
 //! Uses unsynn for parsing instead of syn.
 
+mod template;
+
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
