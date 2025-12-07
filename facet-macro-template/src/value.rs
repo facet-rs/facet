@@ -86,7 +86,10 @@ impl Value {
 
     fn get_struct_field(s: &PStruct, key: &str) -> Option<Value> {
         match key {
-            "name" => Some(Value::Tokens(quote! { #(s.name()) })),
+            "name" => {
+                let name = s.name();
+                Some(Value::Tokens(quote! { #name }))
+            }
             "doc" => Some(Value::String(s.doc())),
             "fields" => {
                 let fields: Vec<Value> = s
@@ -107,7 +110,10 @@ impl Value {
 
     fn get_enum_field(e: &PEnum, key: &str) -> Option<Value> {
         match key {
-            "name" => Some(Value::Tokens(quote! { #(e.name()) })),
+            "name" => {
+                let name = e.name();
+                Some(Value::Tokens(quote! { #name }))
+            }
             "doc" => Some(Value::String(e.doc())),
             "variants" => {
                 let variants: Vec<Value> = e
