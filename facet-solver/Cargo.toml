@@ -10,6 +10,7 @@ keywords = ["reflection", "introspection", "facet", "solver", "serde"]
 categories = ["development-tools", "rust-patterns"]
 
 [features]
+ci = [] # CI feature
 default = ["std", "suggestions"]
 std = ["alloc"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]

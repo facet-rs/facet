@@ -19,6 +19,7 @@ categories = ["encoding", "parsing", "data-structures"]
 rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
 
 [features]
+ci = [] # CI feature
 default = []
 serialize = []
 axum = ["dep:axum-core", "dep:http", "dep:http-body-util"]

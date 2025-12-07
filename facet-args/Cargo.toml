@@ -31,6 +31,7 @@ insta = "1.44.1"
 miette = { version = "7.6.0", default-features = false }
 
 [features]
+ci = [] # CI feature
 default = ["rich-diagnostics"]
 rich-diagnostics = []
 # Include doc comments in help generation (enables facet/doc)

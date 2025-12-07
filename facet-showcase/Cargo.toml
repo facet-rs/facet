@@ -24,4 +24,5 @@ facet = { version = "0.31", path = "../facet" }
 facet-pretty = { version = "0.31", path = "../facet-pretty" }
 
 [features]
+ci = [] # CI feature
 default = []

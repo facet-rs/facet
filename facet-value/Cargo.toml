@@ -10,6 +10,7 @@ keywords = ["serialization", "value", "dynamic", "json"]
 categories = ["encoding", "data-structures"]
 
 [features]
+ci = [] # CI feature
 default = ["std"]
 std = ["alloc", "dep:indexmap"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc", "dep:facet-reflect"]

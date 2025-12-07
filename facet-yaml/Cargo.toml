@@ -13,6 +13,7 @@ categories = ["encoding", "parsing", "data-structures"]
 rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
 
 [features]
+ci = [] # CI feature
 std = ["alloc", "facet-core/std", "facet-reflect/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 default = ["std"]

@@ -18,6 +18,7 @@ categories = ["development-tools", "encoding"]
 [features]
 default = ["helpful-derive"]
 slow-tests = [] # Enable slow tests (compile tests)
+ci = ["slow-tests"] # CI feature
 function = []
 # Include doc comments in generated Shape/Field/Variant definitions
 doc = []

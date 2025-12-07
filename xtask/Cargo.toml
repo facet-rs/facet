@@ -5,4 +5,7 @@ edition = "2024"
 rust-version = "1.88.0"
 publish = false
 
+[features]
+ci = [] # CI feature
+
 [dependencies]
