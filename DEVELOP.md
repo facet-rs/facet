@@ -5,8 +5,9 @@
 The project's website is [facet.rs](https://facet.rs). The website source files
 can be found in the `docs/` directory.
 
-Only @fasterthanlime can deploy the website but anyone can run it locally
-because [home](https://home.bearcove.cloud) is now open-source.
+Only @fasterthanlime can deploy the website but anyone can run it locally 
+with [dodeca](https://github.com/bearcove/dodeca) just install it and run
+`ddc serve` in the root of this repo
 
 ## Collaboration and Contribution Guidelines
 
