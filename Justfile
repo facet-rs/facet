@@ -163,7 +163,10 @@ docsrs *args:
     cargo +nightly doc {{args}}
 
 msrv:
-    cargo hack check --each-feature --locked --rust-version --ignore-private --workspace --keep-going --exclude-no-default-features
+    # Check default features compile on MSRV
+    cargo hack check --rust-version --workspace --locked --ignore-private --keep-going
+    # Check all features compile on MSRV
+    cargo hack check --rust-version --workspace --locked --ignore-private --keep-going --all-features
 
 msrv-power:
     cargo hack check --feature-powerset --locked --rust-version --ignore-private --workspace --all-targets --keep-going --exclude-no-default-features -

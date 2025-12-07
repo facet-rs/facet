@@ -1262,7 +1262,7 @@ pub unsafe extern "C" fn jitson_parse_nested_struct(
     deser(input, len, pos, out)
 }
 
-/// Parse an Option<T> field.
+/// Parse an `Option<T>` field.
 ///
 /// This uses facet's OptionVTable to properly initialize the Option.
 /// - If JSON value is `null`, initializes as None
@@ -1270,8 +1270,8 @@ pub unsafe extern "C" fn jitson_parse_nested_struct(
 ///
 /// Parameters:
 /// - input, len, pos: standard JSON input parameters
-/// - out: pointer to uninitialized Option<T>
-/// - option_shape: pointer to the Shape of Option<T> (used to get vtable and inner type)
+/// - out: pointer to uninitialized `Option<T>`
+/// - option_shape: pointer to the Shape of `Option<T>` (used to get vtable and inner type)
 /// - inner_deser_fn: optional function pointer to deserialize inner value (can be null for fallback)
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jitson_parse_option(
