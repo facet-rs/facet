@@ -107,7 +107,7 @@ enum FieldParser {
     VecVecVecF64,
     VecStruct(&'static Shape),
     NestedStruct(&'static Shape),
-    /// Option<T> - the Shape is the full Option shape (not the inner T)
+    /// `Option<T>` - the Shape is the full Option shape (not the inner T)
     Option(&'static Shape),
     Skip,
 }
