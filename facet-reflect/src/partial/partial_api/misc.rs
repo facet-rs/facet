@@ -463,10 +463,17 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         // check if this needs deserialization from a different shape
         if popped_frame.using_custom_deserialization {
-            if let Some(deserialize_with) = self
+            // First try field-level proxy
+            let deserialize_with = self
                 .parent_field()
-                .and_then(|field| field.proxy_convert_in_fn())
-            {
+                .and_then(|field| field.proxy_convert_in_fn());
+
+            // Fall back to shape-level proxy stored in the frame
+            #[cfg(feature = "alloc")]
+            let deserialize_with =
+                deserialize_with.or_else(|| popped_frame.shape_level_proxy.map(|p| p.convert_in));
+
+            if let Some(deserialize_with) = deserialize_with {
                 let parent_frame = self.frames_mut().last_mut().unwrap();
 
                 trace!(

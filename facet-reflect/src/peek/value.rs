@@ -570,6 +570,56 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
             })
         }
     }
+
+    /// Returns an `OwnedPeek` using the shape's container-level proxy for serialization.
+    ///
+    /// This is used when a type has `#[facet(proxy = ProxyType)]` at the container level.
+    /// Unlike field-level proxies which are checked via `custom_serialization(field)`,
+    /// this method checks the Shape itself for a proxy definition.
+    ///
+    /// Returns `None` if the shape has no container-level proxy.
+    #[cfg(feature = "alloc")]
+    pub fn custom_serialization_from_shape(&self) -> Result<Option<OwnedPeek<'mem>>, ReflectError> {
+        let Some(proxy_def) = self.shape.proxy() else {
+            return Ok(None);
+        };
+
+        let target_shape = proxy_def.shape;
+        let tptr = target_shape.allocate().map_err(|_| ReflectError::Unsized {
+            shape: target_shape,
+            operation: "Not a Sized type",
+        })?;
+
+        let ser_res = unsafe { (proxy_def.convert_out)(self.data(), tptr) };
+        let err = match ser_res {
+            Ok(rptr) => {
+                if rptr.as_uninit() != tptr {
+                    ReflectError::CustomSerializationError {
+                        message: "proxy convert_out did not return the expected pointer".into(),
+                        src_shape: self.shape,
+                        dst_shape: target_shape,
+                    }
+                } else {
+                    return Ok(Some(OwnedPeek {
+                        shape: target_shape,
+                        data: rptr,
+                    }));
+                }
+            }
+            Err(message) => ReflectError::CustomSerializationError {
+                message,
+                src_shape: self.shape,
+                dst_shape: target_shape,
+            },
+        };
+
+        // if we reach here we have an error and we need to deallocate the target allocation
+        unsafe {
+            // SAFETY: unwrap should be ok since the allocation was ok
+            target_shape.deallocate_uninit(tptr).unwrap()
+        };
+        Err(err)
+    }
 }
 
 impl<'mem, 'facet> core::fmt::Display for Peek<'mem, 'facet> {

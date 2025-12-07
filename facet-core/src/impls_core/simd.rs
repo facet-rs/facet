@@ -28,6 +28,7 @@ macro_rules! impl_facet_for_simd {
                     attributes: &[],
                     type_tag: None,
                     inner: None,
+                    proxy: None,
                 }
             };
         }

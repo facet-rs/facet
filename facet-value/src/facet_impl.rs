@@ -442,6 +442,7 @@ pub static VALUE_SHAPE: Shape = Shape {
     attributes: &[],
     type_tag: None,
     inner: None,
+    proxy: None,
 };
 
 unsafe impl Facet<'_> for Value {

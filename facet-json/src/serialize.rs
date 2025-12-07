@@ -389,7 +389,7 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
 ) -> Result<(), SerializeError> {
     trace!("Serializing a value, shape is {}", peek.shape());
 
-    // Handle custom serialization
+    // Handle custom serialization (field-level proxy)
     #[cfg(feature = "alloc")]
     if let Some(fi) = maybe_field_item {
         if fi.field.proxy_convert_out_fn().is_some() {
@@ -399,6 +399,15 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
             trace!("{old_shape} has custom serialization, serializing as {new_shape} instead");
             return serialize_value(owned_peek.as_peek(), None, writer, indent, depth);
         }
+    }
+
+    // Handle container-level proxy (applies even in Vec<T>, Option<T>, etc.)
+    #[cfg(feature = "alloc")]
+    if let Ok(Some(owned_peek)) = peek.custom_serialization_from_shape() {
+        let old_shape = peek.shape();
+        let new_shape = owned_peek.shape();
+        trace!("{old_shape} has container-level proxy, serializing as {new_shape} instead");
+        return serialize_value(owned_peek.as_peek(), None, writer, indent, depth);
     }
 
     // Handle transparent types

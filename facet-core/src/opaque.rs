@@ -19,6 +19,7 @@ unsafe impl<'facet, T: 'facet> Facet<'facet> for Opaque<T> {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }

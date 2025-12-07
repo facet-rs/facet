@@ -58,6 +58,7 @@ unsafe impl Facet<'_> for Zoned {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }
@@ -120,6 +121,7 @@ unsafe impl Facet<'_> for Timestamp {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }
@@ -181,6 +183,7 @@ unsafe impl Facet<'_> for DateTime {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }

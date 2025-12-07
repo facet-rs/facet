@@ -99,6 +99,7 @@ unsafe impl Facet<'_> for Bytes {
             attributes: &[],
             type_tag: None,
             inner: Some(BytesMut::SHAPE),
+            proxy: None,
         }
     };
 }
@@ -182,6 +183,7 @@ unsafe impl Facet<'_> for BytesMut {
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }

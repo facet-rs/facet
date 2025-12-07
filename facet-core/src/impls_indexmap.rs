@@ -110,6 +110,7 @@ where
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }

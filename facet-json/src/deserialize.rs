@@ -708,6 +708,21 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
             return Ok(wip);
         }
 
+        // Check for container-level proxy (applies to values inside Vec<T>, Option<T>, etc.)
+        #[cfg(feature = "alloc")]
+        {
+            let (wip_returned, has_proxy) = wip.begin_custom_deserialization_from_shape()?;
+            wip = wip_returned;
+            if has_proxy {
+                log::trace!(
+                    "deserialize_into: using container-level proxy for {}",
+                    shape.type_identifier
+                );
+                wip = self.deserialize_into(wip)?;
+                return wip.end().map_err(Into::into);
+            }
+        }
+
         // Check Def first for Option (which is also a Type::User::Enum)
         // Must come before the inner check since Option also has .inner() set
         let is_option = matches!(&shape.def, Def::Option(_));

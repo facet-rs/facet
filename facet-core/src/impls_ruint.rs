@@ -19,6 +19,7 @@ unsafe impl<'facet, const BITS: usize, const LIMBS: usize> Facet<'facet> for Uin
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }
@@ -40,6 +41,7 @@ unsafe impl<'facet, const BITS: usize, const LIMBS: usize> Facet<'facet> for Bit
             attributes: &[],
             type_tag: None,
             inner: None,
+            proxy: None,
         }
     };
 }
