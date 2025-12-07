@@ -46,7 +46,10 @@ facet targets the latest stable Rust. Check the CI configuration for the current
 
 If you're looking for a generic value type that can hold any facet-compatible data, use [`facet_value::Value`](https://docs.rs/facet-value).
 
-If you genuinely need to compare, diff, or store shapes at runtime, see the [WIP shapelike PR](https://github.com/facet-rs/facet/pull/1105).
+If you genuinely need to compare, diff, or store shapes at runtime, see [facet-shapelike](https://docs.rs/facet-shapelike). this crate
+implements a version of `Shape` called `Shapelike` which is fully owned and serializable, so you can send it between 2 completely random
+processes if you feel like it. `Shapelike` does not include any data that if sent to a seperate process would cause UB, like TypeId or
+the vtables that are included
 
 ## Usage
 
@@ -294,6 +297,21 @@ struct Config {
 ```
 
 Without the import, `kdl::property` is not recognized.
+
+### Why do i get errors on the recursive data types
+Due to the current facet implementation you need to manually tag where we should introduce indirection,
+this is done with the `#[facet(recursive_type)]` attribute like so
+
+```rust
+#[derive(Facet)]
+struct Node {
+    #[facet(recursive_type)] 
+    lhs: Option<Box<Node>>,
+    #[facet(recursive_type)] 
+    rhs: Option<Box<Node>>,
+}
+```
+
 
 ## Still have questions?
 
