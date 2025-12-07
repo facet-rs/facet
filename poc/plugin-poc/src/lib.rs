@@ -10,52 +10,331 @@
 //! 4. `__facet_finalize!` parses once and generates all code
 //!
 //! For this POC, we simulate the templating with direct codegen.
+//! Uses unsynn for parsing instead of syn.
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{
-    DeriveInput, Ident, LitStr, Token,
-    parse::{Parse, ParseStream},
-    parse_macro_input,
+
+// Import unsynn but avoid shadowing std::result::Result
+use unsynn::{
+    At, BraceGroupContaining, BracketGroupContaining, Colon, Comma, Gt, Ident, Literal, Lt,
+    ParenthesisGroupContaining, Pound, TokenTree, keyword, unsynn,
 };
+use unsynn::{IParse, ToTokenIter};
 
-/// The main derive macro - this is what users write `#[derive(FacetPoc)]` for.
-///
-/// Instead of parsing the struct, it:
-/// 1. Looks for `#[facet_poc(...)]` attributes to find enabled plugins
-/// 2. Chains to the first plugin's `__facet_invoke!`
-/// 3. The chain eventually reaches `__facet_finalize!`
-#[proc_macro_derive(FacetPoc, attributes(facet_poc))]
-pub fn derive_facet_poc(input: TokenStream) -> TokenStream {
-    let input_tokens = TokenStream2::from(input.clone());
-    let input = parse_macro_input!(input as DeriveInput);
+// Define keywords we need
+keyword! {
+    KFacetPoc = "facet_poc";
+    KPub = "pub";
+    KEnum = "enum";
+    KStruct = "struct";
+}
 
-    // Find all #[facet_poc(...)] attributes
-    let mut plugins = Vec::new();
-    for attr in &input.attrs {
-        if attr.path().is_ident("facet_poc") {
-            // Parse the contents, e.g., `display` or `display, error`
-            let _ = attr.parse_nested_meta(|meta| {
-                if let Some(ident) = meta.path.get_ident() {
-                    plugins.push(ident.to_string());
+// Grammar for parsing the internal macro invocation format (private, not pub)
+unsynn! {
+    /// Section marker like `@tokens`, `@remaining`, `@plugins`
+    struct SectionMarker {
+        at: At,
+        name: Ident,
+    }
+
+    /// A braced section like `@tokens { ... }`
+    struct BracedSection {
+        marker: SectionMarker,
+        content: BraceGroupContaining<TokenStream2>,
+    }
+}
+
+/// Parsed plugin invocation
+struct PluginInvoke {
+    tokens: TokenStream2,
+    remaining: Vec<TokenStream2>,
+    plugins: Vec<String>,
+}
+
+impl PluginInvoke {
+    fn parse(input: TokenStream2) -> Result<Self, String> {
+        let mut iter = input.to_token_iter();
+        let mut tokens = None;
+        let mut remaining = Vec::new();
+        let mut plugins = Vec::new();
+
+        while let Ok(section) = iter.parse::<BracedSection>() {
+            let name = section.marker.name.to_string();
+            match name.as_str() {
+                "tokens" => {
+                    tokens = Some(section.content.content);
                 }
-                Ok(())
-            });
+                "remaining" => {
+                    // Parse comma-separated paths - just collect token trees
+                    let content = section.content.content;
+                    if !content.is_empty() {
+                        // Split by comma and collect each path
+                        let mut current = TokenStream2::new();
+                        for tt in content {
+                            if let proc_macro2::TokenTree::Punct(p) = &tt {
+                                if p.as_char() == ',' {
+                                    if !current.is_empty() {
+                                        remaining.push(current);
+                                        current = TokenStream2::new();
+                                    }
+                                    continue;
+                                }
+                            }
+                            current.extend(std::iter::once(tt));
+                        }
+                        if !current.is_empty() {
+                            remaining.push(current);
+                        }
+                    }
+                }
+                "plugins" => {
+                    // Parse comma-separated string literals
+                    let content = section.content.content;
+                    let mut inner = content.to_token_iter();
+                    while let Ok(lit) = inner.parse::<Literal>() {
+                        // Extract string value from literal
+                        let s = lit.to_string();
+                        // Remove quotes
+                        let unquoted = s.trim_matches('"');
+                        plugins.push(unquoted.to_string());
+                        // Skip comma if present
+                        let _ = inner.parse::<Comma>();
+                    }
+                }
+                _ => {
+                    return Err(format!("unknown section: @{name}"));
+                }
+            }
+        }
+
+        Ok(PluginInvoke {
+            tokens: tokens.ok_or("missing @tokens section")?,
+            remaining,
+            plugins,
+        })
+    }
+}
+
+/// Parsed struct/enum for code generation
+struct ParsedType {
+    name: Ident,
+    kind: TypeKind,
+}
+
+enum TypeKind {
+    Enum(Vec<ParsedVariant>),
+    Struct { doc: String },
+}
+
+struct ParsedVariant {
+    name: Ident,
+    doc: String,
+    fields: VariantFields,
+}
+
+enum VariantFields {
+    Unit,
+    Tuple(usize),
+    Named(Vec<Ident>),
+}
+
+// Grammar for attributes and visibility (private)
+unsynn! {
+    /// Attribute like `#[doc = "..."]` or `#[facet_poc(display)]`
+    struct Attribute {
+        pound: Pound,
+        body: BracketGroupContaining<TokenStream2>,
+    }
+
+    /// Visibility
+    enum Vis {
+        Pub(KPub),
+    }
+
+    /// Generics like `<T, U>`
+    struct Generics {
+        lt: Lt,
+        content: TokenStream2,
+        gt: Gt,
+    }
+}
+
+impl ParsedType {
+    fn parse(tokens: TokenStream2) -> Result<Self, String> {
+        let mut iter = tokens.clone().to_token_iter();
+
+        // Skip attributes and visibility
+        while iter.parse::<Attribute>().is_ok() {}
+        let _ = iter.parse::<Vis>();
+
+        // Check if enum or struct
+        if iter.parse::<KEnum>().is_ok() {
+            let name: Ident = iter
+                .parse()
+                .map_err(|e| format!("expected enum name: {e}"))?;
+            // Skip generics if present
+            let _ = iter.parse::<Generics>();
+
+            let body: BraceGroupContaining<TokenStream2> = iter
+                .parse()
+                .map_err(|e| format!("expected enum body: {e}"))?;
+
+            let variants = Self::parse_enum_variants(body.content)?;
+
+            Ok(ParsedType {
+                name,
+                kind: TypeKind::Enum(variants),
+            })
+        } else if iter.parse::<KStruct>().is_ok() {
+            // For struct, just get the name and doc
+            let name: Ident = iter
+                .parse()
+                .map_err(|e| format!("expected struct name: {e}"))?;
+
+            // Re-parse to get doc from attributes
+            let mut doc_iter = tokens.to_token_iter();
+            let mut doc = String::new();
+            while let Ok(attr) = doc_iter.parse::<Attribute>() {
+                if let Some(d) = extract_doc(&attr) {
+                    if !doc.is_empty() {
+                        doc.push(' ');
+                    }
+                    doc.push_str(&d);
+                }
+            }
+
+            Ok(ParsedType {
+                name,
+                kind: TypeKind::Struct { doc },
+            })
+        } else {
+            Err("expected enum or struct".to_string())
         }
     }
 
-    // Build the chain: each plugin wraps the next, with finalize at the end
-    // We process plugins left-to-right: display wraps (debug wraps finalize)
+    fn parse_enum_variants(body: TokenStream2) -> Result<Vec<ParsedVariant>, String> {
+        let mut variants = Vec::new();
+        let mut iter = body.to_token_iter();
 
-    // Validate plugins first
+        loop {
+            // Collect doc comments for this variant
+            let mut doc = String::new();
+            while let Ok(attr) = iter.parse::<Attribute>() {
+                if let Some(d) = extract_doc(&attr) {
+                    if !doc.is_empty() {
+                        doc.push(' ');
+                    }
+                    doc.push_str(&d);
+                }
+            }
+
+            // Try to parse variant name
+            let name: Ident = match iter.parse() {
+                Ok(n) => n,
+                Err(_) => break, // No more variants
+            };
+
+            // Determine variant kind
+            let fields = if let Ok(group) = iter.parse::<ParenthesisGroupContaining<TokenStream2>>()
+            {
+                // Tuple variant - count fields by counting commas + 1
+                let content = group.content.to_string();
+                let field_count = if content.trim().is_empty() {
+                    0
+                } else {
+                    content.matches(',').count() + 1
+                };
+                VariantFields::Tuple(field_count)
+            } else if let Ok(group) = iter.parse::<BraceGroupContaining<TokenStream2>>() {
+                // Struct variant - extract field names
+                let mut field_names = Vec::new();
+                let mut field_iter = group.content.to_token_iter();
+                loop {
+                    // Skip attributes on fields
+                    while field_iter.parse::<Attribute>().is_ok() {}
+
+                    let field_name: Ident = match field_iter.parse() {
+                        Ok(n) => n,
+                        Err(_) => break,
+                    };
+                    field_names.push(field_name);
+
+                    // Skip : Type
+                    let _ = field_iter.parse::<Colon>();
+                    while field_iter.parse::<TokenTree>().is_ok() {
+                        // Consume type tokens until comma or end
+                        if field_iter.parse::<Comma>().is_ok() {
+                            break;
+                        }
+                    }
+                }
+                VariantFields::Named(field_names)
+            } else {
+                VariantFields::Unit
+            };
+
+            variants.push(ParsedVariant { name, doc, fields });
+
+            // Skip comma between variants
+            let _ = iter.parse::<Comma>();
+        }
+
+        Ok(variants)
+    }
+}
+
+/// Extract doc comment text from an attribute
+fn extract_doc(attr: &Attribute) -> Option<String> {
+    let content = attr.body.content.to_string();
+    // Check if it starts with "doc"
+    if content.starts_with("doc") {
+        // Extract the string after `doc = `
+        if let Some(idx) = content.find('=') {
+            let rest = content[idx + 1..].trim();
+            // Remove surrounding quotes
+            let unquoted = rest.trim_matches('"').trim();
+            return Some(unquoted.to_string());
+        }
+    }
+    None
+}
+
+/// The main derive macro - this is what users write `#[derive(FacetPoc)]` for.
+#[proc_macro_derive(FacetPoc, attributes(facet_poc))]
+pub fn derive_facet_poc(input: TokenStream) -> TokenStream {
+    let input_tokens = TokenStream2::from(input.clone());
+    let mut iter = input_tokens.clone().to_token_iter();
+
+    // Find all #[facet_poc(...)] attributes
+    let mut plugins = Vec::new();
+
+    while let Ok(attr) = iter.parse::<Attribute>() {
+        let content = attr.body.content.to_string();
+        if content.starts_with("facet_poc") {
+            // Extract plugin names from facet_poc(plugin1, plugin2, ...)
+            if let Some(start) = content.find('(') {
+                if let Some(end) = content.rfind(')') {
+                    let inner = &content[start + 1..end];
+                    for part in inner.split(',') {
+                        let plugin = part.trim();
+                        if !plugin.is_empty() {
+                            plugins.push(plugin.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Validate plugins
     for plugin in &plugins {
         match plugin.as_str() {
             "display" | "debug" => {}
             other => {
-                return syn::Error::new_spanned(&input.ident, format!("Unknown plugin: {other}"))
-                    .to_compile_error()
-                    .into();
+                let msg = format!("Unknown plugin: {other}");
+                return quote! { compile_error!(#msg); }.into();
             }
         }
     }
@@ -71,16 +350,7 @@ pub fn derive_facet_poc(input: TokenStream) -> TokenStream {
         .into();
     }
 
-    // Build the chain differently: each plugin gets @next as just a path,
-    // and @plugins accumulates as we go.
-    //
-    // For [display, debug], we want:
-    // display_invoke! { @tokens {...} @next_plugin { debug } @remaining { } @plugins { } }
-    //   -> debug_invoke! { @tokens {...} @next_plugin { } @remaining { } @plugins { "display" } }
-    //     -> finalize! { @tokens {...} @plugins { "display", "debug" } }
-    //
-    // Actually, simpler approach: convert plugin list to a path list and iterate.
-
+    // Build the chain from right to left
     let plugin_paths: Vec<_> = plugins
         .iter()
         .map(|p| match p.as_str() {
@@ -90,11 +360,9 @@ pub fn derive_facet_poc(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    // Start the chain with the first plugin
     let first = &plugin_paths[0];
     let rest: Vec<_> = plugin_paths[1..].iter().collect();
 
-    // Pack remaining plugins as a token list
     let remaining = if rest.is_empty() {
         quote! {}
     } else {
@@ -111,90 +379,19 @@ pub fn derive_facet_poc(input: TokenStream) -> TokenStream {
     .into()
 }
 
-// Helper struct for parsing the internal macro format
-struct PluginInvoke {
-    tokens: TokenStream2,
-    remaining: Vec<TokenStream2>, // Remaining plugin paths to invoke
-    plugins: Vec<String>,         // Accumulated plugin names
-}
-
-impl Parse for PluginInvoke {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut tokens = None;
-        let mut remaining = Vec::new();
-        let mut plugins = Vec::new();
-
-        while !input.is_empty() {
-            let lookahead = input.lookahead1();
-            if lookahead.peek(Token![@]) {
-                input.parse::<Token![@]>()?;
-                let keyword: Ident = input.parse()?;
-
-                let content;
-                syn::braced!(content in input);
-
-                match keyword.to_string().as_str() {
-                    "tokens" => {
-                        tokens = Some(content.parse()?);
-                    }
-                    "remaining" => {
-                        // Parse comma-separated paths
-                        while !content.is_empty() {
-                            let path: syn::Path = content.parse()?;
-                            remaining.push(quote! { #path });
-                            if content.peek(Token![,]) {
-                                content.parse::<Token![,]>()?;
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    "plugins" => {
-                        // Parse comma-separated string literals
-                        while !content.is_empty() {
-                            if content.peek(LitStr) {
-                                let lit: LitStr = content.parse()?;
-                                plugins.push(lit.value());
-                                if content.peek(Token![,]) {
-                                    content.parse::<Token![,]>()?;
-                                }
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    _ => {
-                        return Err(syn::Error::new(keyword.span(), "unknown section"));
-                    }
-                }
-            } else {
-                return Err(lookahead.error());
-            }
-        }
-
-        Ok(PluginInvoke {
-            tokens: tokens.ok_or_else(|| input.error("missing @tokens"))?,
-            remaining,
-            plugins,
-        })
-    }
-}
-
 /// Helper to generate the next step in the plugin chain
 fn chain_next(invoke: PluginInvoke, plugin_name: &str) -> TokenStream2 {
     let tokens = &invoke.tokens;
 
-    // Add this plugin to the accumulated list
     let mut plugins = invoke.plugins;
     plugins.push(plugin_name.to_string());
 
     let plugin_strings: Vec<_> = plugins
         .iter()
-        .map(|s| LitStr::new(s, proc_macro2::Span::call_site()))
+        .map(|s| proc_macro2::Literal::string(s))
         .collect();
 
     if invoke.remaining.is_empty() {
-        // No more plugins - go to finalize
         quote! {
             ::facet_plugin_poc::__facet_finalize! {
                 @tokens { #tokens }
@@ -202,7 +399,6 @@ fn chain_next(invoke: PluginInvoke, plugin_name: &str) -> TokenStream2 {
             }
         }
     } else {
-        // More plugins to process - invoke the next one
         let next_plugin = &invoke.remaining[0];
         let rest: Vec<_> = invoke.remaining[1..].iter().collect();
 
@@ -223,60 +419,51 @@ fn chain_next(invoke: PluginInvoke, plugin_name: &str) -> TokenStream2 {
 }
 
 /// Plugin: display
-///
-/// This simulates a plugin that generates `impl Display`.
-/// In the real design, this would add a template string to the @plugins accumulator.
 #[proc_macro]
 pub fn __plugin_display_invoke(input: TokenStream) -> TokenStream {
-    let invoke = parse_macro_input!(input as PluginInvoke);
+    let invoke = match PluginInvoke::parse(input.into()) {
+        Ok(i) => i,
+        Err(e) => return quote! { compile_error!(#e); }.into(),
+    };
     chain_next(invoke, "display").into()
 }
 
 /// Plugin: debug
-///
-/// Another example plugin that generates `impl Debug`.
 #[proc_macro]
 pub fn __plugin_debug_invoke(input: TokenStream) -> TokenStream {
-    let invoke = parse_macro_input!(input as PluginInvoke);
+    let invoke = match PluginInvoke::parse(input.into()) {
+        Ok(i) => i,
+        Err(e) => return quote! { compile_error!(#e); }.into(),
+    };
     chain_next(invoke, "debug").into()
 }
 
-/// The finalizer - this is where parsing actually happens!
-///
-/// It receives:
-/// - @tokens: the raw token stream of the original struct/enum
-/// - @plugins: the accumulated list of plugins that want code generated
-///
-/// It parses the tokens ONCE and generates all requested code.
+/// The finalizer - parses and generates code
 #[proc_macro]
 pub fn __facet_finalize(input: TokenStream) -> TokenStream {
-    let invoke = parse_macro_input!(input as PluginInvoke);
-
-    // NOW we parse the actual struct - this is the one and only parse!
-    let item: DeriveInput = match syn::parse2(invoke.tokens) {
-        Ok(item) => item,
-        Err(e) => return e.to_compile_error().into(),
+    let invoke = match PluginInvoke::parse(input.into()) {
+        Ok(i) => i,
+        Err(e) => return quote! { compile_error!(#e); }.into(),
     };
 
-    let name = &item.ident;
-    let (impl_generics, ty_generics, where_clause) = item.generics.split_for_impl();
+    let parsed = match ParsedType::parse(invoke.tokens) {
+        Ok(p) => p,
+        Err(e) => return quote! { compile_error!(#e); }.into(),
+    };
 
+    let name = &parsed.name;
     let mut generated = TokenStream2::new();
 
-    // Generate code for each plugin
     for plugin in &invoke.plugins {
         match plugin.as_str() {
             "display" => {
-                // Generate Display impl based on doc comments
-                let display_impl = generate_display(&item);
+                let display_impl = generate_display(&parsed);
                 generated.extend(display_impl);
             }
             "debug" => {
-                // Generate Debug impl
                 let debug_impl = quote! {
-                    impl #impl_generics ::core::fmt::Debug for #name #ty_generics #where_clause {
+                    impl ::core::fmt::Debug for #name {
                         fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                            // Simple debug impl - in real version would be more sophisticated
                             write!(f, stringify!(#name))
                         }
                     }
@@ -290,62 +477,34 @@ pub fn __facet_finalize(input: TokenStream) -> TokenStream {
     generated.into()
 }
 
-/// Generate Display impl from doc comments (displaydoc-style)
-fn generate_display(item: &DeriveInput) -> TokenStream2 {
-    let name = &item.ident;
-    let (impl_generics, ty_generics, where_clause) = item.generics.split_for_impl();
+/// Generate Display impl from doc comments
+fn generate_display(parsed: &ParsedType) -> TokenStream2 {
+    let name = &parsed.name;
 
-    match &item.data {
-        syn::Data::Enum(data) => {
-            let match_arms: Vec<_> = data
-                .variants
+    match &parsed.kind {
+        TypeKind::Enum(variants) => {
+            let match_arms: Vec<_> = variants
                 .iter()
                 .map(|v| {
-                    let variant_name = &v.ident;
-
-                    // Extract doc comment
-                    let doc = v
-                        .attrs
-                        .iter()
-                        .filter_map(|attr| {
-                            if attr.path().is_ident("doc") {
-                                attr.meta.require_name_value().ok().and_then(|nv| {
-                                    if let syn::Expr::Lit(syn::ExprLit {
-                                        lit: syn::Lit::Str(s),
-                                        ..
-                                    }) = &nv.value
-                                    {
-                                        Some(s.value().trim().to_string())
-                                    } else {
-                                        None
-                                    }
-                                })
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" ");
-
-                    let format_str = if doc.is_empty() {
+                    let variant_name = &v.name;
+                    let format_str = if v.doc.is_empty() {
                         variant_name.to_string()
                     } else {
-                        doc
+                        v.doc.clone()
                     };
 
-                    // Generate pattern based on fields
                     let (pattern, format_args) = match &v.fields {
-                        syn::Fields::Unit => (quote! {}, quote! {}),
-                        syn::Fields::Unnamed(fields) => {
-                            // For tuple variants, bind to v0, v1, etc.
-                            let field_names: Vec<_> = (0..fields.unnamed.len())
-                                .map(|i| Ident::new(&format!("v{i}"), v.ident.span()))
+                        VariantFields::Unit => (quote! {}, quote! {}),
+                        VariantFields::Tuple(count) => {
+                            let field_names: Vec<_> = (0..*count)
+                                .map(|i| {
+                                    proc_macro2::Ident::new(
+                                        &format!("v{i}"),
+                                        proc_macro2::Span::call_site(),
+                                    )
+                                })
                                 .collect();
-                            // In Rust 2024, match ergonomics means we don't need `ref`
                             let pattern = quote! { ( #(#field_names),* ) };
-
-                            // Check if format string has {0}, {1} etc - if not, don't pass args
-                            // For simplicity, only pass args if there are positional placeholders
                             let has_positional = format_str.contains("{0}");
                             let args = if has_positional {
                                 let args: Vec<_> =
@@ -356,18 +515,8 @@ fn generate_display(item: &DeriveInput) -> TokenStream2 {
                             };
                             (pattern, args)
                         }
-                        syn::Fields::Named(fields) => {
-                            // For struct variants, use field names directly
-                            // Named placeholders like {expected} will be looked up from local variables
-                            let field_names: Vec<_> = fields
-                                .named
-                                .iter()
-                                .filter_map(|f| f.ident.as_ref())
-                                .collect();
-                            // In Rust 2024, match ergonomics means we don't need `ref`
+                        VariantFields::Named(field_names) => {
                             let pattern = quote! { { #(#field_names),* } };
-                            // Don't pass additional args - the format string uses {name} placeholders
-                            // which look up variables in scope
                             (pattern, quote! {})
                         }
                     };
@@ -379,7 +528,7 @@ fn generate_display(item: &DeriveInput) -> TokenStream2 {
                 .collect();
 
             quote! {
-                impl #impl_generics ::core::fmt::Display for #name #ty_generics #where_clause {
+                impl ::core::fmt::Display for #name {
                     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                         match self {
                             #(#match_arms),*
@@ -388,47 +537,20 @@ fn generate_display(item: &DeriveInput) -> TokenStream2 {
                 }
             }
         }
-        syn::Data::Struct(_) => {
-            // Extract doc comment from struct
-            let doc = item
-                .attrs
-                .iter()
-                .filter_map(|attr| {
-                    if attr.path().is_ident("doc") {
-                        attr.meta.require_name_value().ok().and_then(|nv| {
-                            if let syn::Expr::Lit(syn::ExprLit {
-                                lit: syn::Lit::Str(s),
-                                ..
-                            }) = &nv.value
-                            {
-                                Some(s.value().trim().to_string())
-                            } else {
-                                None
-                            }
-                        })
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
-
+        TypeKind::Struct { doc } => {
             let format_str = if doc.is_empty() {
                 name.to_string()
             } else {
-                doc
+                doc.clone()
             };
 
             quote! {
-                impl #impl_generics ::core::fmt::Display for #name #ty_generics #where_clause {
+                impl ::core::fmt::Display for #name {
                     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
                         write!(f, #format_str)
                     }
                 }
             }
-        }
-        syn::Data::Union(_) => {
-            syn::Error::new_spanned(name, "unions are not supported").to_compile_error()
         }
     }
 }
