@@ -10,6 +10,7 @@ keywords = ["singular", "plural", "inflection", "facet"]
 categories = ["text-processing"]
 
 [features]
+ci = [] # CI feature
 default = ["std"]
 std = ["alloc"]
 alloc = []

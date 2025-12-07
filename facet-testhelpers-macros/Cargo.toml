@@ -12,6 +12,9 @@ description = "Proc macro for facet-testhelpers"
 [lib]
 proc-macro = true
 
+[features]
+ci = [] # CI feature
+
 [dependencies]
 quote = "1.0.40"
 unsynn = "0.3.0"

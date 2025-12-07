@@ -10,6 +10,7 @@ keywords = ["axum", "web", "json", "serialization", "facet"]
 categories = ["web-programming", "encoding"]
 
 [features]
+ci = [] # CI feature
 default = ["json", "form"]
 json = ["facet-json/axum"]
 form = ["facet-urlencoded/axum"]

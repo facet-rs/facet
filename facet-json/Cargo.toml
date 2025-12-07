@@ -23,6 +23,8 @@ streaming = ["std", "dep:corosensei"]
 bolero-inline-tests = ["std"]
 # JIT-compiled JSON deserialization using Cranelift
 cranelift = ["std", "dep:cranelift", "dep:cranelift-jit", "dep:cranelift-module", "dep:cranelift-native", "dep:parking_lot", "dep:memchr"]
+# CI feature: enables cranelift for comprehensive testing
+ci = ["cranelift"]
 
 [dependencies]
 facet = { path = "../facet", default-features = false }

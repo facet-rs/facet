@@ -22,6 +22,7 @@ log = [
     "dep:log",
 ] # Enable logging of reflection operations (mostly for internal development)
 slow-tests = [] # Enable slow tests (compile tests)
+ci = ["slow-tests"] # CI feature
 fuzz-tests = [] # Enable proptest-based fuzz tests (very slow, not run in CI)
 camino = [
     "alloc",

@@ -16,6 +16,7 @@ keywords = [
 categories = ["development-tools", "visualization", "command-line-utilities"]
 
 [features]
+ci = [] # CI feature
 alloc = ["facet-core/alloc", "facet-reflect/alloc"] # Enables alloc support
 camino = ["alloc", "facet-core/camino"]
 

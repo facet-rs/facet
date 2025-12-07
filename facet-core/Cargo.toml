@@ -13,6 +13,7 @@ categories = ["development-tools"]
 rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
 
 [features]
+ci = [] # CI feature
 default = ["std"]
 # Enable standard library support
 std = ["alloc"]

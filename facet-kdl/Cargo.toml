@@ -14,6 +14,7 @@ std = ["alloc", "facet-core/std", "facet-reflect/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 default = ["std"]
 slow-tests = [] # Enable slow tests (compile tests)
+ci = ["slow-tests"] # CI feature
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
 [dependencies]

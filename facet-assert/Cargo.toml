@@ -9,6 +9,9 @@ description = "Pretty assertions for Facet types - no PartialEq required"
 keywords = ["facet", "assert", "testing", "diff", "comparison"]
 categories = ["development-tools", "development-tools::testing"]
 
+[features]
+ci = [] # CI feature
+
 [dependencies]
 facet = { path = "../facet" }
 facet-core = { path = "../facet-core" }

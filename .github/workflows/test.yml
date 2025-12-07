@@ -185,7 +185,7 @@ jobs:
       - name: ✨ Run nextest tests (macOS)
         shell: bash
         run: |
-          cargo nextest run --features slow-tests
+          cargo nextest run --features ci
 
   check-windows:
     runs-on: depot-windows-2022

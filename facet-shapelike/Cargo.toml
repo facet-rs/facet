@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+ci = [] # CI feature
+
 [dependencies]
 bitflags = "2.10.0"
 facet = { path = "../facet", version = "0.31.8", features = ["alloc"] }
