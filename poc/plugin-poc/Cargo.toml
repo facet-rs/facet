@@ -10,4 +10,4 @@ proc-macro = true
 [dependencies]
 proc-macro2 = "1"
 quote = "1"
-syn = { version = "2", features = ["full", "parsing", "printing", "extra-traits"] }
+unsynn = "0.3.0"
