@@ -13,3 +13,7 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1"
 unsynn = "0.3.0"
+
+# Use the new facet macro crates
+facet-macro-types = { path = "../../facet-macro-types" }
+facet-macro-parse = { path = "../../facet-macro-parse" }

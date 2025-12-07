@@ -65,7 +65,6 @@
 use quote::{format_ident, quote, quote_spanned};
 
 use super::*;
-use crate::parsed::{DeclaredTraits, KnownDerives, PAttrs};
 
 /// Sources of trait information for vtable generation.
 ///

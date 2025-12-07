@@ -1,5 +1,5 @@
-use crate::function::*;
-use crate::{FunctionSignature, Ident, Span, TokenStream, extract_type_params};
+use super::*;
+use crate::{Ident, Span, TokenStream};
 use quote::quote;
 
 /// Entry point for the facet_fn attribute macro

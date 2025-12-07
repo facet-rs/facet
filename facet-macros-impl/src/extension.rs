@@ -1,6 +1,6 @@
 //! Code generation for extension attributes.
 
-use crate::{Delimiter, Group, Ident, Punct, Spacing, TokenStream, TokenTree};
+use crate::{Delimiter, Group, Ident, PFacetAttr, Punct, Spacing, TokenStream, TokenTree};
 use quote::{ToTokens, quote, quote_spanned};
 
 /// Emits the code for an `ExtensionAttr` on a field.
@@ -74,7 +74,7 @@ pub fn emit_extension_attr(
 ///
 /// - Builtin attrs (no namespace) → `::facet::__attr!(...)`
 /// - Namespaced attrs → `::facet::__ext!(ns::key ...)`
-pub fn emit_attr(attr: &crate::parsed::PFacetAttr, facet_crate: &TokenStream) -> TokenStream {
+pub fn emit_attr(attr: &PFacetAttr, facet_crate: &TokenStream) -> TokenStream {
     let key = &attr.key;
     let args = &attr.args;
 
@@ -103,7 +103,7 @@ pub fn emit_attr(attr: &crate::parsed::PFacetAttr, facet_crate: &TokenStream) ->
 /// - Builtin attrs (no namespace) → `::facet::__attr!(...)`
 /// - Namespaced attrs → `::facet::__ext!(ns::key ...)`
 pub fn emit_attr_for_field(
-    attr: &crate::parsed::PFacetAttr,
+    attr: &PFacetAttr,
     field_name: &impl ToTokens,
     field_type: &TokenStream,
     facet_crate: &TokenStream,

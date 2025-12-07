@@ -1,646 +1,609 @@
 //! # Facet Macro Types
 //!
-//! Shared parsed type representations for the facet macro ecosystem.
+//! Unsynn grammar and type definitions for the facet macro ecosystem.
 //!
-//! This crate provides the core types that represent parsed Rust types
-//! (structs, enums, fields, variants) in a form suitable for code generation.
+//! This crate provides the foundational parsing infrastructure used by facet's
+//! derive macros. It includes:
 //!
-//! These types are used by:
-//! - `facet-macro-parse`: Parses Rust source into these types
-//! - `facet-macro-template`: Evaluates templates against these types
-//! - `facet-macros-impl`: Uses these types for code generation
+//! - Unsynn grammar definitions for parsing Rust struct and enum definitions
+//! - RenameRule for field/variant name transformations
+//! - Helper types like LifetimeName for code generation
 
-use proc_macro2::{Ident, Span, TokenStream};
-use quote::{ToTokens, quote};
+#![warn(missing_docs)]
+#![allow(uncommon_codepoints)]
 
-// =============================================================================
-// Field/Variant Name
-// =============================================================================
+// ============================================================================
+// RE-EXPORTS FROM UNSYNN
+// ============================================================================
 
-/// For struct fields, they can either be identifiers (`my_struct.foo`)
-/// or literals (`my_struct.2`) — for tuple structs.
-#[derive(Debug, Clone)]
-pub enum IdentOrLiteral {
-    /// Named field identifier
-    Ident(Ident),
-    /// Tuple field index
-    Literal(usize),
+pub use unsynn::*;
+
+// ============================================================================
+// KEYWORDS AND OPERATORS
+// ============================================================================
+
+keyword! {
+    /// The "pub" keyword.
+    pub KPub = "pub";
+    /// The "struct" keyword.
+    pub KStruct = "struct";
+    /// The "enum" keyword.
+    pub KEnum = "enum";
+    /// The "doc" keyword.
+    pub KDoc = "doc";
+    /// The "repr" keyword.
+    pub KRepr = "repr";
+    /// The "crate" keyword.
+    pub KCrate = "crate";
+    /// The "in" keyword.
+    pub KIn = "in";
+    /// The "const" keyword.
+    pub KConst = "const";
+    /// The "where" keyword.
+    pub KWhere = "where";
+    /// The "mut" keyword.
+    pub KMut = "mut";
+    /// The "facet" keyword.
+    pub KFacet = "facet";
 }
 
-impl ToTokens for IdentOrLiteral {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        match self {
-            IdentOrLiteral::Ident(ident) => tokens.extend(quote! { #ident }),
-            IdentOrLiteral::Literal(lit) => {
-                let unsuffixed = proc_macro2::Literal::usize_unsuffixed(*lit);
-                tokens.extend(quote! { #unsuffixed })
+operator! {
+    /// Represents the '=' operator.
+    pub Eq = "=";
+    /// Represents the ';' operator.
+    pub Semi = ";";
+    /// Represents the apostrophe '\'' operator.
+    pub Apostrophe = "'";
+    /// Represents the double semicolon '::' operator.
+    pub DoubleSemicolon = "::";
+}
+
+// ============================================================================
+// HELPER TYPES
+// ============================================================================
+
+/// Parses tokens and groups until `C` is found on the current token tree level.
+pub type VerbatimUntil<C> = Many<Cons<Except<C>, AngleTokenTree>>;
+
+/// Represents a module path, consisting of an optional path separator followed by
+/// a path-separator-delimited sequence of identifiers.
+pub type ModPath = Cons<Option<PathSep>, PathSepDelimited<Ident>>;
+
+/// Represents type bounds, consisting of a colon followed by tokens until
+/// a comma, equals sign, or closing angle bracket is encountered.
+pub type Bounds = Cons<Colon, VerbatimUntil<Either<Comma, Eq, Gt>>>;
+
+// ============================================================================
+// UNSYNN GRAMMAR
+// ============================================================================
+
+unsynn! {
+    /// Parses either a `TokenTree` or `<...>` grouping (which is not a [`Group`] as far as proc-macros
+    /// are concerned).
+    #[derive(Clone)]
+    pub struct AngleTokenTree(
+        #[allow(clippy::type_complexity)] // look,
+        pub Either<Cons<Lt, Vec<Cons<Except<Gt>, AngleTokenTree>>, Gt>, TokenTree>,
+    );
+
+    /// Represents an algebraic data type (ADT) declaration, which can be either a struct or enum.
+    pub enum AdtDecl {
+        /// A struct ADT variant.
+        Struct(Struct),
+        /// An enum ADT variant.
+        Enum(Enum),
+    }
+
+    /// Represents visibility modifiers for items.
+    pub enum Vis {
+        /// `pub(in? crate::foo::bar)`/`pub(in? ::foo::bar)`
+        PubIn(Cons<KPub, ParenthesisGroupContaining<Cons<Option<KIn>, ModPath>>>),
+        /// Public visibility, indicated by the "pub" keyword.
+        Pub(KPub),
+    }
+
+    /// Represents an attribute annotation on a field, typically in the form `#[attr]`.
+    pub struct Attribute {
+        /// The pound sign preceding the attribute.
+        pub _pound: Pound,
+        /// The content of the attribute enclosed in square brackets.
+        pub body: BracketGroupContaining<AttributeInner>,
+    }
+
+    /// Represents the inner content of an attribute annotation.
+    pub enum AttributeInner {
+        /// A facet attribute that can contain specialized metadata.
+        Facet(FacetAttr),
+        /// A documentation attribute typically used for generating documentation.
+        Doc(DocInner),
+        /// A representation attribute that specifies how data should be laid out.
+        Repr(ReprInner),
+        /// Any other attribute represented as a sequence of token trees.
+        Any(Vec<TokenTree>),
+    }
+
+    /// Represents a facet attribute that can contain specialized metadata.
+    pub struct FacetAttr {
+        /// The keyword for the facet attribute.
+        pub _facet: KFacet,
+        /// The inner content of the facet attribute.
+        pub inner: ParenthesisGroupContaining<CommaDelimitedVec<FacetInner>>,
+    }
+
+    /// Represents the inner content of a facet attribute.
+    ///
+    /// All attributes are now parsed uniformly - either namespaced (`kdl::child`)
+    /// or simple (`sensitive`, `rename = "foo"`). The grammar system determines
+    /// what's valid, not hardcoded keywords.
+    pub enum FacetInner {
+        /// A namespaced attribute like `kdl::child` or `args::short = 'v'`
+        Namespaced(NamespacedAttr),
+        /// A non-namespaced (builtin) attribute like `sensitive` or `rename = "foo"`
+        Simple(SimpleAttr),
+    }
+
+    /// A namespaced attribute like `kdl::child` or `args::short = 'v'`
+    pub struct NamespacedAttr {
+        /// The namespace (e.g., "kdl", "args")
+        pub ns: Ident,
+        /// The path separator ::
+        pub _sep: PathSep,
+        /// The key (e.g., "child", "short")
+        pub key: Ident,
+        /// Optional arguments - either in parentheses like `(args)` or with equals like `= value`
+        pub args: Option<AttrArgs>,
+    }
+
+    /// A simple (builtin) attribute like `sensitive` or `rename = "foo"`
+    pub struct SimpleAttr {
+        /// The key (e.g., "sensitive", "rename")
+        pub key: Ident,
+        /// Optional arguments - either in parentheses like `(args)` or with equals like `= value`
+        pub args: Option<AttrArgs>,
+    }
+
+    /// Arguments for attributes - either parenthesized `(args)` or with equals `= value`
+    pub enum AttrArgs {
+        /// Parenthesized arguments like `(auto_increment)`
+        Parens(ParenthesisGroupContaining<Vec<TokenTree>>),
+        /// Equals-style arguments like `= 'v'`
+        Equals(AttrEqualsArgs),
+    }
+
+    /// Equals-style arguments like `= 'v'` or `= "value"`
+    pub struct AttrEqualsArgs {
+        /// The equals sign
+        pub _eq: Eq,
+        /// The value (tokens until comma or end)
+        pub value: VerbatimUntil<Comma>,
+    }
+
+    /// Represents documentation for an item.
+    pub struct DocInner {
+        /// The "doc" keyword.
+        pub _kw_doc: KDoc,
+        /// The equality operator.
+        pub _eq: Eq,
+        /// The documentation content as a literal string.
+        pub value: LiteralString,
+    }
+
+    /// Represents the inner content of a `repr` attribute, typically used for specifying
+    /// memory layout or representation hints.
+    pub struct ReprInner {
+        /// The "repr" keyword.
+        pub _kw_repr: KRepr,
+        /// The representation attributes enclosed in parentheses.
+        pub attr: ParenthesisGroupContaining<CommaDelimitedVec<Ident>>,
+    }
+
+    /// Represents a struct definition.
+    pub struct Struct {
+        /// Attributes applied to the struct.
+        pub attributes: Vec<Attribute>,
+        /// The visibility modifier of the struct (e.g., `pub`).
+        pub _vis: Option<Vis>,
+        /// The "struct" keyword.
+        pub _kw_struct: KStruct,
+        /// The name of the struct.
+        pub name: Ident,
+        /// Generic parameters for the struct, if any.
+        pub generics: Option<GenericParams>,
+        /// The variant of struct (unit, tuple, or regular struct with named fields).
+        pub kind: StructKind,
+    }
+
+    /// Represents the generic parameters of a struct or enum definition, enclosed in angle brackets.
+    /// e.g., `<'a, T: Trait, const N: usize>`.
+    pub struct GenericParams {
+        /// The opening angle bracket `<`.
+        pub _lt: Lt,
+        /// The comma-delimited list of generic parameters.
+        pub params: CommaDelimitedVec<GenericParam>,
+        /// The closing angle bracket `>`.
+        pub _gt: Gt,
+    }
+
+    /// Represents a single generic parameter within a `GenericParams` list.
+    pub enum GenericParam {
+        /// A lifetime parameter, e.g., `'a` or `'a: 'b + 'c`.
+        Lifetime {
+            /// The lifetime identifier (e.g., `'a`).
+            name: Lifetime,
+            /// Optional lifetime bounds (e.g., `: 'b + 'c`).
+            bounds: Option<Cons<Colon, VerbatimUntil<Either<Comma, Gt>>>>,
+        },
+        /// A const generic parameter, e.g., `const N: usize = 10`.
+        Const {
+            /// The `const` keyword.
+            _const: KConst,
+            /// The name of the const parameter (e.g., `N`).
+            name: Ident,
+            /// The colon separating the name and type.
+            _colon: Colon,
+            /// The type of the const parameter (e.g., `usize`).
+            typ: VerbatimUntil<Either<Comma, Gt, Eq>>,
+            /// An optional default value (e.g., `= 10`).
+            default: Option<Cons<Eq, VerbatimUntil<Either<Comma, Gt>>>>,
+        },
+        /// A type parameter, e.g., `T: Trait = DefaultType`.
+        Type {
+            /// The name of the type parameter (e.g., `T`).
+            name: Ident,
+            /// Optional type bounds (e.g., `: Trait`).
+            bounds: Option<Bounds>,
+            /// An optional default type (e.g., `= DefaultType`).
+            default: Option<Cons<Eq, VerbatimUntil<Either<Comma, Gt>>>>,
+        },
+    }
+
+    /// Represents a `where` clause attached to a definition.
+    /// e.g., `where T: Trait, 'a: 'b`.
+    #[derive(Clone)]
+    pub struct WhereClauses {
+        /// The `where` keyword.
+        pub _kw_where: KWhere,
+        /// The comma-delimited list of where clause predicates.
+        pub clauses: CommaDelimitedVec<WhereClause>,
+    }
+
+    /// Represents a single predicate within a `where` clause.
+    /// e.g., `T: Trait` or `'a: 'b`.
+    #[derive(Clone)]
+    pub struct WhereClause {
+        /// The type or lifetime being constrained (e.g., `T` or `'a`).
+        /// We specifically required a single colon, not 2 because of `<A as B>::Thingy`
+        pub _pred: VerbatimUntil<Cons<Colon, Except<Colon>>>,
+        /// The colon separating the constrained item and its bounds.
+        pub _colon: Colon,
+        /// The bounds applied to the type or lifetime (e.g., `Trait` or `'b`).
+        pub bounds: VerbatimUntil<Either<Comma, Semicolon, BraceGroup>>,
+    }
+
+    /// Represents the kind of a struct definition.
+    pub enum StructKind {
+        /// A regular struct with named fields, e.g., `struct Foo { bar: u32 }`.
+        Struct {
+            /// Optional where clauses.
+            clauses: Option<WhereClauses>,
+            /// The fields enclosed in braces `{}`.
+            fields: BraceGroupContaining<CommaDelimitedVec<StructField>>,
+        },
+        /// A tuple struct, e.g., `struct Foo(u32, String);`.
+        TupleStruct {
+            /// The fields enclosed in parentheses `()`.
+            fields: ParenthesisGroupContaining<CommaDelimitedVec<TupleField>>,
+            /// Optional where clauses.
+            clauses: Option<WhereClauses>,
+            /// The trailing semicolon `;`.
+            semi: Semi,
+        },
+        /// A unit struct, e.g., `struct Foo;`.
+        UnitStruct {
+            /// Optional where clauses.
+            clauses: Option<WhereClauses>,
+            /// The trailing semicolon `;`.
+            semi: Semi,
+        },
+    }
+
+    /// Represents a lifetime annotation, like `'a`.
+    pub struct Lifetime {
+        /// The apostrophe `'` starting the lifetime.
+        pub _apostrophe: PunctJoint<'\''>,
+        /// The identifier name of the lifetime (e.g., `a`).
+        pub name: Ident,
+    }
+
+    /// Represents a simple expression, currently only integer literals.
+    /// Used potentially for const generic default values.
+    pub enum Expr {
+        /// An integer literal expression.
+        Integer(LiteralInteger),
+    }
+
+    /// Represents either the `const` or `mut` keyword, often used with pointers.
+    pub enum ConstOrMut {
+        /// The `const` keyword.
+        Const(KConst),
+        /// The `mut` keyword.
+        Mut(KMut),
+    }
+
+    /// Represents a field within a regular struct definition.
+    /// e.g., `pub name: String`.
+    pub struct StructField {
+        /// Attributes applied to the field (e.g., `#[doc = "..."]`).
+        pub attributes: Vec<Attribute>,
+        /// Optional visibility modifier (e.g., `pub`).
+        pub _vis: Option<Vis>,
+        /// The name of the field.
+        pub name: Ident,
+        /// The colon separating the name and type.
+        pub _colon: Colon,
+        /// The type of the field.
+        pub typ: VerbatimUntil<Comma>,
+    }
+
+    /// Represents a field within a tuple struct definition.
+    /// e.g., `pub String`.
+    pub struct TupleField {
+        /// Attributes applied to the field (e.g., `#[doc = "..."]`).
+        pub attributes: Vec<Attribute>,
+        /// Optional visibility modifier (e.g., `pub`).
+        pub vis: Option<Vis>,
+        /// The type of the field.
+        pub typ: VerbatimUntil<Comma>,
+    }
+
+    /// Represents an enum definition.
+    /// e.g., `#[repr(u8)] pub enum MyEnum<T> where T: Clone { Variant1, Variant2(T) }`.
+    pub struct Enum {
+        /// Attributes applied to the enum (e.g., `#[repr(...)]`).
+        pub attributes: Vec<Attribute>,
+        /// Optional visibility modifier (e.g., `pub`, `pub(crate)`, etc.).
+        pub _vis: Option<Vis>,
+        /// The `enum` keyword.
+        pub _kw_enum: KEnum,
+        /// The name of the enum.
+        pub name: Ident,
+        /// Optional generic parameters.
+        pub generics: Option<GenericParams>,
+        /// Optional where clauses.
+        pub clauses: Option<WhereClauses>,
+        /// The enum variants enclosed in braces `{}`.
+        pub body: BraceGroupContaining<CommaDelimitedVec<EnumVariantLike>>,
+    }
+
+    /// Represents a variant of an enum, including the optional discriminant value
+    pub struct EnumVariantLike {
+        /// The actual variant
+        pub variant: EnumVariantData,
+        /// The optional discriminant value
+        pub discriminant: Option<Cons<Eq, VerbatimUntil<Comma>>>
+    }
+
+    /// Represents the different kinds of variants an enum can have.
+    pub enum EnumVariantData {
+        /// A tuple-like variant, e.g., `Variant(u32, String)`.
+        Tuple(TupleVariant),
+        /// A struct-like variant, e.g., `Variant { field1: u32, field2: String }`.
+        Struct(StructEnumVariant),
+        /// A unit-like variant, e.g., `Variant`.
+        Unit(UnitVariant),
+    }
+
+    /// Represents a unit-like enum variant.
+    /// e.g., `MyVariant`.
+    pub struct UnitVariant {
+        /// Attributes applied to the variant.
+        pub attributes: Vec<Attribute>,
+        /// The name of the variant.
+        pub name: Ident,
+    }
+
+    /// Represents a tuple-like enum variant.
+    /// e.g., `MyVariant(u32, String)`.
+    pub struct TupleVariant {
+        /// Attributes applied to the variant.
+        pub attributes: Vec<Attribute>,
+        /// The name of the variant.
+        pub name: Ident,
+        /// The fields enclosed in parentheses `()`.
+        pub fields: ParenthesisGroupContaining<CommaDelimitedVec<TupleField>>,
+    }
+
+    /// Represents a struct-like enum variant.
+    /// e.g., `MyVariant { field1: u32, field2: String }`.
+    pub struct StructEnumVariant {
+        /// Attributes applied to the variant.
+        pub attributes: Vec<Attribute>,
+        /// The name of the variant.
+        pub name: Ident,
+        /// The fields enclosed in braces `{}`.
+        pub fields: BraceGroupContaining<CommaDelimitedVec<StructField>>,
+    }
+
+    /// A lifetime or a tokentree, used to gather lifetimes in type definitions
+    pub enum LifetimeOrTt {
+        /// A lifetime annotation.
+        Lifetime(Lifetime),
+        /// A single token tree.
+        TokenTree(TokenTree),
+    }
+}
+
+// ============================================================================
+// DISPLAY IMPLEMENTATIONS
+// ============================================================================
+
+impl core::fmt::Display for AngleTokenTree {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match &self.0 {
+            Either::First(it) => {
+                write!(f, "<")?;
+                for it in it.second.iter() {
+                    write!(f, "{}", it.second)?;
+                }
+                write!(f, ">")?;
             }
+            Either::Second(it) => write!(f, "{it}")?,
+            Either::Third(Invalid) => unreachable!(),
+            Either::Fourth(Invalid) => unreachable!(),
+        };
+        Ok(())
+    }
+}
+
+/// Display the verbatim tokens until the given token.
+pub struct VerbatimDisplay<'a, C>(
+    /// The verbatim tokens to display
+    pub &'a VerbatimUntil<C>,
+);
+
+impl<C> core::fmt::Display for VerbatimDisplay<'_, C> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for tt in self.0.iter() {
+            write!(f, "{}", tt.value.second)?;
+        }
+        Ok(())
+    }
+}
+
+impl core::fmt::Display for ConstOrMut {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ConstOrMut::Const(_) => write!(f, "const"),
+            ConstOrMut::Mut(_) => write!(f, "mut"),
         }
     }
 }
 
-impl std::fmt::Display for IdentOrLiteral {
+impl core::fmt::Display for Lifetime {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "'{}", self.name)
+    }
+}
+
+impl core::fmt::Display for WhereClauses {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "where ")?;
+        for clause in self.clauses.iter() {
+            write!(f, "{},", clause.value)?;
+        }
+        Ok(())
+    }
+}
+
+impl core::fmt::Display for WhereClause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: {}",
+            VerbatimDisplay(&self._pred),
+            VerbatimDisplay(&self.bounds)
+        )
+    }
+}
+
+impl core::fmt::Display for Expr {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            IdentOrLiteral::Ident(ident) => write!(f, "{ident}"),
-            IdentOrLiteral::Literal(lit) => write!(f, "{lit}"),
+            Expr::Integer(int) => write!(f, "{}", int.value()),
         }
     }
 }
 
-/// A parsed name, which includes the raw name and the effective name.
-///
-/// Examples:
-///
-///   raw = "foo_bar", no rename rule, effective = "foo_bar"
-///   raw = "foo_bar", #[facet(rename = "kiki")], effective = "kiki"
-///   raw = "foo_bar", #[facet(rename_all = camelCase)], effective = "fooBar"
-///   raw = "r#type", no rename rule, effective = "type"
-#[derive(Debug, Clone)]
-pub struct PName {
-    /// The raw identifier, as found in the source code.
-    /// It might be raw, as in "r#keyword".
-    pub raw: IdentOrLiteral,
-
-    /// The name after applying rename rules.
-    /// This might not be a valid Rust identifier (e.g., kebab-case).
-    pub effective: String,
+impl Struct {
+    /// Returns an iterator over the `FacetInner` content of `#[facet(...)]` attributes
+    /// applied to this struct.
+    pub fn facet_attributes(&self) -> impl Iterator<Item = &FacetInner> {
+        self.attributes
+            .iter()
+            .filter_map(|attr| match &attr.body.content {
+                AttributeInner::Facet(f) => Some(f.inner.content.as_slice()),
+                _ => None,
+            })
+            .flatten()
+            .map(|d| &d.value)
+    }
 }
 
-impl PName {
-    /// Construct a PName with an optional rename rule applied
-    pub fn new(rename_rule: Option<RenameRule>, raw: IdentOrLiteral) -> Self {
-        // Get the normalized raw string (strip r# prefix for raw identifiers)
-        let norm_raw = match &raw {
-            IdentOrLiteral::Ident(ident) => ident.to_string().trim_start_matches("r#").to_string(),
-            IdentOrLiteral::Literal(lit) => lit.to_string(),
+// ============================================================================
+// HELPER TYPES FOR CODE GENERATION
+// ============================================================================
+
+/// Helper type for lifetime name formatting
+#[derive(Clone)]
+pub struct LifetimeName(
+    /// The identifier for the lifetime
+    pub Ident,
+);
+
+impl quote::ToTokens for LifetimeName {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        use proc_macro2::{Punct, Spacing, TokenTree};
+        let punct = TokenTree::Punct(Punct::new('\'', Spacing::Joint));
+        let name = &self.0;
+        tokens.extend(quote::quote! {
+            #punct #name
+        });
+    }
+}
+
+// ============================================================================
+// RENAME RULE
+// ============================================================================
+
+mod renamerule;
+pub use renamerule::*;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quote::quote;
+
+    #[test]
+    fn test_struct_with_field_doc_comments() {
+        let input = quote! {
+            #[derive(Facet)]
+            pub struct User {
+                #[doc = " The user's unique identifier"]
+                pub id: u64,
+            }
         };
 
-        let effective = if let Some(rule) = rename_rule {
-            rule.apply(&norm_raw)
-        } else {
-            norm_raw
-        };
+        let mut it = input.to_token_iter();
+        let parsed = it.parse::<Struct>().expect("Failed to parse struct");
 
-        Self { raw, effective }
-    }
-}
+        // Check that we parsed the struct correctly
+        assert_eq!(parsed.name.to_string(), "User");
 
-// =============================================================================
-// Representation
-// =============================================================================
+        // Extract fields from the struct
+        if let StructKind::Struct { fields, .. } = &parsed.kind {
+            assert_eq!(fields.content.len(), 1);
 
-/// Parsed representation attribute
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PRepr {
-    /// `#[repr(transparent)]`
-    Transparent,
-    /// `#[repr(Rust)]` with optional primitive type
-    Rust(Option<PrimitiveRepr>),
-    /// `#[repr(C)]` with optional primitive type
-    C(Option<PrimitiveRepr>),
-    /// A repr error that rustc will catch (e.g., conflicting hints).
-    RustcWillCatch,
-}
+            // Check first field (id)
+            let id_field = &fields.content[0].value;
+            assert_eq!(id_field.name.to_string(), "id");
 
-/// Primitive repr types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PrimitiveRepr {
-    U8,
-    U16,
-    U32,
-    U64,
-    U128,
-    I8,
-    I16,
-    I32,
-    I64,
-    I128,
-    Isize,
-    Usize,
-}
-
-impl PrimitiveRepr {
-    /// Returns the type name as a token stream
-    pub fn type_name(&self) -> TokenStream {
-        match self {
-            PrimitiveRepr::U8 => quote! { u8 },
-            PrimitiveRepr::U16 => quote! { u16 },
-            PrimitiveRepr::U32 => quote! { u32 },
-            PrimitiveRepr::U64 => quote! { u64 },
-            PrimitiveRepr::U128 => quote! { u128 },
-            PrimitiveRepr::I8 => quote! { i8 },
-            PrimitiveRepr::I16 => quote! { i16 },
-            PrimitiveRepr::I32 => quote! { i32 },
-            PrimitiveRepr::I64 => quote! { i64 },
-            PrimitiveRepr::I128 => quote! { i128 },
-            PrimitiveRepr::Isize => quote! { isize },
-            PrimitiveRepr::Usize => quote! { usize },
-        }
-    }
-}
-
-// =============================================================================
-// Rename Rules
-// =============================================================================
-
-/// Rename rule for field/variant names
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RenameRule {
-    /// camelCase
-    CamelCase,
-    /// snake_case
-    SnakeCase,
-    /// kebab-case
-    KebabCase,
-    /// PascalCase
-    PascalCase,
-    /// SCREAMING_SNAKE_CASE
-    ScreamingSnakeCase,
-    /// SCREAMING-KEBAB-CASE
-    ScreamingKebabCase,
-    /// lowercase
-    Lowercase,
-    /// UPPERCASE
-    Uppercase,
-}
-
-impl RenameRule {
-    /// Parse a rename rule from a string
-    pub fn parse(s: &str) -> Option<Self> {
-        match s.trim().trim_matches('"') {
-            "camelCase" => Some(RenameRule::CamelCase),
-            "snake_case" => Some(RenameRule::SnakeCase),
-            "kebab-case" => Some(RenameRule::KebabCase),
-            "PascalCase" => Some(RenameRule::PascalCase),
-            "SCREAMING_SNAKE_CASE" => Some(RenameRule::ScreamingSnakeCase),
-            "SCREAMING-KEBAB-CASE" => Some(RenameRule::ScreamingKebabCase),
-            "lowercase" => Some(RenameRule::Lowercase),
-            "UPPERCASE" => Some(RenameRule::Uppercase),
-            _ => None,
-        }
-    }
-
-    /// Apply this rename rule to an identifier
-    pub fn apply(&self, name: &str) -> String {
-        let words = split_into_words(name);
-
-        match self {
-            RenameRule::CamelCase => {
-                let mut result = String::new();
-                for (i, word) in words.iter().enumerate() {
-                    if i == 0 {
-                        result.push_str(&word.to_lowercase());
-                    } else {
-                        let mut chars = word.chars();
-                        if let Some(first) = chars.next() {
-                            result.push(first.to_ascii_uppercase());
-                            result.push_str(&chars.collect::<String>().to_lowercase());
-                        }
+            // Extract doc comments from id field
+            let mut doc_found = false;
+            for attr in &id_field.attributes {
+                match &attr.body.content {
+                    AttributeInner::Doc(doc_inner) => {
+                        // This should work with LiteralString
+                        assert_eq!(doc_inner.value, " The user's unique identifier");
+                        doc_found = true;
+                    }
+                    _ => {
+                        // Skip non-doc attributes
                     }
                 }
-                result
             }
-            RenameRule::SnakeCase => words
-                .iter()
-                .map(|w| w.to_lowercase())
-                .collect::<Vec<_>>()
-                .join("_"),
-            RenameRule::KebabCase => words
-                .iter()
-                .map(|w| w.to_lowercase())
-                .collect::<Vec<_>>()
-                .join("-"),
-            RenameRule::PascalCase => words
-                .iter()
-                .map(|w| {
-                    let mut chars = w.chars();
-                    match chars.next() {
-                        Some(first) => {
-                            first.to_ascii_uppercase().to_string()
-                                + &chars.collect::<String>().to_lowercase()
-                        }
-                        None => String::new(),
-                    }
-                })
-                .collect(),
-            RenameRule::ScreamingSnakeCase => words
-                .iter()
-                .map(|w| w.to_uppercase())
-                .collect::<Vec<_>>()
-                .join("_"),
-            RenameRule::ScreamingKebabCase => words
-                .iter()
-                .map(|w| w.to_uppercase())
-                .collect::<Vec<_>>()
-                .join("-"),
-            RenameRule::Lowercase => name.to_lowercase(),
-            RenameRule::Uppercase => name.to_uppercase(),
-        }
-    }
-}
-
-/// Split an identifier into words for rename rule processing
-fn split_into_words(name: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut current_word = String::new();
-
-    for ch in name.chars() {
-        if ch == '_' || ch == '-' {
-            if !current_word.is_empty() {
-                words.push(current_word);
-                current_word = String::new();
-            }
-        } else if ch.is_uppercase() && !current_word.is_empty() {
-            words.push(current_word);
-            current_word = ch.to_string();
+            assert!(doc_found, "Should have found a doc comment");
         } else {
-            current_word.push(ch);
-        }
-    }
-
-    if !current_word.is_empty() {
-        words.push(current_word);
-    }
-
-    words
-}
-
-// =============================================================================
-// Attributes
-// =============================================================================
-
-/// A parsed facet attribute.
-#[derive(Debug, Clone)]
-pub struct PFacetAttr {
-    /// The namespace (e.g., "kdl", "args"). None for builtin attributes.
-    pub ns: Option<String>,
-    /// The key (e.g., "child", "sensitive", "rename")
-    pub key: String,
-    /// The arguments as a TokenStream
-    pub args: TokenStream,
-}
-
-impl PFacetAttr {
-    /// Returns true if this is a builtin attribute (no namespace)
-    pub fn is_builtin(&self) -> bool {
-        self.ns.is_none()
-    }
-
-    /// Returns the key as a string reference
-    pub fn key_str(&self) -> &str {
-        &self.key
-    }
-
-    /// Returns the args as a trimmed, unquoted string
-    pub fn args_string(&self) -> String {
-        self.args.to_string().trim().trim_matches('"').to_string()
-    }
-}
-
-/// A compile error to be emitted during code generation
-#[derive(Debug, Clone)]
-pub struct CompileError {
-    /// The error message
-    pub message: String,
-    /// The span where the error occurred
-    pub span: Span,
-}
-
-/// Parsed attributes for a container, field, or variant
-#[derive(Debug, Clone, Default)]
-pub struct PAttrs {
-    /// Doc comment lines
-    pub doc: Vec<String>,
-    /// Facet attributes
-    pub facet: Vec<PFacetAttr>,
-    /// Representation
-    pub repr: PRepr,
-    /// Container-level rename_all rule
-    pub rename_all: Option<RenameRule>,
-}
-
-impl Default for PRepr {
-    fn default() -> Self {
-        PRepr::Rust(None)
-    }
-}
-
-impl PAttrs {
-    /// Check if a builtin attribute with the given key exists
-    pub fn has_builtin(&self, key: &str) -> bool {
-        self.facet.iter().any(|a| a.is_builtin() && a.key == key)
-    }
-
-    /// Get the args of a builtin attribute with the given key (if present)
-    pub fn get_builtin_args(&self, key: &str) -> Option<String> {
-        self.facet
-            .iter()
-            .find(|a| a.is_builtin() && a.key == key)
-            .map(|a| a.args_string())
-    }
-
-    /// Get the full doc comment as a single string
-    pub fn doc_string(&self) -> String {
-        self.doc.join(" ")
-    }
-}
-
-// =============================================================================
-// Generics
-// =============================================================================
-
-/// Bounded generic parameters
-#[derive(Debug, Clone, Default)]
-pub struct BoundedGenericParams {
-    /// Lifetime parameters (e.g., ["a", "b"])
-    pub lifetimes: Vec<String>,
-    /// Type parameters with their bounds (e.g., [(T, "Clone + Debug")])
-    pub type_params: Vec<(Ident, TokenStream)>,
-    /// Const parameters with their types (e.g., [(N, "usize")])
-    pub const_params: Vec<(Ident, TokenStream)>,
-}
-
-impl BoundedGenericParams {
-    /// Returns true if there are no generic parameters
-    pub fn is_empty(&self) -> bool {
-        self.lifetimes.is_empty() && self.type_params.is_empty() && self.const_params.is_empty()
-    }
-
-    /// Generate the generic parameter list (e.g., `<'a, T: Clone, const N: usize>`)
-    pub fn to_param_tokens(&self) -> TokenStream {
-        if self.is_empty() {
-            return TokenStream::new();
-        }
-
-        let mut parts: Vec<TokenStream> = Vec::new();
-
-        for lt in &self.lifetimes {
-            let lt_ident = Ident::new(lt, Span::call_site());
-            // Build lifetime token manually to avoid quote! escaping issues
-            let tick = proc_macro2::Punct::new('\'', proc_macro2::Spacing::Joint);
-            parts.push(quote! { #tick #lt_ident });
-        }
-
-        for (name, bounds) in &self.type_params {
-            if bounds.is_empty() {
-                parts.push(quote! { #name });
-            } else {
-                parts.push(quote! { #name: #bounds });
-            }
-        }
-
-        for (name, ty) in &self.const_params {
-            parts.push(quote! { const #name: #ty });
-        }
-
-        quote! { < #(#parts),* > }
-    }
-
-    /// Generate just the type arguments (e.g., `<'a, T, N>`)
-    pub fn to_arg_tokens(&self) -> TokenStream {
-        if self.is_empty() {
-            return TokenStream::new();
-        }
-
-        let mut parts: Vec<TokenStream> = Vec::new();
-
-        for lt in &self.lifetimes {
-            let lt_ident = Ident::new(lt, Span::call_site());
-            let tick = proc_macro2::Punct::new('\'', proc_macro2::Spacing::Joint);
-            parts.push(quote! { #tick #lt_ident });
-        }
-
-        for (name, _) in &self.type_params {
-            parts.push(quote! { #name });
-        }
-
-        for (name, _) in &self.const_params {
-            parts.push(quote! { #name });
-        }
-
-        quote! { < #(#parts),* > }
-    }
-}
-
-// =============================================================================
-// Struct Types
-// =============================================================================
-
-/// A parsed struct field
-#[derive(Debug, Clone)]
-pub struct PStructField {
-    /// The field's name (with rename rules applied)
-    pub name: PName,
-    /// The field's type as tokens
-    pub ty: TokenStream,
-    /// The field's attributes
-    pub attrs: PAttrs,
-}
-
-impl PStructField {
-    /// Get the raw field name for pattern matching
-    pub fn raw_ident(&self) -> TokenStream {
-        self.name.raw.to_token_stream()
-    }
-
-    /// Get the effective name as a string
-    pub fn effective_name(&self) -> &str {
-        &self.name.effective
-    }
-
-    /// Get the doc comment
-    pub fn doc(&self) -> String {
-        self.attrs.doc_string()
-    }
-}
-
-/// Parsed struct kind
-#[derive(Debug, Clone)]
-pub enum PStructKind {
-    /// A regular struct with named fields
-    Struct { fields: Vec<PStructField> },
-    /// A tuple struct
-    Tuple { fields: Vec<PStructField> },
-    /// A unit struct
-    Unit,
-}
-
-impl PStructKind {
-    /// Get all fields (empty for unit struct)
-    pub fn fields(&self) -> &[PStructField] {
-        match self {
-            PStructKind::Struct { fields } | PStructKind::Tuple { fields } => fields,
-            PStructKind::Unit => &[],
-        }
-    }
-
-    /// Is this a unit struct?
-    pub fn is_unit(&self) -> bool {
-        matches!(self, PStructKind::Unit)
-    }
-
-    /// Is this a tuple struct?
-    pub fn is_tuple(&self) -> bool {
-        matches!(self, PStructKind::Tuple { .. })
-    }
-
-    /// Is this a named struct?
-    pub fn is_named(&self) -> bool {
-        matches!(self, PStructKind::Struct { .. })
-    }
-}
-
-/// A parsed struct
-#[derive(Debug, Clone)]
-pub struct PStruct {
-    /// The struct name
-    pub name: Ident,
-    /// Attributes
-    pub attrs: PAttrs,
-    /// Kind of struct
-    pub kind: PStructKind,
-    /// Generic parameters
-    pub generics: Option<BoundedGenericParams>,
-}
-
-impl PStruct {
-    /// Get the struct name as an identifier
-    pub fn name(&self) -> &Ident {
-        &self.name
-    }
-
-    /// Get the doc comment
-    pub fn doc(&self) -> String {
-        self.attrs.doc_string()
-    }
-}
-
-// =============================================================================
-// Enum Types
-// =============================================================================
-
-/// Parsed enum variant kind
-#[derive(Debug, Clone)]
-pub enum PVariantKind {
-    /// Unit variant (e.g., `Variant`)
-    Unit,
-    /// Tuple variant (e.g., `Variant(u32, String)`)
-    Tuple { fields: Vec<PStructField> },
-    /// Struct variant (e.g., `Variant { field1: u32 }`)
-    Struct { fields: Vec<PStructField> },
-}
-
-impl PVariantKind {
-    /// Get all fields (empty for unit variant)
-    pub fn fields(&self) -> &[PStructField] {
-        match self {
-            PVariantKind::Unit => &[],
-            PVariantKind::Tuple { fields } | PVariantKind::Struct { fields } => fields,
-        }
-    }
-
-    /// Is this a unit variant?
-    pub fn is_unit(&self) -> bool {
-        matches!(self, PVariantKind::Unit)
-    }
-
-    /// Is this a tuple variant?
-    pub fn is_tuple(&self) -> bool {
-        matches!(self, PVariantKind::Tuple { .. })
-    }
-
-    /// Is this a struct variant?
-    pub fn is_struct(&self) -> bool {
-        matches!(self, PVariantKind::Struct { .. })
-    }
-}
-
-/// A parsed enum variant
-#[derive(Debug, Clone)]
-pub struct PVariant {
-    /// Name of the variant (with rename rules applied)
-    pub name: PName,
-    /// Attributes
-    pub attrs: PAttrs,
-    /// Kind (unit, tuple, or struct)
-    pub kind: PVariantKind,
-    /// Optional explicit discriminant
-    pub discriminant: Option<TokenStream>,
-}
-
-impl PVariant {
-    /// Get the raw variant name for pattern matching
-    pub fn raw_ident(&self) -> &Ident {
-        match &self.name.raw {
-            IdentOrLiteral::Ident(ident) => ident,
-            IdentOrLiteral::Literal(_) => panic!("variant name cannot be a literal"),
-        }
-    }
-
-    /// Get the effective name as a string
-    pub fn effective_name(&self) -> &str {
-        &self.name.effective
-    }
-
-    /// Get the doc comment
-    pub fn doc(&self) -> String {
-        self.attrs.doc_string()
-    }
-}
-
-/// A parsed enum
-#[derive(Debug, Clone)]
-pub struct PEnum {
-    /// The enum name
-    pub name: Ident,
-    /// Attributes
-    pub attrs: PAttrs,
-    /// The variants
-    pub variants: Vec<PVariant>,
-    /// Generic parameters
-    pub generics: Option<BoundedGenericParams>,
-}
-
-impl PEnum {
-    /// Get the enum name as an identifier
-    pub fn name(&self) -> &Ident {
-        &self.name
-    }
-
-    /// Get the doc comment
-    pub fn doc(&self) -> String {
-        self.attrs.doc_string()
-    }
-}
-
-// =============================================================================
-// Unified Type
-// =============================================================================
-
-/// A parsed type (struct or enum)
-#[derive(Debug, Clone)]
-pub enum PType {
-    /// A struct
-    Struct(PStruct),
-    /// An enum
-    Enum(PEnum),
-}
-
-impl PType {
-    /// Get the type name
-    pub fn name(&self) -> &Ident {
-        match self {
-            PType::Struct(s) => s.name(),
-            PType::Enum(e) => e.name(),
-        }
-    }
-
-    /// Get the doc comment
-    pub fn doc(&self) -> String {
-        match self {
-            PType::Struct(s) => s.doc(),
-            PType::Enum(e) => e.doc(),
+            panic!("Expected a regular struct with named fields");
         }
     }
 }

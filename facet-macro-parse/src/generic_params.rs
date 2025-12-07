@@ -1,7 +1,5 @@
-use crate::{GenericParam, GenericParams, ToTokens, TokenStream};
+use crate::{GenericParam, GenericParams, LifetimeName, ToTokens, TokenStream};
 use quote::quote;
-
-use crate::LifetimeName;
 
 /// The name of a generic parameter
 #[derive(Clone)]

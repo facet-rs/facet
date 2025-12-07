@@ -2,27 +2,37 @@
 
 use crate::DocInner;
 
+/// Errors that can occur while unescaping a string
 #[derive(Debug, PartialEq, Eq)]
 pub enum UnescapeError {
     /// An illegal character was found following a backslash (e.g., `\a`)
     IllegalCharacterFollowingBackslash {
+        /// Index of the backslash in the original string
         character_index: usize,
+        /// The illegal character found
         found: char,
+        /// The original string being unescaped
         string: String,
     },
     /// The string ended unexpectedly after a backslash character
     UnexpectedEofFollowingBackslash {
+        /// Index of the backslash in the original string
         character_index: usize,
+        /// The original string being unescaped
         string: String,
     },
     /// Invalid hex digit in \xNN escape
     InvalidHexEscape {
+        /// Index of the escape start in the original string
         character_index: usize,
+        /// The original string being unescaped
         string: String,
     },
     /// Invalid unicode escape \u{...}
     InvalidUnicodeEscape {
+        /// Index of the escape start in the original string
         character_index: usize,
+        /// The original string being unescaped
         string: String,
     },
 }
@@ -166,7 +176,7 @@ fn parse_unicode_escape(
 /// - `\0` -> null
 /// - `\xNN` -> byte value (2 hex digits, ASCII only)
 /// - `\u{NNNNNN}` -> unicode scalar value (1-6 hex digits)
-fn unescape_inner(s: &str) -> Result<String, UnescapeError> {
+pub fn unescape_inner(s: &str) -> Result<String, UnescapeError> {
     let mut out = String::with_capacity(s.len());
     let mut chars = s.char_indices().peekable();
 

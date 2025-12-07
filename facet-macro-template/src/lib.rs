@@ -20,7 +20,7 @@ pub use ast::{ForLoop, IfBlock, Template, TemplateItem};
 pub use eval::EvalContext;
 pub use value::Value;
 
-// Re-export types from facet-macro-types for convenience
-pub use facet_macro_types::{
-    PAttrs, PEnum, PName, PRepr, PStruct, PStructField, PStructKind, PType, PVariant, PVariantKind,
+// Re-export types from facet-macro-parse for convenience
+pub use facet_macro_parse::{
+    PAttrs, PEnum, PName, PRepr, PStruct, PStructField, PStructKind, PVariant, PVariantKind,
 };
