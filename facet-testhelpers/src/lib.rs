@@ -83,7 +83,9 @@ pub fn setup() {
     }
 
     let logger = Box::new(SimpleLogger);
-    log::set_boxed_logger(logger).unwrap();
+    // Ignore SetLoggerError - logger may already be set if running multiple tests
+    // in the same process (e.g., under valgrind with --test-threads=1)
+    let _ = log::set_boxed_logger(logger);
     log::set_max_level(LevelFilter::Trace);
 }
 

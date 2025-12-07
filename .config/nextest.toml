@@ -1,0 +1,22 @@
+# Nextest configuration for facet
+# See: https://nexte.st/docs/configuration/
+
+experimental = ["wrapper-scripts"]
+
+[scripts.wrapper.valgrind]
+# Run tests under valgrind with leak checking
+# --leak-check=full: show details for each leak
+# --show-leak-kinds=all: show all leak types for diagnostics
+# --errors-for-leak-kinds=definite,indirect: only fail on real leaks
+# --error-exitcode=1: exit with 1 if errors found
+command = 'valgrind --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect --error-exitcode=1'
+
+# Valgrind profile - runs tests under valgrind
+[profile.valgrind]
+# Run tests one at a time under valgrind
+test-threads = 1
+
+[[profile.valgrind.scripts]]
+# Apply valgrind wrapper to all tests on Linux
+platform = 'cfg(target_os = "linux")'
+run-wrapper = 'valgrind'
