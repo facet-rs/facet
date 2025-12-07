@@ -1,5 +1,6 @@
 #![warn(missing_docs)]
-#![deny(unsafe_code)]
+// Allow unsafe code when cranelift feature is enabled (required for JIT compilation)
+#![cfg_attr(not(feature = "cranelift"), deny(unsafe_code))]
 #![doc = include_str!("../README.md")]
 
 extern crate alloc;
@@ -53,6 +54,27 @@ pub use raw_json::RawJson;
 
 mod json;
 pub use json::Json;
+
+/// JIT-compiled JSON deserialization using Cranelift.
+///
+/// This module provides a JIT-compiled JSON deserializer that generates native
+/// code specialized for each type's exact memory layout. On first call for a type,
+/// it compiles a specialized deserializer using Cranelift. Subsequent calls use
+/// the cached native code directly.
+///
+/// # Example
+///
+/// ```ignore
+/// use facet::Facet;
+/// use facet_json::cranelift;
+///
+/// #[derive(Facet)]
+/// struct Point { x: f64, y: f64 }
+///
+/// let point: Point = cranelift::from_str(r#"{"x": 1.0, "y": 2.0}"#).unwrap();
+/// ```
+#[cfg(feature = "cranelift")]
+pub mod cranelift;
 
 #[cfg(feature = "axum")]
 mod axum;
