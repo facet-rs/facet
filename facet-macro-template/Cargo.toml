@@ -1,0 +1,17 @@
+[package]
+name = "facet-macro-template"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Token-based templating engine for facet macro code generation"
+keywords = ["reflection", "macros", "template", "codegen"]
+categories = ["development-tools"]
+
+[dependencies]
+facet-macro-types = { path = "../facet-macro-types" }
+proc-macro2 = "1"
+quote = "1"
+
+[dev-dependencies]

@@ -858,6 +858,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "facet-macro-template"
+version = "0.1.0"
+dependencies = [
+ "facet-macro-types",
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
+name = "facet-macro-types"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
 name = "facet-macros"
 version = "0.31.8"
 dependencies = [
