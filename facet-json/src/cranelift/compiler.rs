@@ -107,6 +107,8 @@ enum FieldParser {
     VecVecVecF64,
     VecStruct(&'static Shape),
     NestedStruct(&'static Shape),
+    /// Option<T> - the Shape is the full Option shape (not the inner T)
+    Option(&'static Shape),
     Skip,
 }
 
@@ -160,8 +162,12 @@ fn extract_fields(shape: &'static Shape) -> Vec<FieldInfo> {
             // Check for nested struct
             FacetType::User(UserType::Struct(_)) => FieldParser::NestedStruct(field_shape),
             _ => {
+                // Check for Option types first (via Def::Option)
+                if let Def::Option(_) = field_shape.def {
+                    FieldParser::Option(field_shape)
+                }
                 // Check for Vec types (List)
-                if let Def::List(list_def) = field_shape.def {
+                else if let Def::List(list_def) = field_shape.def {
                     let elem_shape = list_def.t();
                     // Check for Vec<f64>
                     if matches!(
@@ -389,6 +395,36 @@ impl JitCompiler {
                         .entry(ptr)
                         .or_insert_with(|| get_or_compile_for_shape_locked(self, elem_shape));
                 }
+                FieldParser::Option(option_shape) => {
+                    // Recursively find and pre-compile any nested structs
+                    fn collect_nested_structs(
+                        shape: &'static Shape,
+                        nested_func_ptrs: &mut HashMap<*const Shape, *const u8>,
+                        compiler: &mut JitCompiler,
+                    ) {
+                        match shape.def {
+                            Def::Option(opt_def) => {
+                                // Recurse into Option's inner type
+                                collect_nested_structs(opt_def.t(), nested_func_ptrs, compiler);
+                            }
+                            Def::Pointer(ptr_def) => {
+                                // Recurse into Box/pointer's pointee
+                                if let Some(pointee) = ptr_def.pointee {
+                                    collect_nested_structs(pointee, nested_func_ptrs, compiler);
+                                }
+                            }
+                            _ => {}
+                        }
+                        // If it's a struct, pre-compile it
+                        if matches!(shape.ty, FacetType::User(UserType::Struct(_))) {
+                            let ptr = shape as *const Shape;
+                            nested_func_ptrs.entry(ptr).or_insert_with(|| {
+                                get_or_compile_for_shape_locked(compiler, shape)
+                            });
+                        }
+                    }
+                    collect_nested_structs(option_shape, &mut nested_func_ptrs, self);
+                }
                 _ => {}
             }
         }
@@ -448,6 +484,18 @@ impl JitCompiler {
             s
         };
 
+        let sig_option = {
+            let mut s = self.module.make_signature();
+            s.params.push(AbiParam::new(ptr_type)); // input
+            s.params.push(AbiParam::new(ptr_type)); // len
+            s.params.push(AbiParam::new(ptr_type)); // pos
+            s.params.push(AbiParam::new(ptr_type)); // out
+            s.params.push(AbiParam::new(ptr_type)); // option_shape
+            s.params.push(AbiParam::new(ptr_type)); // inner_deser_fn (nullable)
+            s.returns.push(AbiParam::new(ptr_type));
+            s
+        };
+
         // Declare all helpers we need
         let helpers_to_declare = [
             ("jitson_parse_f64", sig_parse_value.clone()),
@@ -470,6 +518,7 @@ impl JitCompiler {
             ("jitson_skip_value", sig_skip_value.clone()),
             ("jitson_parse_nested_struct", sig_nested_struct.clone()),
             ("jitson_parse_vec_struct", sig_vec_struct.clone()),
+            ("jitson_parse_option", sig_option.clone()),
         ];
 
         for (name, helper_sig) in &helpers_to_declare {
@@ -588,6 +637,9 @@ impl JitCompiler {
         let parse_vec_struct = self
             .module
             .declare_func_in_func(self.helper_funcs["jitson_parse_vec_struct"], builder.func);
+        let parse_option = self
+            .module
+            .declare_func_in_func(self.helper_funcs["jitson_parse_option"], builder.func);
 
         // Skip initial whitespace (inline)
         Self::emit_skip_ws_inline(&mut builder, input_ptr, len_val, pos_var, ptr_type);
@@ -770,6 +822,36 @@ impl JitCompiler {
                             elem_size,
                             elem_align,
                             func_ptr_val,
+                        ],
+                    )
+                }
+                FieldParser::Option(option_shape) => {
+                    // Get the inner type's deserializer if available
+                    let inner_shape = if let Def::Option(opt_def) = option_shape.def {
+                        opt_def.t()
+                    } else {
+                        unreachable!()
+                    };
+
+                    // Check if we have a compiled deserializer for the inner type
+                    let inner_func_ptr = nested_func_ptrs
+                        .get(&(inner_shape as *const Shape))
+                        .copied()
+                        .unwrap_or(std::ptr::null() as *const u8);
+
+                    let option_shape_val = builder
+                        .ins()
+                        .iconst(ptr_type, option_shape as *const Shape as i64);
+                    let inner_func_val = builder.ins().iconst(ptr_type, inner_func_ptr as i64);
+                    builder.ins().call(
+                        parse_option,
+                        &[
+                            input_ptr,
+                            len_val,
+                            pos,
+                            field_ptr,
+                            option_shape_val,
+                            inner_func_val,
                         ],
                     )
                 }
