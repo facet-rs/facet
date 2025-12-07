@@ -21,6 +21,8 @@ tokio = ["std", "dep:tokio", "streaming"]
 futures-io = ["std", "dep:futures-io", "streaming"]
 streaming = ["std", "dep:corosensei"]
 bolero-inline-tests = ["std"]
+# JIT-compiled JSON deserialization using Cranelift
+cranelift = ["std", "dep:cranelift", "dep:cranelift-jit", "dep:cranelift-module", "dep:cranelift-native", "dep:parking_lot", "dep:memchr"]
 
 [dependencies]
 facet = { path = "../facet", default-features = false }
@@ -52,6 +54,14 @@ futures-io = { version = "0.3", optional = true }
 
 # Stackful coroutines for streaming deserialization
 corosensei = { version = "0.3", optional = true }
+
+# JIT compilation dependencies (optional)
+cranelift = { version = "0.125", optional = true }
+cranelift-jit = { version = "0.125", optional = true }
+cranelift-module = { version = "0.125", optional = true }
+cranelift-native = { version = "0.125", optional = true }
+parking_lot = { version = "0.12", optional = true }
+memchr = { version = "2.7", optional = true }
 
 [dev-dependencies]
 bolero = "0.11"
