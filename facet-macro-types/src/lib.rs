@@ -6,10 +6,11 @@
 //! (structs, enums, fields, variants) in a form suitable for code generation.
 //!
 //! These types are used by:
-//! - `facet-macros-impl`: Parses Rust source into these types
+//! - `facet-macro-parse`: Parses Rust source into these types
 //! - `facet-macro-template`: Evaluates templates against these types
+//! - `facet-macros-impl`: Uses these types for code generation
 
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::{Ident, Span, TokenStream};
 use quote::{ToTokens, quote};
 
 // =============================================================================
@@ -21,7 +22,7 @@ use quote::{ToTokens, quote};
 #[derive(Debug, Clone)]
 pub enum IdentOrLiteral {
     /// Named field identifier
-    Ident(proc_macro2::Ident),
+    Ident(Ident),
     /// Tuple field index
     Literal(usize),
 }
@@ -64,6 +65,25 @@ pub struct PName {
     /// The name after applying rename rules.
     /// This might not be a valid Rust identifier (e.g., kebab-case).
     pub effective: String,
+}
+
+impl PName {
+    /// Construct a PName with an optional rename rule applied
+    pub fn new(rename_rule: Option<RenameRule>, raw: IdentOrLiteral) -> Self {
+        // Get the normalized raw string (strip r# prefix for raw identifiers)
+        let norm_raw = match &raw {
+            IdentOrLiteral::Ident(ident) => ident.to_string().trim_start_matches("r#").to_string(),
+            IdentOrLiteral::Literal(lit) => lit.to_string(),
+        };
+
+        let effective = if let Some(rule) = rename_rule {
+            rule.apply(&norm_raw)
+        } else {
+            norm_raw
+        };
+
+        Self { raw, effective }
+    }
 }
 
 // =============================================================================
@@ -121,94 +141,8 @@ impl PrimitiveRepr {
 }
 
 // =============================================================================
-// Attributes
+// Rename Rules
 // =============================================================================
-
-/// A parsed facet attribute.
-///
-/// All attributes are stored uniformly - either with a namespace (`kdl::child`)
-/// or without (`sensitive`).
-#[derive(Debug, Clone)]
-pub struct PFacetAttr {
-    /// The namespace (e.g., "kdl", "args"). None for builtin attributes.
-    pub ns: Option<proc_macro2::Ident>,
-    /// The key (e.g., "child", "sensitive", "rename")
-    pub key: proc_macro2::Ident,
-    /// The arguments as a TokenStream
-    pub args: TokenStream,
-}
-
-impl PFacetAttr {
-    /// Returns true if this is a builtin attribute (no namespace)
-    pub fn is_builtin(&self) -> bool {
-        self.ns.is_none()
-    }
-
-    /// Returns the key as a string
-    pub fn key_str(&self) -> String {
-        self.key.to_string()
-    }
-}
-
-/// A compile error to be emitted during code generation
-#[derive(Debug, Clone)]
-pub struct CompileError {
-    /// The error message
-    pub message: String,
-    /// The span where the error occurred
-    pub span: Span,
-}
-
-/// Tracks which standard derives are visible on the type.
-#[derive(Debug, Clone, Default)]
-pub struct KnownDerives {
-    pub debug: bool,
-    pub clone: bool,
-    pub copy: bool,
-    pub partial_eq: bool,
-    pub eq: bool,
-    pub partial_ord: bool,
-    pub ord: bool,
-    pub hash: bool,
-    pub default: bool,
-}
-
-/// Tracks which traits are explicitly declared via `#[facet(traits(...))]`.
-#[derive(Debug, Clone, Default)]
-pub struct DeclaredTraits {
-    pub display: bool,
-    pub debug: bool,
-    pub clone: bool,
-    pub copy: bool,
-    pub partial_eq: bool,
-    pub eq: bool,
-    pub partial_ord: bool,
-    pub ord: bool,
-    pub hash: bool,
-    pub default: bool,
-    pub send: bool,
-    pub sync: bool,
-    pub unpin: bool,
-}
-
-impl DeclaredTraits {
-    /// Returns true if any trait is declared
-    pub fn has_any(&self) -> bool {
-        self.display
-            || self.debug
-            || self.clone
-            || self.copy
-            || self.partial_eq
-            || self.eq
-            || self.partial_ord
-            || self.ord
-            || self.hash
-            || self.default
-            || self.send
-            || self.sync
-            || self.unpin
-    }
-}
 
 /// Rename rule for field/variant names
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -234,7 +168,7 @@ pub enum RenameRule {
 impl RenameRule {
     /// Parse a rename rule from a string
     pub fn parse(s: &str) -> Option<Self> {
-        match s {
+        match s.trim().trim_matches('"') {
             "camelCase" => Some(RenameRule::CamelCase),
             "snake_case" => Some(RenameRule::SnakeCase),
             "kebab-case" => Some(RenameRule::KebabCase),
@@ -249,7 +183,6 @@ impl RenameRule {
 
     /// Apply this rename rule to an identifier
     pub fn apply(&self, name: &str) -> String {
-        // Split the name into words (handling snake_case, camelCase, etc.)
         let words = split_into_words(name);
 
         match self {
@@ -319,7 +252,6 @@ fn split_into_words(name: &str) -> Vec<String> {
                 current_word = String::new();
             }
         } else if ch.is_uppercase() && !current_word.is_empty() {
-            // camelCase boundary
             words.push(current_word);
             current_word = ch.to_string();
         } else {
@@ -334,8 +266,49 @@ fn split_into_words(name: &str) -> Vec<String> {
     words
 }
 
-/// Parsed attributes for a container, field, or variant
+// =============================================================================
+// Attributes
+// =============================================================================
+
+/// A parsed facet attribute.
 #[derive(Debug, Clone)]
+pub struct PFacetAttr {
+    /// The namespace (e.g., "kdl", "args"). None for builtin attributes.
+    pub ns: Option<String>,
+    /// The key (e.g., "child", "sensitive", "rename")
+    pub key: String,
+    /// The arguments as a TokenStream
+    pub args: TokenStream,
+}
+
+impl PFacetAttr {
+    /// Returns true if this is a builtin attribute (no namespace)
+    pub fn is_builtin(&self) -> bool {
+        self.ns.is_none()
+    }
+
+    /// Returns the key as a string reference
+    pub fn key_str(&self) -> &str {
+        &self.key
+    }
+
+    /// Returns the args as a trimmed, unquoted string
+    pub fn args_string(&self) -> String {
+        self.args.to_string().trim().trim_matches('"').to_string()
+    }
+}
+
+/// A compile error to be emitted during code generation
+#[derive(Debug, Clone)]
+pub struct CompileError {
+    /// The error message
+    pub message: String,
+    /// The span where the error occurred
+    pub span: Span,
+}
+
+/// Parsed attributes for a container, field, or variant
+#[derive(Debug, Clone, Default)]
 pub struct PAttrs {
     /// Doc comment lines
     pub doc: Vec<String>,
@@ -345,55 +318,26 @@ pub struct PAttrs {
     pub repr: PRepr,
     /// Container-level rename_all rule
     pub rename_all: Option<RenameRule>,
-    /// Custom crate path (if any)
-    pub crate_path: Option<TokenStream>,
-    /// Errors to emit
-    pub errors: Vec<CompileError>,
-    /// Known derives on the type
-    pub known_derives: KnownDerives,
-    /// Explicitly declared traits
-    pub declared_traits: Option<DeclaredTraits>,
-    /// Whether auto_traits is enabled
-    pub auto_traits: bool,
 }
 
-impl Default for PAttrs {
+impl Default for PRepr {
     fn default() -> Self {
-        Self {
-            doc: Vec::new(),
-            facet: Vec::new(),
-            repr: PRepr::Rust(None),
-            rename_all: None,
-            crate_path: None,
-            errors: Vec::new(),
-            known_derives: KnownDerives::default(),
-            declared_traits: None,
-            auto_traits: false,
-        }
+        PRepr::Rust(None)
     }
 }
 
 impl PAttrs {
     /// Check if a builtin attribute with the given key exists
     pub fn has_builtin(&self, key: &str) -> bool {
-        self.facet
-            .iter()
-            .any(|a| a.is_builtin() && a.key_str() == key)
+        self.facet.iter().any(|a| a.is_builtin() && a.key == key)
     }
 
     /// Get the args of a builtin attribute with the given key (if present)
     pub fn get_builtin_args(&self, key: &str) -> Option<String> {
         self.facet
             .iter()
-            .find(|a| a.is_builtin() && a.key_str() == key)
-            .map(|a| a.args.to_string().trim().trim_matches('"').to_string())
-    }
-
-    /// Get the facet crate path, defaulting to `::facet` if not specified
-    pub fn facet_crate(&self) -> TokenStream {
-        self.crate_path
-            .clone()
-            .unwrap_or_else(|| quote! { ::facet })
+            .find(|a| a.is_builtin() && a.key == key)
+            .map(|a| a.args_string())
     }
 
     /// Get the full doc comment as a single string
@@ -406,15 +350,77 @@ impl PAttrs {
 // Generics
 // =============================================================================
 
-/// Bounded generic parameters (simplified)
+/// Bounded generic parameters
 #[derive(Debug, Clone, Default)]
 pub struct BoundedGenericParams {
-    /// The full generic parameter list as tokens (e.g., `<T: Clone, U>`)
-    pub params: TokenStream,
-    /// Just the type parameter names (e.g., `T, U`)
-    pub type_params: TokenStream,
-    /// Where clause tokens (if any)
-    pub where_clause: Option<TokenStream>,
+    /// Lifetime parameters (e.g., ["a", "b"])
+    pub lifetimes: Vec<String>,
+    /// Type parameters with their bounds (e.g., [(T, "Clone + Debug")])
+    pub type_params: Vec<(Ident, TokenStream)>,
+    /// Const parameters with their types (e.g., [(N, "usize")])
+    pub const_params: Vec<(Ident, TokenStream)>,
+}
+
+impl BoundedGenericParams {
+    /// Returns true if there are no generic parameters
+    pub fn is_empty(&self) -> bool {
+        self.lifetimes.is_empty() && self.type_params.is_empty() && self.const_params.is_empty()
+    }
+
+    /// Generate the generic parameter list (e.g., `<'a, T: Clone, const N: usize>`)
+    pub fn to_param_tokens(&self) -> TokenStream {
+        if self.is_empty() {
+            return TokenStream::new();
+        }
+
+        let mut parts: Vec<TokenStream> = Vec::new();
+
+        for lt in &self.lifetimes {
+            let lt_ident = Ident::new(lt, Span::call_site());
+            // Build lifetime token manually to avoid quote! escaping issues
+            let tick = proc_macro2::Punct::new('\'', proc_macro2::Spacing::Joint);
+            parts.push(quote! { #tick #lt_ident });
+        }
+
+        for (name, bounds) in &self.type_params {
+            if bounds.is_empty() {
+                parts.push(quote! { #name });
+            } else {
+                parts.push(quote! { #name: #bounds });
+            }
+        }
+
+        for (name, ty) in &self.const_params {
+            parts.push(quote! { const #name: #ty });
+        }
+
+        quote! { < #(#parts),* > }
+    }
+
+    /// Generate just the type arguments (e.g., `<'a, T, N>`)
+    pub fn to_arg_tokens(&self) -> TokenStream {
+        if self.is_empty() {
+            return TokenStream::new();
+        }
+
+        let mut parts: Vec<TokenStream> = Vec::new();
+
+        for lt in &self.lifetimes {
+            let lt_ident = Ident::new(lt, Span::call_site());
+            let tick = proc_macro2::Punct::new('\'', proc_macro2::Spacing::Joint);
+            parts.push(quote! { #tick #lt_ident });
+        }
+
+        for (name, _) in &self.type_params {
+            parts.push(quote! { #name });
+        }
+
+        for (name, _) in &self.const_params {
+            parts.push(quote! { #name });
+        }
+
+        quote! { < #(#parts),* > }
+    }
 }
 
 // =============================================================================
@@ -455,28 +461,28 @@ pub enum PStructKind {
     /// A regular struct with named fields
     Struct { fields: Vec<PStructField> },
     /// A tuple struct
-    TupleStruct { fields: Vec<PStructField> },
+    Tuple { fields: Vec<PStructField> },
     /// A unit struct
-    UnitStruct,
+    Unit,
 }
 
 impl PStructKind {
     /// Get all fields (empty for unit struct)
     pub fn fields(&self) -> &[PStructField] {
         match self {
-            PStructKind::Struct { fields } | PStructKind::TupleStruct { fields } => fields,
-            PStructKind::UnitStruct => &[],
+            PStructKind::Struct { fields } | PStructKind::Tuple { fields } => fields,
+            PStructKind::Unit => &[],
         }
     }
 
     /// Is this a unit struct?
     pub fn is_unit(&self) -> bool {
-        matches!(self, PStructKind::UnitStruct)
+        matches!(self, PStructKind::Unit)
     }
 
     /// Is this a tuple struct?
     pub fn is_tuple(&self) -> bool {
-        matches!(self, PStructKind::TupleStruct { .. })
+        matches!(self, PStructKind::Tuple { .. })
     }
 
     /// Is this a named struct?
@@ -485,35 +491,28 @@ impl PStructKind {
     }
 }
 
-/// Parsed container (shared between struct and enum)
-#[derive(Debug, Clone)]
-pub struct PContainer {
-    /// Name of the container
-    pub name: proc_macro2::Ident,
-    /// Attributes
-    pub attrs: PAttrs,
-    /// Generic parameters
-    pub bgp: BoundedGenericParams,
-}
-
 /// A parsed struct
 #[derive(Debug, Clone)]
 pub struct PStruct {
-    /// Container information
-    pub container: PContainer,
+    /// The struct name
+    pub name: Ident,
+    /// Attributes
+    pub attrs: PAttrs,
     /// Kind of struct
     pub kind: PStructKind,
+    /// Generic parameters
+    pub generics: Option<BoundedGenericParams>,
 }
 
 impl PStruct {
     /// Get the struct name as an identifier
-    pub fn name(&self) -> &proc_macro2::Ident {
-        &self.container.name
+    pub fn name(&self) -> &Ident {
+        &self.name
     }
 
     /// Get the doc comment
     pub fn doc(&self) -> String {
-        self.container.attrs.doc_string()
+        self.attrs.doc_string()
     }
 }
 
@@ -572,7 +571,7 @@ pub struct PVariant {
 
 impl PVariant {
     /// Get the raw variant name for pattern matching
-    pub fn raw_ident(&self) -> &proc_macro2::Ident {
+    pub fn raw_ident(&self) -> &Ident {
         match &self.name.raw {
             IdentOrLiteral::Ident(ident) => ident,
             IdentOrLiteral::Literal(_) => panic!("variant name cannot be a literal"),
@@ -593,23 +592,25 @@ impl PVariant {
 /// A parsed enum
 #[derive(Debug, Clone)]
 pub struct PEnum {
-    /// Container information
-    pub container: PContainer,
+    /// The enum name
+    pub name: Ident,
+    /// Attributes
+    pub attrs: PAttrs,
     /// The variants
     pub variants: Vec<PVariant>,
-    /// The representation
-    pub repr: PRepr,
+    /// Generic parameters
+    pub generics: Option<BoundedGenericParams>,
 }
 
 impl PEnum {
     /// Get the enum name as an identifier
-    pub fn name(&self) -> &proc_macro2::Ident {
-        &self.container.name
+    pub fn name(&self) -> &Ident {
+        &self.name
     }
 
     /// Get the doc comment
     pub fn doc(&self) -> String {
-        self.container.attrs.doc_string()
+        self.attrs.doc_string()
     }
 }
 
@@ -628,18 +629,10 @@ pub enum PType {
 
 impl PType {
     /// Get the type name
-    pub fn name(&self) -> &proc_macro2::Ident {
+    pub fn name(&self) -> &Ident {
         match self {
             PType::Struct(s) => s.name(),
             PType::Enum(e) => e.name(),
-        }
-    }
-
-    /// Get the container
-    pub fn container(&self) -> &PContainer {
-        match self {
-            PType::Struct(s) => &s.container,
-            PType::Enum(e) => &e.container,
         }
     }
 

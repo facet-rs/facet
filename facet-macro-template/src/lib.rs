@@ -22,6 +22,5 @@ pub use value::Value;
 
 // Re-export types from facet-macro-types for convenience
 pub use facet_macro_types::{
-    PAttrs, PContainer, PEnum, PName, PRepr, PStruct, PStructField, PStructKind, PType, PVariant,
-    PVariantKind,
+    PAttrs, PEnum, PName, PRepr, PStruct, PStructField, PStructKind, PType, PVariant, PVariantKind,
 };

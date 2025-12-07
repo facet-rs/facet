@@ -10,6 +10,7 @@ members = [
 
     # macro ecosystem (plugin support)
     "facet-macro-types",
+    "facet-macro-parse",
     "facet-macro-template",
 
     # reflection
