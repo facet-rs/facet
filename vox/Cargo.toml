@@ -12,3 +12,4 @@ proptest = "1"
 
 [workspace]
 members = ["xtask"]
+exclude = ["fuzz"]
