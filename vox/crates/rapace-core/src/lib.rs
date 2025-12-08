@@ -1,14 +1,35 @@
 //! rapace-core: Core types and traits for the rapace RPC system.
 //!
 //! This crate defines:
-//! - Frame descriptors (`MsgDescHot`, `MsgDescCold`)
-//! - Ring buffer structures (`DescRing`)
-//! - Slot allocator (`DataSegment`, `SlotMeta`)
-//! - Frame types (`Frame`, `FrameView`)
-//! - Transport traits (`Transport`, `DynTransport`)
-//! - Error codes and flags (`ErrorCode`, `FrameFlags`, `Encoding`)
-//! - Validation (`validate_descriptor`, `DescriptorLimits`)
+//! - Frame descriptors ([`MsgDescHot`], [`MsgDescCold`])
+//! - Frame types ([`Frame`], [`FrameView`])
+//! - Message header ([`MsgHeader`])
+//! - Transport traits ([`Transport`], [`DynTransport`])
+//! - Encoding traits ([`EncodeCtx`], [`DecodeCtx`])
+//! - Error codes and flags ([`ErrorCode`], [`FrameFlags`], [`Encoding`])
+//! - Control payloads ([`ControlPayload`])
+//! - Validation ([`validate_descriptor`], [`DescriptorLimits`])
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
-// TODO: implement core types
+mod control;
+mod descriptor;
+mod encoding;
+mod error;
+mod flags;
+mod frame;
+mod header;
+mod limits;
+mod transport;
+mod validation;
+
+pub use control::*;
+pub use descriptor::*;
+pub use encoding::*;
+pub use error::*;
+pub use flags::*;
+pub use frame::*;
+pub use header::*;
+pub use limits::*;
+pub use transport::*;
+pub use validation::*;
