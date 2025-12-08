@@ -1958,6 +1958,11 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
     ) -> Result<Partial<'input, BORROW>> {
         log::trace!("deserialize_enum: {}", wip.shape().type_identifier);
 
+        // Check if this is an untagged enum
+        if wip.shape().is_untagged() {
+            return self.deserialize_untagged_enum(wip);
+        }
+
         let token = self.peek()?;
 
         match &token.token {
@@ -2131,6 +2136,174 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
                     },
                     span,
                 ))
+            }
+        }
+    }
+
+    /// Deserialize an untagged enum using the Solver to determine which variant matches.
+    ///
+    /// For untagged enums, we use facet-solver to:
+    /// 1. Build a schema with one resolution per variant
+    /// 2. Feed all JSON keys to the solver to narrow down candidates
+    /// 3. Use finish() to determine which variant's required fields are satisfied
+    /// 4. Deserialize into the matched variant
+    fn deserialize_untagged_enum(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>> {
+        log::trace!("deserialize_untagged_enum: {}", wip.shape().type_identifier);
+
+        let shape = wip.shape();
+
+        // Build schema - this creates one resolution per variant for untagged enums
+        let schema = Schema::build_auto(shape).map_err(|e| {
+            JsonError::without_span(JsonErrorKind::Solver(format!(
+                "failed to build schema: {e}"
+            )))
+        })?;
+
+        // Create the solver
+        let mut solver = Solver::new(&schema);
+
+        // Track field positions for second pass deserialization
+        let mut field_positions: Vec<(&'static str, usize)> = Vec::new();
+
+        // Expect opening brace (struct variants) or handle other cases
+        let token = self.peek()?;
+        match &token.token {
+            Token::ObjectStart => {
+                self.next()?; // consume the brace
+
+                // ========== PASS 1: Scan all keys, feed to solver ==========
+                loop {
+                    let token = self.peek()?;
+                    match &token.token {
+                        Token::ObjectEnd => {
+                            self.next()?;
+                            break;
+                        }
+                        Token::String(_) => {
+                            let key_token = self.next()?;
+                            let key = match &key_token.token {
+                                Token::String(s) => s.clone(),
+                                _ => unreachable!(),
+                            };
+
+                            let colon = self.next()?;
+                            if !matches!(colon.token, Token::Colon) {
+                                return Err(JsonError::new(
+                                    JsonErrorKind::UnexpectedToken {
+                                        got: format!("{:?}", colon.token),
+                                        expected: "':'",
+                                    },
+                                    colon.span,
+                                ));
+                            }
+
+                            // Leak the key for 'static lifetime
+                            let key_static: &'static str =
+                                Box::leak(key.into_owned().into_boxed_str());
+
+                            // Record position before skipping
+                            let value_start = self.peek()?.span.offset;
+                            field_positions.push((key_static, value_start));
+
+                            // Feed key to solver
+                            let _decision = solver.see_key(key_static);
+
+                            // Skip the value
+                            self.skip_value()?;
+
+                            // Check for comma
+                            let next = self.peek()?;
+                            if matches!(next.token, Token::Comma) {
+                                self.next()?;
+                            }
+                        }
+                        _ => {
+                            let span = token.span;
+                            return Err(JsonError::new(
+                                JsonErrorKind::UnexpectedToken {
+                                    got: format!("{:?}", token.token),
+                                    expected: "field name or '}'",
+                                },
+                                span,
+                            ));
+                        }
+                    }
+                }
+
+                // ========== Get the resolved variant ==========
+                let config = solver
+                    .finish()
+                    .map_err(|e| JsonError::without_span(JsonErrorKind::Solver(format!("{e}"))))?;
+
+                // Extract the variant name from the resolution
+                let variant_name = config
+                    .variant_selections()
+                    .first()
+                    .map(|vs| vs.variant_name)
+                    .ok_or_else(|| {
+                        JsonError::without_span(JsonErrorKind::InvalidValue {
+                            message: "solver returned resolution with no variant selection".into(),
+                        })
+                    })?;
+
+                // Select the variant
+                wip = wip.select_variant_named(variant_name)?;
+
+                // Enable deferred mode for proper field handling
+                wip = wip.begin_deferred(config.clone())?;
+
+                // ========== PASS 2: Deserialize fields ==========
+                for (field_name, offset) in &field_positions {
+                    if let Some(field_info) = config.field(field_name) {
+                        // Create adapter at this field's position
+                        let field_adapter = self.adapter.at_offset(*offset).ok_or_else(|| {
+                            JsonError::without_span(JsonErrorKind::InvalidValue {
+                                message: "untagged enums not supported in streaming mode".into(),
+                            })
+                        })?;
+                        let mut field_deser = Self::from_adapter(field_adapter);
+
+                        // Navigate to the field using its path
+                        for segment in field_info.path.segments() {
+                            match segment {
+                                PathSegment::Field(name) => {
+                                    wip = wip.begin_field(name)?;
+                                    if field_info.field.proxy_convert_in_fn().is_some() {
+                                        wip = wip.begin_custom_deserialization()?;
+                                    }
+                                }
+                                PathSegment::Variant(_, _) => {
+                                    // Variant already selected above
+                                }
+                            }
+                        }
+
+                        // Deserialize the value
+                        wip = field_deser.deserialize_into(wip)?;
+
+                        // Close the field
+                        wip = wip.end()?;
+                        if field_info.field.proxy_convert_in_fn().is_some() {
+                            wip = wip.end()?;
+                        }
+                    }
+                }
+
+                // Finish deferred mode
+                wip = wip.finish_deferred()?;
+
+                Ok(wip)
+            }
+            _ => {
+                // Non-object untagged variants (tuple/newtype/unit) are not yet supported
+                Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                    message:
+                        "untagged enum deserialization requires struct variants (JSON objects)"
+                            .into(),
+                }))
             }
         }
     }
