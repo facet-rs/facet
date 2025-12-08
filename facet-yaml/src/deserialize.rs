@@ -17,6 +17,7 @@ use saphyr_parser::{Event, Parser, ScalarStyle, Span as SaphyrSpan, SpannedEvent
 
 use crate::error::{SpanExt, YamlError, YamlErrorKind};
 use facet_reflect::{Span, is_spanned_shape};
+use facet_solver::{Schema, Solver};
 
 type Result<T> = core::result::Result<T, YamlError>;
 
@@ -1138,6 +1139,11 @@ impl<'input> YamlDeserializer<'input> {
             partial.path()
         );
 
+        // Check if this is an untagged enum
+        if partial.shape().is_untagged() {
+            return self.deserialize_untagged_enum(partial);
+        }
+
         // Check for unit variant as plain string
         let mut partial = partial;
         let try_unit_variant = if let Some(event) = self.peek() {
@@ -1255,6 +1261,189 @@ impl<'input> YamlDeserializer<'input> {
             )
             .with_source(self.input)),
         }
+    }
+
+    /// Deserialize an untagged enum by scanning keys and using the Solver
+    /// to determine which variant matches.
+    fn deserialize_untagged_enum<'facet, const BORROW: bool>(
+        &mut self,
+        mut partial: Partial<'facet, BORROW>,
+    ) -> Result<Partial<'facet, BORROW>> {
+        log::trace!(
+            "deserialize_untagged_enum: {} at path = {}",
+            partial.shape(),
+            partial.path()
+        );
+
+        let shape = partial.shape();
+
+        // Build schema - this creates one resolution per variant for untagged enums
+        let schema = Schema::build_auto(shape).map_err(|e| {
+            self.error(YamlErrorKind::InvalidValue {
+                message: format!("failed to build schema: {e}"),
+            })
+        })?;
+
+        // Create the solver
+        let mut solver = Solver::new(&schema);
+
+        // Check what type of YAML value we have
+        let event = self.peek().ok_or_else(|| {
+            self.error(YamlErrorKind::UnexpectedEof {
+                expected: "untagged enum value",
+            })
+        })?;
+        let event_kind = event.event.clone();
+
+        match &event_kind {
+            OwnedEvent::MappingStart { .. } => {
+                // Record start position for rewinding after we determine the variant
+                let start_pos = self.position();
+
+                self.next(); // consume MappingStart
+
+                // ========== PASS 1: Collect event indices of keys ==========
+                // We store indices into self.events to avoid cloning strings
+                let mut key_indices: Vec<usize> = Vec::new();
+                loop {
+                    let event = self.peek().ok_or_else(|| {
+                        self.error(YamlErrorKind::UnexpectedEof {
+                            expected: "field name or mapping end",
+                        })
+                    })?;
+
+                    if matches!(&event.event, OwnedEvent::MappingEnd) {
+                        self.next(); // consume MappingEnd
+                        break;
+                    }
+
+                    // Record the position of this key event
+                    let key_pos = self.pos;
+
+                    // Validate it's a scalar
+                    let key_event = self.next_or_eof("field name")?;
+                    match &key_event.event {
+                        OwnedEvent::Scalar { .. } => {
+                            key_indices.push(key_pos);
+                        }
+                        other => {
+                            return Err(YamlError::new(
+                                YamlErrorKind::UnexpectedEvent {
+                                    got: format!("{other:?}"),
+                                    expected: "field name (scalar)",
+                                },
+                                Span::from_saphyr_span(&key_event.span),
+                            )
+                            .with_source(self.input));
+                        }
+                    };
+
+                    // Skip the value
+                    self.skip_value()?;
+                }
+
+                // ========== Feed keys to solver (zero-copy via references) ==========
+                for &idx in &key_indices {
+                    if let OwnedEvent::Scalar { value, .. } = &self.events[idx].event {
+                        let _decision = solver.see_key(value.as_str());
+                    }
+                }
+
+                // ========== Get the resolved variant ==========
+                let config = solver.finish().map_err(|e| {
+                    self.error(YamlErrorKind::InvalidValue {
+                        message: format!("solver error: {e}"),
+                    })
+                })?;
+
+                // Extract the variant name from the resolution
+                let variant_name = config
+                    .variant_selections()
+                    .first()
+                    .map(|vs| vs.variant_name)
+                    .ok_or_else(|| {
+                        self.error(YamlErrorKind::InvalidValue {
+                            message: "solver returned resolution with no variant selection".into(),
+                        })
+                    })?;
+
+                // Select the variant
+                partial = partial.select_variant_named(variant_name)?;
+
+                // ========== PASS 2: Rewind and deserialize ==========
+                // Create a new deserializer at the start of the mapping
+                let events = self.clone_events();
+                let mut rewound_deser =
+                    YamlDeserializer::from_position(self.input, events, start_pos);
+
+                // Deserialize the variant content
+                partial = rewound_deser.deserialize_untagged_variant_content(partial)?;
+
+                Ok(partial)
+            }
+            OwnedEvent::SequenceStart { .. } => {
+                // For sequences (tuple variants), we need to try to match based on structure
+                // For now, this is a limited implementation - we try each variant in order
+                Err(self.error(YamlErrorKind::InvalidValue {
+                    message: "untagged enum deserialization for sequences not yet fully supported"
+                        .into(),
+                }))
+            }
+            OwnedEvent::Scalar { .. } => {
+                // For scalars (newtype or unit variants), we need special handling
+                // Try each variant that could match a scalar
+                Err(self.error(YamlErrorKind::InvalidValue {
+                    message: "untagged enum deserialization for scalars not yet fully supported"
+                        .into(),
+                }))
+            }
+            other => Err(YamlError::new(
+                YamlErrorKind::UnexpectedEvent {
+                    got: format!("{other:?}"),
+                    expected: "mapping, sequence, or scalar for untagged enum",
+                },
+                self.current_span(),
+            )
+            .with_source(self.input)),
+        }
+    }
+
+    /// Deserialize the content of an untagged enum variant.
+    /// Handles struct variants and tuple variants.
+    fn deserialize_untagged_variant_content<'facet, const BORROW: bool>(
+        &mut self,
+        mut partial: Partial<'facet, BORROW>,
+    ) -> Result<Partial<'facet, BORROW>> {
+        // Get the selected variant info
+        let variant = partial.selected_variant().ok_or_else(|| {
+            self.error(YamlErrorKind::InvalidValue {
+                message: "no variant selected".into(),
+            })
+        })?;
+
+        // Determine if this is a struct variant or tuple variant
+        let is_struct_variant = variant
+            .data
+            .fields
+            .first()
+            .map(|f| !f.name.starts_with(|c: char| c.is_ascii_digit()))
+            .unwrap_or(true);
+
+        if is_struct_variant {
+            // Struct variant: deserialize from mapping
+            partial = self.deserialize_struct_variant_fields(partial)?;
+        } else if variant.data.fields.len() == 1 {
+            // Single-element tuple variant: just the value directly
+            partial = partial.begin_nth_field(0)?;
+            partial = self.deserialize_value(partial)?;
+            partial = partial.end()?;
+        } else {
+            // Multi-element tuple variant: sequence
+            let num_fields = variant.data.fields.len();
+            partial = self.deserialize_tuple_variant_fields(partial, num_fields)?;
+        }
+
+        Ok(partial)
     }
 
     /// Deserialize tuple variant fields from a sequence.
