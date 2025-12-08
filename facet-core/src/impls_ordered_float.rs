@@ -1,6 +1,6 @@
 use crate::{
     Def, Facet, PtrConst, PtrMut, PtrUninit, Repr, Shape, StructType, TryBorrowInnerError,
-    TryFromError, TryIntoInnerError, Type, UserType, field_in_type, value_vtable,
+    TryFromError, TryIntoInnerError, Type, UserType, Variance, field_in_type, value_vtable,
 };
 use ordered_float::{NotNan, OrderedFloat};
 
@@ -94,6 +94,7 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                     type_tag: None,
                     inner: Some(<$float as Facet>::SHAPE),
                     proxy: None,
+                    variance: Variance::Invariant,
                 }
             };
         }
@@ -195,6 +196,7 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                     type_tag: None,
                     inner: Some(<$float as Facet>::SHAPE),
                     proxy: None,
+                    variance: Variance::Invariant,
                 }
             };
         }

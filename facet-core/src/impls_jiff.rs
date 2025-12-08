@@ -1,7 +1,9 @@
 use alloc::string::String;
 use jiff::{Timestamp, Zoned, civil::DateTime};
 
-use crate::{Def, Facet, ParseError, PtrConst, PtrUninit, Shape, Type, UserType, value_vtable};
+use crate::{
+    Def, Facet, ParseError, PtrConst, PtrUninit, Shape, Type, UserType, Variance, value_vtable,
+};
 
 const ZONED_ERROR: &str = "could not parse time-zone aware instant of time";
 
@@ -59,6 +61,7 @@ unsafe impl Facet<'_> for Zoned {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }
@@ -122,6 +125,7 @@ unsafe impl Facet<'_> for Timestamp {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }
@@ -184,6 +188,7 @@ unsafe impl Facet<'_> for DateTime {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }

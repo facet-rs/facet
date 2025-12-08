@@ -1,3 +1,4 @@
+use crate::Variance;
 use core::ptr::NonNull;
 
 use crate::*;
@@ -97,6 +98,7 @@ where
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }

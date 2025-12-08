@@ -1,4 +1,4 @@
-use crate::{Def, value_vtable};
+use crate::{Def, Variance, value_vtable};
 use crate::{Facet, Shape, Type, UserType};
 
 /// Helper type for opaque members
@@ -20,6 +20,7 @@ unsafe impl<'facet, T: 'facet> Facet<'facet> for Opaque<T> {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }

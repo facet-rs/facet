@@ -1,3 +1,4 @@
+use crate::Variance;
 use core::ptr::NonNull;
 
 use crate::shape_util::vtable_for_list;
@@ -106,6 +107,7 @@ where
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }

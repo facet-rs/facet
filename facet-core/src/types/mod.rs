@@ -6,6 +6,90 @@ use crate::PtrMut;
 
 use core::alloc::Layout;
 
+/// The variance of a type with respect to its lifetime parameter.
+///
+/// Variance determines how a type's lifetime parameter relates to subtyping:
+/// - **Covariant**: `T<'static>` can be used where `T<'a>` is expected (shrinking is safe)
+/// - **Contravariant**: `T<'a>` can be used where `T<'static>` is expected (growing is safe)
+/// - **Invariant**: No lifetime changes allowed
+///
+/// This is used by `Peek` to safely allow lifetime manipulation based on the actual
+/// variance of the underlying type.
+///
+/// # Examples
+///
+/// - `&'a T` is covariant in `'a` (a longer-lived reference can be used as a shorter one)
+/// - `fn(&'a T)` is contravariant in `'a` (a function accepting short-lived refs can accept long-lived ones)
+/// - `&'a mut T` is invariant in `'a` (mutable references can't change lifetimes)
+/// - `Cell<&'a T>` is invariant in `'a` (interior mutability prevents variance)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[repr(u8)]
+pub enum Variance {
+    /// Type is covariant: can safely shrink lifetimes (`'static` → `'a`).
+    ///
+    /// Examples: `&'a T`, `Box<&'a T>`, `Vec<&'a T>`, `fn() -> &'a T`
+    Covariant = 0,
+
+    /// Type is contravariant: can safely grow lifetimes (`'a` → `'static`).
+    ///
+    /// Examples: `fn(&'a T)`, `fn(&'a T) -> ()`
+    Contravariant = 1,
+
+    /// Type is invariant: no lifetime changes allowed.
+    ///
+    /// Examples: `&'a mut T`, `Cell<&'a T>`, `UnsafeCell<&'a T>`,
+    /// or any type with mixed covariant/contravariant positions.
+    #[default]
+    Invariant = 2,
+}
+
+impl Variance {
+    /// Combine two variances (used when a type contains multiple lifetime-carrying fields).
+    ///
+    /// The rules follow Rust's variance composition:
+    /// - Same variance: keep it
+    /// - Mixed covariant/contravariant: becomes invariant
+    /// - Invariant dominates everything
+    #[inline]
+    pub const fn combine(self, other: Variance) -> Variance {
+        match (self, other) {
+            // Same variance = keep it
+            (Variance::Covariant, Variance::Covariant) => Variance::Covariant,
+            (Variance::Contravariant, Variance::Contravariant) => Variance::Contravariant,
+            (Variance::Invariant, _) | (_, Variance::Invariant) => Variance::Invariant,
+
+            // Mixed covariant/contravariant = invariant
+            (Variance::Covariant, Variance::Contravariant)
+            | (Variance::Contravariant, Variance::Covariant) => Variance::Invariant,
+        }
+    }
+
+    /// Flip variance (used when type appears in contravariant position, like fn args).
+    ///
+    /// - Covariant ↔ Contravariant
+    /// - Invariant stays Invariant
+    #[inline]
+    pub const fn flip(self) -> Variance {
+        match self {
+            Variance::Covariant => Variance::Contravariant,
+            Variance::Contravariant => Variance::Covariant,
+            Variance::Invariant => Variance::Invariant,
+        }
+    }
+
+    /// Returns `true` if lifetimes can be safely shrunk (`'static` → `'a`).
+    #[inline]
+    pub const fn can_shrink(self) -> bool {
+        matches!(self, Variance::Covariant)
+    }
+
+    /// Returns `true` if lifetimes can be safely grown (`'a` → `'static`).
+    #[inline]
+    pub const fn can_grow(self) -> bool {
+        matches!(self, Variance::Contravariant)
+    }
+}
+
 mod attr_grammar;
 pub use attr_grammar::*;
 
@@ -103,6 +187,17 @@ pub struct Shape {
     /// This is stored as an opaque pointer to avoid conditional compilation on all Shape
     /// constructors. Use the `proxy()` method to access it with proper typing.
     pub proxy: Option<&'static ()>,
+
+    /// Variance of this type with respect to its lifetime parameter.
+    ///
+    /// This determines whether lifetimes can be safely shrunk (covariant),
+    /// grown (contravariant), or must remain unchanged (invariant).
+    ///
+    /// Used by `Peek::get_shrinking()` and `Peek::get_growing()` to safely
+    /// allow lifetime manipulation at runtime.
+    ///
+    /// Defaults to `Invariant` (the safe default) if not explicitly set.
+    pub variance: Variance,
 }
 
 impl PartialOrd for Shape {
@@ -522,6 +617,7 @@ impl core::fmt::Debug for Shape {
             type_tag: _,
             inner: _,
             proxy: _, // omit by default
+            variance: _,
         } = self;
 
         if f.alternate() {
@@ -739,6 +835,7 @@ pub struct ShapeBuilder {
     type_tag: Option<&'static str>,
     inner: Option<&'static Shape>,
     proxy: Option<&'static ()>,
+    variance: Variance,
 }
 
 impl ShapeBuilder {
@@ -761,6 +858,7 @@ impl ShapeBuilder {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant, // Safe default
         }
     }
 
@@ -783,6 +881,7 @@ impl ShapeBuilder {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant, // Safe default
         }
     }
 
@@ -852,6 +951,18 @@ impl ShapeBuilder {
     pub const fn proxy(mut self, proxy: &'static ProxyDef) -> Self {
         // Store as opaque pointer - will be cast back in Shape::proxy()
         self.proxy = Some(unsafe { &*(proxy as *const ProxyDef as *const ()) });
+        self
+    }
+
+    /// Set the variance of this type.
+    ///
+    /// Variance determines how lifetimes can be safely manipulated:
+    /// - `Covariant`: lifetimes can be shrunk (`'static` → `'a`)
+    /// - `Contravariant`: lifetimes can be grown (`'a` → `'static`)
+    /// - `Invariant`: no lifetime changes allowed (default)
+    #[inline]
+    pub const fn variance(mut self, variance: Variance) -> Self {
+        self.variance = variance;
         self
     }
 
@@ -1046,6 +1157,7 @@ impl ShapeBuilder {
             type_tag: self.type_tag,
             inner: self.inner,
             proxy: self.proxy,
+            variance: self.variance,
         }
     }
 }

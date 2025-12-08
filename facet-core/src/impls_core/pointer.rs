@@ -1,3 +1,4 @@
+use crate::Variance;
 use core::fmt;
 use core::hash::Hash;
 
@@ -81,6 +82,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *const T {
             type_tag: None,
             inner: Some(T::SHAPE),
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }
@@ -160,6 +162,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
             type_tag: None,
             inner: Some(T::SHAPE),
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }

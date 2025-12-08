@@ -54,13 +54,18 @@ pub struct Peek<'mem, 'facet> {
     /// Shape of the value
     pub(crate) shape: &'static Shape,
 
-    // Covariant over 'facet: Peek<'mem, 'static> can be used where Peek<'mem, 'a> is expected.
-    // This is safe because:
-    // 1. Covariance only allows shrinking lifetimes ('static -> 'a), not growing
-    // 2. Data valid for 'static is valid for any shorter lifetime
-    // 3. The 'mem lifetime and borrow checker prevent references from escaping
-    // See: https://github.com/facet-rs/facet/discussions/1128
-    _covariant: PhantomData<&'facet ()>,
+    // Invariant over 'facet: Peek<'mem, 'a> cannot be cast to Peek<'mem, 'b> even if 'a: 'b.
+    //
+    // This is REQUIRED for soundness! If Peek were covariant over 'facet, we could:
+    // 1. Create Peek<'mem, 'static> from FnWrapper<'static> (contains fn(&'static str))
+    // 2. Use covariance to cast it to Peek<'mem, 'short>
+    // 3. Call get::<FnWrapper<'short>>() to get &FnWrapper<'short>
+    // 4. This would allow calling the function with a &'short str that goes out of scope
+    //    while the original function pointer still holds it as 'static
+    //
+    // The fn(&'a ()) -> &'a () pattern makes this type invariant over 'facet.
+    // See: https://github.com/facet-rs/facet/issues/1168
+    _invariant: PhantomData<fn(&'facet ()) -> &'facet ()>,
 }
 
 impl<'mem, 'facet> Peek<'mem, 'facet> {
@@ -69,7 +74,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         Self {
             data: PtrConst::new(NonNull::from(t)),
             shape: T::SHAPE,
-            _covariant: PhantomData,
+            _invariant: PhantomData,
         }
     }
 
@@ -85,7 +90,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         Self {
             data,
             shape,
-            _covariant: PhantomData,
+            _invariant: PhantomData,
         }
     }
 
@@ -513,7 +518,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                 current_peek = Peek {
                     data: inner_data,
                     shape: inner_shape,
-                    _covariant: PhantomData,
+                    _invariant: PhantomData,
                 };
             }
         }

@@ -5,7 +5,7 @@ use url::Url;
 
 use crate::{
     Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, Shape, TryBorrowInnerError,
-    TryIntoInnerError, Type, UserType, value_vtable,
+    TryIntoInnerError, Type, UserType, Variance, value_vtable,
 };
 
 unsafe impl Facet<'_> for Url {
@@ -77,6 +77,7 @@ unsafe impl Facet<'_> for Url {
             type_tag: None,
             inner: Some(<String as Facet>::SHAPE),
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }

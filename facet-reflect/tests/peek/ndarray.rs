@@ -151,6 +151,7 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Mat<T> {
         attributes: &[],
         inner: None,
         proxy: None,
+        variance: facet_core::Variance::Invariant,
     };
 }
 

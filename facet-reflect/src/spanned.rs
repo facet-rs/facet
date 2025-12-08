@@ -4,7 +4,7 @@ use core::{mem, ops::Deref};
 
 use facet_core::{
     Def, Facet, Field, FieldFlags, Shape, ShapeRef, StructType, Type, TypeParam, UserType,
-    ValueVTable,
+    ValueVTable, Variance,
 };
 
 /// Source span with offset and length.
@@ -104,6 +104,7 @@ unsafe impl Facet<'_> for Span {
         type_tag: None,
         inner: None,
         proxy: None,
+        variance: Variance::Invariant,
     };
 }
 
@@ -235,6 +236,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Spanned<T> {
         type_tag: None,
         inner: None,
         proxy: None,
+        variance: Variance::Invariant,
     };
 }
 

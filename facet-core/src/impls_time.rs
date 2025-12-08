@@ -1,7 +1,9 @@
 use alloc::string::String;
 use time::{OffsetDateTime, UtcDateTime};
 
-use crate::{Def, Facet, ParseError, PtrConst, PtrUninit, Shape, Type, UserType, value_vtable};
+use crate::{
+    Def, Facet, ParseError, PtrConst, PtrUninit, Shape, Type, UserType, Variance, value_vtable,
+};
 
 unsafe impl Facet<'_> for UtcDateTime {
     const SHAPE: &'static Shape = &const {
@@ -69,6 +71,7 @@ unsafe impl Facet<'_> for UtcDateTime {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }
@@ -139,6 +142,7 @@ unsafe impl Facet<'_> for OffsetDateTime {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }

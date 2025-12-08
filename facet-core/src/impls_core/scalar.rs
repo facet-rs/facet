@@ -408,6 +408,7 @@ macro_rules! impl_facet_for_nonzero {
                     type_tag: None,
                     inner: Some(<$type as Facet>::SHAPE),
                     proxy: None,
+                    variance: Variance::Invariant,
                 }
             };
         }

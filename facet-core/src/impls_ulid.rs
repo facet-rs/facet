@@ -4,7 +4,7 @@ use ulid::Ulid;
 
 use crate::{
     Def, Facet, ParseError, PtrConst, PtrMut, PtrUninit, Shape, TryFromError, TryIntoInnerError,
-    Type, UserType, value_vtable,
+    Type, UserType, Variance, value_vtable,
 };
 
 unsafe impl Facet<'_> for Ulid {
@@ -69,6 +69,7 @@ unsafe impl Facet<'_> for Ulid {
             type_tag: None,
             inner: Some(<String as Facet>::SHAPE),
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }

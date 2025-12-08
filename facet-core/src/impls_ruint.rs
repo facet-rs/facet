@@ -1,6 +1,6 @@
 use ruint::{Bits, Uint};
 
-use crate::{Def, Facet, Shape, Type, UserType, value_vtable};
+use crate::{Def, Facet, Shape, Type, UserType, Variance, value_vtable};
 
 unsafe impl<'facet, const BITS: usize, const LIMBS: usize> Facet<'facet> for Uint<BITS, LIMBS> {
     const SHAPE: &'static Shape = &const {
@@ -20,6 +20,7 @@ unsafe impl<'facet, const BITS: usize, const LIMBS: usize> Facet<'facet> for Uin
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }
@@ -42,6 +43,7 @@ unsafe impl<'facet, const BITS: usize, const LIMBS: usize> Facet<'facet> for Bit
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }

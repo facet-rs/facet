@@ -1,3 +1,4 @@
+use crate::Variance;
 use crate::{
     Def, Facet, FormatVTable, PtrConst, Shape, Type, UserType, ValueVTable,
     shape_util::vtable_for_ptr,
@@ -72,5 +73,6 @@ where
         type_tag: None,
         inner: None,
         proxy: None,
+        variance: Variance::Invariant,
     };
 }
