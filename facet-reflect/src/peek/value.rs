@@ -41,11 +41,27 @@ impl core::fmt::Debug for ValueId {
     }
 }
 
-/// Lets you read from a value (implements read-only [`ValueVTable`] proxies)
+/// A read-only view into a value with runtime type information.
 ///
-/// If the value is a struct, you can read its fields, if the value is an enum,
-/// you can find out which variant is selected, if it's a scalar you can check
-/// against known types and get a concrete value out of it, etc.
+/// `Peek` provides reflection capabilities for reading values at runtime.
+/// If the value is a struct, you can read its fields; if it's an enum,
+/// you can determine which variant is selected; if it's a scalar, you can
+/// extract a concrete value.
+///
+/// # Lifetime Parameters
+///
+/// - `'mem`: The memory lifetime - how long the underlying data is valid
+/// - `'facet`: The type's lifetime parameter (for types like `&'a str`)
+///
+/// # Variance and Soundness
+///
+/// `Peek` is **invariant** over `'facet`. This is required for soundness:
+/// if `Peek` were covariant, it would be possible to launder lifetimes
+/// through reflection, leading to use-after-free bugs with types like
+/// `fn(&'a str)`. See [issue #1168](https://github.com/facet-rs/facet/issues/1168).
+///
+/// The underlying type's variance is tracked in [`Shape::variance`], which
+/// can be used for future variance-aware APIs.
 #[derive(Clone, Copy)]
 pub struct Peek<'mem, 'facet> {
     /// Underlying data
