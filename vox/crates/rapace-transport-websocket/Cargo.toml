@@ -1,0 +1,17 @@
+[package]
+name = "rapace-transport-websocket"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WebSocket transport for rapace"
+
+[dependencies]
+rapace-core.workspace = true
+tokio.workspace = true
+futures.workspace = true
+# TODO: add websocket library (tokio-tungstenite or similar)
+
+[dev-dependencies]
+rapace-testkit.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "net"] }

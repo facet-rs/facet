@@ -1,0 +1,18 @@
+[package]
+name = "rapace-macros"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Proc macros for rapace RPC (#[rapace::service])"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "parsing", "extra-traits"] }
+
+[dev-dependencies]
+rapace-core.workspace = true

@@ -1,0 +1,15 @@
+[package]
+name = "rapace-testkit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Conformance test suite for rapace transports"
+
+[dependencies]
+rapace-core.workspace = true
+tokio.workspace = true
+futures.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread"] }

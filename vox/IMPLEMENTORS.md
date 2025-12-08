@@ -4,6 +4,55 @@ Rules and invariants for contributors. Violating these breaks the design.
 
 ---
 
+## Crate Structure
+
+**Core crates:**
+- `rapace` — Main crate, re-exports, `#[rapace::service]` proc macro
+- `rapace-core` — Shared types: `Frame`, `FrameView`, `MsgDescHot`, `MsgDescCold`, `MsgHeader`, `ControlPayload`, `ErrorCode`, `FrameFlags`, validation, limits
+- `rapace-macros` — Proc macro implementation for `#[rapace::service]`
+
+**Transport crates:**
+- `rapace-transport-mem` — In-proc transport (semantic reference)
+- `rapace-transport-shm` — Shared memory transport (performance reference)
+- `rapace-transport-stream` — TCP/Unix socket transport
+- `rapace-transport-websocket` — WebSocket transport
+
+**Supporting crates:**
+- `rapace-codec` — Facet-driven encoding/decoding, `EncodeCtx`/`DecodeCtx` traits
+- `rapace-registry` — Service registry, schemas, introspection
+
+**Optional/utility crates:**
+- `rapace-bus` — Broker pattern for N-way topologies (future)
+- `rapace-testing` — Fault injection, conformance tests
+
+**External dependencies:**
+- `facet` — Reflection system (from git)
+- `facet-postcard` — Postcard encoding via facet (from git)
+- `tokio` — Async runtime
+- `bitflags` — For `FrameFlags`
+
+---
+
+## Hard Constraints
+
+### NO SERDE
+
+rapace does not use serde. All serialization goes through facet.
+
+```rust
+// WRONG: serde derives
+#[derive(Serialize, Deserialize)]
+struct MyType { ... }
+
+// RIGHT: facet derives
+#[derive(facet::Facet)]
+struct MyType { ... }
+```
+
+This is non-negotiable. If a dependency requires serde, find an alternative or write a facet-based solution.
+
+---
+
 ## Core Invariants
 
 These are non-negotiable. If you find yourself wanting to break one, stop and discuss first.

@@ -1,23 +1,46 @@
-[package]
-name = "rapace"
+[workspace]
+resolver = "2"
+members = [
+    "crates/rapace-core",
+    "crates/rapace-macros",
+    "crates/rapace-transport-mem",
+    "crates/rapace-transport-shm",
+    "crates/rapace-transport-stream",
+    "crates/rapace-transport-websocket",
+    "crates/rapace-testkit",
+    "xtask",
+]
+exclude = ["fuzz"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bearcove/rapace"
 
-[dependencies]
+[workspace.dependencies]
+# Internal crates
+rapace-core = { path = "crates/rapace-core" }
+rapace-macros = { path = "crates/rapace-macros" }
+rapace-transport-mem = { path = "crates/rapace-transport-mem" }
+rapace-transport-shm = { path = "crates/rapace-transport-shm" }
+rapace-transport-stream = { path = "crates/rapace-transport-stream" }
+rapace-transport-websocket = { path = "crates/rapace-transport-websocket" }
+rapace-testkit = { path = "crates/rapace-testkit" }
+
+# External dependencies
 libc = "0.2"
 bitflags = "2"
-tokio = { version = "1", features = ["sync", "rt"] }
+tokio = { version = "1", features = ["sync", "rt", "macros"] }
 paste = "1"
+futures = "0.3"
+pin-project-lite = "0.2"
 
 # facet ecosystem (from git until published)
 facet = { git = "https://github.com/facet-rs/facet" }
 facet-core = { git = "https://github.com/facet-rs/facet" }
 facet-postcard = { git = "https://github.com/facet-rs/facet" }
 
-[dev-dependencies]
+# Testing/fuzzing
+bolero = "0.11"
 proptest = "1"
-tokio = { version = "1", features = ["macros", "rt"] }
-
-[workspace]
-members = ["xtask"]
-exclude = ["fuzz"]
