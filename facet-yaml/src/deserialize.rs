@@ -397,6 +397,18 @@ impl<'input> YamlDeserializer<'input> {
             return self.deserialize_spanned(partial);
         }
 
+        // Check for container-level proxy (applies to values inside Vec<T>, Option<T>, etc.)
+        // This must come early because proxy types need to be deserialized through their proxy shape
+        let (partial, has_proxy) = partial.begin_custom_deserialization_from_shape()?;
+        if has_proxy {
+            log::trace!(
+                "deserialize_value: using container-level proxy for {}",
+                shape.type_identifier
+            );
+            let partial = self.deserialize_value(partial)?;
+            return partial.end().map_err(Into::into);
+        }
+
         // Check Def first for Option (which is also a Type::User::Enum)
         if matches!(&shape.def, Def::Option(_)) {
             return self.deserialize_option(partial);
@@ -423,7 +435,18 @@ impl<'input> YamlDeserializer<'input> {
             log::trace!("Handling transparent type: {}", shape.type_identifier);
             let mut partial = partial;
             partial = partial.begin_inner()?;
-            partial = self.deserialize_value(partial)?;
+            // Check if field has custom deserialization (field-level proxy)
+            if partial
+                .parent_field()
+                .and_then(|field| field.proxy_convert_in_fn())
+                .is_some()
+            {
+                partial = partial.begin_custom_deserialization()?;
+                partial = self.deserialize_value(partial)?;
+                partial = partial.end()?;
+            } else {
+                partial = self.deserialize_value(partial)?;
+            }
             partial = partial.end()?;
             return Ok(partial);
         }
