@@ -38,6 +38,39 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             self.prepare_for_reinitialization();
         }
 
+        // In deferred mode, push "Some" onto the path to distinguish
+        // Option<T> (path ends before "Some") from the inner T (path includes "Some").
+        // This treats Option like an enum with Some/None variants for path tracking.
+        if let FrameMode::Deferred {
+            stack,
+            start_depth,
+            current_path,
+            stored_frames,
+            ..
+        } = &mut self.mode
+        {
+            let relative_depth = stack.len() - *start_depth;
+            let should_track = current_path.len() == relative_depth;
+
+            if should_track {
+                current_path.push("Some");
+
+                // Check if we have a stored frame for this path (re-entry case)
+                if let Some(stored_frame) = stored_frames.remove(current_path) {
+                    trace!("begin_some: Restoring stored frame for path {current_path:?}");
+
+                    // Update tracker to indicate we're building the inner value
+                    let frame = stack.last_mut().unwrap();
+                    frame.tracker = Tracker::Option {
+                        building_inner: true,
+                    };
+
+                    stack.push(stored_frame);
+                    return Ok(self);
+                }
+            }
+        }
+
         // Set tracker to indicate we're building the inner value
         let frame = self.frames_mut().last_mut().unwrap();
         frame.tracker = Tracker::Option {

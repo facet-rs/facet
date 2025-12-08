@@ -209,6 +209,29 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             if let Some(field_name) = path.last() {
                 let parent_path: Vec<_> = path[..path.len() - 1].to_vec();
 
+                // Special handling for Option inner values: when path ends with "Some",
+                // the parent is an Option frame and we need to complete the Option by
+                // writing the inner value into the Option's memory.
+                if *field_name == "Some" {
+                    // Find the Option frame (parent)
+                    let option_frame = if parent_path.is_empty() {
+                        let parent_index = start_depth.saturating_sub(1);
+                        self.frames_mut().get_mut(parent_index)
+                    } else if let Some(parent_frame) = stored_frames.get_mut(&parent_path) {
+                        Some(parent_frame)
+                    } else {
+                        let parent_frame_index = start_depth + parent_path.len() - 1;
+                        self.frames_mut().get_mut(parent_frame_index)
+                    };
+
+                    if let Some(option_frame) = option_frame {
+                        // The frame contains the inner value - write it into the Option's memory
+                        Self::complete_option_frame(option_frame, frame);
+                        // Frame data has been transferred to Option - don't drop it
+                        continue;
+                    }
+                }
+
                 if parent_path.is_empty() {
                     // Parent is the frame that was current when deferred mode started.
                     // It's at index (start_depth - 1) because deferred mode stores frames
@@ -285,6 +308,40 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// Complete an Option frame by writing the inner value and marking it initialized.
+    /// Used in finish_deferred when processing a stored frame at a path ending with "Some".
+    fn complete_option_frame(option_frame: &mut Frame, inner_frame: Frame) {
+        if let Def::Option(option_def) = option_frame.shape.def {
+            // Use the Option vtable to initialize Some(inner_value)
+            let init_some_fn = option_def.vtable.init_some_fn;
+
+            // The inner frame contains the inner value
+            let inner_value_ptr = unsafe { inner_frame.data.assume_init().as_const() };
+
+            // Initialize the Option as Some(inner_value)
+            unsafe {
+                init_some_fn(option_frame.data, inner_value_ptr);
+            }
+
+            // Deallocate the inner value's memory since init_some_fn moved it
+            if let FrameOwnership::Owned = inner_frame.ownership {
+                if let Ok(layout) = inner_frame.shape.layout.sized_layout() {
+                    if layout.size() > 0 {
+                        unsafe {
+                            ::alloc::alloc::dealloc(inner_frame.data.as_mut_byte_ptr(), layout);
+                        }
+                    }
+                }
+            }
+
+            // Mark the Option as initialized
+            option_frame.tracker = Tracker::Option {
+                building_inner: false,
+            };
+            option_frame.is_init = true;
         }
     }
 
@@ -378,24 +435,45 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         let requires_full_init = if !self.is_deferred() {
             true
         } else {
-            // In deferred mode, check if parent is a collection that requires
-            // fully initialized items (map, list, set, option)
-            if self.frames().len() >= 2 {
-                let frame_len = self.frames().len();
-                let parent_frame = &self.frames()[frame_len - 2];
-                matches!(
-                    parent_frame.tracker,
-                    Tracker::Map { .. }
-                        | Tracker::List { .. }
-                        | Tracker::Set { .. }
-                        | Tracker::Option { .. }
-                        | Tracker::Result { .. }
-                        | Tracker::DynamicValue {
-                            state: DynamicValueState::Array { .. }
-                        }
-                )
+            // In deferred mode, first check if this frame will be stored (tracked field).
+            // If so, skip full init check - the frame will be stored for later completion.
+            let is_tracked_frame = if let FrameMode::Deferred {
+                stack,
+                start_depth,
+                current_path,
+                ..
+            } = &self.mode
+            {
+                // Path depth should match the relative frame depth for a tracked field.
+                // frames.len() - start_depth should equal path.len() for tracked fields.
+                let relative_depth = stack.len() - *start_depth;
+                !current_path.is_empty() && current_path.len() == relative_depth
             } else {
                 false
+            };
+
+            if is_tracked_frame {
+                // This frame will be stored in deferred mode - don't require full init
+                false
+            } else {
+                // Check if parent is a collection that requires fully initialized items
+                if self.frames().len() >= 2 {
+                    let frame_len = self.frames().len();
+                    let parent_frame = &self.frames()[frame_len - 2];
+                    matches!(
+                        parent_frame.tracker,
+                        Tracker::Map { .. }
+                            | Tracker::List { .. }
+                            | Tracker::Set { .. }
+                            | Tracker::Option { .. }
+                            | Tracker::Result { .. }
+                            | Tracker::DynamicValue {
+                                state: DynamicValueState::Array { .. }
+                            }
+                    )
+                } else {
+                    false
+                }
             }
         };
 

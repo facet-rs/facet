@@ -217,7 +217,12 @@ impl core::fmt::Display for ReflectError {
                 write!(f, "Wrong shape: expected {expected}, but got {actual}")
             }
             ReflectError::UninitializedField { shape, field_name } => {
-                write!(f, "Field '{shape}::{field_name}' was not initialized")
+                write!(
+                    f,
+                    "Field '{shape}::{field_name}' was not initialized. \
+                    If you need to leave fields partially initialized and come back later, \
+                    use deferred mode (begin_deferred/finish_deferred)"
+                )
             }
             ReflectError::UninitializedEnumField {
                 shape,
@@ -226,11 +231,18 @@ impl core::fmt::Display for ReflectError {
             } => {
                 write!(
                     f,
-                    "Field '{shape}::{field_name}' in variant '{variant_name}' was not initialized"
+                    "Field '{shape}::{field_name}' in variant '{variant_name}' was not initialized. \
+                    If you need to leave fields partially initialized and come back later, \
+                    use deferred mode (begin_deferred/finish_deferred)"
                 )
             }
             ReflectError::UninitializedValue { shape } => {
-                write!(f, "Value '{shape}' was not initialized")
+                write!(
+                    f,
+                    "Value '{shape}' was not initialized. \
+                    If you need to leave values partially initialized and come back later, \
+                    use deferred mode (begin_deferred/finish_deferred)"
+                )
             }
             ReflectError::InvariantViolation { invariant } => {
                 write!(f, "Invariant violation: {invariant}")

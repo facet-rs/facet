@@ -1,5 +1,6 @@
 ---
 source: facet-reflect/tests/partial/pointer.rs
+assertion_line: 130
 expression: _err
 ---
-Value 'String' was not initialized
+Value 'String' was not initialized. If you need to leave values partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred)

@@ -620,65 +620,6 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
         })
     }
 
-    /// Navigate a FieldPath from the solver and deserialize a value at that location.
-    ///
-    /// The FieldPath contains segments like:
-    /// - `Field("name")` - navigate into struct field "name"
-    /// - `Variant("field", "Variant")` - select enum variant (field already entered by prior Field segment)
-    #[allow(dead_code)]
-    fn deserialize_at_path(
-        &mut self,
-        mut wip: Partial<'input, BORROW>,
-        field_info: &facet_solver::FieldInfo,
-    ) -> Result<Partial<'input, BORROW>> {
-        let segments = field_info.path.segments();
-
-        // Count only Field segments for the unwind depth
-        // Variant segments select a variant but don't add to the stack
-        let field_depth = segments
-            .iter()
-            .filter(|s| matches!(s, PathSegment::Field(_)))
-            .count();
-
-        // Check if the path ends with a Variant segment - this means we're deserializing
-        // an externally tagged enum variant's content, not a regular field
-        let ends_with_variant = segments
-            .last()
-            .is_some_and(|s| matches!(s, PathSegment::Variant(_, _)));
-
-        // Navigate to the correct location
-        for segment in segments {
-            match segment {
-                PathSegment::Field(name) => {
-                    wip = wip.begin_field(name)?;
-                }
-                PathSegment::Variant(_field_name, variant_name) => {
-                    // Variant segment just selects the variant - the field was already
-                    // entered by a prior Field segment. The field_name in the Variant
-                    // segment is for display/debugging only.
-                    wip = wip.select_variant_named(variant_name)?;
-                }
-            }
-        }
-
-        // Deserialize the value at this location
-        if ends_with_variant {
-            // For externally tagged enum variants, after selecting the variant,
-            // we need to deserialize the variant's content (struct fields).
-            // The JSON value is the struct content, e.g., {"field1":"a","field2":"b"}
-            wip = self.deserialize_variant_struct_content(wip)?;
-        } else {
-            wip = self.deserialize_into(wip)?;
-        }
-
-        // Unwind the stack (call end() only for Field segments)
-        for _ in 0..field_depth {
-            wip = wip.end()?;
-        }
-
-        Ok(wip)
-    }
-
     /// Check if a struct has any flattened fields.
     fn has_flatten_fields(struct_def: &facet_core::StructType) -> bool {
         struct_def.fields.iter().any(|f| f.is_flattened())

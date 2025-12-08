@@ -2551,3 +2551,118 @@ fn deferred_all_fields_are_optional() -> Result<(), IPanic> {
 
     Ok(())
 }
+
+// =============================================================================
+// Option<Struct> interleaved field access (path tracking for begin_some)
+// =============================================================================
+
+#[test]
+fn deferred_option_struct_interleaved_fields() -> Result<(), IPanic> {
+    // This tests that begin_some() correctly pushes "Some" onto the deferred path,
+    // allowing us to exit and re-enter an Option<Struct> to set fields interleaved
+    // with other operations.
+    #[derive(Facet, Debug, PartialEq)]
+    struct Inner {
+        host: String,
+        port: u16,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Outer {
+        name: String,
+        connection: Option<Inner>,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial: Partial<'_> = Partial::alloc::<Outer>()?;
+    partial = partial.begin_deferred(resolution)?;
+
+    // Set name first
+    partial = partial.set_field("name", String::from("test"))?;
+
+    // Enter Option, set first inner field
+    partial = partial.begin_field("connection")?;
+    partial = partial.begin_some()?;
+    partial = partial.set_field("host", String::from("localhost"))?;
+    partial = partial.end()?; // end Inner (stored at path ["connection", "Some"])
+    partial = partial.end()?; // end Option field (stored at path ["connection"])
+
+    // Re-enter and set second inner field
+    partial = partial.begin_field("connection")?;
+    partial = partial.begin_some()?; // should restore stored frame
+    partial = partial.set_field("port", 8080u16)?;
+    partial = partial.end()?;
+    partial = partial.end()?;
+
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Outer>()?;
+
+    assert_eq!(result.name, "test");
+    assert_eq!(
+        result.connection,
+        Some(Inner {
+            host: String::from("localhost"),
+            port: 8080
+        })
+    );
+
+    Ok(())
+}
+
+#[test]
+fn deferred_option_struct_deeply_nested_interleaved() -> Result<(), IPanic> {
+    // Test deeper nesting: Outer -> Option<Middle> -> Inner
+    #[derive(Facet, Debug, PartialEq)]
+    struct Inner {
+        value: i32,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Middle {
+        inner: Inner,
+        tag: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Outer {
+        name: String,
+        middle: Option<Middle>,
+    }
+
+    let resolution = Resolution::new();
+    let mut partial: Partial<'_> = Partial::alloc::<Outer>()?;
+    partial = partial.begin_deferred(resolution)?;
+
+    // Set outer name
+    partial = partial.set_field("name", String::from("outer"))?;
+
+    // Enter Option<Middle>, then Inner, set value
+    partial = partial.begin_field("middle")?;
+    partial = partial.begin_some()?;
+    partial = partial.begin_field("inner")?;
+    partial = partial.set_field("value", 42i32)?;
+    partial = partial.end()?; // end Inner
+    partial = partial.end()?; // end Middle (the Some content)
+    partial = partial.end()?; // end Option field
+
+    // Re-enter to set Middle.tag
+    partial = partial.begin_field("middle")?;
+    partial = partial.begin_some()?;
+    partial = partial.set_field("tag", String::from("tagged"))?;
+    partial = partial.end()?;
+    partial = partial.end()?;
+
+    partial = partial.finish_deferred()?;
+    let result = partial.build()?.materialize::<Outer>()?;
+
+    assert_eq!(result.name, "outer");
+    assert_eq!(
+        result.middle,
+        Some(Middle {
+            inner: Inner { value: 42 },
+            tag: String::from("tagged")
+        })
+    );
+
+    Ok(())
+}
