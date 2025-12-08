@@ -2562,12 +2562,11 @@ impl<'input> XmlDeserializer<'input> {
 
         // Feed attribute names to solver
         for (attr_name, _) in attributes {
-            let key_static: &'static str = Box::leak(attr_name.local_name.clone().into_boxed_str());
-            let _decision = solver.see_key(key_static);
+            let _decision = solver.see_key(attr_name.local_name.clone());
         }
 
         // Track child element positions for pass 2
-        let mut element_positions: Vec<(&'static str, usize)> = Vec::new();
+        let mut element_positions: Vec<(String, usize)> = Vec::new();
         let saved_pos = self.pos;
 
         // ========== PASS 1: Peek mode - scan all child elements ==========
@@ -2585,11 +2584,9 @@ impl<'input> XmlDeserializer<'input> {
                         // Record position before this element
                         let elem_pos = self.pos - 1; // We already consumed this event
 
-                        // Leak the name for 'static lifetime
-                        let key_static: &'static str =
-                            Box::leak(name.local_name.clone().into_boxed_str());
-                        let _decision = solver.see_key(key_static);
-                        element_positions.push((key_static, elem_pos));
+                        let key = name.local_name.clone();
+                        let _decision = solver.see_key(key.clone());
+                        element_positions.push((key, elem_pos));
 
                         // Skip the element content if it's a Start event
                         if matches!(&event.event, OwnedEvent::Start { .. }) {

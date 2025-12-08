@@ -1715,7 +1715,7 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
         let mut solver = Solver::new(&schema);
 
         // Track where values start so we can re-read them in pass 2
-        let mut field_positions: Vec<(&'static str, usize)> = Vec::new();
+        let mut field_positions: Vec<(Cow<'input, str>, usize)> = Vec::new();
 
         // Expect opening brace
         let token = self.next()?;
@@ -1760,16 +1760,13 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
                         ));
                     }
 
-                    // Leak the key for 'static lifetime (fine for deserialization)
-                    let key_static: &'static str = Box::leak(key.into_owned().into_boxed_str());
-
                     // Record the value position before skipping
                     let value_start = self.peek()?.span.offset;
 
                     // Feed key to solver (decision not used in peek mode)
-                    let _decision = solver.see_key(key_static);
+                    let _decision = solver.see_key(key.clone());
 
-                    field_positions.push((key_static, value_start));
+                    field_positions.push((key, value_start));
 
                     // Skip the value
                     self.skip_value()?;
@@ -1805,7 +1802,7 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
         // This ensures we set all fields at a given nesting level before closing it
         let mut fields_to_process: Vec<_> = field_positions
             .iter()
-            .filter_map(|(key, offset)| config.field(key).map(|info| (info, *offset)))
+            .filter_map(|(key, offset)| config.field(key.as_ref()).map(|info| (info, *offset)))
             .collect();
 
         // Sort by path to group nested fields together
@@ -2143,10 +2140,10 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
     /// Deserialize an untagged enum using the Solver to determine which variant matches.
     ///
     /// For untagged enums, we use facet-solver to:
-    /// 1. Build a schema with one resolution per variant
-    /// 2. Feed all JSON keys to the solver to narrow down candidates
+    /// 1. Record the start position of the object
+    /// 2. Scan all JSON keys, feed them to the solver to narrow down candidates
     /// 3. Use finish() to determine which variant's required fields are satisfied
-    /// 4. Deserialize into the matched variant
+    /// 4. Rewind to start position and deserialize the whole object into the matched variant
     fn deserialize_untagged_enum(
         &mut self,
         mut wip: Partial<'input, BORROW>,
@@ -2165,13 +2162,13 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
         // Create the solver
         let mut solver = Solver::new(&schema);
 
-        // Track field positions for second pass deserialization
-        let mut field_positions: Vec<(&'static str, usize)> = Vec::new();
-
         // Expect opening brace (struct variants) or handle other cases
         let token = self.peek()?;
         match &token.token {
             Token::ObjectStart => {
+                // Record start position for rewinding after we determine the variant
+                let start_offset = token.span.offset;
+
                 self.next()?; // consume the brace
 
                 // ========== PASS 1: Scan all keys, feed to solver ==========
@@ -2200,16 +2197,8 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
                                 ));
                             }
 
-                            // Leak the key for 'static lifetime
-                            let key_static: &'static str =
-                                Box::leak(key.into_owned().into_boxed_str());
-
-                            // Record position before skipping
-                            let value_start = self.peek()?.span.offset;
-                            field_positions.push((key_static, value_start));
-
                             // Feed key to solver
-                            let _decision = solver.see_key(key_static);
+                            let _decision = solver.see_key(key);
 
                             // Skip the value
                             self.skip_value()?;
@@ -2252,48 +2241,17 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
                 // Select the variant
                 wip = wip.select_variant_named(variant_name)?;
 
-                // Enable deferred mode for proper field handling
-                wip = wip.begin_deferred(config.clone())?;
+                // ========== PASS 2: Rewind and deserialize ==========
+                // Create a new deserializer at the start of the object
+                let rewound_adapter = self.adapter.at_offset(start_offset).ok_or_else(|| {
+                    JsonError::without_span(JsonErrorKind::InvalidValue {
+                        message: "untagged enums not supported in streaming mode".into(),
+                    })
+                })?;
+                let mut rewound_deser = Self::from_adapter(rewound_adapter);
 
-                // ========== PASS 2: Deserialize fields ==========
-                for (field_name, offset) in &field_positions {
-                    if let Some(field_info) = config.field(field_name) {
-                        // Create adapter at this field's position
-                        let field_adapter = self.adapter.at_offset(*offset).ok_or_else(|| {
-                            JsonError::without_span(JsonErrorKind::InvalidValue {
-                                message: "untagged enums not supported in streaming mode".into(),
-                            })
-                        })?;
-                        let mut field_deser = Self::from_adapter(field_adapter);
-
-                        // Navigate to the field using its path
-                        for segment in field_info.path.segments() {
-                            match segment {
-                                PathSegment::Field(name) => {
-                                    wip = wip.begin_field(name)?;
-                                    if field_info.field.proxy_convert_in_fn().is_some() {
-                                        wip = wip.begin_custom_deserialization()?;
-                                    }
-                                }
-                                PathSegment::Variant(_, _) => {
-                                    // Variant already selected above
-                                }
-                            }
-                        }
-
-                        // Deserialize the value
-                        wip = field_deser.deserialize_into(wip)?;
-
-                        // Close the field
-                        wip = wip.end()?;
-                        if field_info.field.proxy_convert_in_fn().is_some() {
-                            wip = wip.end()?;
-                        }
-                    }
-                }
-
-                // Finish deferred mode
-                wip = wip.finish_deferred()?;
+                // Deserialize the object into the selected variant
+                wip = rewound_deser.deserialize_variant_struct_content(wip)?;
 
                 Ok(wip)
             }

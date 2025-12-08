@@ -6,6 +6,7 @@
 
 extern crate alloc;
 
+use alloc::borrow::Cow;
 use alloc::collections::BTreeMap;
 use alloc::collections::BTreeSet;
 use alloc::format;
@@ -312,12 +313,12 @@ impl Resolution {
     }
 
     /// Check if this resolution matches the input fields.
-    pub fn matches(&self, input_fields: &BTreeSet<&str>) -> MatchResult {
+    pub fn matches(&self, input_fields: &BTreeSet<Cow<'_, str>>) -> MatchResult {
         let mut missing_required = Vec::new();
         let mut missing_optional = Vec::new();
 
         for (name, info) in &self.fields {
-            if !input_fields.contains(name) {
+            if !input_fields.iter().any(|k| k.as_ref() == *name) {
                 if info.required {
                     missing_required.push(*name);
                 } else {
@@ -329,8 +330,8 @@ impl Resolution {
         // Check for unknown fields
         let unknown: Vec<String> = input_fields
             .iter()
-            .filter(|f| !self.fields.contains_key(*f))
-            .map(|s| (*s).into())
+            .filter(|f| !self.fields.contains_key(f.as_ref()))
+            .map(|s| s.to_string())
             .collect();
 
         if !missing_required.is_empty() || !unknown.is_empty() {
@@ -397,11 +398,11 @@ impl Resolution {
     /// optional fields to `None` or their default value.
     pub fn missing_optional_fields<'a>(
         &'a self,
-        seen_keys: &'a BTreeSet<&str>,
+        seen_keys: &'a BTreeSet<Cow<'_, str>>,
     ) -> impl Iterator<Item = &'a FieldInfo> {
-        self.fields
-            .values()
-            .filter(move |info| !info.required && !seen_keys.contains(info.serialized_name))
+        self.fields.values().filter(move |info| {
+            !info.required && !seen_keys.iter().any(|k| k.as_ref() == info.serialized_name)
+        })
     }
 
     /// Get variant selections.

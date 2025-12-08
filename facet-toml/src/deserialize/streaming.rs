@@ -7,7 +7,6 @@
 
 use alloc::{
     borrow::{Cow, ToOwned},
-    boxed::Box,
     format,
     string::{String, ToString},
     vec,
@@ -604,7 +603,7 @@ pub fn from_str_with_options<'input, 'facet, T: Facet<'facet>>(
         trace!("Top-level keys: {keys:?}");
 
         for key in &keys {
-            let result = solver.see_key(key);
+            let result = solver.see_key(*key);
             trace!("Solver result for '{key}': {result:?}");
 
             match result {
@@ -817,7 +816,7 @@ struct StreamingDeserializer<'input, 'events, 'res> {
     /// Event iterator (automatically filters whitespace/comments/newlines)
     iter: EventIter<'events>,
     /// Current key path being built (for dotted keys like foo.bar.baz)
-    current_keys: Vec<&'input str>,
+    current_keys: Vec<Cow<'input, str>>,
     /// Number of nested frames we've opened (for cleanup)
     open_frames: usize,
     /// The root shape (for finding flattened fields)
@@ -1196,11 +1195,11 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     }
 
     /// Decode a key from an event
-    fn decode_key(&self, event: &Event) -> String {
+    fn decode_key(&self, event: &Event) -> Cow<'input, str> {
         let raw = self.raw_from_event(event);
         let mut output: Cow<'input, str> = Cow::Borrowed("");
         raw.decode_key(&mut output, &mut ());
-        output.into_owned()
+        output
     }
 
     /// Deserialize the entire document
@@ -1278,7 +1277,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             match event.kind() {
                 EventKind::SimpleKey => {
                     let key = self.decode_key(event);
-                    path.push(key);
+                    path.push(key.into_owned());
                     self.iter.next();
                 }
                 EventKind::KeySep => {
@@ -1577,9 +1576,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 EventKind::SimpleKey => {
                     let event = self.iter.next().unwrap();
                     let key = self.decode_key(event);
-                    // Store the key - we need to handle lifetimes carefully
-                    // For now, leak the string (we'll fix this later)
-                    self.current_keys.push(Box::leak(key.into_boxed_str()));
+                    self.current_keys.push(key);
                 }
                 EventKind::KeySep => {
                     self.iter.next(); // skip the dot
@@ -1602,10 +1599,12 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
         let mut partial = partial;
 
         // For the first key, check if it's a flattened field at the document root
-        let first_key = self.current_keys[0];
+        let first_key = &self.current_keys[0];
 
         // Check if this key belongs to a flattened field
-        if let Some(location) = find_field_location(self.root_shape, first_key, self.resolution) {
+        if let Some(location) =
+            find_field_location(self.root_shape, first_key.as_ref(), self.resolution)
+        {
             match location {
                 FieldLocation::Direct { field_name } => {
                     // Simple case: navigate directly
@@ -1666,7 +1665,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
     fn navigate_and_deserialize_direct<'facet>(
         &mut self,
         partial: Partial<'facet>,
-        keys: &[&str],
+        keys: &[Cow<'input, str>],
     ) -> Result<Partial<'facet>, TomlDeError<'input>> {
         if keys.is_empty() {
             return Ok(partial);
@@ -1687,7 +1686,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 // The current key is the map key, remaining keys (if any) would be
                 // nested paths into the value - for TOML, we typically just have one key
                 // for simple maps like HashMap<String, i32>
-                let map_key = *key;
+                let map_key = key.as_ref();
                 let remaining_keys = &keys[i + 1..];
 
                 // Insert map entry: begin_key, set key, end, begin_value, deserialize, end
@@ -1727,7 +1726,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 // Initialize as object
                 partial = self.begin_map(partial)?;
 
-                let entry_key = *key;
+                let entry_key = key.as_ref();
                 let remaining_keys = &keys[i + 1..];
 
                 // Start object entry with this key
@@ -1759,7 +1758,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 return Ok(partial);
             }
 
-            let (new_partial, pushed) = self.navigate_into_key(partial, key)?;
+            let (new_partial, pushed) = self.navigate_into_key(partial, key.as_ref())?;
             partial = new_partial;
             local_frames.push(pushed);
         }
