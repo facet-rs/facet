@@ -309,7 +309,7 @@ fn test_untagged_scalar_float_vs_int() {
 
 #[test]
 fn test_untagged_scalar_bool() {
-    // Test boolean discrimination
+    // Test boolean discrimination with all YAML boolean spellings
     #[derive(Debug, Facet, PartialEq)]
     #[repr(u8)]
     #[facet(untagged)]
@@ -318,13 +318,31 @@ fn test_untagged_scalar_bool() {
         Str(String),
     }
 
-    // Boolean true
+    // Boolean true - various YAML spellings
     let t: BoolOrString = facet_yaml::from_str("true").unwrap();
     assert_eq!(t, BoolOrString::Bool(true));
 
-    // Boolean false
+    let yes: BoolOrString = facet_yaml::from_str("yes").unwrap();
+    assert_eq!(yes, BoolOrString::Bool(true));
+
+    let on: BoolOrString = facet_yaml::from_str("on").unwrap();
+    assert_eq!(on, BoolOrString::Bool(true));
+
+    let y: BoolOrString = facet_yaml::from_str("y").unwrap();
+    assert_eq!(y, BoolOrString::Bool(true));
+
+    // Boolean false - various YAML spellings
     let f: BoolOrString = facet_yaml::from_str("false").unwrap();
     assert_eq!(f, BoolOrString::Bool(false));
+
+    let no: BoolOrString = facet_yaml::from_str("no").unwrap();
+    assert_eq!(no, BoolOrString::Bool(false));
+
+    let off: BoolOrString = facet_yaml::from_str("off").unwrap();
+    assert_eq!(off, BoolOrString::Bool(false));
+
+    let n: BoolOrString = facet_yaml::from_str("n").unwrap();
+    assert_eq!(n, BoolOrString::Bool(false));
 
     // Regular string
     let s: BoolOrString = facet_yaml::from_str("hello").unwrap();
@@ -499,6 +517,66 @@ fn test_untagged_tuple_list() {
     assert_eq!(points[0], Point::XY(0, 0));
     assert_eq!(points[1], Point::XY(1, 2));
     assert_eq!(points[2], Point::XY(3, 4));
+}
+
+// ===========================================================================
+// Multiple String-Parseable Types (Trial Parsing)
+// ===========================================================================
+
+#[test]
+fn test_untagged_scalar_multiple_string_types() {
+    use std::net::IpAddr;
+
+    // Multiple variants that all parse from strings, but with different validity
+    #[derive(Debug, Facet, PartialEq)]
+    #[repr(C)]
+    #[facet(untagged)]
+    enum NetworkOrText {
+        // IpAddr parses from string but only accepts valid IP addresses
+        Ip(IpAddr),
+        // String accepts anything
+        Text(String),
+    }
+
+    // Valid IP address -> should pick Ip variant
+    let ip: NetworkOrText = facet_yaml::from_str("192.168.1.1").unwrap();
+    assert_eq!(ip, NetworkOrText::Ip("192.168.1.1".parse().unwrap()));
+
+    // Another valid IP
+    let ip6: NetworkOrText = facet_yaml::from_str("::1").unwrap();
+    assert_eq!(ip6, NetworkOrText::Ip("::1".parse().unwrap()));
+
+    // Invalid IP address -> should fall back to Text variant
+    let text: NetworkOrText = facet_yaml::from_str("hello world").unwrap();
+    assert_eq!(text, NetworkOrText::Text("hello world".to_string()));
+
+    // Something that looks like IP but isn't valid
+    let not_ip: NetworkOrText = facet_yaml::from_str("999.999.999.999").unwrap();
+    assert_eq!(not_ip, NetworkOrText::Text("999.999.999.999".to_string()));
+}
+
+#[test]
+fn test_untagged_scalar_multiple_string_types_ordering() {
+    use std::net::Ipv4Addr;
+
+    // Test that more specific types are tried before String
+    #[derive(Debug, Facet, PartialEq)]
+    #[repr(C)]
+    #[facet(untagged)]
+    enum Value {
+        // String is first in declaration order, but should be tried last
+        Text(String),
+        // Ipv4Addr is more specific
+        Ip(Ipv4Addr),
+    }
+
+    // Valid IP should still pick Ip even though Text is declared first
+    let ip: Value = facet_yaml::from_str("10.0.0.1").unwrap();
+    assert_eq!(ip, Value::Ip("10.0.0.1".parse().unwrap()));
+
+    // Invalid IP falls back to Text
+    let text: Value = facet_yaml::from_str("not-an-ip").unwrap();
+    assert_eq!(text, Value::Text("not-an-ip".to_string()));
 }
 
 // ===========================================================================

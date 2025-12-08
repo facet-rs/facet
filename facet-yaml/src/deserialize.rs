@@ -9,8 +9,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use facet_core::{
-    Characteristic, Def, Facet, Field, NumericType, PrimitiveType, ShapeLayout, StructKind, Type,
-    UserType,
+    Characteristic, Def, Facet, Field, NumericType, PrimitiveType, Shape, ShapeLayout, StructKind,
+    Type, UserType,
 };
 use facet_reflect::{HeapValue, Partial};
 use saphyr_parser::{Event, Parser, ScalarStyle, Span as SaphyrSpan, SpannedEventReceiver};
@@ -1468,14 +1468,11 @@ impl<'input> YamlDeserializer<'input> {
             }));
         }
 
-        // Determine which variant to use based on the scalar value and style
+        // Select variant and deserialize - handles trial parsing for multiple string-like candidates
         let variant_name =
             self.select_scalar_variant(&variants_by_format, scalar_value, scalar_style)?;
 
-        // Select the variant and deserialize
         partial = partial.select_variant_named(variant_name)?;
-
-        // Newtype variant: deserialize the inner field (field "0")
         partial = partial.begin_nth_field(0)?;
         partial = self.deserialize_value(partial)?;
         partial = partial.end()?;
@@ -1521,8 +1518,8 @@ impl<'input> YamlDeserializer<'input> {
         }
 
         // Try to parse as different types and find the best match
-        // Check if it's a boolean
-        if scalar_value == "true" || scalar_value == "false" {
+        // Check if it's a boolean (YAML supports yes/no/on/off/y/n)
+        if parse_yaml_bool(scalar_value).is_some() {
             for (variant, inner_shape) in &candidates {
                 if inner_shape.scalar_type() == Some(ScalarType::Bool) {
                     return Ok(variant.name);
@@ -1578,27 +1575,36 @@ impl<'input> YamlDeserializer<'input> {
         }
 
         // Fall back to string-like types
-        // For strings, if there's only one string variant, use it directly
-        // If there are multiple (e.g., String, IpAddr, custom proxy), we need to try them
-        let string_variants: Vec<_> = candidates
-            .iter()
-            .filter(|(_, shape)| {
-                matches!(
-                    shape.scalar_type(),
-                    Some(ScalarType::String) | Some(ScalarType::Str) | Some(ScalarType::CowStr)
-                ) || shape.scalar_type().is_none() // Custom types with proxy
-            })
-            .collect();
+        // Separate variants into:
+        // 1. Parseable types (have vtable.parse) - try these first, they may fail
+        // 2. String fallbacks (String/Str/CowStr) - always succeed
+        let mut parseable_variants: Vec<_> = Vec::new();
+        let mut string_fallbacks: Vec<_> = Vec::new();
 
-        if string_variants.len() == 1 {
-            return Ok(string_variants[0].0.name);
+        for (variant, shape) in &candidates {
+            let is_plain_string = matches!(
+                shape.scalar_type(),
+                Some(ScalarType::String) | Some(ScalarType::Str) | Some(ScalarType::CowStr)
+            );
+
+            if is_plain_string {
+                string_fallbacks.push((variant, *shape));
+            } else if shape.vtable.parse.is_some() {
+                // Has a parse function - could be IpAddr, custom proxy type, etc.
+                parseable_variants.push((variant, *shape));
+            }
         }
 
-        // Multiple string-like variants - prefer String type first, then others
-        for (variant, shape) in &string_variants {
-            if matches!(shape.scalar_type(), Some(ScalarType::String)) {
+        // Try parseable types first (they're more specific than String)
+        for (variant, shape) in &parseable_variants {
+            if try_parse_scalar(scalar_value, shape) {
                 return Ok(variant.name);
             }
+        }
+
+        // Fall back to String types
+        if let Some((variant, _)) = string_fallbacks.first() {
+            return Ok(variant.name);
         }
 
         // Just pick the first candidate as fallback
@@ -2091,6 +2097,73 @@ fn parse_yaml_bool(value: &str) -> Option<bool> {
         "false" | "no" | "off" | "n" => Some(false),
         _ => None,
     }
+}
+
+/// Try to parse a scalar value into a type that has a vtable.parse function.
+/// Returns true if parsing would succeed, false otherwise.
+/// This is used for trial parsing when selecting between multiple string-like variants.
+fn try_parse_scalar(value: &str, shape: &Shape) -> bool {
+    use alloc::alloc::{Layout, alloc, dealloc};
+    use core::ptr::NonNull;
+
+    let Some(parse_fn) = shape.vtable.parse else {
+        return false;
+    };
+
+    // Get the layout for the type
+    let layout = match shape.layout {
+        ShapeLayout::Sized(layout) => layout,
+        ShapeLayout::Unsized => return false,
+    };
+
+    // Don't allocate for zero-sized types
+    if layout.size() == 0 {
+        // For ZSTs, just try calling the parse function with a dangling pointer
+        #[allow(unsafe_code)]
+        let ptr = facet_core::PtrUninit::new(NonNull::<u8>::dangling());
+        #[allow(unsafe_code)]
+        let result = unsafe { parse_fn(value, ptr) };
+        return result.is_ok();
+    }
+
+    // Allocate memory for the trial parse
+    let rust_layout = Layout::from_size_align(layout.size(), layout.align()).unwrap();
+    #[allow(unsafe_code)]
+    let raw_ptr = unsafe { alloc(rust_layout) };
+    if raw_ptr.is_null() {
+        return false;
+    }
+
+    // SAFETY: We just allocated this memory and checked it's not null
+    #[allow(unsafe_code)]
+    let non_null = unsafe { NonNull::new_unchecked(raw_ptr) };
+    let ptr = facet_core::PtrUninit::new(non_null);
+
+    // Try parsing
+    #[allow(unsafe_code)]
+    let result = unsafe { parse_fn(value, ptr) };
+    let success = result.is_ok();
+
+    // If successful, we need to drop the value properly before deallocating
+    if success {
+        if let Some(drop_in_place) = shape.vtable.drop_in_place {
+            // SAFETY: parse succeeded, so the memory is now initialized
+            #[allow(unsafe_code)]
+            let init_ptr = unsafe { ptr.assume_init() };
+            #[allow(unsafe_code)]
+            unsafe {
+                drop_in_place(init_ptr);
+            }
+        }
+    }
+
+    // Deallocate the memory
+    #[allow(unsafe_code)]
+    unsafe {
+        dealloc(raw_ptr, rust_layout);
+    }
+
+    success
 }
 
 /// Check if a YAML value represents null.
