@@ -440,3 +440,82 @@ fn test_multiple_structs_same_generic_proxy() {
     );
     assert_eq!(combined.another_int, AnotherIntHolder { num: 2 });
 }
+
+/// Test deserialization of untagged enums with struct variants.
+/// This is a regression test for https://github.com/facet-rs/facet/issues/1175
+#[test]
+fn test_untagged_struct_variants_deserialization() {
+    #[derive(Debug, Facet, PartialEq)]
+    #[repr(C)]
+    #[facet(untagged)]
+    #[allow(dead_code)]
+    enum Shape {
+        Circle { radius: f64 },
+        Rectangle { width: f64, height: f64 },
+    }
+
+    // Deserialize into Circle variant
+    let json_circle = r#"{"radius":5.0}"#;
+    let circle: Shape = json::from_str(json_circle).expect("should deserialize Circle");
+    assert_eq!(circle, Shape::Circle { radius: 5.0 });
+
+    // Deserialize into Rectangle variant
+    let json_rect = r#"{"width":10.0,"height":20.0}"#;
+    let rect: Shape = json::from_str(json_rect).expect("should deserialize Rectangle");
+    assert_eq!(
+        rect,
+        Shape::Rectangle {
+            width: 10.0,
+            height: 20.0
+        }
+    );
+}
+
+/// Test container-level proxy with an untagged enum.
+/// This is a regression test for https://github.com/facet-rs/facet/issues/1175
+#[test]
+fn test_proxy_with_untagged_enum() {
+    // Simplified stand-in for Curve64
+    #[derive(Facet, Debug, Clone, PartialEq)]
+    pub struct Curve64 {
+        value: f64,
+    }
+
+    // The proxy enum - untagged means it should match based on structure
+    #[derive(Facet, Debug, Clone, PartialEq)]
+    #[facet(untagged)]
+    #[repr(C)]
+    pub enum XCurveRepr {
+        Linear(Curve64),
+        Constant { constant: f64 },
+        Special { spe: Curve64 },
+    }
+
+    // The main type that uses the proxy
+    #[derive(Facet, Debug, Clone)]
+    #[facet(proxy = XCurveRepr)]
+    pub struct XCurve {
+        pub repr: XCurveRepr,
+    }
+
+    impl From<XCurveRepr> for XCurve {
+        fn from(repr: XCurveRepr) -> Self {
+            XCurve { repr }
+        }
+    }
+
+    impl From<&XCurve> for XCurveRepr {
+        fn from(curve: &XCurve) -> Self {
+            curve.repr.clone()
+        }
+    }
+
+    // First, verify the untagged enum works directly
+    let json = r#"{"constant":0.0}"#;
+    let repr: XCurveRepr = json::from_str(json).expect("untagged enum should parse directly");
+    assert_eq!(repr, XCurveRepr::Constant { constant: 0.0 });
+
+    // Now test through the proxy
+    let curve: XCurve = json::from_str(json).expect("proxy with untagged enum should work");
+    assert_eq!(curve.repr, XCurveRepr::Constant { constant: 0.0 });
+}
