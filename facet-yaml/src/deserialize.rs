@@ -17,7 +17,7 @@ use saphyr_parser::{Event, Parser, ScalarStyle, Span as SaphyrSpan, SpannedEvent
 
 use crate::error::{SpanExt, YamlError, YamlErrorKind};
 use facet_reflect::{Span, is_spanned_shape};
-use facet_solver::{Schema, Solver};
+use facet_solver::{Schema, Solver, VariantsByFormat, specificity_score};
 
 type Result<T> = core::result::Result<T, YamlError>;
 
@@ -1382,20 +1382,12 @@ impl<'input> YamlDeserializer<'input> {
                 Ok(partial)
             }
             OwnedEvent::SequenceStart { .. } => {
-                // For sequences (tuple variants), we need to try to match based on structure
-                // For now, this is a limited implementation - we try each variant in order
-                Err(self.error(YamlErrorKind::InvalidValue {
-                    message: "untagged enum deserialization for sequences not yet fully supported"
-                        .into(),
-                }))
+                // For sequences (tuple variants), match by arity and try each candidate
+                self.deserialize_untagged_sequence_variant(partial, shape)
             }
-            OwnedEvent::Scalar { .. } => {
-                // For scalars (newtype or unit variants), we need special handling
-                // Try each variant that could match a scalar
-                Err(self.error(YamlErrorKind::InvalidValue {
-                    message: "untagged enum deserialization for scalars not yet fully supported"
-                        .into(),
-                }))
+            OwnedEvent::Scalar { value, style, .. } => {
+                // For scalars (newtype variants wrapping scalar types)
+                self.deserialize_untagged_scalar_variant(partial, shape, value, *style)
             }
             other => Err(YamlError::new(
                 YamlErrorKind::UnexpectedEvent {
@@ -1442,6 +1434,259 @@ impl<'input> YamlDeserializer<'input> {
             let num_fields = variant.data.fields.len();
             partial = self.deserialize_tuple_variant_fields(partial, num_fields)?;
         }
+
+        Ok(partial)
+    }
+
+    /// Deserialize an untagged enum from a scalar value.
+    ///
+    /// This handles newtype variants that wrap scalar types (String, i32, etc.).
+    /// We determine the variant based on:
+    /// 1. YAML scalar style (quoted strings are always strings)
+    /// 2. YAML value type (number vs string vs bool)
+    /// 3. For numbers: pick the most specific numeric type that fits
+    /// 4. For strings with proxy types: try in order until one succeeds
+    fn deserialize_untagged_scalar_variant<'facet, const BORROW: bool>(
+        &mut self,
+        mut partial: Partial<'facet, BORROW>,
+        shape: &'static facet_core::Shape,
+        scalar_value: &str,
+        scalar_style: ScalarStyle,
+    ) -> Result<Partial<'facet, BORROW>> {
+        let variants_by_format = VariantsByFormat::from_shape(shape).ok_or_else(|| {
+            self.error(YamlErrorKind::InvalidValue {
+                message: "expected enum shape for untagged deserialization".into(),
+            })
+        })?;
+
+        if variants_by_format.scalar_variants.is_empty() {
+            return Err(self.error(YamlErrorKind::InvalidValue {
+                message: format!(
+                    "no scalar-accepting variants in untagged enum {} for value: {}",
+                    shape.type_identifier, scalar_value
+                ),
+            }));
+        }
+
+        // Determine which variant to use based on the scalar value and style
+        let variant_name =
+            self.select_scalar_variant(&variants_by_format, scalar_value, scalar_style)?;
+
+        // Select the variant and deserialize
+        partial = partial.select_variant_named(variant_name)?;
+
+        // Newtype variant: deserialize the inner field (field "0")
+        partial = partial.begin_nth_field(0)?;
+        partial = self.deserialize_value(partial)?;
+        partial = partial.end()?;
+
+        Ok(partial)
+    }
+
+    /// Select which scalar variant to use based on the YAML value.
+    ///
+    /// For quoted strings: always prefer string types.
+    /// For numeric values: pick the smallest type that can hold the value.
+    /// For string values: if only one string-like variant, use it; otherwise try in order.
+    fn select_scalar_variant(
+        &self,
+        variants: &VariantsByFormat,
+        scalar_value: &str,
+        scalar_style: ScalarStyle,
+    ) -> Result<&'static str> {
+        use facet_core::ScalarType;
+
+        // Sort by specificity (most specific first)
+        let mut candidates: Vec<_> = variants.scalar_variants.clone();
+        candidates.sort_by_key(|(_, inner_shape)| specificity_score(inner_shape));
+
+        // If the YAML scalar is quoted, it's explicitly a string - skip numeric parsing
+        let is_quoted = matches!(
+            scalar_style,
+            ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted
+        );
+
+        if is_quoted {
+            // Find a string-like variant
+            for (variant, shape) in &candidates {
+                if matches!(
+                    shape.scalar_type(),
+                    Some(ScalarType::String) | Some(ScalarType::Str) | Some(ScalarType::CowStr)
+                ) || shape.scalar_type().is_none()
+                {
+                    return Ok(variant.name);
+                }
+            }
+            // No string variant found, fall through to use the value as-is
+        }
+
+        // Try to parse as different types and find the best match
+        // Check if it's a boolean
+        if scalar_value == "true" || scalar_value == "false" {
+            for (variant, inner_shape) in &candidates {
+                if inner_shape.scalar_type() == Some(ScalarType::Bool) {
+                    return Ok(variant.name);
+                }
+            }
+        }
+
+        // Check if it's a number (integer or float)
+        if let Ok(int_val) = scalar_value.parse::<i128>() {
+            // Find the smallest integer type that fits
+            for (variant, inner_shape) in &candidates {
+                let fits = match inner_shape.scalar_type() {
+                    Some(ScalarType::U8) => int_val >= 0 && int_val <= u8::MAX as i128,
+                    Some(ScalarType::U16) => int_val >= 0 && int_val <= u16::MAX as i128,
+                    Some(ScalarType::U32) => int_val >= 0 && int_val <= u32::MAX as i128,
+                    Some(ScalarType::U64) => int_val >= 0 && int_val <= u64::MAX as i128,
+                    Some(ScalarType::U128) => int_val >= 0,
+                    Some(ScalarType::USize) => int_val >= 0 && int_val <= usize::MAX as i128,
+                    Some(ScalarType::I8) => {
+                        int_val >= i8::MIN as i128 && int_val <= i8::MAX as i128
+                    }
+                    Some(ScalarType::I16) => {
+                        int_val >= i16::MIN as i128 && int_val <= i16::MAX as i128
+                    }
+                    Some(ScalarType::I32) => {
+                        int_val >= i32::MIN as i128 && int_val <= i32::MAX as i128
+                    }
+                    Some(ScalarType::I64) => {
+                        int_val >= i64::MIN as i128 && int_val <= i64::MAX as i128
+                    }
+                    Some(ScalarType::I128) => true,
+                    Some(ScalarType::ISize) => {
+                        int_val >= isize::MIN as i128 && int_val <= isize::MAX as i128
+                    }
+                    _ => false,
+                };
+                if fits {
+                    return Ok(variant.name);
+                }
+            }
+        }
+
+        // Check if it's a float
+        if scalar_value.parse::<f64>().is_ok() {
+            for (variant, inner_shape) in &candidates {
+                match inner_shape.scalar_type() {
+                    Some(ScalarType::F32) | Some(ScalarType::F64) => {
+                        return Ok(variant.name);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // Fall back to string-like types
+        // For strings, if there's only one string variant, use it directly
+        // If there are multiple (e.g., String, IpAddr, custom proxy), we need to try them
+        let string_variants: Vec<_> = candidates
+            .iter()
+            .filter(|(_, shape)| {
+                matches!(
+                    shape.scalar_type(),
+                    Some(ScalarType::String) | Some(ScalarType::Str) | Some(ScalarType::CowStr)
+                ) || shape.scalar_type().is_none() // Custom types with proxy
+            })
+            .collect();
+
+        if string_variants.len() == 1 {
+            return Ok(string_variants[0].0.name);
+        }
+
+        // Multiple string-like variants - prefer String type first, then others
+        for (variant, shape) in &string_variants {
+            if matches!(shape.scalar_type(), Some(ScalarType::String)) {
+                return Ok(variant.name);
+            }
+        }
+
+        // Just pick the first candidate as fallback
+        if let Some((variant, _)) = candidates.first() {
+            return Ok(variant.name);
+        }
+
+        Err(self.error(YamlErrorKind::InvalidValue {
+            message: format!("no suitable variant found for scalar value: {scalar_value}"),
+        }))
+    }
+
+    /// Deserialize an untagged enum from a sequence (tuple variant).
+    ///
+    /// We match by arity first. If only one variant matches, use it directly.
+    /// If multiple variants have the same arity, we'd need type-based disambiguation.
+    fn deserialize_untagged_sequence_variant<'facet, const BORROW: bool>(
+        &mut self,
+        mut partial: Partial<'facet, BORROW>,
+        shape: &'static facet_core::Shape,
+    ) -> Result<Partial<'facet, BORROW>> {
+        let variants_by_format = VariantsByFormat::from_shape(shape).ok_or_else(|| {
+            self.error(YamlErrorKind::InvalidValue {
+                message: "expected enum shape for untagged deserialization".into(),
+            })
+        })?;
+
+        if variants_by_format.tuple_variants.is_empty() {
+            return Err(self.error(YamlErrorKind::InvalidValue {
+                message: format!(
+                    "no tuple variants in untagged enum {} for sequence value",
+                    shape.type_identifier
+                ),
+            }));
+        }
+
+        // Record start position
+        let start_pos = self.position();
+
+        // First pass: count sequence elements to get arity
+        self.next(); // consume SequenceStart
+        let mut arity = 0;
+        loop {
+            let event = self.peek().ok_or_else(|| {
+                self.error(YamlErrorKind::UnexpectedEof {
+                    expected: "sequence element or end",
+                })
+            })?;
+
+            if matches!(&event.event, OwnedEvent::SequenceEnd) {
+                self.next(); // consume SequenceEnd
+                break;
+            }
+
+            arity += 1;
+            self.skip_value()?;
+        }
+
+        // Find variants matching this arity
+        let matching_variants = variants_by_format.tuple_variants_with_arity(arity);
+
+        if matching_variants.is_empty() {
+            return Err(self.error(YamlErrorKind::InvalidValue {
+                message: format!(
+                    "no tuple variant in untagged enum {} has arity {} (sequence has {} elements)",
+                    shape.type_identifier, arity, arity
+                ),
+            }));
+        }
+
+        if matching_variants.len() > 1 {
+            // Multiple variants with same arity - for now, just pick the first
+            // TODO: Could do type-based disambiguation by examining element types
+            log::warn!(
+                "Multiple tuple variants with arity {} in untagged enum {}, picking first: {}",
+                arity,
+                shape.type_identifier,
+                matching_variants[0].name
+            );
+        }
+
+        let variant_name = matching_variants[0].name;
+
+        // Rewind and deserialize into the selected variant
+        self.pos = start_pos;
+
+        partial = partial.select_variant_named(variant_name)?;
+        partial = self.deserialize_tuple_variant_fields(partial, arity)?;
 
         Ok(partial)
     }
