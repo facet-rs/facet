@@ -155,3 +155,63 @@ fn transparent_string_as_map_key() {
     );
     assert_eq!(map.len(), 3);
 }
+
+#[test]
+fn repr_transparent_implies_facet_transparent() {
+    let markup = r#"
+        "I look like a string"
+    "#;
+
+    // #[repr(transparent)] should automatically imply #[facet(transparent)]
+    // No need to add #[facet(transparent)] separately
+    #[derive(Facet, Clone, Debug)]
+    #[repr(transparent)]
+    struct MyString(String);
+
+    let t: MyString = from_str(markup).unwrap();
+    assert_eq!(t.0, "I look like a string".to_string());
+}
+
+#[test]
+fn repr_transparent_u64() {
+    use std::num::NonZeroU64;
+
+    let markup = r#"
+        42
+    "#;
+
+    // Test that repr(transparent) works with numeric wrappers
+    #[derive(Facet, Clone, Debug)]
+    #[repr(transparent)]
+    struct MyU64(NonZeroU64);
+
+    let n: MyU64 = from_str(markup).unwrap();
+    assert_eq!(n.0, NonZeroU64::new(42).unwrap());
+}
+
+#[test]
+fn repr_transparent_as_map_key() {
+    use std::collections::HashMap;
+
+    // Test that repr(transparent) works as map keys (just like facet(transparent))
+    #[derive(Facet, Clone, Debug, PartialEq, Eq, Hash)]
+    #[repr(transparent)]
+    struct UserId(String);
+
+    let markup = r#"
+        {
+            "user123": "Alice",
+            "user456": "Bob"
+        }
+    "#;
+
+    let map: HashMap<UserId, String> = from_str(markup).unwrap();
+    assert_eq!(
+        map.get(&UserId("user123".to_string())),
+        Some(&"Alice".to_string())
+    );
+    assert_eq!(
+        map.get(&UserId("user456".to_string())),
+        Some(&"Bob".to_string())
+    );
+}
