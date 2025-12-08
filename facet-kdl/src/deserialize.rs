@@ -1,5 +1,6 @@
 //! KDL deserialization implementation.
 
+use std::borrow::Cow;
 use std::mem;
 
 use facet_core::{
@@ -1407,13 +1408,15 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         let remaining_candidates = solver.candidates();
         if remaining_candidates.len() > 1 {
             // Include both properties and argument fields in seen set
-            let mut seen_props: std::collections::BTreeSet<&str> =
-                property_names.iter().map(|s| s.as_str()).collect();
+            let mut seen_props: std::collections::BTreeSet<Cow<'_, str>> = property_names
+                .iter()
+                .map(|s| Cow::Borrowed(s.as_str()))
+                .collect();
             for field in fields {
                 if field.has_attr(Some("kdl"), "argument")
                     || field.has_attr(Some("kdl"), "arguments")
                 {
-                    seen_props.insert(field.name);
+                    seen_props.insert(Cow::Borrowed(field.name));
                 }
             }
 
@@ -1511,7 +1514,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         // as that would turn None into Some(default). So we pass enter_new_options=false.
         // When we encounter a field inside an unopened Option<T>, we track the Option field
         // so we can set it to None later.
-        let mut seen_keys: BTreeSet<&str> = property_names.iter().map(|s| s.as_str()).collect();
+        let mut seen_keys: BTreeSet<Cow<'_, str>> = property_names
+            .iter()
+            .map(|s| Cow::Borrowed(s.as_str()))
+            .collect();
         let mut skipped_option_fields: std::collections::HashSet<&'static str> =
             std::collections::HashSet::new();
         log::trace!(" Processing missing_optional_fields");
@@ -1620,7 +1626,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         // Record that we've seen this child field - important for variant selection
                         // check later (variants selected via child paths, not just properties)
                         // Use the serialized_name from field_info since it's 'static
-                        seen_keys.insert(field_info.serialized_name);
+                        seen_keys.insert(Cow::Borrowed(field_info.serialized_name));
 
                         // First close paths to the common prefix with the target field
                         // This handles cases like: we're inside `connection` (a flatten struct)

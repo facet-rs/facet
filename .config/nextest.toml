@@ -15,8 +15,7 @@ command = 'valgrind --leak-check=full --show-leak-kinds=all --errors-for-leak-ki
 [profile.valgrind]
 
 [[profile.valgrind.scripts]]
-# Apply valgrind wrapper to all tests on Linux, except flatten tests
-# (flatten uses intentional Box::leak for 'static lifetimes in the solver)
+# Apply valgrind wrapper to all tests on Linux
 platform = 'cfg(target_os = "linux")'
-filter = 'not binary(/flatten/) & not test(test_reading_flat_structs)'
+filter = 'all()'
 run-wrapper = 'valgrind'

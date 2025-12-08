@@ -3,6 +3,7 @@
 
 extern crate alloc;
 
+use alloc::borrow::Cow;
 use alloc::collections::BTreeMap;
 use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
@@ -471,8 +472,9 @@ pub struct Solver<'a> {
     schema: &'a Schema,
     /// Bitmask of remaining candidate configuration indices
     candidates: ResolutionSet,
-    /// Set of seen keys for required field checking
-    seen_keys: BTreeSet<&'a str>,
+    /// Set of seen keys for required field checking.
+    /// Uses Cow to allow both borrowed keys (zero-copy) and owned keys (when needed).
+    seen_keys: BTreeSet<Cow<'a, str>>,
 }
 
 impl<'a> Solver<'a> {
@@ -491,11 +493,14 @@ impl<'a> Solver<'a> {
     /// - `Ambiguous`: Types differ - check which fields the value can satisfy
     /// - `Solved`: Disambiguated to one config
     /// - `Unknown`: Key not found in any candidate
-    pub fn see_key(&mut self, key: &'a str) -> KeyResult<'a> {
-        self.seen_keys.insert(key);
+    ///
+    /// Accepts both borrowed (`&str`) and owned (`String`) keys via `Cow`.
+    pub fn see_key(&mut self, key: impl Into<Cow<'a, str>>) -> KeyResult<'a> {
+        let key = key.into();
+        self.seen_keys.insert(key.clone());
 
         // Key-based filtering
-        let resolutions_with_key = match self.schema.field_to_resolutions.get(key) {
+        let resolutions_with_key = match self.schema.field_to_resolutions.get(key.as_ref()) {
             Some(set) => set,
             None => return KeyResult::Unknown,
         };
@@ -516,7 +521,7 @@ impl<'a> Solver<'a> {
         let mut unique_fields: Vec<&'a FieldInfo> = Vec::new();
         for idx in self.candidates.iter() {
             let config = &self.schema.resolutions[idx];
-            if let Some(info) = config.field(key) {
+            if let Some(info) = config.field(key.as_ref()) {
                 // Deduplicate by shape pointer
                 if !unique_fields
                     .iter()
@@ -698,7 +703,7 @@ impl<'a> Solver<'a> {
     }
 
     /// Get the seen keys.
-    pub fn seen_keys(&self) -> &BTreeSet<&'a str> {
+    pub fn seen_keys(&self) -> &BTreeSet<Cow<'a, str>> {
         &self.seen_keys
     }
 
@@ -776,8 +781,8 @@ impl<'a> Solver<'a> {
     /// This is useful when the key is known to be present through means other than
     /// parsing (e.g., type annotations). Call this after `hint_variant` to mark
     /// the variant name as seen so that `finish()` doesn't report it as missing.
-    pub fn mark_seen(&mut self, key: &'a str) {
-        self.seen_keys.insert(key);
+    pub fn mark_seen(&mut self, key: impl Into<Cow<'a, str>>) {
+        self.seen_keys.insert(key.into());
     }
 
     /// Report a key at a nested path. Returns what to do next.
@@ -978,8 +983,8 @@ impl<'a> Solver<'a> {
         let unknown_fields: Vec<String> = self
             .seen_keys
             .iter()
-            .filter(|k| !all_known_fields.contains(*k))
-            .map(|s| (*s).to_string())
+            .filter(|k| !all_known_fields.contains(k.as_ref()))
+            .map(|s| s.to_string())
             .collect();
 
         // Compute suggestions for unknown fields
@@ -998,7 +1003,7 @@ impl<'a> Solver<'a> {
             sort_candidates_by_closeness(&mut candidate_failures);
 
             return Err(SolverError::NoMatch {
-                input_fields: self.seen_keys.iter().map(|s| (*s).into()).collect(),
+                input_fields: self.seen_keys.iter().map(|s| s.to_string()).collect(),
                 missing_required: Vec::new(),
                 missing_required_detailed: Vec::new(),
                 unknown_fields,
@@ -1017,7 +1022,7 @@ impl<'a> Solver<'a> {
                 config
                     .required_field_names()
                     .iter()
-                    .all(|f| self.seen_keys.contains(f))
+                    .all(|f| self.seen_keys.iter().any(|k| k.as_ref() == *f))
             })
             .collect();
 
@@ -1051,7 +1056,7 @@ impl<'a> Solver<'a> {
                         let missing: Vec<_> = config
                             .required_field_names()
                             .iter()
-                            .filter(|f| !self.seen_keys.contains(*f))
+                            .filter(|f| !self.seen_keys.iter().any(|k| k.as_ref() == **f))
                             .copied()
                             .collect();
                         let missing_detailed: Vec<_> = missing
@@ -1065,7 +1070,7 @@ impl<'a> Solver<'a> {
                     };
 
                 Err(SolverError::NoMatch {
-                    input_fields: self.seen_keys.iter().map(|s| (*s).into()).collect(),
+                    input_fields: self.seen_keys.iter().map(|s| s.to_string()).collect(),
                     missing_required: missing,
                     missing_required_detailed: missing_detailed,
                     unknown_fields,
@@ -1097,19 +1102,22 @@ impl<'a> Solver<'a> {
 }
 
 /// Build a CandidateFailure for a resolution given the seen keys.
-fn build_candidate_failure(config: &Resolution, seen_keys: &BTreeSet<&str>) -> CandidateFailure {
+fn build_candidate_failure<'a>(
+    config: &Resolution,
+    seen_keys: &BTreeSet<Cow<'a, str>>,
+) -> CandidateFailure {
     let missing_fields: Vec<MissingFieldInfo> = config
         .required_field_names()
         .iter()
-        .filter(|f| !seen_keys.contains(*f))
+        .filter(|f| !seen_keys.iter().any(|k| k.as_ref() == **f))
         .filter_map(|f| config.field(f))
         .map(MissingFieldInfo::from_field_info)
         .collect();
 
     let unknown_fields: Vec<String> = seen_keys
         .iter()
-        .filter(|k| !config.fields().contains_key(*k))
-        .map(|s| (*s).to_string())
+        .filter(|k| !config.fields().contains_key(k.as_ref()))
+        .map(|s| s.to_string())
         .collect();
 
     // Compute closeness score for ranking
