@@ -37,10 +37,9 @@ fn test_proxy_deserialization_struct() {
         }
     }
 
-    impl TryFrom<&OpaqueType> for OpaqueTypeProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &OpaqueType) -> Result<Self, Self::Error> {
-            Ok(OpaqueTypeProxy(v.0.to_string()))
+    impl From<&OpaqueType> for OpaqueTypeProxy {
+        fn from(v: &OpaqueType) -> Self {
+            OpaqueTypeProxy(v.0.to_string())
         }
     }
 
@@ -56,10 +55,9 @@ fn test_proxy_deserialization_struct() {
         }
     }
 
-    impl TryFrom<&u64> for U64FromStrProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &u64) -> Result<Self, Self::Error> {
-            Ok(U64FromStrProxy(v.to_string()))
+    impl From<&u64> for U64FromStrProxy {
+        fn from(v: &u64) -> Self {
+            U64FromStrProxy(v.to_string())
         }
     }
 
@@ -76,10 +74,9 @@ fn test_proxy_deserialization_struct() {
         }
     }
 
-    impl TryFrom<&std::sync::Arc<u64>> for ArcU64Proxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &std::sync::Arc<u64>) -> Result<Self, Self::Error> {
-            Ok(ArcU64Proxy { val: **v })
+    impl From<&std::sync::Arc<u64>> for ArcU64Proxy {
+        fn from(v: &std::sync::Arc<u64>) -> Self {
+            ArcU64Proxy { val: **v }
         }
     }
 
@@ -118,10 +115,9 @@ fn test_proxy_deserialization_enum() {
         }
     }
 
-    impl TryFrom<&OpaqueType> for OpaqueTypeProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &OpaqueType) -> Result<Self, Self::Error> {
-            Ok(OpaqueTypeProxy(v.0.to_string()))
+    impl From<&OpaqueType> for OpaqueTypeProxy {
+        fn from(v: &OpaqueType) -> Self {
+            OpaqueTypeProxy(v.0.to_string())
         }
     }
 
@@ -171,10 +167,9 @@ fn test_proxy_transparent_struct() {
         }
     }
 
-    impl TryFrom<&MyUrl> for MyUrlProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &MyUrl) -> Result<Self, Self::Error> {
-            Ok(MyUrlProxy(v.0.clone()))
+    impl From<&MyUrl> for MyUrlProxy {
+        fn from(v: &MyUrl) -> Self {
+            MyUrlProxy(v.0.clone())
         }
     }
 
@@ -221,15 +216,13 @@ fn test_proxy_attribute_deserialization() {
         }
     }
 
-    // Implement TryFrom<&ExternalConfig> for Proxy (serialization)
-    impl TryFrom<&ExternalConfig> for ExternalConfigProxy {
-        type Error = std::convert::Infallible;
-
-        fn try_from(cfg: &ExternalConfig) -> Result<Self, Self::Error> {
-            Ok(ExternalConfigProxy {
+    // Implement From<&ExternalConfig> for Proxy (serialization)
+    impl From<&ExternalConfig> for ExternalConfigProxy {
+        fn from(cfg: &ExternalConfig) -> Self {
+            ExternalConfigProxy {
                 api_key: cfg.api_key.clone(),
                 endpoint: cfg.endpoint.clone(),
-            })
+            }
         }
     }
 
@@ -269,11 +262,9 @@ fn test_proxy_attribute_validation_error() {
         }
     }
 
-    impl TryFrom<&ValidatedString> for StringProxy {
-        type Error = std::convert::Infallible;
-
-        fn try_from(v: &ValidatedString) -> Result<Self, Self::Error> {
-            Ok(StringProxy(v.0.clone()))
+    impl From<&ValidatedString> for StringProxy {
+        fn from(v: &ValidatedString) -> Self {
+            StringProxy(v.0.clone())
         }
     }
 
@@ -318,12 +309,9 @@ fn test_opaque_proxy_option_field() {
     }
 
     // Convert &Option<PathData> -> proxy (serialization)
-    impl TryFrom<&Option<PathData>> for PathDataProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &Option<PathData>) -> Result<Self, Self::Error> {
-            Ok(PathDataProxy(
-                v.as_ref().map(|d| d.commands.join(",")).unwrap_or_default(),
-            ))
+    impl From<&Option<PathData>> for PathDataProxy {
+        fn from(v: &Option<PathData>) -> Self {
+            PathDataProxy(v.as_ref().map(|d| d.commands.join(",")).unwrap_or_default())
         }
     }
 

@@ -1,4 +1,4 @@
-use crate::ptr::{PtrConst, PtrMut, PtrUninit};
+use super::{PtrConst, PtrMut, PtrUninit};
 
 use super::{IterVTable, Shape};
 
@@ -37,8 +37,7 @@ impl MapDef {
 ///
 /// The `map` parameter must point to uninitialized memory of sufficient size.
 /// The function must properly initialize the memory.
-pub type MapInitInPlaceWithCapacityFn =
-    for<'mem> unsafe fn(map: PtrUninit<'mem>, capacity: usize) -> PtrMut<'mem>;
+pub type MapInitInPlaceWithCapacityFn = unsafe fn(map: PtrUninit, capacity: usize) -> PtrMut;
 
 /// Insert a key-value pair into the map
 ///
@@ -47,72 +46,50 @@ pub type MapInitInPlaceWithCapacityFn =
 /// The `map` parameter must point to aligned, initialized memory of the correct type.
 /// `key` and `value` are moved out of (with [`core::ptr::read`]) — they should be deallocated
 /// afterwards (e.g. with [`core::mem::forget`]) but NOT dropped.
-pub type MapInsertFn =
-    for<'map, 'key, 'value> unsafe fn(map: PtrMut<'map>, key: PtrMut<'key>, value: PtrMut<'value>);
+pub type MapInsertFn = unsafe fn(map: PtrMut, key: PtrMut, value: PtrMut);
 
 /// Get the number of entries in the map
 ///
 /// # Safety
 ///
 /// The `map` parameter must point to aligned, initialized memory of the correct type.
-pub type MapLenFn = for<'map> unsafe fn(map: PtrConst<'map>) -> usize;
+pub type MapLenFn = unsafe fn(map: PtrConst) -> usize;
 
 /// Check if the map contains a key
 ///
 /// # Safety
 ///
 /// The `map` parameter must point to aligned, initialized memory of the correct type.
-pub type MapContainsKeyFn =
-    for<'map, 'key> unsafe fn(map: PtrConst<'map>, key: PtrConst<'key>) -> bool;
+pub type MapContainsKeyFn = unsafe fn(map: PtrConst, key: PtrConst) -> bool;
 
 /// Get pointer to a value for a given key, returns None if not found
 ///
 /// # Safety
 ///
 /// The `map` parameter must point to aligned, initialized memory of the correct type.
-pub type MapGetValuePtrFn =
-    for<'map, 'key> unsafe fn(map: PtrConst<'map>, key: PtrConst<'key>) -> Option<PtrConst<'map>>;
+pub type MapGetValuePtrFn = unsafe fn(map: PtrConst, key: PtrConst) -> Option<PtrConst>;
 
-/// Virtual table for a Map<K, V>
-#[derive(Clone, Copy, Debug)]
-#[repr(C)]
-pub struct MapVTable {
-    /// cf. [`MapInitInPlaceWithCapacityFn`]
-    pub init_in_place_with_capacity_fn: MapInitInPlaceWithCapacityFn,
+vtable_def! {
+    /// Virtual table for a Map<K, V>
+    #[derive(Clone, Copy, Debug)]
+    #[repr(C)]
+    pub struct MapVTable + MapVTableBuilder {
+        /// cf. [`MapInitInPlaceWithCapacityFn`]
+        pub init_in_place_with_capacity: MapInitInPlaceWithCapacityFn,
 
-    /// cf. [`MapInsertFn`]
-    pub insert_fn: MapInsertFn,
+        /// cf. [`MapInsertFn`]
+        pub insert: MapInsertFn,
 
-    /// cf. [`MapLenFn`]
-    pub len_fn: MapLenFn,
+        /// cf. [`MapLenFn`]
+        pub len: MapLenFn,
 
-    /// cf. [`MapContainsKeyFn`]
-    pub contains_key_fn: MapContainsKeyFn,
+        /// cf. [`MapContainsKeyFn`]
+        pub contains_key: MapContainsKeyFn,
 
-    /// cf. [`MapGetValuePtrFn`]
-    pub get_value_ptr_fn: MapGetValuePtrFn,
+        /// cf. [`MapGetValuePtrFn`]
+        pub get_value_ptr: MapGetValuePtrFn,
 
-    /// Virtual table for map iterator operations
-    pub iter_vtable: IterVTable<(PtrConst<'static>, PtrConst<'static>)>,
-}
-
-impl MapVTable {
-    /// Const ctor; all map vtable hooks must be provided.
-    pub const fn new(
-        init_in_place_with_capacity_fn: MapInitInPlaceWithCapacityFn,
-        insert_fn: MapInsertFn,
-        len_fn: MapLenFn,
-        contains_key_fn: MapContainsKeyFn,
-        get_value_ptr_fn: MapGetValuePtrFn,
-        iter_vtable: IterVTable<(PtrConst<'static>, PtrConst<'static>)>,
-    ) -> Self {
-        Self {
-            init_in_place_with_capacity_fn,
-            insert_fn,
-            len_fn,
-            contains_key_fn,
-            get_value_ptr_fn,
-            iter_vtable,
-        }
+        /// Virtual table for map iterator operations
+        pub iter_vtable: IterVTable<(PtrConst, PtrConst)>,
     }
 }

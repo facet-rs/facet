@@ -22,13 +22,13 @@ pub const ERR_INVALID_BOOL: isize = -8;
 /// Get a byte slice from raw parts.
 #[inline(always)]
 unsafe fn slice(input: *const u8, len: usize, pos: usize) -> &'static [u8] {
-    std::slice::from_raw_parts(input.add(pos), len - pos)
+    unsafe { std::slice::from_raw_parts(input.add(pos), len - pos) }
 }
 
 /// Get full input slice.
 #[inline(always)]
 unsafe fn full_slice(input: *const u8, len: usize) -> &'static [u8] {
-    std::slice::from_raw_parts(input, len)
+    unsafe { std::slice::from_raw_parts(input, len) }
 }
 
 // =============================================================================
@@ -44,7 +44,7 @@ pub unsafe extern "C" fn jitson_parse_f64(
     pos: usize,
     out: *mut f64,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
+    let bytes = unsafe { slice(input, len, pos) };
 
     let mut end = 0;
     while end < bytes.len() {
@@ -61,7 +61,7 @@ pub unsafe extern "C" fn jitson_parse_f64(
     use lexical_parse_float::FromLexical;
     match f64::from_lexical(&bytes[..end]) {
         Ok(val) => {
-            *out = val;
+            unsafe { *out = val };
             (pos + end) as isize
         }
         Err(_) => ERR_INVALID_NUMBER,
@@ -76,7 +76,7 @@ pub unsafe extern "C" fn jitson_parse_f32(
     pos: usize,
     out: *mut f32,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
+    let bytes = unsafe { slice(input, len, pos) };
 
     let mut end = 0;
     while end < bytes.len() {
@@ -93,7 +93,7 @@ pub unsafe extern "C" fn jitson_parse_f32(
     use lexical_parse_float::FromLexical;
     match f32::from_lexical(&bytes[..end]) {
         Ok(val) => {
-            *out = val;
+            unsafe { *out = val };
             (pos + end) as isize
         }
         Err(_) => ERR_INVALID_NUMBER,
@@ -108,7 +108,7 @@ pub unsafe extern "C" fn jitson_parse_i64(
     pos: usize,
     out: *mut i64,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
+    let bytes = unsafe { slice(input, len, pos) };
 
     let mut end = 0;
     while end < bytes.len() {
@@ -125,7 +125,7 @@ pub unsafe extern "C" fn jitson_parse_i64(
     use lexical_parse_integer::FromLexical;
     match i64::from_lexical(&bytes[..end]) {
         Ok(val) => {
-            *out = val;
+            unsafe { *out = val };
             (pos + end) as isize
         }
         Err(_) => ERR_INVALID_NUMBER,
@@ -140,7 +140,7 @@ pub unsafe extern "C" fn jitson_parse_i32(
     pos: usize,
     out: *mut i32,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
+    let bytes = unsafe { slice(input, len, pos) };
 
     let mut end = 0;
     while end < bytes.len() {
@@ -157,7 +157,7 @@ pub unsafe extern "C" fn jitson_parse_i32(
     use lexical_parse_integer::FromLexical;
     match i32::from_lexical(&bytes[..end]) {
         Ok(val) => {
-            *out = val;
+            unsafe { *out = val };
             (pos + end) as isize
         }
         Err(_) => ERR_INVALID_NUMBER,
@@ -172,7 +172,7 @@ pub unsafe extern "C" fn jitson_parse_i16(
     pos: usize,
     out: *mut i16,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
+    let bytes = unsafe { slice(input, len, pos) };
 
     let mut end = 0;
     while end < bytes.len() {
@@ -189,7 +189,7 @@ pub unsafe extern "C" fn jitson_parse_i16(
     use lexical_parse_integer::FromLexical;
     match i16::from_lexical(&bytes[..end]) {
         Ok(val) => {
-            *out = val;
+            unsafe { *out = val };
             (pos + end) as isize
         }
         Err(_) => ERR_INVALID_NUMBER,
@@ -204,7 +204,7 @@ pub unsafe extern "C" fn jitson_parse_i8(
     pos: usize,
     out: *mut i8,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
+    let bytes = unsafe { slice(input, len, pos) };
 
     let mut end = 0;
     while end < bytes.len() {
@@ -221,7 +221,7 @@ pub unsafe extern "C" fn jitson_parse_i8(
     use lexical_parse_integer::FromLexical;
     match i8::from_lexical(&bytes[..end]) {
         Ok(val) => {
-            *out = val;
+            unsafe { *out = val };
             (pos + end) as isize
         }
         Err(_) => ERR_INVALID_NUMBER,
@@ -236,7 +236,7 @@ pub unsafe extern "C" fn jitson_parse_u64(
     pos: usize,
     out: *mut u64,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
+    let bytes = unsafe { slice(input, len, pos) };
 
     let mut end = 0;
     while end < bytes.len() {
@@ -253,7 +253,7 @@ pub unsafe extern "C" fn jitson_parse_u64(
     use lexical_parse_integer::FromLexical;
     match u64::from_lexical(&bytes[..end]) {
         Ok(val) => {
-            *out = val;
+            unsafe { *out = val };
             (pos + end) as isize
         }
         Err(_) => ERR_INVALID_NUMBER,
@@ -268,7 +268,7 @@ pub unsafe extern "C" fn jitson_parse_u32(
     pos: usize,
     out: *mut u32,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
+    let bytes = unsafe { slice(input, len, pos) };
 
     let mut end = 0;
     while end < bytes.len() {
@@ -285,7 +285,7 @@ pub unsafe extern "C" fn jitson_parse_u32(
     use lexical_parse_integer::FromLexical;
     match u32::from_lexical(&bytes[..end]) {
         Ok(val) => {
-            *out = val;
+            unsafe { *out = val };
             (pos + end) as isize
         }
         Err(_) => ERR_INVALID_NUMBER,
@@ -300,7 +300,7 @@ pub unsafe extern "C" fn jitson_parse_u16(
     pos: usize,
     out: *mut u16,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
+    let bytes = unsafe { slice(input, len, pos) };
 
     let mut end = 0;
     while end < bytes.len() {
@@ -317,7 +317,7 @@ pub unsafe extern "C" fn jitson_parse_u16(
     use lexical_parse_integer::FromLexical;
     match u16::from_lexical(&bytes[..end]) {
         Ok(val) => {
-            *out = val;
+            unsafe { *out = val };
             (pos + end) as isize
         }
         Err(_) => ERR_INVALID_NUMBER,
@@ -332,7 +332,7 @@ pub unsafe extern "C" fn jitson_parse_u8(
     pos: usize,
     out: *mut u8,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
+    let bytes = unsafe { slice(input, len, pos) };
 
     let mut end = 0;
     while end < bytes.len() {
@@ -349,7 +349,7 @@ pub unsafe extern "C" fn jitson_parse_u8(
     use lexical_parse_integer::FromLexical;
     match u8::from_lexical(&bytes[..end]) {
         Ok(val) => {
-            *out = val;
+            unsafe { *out = val };
             (pos + end) as isize
         }
         Err(_) => ERR_INVALID_NUMBER,
@@ -364,13 +364,13 @@ pub unsafe extern "C" fn jitson_parse_bool(
     pos: usize,
     out: *mut u8,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
+    let bytes = unsafe { slice(input, len, pos) };
 
     if bytes.starts_with(b"true") {
-        *out = 1;
+        unsafe { *out = 1 };
         (pos + 4) as isize
     } else if bytes.starts_with(b"false") {
-        *out = 0;
+        unsafe { *out = 0 };
         (pos + 5) as isize
     } else {
         ERR_INVALID_BOOL
@@ -386,7 +386,7 @@ pub unsafe extern "C" fn jitson_parse_string(
     pos: usize,
     out: *mut String,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
+    let bytes = unsafe { slice(input, len, pos) };
 
     // Expect opening quote
     if bytes.is_empty() || bytes[0] != b'"' {
@@ -399,15 +399,15 @@ pub unsafe extern "C" fn jitson_parse_string(
         Some(offset) => {
             if content[offset] == b'"' {
                 // Found closing quote - no escapes in this string!
-                let s = std::str::from_utf8_unchecked(&content[..offset]);
-                std::ptr::write(out, s.to_owned());
+                let s = unsafe { std::str::from_utf8_unchecked(&content[..offset]) };
+                unsafe { std::ptr::write(out, s.to_owned()) };
                 (pos + 1 + offset + 1) as isize // +1 open quote, +1 close quote
             } else {
                 // Found backslash - need slow path with escape handling
                 match find_string_end_with_escapes(content, offset) {
                     Some(end) => {
                         let result = decode_escaped_string(&content[..end]);
-                        std::ptr::write(out, result);
+                        unsafe { std::ptr::write(out, result) };
                         (pos + 1 + end + 1) as isize
                     }
                     None => ERR_UNEXPECTED_EOF,
@@ -485,12 +485,11 @@ fn decode_escaped_string(bytes: &[u8]) -> String {
                     i += 2;
                 }
                 b'u' if i + 5 < bytes.len() => {
-                    if let Ok(hex) = std::str::from_utf8(&bytes[i + 2..i + 6]) {
-                        if let Ok(code) = u16::from_str_radix(hex, 16) {
-                            if let Some(c) = char::from_u32(code as u32) {
-                                result.push(c);
-                            }
-                        }
+                    if let Ok(hex) = std::str::from_utf8(&bytes[i + 2..i + 6])
+                        && let Ok(code) = u16::from_str_radix(hex, 16)
+                        && let Some(c) = char::from_u32(code as u32)
+                    {
+                        result.push(c);
                     }
                     i += 6;
                 }
@@ -519,7 +518,7 @@ pub unsafe extern "C" fn jitson_skip_value(
     len: usize,
     pos: usize,
 ) -> ParseResult {
-    let bytes = full_slice(input, len);
+    let bytes = unsafe { full_slice(input, len) };
     let mut i = pos;
 
     // Skip leading whitespace
@@ -731,7 +730,7 @@ pub unsafe extern "C" fn jitson_parse_vec_f64(
     pos: usize,
     out: *mut Vec<f64>,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
+    let bytes = unsafe { slice(input, len, pos) };
     let mut i = 0;
 
     if bytes.is_empty() || bytes[0] != b'[' {
@@ -743,7 +742,7 @@ pub unsafe extern "C" fn jitson_parse_vec_f64(
     let mut vec = Vec::with_capacity(16);
 
     if i < bytes.len() && bytes[i] == b']' {
-        std::ptr::write(out, vec);
+        unsafe { std::ptr::write(out, vec) };
         return (pos + i + 1) as isize;
     }
 
@@ -778,7 +777,7 @@ pub unsafe extern "C" fn jitson_parse_vec_f64(
                 skip_ws_inline(bytes, &mut i);
             }
             b']' => {
-                std::ptr::write(out, vec);
+                unsafe { std::ptr::write(out, vec) };
                 return (pos + i + 1) as isize;
             }
             _ => return ERR_EXPECTED_COMMA_OR_END,
@@ -794,57 +793,59 @@ pub unsafe extern "C" fn jitson_parse_vec_i64(
     pos: usize,
     out: *mut Vec<i64>,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
-    let mut i = 0;
+    unsafe {
+        let bytes = slice(input, len, pos);
+        let mut i = 0;
 
-    if bytes.is_empty() || bytes[0] != b'[' {
-        return ERR_EXPECTED_ARRAY_START;
-    }
-    i += 1;
-    skip_ws_inline(bytes, &mut i);
-
-    let mut vec = Vec::with_capacity(16);
-
-    if i < bytes.len() && bytes[i] == b']' {
-        std::ptr::write(out, vec);
-        return (pos + i + 1) as isize;
-    }
-
-    loop {
-        // Parse number directly
-        let mut end = i;
-        while end < bytes.len() {
-            match bytes[end] {
-                b'0'..=b'9' | b'-' | b'+' => end += 1,
-                _ => break,
-            }
+        if bytes.is_empty() || bytes[0] != b'[' {
+            return ERR_EXPECTED_ARRAY_START;
         }
-
-        if end == i {
-            return ERR_INVALID_NUMBER;
-        }
-
-        use lexical_parse_integer::FromLexical;
-        match i64::from_lexical(&bytes[i..end]) {
-            Ok(val) => vec.push(val),
-            Err(_) => return ERR_INVALID_NUMBER,
-        }
-        i = end;
-
+        i += 1;
         skip_ws_inline(bytes, &mut i);
-        if i >= bytes.len() {
-            return ERR_EXPECTED_COMMA_OR_END;
+
+        let mut vec = Vec::with_capacity(16);
+
+        if i < bytes.len() && bytes[i] == b']' {
+            std::ptr::write(out, vec);
+            return (pos + i + 1) as isize;
         }
-        match bytes[i] {
-            b',' => {
-                i += 1;
-                skip_ws_inline(bytes, &mut i);
+
+        loop {
+            // Parse number directly
+            let mut end = i;
+            while end < bytes.len() {
+                match bytes[end] {
+                    b'0'..=b'9' | b'-' | b'+' => end += 1,
+                    _ => break,
+                }
             }
-            b']' => {
-                std::ptr::write(out, vec);
-                return (pos + i + 1) as isize;
+
+            if end == i {
+                return ERR_INVALID_NUMBER;
             }
-            _ => return ERR_EXPECTED_COMMA_OR_END,
+
+            use lexical_parse_integer::FromLexical;
+            match i64::from_lexical(&bytes[i..end]) {
+                Ok(val) => vec.push(val),
+                Err(_) => return ERR_INVALID_NUMBER,
+            }
+            i = end;
+
+            skip_ws_inline(bytes, &mut i);
+            if i >= bytes.len() {
+                return ERR_EXPECTED_COMMA_OR_END;
+            }
+            match bytes[i] {
+                b',' => {
+                    i += 1;
+                    skip_ws_inline(bytes, &mut i);
+                }
+                b']' => {
+                    std::ptr::write(out, vec);
+                    return (pos + i + 1) as isize;
+                }
+                _ => return ERR_EXPECTED_COMMA_OR_END,
+            }
         }
     }
 }
@@ -857,57 +858,59 @@ pub unsafe extern "C" fn jitson_parse_vec_u64(
     pos: usize,
     out: *mut Vec<u64>,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
-    let mut i = 0;
+    unsafe {
+        let bytes = slice(input, len, pos);
+        let mut i = 0;
 
-    if bytes.is_empty() || bytes[0] != b'[' {
-        return ERR_EXPECTED_ARRAY_START;
-    }
-    i += 1;
-    skip_ws_inline(bytes, &mut i);
-
-    let mut vec = Vec::with_capacity(16);
-
-    if i < bytes.len() && bytes[i] == b']' {
-        std::ptr::write(out, vec);
-        return (pos + i + 1) as isize;
-    }
-
-    loop {
-        // Parse number directly
-        let mut end = i;
-        while end < bytes.len() {
-            match bytes[end] {
-                b'0'..=b'9' | b'+' => end += 1,
-                _ => break,
-            }
+        if bytes.is_empty() || bytes[0] != b'[' {
+            return ERR_EXPECTED_ARRAY_START;
         }
-
-        if end == i {
-            return ERR_INVALID_NUMBER;
-        }
-
-        use lexical_parse_integer::FromLexical;
-        match u64::from_lexical(&bytes[i..end]) {
-            Ok(val) => vec.push(val),
-            Err(_) => return ERR_INVALID_NUMBER,
-        }
-        i = end;
-
+        i += 1;
         skip_ws_inline(bytes, &mut i);
-        if i >= bytes.len() {
-            return ERR_EXPECTED_COMMA_OR_END;
+
+        let mut vec = Vec::with_capacity(16);
+
+        if i < bytes.len() && bytes[i] == b']' {
+            std::ptr::write(out, vec);
+            return (pos + i + 1) as isize;
         }
-        match bytes[i] {
-            b',' => {
-                i += 1;
-                skip_ws_inline(bytes, &mut i);
+
+        loop {
+            // Parse number directly
+            let mut end = i;
+            while end < bytes.len() {
+                match bytes[end] {
+                    b'0'..=b'9' | b'+' => end += 1,
+                    _ => break,
+                }
             }
-            b']' => {
-                std::ptr::write(out, vec);
-                return (pos + i + 1) as isize;
+
+            if end == i {
+                return ERR_INVALID_NUMBER;
             }
-            _ => return ERR_EXPECTED_COMMA_OR_END,
+
+            use lexical_parse_integer::FromLexical;
+            match u64::from_lexical(&bytes[i..end]) {
+                Ok(val) => vec.push(val),
+                Err(_) => return ERR_INVALID_NUMBER,
+            }
+            i = end;
+
+            skip_ws_inline(bytes, &mut i);
+            if i >= bytes.len() {
+                return ERR_EXPECTED_COMMA_OR_END;
+            }
+            match bytes[i] {
+                b',' => {
+                    i += 1;
+                    skip_ws_inline(bytes, &mut i);
+                }
+                b']' => {
+                    std::ptr::write(out, vec);
+                    return (pos + i + 1) as isize;
+                }
+                _ => return ERR_EXPECTED_COMMA_OR_END,
+            }
         }
     }
 }
@@ -920,89 +923,91 @@ pub unsafe extern "C" fn jitson_parse_vec_vec_f64(
     pos: usize,
     out: *mut Vec<Vec<f64>>,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
-    let mut i = 0;
+    unsafe {
+        let bytes = slice(input, len, pos);
+        let mut i = 0;
 
-    if bytes.is_empty() || bytes[0] != b'[' {
-        return ERR_EXPECTED_ARRAY_START;
-    }
-    i += 1;
-    skip_ws_inline(bytes, &mut i);
-
-    let mut outer = Vec::with_capacity(16);
-
-    if i < bytes.len() && bytes[i] == b']' {
-        std::ptr::write(out, outer);
-        return (pos + i + 1) as isize;
-    }
-
-    loop {
-        // Parse inner array
-        if i >= bytes.len() || bytes[i] != b'[' {
+        if bytes.is_empty() || bytes[0] != b'[' {
             return ERR_EXPECTED_ARRAY_START;
         }
         i += 1;
         skip_ws_inline(bytes, &mut i);
 
-        let mut inner = Vec::with_capacity(16);
+        let mut outer = Vec::with_capacity(16);
 
         if i < bytes.len() && bytes[i] == b']' {
+            std::ptr::write(out, outer);
+            return (pos + i + 1) as isize;
+        }
+
+        loop {
+            // Parse inner array
+            if i >= bytes.len() || bytes[i] != b'[' {
+                return ERR_EXPECTED_ARRAY_START;
+            }
             i += 1;
-        } else {
-            loop {
-                let mut end = i;
-                while end < bytes.len() {
-                    match bytes[end] {
-                        b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E' => end += 1,
-                        _ => break,
-                    }
-                }
+            skip_ws_inline(bytes, &mut i);
 
-                if end == i {
-                    return ERR_INVALID_NUMBER;
-                }
+            let mut inner = Vec::with_capacity(16);
 
-                use lexical_parse_float::FromLexical;
-                match f64::from_lexical(&bytes[i..end]) {
-                    Ok(val) => inner.push(val),
-                    Err(_) => return ERR_INVALID_NUMBER,
-                }
-                i = end;
-
-                skip_ws_inline(bytes, &mut i);
-                if i >= bytes.len() {
-                    return ERR_EXPECTED_COMMA_OR_END;
-                }
-                match bytes[i] {
-                    b',' => {
-                        i += 1;
-                        skip_ws_inline(bytes, &mut i);
-                    }
-                    b']' => {
-                        i += 1;
-                        break;
-                    }
-                    _ => return ERR_EXPECTED_COMMA_OR_END,
-                }
-            }
-        }
-
-        outer.push(inner);
-
-        skip_ws_inline(bytes, &mut i);
-        if i >= bytes.len() {
-            return ERR_EXPECTED_COMMA_OR_END;
-        }
-        match bytes[i] {
-            b',' => {
+            if i < bytes.len() && bytes[i] == b']' {
                 i += 1;
-                skip_ws_inline(bytes, &mut i);
+            } else {
+                loop {
+                    let mut end = i;
+                    while end < bytes.len() {
+                        match bytes[end] {
+                            b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E' => end += 1,
+                            _ => break,
+                        }
+                    }
+
+                    if end == i {
+                        return ERR_INVALID_NUMBER;
+                    }
+
+                    use lexical_parse_float::FromLexical;
+                    match f64::from_lexical(&bytes[i..end]) {
+                        Ok(val) => inner.push(val),
+                        Err(_) => return ERR_INVALID_NUMBER,
+                    }
+                    i = end;
+
+                    skip_ws_inline(bytes, &mut i);
+                    if i >= bytes.len() {
+                        return ERR_EXPECTED_COMMA_OR_END;
+                    }
+                    match bytes[i] {
+                        b',' => {
+                            i += 1;
+                            skip_ws_inline(bytes, &mut i);
+                        }
+                        b']' => {
+                            i += 1;
+                            break;
+                        }
+                        _ => return ERR_EXPECTED_COMMA_OR_END,
+                    }
+                }
             }
-            b']' => {
-                std::ptr::write(out, outer);
-                return (pos + i + 1) as isize;
+
+            outer.push(inner);
+
+            skip_ws_inline(bytes, &mut i);
+            if i >= bytes.len() {
+                return ERR_EXPECTED_COMMA_OR_END;
             }
-            _ => return ERR_EXPECTED_COMMA_OR_END,
+            match bytes[i] {
+                b',' => {
+                    i += 1;
+                    skip_ws_inline(bytes, &mut i);
+                }
+                b']' => {
+                    std::ptr::write(out, outer);
+                    return (pos + i + 1) as isize;
+                }
+                _ => return ERR_EXPECTED_COMMA_OR_END,
+            }
         }
     }
 }
@@ -1015,122 +1020,124 @@ pub unsafe extern "C" fn jitson_parse_vec_vec_vec_f64(
     pos: usize,
     out: *mut Vec<Vec<Vec<f64>>>,
 ) -> ParseResult {
-    let bytes = slice(input, len, pos);
-    let mut i = 0;
+    unsafe {
+        let bytes = slice(input, len, pos);
+        let mut i = 0;
 
-    if bytes.is_empty() || bytes[0] != b'[' {
-        return ERR_EXPECTED_ARRAY_START;
-    }
-    i += 1;
-    skip_ws_inline(bytes, &mut i);
-
-    let mut outer = Vec::with_capacity(16);
-
-    if i < bytes.len() && bytes[i] == b']' {
-        std::ptr::write(out, outer);
-        return (pos + i + 1) as isize;
-    }
-
-    loop {
-        // Parse middle array
-        if i >= bytes.len() || bytes[i] != b'[' {
+        if bytes.is_empty() || bytes[0] != b'[' {
             return ERR_EXPECTED_ARRAY_START;
         }
         i += 1;
         skip_ws_inline(bytes, &mut i);
 
-        let mut middle = Vec::with_capacity(16);
+        let mut outer = Vec::with_capacity(16);
 
         if i < bytes.len() && bytes[i] == b']' {
+            std::ptr::write(out, outer);
+            return (pos + i + 1) as isize;
+        }
+
+        loop {
+            // Parse middle array
+            if i >= bytes.len() || bytes[i] != b'[' {
+                return ERR_EXPECTED_ARRAY_START;
+            }
             i += 1;
-        } else {
-            loop {
-                // Parse inner array
-                if i >= bytes.len() || bytes[i] != b'[' {
-                    return ERR_EXPECTED_ARRAY_START;
-                }
+            skip_ws_inline(bytes, &mut i);
+
+            let mut middle = Vec::with_capacity(16);
+
+            if i < bytes.len() && bytes[i] == b']' {
                 i += 1;
-                skip_ws_inline(bytes, &mut i);
-
-                let mut inner = Vec::with_capacity(16);
-
-                if i < bytes.len() && bytes[i] == b']' {
+            } else {
+                loop {
+                    // Parse inner array
+                    if i >= bytes.len() || bytes[i] != b'[' {
+                        return ERR_EXPECTED_ARRAY_START;
+                    }
                     i += 1;
-                } else {
-                    loop {
-                        let mut end = i;
-                        while end < bytes.len() {
-                            match bytes[end] {
-                                b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E' => end += 1,
-                                _ => break,
-                            }
-                        }
+                    skip_ws_inline(bytes, &mut i);
 
-                        if end == i {
-                            return ERR_INVALID_NUMBER;
-                        }
+                    let mut inner = Vec::with_capacity(16);
 
-                        use lexical_parse_float::FromLexical;
-                        match f64::from_lexical(&bytes[i..end]) {
-                            Ok(val) => inner.push(val),
-                            Err(_) => return ERR_INVALID_NUMBER,
-                        }
-                        i = end;
-
-                        skip_ws_inline(bytes, &mut i);
-                        if i >= bytes.len() {
-                            return ERR_EXPECTED_COMMA_OR_END;
-                        }
-                        match bytes[i] {
-                            b',' => {
-                                i += 1;
-                                skip_ws_inline(bytes, &mut i);
-                            }
-                            b']' => {
-                                i += 1;
-                                break;
-                            }
-                            _ => return ERR_EXPECTED_COMMA_OR_END,
-                        }
-                    }
-                }
-
-                middle.push(inner);
-
-                skip_ws_inline(bytes, &mut i);
-                if i >= bytes.len() {
-                    return ERR_EXPECTED_COMMA_OR_END;
-                }
-                match bytes[i] {
-                    b',' => {
+                    if i < bytes.len() && bytes[i] == b']' {
                         i += 1;
-                        skip_ws_inline(bytes, &mut i);
+                    } else {
+                        loop {
+                            let mut end = i;
+                            while end < bytes.len() {
+                                match bytes[end] {
+                                    b'0'..=b'9' | b'-' | b'+' | b'.' | b'e' | b'E' => end += 1,
+                                    _ => break,
+                                }
+                            }
+
+                            if end == i {
+                                return ERR_INVALID_NUMBER;
+                            }
+
+                            use lexical_parse_float::FromLexical;
+                            match f64::from_lexical(&bytes[i..end]) {
+                                Ok(val) => inner.push(val),
+                                Err(_) => return ERR_INVALID_NUMBER,
+                            }
+                            i = end;
+
+                            skip_ws_inline(bytes, &mut i);
+                            if i >= bytes.len() {
+                                return ERR_EXPECTED_COMMA_OR_END;
+                            }
+                            match bytes[i] {
+                                b',' => {
+                                    i += 1;
+                                    skip_ws_inline(bytes, &mut i);
+                                }
+                                b']' => {
+                                    i += 1;
+                                    break;
+                                }
+                                _ => return ERR_EXPECTED_COMMA_OR_END,
+                            }
+                        }
                     }
-                    b']' => {
-                        i += 1;
-                        break;
+
+                    middle.push(inner);
+
+                    skip_ws_inline(bytes, &mut i);
+                    if i >= bytes.len() {
+                        return ERR_EXPECTED_COMMA_OR_END;
                     }
-                    _ => return ERR_EXPECTED_COMMA_OR_END,
+                    match bytes[i] {
+                        b',' => {
+                            i += 1;
+                            skip_ws_inline(bytes, &mut i);
+                        }
+                        b']' => {
+                            i += 1;
+                            break;
+                        }
+                        _ => return ERR_EXPECTED_COMMA_OR_END,
+                    }
                 }
             }
-        }
 
-        outer.push(middle);
+            outer.push(middle);
 
-        skip_ws_inline(bytes, &mut i);
-        if i >= bytes.len() {
-            return ERR_EXPECTED_COMMA_OR_END;
-        }
-        match bytes[i] {
-            b',' => {
-                i += 1;
-                skip_ws_inline(bytes, &mut i);
+            skip_ws_inline(bytes, &mut i);
+            if i >= bytes.len() {
+                return ERR_EXPECTED_COMMA_OR_END;
             }
-            b']' => {
-                std::ptr::write(out, outer);
-                return (pos + i + 1) as isize;
+            match bytes[i] {
+                b',' => {
+                    i += 1;
+                    skip_ws_inline(bytes, &mut i);
+                }
+                b']' => {
+                    std::ptr::write(out, outer);
+                    return (pos + i + 1) as isize;
+                }
+                _ => return ERR_EXPECTED_COMMA_OR_END,
             }
-            _ => return ERR_EXPECTED_COMMA_OR_END,
         }
     }
 }
@@ -1148,93 +1155,76 @@ pub unsafe extern "C" fn jitson_parse_vec_struct(
     elem_align: usize,
     func_ptr: *const u8,
 ) -> ParseResult {
-    // The func_ptr is a compiled deserializer: fn(input, len, pos, out) -> isize
-    type DeserFn = unsafe extern "C" fn(*const u8, usize, usize, *mut u8) -> isize;
-    let deser: DeserFn = std::mem::transmute(func_ptr);
+    unsafe {
+        // The func_ptr is a compiled deserializer: fn(input, len, pos, out) -> isize
+        type DeserFn = unsafe extern "C" fn(*const u8, usize, usize, *mut u8) -> isize;
+        let deser: DeserFn = std::mem::transmute(func_ptr);
 
-    let bytes = slice(input, len, pos);
-    let mut i = 0;
+        let bytes = slice(input, len, pos);
+        let mut i = 0;
 
-    if bytes.is_empty() || bytes[0] != b'[' {
-        return ERR_EXPECTED_ARRAY_START;
-    }
-    i += 1;
-    skip_ws_inline(bytes, &mut i);
-
-    // Build a Vec manually with proper layout
-    let mut capacity = 16usize;
-    let mut len_items = 0usize;
-    let mut data = if elem_size > 0 {
-        std::alloc::alloc(
-            std::alloc::Layout::from_size_align(elem_size * capacity, elem_align).unwrap(),
-        )
-    } else {
-        std::ptr::null_mut()
-    };
-
-    if i < bytes.len() && bytes[i] == b']' {
-        // Empty array
-        let vec_ptr = out as *mut (usize, *mut u8, usize);
-        std::ptr::write(vec_ptr, (capacity, data, 0));
-        return (pos + i + 1) as isize;
-    }
-
-    loop {
-        // Grow if needed
-        if len_items >= capacity {
-            let new_cap = capacity * 2;
-            let new_data = std::alloc::alloc(
-                std::alloc::Layout::from_size_align(elem_size * new_cap, elem_align).unwrap(),
-            );
-            if elem_size > 0 && !data.is_null() {
-                std::ptr::copy_nonoverlapping(data, new_data, elem_size * len_items);
-                std::alloc::dealloc(
-                    data,
-                    std::alloc::Layout::from_size_align(elem_size * capacity, elem_align).unwrap(),
-                );
-            }
-            data = new_data;
-            capacity = new_cap;
+        if bytes.is_empty() || bytes[0] != b'[' {
+            return ERR_EXPECTED_ARRAY_START;
         }
-
-        // Parse element
-        let elem_ptr = data.add(len_items * elem_size);
-        let result = deser(input, len, pos + i, elem_ptr);
-        if result < 0 {
-            // Clean up on error
-            if elem_size > 0 && !data.is_null() {
-                std::alloc::dealloc(
-                    data,
-                    std::alloc::Layout::from_size_align(elem_size * capacity, elem_align).unwrap(),
-                );
-            }
-            return result;
-        }
-        i = (result as usize) - pos;
-        len_items += 1;
-
+        i += 1;
         skip_ws_inline(bytes, &mut i);
-        if i >= bytes.len() {
-            if elem_size > 0 && !data.is_null() {
-                std::alloc::dealloc(
-                    data,
-                    std::alloc::Layout::from_size_align(elem_size * capacity, elem_align).unwrap(),
-                );
-            }
-            return ERR_EXPECTED_COMMA_OR_END;
+
+        // Build a Vec manually with proper layout
+        let mut capacity = 16usize;
+        let mut len_items = 0usize;
+        let mut data = if elem_size > 0 {
+            std::alloc::alloc(
+                std::alloc::Layout::from_size_align(elem_size * capacity, elem_align).unwrap(),
+            )
+        } else {
+            std::ptr::null_mut()
+        };
+
+        if i < bytes.len() && bytes[i] == b']' {
+            // Empty array
+            let vec_ptr = out as *mut (usize, *mut u8, usize);
+            std::ptr::write(vec_ptr, (capacity, data, 0));
+            return (pos + i + 1) as isize;
         }
-        match bytes[i] {
-            b',' => {
-                i += 1;
-                skip_ws_inline(bytes, &mut i);
+
+        loop {
+            // Grow if needed
+            if len_items >= capacity {
+                let new_cap = capacity * 2;
+                let new_data = std::alloc::alloc(
+                    std::alloc::Layout::from_size_align(elem_size * new_cap, elem_align).unwrap(),
+                );
+                if elem_size > 0 && !data.is_null() {
+                    std::ptr::copy_nonoverlapping(data, new_data, elem_size * len_items);
+                    std::alloc::dealloc(
+                        data,
+                        std::alloc::Layout::from_size_align(elem_size * capacity, elem_align)
+                            .unwrap(),
+                    );
+                }
+                data = new_data;
+                capacity = new_cap;
             }
-            b']' => {
-                // Write the Vec
-                let vec_ptr = out as *mut (usize, *mut u8, usize);
-                std::ptr::write(vec_ptr, (capacity, data, len_items));
-                return (pos + i + 1) as isize;
+
+            // Parse element
+            let elem_ptr = data.add(len_items * elem_size);
+            let result = deser(input, len, pos + i, elem_ptr);
+            if result < 0 {
+                // Clean up on error
+                if elem_size > 0 && !data.is_null() {
+                    std::alloc::dealloc(
+                        data,
+                        std::alloc::Layout::from_size_align(elem_size * capacity, elem_align)
+                            .unwrap(),
+                    );
+                }
+                return result;
             }
-            _ => {
+            i = (result as usize) - pos;
+            len_items += 1;
+
+            skip_ws_inline(bytes, &mut i);
+            if i >= bytes.len() {
                 if elem_size > 0 && !data.is_null() {
                     std::alloc::dealloc(
                         data,
@@ -1243,6 +1233,28 @@ pub unsafe extern "C" fn jitson_parse_vec_struct(
                     );
                 }
                 return ERR_EXPECTED_COMMA_OR_END;
+            }
+            match bytes[i] {
+                b',' => {
+                    i += 1;
+                    skip_ws_inline(bytes, &mut i);
+                }
+                b']' => {
+                    // Write the Vec
+                    let vec_ptr = out as *mut (usize, *mut u8, usize);
+                    std::ptr::write(vec_ptr, (capacity, data, len_items));
+                    return (pos + i + 1) as isize;
+                }
+                _ => {
+                    if elem_size > 0 && !data.is_null() {
+                        std::alloc::dealloc(
+                            data,
+                            std::alloc::Layout::from_size_align(elem_size * capacity, elem_align)
+                                .unwrap(),
+                        );
+                    }
+                    return ERR_EXPECTED_COMMA_OR_END;
+                }
             }
         }
     }
@@ -1257,9 +1269,11 @@ pub unsafe extern "C" fn jitson_parse_nested_struct(
     out: *mut u8,
     func_ptr: *const u8,
 ) -> ParseResult {
-    type DeserFn = unsafe extern "C" fn(*const u8, usize, usize, *mut u8) -> isize;
-    let deser: DeserFn = std::mem::transmute(func_ptr);
-    deser(input, len, pos, out)
+    unsafe {
+        type DeserFn = unsafe extern "C" fn(*const u8, usize, usize, *mut u8) -> isize;
+        let deser: DeserFn = std::mem::transmute(func_ptr);
+        deser(input, len, pos, out)
+    }
 }
 
 /// Parse an `Option<T>` field.
@@ -1282,184 +1296,193 @@ pub unsafe extern "C" fn jitson_parse_option(
     option_shape: *const facet_core::Shape,
     inner_deser_fn: *const u8, // nullable - if null, we dispatch on inner type
 ) -> ParseResult {
-    use facet_core::{
-        Def, NumericType, PrimitiveType, PtrConst, PtrMut, PtrUninit, Type, UserType,
-    };
-    use std::ptr::NonNull;
+    unsafe {
+        use facet_core::{
+            Def, NumericType, PrimitiveType, PtrConst, PtrMut, PtrUninit, Type, UserType,
+        };
 
-    let bytes = slice(input, len, pos);
-    let mut i = 0;
+        let bytes = slice(input, len, pos);
+        let mut i = 0;
 
-    // Skip whitespace
-    skip_ws_inline(bytes, &mut i);
+        // Skip whitespace
+        skip_ws_inline(bytes, &mut i);
 
-    if i >= bytes.len() {
-        return ERR_UNEXPECTED_EOF;
-    }
+        if i >= bytes.len() {
+            return ERR_UNEXPECTED_EOF;
+        }
 
-    // Get the OptionDef from the shape
-    let shape = &*option_shape;
-    let Def::Option(option_def) = shape.def else {
-        // This shouldn't happen if called correctly
-        return ERR_UNEXPECTED_EOF;
-    };
+        // Get the OptionDef from the shape
+        let shape = &*option_shape;
+        let Def::Option(option_def) = shape.def else {
+            // This shouldn't happen if called correctly
+            return ERR_UNEXPECTED_EOF;
+        };
 
-    let vtable = option_def.vtable;
-    let inner_shape = option_def.t();
+        let vtable = option_def.vtable;
+        let inner_shape = option_def.t();
 
-    // Check for null
-    if bytes.len() - i >= 4 && &bytes[i..i + 4] == b"null" {
-        // Initialize as None
-        let out_uninit = PtrUninit::new(NonNull::new_unchecked(out));
-        (vtable.init_none_fn)(out_uninit);
-        return (pos + i + 4) as isize;
-    }
+        // Check for null
+        if bytes.len() - i >= 4 && &bytes[i..i + 4] == b"null" {
+            // Initialize as None
+            let out_uninit = PtrUninit::new(out);
+            (vtable.init_none)(out_uninit);
+            return (pos + i + 4) as isize;
+        }
 
-    // Not null - need to parse the inner value
-    // Get the inner type's size and alignment for allocation
-    let inner_layout = inner_shape
-        .layout
-        .sized_layout()
-        .expect("Option inner type must be sized");
+        // Not null - need to parse the inner value
+        // Get the inner type's size and alignment for allocation
+        let inner_layout = inner_shape
+            .layout
+            .sized_layout()
+            .expect("Option inner type must be sized");
 
-    // Allocate temporary buffer for inner value
-    let inner_buf = if inner_layout.size() > 0 {
-        std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-            inner_layout.size(),
-            inner_layout.align(),
-        ))
-    } else {
-        // For ZSTs, use a non-null dangling pointer
-        inner_layout.align() as *mut u8
-    };
+        // Allocate temporary buffer for inner value
+        let inner_buf = if inner_layout.size() > 0 {
+            std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
+                inner_layout.size(),
+                inner_layout.align(),
+            ))
+        } else {
+            // For ZSTs, use a non-null dangling pointer
+            inner_layout.align() as *mut u8
+        };
 
-    // Parse the inner value based on the inner type
-    let inner_result = if !inner_deser_fn.is_null() {
-        // Use JIT-compiled deserializer for inner value (for structs)
-        type DeserFn = unsafe extern "C" fn(*const u8, usize, usize, *mut u8) -> isize;
-        let deser: DeserFn = std::mem::transmute(inner_deser_fn);
-        deser(input, len, pos + i, inner_buf)
-    } else {
-        // Dispatch based on inner type
-        match &inner_shape.ty {
-            Type::Primitive(PrimitiveType::Numeric(NumericType::Float)) => {
-                match inner_layout.size() {
-                    8 => jitson_parse_f64(input, len, pos + i, inner_buf.cast()),
-                    4 => jitson_parse_f32(input, len, pos + i, inner_buf.cast()),
-                    _ => ERR_UNEXPECTED_EOF,
+        // Parse the inner value based on the inner type
+        let inner_result = if !inner_deser_fn.is_null() {
+            // Use JIT-compiled deserializer for inner value (for structs)
+            type DeserFn = unsafe extern "C" fn(*const u8, usize, usize, *mut u8) -> isize;
+            let deser: DeserFn = std::mem::transmute(inner_deser_fn);
+            deser(input, len, pos + i, inner_buf)
+        } else {
+            // Dispatch based on inner type
+            match &inner_shape.ty {
+                Type::Primitive(PrimitiveType::Numeric(NumericType::Float)) => {
+                    match inner_layout.size() {
+                        8 => jitson_parse_f64(input, len, pos + i, inner_buf.cast()),
+                        4 => jitson_parse_f32(input, len, pos + i, inner_buf.cast()),
+                        _ => ERR_UNEXPECTED_EOF,
+                    }
                 }
-            }
-            Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: true })) => {
-                match inner_layout.size() {
-                    8 => jitson_parse_i64(input, len, pos + i, inner_buf.cast()),
-                    4 => jitson_parse_i32(input, len, pos + i, inner_buf.cast()),
-                    2 => jitson_parse_i16(input, len, pos + i, inner_buf.cast()),
-                    1 => jitson_parse_i8(input, len, pos + i, inner_buf.cast()),
-                    _ => ERR_UNEXPECTED_EOF,
+                Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: true })) => {
+                    match inner_layout.size() {
+                        8 => jitson_parse_i64(input, len, pos + i, inner_buf.cast()),
+                        4 => jitson_parse_i32(input, len, pos + i, inner_buf.cast()),
+                        2 => jitson_parse_i16(input, len, pos + i, inner_buf.cast()),
+                        1 => jitson_parse_i8(input, len, pos + i, inner_buf.cast()),
+                        _ => ERR_UNEXPECTED_EOF,
+                    }
                 }
-            }
-            Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: false })) => {
-                match inner_layout.size() {
-                    8 => jitson_parse_u64(input, len, pos + i, inner_buf.cast()),
-                    4 => jitson_parse_u32(input, len, pos + i, inner_buf.cast()),
-                    2 => jitson_parse_u16(input, len, pos + i, inner_buf.cast()),
-                    1 => jitson_parse_u8(input, len, pos + i, inner_buf.cast()),
-                    _ => ERR_UNEXPECTED_EOF,
+                Type::Primitive(PrimitiveType::Numeric(NumericType::Integer { signed: false })) => {
+                    match inner_layout.size() {
+                        8 => jitson_parse_u64(input, len, pos + i, inner_buf.cast()),
+                        4 => jitson_parse_u32(input, len, pos + i, inner_buf.cast()),
+                        2 => jitson_parse_u16(input, len, pos + i, inner_buf.cast()),
+                        1 => jitson_parse_u8(input, len, pos + i, inner_buf.cast()),
+                        _ => ERR_UNEXPECTED_EOF,
+                    }
                 }
-            }
-            Type::Primitive(PrimitiveType::Boolean) => {
-                jitson_parse_bool(input, len, pos + i, inner_buf.cast())
-            }
-            Type::User(UserType::Opaque) if inner_shape.type_identifier == "String" => {
-                jitson_parse_string(input, len, pos + i, inner_buf.cast())
-            }
-            Type::User(UserType::Opaque) if inner_shape.type_identifier == "Box" => {
-                // Handle Box<T> - parse the inner value and box it
-                if let Def::Pointer(ptr_def) = inner_shape.def {
-                    if let Some(pointee_shape) = ptr_def.pointee {
-                        if let Some(new_into_fn) = ptr_def.vtable.new_into_fn {
-                            let pointee_layout = pointee_shape
-                                .layout
-                                .sized_layout()
-                                .expect("Box pointee must be sized");
+                Type::Primitive(PrimitiveType::Boolean) => {
+                    jitson_parse_bool(input, len, pos + i, inner_buf.cast())
+                }
+                Type::User(UserType::Opaque) if inner_shape.type_identifier == "String" => {
+                    jitson_parse_string(input, len, pos + i, inner_buf.cast())
+                }
+                Type::User(UserType::Opaque) if inner_shape.type_identifier == "Box" => {
+                    // Handle Box<T> - parse the inner value and box it
+                    if let Def::Pointer(ptr_def) = inner_shape.def {
+                        if let Some(pointee_shape) = ptr_def.pointee {
+                            if let Some(new_into_fn) = ptr_def.vtable.new_into_fn {
+                                let pointee_layout = pointee_shape
+                                    .layout
+                                    .sized_layout()
+                                    .expect("Box pointee must be sized");
 
-                            // Allocate temp buffer for pointee
-                            let pointee_buf = if pointee_layout.size() > 0 {
-                                std::alloc::alloc(std::alloc::Layout::from_size_align_unchecked(
-                                    pointee_layout.size(),
-                                    pointee_layout.align(),
-                                ))
-                            } else {
-                                pointee_layout.align() as *mut u8
-                            };
+                                // Allocate temp buffer for pointee
+                                let pointee_buf = if pointee_layout.size() > 0 {
+                                    std::alloc::alloc(
+                                        std::alloc::Layout::from_size_align_unchecked(
+                                            pointee_layout.size(),
+                                            pointee_layout.align(),
+                                        ),
+                                    )
+                                } else {
+                                    pointee_layout.align() as *mut u8
+                                };
 
-                            // Recursively parse inner value - reuse jitson_parse_option if inner is Option
-                            let pointee_result = if let Def::Option(_) = pointee_shape.def {
-                                jitson_parse_option(
-                                    input,
-                                    len,
-                                    pos + i,
-                                    pointee_buf,
-                                    pointee_shape,
-                                    std::ptr::null(),
-                                )
-                            } else {
-                                // Try to parse as primitive or fail
-                                match &pointee_shape.ty {
-                                    Type::Primitive(PrimitiveType::Numeric(
-                                        NumericType::Integer { signed: false },
-                                    )) => match pointee_layout.size() {
-                                        8 => jitson_parse_u64(
-                                            input,
-                                            len,
-                                            pos + i,
-                                            pointee_buf.cast(),
-                                        ),
-                                        4 => jitson_parse_u32(
-                                            input,
-                                            len,
-                                            pos + i,
-                                            pointee_buf.cast(),
-                                        ),
-                                        2 => jitson_parse_u16(
-                                            input,
-                                            len,
-                                            pos + i,
-                                            pointee_buf.cast(),
-                                        ),
-                                        1 => {
-                                            jitson_parse_u8(input, len, pos + i, pointee_buf.cast())
-                                        }
-                                        _ => ERR_UNEXPECTED_EOF,
-                                    },
-                                    Type::Primitive(PrimitiveType::Numeric(
-                                        NumericType::Integer { signed: true },
-                                    )) => match pointee_layout.size() {
-                                        8 => jitson_parse_i64(
-                                            input,
-                                            len,
-                                            pos + i,
-                                            pointee_buf.cast(),
-                                        ),
-                                        4 => jitson_parse_i32(
-                                            input,
-                                            len,
-                                            pos + i,
-                                            pointee_buf.cast(),
-                                        ),
-                                        2 => jitson_parse_i16(
-                                            input,
-                                            len,
-                                            pos + i,
-                                            pointee_buf.cast(),
-                                        ),
-                                        1 => {
-                                            jitson_parse_i8(input, len, pos + i, pointee_buf.cast())
-                                        }
-                                        _ => ERR_UNEXPECTED_EOF,
-                                    },
-                                    Type::Primitive(PrimitiveType::Numeric(NumericType::Float)) => {
-                                        match pointee_layout.size() {
+                                // Recursively parse inner value - reuse jitson_parse_option if inner is Option
+                                let pointee_result = if let Def::Option(_) = pointee_shape.def {
+                                    jitson_parse_option(
+                                        input,
+                                        len,
+                                        pos + i,
+                                        pointee_buf,
+                                        pointee_shape,
+                                        std::ptr::null(),
+                                    )
+                                } else {
+                                    // Try to parse as primitive or fail
+                                    match &pointee_shape.ty {
+                                        Type::Primitive(PrimitiveType::Numeric(
+                                            NumericType::Integer { signed: false },
+                                        )) => match pointee_layout.size() {
+                                            8 => jitson_parse_u64(
+                                                input,
+                                                len,
+                                                pos + i,
+                                                pointee_buf.cast(),
+                                            ),
+                                            4 => jitson_parse_u32(
+                                                input,
+                                                len,
+                                                pos + i,
+                                                pointee_buf.cast(),
+                                            ),
+                                            2 => jitson_parse_u16(
+                                                input,
+                                                len,
+                                                pos + i,
+                                                pointee_buf.cast(),
+                                            ),
+                                            1 => jitson_parse_u8(
+                                                input,
+                                                len,
+                                                pos + i,
+                                                pointee_buf.cast(),
+                                            ),
+                                            _ => ERR_UNEXPECTED_EOF,
+                                        },
+                                        Type::Primitive(PrimitiveType::Numeric(
+                                            NumericType::Integer { signed: true },
+                                        )) => match pointee_layout.size() {
+                                            8 => jitson_parse_i64(
+                                                input,
+                                                len,
+                                                pos + i,
+                                                pointee_buf.cast(),
+                                            ),
+                                            4 => jitson_parse_i32(
+                                                input,
+                                                len,
+                                                pos + i,
+                                                pointee_buf.cast(),
+                                            ),
+                                            2 => jitson_parse_i16(
+                                                input,
+                                                len,
+                                                pos + i,
+                                                pointee_buf.cast(),
+                                            ),
+                                            1 => jitson_parse_i8(
+                                                input,
+                                                len,
+                                                pos + i,
+                                                pointee_buf.cast(),
+                                            ),
+                                            _ => ERR_UNEXPECTED_EOF,
+                                        },
+                                        Type::Primitive(PrimitiveType::Numeric(
+                                            NumericType::Float,
+                                        )) => match pointee_layout.size() {
                                             8 => jitson_parse_f64(
                                                 input,
                                                 len,
@@ -1473,21 +1496,58 @@ pub unsafe extern "C" fn jitson_parse_option(
                                                 pointee_buf.cast(),
                                             ),
                                             _ => ERR_UNEXPECTED_EOF,
+                                        },
+                                        Type::Primitive(PrimitiveType::Boolean) => {
+                                            jitson_parse_bool(
+                                                input,
+                                                len,
+                                                pos + i,
+                                                pointee_buf.cast(),
+                                            )
                                         }
+                                        Type::User(UserType::Opaque)
+                                            if pointee_shape.type_identifier == "String" =>
+                                        {
+                                            jitson_parse_string(
+                                                input,
+                                                len,
+                                                pos + i,
+                                                pointee_buf.cast(),
+                                            )
+                                        }
+                                        _ => ERR_UNEXPECTED_EOF,
                                     }
-                                    Type::Primitive(PrimitiveType::Boolean) => {
-                                        jitson_parse_bool(input, len, pos + i, pointee_buf.cast())
-                                    }
-                                    Type::User(UserType::Opaque)
-                                        if pointee_shape.type_identifier == "String" =>
-                                    {
-                                        jitson_parse_string(input, len, pos + i, pointee_buf.cast())
-                                    }
-                                    _ => ERR_UNEXPECTED_EOF,
-                                }
-                            };
+                                };
 
-                            if pointee_result < 0 {
+                                if pointee_result < 0 {
+                                    if pointee_layout.size() > 0 {
+                                        std::alloc::dealloc(
+                                            pointee_buf,
+                                            std::alloc::Layout::from_size_align_unchecked(
+                                                pointee_layout.size(),
+                                                pointee_layout.align(),
+                                            ),
+                                        );
+                                    }
+                                    // Cleanup outer buffer too
+                                    if inner_layout.size() > 0 {
+                                        std::alloc::dealloc(
+                                            inner_buf,
+                                            std::alloc::Layout::from_size_align_unchecked(
+                                                inner_layout.size(),
+                                                inner_layout.align(),
+                                            ),
+                                        );
+                                    }
+                                    return pointee_result;
+                                }
+
+                                // Create the Box using new_into_fn
+                                let inner_uninit = PtrUninit::new(inner_buf);
+                                let pointee_ptr = PtrMut::new(pointee_buf);
+                                new_into_fn(inner_uninit, pointee_ptr);
+
+                                // Deallocate pointee buffer (value moved into Box)
                                 if pointee_layout.size() > 0 {
                                     std::alloc::dealloc(
                                         pointee_buf,
@@ -1497,96 +1557,87 @@ pub unsafe extern "C" fn jitson_parse_option(
                                         ),
                                     );
                                 }
-                                // Cleanup outer buffer too
-                                if inner_layout.size() > 0 {
-                                    std::alloc::dealloc(
-                                        inner_buf,
-                                        std::alloc::Layout::from_size_align_unchecked(
-                                            inner_layout.size(),
-                                            inner_layout.align(),
-                                        ),
-                                    );
-                                }
-                                return pointee_result;
+
+                                pointee_result
+                            } else {
+                                ERR_UNEXPECTED_EOF
                             }
-
-                            // Create the Box using new_into_fn
-                            let inner_uninit = PtrUninit::new(NonNull::new_unchecked(inner_buf));
-                            let pointee_ptr = PtrMut::new(NonNull::new_unchecked(pointee_buf));
-                            new_into_fn(inner_uninit, pointee_ptr);
-
-                            // Deallocate pointee buffer (value moved into Box)
-                            if pointee_layout.size() > 0 {
-                                std::alloc::dealloc(
-                                    pointee_buf,
-                                    std::alloc::Layout::from_size_align_unchecked(
-                                        pointee_layout.size(),
-                                        pointee_layout.align(),
-                                    ),
-                                );
-                            }
-
-                            pointee_result
                         } else {
                             ERR_UNEXPECTED_EOF
                         }
                     } else {
                         ERR_UNEXPECTED_EOF
                     }
-                } else {
-                    ERR_UNEXPECTED_EOF
                 }
-            }
-            Type::User(UserType::Struct(_)) => {
-                // Look up pre-compiled deserializer from cache
-                if let Some(func) = crate::cranelift::cache::get_by_shape(inner_shape) {
-                    type DeserFn = unsafe extern "C" fn(*const u8, usize, usize, *mut u8) -> isize;
-                    let deser: DeserFn = std::mem::transmute(func.ptr());
-                    deser(input, len, pos + i, inner_buf)
-                } else {
-                    if inner_layout.size() > 0 {
-                        std::alloc::dealloc(
-                            inner_buf,
-                            std::alloc::Layout::from_size_align_unchecked(
-                                inner_layout.size(),
-                                inner_layout.align(),
-                            ),
-                        );
+                Type::User(UserType::Struct(_)) => {
+                    // Look up pre-compiled deserializer from cache
+                    if let Some(func) = crate::cranelift::cache::get_by_shape(inner_shape) {
+                        type DeserFn =
+                            unsafe extern "C" fn(*const u8, usize, usize, *mut u8) -> isize;
+                        let deser: DeserFn = std::mem::transmute(func.ptr());
+                        deser(input, len, pos + i, inner_buf)
+                    } else {
+                        if inner_layout.size() > 0 {
+                            std::alloc::dealloc(
+                                inner_buf,
+                                std::alloc::Layout::from_size_align_unchecked(
+                                    inner_layout.size(),
+                                    inner_layout.align(),
+                                ),
+                            );
+                        }
+                        return ERR_UNEXPECTED_EOF;
                     }
-                    return ERR_UNEXPECTED_EOF;
                 }
-            }
-            _ => {
-                // Check if it's a nested Option
-                if let Def::Option(_) = inner_shape.def {
-                    // Recursively handle nested Option
-                    jitson_parse_option(
-                        input,
-                        len,
-                        pos + i,
-                        inner_buf,
-                        inner_shape,
-                        std::ptr::null(),
-                    )
-                } else {
-                    // Unsupported inner type - cleanup and fail
-                    if inner_layout.size() > 0 {
-                        std::alloc::dealloc(
+                _ => {
+                    // Check if it's a nested Option
+                    if let Def::Option(_) = inner_shape.def {
+                        // Recursively handle nested Option
+                        jitson_parse_option(
+                            input,
+                            len,
+                            pos + i,
                             inner_buf,
-                            std::alloc::Layout::from_size_align_unchecked(
-                                inner_layout.size(),
-                                inner_layout.align(),
-                            ),
-                        );
+                            inner_shape,
+                            std::ptr::null(),
+                        )
+                    } else {
+                        // Unsupported inner type - cleanup and fail
+                        if inner_layout.size() > 0 {
+                            std::alloc::dealloc(
+                                inner_buf,
+                                std::alloc::Layout::from_size_align_unchecked(
+                                    inner_layout.size(),
+                                    inner_layout.align(),
+                                ),
+                            );
+                        }
+                        return ERR_UNEXPECTED_EOF;
                     }
-                    return ERR_UNEXPECTED_EOF;
                 }
             }
-        }
-    };
+        };
 
-    if inner_result < 0 {
-        // Cleanup on error
+        if inner_result < 0 {
+            // Cleanup on error
+            if inner_layout.size() > 0 {
+                std::alloc::dealloc(
+                    inner_buf,
+                    std::alloc::Layout::from_size_align_unchecked(
+                        inner_layout.size(),
+                        inner_layout.align(),
+                    ),
+                );
+            }
+            return inner_result;
+        }
+
+        // Initialize Option as Some with the parsed inner value
+        let out_uninit = PtrUninit::new(out);
+        let inner_ptr = PtrConst::new(inner_buf as *const u8);
+        (vtable.init_some)(out_uninit, inner_ptr);
+
+        // Deallocate the temporary buffer (value has been moved into Option)
         if inner_layout.size() > 0 {
             std::alloc::dealloc(
                 inner_buf,
@@ -1596,26 +1647,9 @@ pub unsafe extern "C" fn jitson_parse_option(
                 ),
             );
         }
-        return inner_result;
+
+        inner_result
     }
-
-    // Initialize Option as Some with the parsed inner value
-    let out_uninit = PtrUninit::new(NonNull::new_unchecked(out));
-    let inner_ptr = PtrConst::new(NonNull::new_unchecked(inner_buf));
-    (vtable.init_some_fn)(out_uninit, inner_ptr);
-
-    // Deallocate the temporary buffer (value has been moved into Option)
-    if inner_layout.size() > 0 {
-        std::alloc::dealloc(
-            inner_buf,
-            std::alloc::Layout::from_size_align_unchecked(
-                inner_layout.size(),
-                inner_layout.align(),
-            ),
-        );
-    }
-
-    inner_result
 }
 
 // =============================================================================

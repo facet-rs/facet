@@ -58,10 +58,10 @@ impl TrieNode {
             for child in children.values_mut() {
                 child.optimize();
             }
-            if children.is_empty() {
-                if let Some(idx) = *terminal {
-                    *self = TrieNode::Leaf(idx);
-                }
+            if children.is_empty()
+                && let Some(idx) = *terminal
+            {
+                *self = TrieNode::Leaf(idx);
             }
         }
     }
@@ -272,18 +272,23 @@ impl CompiledDeserializer {
         let mut output = std::mem::MaybeUninit::<T>::uninit();
 
         // New signature: fn(input, len, pos, out) -> isize
+        // SAFETY: self.ptr was created by the JIT compiler and points to valid code
         let func: unsafe extern "C" fn(*const u8, usize, usize, *mut u8) -> isize =
-            std::mem::transmute(self.ptr);
+            unsafe { std::mem::transmute(self.ptr) };
 
-        let result = func(
-            input.as_ptr(),
-            input.len(),
-            0,
-            output.as_mut_ptr() as *mut u8,
-        );
+        // SAFETY: func is a valid function pointer, input is valid for the duration of the call
+        let result = unsafe {
+            func(
+                input.as_ptr(),
+                input.len(),
+                0,
+                output.as_mut_ptr() as *mut u8,
+            )
+        };
 
         if result >= 0 {
-            Ok(output.assume_init())
+            // SAFETY: result >= 0 indicates successful parsing and output is initialized
+            Ok(unsafe { output.assume_init() })
         } else {
             Err(error_from_code(result))
         }
@@ -1006,14 +1011,13 @@ impl JitCompiler {
         self.module.define_function(func_id, &mut ctx).unwrap();
 
         // Print disassembly if requested
-        if want_disasm {
-            if let Some(compiled) = ctx.compiled_code() {
-                if let Some(disasm) = &compiled.vcode {
-                    eprintln!("=== JIT Disassembly for {func_name} ===");
-                    eprintln!("{disasm}");
-                    eprintln!("=== End Disassembly ===\n");
-                }
-            }
+        if want_disasm
+            && let Some(compiled) = ctx.compiled_code()
+            && let Some(disasm) = &compiled.vcode
+        {
+            eprintln!("=== JIT Disassembly for {func_name} ===");
+            eprintln!("{disasm}");
+            eprintln!("=== End Disassembly ===\n");
         }
 
         self.module.clear_context(&mut ctx);

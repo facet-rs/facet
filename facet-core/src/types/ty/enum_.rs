@@ -1,4 +1,4 @@
-use super::{Repr, StructType};
+use super::{Field, Repr, StructKind, StructType};
 
 /// Fields for enum types
 #[derive(Clone, Copy, Debug)]
@@ -51,7 +51,7 @@ impl Variant {
     ///
     /// Use `None` for builtin attributes, `Some("ns")` for namespaced attributes.
     #[inline]
-    pub fn get_attr(&self, ns: Option<&str>, key: &str) -> Option<&super::ExtensionAttr> {
+    pub fn get_attr(&self, ns: Option<&str>, key: &str) -> Option<&super::Attr> {
         self.attributes
             .iter()
             .find(|attr| attr.ns == ns && attr.key == key)
@@ -65,14 +65,14 @@ impl Variant {
 
     /// Gets a builtin attribute by key.
     #[inline]
-    pub fn get_builtin_attr(&self, key: &str) -> Option<&super::ExtensionAttr> {
+    pub fn get_builtin_attr(&self, key: &str) -> Option<&super::Attr> {
         self.get_attr(None, key)
     }
 }
 
 /// An attribute that can be set on an enum variant.
 /// This is now just an alias for `ExtensionAttr` - all attributes use the same representation.
-pub type VariantAttribute = super::ExtensionAttr;
+pub type VariantAttribute = super::Attr;
 
 /// All possible representations for Rust enums — ie. the type/size of the discriminant
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -137,7 +137,7 @@ impl EnumRepr {
 ///     "Foo",
 ///     StructTypeBuilder::new(StructKind::Unit, &[]).build()
 /// )
-/// .discriminant(Some(42))
+/// .discriminant(42)
 /// .build();
 /// ```
 #[derive(Clone, Copy, Debug)]
@@ -167,12 +167,41 @@ impl VariantBuilder {
         }
     }
 
+    /// Creates a unit variant (no fields).
+    ///
+    /// # Example
+    /// ```ignore
+    /// VariantBuilder::unit("None").build()
+    /// ```
+    #[inline]
+    pub const fn unit(name: &'static str) -> Self {
+        Self::new(name, StructType::UNIT)
+    }
+
+    /// Creates a tuple variant with the given fields.
+    ///
+    /// # Example
+    /// ```ignore
+    /// VariantBuilder::tuple("Some", &[FieldBuilder::new("0", T::SHAPE, 0).build()]).build()
+    /// ```
+    #[inline]
+    pub const fn tuple(name: &'static str, fields: &'static [Field]) -> Self {
+        Self::new(
+            name,
+            StructType {
+                repr: Repr::default(),
+                kind: StructKind::TupleStruct,
+                fields,
+            },
+        )
+    }
+
     /// Sets the discriminant value for this variant.
     ///
     /// Defaults to `None` if not called.
     #[inline]
-    pub const fn discriminant(mut self, discriminant: Option<i64>) -> Self {
-        self.discriminant = discriminant;
+    pub const fn discriminant(mut self, discriminant: i64) -> Self {
+        self.discriminant = Some(discriminant);
         self
     }
 

@@ -92,14 +92,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         let inner_data = if inner_layout.size() == 0 {
             // For ZST, use a non-null but unallocated pointer
-            PtrUninit::new(NonNull::<u8>::dangling())
+            PtrUninit::new(NonNull::<u8>::dangling().as_ptr())
         } else {
             // Allocate memory for the inner value
             let ptr = unsafe { ::alloc::alloc::alloc(inner_layout) };
             let Some(ptr) = NonNull::new(ptr) else {
                 ::alloc::alloc::handle_alloc_error(inner_layout);
             };
-            PtrUninit::new(ptr)
+            PtrUninit::new(ptr.as_ptr())
         };
 
         // Create a new frame for the inner value
@@ -115,7 +115,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let (inner_shape, has_try_from, parent_shape, is_option) = {
             let frame = self.frames().last().unwrap();
             if let Some(inner_shape) = frame.shape.inner {
-                let has_try_from = frame.shape.vtable.try_from.is_some();
+                let has_try_from = frame.shape.vtable.has_try_from();
                 let is_option = matches!(frame.shape.def, Def::Option(_));
                 (Some(inner_shape), has_try_from, frame.shape, is_option)
             } else {
@@ -150,14 +150,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
                 let inner_data = if inner_layout.size() == 0 {
                     // For ZST, use a non-null but unallocated pointer
-                    PtrUninit::new(NonNull::<u8>::dangling())
+                    PtrUninit::new(NonNull::<u8>::dangling().as_ptr())
                 } else {
                     // Allocate memory for the inner value
                     let ptr = unsafe { ::alloc::alloc::alloc(inner_layout) };
                     let Some(ptr) = NonNull::new(ptr) else {
                         ::alloc::alloc::handle_alloc_error(inner_layout);
                     };
-                    PtrUninit::new(ptr)
+                    PtrUninit::new(ptr.as_ptr())
                 };
 
                 // For conversion frames, we create a frame directly with the inner shape
@@ -192,11 +192,9 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         trace!("begin_custom_deserialization: target_shape={target_shape}");
         if let Some(field) = self.parent_field() {
             trace!("begin_custom_deserialization: field name={}", field.name);
-            if field.proxy_convert_in_fn().is_some() {
-                // Get the source shape from the proxy attribute
-                let Some(source_shape) = field.proxy_shape() else {
-                    panic!("expected proxy attribute to be present with deserialize_with");
-                };
+            if let Some(proxy_def) = field.proxy() {
+                // Get the source shape from the proxy definition
+                let source_shape = proxy_def.shape;
                 let source_data = source_shape.allocate().map_err(|_| ReflectError::Unsized {
                     shape: target_shape,
                     operation: "Not a Sized type",
@@ -213,7 +211,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             } else {
                 Err(ReflectError::OperationFailed {
                     shape: target_shape,
-                    operation: "field does not have a deserialize_with function",
+                    operation: "field does not have a proxy definition",
                 })
             }
         } else {
@@ -236,7 +234,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         let target_shape = current_frame.shape;
         trace!("begin_custom_deserialization_from_shape: target_shape={target_shape}");
 
-        let Some(proxy_def) = target_shape.proxy() else {
+        let Some(proxy_def) = target_shape.proxy else {
             return Ok((self, false));
         };
 

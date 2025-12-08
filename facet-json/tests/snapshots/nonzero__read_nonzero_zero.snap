@@ -1,5 +1,6 @@
 ---
-source: tests/nonzero.rs
+source: facet-json/tests/nonzero.rs
+assertion_line: 28
 expression: result.unwrap_err().to_string()
 ---
-reflection error: While trying to put u64 into a NonZero<u64>: value should be non-zero
+reflection error: While trying to put u64 into a NonZero: NonZero value cannot be zero

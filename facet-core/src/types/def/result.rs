@@ -1,5 +1,4 @@
-use super::Shape;
-use crate::ptr::{PtrConst, PtrMut, PtrUninit};
+use super::{PtrConst, PtrMut, PtrUninit, Shape};
 
 /// Describes a Result — including a vtable to query and alter its state,
 /// and the inner shapes (the `T` and `E` in `Result<T, E>`).
@@ -38,23 +37,21 @@ impl ResultDef {
 /// # Safety
 ///
 /// The `result` parameter must point to aligned, initialized memory of the correct type.
-pub type ResultIsOkFn = for<'result> unsafe fn(result: PtrConst<'result>) -> bool;
+pub type ResultIsOkFn = unsafe fn(result: PtrConst) -> bool;
 
 /// Get the Ok value contained in a result, if present
 ///
 /// # Safety
 ///
 /// The `result` parameter must point to aligned, initialized memory of the correct type.
-pub type ResultGetOkFn =
-    for<'result> unsafe fn(result: PtrConst<'result>) -> Option<PtrConst<'result>>;
+pub type ResultGetOkFn = unsafe fn(result: PtrConst) -> Option<PtrConst>;
 
 /// Get the Err value contained in a result, if present
 ///
 /// # Safety
 ///
 /// The `result` parameter must point to aligned, initialized memory of the correct type.
-pub type ResultGetErrFn =
-    for<'result> unsafe fn(result: PtrConst<'result>) -> Option<PtrConst<'result>>;
+pub type ResultGetErrFn = unsafe fn(result: PtrConst) -> Option<PtrConst>;
 
 /// Initialize a result with Ok(value)
 ///
@@ -64,8 +61,7 @@ pub type ResultGetErrFn =
 /// The function must properly initialize the memory.
 /// `value` is moved out of (with [`core::ptr::read`]) — it should be deallocated afterwards (e.g.
 /// with [`core::mem::forget`]) but NOT dropped.
-pub type ResultInitOkFn =
-    for<'result> unsafe fn(result: PtrUninit<'result>, value: PtrConst<'_>) -> PtrMut<'result>;
+pub type ResultInitOkFn = unsafe fn(result: PtrUninit, value: PtrConst) -> PtrMut;
 
 /// Initialize a result with Err(value)
 ///
@@ -75,44 +71,22 @@ pub type ResultInitOkFn =
 /// The function must properly initialize the memory.
 /// `value` is moved out of (with [`core::ptr::read`]) — it should be deallocated afterwards (e.g.
 /// with [`core::mem::forget`]) but NOT dropped.
-pub type ResultInitErrFn =
-    for<'result> unsafe fn(result: PtrUninit<'result>, value: PtrConst<'_>) -> PtrMut<'result>;
+pub type ResultInitErrFn = unsafe fn(result: PtrUninit, value: PtrConst) -> PtrMut;
 
-/// Virtual table for `Result<T, E>`
-#[derive(Clone, Copy, Debug)]
-#[repr(C)]
-pub struct ResultVTable {
-    /// cf. [`ResultIsOkFn`]
-    pub is_ok_fn: ResultIsOkFn,
-
-    /// cf. [`ResultGetOkFn`]
-    pub get_ok_fn: ResultGetOkFn,
-
-    /// cf. [`ResultGetErrFn`]
-    pub get_err_fn: ResultGetErrFn,
-
-    /// cf. [`ResultInitOkFn`]
-    pub init_ok_fn: ResultInitOkFn,
-
-    /// cf. [`ResultInitErrFn`]
-    pub init_err_fn: ResultInitErrFn,
-}
-
-impl ResultVTable {
-    /// Const ctor for result vtable; all hooks required.
-    pub const fn new(
-        is_ok_fn: ResultIsOkFn,
-        get_ok_fn: ResultGetOkFn,
-        get_err_fn: ResultGetErrFn,
-        init_ok_fn: ResultInitOkFn,
-        init_err_fn: ResultInitErrFn,
-    ) -> Self {
-        Self {
-            is_ok_fn,
-            get_ok_fn,
-            get_err_fn,
-            init_ok_fn,
-            init_err_fn,
-        }
+vtable_def! {
+    /// Virtual table for `Result<T, E>`
+    #[derive(Clone, Copy, Debug)]
+    #[repr(C)]
+    pub struct ResultVTable + ResultVTableBuilder {
+        /// cf. [`ResultIsOkFn`]
+        pub is_ok: ResultIsOkFn,
+        /// cf. [`ResultGetOkFn`]
+        pub get_ok: ResultGetOkFn,
+        /// cf. [`ResultGetErrFn`]
+        pub get_err: ResultGetErrFn,
+        /// cf. [`ResultInitOkFn`]
+        pub init_ok: ResultInitOkFn,
+        /// cf. [`ResultInitErrFn`]
+        pub init_err: ResultInitErrFn,
     }
 }

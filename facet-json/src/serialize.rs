@@ -320,10 +320,10 @@ impl<W: std::io::Write> StdWriteAdapter<W> {
 #[cfg(feature = "std")]
 impl<W: std::io::Write> crate::JsonWrite for StdWriteAdapter<W> {
     fn write(&mut self, buf: &[u8]) {
-        if self.error.is_none() {
-            if let Err(e) = self.writer.write_all(buf) {
-                self.error = Some(e);
-            }
+        if self.error.is_none()
+            && let Err(e) = self.writer.write_all(buf)
+        {
+            self.error = Some(e);
         }
     }
 
@@ -335,10 +335,10 @@ impl<W: std::io::Write> crate::JsonWrite for StdWriteAdapter<W> {
 #[cfg(feature = "std")]
 impl<W: std::io::Write> crate::JsonWrite for &mut StdWriteAdapter<W> {
     fn write(&mut self, buf: &[u8]) {
-        if self.error.is_none() {
-            if let Err(e) = self.writer.write_all(buf) {
-                self.error = Some(e);
-            }
+        if self.error.is_none()
+            && let Err(e) = self.writer.write_all(buf)
+        {
+            self.error = Some(e);
         }
     }
 
@@ -391,14 +391,14 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
 
     // Handle custom serialization (field-level proxy)
     #[cfg(feature = "alloc")]
-    if let Some(fi) = maybe_field_item {
-        if fi.field.proxy_convert_out_fn().is_some() {
-            let owned_peek = peek.custom_serialization(fi.field).unwrap();
-            let old_shape = peek.shape();
-            let new_shape = owned_peek.shape();
-            trace!("{old_shape} has custom serialization, serializing as {new_shape} instead");
-            return serialize_value(owned_peek.as_peek(), None, writer, indent, depth);
-        }
+    if let Some(fi) = maybe_field_item
+        && fi.field.proxy_convert_out_fn().is_some()
+    {
+        let owned_peek = peek.custom_serialization(fi.field).unwrap();
+        let old_shape = peek.shape();
+        let new_shape = owned_peek.shape();
+        trace!("{old_shape} has custom serialization, serializing as {new_shape} instead");
+        return serialize_value(owned_peek.as_peek(), None, writer, indent, depth);
     }
 
     // Handle container-level proxy (applies even in Vec<T>, Option<T>, etc.)
@@ -428,7 +428,9 @@ fn serialize_value<'mem, 'facet, W: crate::JsonWrite>(
 
     // Handle RawJson - write raw content directly
     if peek.shape() == RawJson::SHAPE {
-        let raw = peek.get::<RawJson<'_>>().unwrap();
+        // SAFETY: We've verified the shape matches RawJson
+        #[allow(unsafe_code)]
+        let raw = unsafe { peek.data().get::<RawJson<'static>>() };
         writer.write(raw.as_str().as_bytes());
         return Ok(());
     }
@@ -1004,7 +1006,7 @@ fn serialize_map_key<W: crate::JsonWrite>(
         }
         _ => {
             // Fallback: use Display if available
-            if peek.shape().vtable.format.display.is_some() {
+            if peek.shape().vtable.has_display() {
                 crate::write_json_string(writer, &alloc::format!("{peek}"));
             } else {
                 panic!("Unsupported map key type: {}", peek.shape())
@@ -1037,10 +1039,10 @@ fn serialize_scalar<W: crate::JsonWrite>(
             crate::write_json_string(writer, peek.get::<String>().unwrap());
         }
         Some(ScalarType::CowStr) => {
-            crate::write_json_string(
-                writer,
-                peek.get::<alloc::borrow::Cow<'_, str>>().unwrap().as_ref(),
-            );
+            // SAFETY: We've verified the scalar type matches CowStr
+            #[allow(unsafe_code)]
+            let cow_str = unsafe { peek.data().get::<alloc::borrow::Cow<'static, str>>() };
+            crate::write_json_string(writer, cow_str.as_ref());
         }
         Some(ScalarType::F32) => {
             let v = *peek.get::<f32>().unwrap();
@@ -1103,7 +1105,7 @@ fn serialize_scalar<W: crate::JsonWrite>(
         }
         None => {
             // Try Display formatting if available
-            if peek.shape().vtable.format.display.is_some() {
+            if peek.shape().vtable.has_display() {
                 crate::write_json_string(writer, &alloc::format!("{peek}"));
             } else {
                 panic!("Unsupported shape (no display): {}", peek.shape())

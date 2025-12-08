@@ -1,36 +1,38 @@
-use crate::PtrConst;
-#[cfg(feature = "alloc")]
-use crate::{PtrMut, PtrUninit};
+use crate::{DefaultInPlaceFn, InvariantsFn, PtrConst};
 
-use super::{DefaultInPlaceFn, InvariantsFn, Shape};
+use super::Shape;
 
-/// A reference to a [`Shape`], either direct or lazy.
+/// Source of a field's default value.
 ///
-/// Most fields use [`ShapeRef::Static`] for direct `&'static Shape` references,
-/// which is more efficient (no function call overhead).
-///
-/// For recursive types (e.g., a struct containing `Vec<Self>`), use
-/// [`ShapeRef::Lazy`] with a closure to break the cycle. Mark such fields
-/// with `#[facet(recursive_type)]` in the derive macro.
-#[derive(Clone, Copy)]
-pub enum ShapeRef {
-    /// Direct reference to a shape (default, most efficient)
-    Static(&'static Shape),
-    /// Lazy reference via closure (for recursive types)
-    Lazy(fn() -> &'static Shape),
+/// Used by the `#[facet(default)]` attribute.
+#[derive(Clone, Copy, Debug)]
+pub enum DefaultSource {
+    /// Use the type's Default trait via shape vtable.
+    /// Set when `#[facet(default)]` is used without an expression.
+    FromTrait,
+    /// Custom default expression wrapped in a function.
+    /// Set when `#[facet(default = expr)]` is used.
+    Custom(DefaultInPlaceFn),
 }
 
+/// A lazy reference to a [`Shape`] via a function pointer.
+///
+/// All shape references use function pointers to enable lazy evaluation,
+/// which moves const evaluation overhead from compile time to runtime.
+/// This significantly improves compile times for large codebases.
+///
+/// The function is typically a monomorphized generic function like:
+/// ```ignore
+/// fn shape_of<T: Facet>() -> &'static Shape { T::SHAPE }
+/// ```
+#[derive(Clone, Copy)]
+pub struct ShapeRef(pub fn() -> &'static Shape);
+
 impl ShapeRef {
-    /// Get the referenced shape.
-    ///
-    /// For [`ShapeRef::Static`], returns the reference directly.
-    /// For [`ShapeRef::Lazy`], calls the closure to get the shape.
+    /// Get the referenced shape by calling the function.
     #[inline]
     pub fn get(&self) -> &'static Shape {
-        match self {
-            ShapeRef::Static(shape) => shape,
-            ShapeRef::Lazy(f) => f(),
-        }
+        (self.0)()
     }
 }
 
@@ -74,10 +76,6 @@ crate::bitflags! {
         /// Field has a recursive type that needs lazy shape resolution.
         /// Set by `#[facet(recursive_type)]`.
         const RECURSIVE_TYPE = 1 << 6;
-
-        /// Field has a default value (either via Default trait or custom expression).
-        /// Set by `#[facet(default)]` or `#[facet(default = expr)]`.
-        const HAS_DEFAULT = 1 << 7;
     }
 }
 
@@ -90,8 +88,8 @@ pub struct Field {
 
     /// shape of the inner type
     ///
-    /// Use [`ShapeRef::Static`] for most fields (direct reference, more efficient).
-    /// Use [`ShapeRef::Lazy`] for recursive types to break cycles.
+    /// [`ShapeRef`] wraps a function that returns the shape, enabling lazy evaluation
+    /// for recursive types while still being simple to use.
     pub shape: ShapeRef,
 
     /// offset of the field in the struct (obtained through `core::mem::offset_of`)
@@ -126,36 +124,26 @@ pub struct Field {
 
     /// doc comments
     pub doc: &'static [&'static str],
+
+    /// Default value source for this field.
+    /// Set by `#[facet(default)]` or `#[facet(default = expr)]`.
+    pub default: Option<DefaultSource>,
+
+    /// Predicate to conditionally skip serialization of this field.
+    /// Set by `#[facet(skip_serializing_if = fn_name)]`.
+    pub skip_serializing_if: Option<SkipSerializingIfFn>,
+
+    /// Type invariant validation function for this field.
+    /// Set by `#[facet(invariants = fn_name)]`.
+    pub invariants: Option<InvariantsFn>,
+
+    /// Proxy definition for custom serialization/deserialization.
+    /// Set by `#[facet(proxy = ProxyType)]`.
+    #[cfg(feature = "alloc")]
+    pub proxy: Option<&'static super::ProxyDef>,
 }
 
 impl Field {
-    /// Returns true if the field should be skipped during serialization.
-    ///
-    /// This checks the `SKIP` and `SKIP_SERIALIZING` flags (O(1)),
-    /// then the `skip_serializing_if` function if present.
-    ///
-    /// # Safety
-    /// The ptr should correspond to a value of the same type as this field
-    pub unsafe fn should_skip_serializing(&self, ptr: PtrConst<'_>) -> bool {
-        if self.flags.contains(FieldFlags::SKIP)
-            || self.flags.contains(FieldFlags::SKIP_SERIALIZING)
-        {
-            return true;
-        }
-        if let Some(skip_serializing_if) = self.skip_serializing_if_fn() {
-            return unsafe { skip_serializing_if(ptr) };
-        }
-        false
-    }
-
-    /// Returns true if this field should be skipped during deserialization.
-    ///
-    /// This checks the `SKIP` and `SKIP_DESERIALIZING` flags (O(1)).
-    #[inline]
-    pub fn should_skip_deserializing(&self) -> bool {
-        self.flags.contains(FieldFlags::SKIP) || self.flags.contains(FieldFlags::SKIP_DESERIALIZING)
-    }
-
     /// Returns true if this field is flattened.
     ///
     /// This checks the `FLATTEN` flag (O(1)).
@@ -174,10 +162,17 @@ impl Field {
 
     /// Returns true if this field has a default value.
     ///
-    /// This checks the `HAS_DEFAULT` flag (O(1)).
+    /// This returns true for both `#[facet(default)]` (uses the type's Default impl)
+    /// and `#[facet(default = expr)]` (uses a custom expression).
     #[inline]
     pub fn has_default(&self) -> bool {
-        self.flags.contains(FieldFlags::HAS_DEFAULT)
+        self.default.is_some()
+    }
+
+    /// Returns the default source for this field, if any.
+    #[inline]
+    pub fn default_source(&self) -> Option<&DefaultSource> {
+        self.default.as_ref()
     }
 
     /// Returns true if this field is a child (for KDL/XML formats).
@@ -186,6 +181,17 @@ impl Field {
     #[inline]
     pub fn is_child(&self) -> bool {
         self.flags.contains(FieldFlags::CHILD)
+    }
+
+    /// Returns true if this field should be skipped during deserialization.
+    ///
+    /// This checks the `SKIP` and `SKIP_DESERIALIZING` flags (O(1)).
+    #[inline]
+    pub fn should_skip_deserializing(&self) -> bool {
+        !self
+            .flags
+            .intersection(FieldFlags::SKIP.union(FieldFlags::SKIP_DESERIALIZING))
+            .is_empty()
     }
 
     /// Returns the effective name for this field during serialization/deserialization.
@@ -199,46 +205,7 @@ impl Field {
 
 /// A function that, if present, determines whether field should be included in the serialization
 /// step. Takes a type-erased pointer and returns true if the field should be skipped.
-pub type SkipSerializingIfFn = for<'mem> unsafe fn(value: PtrConst<'mem>) -> bool;
-
-#[cfg(feature = "alloc")]
-/// Function type for proxy deserialization: converts FROM proxy type INTO field type.
-/// Used internally when `#[facet(proxy = Type)]` is specified on a field.
-pub type ProxyConvertInFn = for<'mem> unsafe fn(
-    proxy_ptr: PtrConst<'mem>,
-    field_ptr: PtrUninit<'mem>,
-) -> Result<PtrMut<'mem>, alloc::string::String>;
-
-#[cfg(feature = "alloc")]
-/// Function type for proxy serialization: converts FROM field type OUT TO proxy type.
-/// Used internally when `#[facet(proxy = Type)]` is specified on a field.
-pub type ProxyConvertOutFn = for<'mem> unsafe fn(
-    field_ptr: PtrConst<'mem>,
-    proxy_ptr: PtrUninit<'mem>,
-) -> Result<PtrMut<'mem>, alloc::string::String>;
-
-#[cfg(feature = "alloc")]
-/// Definition of a proxy type for serialization/deserialization.
-///
-/// This is used when `#[facet(proxy = ProxyType)]` is applied at the container level
-/// (struct or enum). It stores everything needed to convert values to/from the proxy type.
-///
-/// The user must implement:
-/// - `TryFrom<ProxyType> for OriginalType` (for deserialization: proxy → original)
-/// - `TryFrom<&OriginalType> for ProxyType` (for serialization: original → proxy)
-#[derive(Clone, Copy)]
-pub struct ProxyDef {
-    /// The shape of the proxy type.
-    pub shape: &'static super::Shape,
-
-    /// Function to convert FROM proxy type INTO the original type.
-    /// Used during deserialization.
-    pub convert_in: ProxyConvertInFn,
-
-    /// Function to convert FROM original type OUT TO proxy type.
-    /// Used during serialization.
-    pub convert_out: ProxyConvertOutFn,
-}
+pub type SkipSerializingIfFn = unsafe fn(value: PtrConst) -> bool;
 
 impl Field {
     /// Returns the shape of the inner type
@@ -261,7 +228,7 @@ impl Field {
     ///
     /// Use `None` for builtin attributes, `Some("ns")` for namespaced attributes.
     #[inline]
-    pub fn get_attr(&self, ns: Option<&str>, key: &str) -> Option<&super::ExtensionAttr> {
+    pub fn get_attr(&self, ns: Option<&str>, key: &str) -> Option<&super::Attr> {
         self.attributes
             .iter()
             .find(|attr| attr.ns == ns && attr.key == key)
@@ -275,80 +242,90 @@ impl Field {
 
     /// Gets a builtin attribute by key.
     #[inline]
-    pub fn get_builtin_attr(&self, key: &str) -> Option<&super::ExtensionAttr> {
+    pub fn get_builtin_attr(&self, key: &str) -> Option<&super::Attr> {
         self.get_attr(None, key)
     }
 
-    /// Gets the proxy shape stored in the `proxy` attribute, if present.
+    /// Gets the proxy definition, if present.
     ///
     /// This is set when `#[facet(proxy = ProxyType)]` is used. The proxy type
     /// is used for both serialization and deserialization. The user must implement:
     /// - `TryFrom<ProxyType> for FieldType` (for deserialization)
     /// - `TryFrom<&FieldType> for ProxyType` (for serialization)
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub fn proxy(&self) -> Option<&'static super::ProxyDef> {
+        self.proxy
+    }
+
+    /// Gets the proxy shape, if present.
+    ///
+    /// Convenience method that returns just the shape from the proxy definition.
+    #[cfg(feature = "alloc")]
     #[inline]
     pub fn proxy_shape(&self) -> Option<&'static super::Shape> {
-        // Note: shape_type variants store the Shape directly (not wrapped in Attr enum)
-        // so we read it as Shape, not &'static Shape
-        self.get_builtin_attr("proxy")
-            .map(|attr| unsafe { attr.data_ref::<super::Shape>() })
+        self.proxy.map(|p| p.shape)
     }
 
-    /// Gets the `skip_serializing_if` function pointer from attributes, if present.
+    /// Checks if this field should be skipped during serialization.
     ///
-    /// This is set when `#[facet(skip_serializing_if = fn)]` is used.
+    /// Returns `true` if:
+    /// - The field has `SKIP_SERIALIZING` flag set, or
+    /// - `skip_serializing_if` is set and the predicate returns true
+    ///
+    /// # Safety
+    ///
+    /// `field_ptr` must point to a valid value of this field's type.
     #[inline]
-    pub fn skip_serializing_if_fn(&self) -> Option<SkipSerializingIfFn> {
-        self.get_builtin_attr("skip_serializing_if")
-            .map(|attr| unsafe { *attr.data_ref::<SkipSerializingIfFn>() })
+    pub unsafe fn should_skip_serializing(&self, field_ptr: PtrConst) -> bool {
+        // Check the SKIP flag (which means skip both serialization and deserialization)
+        if self.flags.contains(FieldFlags::SKIP) {
+            return true;
+        }
+        // Check the SKIP_SERIALIZING flag (which means skip serialization only)
+        if self.flags.contains(FieldFlags::SKIP_SERIALIZING) {
+            return true;
+        }
+        // Then check the predicate if set
+        if let Some(predicate) = self.skip_serializing_if {
+            unsafe { predicate(field_ptr) }
+        } else {
+            false
+        }
     }
 
-    /// Gets the `default` function pointer from attributes, if present.
+    /// Returns true if this field has a proxy for custom ser/de.
     ///
-    /// This is set when `#[facet(default = expr)]` is used with a custom expression.
-    /// Returns `None` if:
-    /// - No `#[facet(default)]` attribute is present, OR
-    /// - `#[facet(default)]` is present without an expression (uses Default trait instead)
-    #[inline]
-    pub fn default_fn(&self) -> Option<DefaultInPlaceFn> {
-        self.get_builtin_attr("default")
-            .and_then(|attr| unsafe { *attr.data_ref::<Option<DefaultInPlaceFn>>() })
-    }
-
-    /// Gets the `invariants` function pointer from attributes, if present.
-    ///
-    /// This is set when `#[facet(invariants = validate_fn)]` is used.
-    #[inline]
-    pub fn invariants_fn(&self) -> Option<InvariantsFn> {
-        self.get_builtin_attr("invariants")
-            .map(|attr| unsafe { *attr.data_ref::<InvariantsFn>() })
-    }
-
-    /// Gets the proxy-to-field conversion function, if this field has a proxy attribute.
-    ///
-    /// This is generated by the derive macro when `#[facet(proxy = Type)]` is used.
-    /// The function converts from the proxy type to the field type via TryFrom.
+    /// When true, use `proxy()` to get the proxy definition which contains
+    /// the proxy shape and conversion functions.
     #[cfg(feature = "alloc")]
     #[inline]
-    pub fn proxy_convert_in_fn(&self) -> Option<ProxyConvertInFn> {
-        self.get_builtin_attr("__proxy_in")
-            .map(|attr| unsafe { *attr.data_ref::<ProxyConvertInFn>() })
+    pub fn has_proxy(&self) -> bool {
+        self.proxy.is_some()
     }
 
-    /// Gets the field-to-proxy conversion function, if this field has a proxy attribute.
+    /// Gets the proxy convert_in function, if present.
     ///
-    /// This is generated by the derive macro when `#[facet(proxy = Type)]` is used.
-    /// The function converts from the field type to the proxy type via TryFrom.
+    /// This converts from proxy type to target type (deserialization).
     #[cfg(feature = "alloc")]
     #[inline]
-    pub fn proxy_convert_out_fn(&self) -> Option<ProxyConvertOutFn> {
-        self.get_builtin_attr("__proxy_out")
-            .map(|attr| unsafe { *attr.data_ref::<ProxyConvertOutFn>() })
+    pub fn proxy_convert_in_fn(&self) -> Option<super::ProxyConvertInFn> {
+        self.proxy.map(|p| p.convert_in)
+    }
+
+    /// Gets the proxy convert_out function, if present.
+    ///
+    /// This converts from target type to proxy type (serialization).
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub fn proxy_convert_out_fn(&self) -> Option<super::ProxyConvertOutFn> {
+        self.proxy.map(|p| p.convert_out)
     }
 }
 
 /// An attribute that can be set on a field.
 /// This is now just an alias for `ExtensionAttr` - all attributes use the same representation.
-pub type FieldAttribute = super::ExtensionAttr;
+pub type FieldAttribute = super::Attr;
 
 /// Errors encountered when calling `field_by_index` or `field_by_name`
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -399,23 +376,6 @@ impl core::fmt::Display for FieldError {
     }
 }
 
-macro_rules! field_in_type {
-    ($container:ty, $field:tt, $field_ty:ty) => {
-        $crate::Field {
-            name: stringify!($field),
-            shape: $crate::ShapeRef::Static(<$field_ty as $crate::Facet>::SHAPE),
-            offset: ::core::mem::offset_of!(Self, $field),
-            flags: $crate::FieldFlags::empty(),
-            rename: None,
-            alias: None,
-            attributes: &[],
-            doc: &[],
-        }
-    };
-}
-
-pub(crate) use field_in_type;
-
 /// Builder for constructing `Field` instances in const contexts.
 ///
 /// This builder is primarily used by derive macros to generate more compact code.
@@ -447,46 +407,52 @@ pub struct FieldBuilder {
     alias: Option<&'static str>,
     attributes: &'static [FieldAttribute],
     doc: &'static [&'static str],
+    default: Option<DefaultSource>,
+    skip_serializing_if: Option<SkipSerializingIfFn>,
+    invariants: Option<InvariantsFn>,
+    #[cfg(feature = "alloc")]
+    proxy: Option<&'static super::ProxyDef>,
 }
 
 impl FieldBuilder {
-    /// Creates a new `FieldBuilder` with a static shape reference (default, most efficient).
+    /// Creates a new `FieldBuilder` with a shape function.
     ///
-    /// Use this for most fields. The `attributes` and `doc` fields default to empty slices.
+    /// The shape is provided as a function pointer to enable lazy evaluation,
+    /// which improves compile times by deferring const evaluation to runtime.
+    ///
+    /// Use the `shape_of::<T>` helper function for the common case:
+    /// ```ignore
+    /// FieldBuilder::new("field", shape_of::<i32>, offset)
+    /// ```
     #[inline]
-    pub const fn new(name: &'static str, shape: &'static Shape, offset: usize) -> Self {
+    pub const fn new(name: &'static str, shape: fn() -> &'static Shape, offset: usize) -> Self {
         Self {
             name,
-            shape: ShapeRef::Static(shape),
+            shape: ShapeRef(shape),
             offset,
             flags: FieldFlags::empty(),
             rename: None,
             alias: None,
             attributes: &[],
             doc: &[],
+            default: None,
+            skip_serializing_if: None,
+            invariants: None,
+            #[cfg(feature = "alloc")]
+            proxy: None,
         }
     }
 
-    /// Creates a new `FieldBuilder` with a lazy shape reference (for recursive types).
+    /// Alias for `new` - kept for backward compatibility.
     ///
-    /// Use this for fields with recursive types (e.g., `Vec<Self>`) to break cycles.
-    /// Mark such fields with `#[facet(recursive_type)]` in the derive macro.
+    /// Previously used for recursive types, but now all fields use lazy shape references.
     #[inline]
     pub const fn new_lazy(
         name: &'static str,
         shape: fn() -> &'static Shape,
         offset: usize,
     ) -> Self {
-        Self {
-            name,
-            shape: ShapeRef::Lazy(shape),
-            offset,
-            flags: FieldFlags::empty(),
-            rename: None,
-            alias: None,
-            attributes: &[],
-            doc: &[],
-        }
+        Self::new(name, shape, offset)
     }
 
     /// Sets the attributes for this field.
@@ -524,6 +490,42 @@ impl FieldBuilder {
         self
     }
 
+    /// Sets the default to use the type's Default trait.
+    #[inline]
+    pub const fn default_from_trait(mut self) -> Self {
+        self.default = Some(DefaultSource::FromTrait);
+        self
+    }
+
+    /// Sets a custom default function.
+    #[inline]
+    pub const fn default_custom(mut self, f: DefaultInPlaceFn) -> Self {
+        self.default = Some(DefaultSource::Custom(f));
+        self
+    }
+
+    /// Sets the skip_serializing_if predicate.
+    #[inline]
+    pub const fn skip_serializing_if(mut self, f: SkipSerializingIfFn) -> Self {
+        self.skip_serializing_if = Some(f);
+        self
+    }
+
+    /// Sets the invariants validation function.
+    #[inline]
+    pub const fn invariants(mut self, f: InvariantsFn) -> Self {
+        self.invariants = Some(f);
+        self
+    }
+
+    /// Sets the proxy definition for custom ser/de.
+    #[cfg(feature = "alloc")]
+    #[inline]
+    pub const fn proxy(mut self, proxy: &'static super::ProxyDef) -> Self {
+        self.proxy = Some(proxy);
+        self
+    }
+
     /// Builds the final `Field` instance.
     #[inline]
     pub const fn build(self) -> Field {
@@ -536,6 +538,11 @@ impl FieldBuilder {
             alias: self.alias,
             attributes: self.attributes,
             doc: self.doc,
+            default: self.default,
+            skip_serializing_if: self.skip_serializing_if,
+            invariants: self.invariants,
+            #[cfg(feature = "alloc")]
+            proxy: self.proxy,
         }
     }
 }

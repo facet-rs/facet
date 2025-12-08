@@ -68,7 +68,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         // Check that we have a Map or DynamicValue
         match &frame.shape.def {
             Def::Map(map_def) => {
-                let init_fn = map_def.vtable.init_in_place_with_capacity_fn;
+                let init_fn = map_def.vtable.init_in_place_with_capacity;
 
                 // Initialize the map with default capacity (0)
                 unsafe {
@@ -172,7 +172,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             });
         };
 
-        let key_ptr = PtrUninit::new(key_ptr_raw);
+        let key_ptr = PtrUninit::new(key_ptr_raw.as_ptr());
 
         // Store the key pointer in the insert state
         match &mut frame.tracker {
@@ -187,7 +187,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         // Push a new frame for the key
         self.frames_mut().push(Frame::new(
-            PtrUninit::new(key_ptr_raw),
+            PtrUninit::new(key_ptr_raw.as_ptr()),
             key_shape,
             FrameOwnership::ManagedElsewhere, // Ownership tracked in MapInsertState
         ));
@@ -259,7 +259,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             });
         };
 
-        let value_ptr = PtrUninit::new(value_ptr_raw);
+        let value_ptr = PtrUninit::new(value_ptr_raw.as_ptr());
 
         // Store the value pointer in the insert state
         match &mut frame.tracker {
@@ -395,7 +395,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         // Push a new frame for the value
         self.frames_mut().push(Frame::new(
-            PtrUninit::new(value_ptr),
+            PtrUninit::new(value_ptr.as_ptr()),
             value_shape,
             FrameOwnership::Owned,
         ));

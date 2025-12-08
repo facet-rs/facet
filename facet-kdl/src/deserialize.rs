@@ -52,13 +52,12 @@ impl KdlChildrenFieldExt for Field {
     fn kdl_children_node_name(&self) -> Option<&'static str> {
         // Get the kdl::children attribute and extract the Option<&'static str> value
         self.get_attr(Some("kdl"), "children").and_then(|attr| {
-            // SAFETY: We know the attribute data is of type Attr::Children(Option<&'static str>)
-            // We read the inner Option<&'static str> from the Attr enum
-            let kdl_attr = unsafe { attr.data_ref::<crate::Attr>() };
-            match kdl_attr {
-                crate::Attr::Children(opt) => *opt,
-                _ => None,
-            }
+            // Use the typed accessor to get the Attr enum value
+            attr.get_as::<crate::Attr>()
+                .and_then(|kdl_attr| match kdl_attr {
+                    crate::Attr::Children(opt) => *opt,
+                    _ => None,
+                })
         })
     }
 }
@@ -390,11 +389,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 .filter(|field| field.is_kdl_child())
                 .find_map(|field| {
                     let field_shape = field.shape();
-                    if let Some(enum_type) = get_enum_type(field_shape) {
-                        if let Some(variant) = find_variant_by_name(&enum_type, node.name().value())
-                        {
-                            return Some((field, variant));
-                        }
+                    if let Some(enum_type) = get_enum_type(field_shape)
+                        && let Some(variant) = find_variant_by_name(&enum_type, node.name().value())
+                    {
+                        return Some((field, variant));
                     }
                     None
                 })
@@ -535,14 +533,17 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                     ChildrenContainerState::Map { .. } => {
                         // For maps, use node name as key
                         partial = partial.begin_key()?;
-                        // For transparent types (like Utf8PathBuf), we need to use begin_inner
-                        // to set the inner value
-                        if partial.shape().inner.is_some() {
+                        let key_str = node.name().value().to_string();
+                        // For types with parse_from_str (like Utf8PathBuf), use that
+                        if partial.shape().vtable.has_parse() {
+                            partial = partial.parse_from_str(&key_str)?;
+                        } else if partial.shape().inner.is_some() {
+                            // For other transparent types, use begin_inner
                             partial = partial.begin_inner()?;
-                            partial = partial.set(node.name().value().to_string())?;
+                            partial = partial.set(key_str)?;
                             partial = partial.end()?;
                         } else {
-                            partial = partial.set(node.name().value().to_string())?;
+                            partial = partial.set(key_str)?;
                         }
                         partial = partial.end()?;
                         partial = partial.begin_value()?;
@@ -554,16 +555,16 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
                         if !is_struct {
                             // Value is a simple type, get the first argument
-                            if let Some(mut entry) = node.entries_mut().drain(..).next() {
-                                if entry.name().is_none() {
-                                    // It's an argument (not a property)
-                                    let entry_span = entry.span();
-                                    let value = mem::replace(entry.value_mut(), KdlValue::Null);
-                                    partial =
-                                        self.deserialize_value(partial, value, Some(entry_span))?;
-                                    partial = partial.end()?; // end value
-                                    return Ok(partial);
-                                }
+                            if let Some(mut entry) = node.entries_mut().drain(..).next()
+                                && entry.name().is_none()
+                            {
+                                // It's an argument (not a property)
+                                let entry_span = entry.span();
+                                let value = mem::replace(entry.value_mut(), KdlValue::Null);
+                                partial =
+                                    self.deserialize_value(partial, value, Some(entry_span))?;
+                                partial = partial.end()?; // end value
+                                return Ok(partial);
                             }
                             return Err(KdlErrorKind::NoMatchingArgument.into());
                         }
@@ -573,34 +574,32 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         partial = partial.begin_list_item()?;
 
                         // After beginning the list item, check if it's an enum type
-                        if let Some(enum_type) = get_enum_type(partial.shape()) {
-                            if let Some(variant) =
+                        if let Some(enum_type) = get_enum_type(partial.shape())
+                            && let Some(variant) =
                                 find_variant_by_name(&enum_type, node.name().value())
-                            {
-                                log::trace!(
-                                    "List item is enum, matched variant {} for node {}",
-                                    variant.name,
-                                    node.name().value()
-                                );
-                                enum_variant_to_select = Some((variant.name, variant.data));
-                            }
+                        {
+                            log::trace!(
+                                "List item is enum, matched variant {} for node {}",
+                                variant.name,
+                                node.name().value()
+                            );
+                            enum_variant_to_select = Some((variant.name, variant.data));
                         }
                     }
                     ChildrenContainerState::Set { .. } => {
                         partial = partial.begin_set_item()?;
 
                         // After beginning the set item, check if it's an enum type
-                        if let Some(enum_type) = get_enum_type(partial.shape()) {
-                            if let Some(variant) =
+                        if let Some(enum_type) = get_enum_type(partial.shape())
+                            && let Some(variant) =
                                 find_variant_by_name(&enum_type, node.name().value())
-                            {
-                                log::trace!(
-                                    "Set item is enum, matched variant {} for node {}",
-                                    variant.name,
-                                    node.name().value()
-                                );
-                                enum_variant_to_select = Some((variant.name, variant.data));
-                            }
+                        {
+                            log::trace!(
+                                "Set item is enum, matched variant {} for node {}",
+                                variant.name,
+                                node.name().value()
+                            );
+                            enum_variant_to_select = Some((variant.name, variant.data));
                         }
                     }
                     ChildrenContainerState::None => unreachable!(),
@@ -1277,127 +1276,126 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         // Phase 1b: Process child nodes through the solver for nested disambiguation
         // This handles cases like #[facet(child)] fields where the discriminating
         // information is in nested child nodes rather than top-level properties.
-        if resolved_resolution.is_none() {
-            if let Some(children) = node.children() {
-                for child_node in children.nodes() {
-                    if resolved_resolution.is_some() {
-                        break;
+        if resolved_resolution.is_none()
+            && let Some(children) = node.children()
+        {
+            for child_node in children.nodes() {
+                if resolved_resolution.is_some() {
+                    break;
+                }
+
+                let child_name = child_node.name().value();
+                log::trace!("Probing child node '{child_name}' for solver");
+
+                // Tell solver we saw this child node
+                let result = solver.probe_key(&[], child_name);
+                log::trace!("Solver probe_key result for child '{child_name}': {result:?}");
+
+                match result {
+                    KeyResult::Solved(resolution) => {
+                        log::trace!(
+                            "Child node '{}' solved to: {}",
+                            child_name,
+                            resolution.describe()
+                        );
+                        resolved_resolution = Some(resolution);
+                        partial = start_deferred(partial, resolution)?;
                     }
-
-                    let child_name = child_node.name().value();
-                    log::trace!("Probing child node '{child_name}' for solver");
-
-                    // Tell solver we saw this child node
-                    let result = solver.probe_key(&[], child_name);
-                    log::trace!("Solver probe_key result for child '{child_name}': {result:?}");
-
-                    match result {
-                        KeyResult::Solved(resolution) => {
-                            log::trace!(
-                                "Child node '{}' solved to: {}",
-                                child_name,
-                                resolution.describe()
-                            );
-                            resolved_resolution = Some(resolution);
-                            partial = start_deferred(partial, resolution)?;
-                        }
-                        KeyResult::Unambiguous { .. } | KeyResult::Unknown => {
-                            // Continue - either all agree or this child isn't tracked
-                        }
-                        KeyResult::Ambiguous { .. } => {
-                            // Need to look deeper - check properties inside this child
-                            log::trace!(
-                                "Child '{child_name}' is ambiguous, checking nested properties"
-                            );
-                        }
+                    KeyResult::Unambiguous { .. } | KeyResult::Unknown => {
+                        // Continue - either all agree or this child isn't tracked
                     }
+                    KeyResult::Ambiguous { .. } => {
+                        // Need to look deeper - check properties inside this child
+                        log::trace!(
+                            "Child '{child_name}' is ambiguous, checking nested properties"
+                        );
+                    }
+                }
 
-                    // Process properties inside this child node for deeper disambiguation
-                    if resolved_resolution.is_none() {
-                        for entry in child_node.entries() {
-                            if let Some(prop_name_ident) = entry.name() {
-                                let prop_name = prop_name_ident.value();
-                                let path: Vec<&str> = vec![child_name];
+                // Process properties inside this child node for deeper disambiguation
+                if resolved_resolution.is_none() {
+                    for entry in child_node.entries() {
+                        if let Some(prop_name_ident) = entry.name() {
+                            let prop_name = prop_name_ident.value();
+                            let path: Vec<&str> = vec![child_name];
 
-                                log::trace!("Probing nested property '{child_name}.{prop_name}'");
-                                let result = solver.probe_key(&path, prop_name);
-                                log::trace!(
-                                    "Solver probe_key result for '{child_name}.{prop_name}': {result:?}"
-                                );
+                            log::trace!("Probing nested property '{child_name}.{prop_name}'");
+                            let result = solver.probe_key(&path, prop_name);
+                            log::trace!(
+                                "Solver probe_key result for '{child_name}.{prop_name}': {result:?}"
+                            );
 
-                                match result {
-                                    KeyResult::Solved(resolution) => {
-                                        log::trace!(
-                                            "Nested property solved to: {}",
-                                            resolution.describe()
-                                        );
-                                        resolved_resolution = Some(resolution);
-                                        break;
+                            match result {
+                                KeyResult::Solved(resolution) => {
+                                    log::trace!(
+                                        "Nested property solved to: {}",
+                                        resolution.describe()
+                                    );
+                                    resolved_resolution = Some(resolution);
+                                    break;
+                                }
+                                KeyResult::Ambiguous { .. } => {
+                                    // Different types at this nested path - use value-based disambiguation
+                                    let full_path: Vec<&str> = vec![child_name, prop_name];
+                                    let shapes = solver.get_shapes_at_path(&full_path);
+                                    log::trace!(
+                                        "Ambiguous nested types at {:?}: {:?}",
+                                        full_path,
+                                        shapes
+                                            .iter()
+                                            .map(|s| s.type_identifier)
+                                            .collect::<Vec<_>>()
+                                    );
+
+                                    let value = entry.value();
+                                    let mut satisfied_shapes: Vec<&'static Shape> = shapes
+                                        .into_iter()
+                                        .filter(|s| kdl_value_fits_shape(value, s))
+                                        .collect();
+
+                                    // Pick tightest types
+                                    if satisfied_shapes.len() > 1 {
+                                        let min_tightness = satisfied_shapes
+                                            .iter()
+                                            .map(|s| shape_tightness(s))
+                                            .min()
+                                            .unwrap_or(0);
+                                        satisfied_shapes
+                                            .retain(|s| shape_tightness(s) == min_tightness);
                                     }
-                                    KeyResult::Ambiguous { .. } => {
-                                        // Different types at this nested path - use value-based disambiguation
-                                        let full_path: Vec<&str> = vec![child_name, prop_name];
-                                        let shapes = solver.get_shapes_at_path(&full_path);
-                                        log::trace!(
-                                            "Ambiguous nested types at {:?}: {:?}",
-                                            full_path,
-                                            shapes
-                                                .iter()
-                                                .map(|s| s.type_identifier)
-                                                .collect::<Vec<_>>()
-                                        );
 
-                                        let value = entry.value();
-                                        let mut satisfied_shapes: Vec<&'static Shape> = shapes
-                                            .into_iter()
-                                            .filter(|s| kdl_value_fits_shape(value, s))
-                                            .collect();
+                                    log::trace!(
+                                        "Value {:?} satisfies tightest nested types: {:?}",
+                                        value,
+                                        satisfied_shapes
+                                            .iter()
+                                            .map(|s| s.type_identifier)
+                                            .collect::<Vec<_>>()
+                                    );
 
-                                        // Pick tightest types
-                                        if satisfied_shapes.len() > 1 {
-                                            let min_tightness = satisfied_shapes
-                                                .iter()
-                                                .map(|s| shape_tightness(s))
-                                                .min()
-                                                .unwrap_or(0);
-                                            satisfied_shapes
-                                                .retain(|s| shape_tightness(s) == min_tightness);
+                                    match solver.satisfy_at_path(&full_path, &satisfied_shapes) {
+                                        SatisfyResult::Solved(resolution) => {
+                                            log::trace!(
+                                                "Nested value disambiguation solved to: {}",
+                                                resolution.describe()
+                                            );
+                                            resolved_resolution = Some(resolution);
+                                            partial = start_deferred(partial, resolution)?;
+                                            break;
                                         }
-
-                                        log::trace!(
-                                            "Value {:?} satisfies tightest nested types: {:?}",
-                                            value,
-                                            satisfied_shapes
-                                                .iter()
-                                                .map(|s| s.type_identifier)
-                                                .collect::<Vec<_>>()
-                                        );
-
-                                        match solver.satisfy_at_path(&full_path, &satisfied_shapes)
-                                        {
-                                            SatisfyResult::Solved(resolution) => {
-                                                log::trace!(
-                                                    "Nested value disambiguation solved to: {}",
-                                                    resolution.describe()
-                                                );
-                                                resolved_resolution = Some(resolution);
-                                                partial = start_deferred(partial, resolution)?;
-                                                break;
-                                            }
-                                            SatisfyResult::Continue => {
-                                                // Still ambiguous, continue
-                                            }
-                                            SatisfyResult::NoMatch => {
-                                                return Err(KdlErrorKind::InvalidValueForShape(format!(
+                                        SatisfyResult::Continue => {
+                                            // Still ambiguous, continue
+                                        }
+                                        SatisfyResult::NoMatch => {
+                                            return Err(KdlErrorKind::InvalidValueForShape(format!(
                                                     "value {value:?} doesn't fit any candidate type for nested field '{child_name}.{prop_name}'"
                                                 ))
                                                 .into());
-                                            }
                                         }
                                     }
-                                    KeyResult::Unambiguous { .. } | KeyResult::Unknown => {
-                                        // Continue
-                                    }
+                                }
+                                KeyResult::Unambiguous { .. } | KeyResult::Unknown => {
+                                    // Continue
                                 }
                             }
                         }
@@ -1614,84 +1612,83 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 log::trace!("DEBUG: Looking for child '{child_name}' in solver resolution");
 
                 // Look up the child field in the solver's resolution
-                if let Some(field_info) = final_resolution.field(&child_name) {
-                    if field_info.field.is_kdl_child() {
-                        log::trace!(
-                            "Processing child node '{}' via solver path {:?}",
-                            child_name,
-                            field_info.path
-                        );
-                        log::trace!(
-                            "DEBUG: Processing child node '{}' via solver path {:?}",
-                            child_name,
-                            field_info.path
-                        );
+                if let Some(field_info) = final_resolution.field(&child_name)
+                    && field_info.field.is_kdl_child()
+                {
+                    log::trace!(
+                        "Processing child node '{}' via solver path {:?}",
+                        child_name,
+                        field_info.path
+                    );
+                    log::trace!(
+                        "DEBUG: Processing child node '{}' via solver path {:?}",
+                        child_name,
+                        field_info.path
+                    );
 
-                        // Record that we've seen this child field - important for variant selection
-                        // check later (variants selected via child paths, not just properties)
-                        // Use the serialized_name from field_info since it's 'static
-                        seen_keys.insert(Cow::Borrowed(field_info.serialized_name));
+                    // Record that we've seen this child field - important for variant selection
+                    // check later (variants selected via child paths, not just properties)
+                    // Use the serialized_name from field_info since it's 'static
+                    seen_keys.insert(Cow::Borrowed(field_info.serialized_name));
 
-                        // First close paths to the common prefix with the target field
-                        // This handles cases like: we're inside `connection` (a flatten struct)
-                        // but `logging` is a sibling field at the parent level
-                        partial =
-                            self.close_paths_to(partial, &mut open_paths, &field_info.path)?;
+                    // First close paths to the common prefix with the target field
+                    // This handles cases like: we're inside `connection` (a flatten struct)
+                    // but `logging` is a sibling field at the parent level
+                    partial = self.close_paths_to(partial, &mut open_paths, &field_info.path)?;
 
-                        // Navigate to the field using its path
-                        // Don't enter new options here - we handle Option wrapping ourselves
-                        (partial, _) =
-                            self.open_path_to(partial, &mut open_paths, &field_info.path, false)?;
+                    // Navigate to the field using its path
+                    // Don't enter new options here - we handle Option wrapping ourselves
+                    (partial, _) =
+                        self.open_path_to(partial, &mut open_paths, &field_info.path, false)?;
 
-                        // Handle Option wrapper
-                        let mut entered_option = false;
-                        if let Def::Option(_) = partial.shape().def {
-                            log::trace!("Child field is Option<T>, calling begin_some()");
-                            partial = partial.begin_some()?;
-                            entered_option = true;
+                    // Handle Option wrapper
+                    let mut entered_option = false;
+                    if let Def::Option(_) = partial.shape().def {
+                        log::trace!("Child field is Option<T>, calling begin_some()");
+                        partial = partial.begin_some()?;
+                        entered_option = true;
+                    }
+
+                    // Deserialize the child node's entries into the struct
+                    if let Type::User(UserType::Struct(struct_def)) = partial.shape().ty {
+                        let deny_unknown = partial.shape().has_deny_unknown_fields_attr();
+                        let mut in_entry_arguments_list = false;
+                        let mut open_flattened_field: Option<&'static str> = None;
+
+                        for entry in child_node.entries_mut().drain(..) {
+                            partial = self.deserialize_entry(
+                                partial,
+                                entry,
+                                struct_def.fields,
+                                &mut in_entry_arguments_list,
+                                &mut open_flattened_field,
+                                deny_unknown,
+                            )?;
                         }
 
-                        // Deserialize the child node's entries into the struct
-                        if let Type::User(UserType::Struct(struct_def)) = partial.shape().ty {
-                            let deny_unknown = partial.shape().has_deny_unknown_fields_attr();
-                            let mut in_entry_arguments_list = false;
-                            let mut open_flattened_field: Option<&'static str> = None;
-
-                            for entry in child_node.entries_mut().drain(..) {
-                                partial = self.deserialize_entry(
-                                    partial,
-                                    entry,
-                                    struct_def.fields,
-                                    &mut in_entry_arguments_list,
-                                    &mut open_flattened_field,
-                                    deny_unknown,
-                                )?;
-                            }
-
-                            if open_flattened_field.is_some() {
-                                partial = partial.end()?;
-                            }
-
-                            // Set defaults for unset fields
-                            for (idx, field) in struct_def.fields.iter().enumerate() {
-                                if !partial.is_field_set(idx)?
-                                    && (field.has_default() || field.should_skip_deserializing())
-                                {
-                                    partial = partial.set_nth_field_to_default(idx)?;
-                                }
-                            }
-                        }
-
-                        // End the struct
-                        partial = partial.end()?;
-
-                        // End the Option if we entered one
-                        if entered_option {
+                        if open_flattened_field.is_some() {
                             partial = partial.end()?;
                         }
 
-                        continue;
+                        // Set defaults for unset fields
+                        for (idx, field) in struct_def.fields.iter().enumerate() {
+                            if !partial.is_field_set(idx)?
+                                && (field.has_default() || field.should_skip_deserializing())
+                            {
+                                partial = partial.set_nth_field_to_default(idx)?;
+                            }
+                        }
                     }
+
+                    // End the struct
+                    partial = partial.end()?;
+
+                    // End the Option if we entered one
+                    if entered_option {
+                        partial = partial.end()?;
+                    }
+
+                    continue;
                 }
 
                 // Fall back to original field matching for non-solver child fields
@@ -1756,11 +1753,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                         .filter(|field| field.is_kdl_child())
                         .find_map(|field| {
                             let field_shape = field.shape();
-                            if let Some(enum_type) = get_enum_type(field_shape) {
-                                if let Some(variant) = find_variant_by_name(&enum_type, &child_name)
-                                {
-                                    return Some((field, variant));
-                                }
+                            if let Some(enum_type) = get_enum_type(field_shape)
+                                && let Some(variant) = find_variant_by_name(&enum_type, &child_name)
+                            {
+                                return Some((field, variant));
                             }
                             None
                         })
@@ -2131,19 +2127,16 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                     PathSegment::Field(name) => {
                         // Check if this field is an Option BEFORE opening it
                         // by looking at the field definition in the current struct
-                        if !enter_new_options {
-                            if let Type::User(UserType::Struct(struct_def)) = partial.shape().ty {
-                                if let Some(field) =
-                                    struct_def.fields.iter().find(|f| f.name == *name)
-                                {
-                                    let field_shape = field.shape();
-                                    if matches!(field_shape.def, Def::Option(_)) {
-                                        log::trace!(
-                                            "Field {name} is Option<T>, not entering (enter_new_options=false)"
-                                        );
-                                        return Ok((partial, Some(name)));
-                                    }
-                                }
+                        if !enter_new_options
+                            && let Type::User(UserType::Struct(struct_def)) = partial.shape().ty
+                            && let Some(field) = struct_def.fields.iter().find(|f| f.name == *name)
+                        {
+                            let field_shape = field.shape();
+                            if matches!(field_shape.def, Def::Option(_)) {
+                                log::trace!(
+                                    "Field {name} is Option<T>, not entering (enter_new_options=false)"
+                                );
+                                return Ok((partial, Some(name)));
                             }
                         }
                         log::trace!("Opening field: {name}");
@@ -2301,8 +2294,9 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         }
 
         // Handle transparent/inner wrapper types (like Utf8PathBuf, newtype wrappers, etc.)
-        // These should deserialize as their inner type
-        if partial.shape().inner.is_some() {
+        // These should deserialize as their inner type, UNLESS they have parse_from_str
+        // (like Utf8PathBuf which can parse directly from a string)
+        if partial.shape().inner.is_some() && !partial.shape().vtable.has_parse() {
             log::trace!(
                 "Field has inner type, using begin_inner() for {}",
                 partial.shape().type_identifier
@@ -2323,7 +2317,12 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
         match value {
             KdlValue::String(string) => {
-                partial = partial.set(string)?;
+                // Try parse_from_str first if the type supports it (e.g., Utf8PathBuf, chrono types)
+                if partial.shape().vtable.has_parse() {
+                    partial = partial.parse_from_str(&string)?;
+                } else {
+                    partial = partial.set(string)?;
+                }
             }
             KdlValue::Integer(integer) => {
                 let size = match partial.shape().layout {

@@ -1,4 +1,4 @@
-use crate::{PtrMut, ptr::PtrConst};
+use super::{PtrConst, PtrMut};
 
 use super::Shape;
 

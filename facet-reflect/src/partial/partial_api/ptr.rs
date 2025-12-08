@@ -64,7 +64,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
             // Push a new frame for the inner value
             self.frames_mut().push(Frame::new(
-                PtrUninit::new(inner_ptr),
+                PtrUninit::new(inner_ptr.as_ptr()),
                 pointee_shape,
                 FrameOwnership::Owned,
             ));
@@ -86,7 +86,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     });
                 };
                 let frame = Frame::new(
-                    PtrUninit::new(string_ptr),
+                    PtrUninit::new(string_ptr.as_ptr()),
                     String::SHAPE,
                     FrameOwnership::Owned,
                 );
@@ -107,14 +107,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 let builder_ptr = (slice_builder_vtable.new_fn)();
 
                 // Deallocate the original Arc allocation before replacing with slice builder
-                if let FrameOwnership::Owned = frame.ownership {
-                    if let Ok(layout) = frame.shape.layout.sized_layout() {
-                        if layout.size() > 0 {
-                            unsafe {
-                                ::alloc::alloc::dealloc(frame.data.as_mut_byte_ptr(), layout)
-                            };
-                        }
-                    }
+                if let FrameOwnership::Owned = frame.ownership
+                    && let Ok(layout) = frame.shape.layout.sized_layout()
+                    && layout.size() > 0
+                {
+                    unsafe { ::alloc::alloc::dealloc(frame.data.as_mut_byte_ptr(), layout) };
                 }
 
                 // Update the current frame to use the slice builder

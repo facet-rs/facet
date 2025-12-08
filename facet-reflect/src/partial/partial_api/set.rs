@@ -29,7 +29,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             ptr: (&mut value) as *mut ManuallyDrop<U> as *mut U,
         };
 
-        let ptr_const = PtrConst::new(unsafe { NonNull::new_unchecked(drop.ptr) });
+        let ptr_const = PtrConst::new(drop.ptr);
         // Safety: We are calling set_shape with a valid shape and a valid pointer
         self = unsafe { self.set_shape(ptr_const, U::SHAPE)? };
         core::mem::forget(drop);
@@ -53,7 +53,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     #[inline]
     pub unsafe fn set_shape(
         mut self,
-        src_value: PtrConst<'_>,
+        src_value: PtrConst,
         src_shape: &'static Shape,
     ) -> Result<Self, ReflectError> {
         let fr = self.frames_mut().last_mut().unwrap();
@@ -96,7 +96,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// Same safety requirements as `set_shape`.
     unsafe fn set_into_dynamic_value(
         mut self,
-        src_value: PtrConst<'_>,
+        src_value: PtrConst,
         src_shape: &'static Shape,
         dyn_def: &facet_core::DynamicValueDef,
     ) -> Result<Self, ReflectError> {
@@ -203,12 +203,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         unsafe { &*(src_value.as_byte_ptr() as *const ::alloc::string::String) };
                     unsafe { (vtable.set_str)(fr.data, s.as_str()) };
                     // Drop the source String since we cloned its content
-                    if let Some(drop_fn) = src_shape.vtable.drop_in_place {
-                        unsafe {
-                            drop_fn(PtrMut::new(NonNull::new_unchecked(
-                                src_value.as_byte_ptr() as *mut u8
-                            )));
-                        }
+                    unsafe {
+                        src_shape
+                            .call_drop_in_place(PtrMut::new(src_value.as_byte_ptr() as *mut u8));
                     }
                 } else {
                     return Err(ReflectError::OperationFailed {
@@ -292,7 +289,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// there is no need to drop it in place.
     pub unsafe fn set_from_function<F>(mut self, f: F) -> Result<Self, ReflectError>
     where
-        F: FnOnce(PtrUninit<'_>) -> Result<(), ReflectError>,
+        F: FnOnce(PtrUninit) -> Result<(), ReflectError>,
     {
         let frame = self.frames_mut().last_mut().unwrap();
 
@@ -318,19 +315,17 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     #[inline]
     pub fn set_default(self) -> Result<Self, ReflectError> {
         let frame = self.frames().last().unwrap();
+        let shape = frame.shape;
 
-        let Some(default_fn) = frame.shape.vtable.default_in_place else {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "type does not implement Default",
-            });
-        };
-
-        // SAFETY: `default_fn` fully initializes the passed pointer. we took it
-        // from the vtable of `frame.shape`.
+        // SAFETY: `call_default_in_place` fully initializes the passed pointer.
         unsafe {
             self.set_from_function(move |ptr| {
-                default_fn(ptr);
+                shape.call_default_in_place(ptr.assume_init()).ok_or(
+                    ReflectError::OperationFailed {
+                        shape,
+                        operation: "type does not implement Default",
+                    },
+                )?;
                 Ok(())
             })
         }
@@ -360,32 +355,33 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     /// If the current frame was previously initialized, its contents are dropped in place.
     pub fn parse_from_str(mut self, s: &str) -> Result<Self, ReflectError> {
         let frame = self.frames_mut().last_mut().unwrap();
-
-        // Check if the type has a parse function
-        let Some(parse_fn) = frame.shape.vtable.parse else {
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "Type does not support parsing from string",
-            });
-        };
+        let shape = frame.shape;
 
         // Note: deinit leaves us in `Tracker::Uninit` state which is valid even if we error out.
         frame.deinit();
 
         // Parse the string value using the type's parse function
-        let result = unsafe { parse_fn(s, frame.data) };
-        if let Err(_pe) = result {
-            // TODO: can we propagate the ParseError somehow?
-            return Err(ReflectError::OperationFailed {
-                shape: frame.shape,
-                operation: "Failed to parse string value",
-            });
-        }
+        let result = unsafe { shape.call_parse(s, frame.data.assume_init()) };
 
-        // SAFETY: `parse_fn` returned `Ok`, so `frame.data` is fully initialized now.
-        unsafe {
-            frame.mark_as_init();
+        match result {
+            Some(Ok(())) => {
+                // SAFETY: `call_parse` returned `Ok`, so `frame.data` is fully initialized now.
+                unsafe {
+                    frame.mark_as_init();
+                }
+                Ok(self)
+            }
+            Some(Err(_pe)) => {
+                // TODO: can we propagate the ParseError somehow?
+                Err(ReflectError::OperationFailed {
+                    shape,
+                    operation: "Failed to parse string value",
+                })
+            }
+            None => Err(ReflectError::OperationFailed {
+                shape,
+                operation: "Type does not support parsing from string",
+            }),
         }
-        Ok(self)
     }
 }

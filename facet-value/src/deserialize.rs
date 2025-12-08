@@ -543,7 +543,7 @@ fn deserialize_scalar<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial
         ValueType::String => {
             let s = value.as_string().unwrap();
             // Try parse_from_str first if the type supports it
-            if shape.vtable.parse.is_some() {
+            if shape.vtable.has_parse() {
                 partial = partial.parse_from_str(s.as_str())?;
             } else {
                 partial = partial.set(s.as_str().to_string())?;

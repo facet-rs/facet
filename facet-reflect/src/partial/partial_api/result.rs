@@ -59,14 +59,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         let inner_data = if inner_layout.size() == 0 {
             // For ZST, use a non-null but unallocated pointer
-            PtrUninit::new(NonNull::<u8>::dangling())
+            PtrUninit::new(NonNull::<u8>::dangling().as_ptr())
         } else {
             // Allocate memory for the inner value
             let ptr = unsafe { ::alloc::alloc::alloc(inner_layout) };
             let Some(ptr) = NonNull::new(ptr) else {
                 ::alloc::alloc::handle_alloc_error(inner_layout);
             };
-            PtrUninit::new(ptr)
+            PtrUninit::new(ptr.as_ptr())
         };
 
         // Create a new frame for the inner value
@@ -131,14 +131,14 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         let inner_data = if inner_layout.size() == 0 {
             // For ZST, use a non-null but unallocated pointer
-            PtrUninit::new(NonNull::<u8>::dangling())
+            PtrUninit::new(NonNull::<u8>::dangling().as_ptr())
         } else {
             // Allocate memory for the inner value
             let ptr = unsafe { ::alloc::alloc::alloc(inner_layout) };
             let Some(ptr) = NonNull::new(ptr) else {
                 ::alloc::alloc::handle_alloc_error(inner_layout);
             };
-            PtrUninit::new(ptr)
+            PtrUninit::new(ptr.as_ptr())
         };
 
         // Create a new frame for the inner value

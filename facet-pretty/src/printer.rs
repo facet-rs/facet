@@ -239,6 +239,7 @@ impl PrettyPrinter {
                 }
                 UserType::Opaque | UserType::Union(_) => 1,
             },
+            Type::Undefined => 1,
         }
     }
 

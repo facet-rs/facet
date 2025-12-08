@@ -322,11 +322,11 @@ pub fn ansi_to_html(input: &str) -> String {
                 }
 
                 // Parse the style
-                if let Some(style) = parse_ansi_style(&seq) {
-                    if !style.is_empty() {
-                        output.push_str(&format!("<span style=\"{style}\">"));
-                        in_span = true;
-                    }
+                if let Some(style) = parse_ansi_style(&seq)
+                    && !style.is_empty()
+                {
+                    output.push_str(&format!("<span style=\"{style}\">"));
+                    in_span = true;
                 }
             }
         } else if c == '<' {

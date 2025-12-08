@@ -3,8 +3,7 @@
 use core::{mem, ops::Deref};
 
 use facet_core::{
-    Def, Facet, Field, FieldFlags, Shape, ShapeRef, StructType, Type, TypeParam, UserType,
-    ValueVTable, Variance,
+    Def, Facet, FieldBuilder, Shape, StructKind, TypeOpsDirect, type_ops_direct, vtable_direct,
 };
 
 /// Source span with offset and length.
@@ -55,56 +54,31 @@ impl From<miette::SourceSpan> for Span {
 
 // SAFETY: Span is a simple struct with two usize fields, properly laid out
 unsafe impl Facet<'_> for Span {
-    const SHAPE: &'static Shape = &Shape {
-        id: Shape::id_of::<Self>(),
-        layout: Shape::layout_of::<Self>(),
-        vtable: ValueVTable::builder(|f, _opts| write!(f, "Span"))
-            .drop_in_place(ValueVTable::drop_in_place_for::<Self>())
-            .default_in_place(|target| unsafe { target.put(Span::default()) })
-            .clone_into(|src, dst| unsafe { dst.put(*src.get::<Span>()) })
-            .debug(|this, f| {
-                let span = unsafe { this.get::<Span>() };
-                write!(f, "Span {{ offset: {}, len: {} }}", span.offset, span.len)
-            })
-            .partial_eq(|a, b| unsafe { a.get::<Span>() == b.get::<Span>() })
+    const SHAPE: &'static Shape = &const {
+        static FIELDS: [facet_core::Field; 2] = [
+            FieldBuilder::new(
+                "offset",
+                facet_core::shape_of::<usize>,
+                mem::offset_of!(Span, offset),
+            )
             .build(),
-        type_identifier: "Span",
-        ty: Type::User(UserType::Struct(StructType {
-            kind: facet_core::StructKind::Struct,
-            repr: facet_core::Repr::default(),
-            fields: &const {
-                [
-                    Field {
-                        name: "offset",
-                        shape: ShapeRef::Static(<usize as Facet>::SHAPE),
-                        offset: mem::offset_of!(Span, offset),
-                        flags: FieldFlags::empty(),
-                        rename: None,
-                        alias: None,
-                        attributes: &[],
-                        doc: &[],
-                    },
-                    Field {
-                        name: "len",
-                        shape: ShapeRef::Static(<usize as Facet>::SHAPE),
-                        offset: mem::offset_of!(Span, len),
-                        flags: FieldFlags::empty(),
-                        rename: None,
-                        alias: None,
-                        attributes: &[],
-                        doc: &[],
-                    },
-                ]
-            },
-        })),
-        def: Def::Undefined,
-        type_params: &[],
-        doc: &[],
-        attributes: &[],
-        type_tag: None,
-        inner: None,
-        proxy: None,
-        variance: Variance::INVARIANT,
+            FieldBuilder::new(
+                "len",
+                facet_core::shape_of::<usize>,
+                mem::offset_of!(Span, len),
+            )
+            .build(),
+        ];
+
+        const VTABLE: facet_core::VTableDirect = vtable_direct!(Span => Debug, PartialEq);
+        const TYPE_OPS: TypeOpsDirect = type_ops_direct!(Span => Default, Clone);
+
+        Shape::builder_for_sized::<Span>("Span")
+            .vtable_direct(&VTABLE)
+            .type_ops_direct(&TYPE_OPS)
+            .ty(facet_core::Type::struct_builder(StructKind::Struct, &FIELDS).build())
+            .def(Def::Undefined)
+            .build()
     };
 }
 
@@ -179,64 +153,70 @@ impl<T: Eq> Eq for Spanned<T> {}
 
 // SAFETY: Spanned<T> is a simple struct with a value and span field, properly laid out
 unsafe impl<'a, T: Facet<'a>> Facet<'a> for Spanned<T> {
-    const SHAPE: &'static Shape = &Shape {
-        id: Shape::id_of::<Self>(),
-        layout: Shape::layout_of::<Self>(),
-        vtable: ValueVTable {
-            type_name: |f, opts| {
+    const SHAPE: &'static Shape = &const {
+        use facet_core::{TypeOpsIndirect, TypeParam, VTableIndirect};
+
+        unsafe fn drop_in_place<T>(ox: facet_core::OxPtrMut) {
+            // SAFETY: The caller guarantees ox points to a valid Spanned<T>
+            unsafe { core::ptr::drop_in_place(ox.ptr().as_byte_ptr() as *mut Spanned<T>) };
+        }
+
+        Shape::builder_for_sized::<Spanned<T>>("Spanned")
+            .vtable_indirect(&VTableIndirect::EMPTY)
+            .type_ops_indirect(
+                &const {
+                    TypeOpsIndirect {
+                        drop_in_place: drop_in_place::<T>,
+                        default_in_place: None,
+                        clone_into: None,
+                    }
+                },
+            )
+            .type_params(
+                &const {
+                    [TypeParam {
+                        name: "T",
+                        shape: T::SHAPE,
+                    }]
+                },
+            )
+            .ty(facet_core::Type::struct_builder(
+                StructKind::Struct,
+                &const {
+                    [
+                        FieldBuilder::new(
+                            "value",
+                            facet_core::shape_of::<T>,
+                            mem::offset_of!(Spanned<T>, value),
+                        )
+                        .build(),
+                        FieldBuilder::new(
+                            "span",
+                            facet_core::shape_of::<Span>,
+                            mem::offset_of!(Spanned<T>, span),
+                        )
+                        .build(),
+                    ]
+                },
+            )
+            .build())
+            .def(Def::Undefined)
+            .type_name(|_shape, f, opts| {
                 write!(f, "Spanned")?;
                 if let Some(opts) = opts.for_children() {
                     write!(f, "<")?;
-                    T::SHAPE.vtable.type_name()(f, opts)?;
+                    if let Some(type_name_fn) = T::SHAPE.type_name {
+                        type_name_fn(T::SHAPE, f, opts)?;
+                    } else {
+                        write!(f, "{}", T::SHAPE.type_identifier)?;
+                    }
                     write!(f, ">")?;
                 } else {
                     write!(f, "<…>")?;
                 }
                 Ok(())
-            },
-            drop_in_place: ValueVTable::drop_in_place_for::<Self>(),
-            ..ValueVTable::new(|_, _| Ok(()))
-        },
-        type_identifier: "Spanned",
-        type_params: &[TypeParam {
-            name: "T",
-            shape: T::SHAPE,
-        }],
-        ty: Type::User(UserType::Struct(StructType {
-            kind: facet_core::StructKind::Struct,
-            repr: facet_core::Repr::default(),
-            fields: &const {
-                [
-                    Field {
-                        name: "value",
-                        shape: ShapeRef::Static(T::SHAPE),
-                        offset: mem::offset_of!(Spanned<T>, value),
-                        flags: FieldFlags::empty(),
-                        rename: None,
-                        alias: None,
-                        attributes: &[],
-                        doc: &[],
-                    },
-                    Field {
-                        name: "span",
-                        shape: ShapeRef::Static(Span::SHAPE),
-                        offset: mem::offset_of!(Spanned<T>, span),
-                        flags: FieldFlags::empty(),
-                        rename: None,
-                        alias: None,
-                        attributes: &[],
-                        doc: &[],
-                    },
-                ]
-            },
-        })),
-        def: Def::Undefined,
-        doc: &[],
-        attributes: &[],
-        type_tag: None,
-        inner: None,
-        proxy: None,
-        variance: Variance::INVARIANT,
+            })
+            .build()
     };
 }
 

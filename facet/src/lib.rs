@@ -15,8 +15,6 @@ pub use facet_macros::*;
 #[cfg(feature = "reflect")]
 pub use facet_reflect::*;
 
-pub mod hacking;
-
 /// Built-in facet attributes.
 ///
 /// These attributes are used with the `#[facet(...)]` syntax without a namespace prefix.
@@ -209,7 +207,9 @@ pub mod builtin {
         const SHAPE: &'static crate::Shape = &crate::Shape {
             id: crate::Shape::id_of::<Self>(),
             layout: crate::Shape::layout_of::<Self>(),
-            vtable: crate::value_vtable!(Self, |_f, _o| { core::fmt::Result::Ok(()) }),
+            vtable: crate::VTableErased::Direct(&crate::VTableDirect::empty()),
+            type_ops: None,
+            marker_traits: crate::MarkerTraits::empty(),
             type_identifier: "facet::builtin::Attr",
             ty: crate::Type::User(crate::UserType::Opaque),
             def: crate::Def::Undefined,
@@ -218,8 +218,12 @@ pub mod builtin {
             attributes: &[],
             type_tag: None,
             inner: None,
+            type_name: None,
             proxy: None,
-            variance: crate::Variance::INVARIANT,
+            variance: crate::Variance::COVARIANT,
+            flags: crate::ShapeFlags::empty(),
+            tag: None,
+            content: None,
         };
     }
 }

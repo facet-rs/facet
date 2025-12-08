@@ -36,8 +36,8 @@ fn str_ref() {
 
 #[test]
 fn str_ref_ref() {
-    let s = "abc";
-    let r = &s;
+    let s: &'static str = "abc";
+    let r: &'static &str = Box::leak(Box::new(s));
     let peek = Peek::new::<&&str>(&r);
 
     assert_eq!(format!("{peek}"), "abc");
@@ -54,9 +54,8 @@ fn str_mut_ref() {
 
 #[test]
 fn str_mut_ref_mut_ref() {
-    let mut s = String::from("abc");
-    let mut r = s.as_mut_str();
-    let r = &mut r;
+    let s = Box::leak(Box::new(String::from("abc")));
+    let r: &'static mut &mut str = Box::leak(Box::new(s.as_mut_str()));
     let peek = Peek::new::<&mut &mut str>(&r);
 
     assert_eq!(format!("{peek}"), "abc");
@@ -64,8 +63,8 @@ fn str_mut_ref_mut_ref() {
 
 #[test]
 fn str_ref_mut_ref() {
-    let mut s = "abc";
-    let r = &mut s;
+    let s: &'static str = "abc";
+    let r: &'static mut &str = Box::leak(Box::new(s));
     let peek = Peek::new::<&mut &str>(&r);
 
     assert_eq!(format!("{peek}"), "abc");
@@ -73,9 +72,8 @@ fn str_ref_mut_ref() {
 
 #[test]
 fn str_mut_ref_ref() {
-    let mut s = String::from("abc");
-    let r = s.as_mut_str();
-    let r = &r;
+    let s = Box::leak(Box::new(String::from("abc")));
+    let r: &'static &mut str = Box::leak(Box::new(s.as_mut_str()));
     let peek = Peek::new::<&&mut str>(&r);
 
     assert_eq!(format!("{peek}"), "abc");

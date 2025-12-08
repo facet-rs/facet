@@ -1,4 +1,5 @@
 use crate::trace;
+use core::marker::PhantomData;
 use facet_core::{PtrMut, Shape};
 
 use super::Peek;
@@ -8,8 +9,9 @@ use super::Peek;
 /// Should be held onto until the serialization of the type
 /// is completed.
 pub struct OwnedPeek<'mem> {
-    pub(crate) data: PtrMut<'mem>,
+    pub(crate) data: PtrMut,
     pub(crate) shape: &'static Shape,
+    pub(crate) _phantom: PhantomData<&'mem ()>,
 }
 
 impl<'mem, 'facet> OwnedPeek<'mem> {
@@ -27,9 +29,7 @@ impl<'mem, 'facet> OwnedPeek<'mem> {
 impl<'mem> Drop for OwnedPeek<'mem> {
     fn drop(&mut self) {
         trace!("Dropping owned peek of shape '{}'", self.shape);
-        if let Some(drop_fn) = self.shape.vtable.drop_in_place {
-            unsafe { drop_fn(self.data) };
-        }
+        unsafe { self.shape.call_drop_in_place(self.data) };
         let _ = unsafe { self.shape.deallocate_mut(self.data) };
     }
 }

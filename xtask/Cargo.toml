@@ -9,3 +9,7 @@ publish = false
 ci = [] # CI feature
 
 [dependencies]
+facet = { path = "../facet" }
+facet-json = { path = "../facet-json" }
+ratatui = "0.28"
+crossterm = "0.28"

@@ -28,35 +28,25 @@ ci: precommit prepush docs msrv miri
 nostd:
     rustup target add thumbv8m.main-none-eabihf
 
-    # Run alloc but no-std checks with specified target directory
-    cargo check --no-default-features -p facet-core --target-dir target/nostd --target thumbv8m.main-none-eabihf
-    cargo check --no-default-features -p facet --target-dir target/nostd --target thumbv8m.main-none-eabihf
-    cargo check --no-default-features -p facet-reflect --target-dir target/nostd --target thumbv8m.main-none-eabihf
-
-    # Run alloc but no-std checks with specified target directory
-    cargo check --no-default-features --features alloc -p facet-core --target-dir target/nostd-w-alloc --target thumbv8m.main-none-eabihf
-    cargo check --no-default-features --features alloc -p facet --target-dir target/nostd-w-alloc --target thumbv8m.main-none-eabihf
-    cargo check --no-default-features --features alloc -p facet-reflect --target-dir target/nostd-w-alloc --target thumbv8m.main-none-eabihf
+    # Run no_std + alloc checks (alloc is required for facet-core)
+    cargo check --no-default-features --features alloc -p facet-core --target-dir target/nostd --target thumbv8m.main-none-eabihf
+    cargo check --no-default-features --features alloc -p facet --target-dir target/nostd --target thumbv8m.main-none-eabihf
+    cargo check --no-default-features --features alloc -p facet-reflect --target-dir target/nostd --target thumbv8m.main-none-eabihf
 
 nostd-ci:
     #!/usr/bin/env -S bash -euo pipefail
     source .envrc
 
-    # Set up target directory for no-std checks
+    # Set up target directory for no_std + alloc checks (alloc is required)
     export CARGO_TARGET_DIR=target/nostd
-
-    # Run each check in its own group with the full command as the title
-    cmd_group "cargo check --no-default-features -p facet-core --target thumbv8m.main-none-eabihf"
-    cmd_group "cargo check --no-default-features -p facet --target thumbv8m.main-none-eabihf"
-    cmd_group "cargo check --no-default-features -p facet-reflect --target thumbv8m.main-none-eabihf"
-
-    # Set up target directory for alloc but no-std checks
-    export CARGO_TARGET_DIR=target/nostd-w-alloc
 
     # Run each check in its own group with the full command as the title
     cmd_group "cargo check --no-default-features --features alloc -p facet-core --target thumbv8m.main-none-eabihf"
     cmd_group "cargo check --no-default-features --features alloc -p facet --target thumbv8m.main-none-eabihf"
     cmd_group "cargo check --no-default-features --features alloc -p facet-reflect --target thumbv8m.main-none-eabihf"
+
+clippy-ci:
+    cargo clippy --workspace --all-features --all-targets --keep-going -- -D warnings --allow deprecated
 
 clippy-all:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
@@ -82,8 +72,11 @@ asan-facet-value-ci:
     rustup toolchain install nightly
     cmd_group "cargo +nightly test -Zsanitizer=address -p facet-value --lib --tests -- --test-threads=1"
 
+valgrind *args:
+    cargo nextest run --profile valgrind --features cranelift {{args}}
+
 valgrind-facet-json:
-    node ci.mjs valgrind-facet-json
+    cargo nextest run -p facet-json --features cranelift --profile valgrind
 
 fuzz-smoke-value:
     cargo fuzz run fuzz_value -- -runs=1000

@@ -1,0 +1,183 @@
+use core::hash::BuildHasher;
+use core::ptr::NonNull;
+use std::collections::HashMap;
+use std::hash::RandomState;
+
+use crate::{PtrConst, PtrMut, PtrUninit};
+
+use crate::{
+    Def, Facet, IterVTable, MapDef, MapVTable, Shape, ShapeBuilder, Type, TypeNameFn, TypeNameOpts,
+    TypeOpsIndirect, TypeParam, UserType, VTableDirect, VTableIndirect,
+};
+
+type HashMapIterator<'mem, K, V> = std::collections::hash_map::Iter<'mem, K, V>;
+
+unsafe fn hashmap_init_in_place_with_capacity<K, V, S: Default + BuildHasher>(
+    uninit: PtrUninit,
+    capacity: usize,
+) -> PtrMut {
+    unsafe {
+        uninit.put(HashMap::<K, V, S>::with_capacity_and_hasher(
+            capacity,
+            S::default(),
+        ))
+    }
+}
+
+unsafe fn hashmap_insert<K: Eq + core::hash::Hash, V>(ptr: PtrMut, key: PtrMut, value: PtrMut) {
+    let map = unsafe { ptr.as_mut::<HashMap<K, V>>() };
+    let key = unsafe { key.read::<K>() };
+    let value = unsafe { value.read::<V>() };
+    map.insert(key, value);
+}
+
+unsafe fn hashmap_len<K, V>(ptr: PtrConst) -> usize {
+    unsafe { ptr.get::<HashMap<K, V>>().len() }
+}
+
+unsafe fn hashmap_contains_key<K: Eq + core::hash::Hash, V>(ptr: PtrConst, key: PtrConst) -> bool {
+    unsafe { ptr.get::<HashMap<K, V>>().contains_key(key.get()) }
+}
+
+unsafe fn hashmap_get_value_ptr<K: Eq + core::hash::Hash, V>(
+    ptr: PtrConst,
+    key: PtrConst,
+) -> Option<PtrConst> {
+    unsafe {
+        ptr.get::<HashMap<K, V>>()
+            .get(key.get())
+            .map(|v| PtrConst::new(NonNull::from(v).as_ptr()))
+    }
+}
+
+unsafe fn hashmap_iter_init<K, V>(ptr: PtrConst) -> PtrMut {
+    unsafe {
+        let map = ptr.get::<HashMap<K, V>>();
+        let iter: HashMapIterator<'_, K, V> = map.iter();
+        let iter_state = Box::new(iter);
+        PtrMut::new(Box::into_raw(iter_state) as *mut u8)
+    }
+}
+
+unsafe fn hashmap_iter_next<K, V>(iter_ptr: PtrMut) -> Option<(PtrConst, PtrConst)> {
+    unsafe {
+        // SAFETY: We're extending the lifetime from '_ to 'static through a raw pointer cast.
+        // This is sound because:
+        // 1. The iterator was allocated in hashmap_iter_init and lives until hashmap_iter_dealloc
+        // 2. We only return pointers (PtrConst), not references with the extended lifetime
+        // 3. The actual lifetime of the data is managed by the HashMap, not this iterator
+        let ptr = iter_ptr.as_mut_ptr::<HashMapIterator<'_, K, V>>();
+        let state = &mut *ptr;
+        state.next().map(|(key, value)| {
+            (
+                PtrConst::new(NonNull::from(key).as_ptr()),
+                PtrConst::new(NonNull::from(value).as_ptr()),
+            )
+        })
+    }
+}
+
+unsafe fn hashmap_iter_dealloc<K, V>(iter_ptr: PtrMut) {
+    unsafe {
+        drop(Box::from_raw(
+            iter_ptr.as_ptr::<HashMapIterator<'_, K, V>>() as *mut HashMapIterator<'_, K, V>,
+        ));
+    }
+}
+
+unsafe fn hashmap_drop<K, V, S>(ox: crate::OxPtrMut) {
+    unsafe {
+        core::ptr::drop_in_place(ox.as_mut::<HashMap<K, V, S>>());
+    }
+}
+
+// TODO: Debug, PartialEq, Eq for HashMap, HashSet
+unsafe impl<'a, K, V, S> Facet<'a> for HashMap<K, V, S>
+where
+    K: Facet<'a> + core::cmp::Eq + core::hash::Hash,
+    V: Facet<'a>,
+    S: 'a + Default + BuildHasher,
+{
+    const SHAPE: &'static Shape = &const {
+        const fn build_map_vtable<K: Eq + core::hash::Hash, V, S: Default + BuildHasher>()
+        -> MapVTable {
+            MapVTable::builder()
+                .init_in_place_with_capacity(hashmap_init_in_place_with_capacity::<K, V, S>)
+                .insert(hashmap_insert::<K, V>)
+                .len(hashmap_len::<K, V>)
+                .contains_key(hashmap_contains_key::<K, V>)
+                .get_value_ptr(hashmap_get_value_ptr::<K, V>)
+                .iter_vtable(IterVTable {
+                    init_with_value: Some(hashmap_iter_init::<K, V>),
+                    next: hashmap_iter_next::<K, V>,
+                    next_back: None,
+                    size_hint: None,
+                    dealloc: hashmap_iter_dealloc::<K, V>,
+                })
+                .build()
+        }
+
+        const fn build_type_name<'a, K: Facet<'a>, V: Facet<'a>>() -> TypeNameFn {
+            fn type_name_impl<'a, K: Facet<'a>, V: Facet<'a>>(
+                _shape: &'static Shape,
+                f: &mut core::fmt::Formatter<'_>,
+                opts: TypeNameOpts,
+            ) -> core::fmt::Result {
+                write!(f, "HashMap")?;
+                if let Some(opts) = opts.for_children() {
+                    write!(f, "<")?;
+                    K::SHAPE.write_type_name(f, opts)?;
+                    write!(f, ", ")?;
+                    V::SHAPE.write_type_name(f, opts)?;
+                    write!(f, ">")?;
+                } else {
+                    write!(f, "<…>")?;
+                }
+                Ok(())
+            }
+            type_name_impl::<K, V>
+        }
+
+        ShapeBuilder::for_sized::<Self>("HashMap")
+            .type_name(build_type_name::<K, V>())
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::Map(MapDef {
+                vtable: &const { build_map_vtable::<K, V, S>() },
+                k: K::SHAPE,
+                v: V::SHAPE,
+            }))
+            .type_params(&[
+                TypeParam {
+                    name: "K",
+                    shape: K::SHAPE,
+                },
+                TypeParam {
+                    name: "V",
+                    shape: V::SHAPE,
+                },
+            ])
+            .vtable_indirect(&VTableIndirect::EMPTY)
+            .type_ops_indirect(
+                &const {
+                    TypeOpsIndirect {
+                        drop_in_place: hashmap_drop::<K, V, S>,
+                        default_in_place: None,
+                        clone_into: None,
+                    }
+                },
+            )
+            .build()
+    };
+}
+
+unsafe impl Facet<'_> for RandomState {
+    const SHAPE: &'static Shape = &const {
+        const VTABLE: VTableDirect = VTableDirect::empty();
+
+        ShapeBuilder::for_sized::<Self>("RandomState")
+            .ty(Type::User(UserType::Opaque))
+            .def(Def::Scalar)
+            .vtable_direct(&VTABLE)
+            .build()
+    };
+}

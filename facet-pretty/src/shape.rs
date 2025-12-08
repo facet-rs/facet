@@ -11,8 +11,8 @@ use alloc::vec::Vec;
 use core::fmt::Write;
 
 use facet_core::{
-    Def, EnumRepr, EnumType, ExtensionAttr, Field, PointerType, Shape, StructKind, StructType,
-    Type, UserType, Variant,
+    Attr, Def, EnumRepr, EnumType, Field, PointerType, Shape, StructKind, StructType, Type,
+    UserType, Variant,
 };
 use owo_colors::OwoColorize;
 
@@ -540,7 +540,7 @@ fn write_doc_comments_colored(
 /// Write third-party (namespaced) attributes from a Shape's attributes
 /// Groups attributes by namespace, e.g. `#[facet(args::named, args::short)]`
 fn write_third_party_attrs_colored(
-    attributes: &[ExtensionAttr],
+    attributes: &[Attr],
     output: &mut String,
     indent: &str,
 ) -> core::fmt::Result {
@@ -604,19 +604,19 @@ fn write_type_name_colored(shape: &Shape, output: &mut String) -> core::fmt::Res
             }
         }
         Def::Pointer(_) => {
-            if let Type::Pointer(PointerType::Reference(r)) = shape.ty {
-                if let Def::Array(array_def) = r.target.def {
-                    write!(output, "{}", "&[".style(colors::punctuation()))?;
-                    write_type_name_colored(array_def.t, output)?;
-                    write!(
-                        output,
-                        "{}{}{}",
-                        "; ".style(colors::punctuation()),
-                        array_def.n.style(colors::primitive()),
-                        "]".style(colors::punctuation())
-                    )?;
-                    return Ok(());
-                }
+            if let Type::Pointer(PointerType::Reference(r)) = shape.ty
+                && let Def::Array(array_def) = r.target.def
+            {
+                write!(output, "{}", "&[".style(colors::punctuation()))?;
+                write_type_name_colored(array_def.t, output)?;
+                write!(
+                    output,
+                    "{}{}{}",
+                    "; ".style(colors::punctuation()),
+                    array_def.n.style(colors::primitive()),
+                    "]".style(colors::punctuation())
+                )?;
+                return Ok(());
             }
             write!(
                 output,
@@ -1065,13 +1065,13 @@ fn write_type_name(shape: &Shape, output: &mut String) -> core::fmt::Result {
             write!(output, "{}", shape.type_identifier)?;
         }
         Def::Pointer(_) => {
-            if let Type::Pointer(PointerType::Reference(r)) = shape.ty {
-                if let Def::Array(array_def) = r.target.def {
-                    write!(output, "&[")?;
-                    write_type_name(array_def.t, output)?;
-                    write!(output, "; {}]", array_def.n)?;
-                    return Ok(());
-                }
+            if let Type::Pointer(PointerType::Reference(r)) = shape.ty
+                && let Def::Array(array_def) = r.target.def
+            {
+                write!(output, "&[")?;
+                write_type_name(array_def.t, output)?;
+                write!(output, "; {}]", array_def.n)?;
+                return Ok(());
             }
             write!(output, "{}", shape.type_identifier)?;
         }

@@ -661,19 +661,19 @@ impl PAttrs {
         }
 
         // Validate: traits(...) and auto_traits are mutually exclusive
-        if declared_traits.is_some() && auto_traits {
-            if let Some(span) = facet_attrs
+        if declared_traits.is_some()
+            && auto_traits
+            && let Some(span) = facet_attrs
                 .iter()
                 .find(|a| a.is_builtin() && a.key_str() == "auto_traits")
                 .map(|a| a.key.span())
-            {
-                errors.push(CompileError {
-                    message: "cannot use both #[facet(traits(...))] and #[facet(auto_traits)] \
+        {
+            errors.push(CompileError {
+                message: "cannot use both #[facet(traits(...))] and #[facet(auto_traits)] \
                               on the same type"
-                        .to_string(),
-                    span,
-                });
-            }
+                    .to_string(),
+                span,
+            });
         }
 
         Self {

@@ -117,17 +117,17 @@ fn is_unit_like(peek: &Peek<'_, '_>) -> bool {
         }
         // Check if it's a list/array of unit types
         (Def::List(ld), _) => {
-            if let Type::User(UserType::Struct(sd)) = ld.t().ty {
-                if sd.kind == StructKind::Unit {
-                    return true;
-                }
+            if let Type::User(UserType::Struct(sd)) = ld.t().ty
+                && sd.kind == StructKind::Unit
+            {
+                return true;
             }
         }
         (Def::Array(ad), _) => {
-            if let Type::User(UserType::Struct(sd)) = ad.t().ty {
-                if sd.kind == StructKind::Unit {
-                    return true;
-                }
+            if let Type::User(UserType::Struct(sd)) = ad.t().ty
+                && sd.kind == StructKind::Unit
+            {
+                return true;
             }
         }
         _ => {}

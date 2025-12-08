@@ -530,12 +530,11 @@ fn wip_fuzz_drop_mid_nested() {
 fn wip_fuzz_drop_mid_list() {
     // Start building a list, add some items, drop
     let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
-    if let Ok(partial) = partial.begin_field("items") {
-        if let Ok(partial) = partial.begin_list() {
-            if let Ok(partial) = partial.push(String::from("item1")) {
-                let _ = partial.push(String::from("item2"));
-            }
-        }
+    if let Ok(partial) = partial.begin_field("items")
+        && let Ok(partial) = partial.begin_list()
+        && let Ok(partial) = partial.push(String::from("item1"))
+    {
+        let _ = partial.push(String::from("item2"));
     }
     // Drop with list partially built
 }
@@ -544,17 +543,14 @@ fn wip_fuzz_drop_mid_list() {
 fn wip_fuzz_drop_mid_map() {
     // Start building a map, add a key, drop before value
     let partial: Partial<'_> = Partial::alloc::<FuzzTarget>().unwrap();
-    if let Ok(partial) = partial.begin_field("mapping") {
-        if let Ok(partial) = partial.begin_map() {
-            if let Ok(partial) = partial.begin_key() {
-                if let Ok(partial) = partial.set(String::from("key1")) {
-                    if let Ok(partial) = partial.end() {
-                        // end key
-                        let _ = partial.begin_value();
-                    }
-                }
-            }
-        }
+    if let Ok(partial) = partial.begin_field("mapping")
+        && let Ok(partial) = partial.begin_map()
+        && let Ok(partial) = partial.begin_key()
+        && let Ok(partial) = partial.set(String::from("key1"))
+        && let Ok(partial) = partial.end()
+    {
+        // end key
+        let _ = partial.begin_value();
     }
     // Drop with map in "pushing value" state
 }

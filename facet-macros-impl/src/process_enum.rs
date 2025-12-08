@@ -1,5 +1,8 @@
 use super::*;
-use crate::process_struct::{TraitSources, gen_field_from_pfield, gen_trait_bounds, gen_vtable};
+use crate::process_struct::{
+    TraitSources, gen_field_from_pfield, gen_trait_bounds, gen_type_ops, gen_vtable,
+};
+use proc_macro2::Literal;
 use quote::{format_ident, quote, quote_spanned};
 
 /// Generate a Variant using VariantBuilder for more compact output.
@@ -9,19 +12,23 @@ use quote::{format_ident, quote, quote_spanned};
 fn gen_variant(
     name: impl quote::ToTokens,
     discriminant: impl quote::ToTokens,
-    attributes: impl quote::ToTokens,
+    attributes: Option<impl quote::ToTokens>,
     struct_kind: impl quote::ToTokens,
     fields: impl quote::ToTokens,
-    doc: impl quote::ToTokens,
+    doc: Option<impl quote::ToTokens>,
 ) -> TokenStream {
+    // Only emit .attributes() and .doc() calls when there's actual content
+    let attributes_call = attributes.map(|a| quote! { .attributes(#a) });
+    let doc_call = doc.map(|d| quote! { .doc(#d) });
+
     quote! {
         𝟋VarB::new(
             #name,
             𝟋STyB::new(#struct_kind, #fields).build()
         )
-        .discriminant(Some(#discriminant as _))
-        .attributes(#attributes)
-        .doc(#doc)
+        .discriminant(#discriminant)
+        #attributes_call
+        #doc_call
         .build()
     }
 }
@@ -32,14 +39,18 @@ fn gen_variant(
 fn gen_unit_variant(
     name: impl quote::ToTokens,
     discriminant: impl quote::ToTokens,
-    attributes: impl quote::ToTokens,
-    doc: impl quote::ToTokens,
+    attributes: Option<impl quote::ToTokens>,
+    doc: Option<impl quote::ToTokens>,
 ) -> TokenStream {
+    // Only emit .attributes() and .doc() calls when there's actual content
+    let attributes_call = attributes.map(|a| quote! { .attributes(#a) });
+    let doc_call = doc.map(|d| quote! { .doc(#d) });
+
     quote! {
         𝟋VarB::new(#name, 𝟋STy::UNIT)
-            .discriminant(Some(#discriminant as _))
-            .attributes(#attributes)
-            .doc(#doc)
+            .discriminant(#discriminant)
+            #attributes_call
+            #doc_call
             .build()
     }
 }
@@ -76,9 +87,37 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         generate_type_name_fn(enum_name, parsed.generics.as_ref(), opaque, &facet_crate);
 
     // Determine trait sources and generate vtable accordingly
+    // Enums don't support transparent semantics, so pass None
     let trait_sources = TraitSources::from_attrs(&pe.container.attrs);
-    let vtable_code = gen_vtable(&facet_crate, &type_name_fn, &trait_sources);
-    let vtable_init = quote! { const { #vtable_code } };
+    let bgp_for_vtable = pe.container.bgp.display_without_bounds();
+    let enum_type_for_vtable = quote! { #enum_name #bgp_for_vtable };
+    let vtable_code = gen_vtable(
+        &facet_crate,
+        &type_name_fn,
+        &trait_sources,
+        None,
+        &enum_type_for_vtable,
+        None, // enums don't support container-level invariants yet
+    );
+    // Note: vtable_code already contains &const { ... } for the VTableDirect,
+    // no need for an extra const { } wrapper around VTableErased
+    let vtable_init = vtable_code;
+
+    // Generate TypeOps for drop/default/clone operations
+    // Check if enum has type or const generics (not just lifetimes)
+    let has_type_or_const_generics = pe.container.bgp.params.iter().any(|p| {
+        matches!(
+            p.param,
+            facet_macro_parse::GenericParamName::Type(_)
+                | facet_macro_parse::GenericParamName::Const(_)
+        )
+    });
+    let type_ops_init = gen_type_ops(
+        &facet_crate,
+        &trait_sources,
+        &enum_type_for_vtable,
+        has_type_or_const_generics,
+    );
 
     let bgp = pe.container.bgp.clone();
     // Use the AST directly for where clauses and generics, as PContainer/PEnum doesn't store them
@@ -134,6 +173,33 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         }
     };
 
+    // Tag field name for internally/adjacently tagged enums - returns builder call only if present
+    let tag_call = {
+        if let Some(tag) = pe.container.attrs.get_builtin_args("tag") {
+            quote! { .tag(#tag) }
+        } else {
+            quote! {}
+        }
+    };
+
+    // Content field name for adjacently tagged enums - returns builder call only if present
+    let content_call = {
+        if let Some(content) = pe.container.attrs.get_builtin_args("content") {
+            quote! { .content(#content) }
+        } else {
+            quote! {}
+        }
+    };
+
+    // Untagged flag - returns builder call only if present
+    let untagged_call = {
+        if pe.container.attrs.has_builtin("untagged") {
+            quote! { .untagged() }
+        } else {
+            quote! {}
+        }
+    };
+
     // Container-level proxy from PEnum - generates ProxyDef with conversion functions
     let proxy_call = {
         if let Some(attr) = pe
@@ -151,10 +217,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 .proxy(&const {
                     extern crate alloc as __alloc;
 
-                    unsafe fn __proxy_convert_in<'mem>(
-                        proxy_ptr: #facet_crate::PtrConst<'mem>,
-                        field_ptr: #facet_crate::PtrUninit<'mem>,
-                    ) -> ::core::result::Result<#facet_crate::PtrMut<'mem>, __alloc::string::String> {
+                    unsafe fn __proxy_convert_in(
+                        proxy_ptr: #facet_crate::PtrConst,
+                        field_ptr: #facet_crate::PtrUninit,
+                    ) -> ::core::result::Result<#facet_crate::PtrMut, __alloc::string::String> {
                         let proxy: #proxy_type = proxy_ptr.read();
                         match <#enum_type #bgp_display as ::core::convert::TryFrom<#proxy_type>>::try_from(proxy) {
                             ::core::result::Result::Ok(value) => ::core::result::Result::Ok(field_ptr.put(value)),
@@ -162,10 +228,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         }
                     }
 
-                    unsafe fn __proxy_convert_out<'mem>(
-                        field_ptr: #facet_crate::PtrConst<'mem>,
-                        proxy_ptr: #facet_crate::PtrUninit<'mem>,
-                    ) -> ::core::result::Result<#facet_crate::PtrMut<'mem>, __alloc::string::String> {
+                    unsafe fn __proxy_convert_out(
+                        field_ptr: #facet_crate::PtrConst,
+                        proxy_ptr: #facet_crate::PtrUninit,
+                    ) -> ::core::result::Result<#facet_crate::PtrMut, __alloc::string::String> {
                         let field_ref: &#enum_type #bgp_display = field_ptr.get();
                         match <#proxy_type as ::core::convert::TryFrom<&#enum_type #bgp_display>>::try_from(field_ref) {
                             ::core::result::Result::Ok(proxy) => ::core::result::Result::Ok(proxy_ptr.put(proxy)),
@@ -200,10 +266,11 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     };
 
     // Helper for EnumRepr TS (token stream) generation for primitives
+    // Uses prelude alias 𝟋ERpr for compact output
     let enum_repr_ts_from_primitive = |primitive_repr: PrimitiveRepr| -> TokenStream {
         let type_name_str = primitive_repr.type_name().to_string();
         let enum_repr_variant_ident = format_ident!("{}", type_name_str.to_uppercase());
-        quote! { #facet_crate::EnumRepr::#enum_repr_variant_ident }
+        quote! { 𝟋ERpr::#enum_repr_variant_ident }
     };
 
     // --- Processing code for shadow struct/fields/variant_expressions ---
@@ -280,42 +347,44 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     discriminant_offset = 0;
                 }
 
+                // Only cast to i64 when we have a user-provided discriminant expression
                 let discriminant_ts = if let Some(discriminant) = discriminant {
                     if discriminant_offset > 0 {
-                        quote! { #discriminant + #discriminant_offset }
+                        let offset_lit = Literal::i64_unsuffixed(discriminant_offset);
+                        quote! { (#discriminant + #offset_lit) as i64 }
                     } else {
-                        quote! { #discriminant }
+                        quote! { #discriminant as i64 }
                     }
                 } else {
-                    quote! { #discriminant_offset }
+                    // Simple unsuffixed literal
+                    let lit = Literal::i64_unsuffixed(discriminant_offset);
+                    quote! { #lit }
                 };
 
                 let display_name = pv.name.effective.clone();
                 let name_token = TokenTree::Literal(Literal::string(&display_name));
-                let variant_attributes = {
-                    if pv.attrs.facet.is_empty() {
-                        quote! { &[] }
-                    } else {
-                        let attrs_list: Vec<TokenStream> = pv
-                            .attrs
-                            .facet
-                            .iter()
-                            .map(|attr| {
-                                let ext_attr = emit_attr(attr, &facet_crate);
-                                quote! { #ext_attr }
-                            })
-                            .collect();
-                        quote! { &const {[#(#attrs_list),*]} }
-                    }
+                let variant_attributes: Option<TokenStream> = if pv.attrs.facet.is_empty() {
+                    None
+                } else {
+                    let attrs_list: Vec<TokenStream> = pv
+                        .attrs
+                        .facet
+                        .iter()
+                        .map(|attr| {
+                            let ext_attr = emit_attr(attr, &facet_crate);
+                            quote! { #ext_attr }
+                        })
+                        .collect();
+                    Some(quote! { &const {[#(#attrs_list),*]} })
                 };
 
                 #[cfg(feature = "doc")]
-                let variant_doc = match &pv.attrs.doc[..] {
-                    [] => quote! { &[] },
-                    doc_lines => quote! { &[#(#doc_lines),*] },
+                let variant_doc: Option<TokenStream> = match &pv.attrs.doc[..] {
+                    [] => None,
+                    doc_lines => Some(quote! { &[#(#doc_lines),*] }),
                 };
                 #[cfg(not(feature = "doc"))]
-                let variant_doc = quote! { &[] };
+                let variant_doc: Option<TokenStream> = None;
 
                 let shadow_struct_name = match &pv.name.raw {
                     IdentOrLiteral::Ident(id) => quote::format_ident!("_F{}", id),
@@ -338,8 +407,8 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         let variant = gen_unit_variant(
                             &name_token,
                             &discriminant_ts,
-                            &variant_attributes,
-                            &variant_doc,
+                            variant_attributes.as_ref(),
+                            variant_doc.as_ref(),
                         );
                         exprs.push(variant);
                     }
@@ -382,10 +451,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         let variant = gen_variant(
                             &name_token,
                             &discriminant_ts,
-                            &variant_attributes,
+                            variant_attributes.as_ref(),
                             &kind,
                             &quote! { fields },
-                            &variant_doc,
+                            variant_doc.as_ref(),
                         );
                         exprs.push(quote! {{
                             let fields: &'static [𝟋Fld] = &const {[
@@ -443,10 +512,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         let variant = gen_variant(
                             &name_token,
                             &discriminant_ts,
-                            &variant_attributes,
+                            variant_attributes.as_ref(),
                             &kind,
                             &quote! { fields },
-                            &variant_doc,
+                            variant_doc.as_ref(),
                         );
                         exprs.push(quote! {{
                             let fields: &'static [𝟋Fld] = &const {[
@@ -461,10 +530,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 discriminant_offset += 1;
             }
 
-            // Generate the EnumRepr token stream
+            // Generate the EnumRepr token stream (uses prelude alias 𝟋ERpr)
             let repr_type_ts = match prim_opt {
                 None => {
-                    quote! { #facet_crate::EnumRepr::from_discriminant_size::<#shadow_discriminant_name>() }
+                    quote! { 𝟋ERpr::from_discriminant_size::<#shadow_discriminant_name>() }
                 }
                 Some(p) => enum_repr_ts_from_primitive(*p),
             };
@@ -491,50 +560,52 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     discriminant_offset = 0;
                 }
 
+                // Only cast to i64 when we have a user-provided discriminant expression
                 let discriminant_ts = if let Some(discriminant) = discriminant {
                     if discriminant_offset > 0 {
-                        quote! { #discriminant + #discriminant_offset }
+                        let offset_lit = Literal::i64_unsuffixed(discriminant_offset);
+                        quote! { (#discriminant + #offset_lit) as i64 }
                     } else {
-                        quote! { #discriminant }
+                        quote! { #discriminant as i64 }
                     }
                 } else {
-                    quote! { #discriminant_offset }
+                    // Simple unsuffixed literal
+                    let lit = Literal::i64_unsuffixed(discriminant_offset);
+                    quote! { #lit }
                 };
 
                 let display_name = pv.name.effective.clone();
                 let name_token = TokenTree::Literal(Literal::string(&display_name));
-                let variant_attributes = {
-                    if pv.attrs.facet.is_empty() {
-                        quote! { &[] }
-                    } else {
-                        let attrs_list: Vec<TokenStream> = pv
-                            .attrs
-                            .facet
-                            .iter()
-                            .map(|attr| {
-                                let ext_attr = emit_attr(attr, &facet_crate);
-                                quote! { #ext_attr }
-                            })
-                            .collect();
-                        quote! { &const {[#(#attrs_list),*]} }
-                    }
+                let variant_attributes: Option<TokenStream> = if pv.attrs.facet.is_empty() {
+                    None
+                } else {
+                    let attrs_list: Vec<TokenStream> = pv
+                        .attrs
+                        .facet
+                        .iter()
+                        .map(|attr| {
+                            let ext_attr = emit_attr(attr, &facet_crate);
+                            quote! { #ext_attr }
+                        })
+                        .collect();
+                    Some(quote! { &const {[#(#attrs_list),*]} })
                 };
 
                 #[cfg(feature = "doc")]
-                let variant_doc = match &pv.attrs.doc[..] {
-                    [] => quote! { &[] },
-                    doc_lines => quote! { &[#(#doc_lines),*] },
+                let variant_doc: Option<TokenStream> = match &pv.attrs.doc[..] {
+                    [] => None,
+                    doc_lines => Some(quote! { &[#(#doc_lines),*] }),
                 };
                 #[cfg(not(feature = "doc"))]
-                let variant_doc = quote! { &[] };
+                let variant_doc: Option<TokenStream> = None;
 
                 match &pv.kind {
                     PVariantKind::Unit => {
                         let variant = gen_unit_variant(
                             &name_token,
                             &discriminant_ts,
-                            &variant_attributes,
-                            &variant_doc,
+                            variant_attributes.as_ref(),
+                            variant_doc.as_ref(),
                         );
                         exprs.push(variant);
                     }
@@ -587,10 +658,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         let variant = gen_variant(
                             &name_token,
                             &discriminant_ts,
-                            &variant_attributes,
+                            variant_attributes.as_ref(),
                             &kind,
                             &quote! { fields },
-                            &variant_doc,
+                            variant_doc.as_ref(),
                         );
                         exprs.push(quote! {{
                             let fields: &'static [𝟋Fld] = &const {[
@@ -648,10 +719,10 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                         let variant = gen_variant(
                             &name_token,
                             &discriminant_ts,
-                            &variant_attributes,
+                            variant_attributes.as_ref(),
                             &kind,
                             &quote! { fields },
-                            &variant_doc,
+                            variant_doc.as_ref(),
                         );
                         exprs.push(quote! {{
                             let fields: &'static [𝟋Fld] = &const {[
@@ -684,12 +755,8 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         }
     };
 
-    // Only make static_decl for non-generic enums
-    let static_decl = if parsed.generics.is_none() {
-        generate_static_decl(enum_name, &facet_crate)
-    } else {
-        quote! {}
-    };
+    // Static decl removed - the TYPENAME_SHAPE static was redundant since
+    // <T as Facet>::SHAPE is already accessible and nobody was using the static
 
     // Set up generics for impl blocks
     let facet_bgp = bgp.with_lifetime(LifetimeName(format_ident!("ʄ")));
@@ -759,12 +826,23 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
     // Compute variance - delegate to Shape::computed_variance() at runtime
     let variance_call = if opaque {
         // Opaque types don't expose internals, use invariant for safety
-        quote! { .variance(#facet_crate::Variance::INVARIANT) }
+        quote! { .variance(𝟋Vnc::INVARIANT) }
     } else {
         // Point to Shape::computed_variance - it takes &Shape and walks fields
-        quote! {
-            .variance(#facet_crate::Shape::computed_variance)
-        }
+        quote! { .variance(𝟋CV) }
+    };
+
+    // TypeOps for drop, default, clone - convert Option<TokenStream> to a call
+    let type_ops_call = match type_ops_init {
+        Some(ops) => quote! { .type_ops(#ops) },
+        None => quote! {},
+    };
+
+    // Type name function - for generic types, this formats with type parameters
+    let type_name_call = if parsed.generics.is_some() && !opaque {
+        quote! { .type_name(#type_name_fn) }
+    } else {
+        quote! {}
     };
 
     // Generate static assertions for declared traits (catches lies at compile time)
@@ -788,10 +866,11 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         quote! {}
     };
 
+    // Static declaration for release builds (pre-evaluates SHAPE)
+    let static_decl = crate::derive::generate_static_decl(enum_name, &facet_crate);
+
     // Generate the impl
     quote! {
-        #static_decl
-
         // Suppress dead_code warnings for enum variants constructed via reflection.
         // See: https://github.com/facet-rs/facet/issues/996
         const _: () = {
@@ -812,18 +891,25 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                 use #facet_crate::𝟋::*;
                 #(#shadow_struct_defs)*
                 #fields
-                𝟋ShpB::for_sized::<Self>(#type_name_fn, #enum_name_str)
+                𝟋ShpB::for_sized::<Self>(#enum_name_str)
                     .vtable(#vtable_init)
+                    #type_ops_call
                     .ty(#ty_field)
                     .def(𝟋Def::Undefined)
                     #type_params_call
+                    #type_name_call
                     #doc_call
                     #attributes_call
                     #type_tag_call
+                    #tag_call
+                    #content_call
+                    #untagged_call
                     #proxy_call
                     #variance_call
                     .build()
             };
         }
+
+        #static_decl
     }
 }

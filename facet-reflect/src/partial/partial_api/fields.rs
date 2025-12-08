@@ -45,12 +45,11 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                 }
 
                 // For enum variant fields that are empty structs, they are always initialized
-                if let Some(field) = variant.data.fields.get(index) {
-                    if let Type::User(UserType::Struct(field_struct)) = field.shape().ty {
-                        if field_struct.fields.is_empty() {
-                            return Ok(true);
-                        }
-                    }
+                if let Some(field) = variant.data.fields.get(index)
+                    && let Type::User(UserType::Struct(field_struct)) = field.shape().ty
+                    && field_struct.fields.is_empty()
+                {
+                    return Ok(true);
                 }
 
                 Ok(false)
@@ -124,21 +123,21 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             let relative_depth = stack.len() - *start_depth;
             let should_track = current_path.len() == relative_depth;
 
-            if let Some(name) = field_name {
-                if should_track {
-                    current_path.push(name);
+            if let Some(name) = field_name
+                && should_track
+            {
+                current_path.push(name);
 
-                    // Check if we have a stored frame for this path
-                    if let Some(stored_frame) = stored_frames.remove(current_path) {
-                        trace!("begin_nth_field: Restoring stored frame for path {current_path:?}");
+                // Check if we have a stored frame for this path
+                if let Some(stored_frame) = stored_frames.remove(current_path) {
+                    trace!("begin_nth_field: Restoring stored frame for path {current_path:?}");
 
-                        // Update parent's current_child tracking
-                        let frame = stack.last_mut().unwrap();
-                        frame.tracker.set_current_child(idx);
+                    // Update parent's current_child tracking
+                    let frame = stack.last_mut().unwrap();
+                    frame.tracker.set_current_child(idx);
 
-                        stack.push(stored_frame);
-                        return Ok(self);
-                    }
+                    stack.push(stored_frame);
+                    return Ok(self);
                 }
             }
         }
@@ -240,16 +239,24 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         let field = fields[idx];
 
-        // Check for field-level default function first, then type-level default
-        if let Some(field_default_fn) = field.default_fn() {
+        // Check for field-level default first, then type-level default
+        if let Some(default_source) = field.default {
             self = self.begin_nth_field(idx)?;
-            // the field default fn should be well-behaved
-            self = unsafe {
-                self.set_from_function(|ptr| {
-                    field_default_fn(ptr);
-                    Ok(())
-                })?
-            };
+            match default_source {
+                facet_core::DefaultSource::Custom(field_default_fn) => {
+                    // Custom default function provided via #[facet(default = expr)]
+                    self = unsafe {
+                        self.set_from_function(|ptr| {
+                            field_default_fn(ptr);
+                            Ok(())
+                        })?
+                    };
+                }
+                facet_core::DefaultSource::FromTrait => {
+                    // Use the type's Default trait via #[facet(default)]
+                    self = self.set_default()?;
+                }
+            }
             self.end()
         } else if field.shape().is(Characteristic::Default) {
             self = self.begin_nth_field(idx)?;

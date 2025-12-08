@@ -5,15 +5,14 @@ use crate::{PtrConst, PtrMut};
 /// # Safety
 ///
 /// The `value` parameter must point to aligned, initialized memory of the correct type.
-pub type IterInitWithValueFn = for<'value> unsafe fn(value: PtrConst<'value>) -> PtrMut<'value>;
+pub type IterInitWithValueFn = unsafe fn(value: PtrConst) -> PtrMut;
 
 /// Advance the iterator, returning the next value from the iterator
 ///
 /// # Safety
 ///
 /// The `iter` parameter must point to aligned, initialized memory of the correct type.
-pub type IterNextFn<T> =
-    for<'iter> unsafe fn(iter: PtrMut<'iter>) -> Option<<T as IterItem>::Item<'iter>>;
+pub type IterNextFn<T> = unsafe fn(iter: PtrMut) -> Option<<T as IterItem>::Item>;
 
 /// Advance the iterator in reverse, returning the next value from the end
 /// of the iterator.
@@ -21,23 +20,21 @@ pub type IterNextFn<T> =
 /// # Safety
 ///
 /// The `iter` parameter must point to aligned, initialized memory of the correct type.
-pub type IterNextBackFn<T> =
-    for<'iter> unsafe fn(iter: PtrMut<'iter>) -> Option<<T as IterItem>::Item<'iter>>;
+pub type IterNextBackFn<T> = unsafe fn(iter: PtrMut) -> Option<<T as IterItem>::Item>;
 
 /// Return the lower and upper bounds of the iterator, if known.
 ///
 /// # Safety
 ///
 /// The `iter` parameter must point to aligned, initialized memory of the correct type.
-pub type IterSizeHintFn =
-    for<'iter> unsafe fn(iter: PtrMut<'iter>) -> Option<(usize, Option<usize>)>;
+pub type IterSizeHintFn = unsafe fn(iter: PtrMut) -> Option<(usize, Option<usize>)>;
 
 /// Deallocate the iterator
 ///
 /// # Safety
 ///
 /// The `iter` parameter must point to aligned, initialized memory of the correct type.
-pub type IterDeallocFn = for<'iter> unsafe fn(iter: PtrMut<'iter>);
+pub type IterDeallocFn = unsafe fn(iter: PtrMut);
 
 /// VTable for an iterator
 #[derive(Clone, Copy, Debug)]
@@ -75,15 +72,14 @@ impl<T: IterItem> IterVTable<T> {
 /// A kind of item that an [`IterVTable`] returns
 ///
 /// This trait is needed as a utility, so the functions within [`IterVTable`]
-/// can apply the appropriate lifetime to their result types. In other words,
-/// this trait acts like a higher-kinded type that takes a lifetime.
+/// can apply the appropriate type to their result types.
 pub trait IterItem {
-    /// The output type of the iterator, bound by the lifetime `'a`
-    type Item<'a>;
+    /// The output type of the iterator
+    type Item;
 }
 
-impl IterItem for PtrConst<'_> {
-    type Item<'a> = PtrConst<'a>;
+impl IterItem for PtrConst {
+    type Item = PtrConst;
 }
 
 impl<T, U> IterItem for (T, U)
@@ -91,5 +87,5 @@ where
     T: IterItem,
     U: IterItem,
 {
-    type Item<'a> = (T::Item<'a>, U::Item<'a>);
+    type Item = (T::Item, U::Item);
 }

@@ -50,7 +50,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             }
         };
 
-        let init_fn = set_def.vtable.init_in_place_with_capacity_fn;
+        let init_fn = set_def.vtable.init_in_place_with_capacity;
 
         // Initialize the set with default capacity (0)
         unsafe {
@@ -126,7 +126,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         // Push a new frame for the element
         self.frames_mut().push(Frame::new(
-            PtrUninit::new(element_ptr),
+            PtrUninit::new(element_ptr.as_ptr()),
             element_shape,
             FrameOwnership::Owned,
         ));

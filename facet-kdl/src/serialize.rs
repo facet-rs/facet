@@ -555,12 +555,11 @@ impl<W: Write> KdlSerializer<W> {
         }
 
         // Handle Spanned<T> - unwrap to the inner value
-        if is_spanned_shape(peek.shape()) {
-            if let Ok(struct_peek) = peek.into_struct() {
-                if let Ok(value_field) = struct_peek.field_by_name("value") {
-                    return self.serialize_value(value_field);
-                }
-            }
+        if is_spanned_shape(peek.shape())
+            && let Ok(struct_peek) = peek.into_struct()
+            && let Ok(value_field) = struct_peek.field_by_name("value")
+        {
+            return self.serialize_value(value_field);
         }
 
         // Unwrap transparent wrappers to get the inner value
@@ -637,14 +636,12 @@ impl<W: Write> KdlSerializer<W> {
                     return Ok(s.to_string());
                 }
                 // Handle Spanned<String> - extract the value field
-                if is_spanned_shape(field_peek.shape()) {
-                    if let Ok(spanned_struct) = field_peek.into_struct() {
-                        if let Ok(value_peek) = spanned_struct.field_by_name("value") {
-                            if let Some(s) = value_peek.as_str() {
-                                return Ok(s.to_string());
-                            }
-                        }
-                    }
+                if is_spanned_shape(field_peek.shape())
+                    && let Ok(spanned_struct) = field_peek.into_struct()
+                    && let Ok(value_peek) = spanned_struct.field_by_name("value")
+                    && let Some(s) = value_peek.as_str()
+                {
+                    return Ok(s.to_string());
                 }
             }
         }

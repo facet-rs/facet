@@ -1598,10 +1598,9 @@ fn proxy_property() {
         }
     }
 
-    impl TryFrom<&HexValue> for HexValueProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &HexValue) -> Result<Self, Self::Error> {
-            Ok(HexValueProxy(format!("0x{:x}", v.0)))
+    impl From<&HexValue> for HexValueProxy {
+        fn from(v: &HexValue) -> Self {
+            HexValueProxy(format!("0x{:x}", v.0))
         }
     }
 
@@ -1658,10 +1657,9 @@ fn proxy_argument() {
         }
     }
 
-    impl TryFrom<&HexValue> for HexValueProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &HexValue) -> Result<Self, Self::Error> {
-            Ok(HexValueProxy(format!("0x{:x}", v.0)))
+    impl From<&HexValue> for HexValueProxy {
+        fn from(v: &HexValue) -> Self {
+            HexValueProxy(format!("0x{:x}", v.0))
         }
     }
 
@@ -1715,10 +1713,9 @@ fn proxy_flattened() {
         }
     }
 
-    impl TryFrom<&HexValue> for HexValueProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &HexValue) -> Result<Self, Self::Error> {
-            Ok(HexValueProxy(format!("0x{:x}", v.0)))
+    impl From<&HexValue> for HexValueProxy {
+        fn from(v: &HexValue) -> Self {
+            HexValueProxy(format!("0x{:x}", v.0))
         }
     }
 

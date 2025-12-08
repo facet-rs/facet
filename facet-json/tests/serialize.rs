@@ -19,10 +19,9 @@ fn test_proxy_serialization_struct() {
         }
     }
 
-    impl TryFrom<&OpaqueType> for OpaqueTypeStrProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &OpaqueType) -> Result<Self, Self::Error> {
-            Ok(OpaqueTypeStrProxy(format!("0x{:x}", v.0)))
+    impl From<&OpaqueType> for OpaqueTypeStrProxy {
+        fn from(v: &OpaqueType) -> Self {
+            OpaqueTypeStrProxy(format!("0x{:x}", v.0))
         }
     }
 
@@ -39,10 +38,9 @@ fn test_proxy_serialization_struct() {
         }
     }
 
-    impl TryFrom<&OpaqueType> for OpaqueTypeNestedProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &OpaqueType) -> Result<Self, Self::Error> {
-            Ok(OpaqueTypeNestedProxy { val: v.0 })
+    impl From<&OpaqueType> for OpaqueTypeNestedProxy {
+        fn from(v: &OpaqueType) -> Self {
+            OpaqueTypeNestedProxy { val: v.0 }
         }
     }
 
@@ -58,10 +56,9 @@ fn test_proxy_serialization_struct() {
         }
     }
 
-    impl TryFrom<&u64> for U64ToStrProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &u64) -> Result<Self, Self::Error> {
-            Ok(U64ToStrProxy(format!("0x{v:x}")))
+    impl From<&u64> for U64ToStrProxy {
+        fn from(v: &u64) -> Self {
+            U64ToStrProxy(format!("0x{v:x}"))
         }
     }
 
@@ -78,10 +75,9 @@ fn test_proxy_serialization_struct() {
         }
     }
 
-    impl TryFrom<&std::sync::Arc<u64>> for ArcU64Proxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &std::sync::Arc<u64>) -> Result<Self, Self::Error> {
-            Ok(ArcU64Proxy { val: **v })
+    impl From<&std::sync::Arc<u64>> for ArcU64Proxy {
+        fn from(v: &std::sync::Arc<u64>) -> Self {
+            ArcU64Proxy { val: **v }
         }
     }
 
@@ -128,10 +124,9 @@ fn test_proxy_serialization_enum() {
         }
     }
 
-    impl TryFrom<&OpaqueType> for OpaqueTypeProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &OpaqueType) -> Result<Self, Self::Error> {
-            Ok(OpaqueTypeProxy(format!("0x{:x}", v.0)))
+    impl From<&OpaqueType> for OpaqueTypeProxy {
+        fn from(v: &OpaqueType) -> Self {
+            OpaqueTypeProxy(format!("0x{:x}", v.0))
         }
     }
 
@@ -177,10 +172,9 @@ fn test_proxy_serialize_transparent_struct() {
         }
     }
 
-    impl TryFrom<&MyUrl> for MyUrlProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &MyUrl) -> Result<Self, Self::Error> {
-            Ok(MyUrlProxy(v.0.clone()))
+    impl From<&MyUrl> for MyUrlProxy {
+        fn from(v: &MyUrl) -> Self {
+            MyUrlProxy(v.0.clone())
         }
     }
 

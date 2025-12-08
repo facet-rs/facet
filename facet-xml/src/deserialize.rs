@@ -81,10 +81,10 @@ impl DeserializeOptions {
 
 /// Get the display name for a variant (respecting `rename` attribute).
 fn get_variant_display_name(variant: &Variant) -> &'static str {
-    if let Some(attr) = variant.get_builtin_attr("rename") {
-        if let Some(&renamed) = attr.get_as::<&str>() {
-            return renamed;
-        }
+    if let Some(attr) = variant.get_builtin_attr("rename")
+        && let Some(&renamed) = attr.get_as::<&str>()
+    {
+        return renamed;
     }
     variant.name
 }
@@ -99,10 +99,10 @@ pub(crate) fn get_shape_display_name(shape: &facet_core::Shape) -> &'static str 
 
 /// Get the display name for a field (respecting `rename` attribute).
 fn get_field_display_name(field: &Field) -> &'static str {
-    if let Some(attr) = field.get_builtin_attr("rename") {
-        if let Some(&renamed) = attr.get_as::<&str>() {
-            return renamed;
-        }
+    if let Some(attr) = field.get_builtin_attr("rename")
+        && let Some(&renamed) = attr.get_as::<&str>()
+    {
+        return renamed;
     }
     field.name
 }
@@ -861,58 +861,58 @@ impl<'input> XmlDeserializer<'input> {
         }
 
         // Handle Vec<u8> as base64
-        if let Def::List(list_def) = &shape.def {
-            if list_def.t().is_type::<u8>() {
-                if is_empty {
-                    // Empty element = empty bytes
-                    partial = partial.begin_list()?;
-                    // Empty list, nothing to add
-                    return Ok(partial);
-                }
-                let text = self.read_text_until_end(element_name)?;
-                let bytes = BASE64_STANDARD
-                    .decode(text.trim())
-                    .map_err(|e| self.err_at(XmlErrorKind::Base64Decode(e.to_string()), span))?;
+        if let Def::List(list_def) = &shape.def
+            && list_def.t().is_type::<u8>()
+        {
+            if is_empty {
+                // Empty element = empty bytes
                 partial = partial.begin_list()?;
-                for byte in bytes {
-                    partial = partial.begin_list_item()?;
-                    partial = partial.set(byte)?;
-                    partial = partial.end()?; // end list item
-                }
+                // Empty list, nothing to add
                 return Ok(partial);
             }
+            let text = self.read_text_until_end(element_name)?;
+            let bytes = BASE64_STANDARD
+                .decode(text.trim())
+                .map_err(|e| self.err_at(XmlErrorKind::Base64Decode(e.to_string()), span))?;
+            partial = partial.begin_list()?;
+            for byte in bytes {
+                partial = partial.begin_list_item()?;
+                partial = partial.set(byte)?;
+                partial = partial.end()?; // end list item
+            }
+            return Ok(partial);
         }
 
         // Handle [u8; N] as base64
-        if let Def::Array(arr_def) = &shape.def {
-            if arr_def.t().is_type::<u8>() {
-                if is_empty {
-                    return Err(self.err_at(
-                        XmlErrorKind::InvalidValueForShape("empty element for byte array".into()),
-                        span,
-                    ));
-                }
-                let text = self.read_text_until_end(element_name)?;
-                let bytes = BASE64_STANDARD
-                    .decode(text.trim())
-                    .map_err(|e| self.err_at(XmlErrorKind::Base64Decode(e.to_string()), span))?;
-                if bytes.len() != arr_def.n {
-                    return Err(self.err_at(
-                        XmlErrorKind::InvalidValueForShape(format!(
-                            "base64 decoded {} bytes, expected {}",
-                            bytes.len(),
-                            arr_def.n
-                        )),
-                        span,
-                    ));
-                }
-                for (idx, byte) in bytes.into_iter().enumerate() {
-                    partial = partial.begin_nth_field(idx)?;
-                    partial = partial.set(byte)?;
-                    partial = partial.end()?;
-                }
-                return Ok(partial);
+        if let Def::Array(arr_def) = &shape.def
+            && arr_def.t().is_type::<u8>()
+        {
+            if is_empty {
+                return Err(self.err_at(
+                    XmlErrorKind::InvalidValueForShape("empty element for byte array".into()),
+                    span,
+                ));
             }
+            let text = self.read_text_until_end(element_name)?;
+            let bytes = BASE64_STANDARD
+                .decode(text.trim())
+                .map_err(|e| self.err_at(XmlErrorKind::Base64Decode(e.to_string()), span))?;
+            if bytes.len() != arr_def.n {
+                return Err(self.err_at(
+                    XmlErrorKind::InvalidValueForShape(format!(
+                        "base64 decoded {} bytes, expected {}",
+                        bytes.len(),
+                        arr_def.n
+                    )),
+                    span,
+                ));
+            }
+            for (idx, byte) in bytes.into_iter().enumerate() {
+                partial = partial.begin_nth_field(idx)?;
+                partial = partial.set(byte)?;
+                partial = partial.end()?;
+            }
+            return Ok(partial);
         }
 
         // Handle fixed arrays (non-byte)
@@ -2073,16 +2073,11 @@ impl<'input> XmlDeserializer<'input> {
                 continue;
             }
 
-            let field_has_default_flag = field.has_default();
-            let field_has_default_fn = field.default_fn().is_some();
+            let field_has_default = field.has_default();
             let field_type_has_default = field.shape().is(Characteristic::Default);
             let should_skip = field.should_skip_deserializing();
 
-            if field_has_default_fn
-                || field_has_default_flag
-                || field_type_has_default
-                || should_skip
-            {
+            if field_has_default || field_type_has_default || should_skip {
                 log::trace!("setting default for unset field: {}", field.name);
                 partial = partial.set_nth_field_to_default(idx)?;
             }
@@ -2182,7 +2177,7 @@ impl<'input> XmlDeserializer<'input> {
         }
 
         // Try parse_from_str for other types (IpAddr, DateTime, etc.)
-        if partial.shape().vtable.parse.is_some() {
+        if partial.shape().vtable.has_parse() {
             partial = partial
                 .parse_from_str(value)
                 .map_err(|e| self.err(XmlErrorKind::Reflect(e)))?;

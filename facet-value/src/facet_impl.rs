@@ -1,11 +1,8 @@
 //! Facet implementation for Value, enabling deserialization from any format.
 
-use core::ptr::NonNull;
-
 use facet_core::{
-    ConstTypeId, Def, DynDateTimeKind, DynValueKind, DynamicValueDef, DynamicValueVTable, Facet,
-    PtrConst, PtrMut, PtrUninit, Shape, ShapeLayout, Type, TypeNameOpts, UserType, ValueVTable,
-    Variance,
+    Def, DynDateTimeKind, DynValueKind, DynamicValueDef, DynamicValueVTable, Facet, OxPtrConst,
+    OxPtrMut, PtrConst, PtrMut, PtrUninit, Shape, ShapeBuilder, VTableErased,
 };
 
 use crate::{DateTimeKind, VArray, VBytes, VDateTime, VNumber, VObject, VString, Value};
@@ -14,35 +11,35 @@ use crate::{DateTimeKind, VArray, VBytes, VDateTime, VNumber, VObject, VString, 
 // Scalar setters
 // ============================================================================
 
-unsafe fn dyn_set_null(dst: PtrUninit<'_>) {
+unsafe fn dyn_set_null(dst: PtrUninit) {
     unsafe {
         let ptr = dst.as_mut_byte_ptr() as *mut Value;
         ptr.write(Value::NULL);
     }
 }
 
-unsafe fn dyn_set_bool(dst: PtrUninit<'_>, value: bool) {
+unsafe fn dyn_set_bool(dst: PtrUninit, value: bool) {
     unsafe {
         let ptr = dst.as_mut_byte_ptr() as *mut Value;
         ptr.write(Value::from(value));
     }
 }
 
-unsafe fn dyn_set_i64(dst: PtrUninit<'_>, value: i64) {
+unsafe fn dyn_set_i64(dst: PtrUninit, value: i64) {
     unsafe {
         let ptr = dst.as_mut_byte_ptr() as *mut Value;
         ptr.write(VNumber::from_i64(value).into_value());
     }
 }
 
-unsafe fn dyn_set_u64(dst: PtrUninit<'_>, value: u64) {
+unsafe fn dyn_set_u64(dst: PtrUninit, value: u64) {
     unsafe {
         let ptr = dst.as_mut_byte_ptr() as *mut Value;
         ptr.write(VNumber::from_u64(value).into_value());
     }
 }
 
-unsafe fn dyn_set_f64(dst: PtrUninit<'_>, value: f64) -> bool {
+unsafe fn dyn_set_f64(dst: PtrUninit, value: f64) -> bool {
     unsafe {
         let ptr = dst.as_mut_byte_ptr() as *mut Value;
         match VNumber::from_f64(value) {
@@ -59,14 +56,14 @@ unsafe fn dyn_set_f64(dst: PtrUninit<'_>, value: f64) -> bool {
     }
 }
 
-unsafe fn dyn_set_str(dst: PtrUninit<'_>, value: &str) {
+unsafe fn dyn_set_str(dst: PtrUninit, value: &str) {
     unsafe {
         let ptr = dst.as_mut_byte_ptr() as *mut Value;
         ptr.write(VString::new(value).into_value());
     }
 }
 
-unsafe fn dyn_set_bytes(dst: PtrUninit<'_>, value: &[u8]) {
+unsafe fn dyn_set_bytes(dst: PtrUninit, value: &[u8]) {
     unsafe {
         let ptr = dst.as_mut_byte_ptr() as *mut Value;
         ptr.write(VBytes::new(value).into_value());
@@ -75,7 +72,7 @@ unsafe fn dyn_set_bytes(dst: PtrUninit<'_>, value: &[u8]) {
 
 #[allow(clippy::too_many_arguments)]
 unsafe fn dyn_set_datetime(
-    dst: PtrUninit<'_>,
+    dst: PtrUninit,
     year: i32,
     month: u8,
     day: u8,
@@ -112,14 +109,14 @@ unsafe fn dyn_set_datetime(
 // Array operations
 // ============================================================================
 
-unsafe fn dyn_begin_array(dst: PtrUninit<'_>) {
+unsafe fn dyn_begin_array(dst: PtrUninit) {
     unsafe {
         let ptr = dst.as_mut_byte_ptr() as *mut Value;
         ptr.write(VArray::new().into_value());
     }
 }
 
-unsafe fn dyn_push_array_element(array: PtrMut<'_>, element: PtrMut<'_>) {
+unsafe fn dyn_push_array_element(array: PtrMut, element: PtrMut) {
     unsafe {
         let array_ptr = array.as_mut_byte_ptr() as *mut Value;
         let element_ptr = element.as_mut_byte_ptr() as *mut Value;
@@ -139,14 +136,14 @@ unsafe fn dyn_push_array_element(array: PtrMut<'_>, element: PtrMut<'_>) {
 // Object operations
 // ============================================================================
 
-unsafe fn dyn_begin_object(dst: PtrUninit<'_>) {
+unsafe fn dyn_begin_object(dst: PtrUninit) {
     unsafe {
         let ptr = dst.as_mut_byte_ptr() as *mut Value;
         ptr.write(VObject::new().into_value());
     }
 }
 
-unsafe fn dyn_insert_object_entry(object: PtrMut<'_>, key: &str, value: PtrMut<'_>) {
+unsafe fn dyn_insert_object_entry(object: PtrMut, key: &str, value: PtrMut) {
     unsafe {
         let object_ptr = object.as_mut_byte_ptr() as *mut Value;
         let value_ptr = value.as_mut_byte_ptr() as *mut Value;
@@ -166,7 +163,7 @@ unsafe fn dyn_insert_object_entry(object: PtrMut<'_>, key: &str, value: PtrMut<'
 // Read operations
 // ============================================================================
 
-unsafe fn dyn_get_kind(value: PtrConst<'_>) -> DynValueKind {
+unsafe fn dyn_get_kind(value: PtrConst) -> DynValueKind {
     unsafe {
         let ptr = value.as_byte_ptr() as *const Value;
         let v = &*ptr;
@@ -185,42 +182,42 @@ unsafe fn dyn_get_kind(value: PtrConst<'_>) -> DynValueKind {
     }
 }
 
-unsafe fn dyn_get_bool(value: PtrConst<'_>) -> Option<bool> {
+unsafe fn dyn_get_bool(value: PtrConst) -> Option<bool> {
     unsafe {
         let ptr = value.as_byte_ptr() as *const Value;
         (*ptr).as_bool()
     }
 }
 
-unsafe fn dyn_get_i64(value: PtrConst<'_>) -> Option<i64> {
+unsafe fn dyn_get_i64(value: PtrConst) -> Option<i64> {
     unsafe {
         let ptr = value.as_byte_ptr() as *const Value;
         (*ptr).as_number().and_then(|n| n.to_i64())
     }
 }
 
-unsafe fn dyn_get_u64(value: PtrConst<'_>) -> Option<u64> {
+unsafe fn dyn_get_u64(value: PtrConst) -> Option<u64> {
     unsafe {
         let ptr = value.as_byte_ptr() as *const Value;
         (*ptr).as_number().and_then(|n| n.to_u64())
     }
 }
 
-unsafe fn dyn_get_f64(value: PtrConst<'_>) -> Option<f64> {
+unsafe fn dyn_get_f64(value: PtrConst) -> Option<f64> {
     unsafe {
         let ptr = value.as_byte_ptr() as *const Value;
         (*ptr).as_number().map(|n| n.to_f64_lossy())
     }
 }
 
-unsafe fn dyn_get_str<'a>(value: PtrConst<'a>) -> Option<&'a str> {
+unsafe fn dyn_get_str<'a>(value: PtrConst) -> Option<&'a str> {
     unsafe {
         let ptr = value.as_byte_ptr() as *const Value;
         (*ptr).as_string().map(|s| s.as_str())
     }
 }
 
-unsafe fn dyn_get_bytes<'a>(value: PtrConst<'a>) -> Option<&'a [u8]> {
+unsafe fn dyn_get_bytes<'a>(value: PtrConst) -> Option<&'a [u8]> {
     unsafe {
         let ptr = value.as_byte_ptr() as *const Value;
         (*ptr).as_bytes().map(|b| b.as_slice())
@@ -229,7 +226,7 @@ unsafe fn dyn_get_bytes<'a>(value: PtrConst<'a>) -> Option<&'a [u8]> {
 
 #[allow(clippy::type_complexity)]
 unsafe fn dyn_get_datetime(
-    value: PtrConst<'_>,
+    value: PtrConst,
 ) -> Option<(i32, u8, u8, u8, u8, u8, u32, DynDateTimeKind)> {
     unsafe {
         let ptr = value.as_byte_ptr() as *const Value;
@@ -256,64 +253,55 @@ unsafe fn dyn_get_datetime(
     }
 }
 
-unsafe fn dyn_array_len(value: PtrConst<'_>) -> Option<usize> {
+unsafe fn dyn_array_len(value: PtrConst) -> Option<usize> {
     unsafe {
         let ptr = value.as_byte_ptr() as *const Value;
         (*ptr).as_array().map(|a| a.len())
     }
 }
 
-unsafe fn dyn_array_get(value: PtrConst<'_>, index: usize) -> Option<PtrConst<'_>> {
+unsafe fn dyn_array_get(value: PtrConst, index: usize) -> Option<PtrConst> {
     unsafe {
         let ptr = value.as_byte_ptr() as *const Value;
-        (*ptr).as_array().and_then(|a| {
-            a.get(index)
-                .map(|elem| PtrConst::new(NonNull::new_unchecked(elem as *const Value as *mut u8)))
-        })
+        (*ptr)
+            .as_array()
+            .and_then(|a| a.get(index).map(|elem| PtrConst::new(elem as *const Value)))
     }
 }
 
-unsafe fn dyn_object_len(value: PtrConst<'_>) -> Option<usize> {
+unsafe fn dyn_object_len(value: PtrConst) -> Option<usize> {
     unsafe {
         let ptr = value.as_byte_ptr() as *const Value;
         (*ptr).as_object().map(|o| o.len())
     }
 }
 
-unsafe fn dyn_object_get_entry<'a>(
-    value: PtrConst<'a>,
-    index: usize,
-) -> Option<(&'a str, PtrConst<'a>)> {
+unsafe fn dyn_object_get_entry<'a>(value: PtrConst, index: usize) -> Option<(&'a str, PtrConst)> {
     unsafe {
         let ptr = value.as_byte_ptr() as *const Value;
         (*ptr).as_object().and_then(|o| {
-            o.iter().nth(index).map(|(k, v)| {
-                (
-                    k.as_str(),
-                    PtrConst::new(NonNull::new_unchecked(v as *const Value as *mut u8)),
-                )
-            })
+            o.iter()
+                .nth(index)
+                .map(|(k, v)| (k.as_str(), PtrConst::new(v as *const Value)))
         })
     }
 }
 
-unsafe fn dyn_object_get<'a>(value: PtrConst<'a>, key: &str) -> Option<PtrConst<'a>> {
+unsafe fn dyn_object_get(value: PtrConst, key: &str) -> Option<PtrConst> {
     unsafe {
         let ptr = value.as_byte_ptr() as *const Value;
-        (*ptr).as_object().and_then(|o| {
-            o.get(key)
-                .map(|v| PtrConst::new(NonNull::new_unchecked(v as *const Value as *mut u8)))
-        })
+        (*ptr)
+            .as_object()
+            .and_then(|o| o.get(key).map(|v| PtrConst::new(v as *const Value)))
     }
 }
 
-unsafe fn dyn_object_get_mut<'a>(value: PtrMut<'a>, key: &str) -> Option<PtrMut<'a>> {
+unsafe fn dyn_object_get_mut(value: PtrMut, key: &str) -> Option<PtrMut> {
     unsafe {
         let ptr = value.as_mut_byte_ptr() as *mut Value;
-        (*ptr).as_object_mut().and_then(|o| {
-            o.get_mut(key)
-                .map(|v| PtrMut::new(NonNull::new_unchecked(v as *mut Value as *mut u8)))
-        })
+        (*ptr)
+            .as_object_mut()
+            .and_then(|o| o.get_mut(key).map(|v| PtrMut::new(v as *mut Value)))
     }
 }
 
@@ -356,97 +344,80 @@ static DYNAMIC_VALUE_DEF: DynamicValueDef = DynamicValueDef::new(&DYNAMIC_VALUE_
 
 // Value vtable functions for the standard Facet machinery
 
-unsafe fn value_drop_in_place(value: PtrMut<'_>) -> PtrUninit<'_> {
+unsafe fn value_drop_in_place(ox: OxPtrMut) {
     unsafe {
-        let ptr = value.as_mut_byte_ptr() as *mut Value;
+        let ptr = ox.ptr().as_mut_byte_ptr() as *mut Value;
         core::ptr::drop_in_place(ptr);
-        PtrUninit::new(NonNull::new_unchecked(ptr as *mut u8))
     }
 }
 
-unsafe fn value_clone_into<'src, 'dst>(src: PtrConst<'src>, dst: PtrUninit<'dst>) -> PtrMut<'dst> {
+unsafe fn value_clone_into(src: OxPtrConst, dst: OxPtrMut) {
     unsafe {
-        let src_ptr = src.as_byte_ptr() as *const Value;
-        let dst_ptr = dst.as_mut_byte_ptr() as *mut Value;
+        let src_ptr = src.ptr().as_byte_ptr() as *const Value;
+        let dst_ptr = dst.ptr().as_mut_byte_ptr() as *mut Value;
         dst_ptr.write((*src_ptr).clone());
-        PtrMut::new(NonNull::new_unchecked(dst_ptr as *mut u8))
     }
 }
 
-unsafe fn value_debug(value: PtrConst<'_>, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+unsafe fn value_debug(
+    ox: OxPtrConst,
+    f: &mut core::fmt::Formatter<'_>,
+) -> Option<core::fmt::Result> {
     unsafe {
-        let ptr = value.as_byte_ptr() as *const Value;
-        core::fmt::Debug::fmt(&*ptr, f)
+        let ptr = ox.ptr().as_byte_ptr() as *const Value;
+        Some(core::fmt::Debug::fmt(&*ptr, f))
     }
 }
 
-unsafe fn value_default_in_place(dst: PtrUninit<'_>) -> PtrMut<'_> {
+unsafe fn value_default_in_place(ox: OxPtrMut) {
     unsafe {
-        let ptr = dst.as_mut_byte_ptr() as *mut Value;
+        let ptr = ox.ptr().as_mut_byte_ptr() as *mut Value;
         ptr.write(Value::default());
-        PtrMut::new(NonNull::new_unchecked(ptr as *mut u8))
     }
 }
 
-unsafe fn value_partial_eq(a: PtrConst<'_>, b: PtrConst<'_>) -> bool {
+unsafe fn value_partial_eq(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
     unsafe {
-        let a_ptr = a.as_byte_ptr() as *const Value;
-        let b_ptr = b.as_byte_ptr() as *const Value;
-        *a_ptr == *b_ptr
+        let a_ptr = a.ptr().as_byte_ptr() as *const Value;
+        let b_ptr = b.ptr().as_byte_ptr() as *const Value;
+        Some(*a_ptr == *b_ptr)
     }
 }
 
-/// Wrapper to allow hashing through a `&mut dyn Hasher`
-struct HasherWrapper<'a>(&'a mut dyn core::hash::Hasher);
-
-impl core::hash::Hasher for HasherWrapper<'_> {
-    fn finish(&self) -> u64 {
-        self.0.finish()
-    }
-    fn write(&mut self, bytes: &[u8]) {
-        self.0.write(bytes)
-    }
-}
-
-unsafe fn value_hash(value: PtrConst<'_>, hasher: &mut dyn core::hash::Hasher) {
+unsafe fn value_hash(ox: OxPtrConst, hasher: &mut facet_core::HashProxy<'_>) -> Option<()> {
     unsafe {
         use core::hash::Hash;
-        let ptr = value.as_byte_ptr() as *const Value;
-        let mut wrapper = HasherWrapper(hasher);
-        (*ptr).hash(&mut wrapper);
+        let ptr = ox.ptr().as_byte_ptr() as *const Value;
+        (*ptr).hash(hasher);
+        Some(())
     }
 }
 
-fn value_type_name(f: &mut core::fmt::Formatter<'_>, _opts: TypeNameOpts) -> core::fmt::Result {
-    write!(f, "Value")
-}
+// Use VTableIndirect for Value (trait operations)
+static VALUE_VTABLE_INDIRECT: facet_core::VTableIndirect = facet_core::VTableIndirect {
+    debug: Some(value_debug),
+    partial_eq: Some(value_partial_eq),
+    hash: Some(value_hash),
+    ..facet_core::VTableIndirect::EMPTY
+};
 
-static VALUE_VTABLE: ValueVTable = ValueVTable::builder(value_type_name)
-    .drop_in_place(Some(value_drop_in_place))
-    .debug(value_debug)
-    .default_in_place(value_default_in_place)
-    .clone_into(value_clone_into)
-    .partial_eq(value_partial_eq)
-    .hash(value_hash)
-    .build();
-
-/// The static shape for `Value`.
-pub static VALUE_SHAPE: Shape = Shape {
-    id: ConstTypeId::of::<Value>(),
-    layout: ShapeLayout::Sized(core::alloc::Layout::new::<Value>()),
-    vtable: VALUE_VTABLE,
-    ty: Type::User(UserType::Opaque),
-    def: Def::DynamicValue(DYNAMIC_VALUE_DEF),
-    type_identifier: "Value",
-    type_params: &[],
-    doc: &[" A dynamic value that can hold null, bool, number, string, bytes, array, or object."],
-    attributes: &[],
-    type_tag: None,
-    inner: None,
-    proxy: None,
-    variance: Variance::INVARIANT,
+// Use TypeOpsIndirect for Value (type operations)
+static VALUE_TYPE_OPS_INDIRECT: facet_core::TypeOpsIndirect = facet_core::TypeOpsIndirect {
+    drop_in_place: value_drop_in_place,
+    default_in_place: Some(value_default_in_place),
+    clone_into: Some(value_clone_into),
 };
 
 unsafe impl Facet<'_> for Value {
-    const SHAPE: &'static Shape = &VALUE_SHAPE;
+    const SHAPE: &'static Shape = &const {
+        ShapeBuilder::for_sized::<Value>("Value")
+            .vtable(VTableErased::Indirect(&VALUE_VTABLE_INDIRECT))
+            .type_ops(facet_core::TypeOps::Indirect(&VALUE_TYPE_OPS_INDIRECT))
+            .def(Def::DynamicValue(DYNAMIC_VALUE_DEF))
+            .doc(&[" A dynamic value that can hold null, bool, number, string, bytes, array, or object."])
+            .build()
+    };
 }
+
+/// The static shape for `Value`.
+pub static VALUE_SHAPE: &Shape = <Value as Facet>::SHAPE;

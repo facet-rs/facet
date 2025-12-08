@@ -66,6 +66,18 @@ use quote::{format_ident, quote, quote_spanned};
 
 use super::*;
 
+/// Information about transparent type for vtable generation.
+///
+/// This is used to generate `try_borrow_inner` functions for transparent/newtype wrappers.
+pub(crate) struct TransparentInfo<'a> {
+    /// The inner field type (for tuple struct with one field)
+    pub inner_field_type: Option<&'a TokenStream>,
+    /// Whether the inner field is opaque
+    pub inner_is_opaque: bool,
+    /// Whether this is a ZST (unit-like transparent struct)
+    pub is_zst: bool,
+}
+
 /// Sources of trait information for vtable generation.
 ///
 /// The vtable generation uses a layered approach:
@@ -119,371 +131,587 @@ impl<'a> TraitSources<'a> {
 /// 2. If explicitly declared → direct impl (no specialization)
 /// 3. If auto_traits enabled → use `impls!` macro for detection
 /// 4. Otherwise → None
+///
+/// When `auto_traits` is NOT enabled, generates `ValueVTableThinInstant` using
+/// helper functions like `debug_for::<Self>()`. This avoids closures that would
+/// require `T: 'static` bounds.
+///
+/// When `auto_traits` IS enabled, falls back to `ValueVTable::builder()` pattern
+/// (ThinDelayed) which uses closures for runtime trait detection.
 pub(crate) fn gen_vtable(
     facet_crate: &TokenStream,
     type_name_fn: &TokenStream,
     sources: &TraitSources<'_>,
+    transparent: Option<&TransparentInfo<'_>>,
+    struct_type: &TokenStream,
+    invariants_fn: Option<&TokenStream>,
 ) -> TokenStream {
-    // Helper to generate a direct implementation (no specialization)
-    let direct_display = quote! {
-        Some(|data, f| {
-            let data = unsafe { data.get::<Self>() };
-            core::fmt::Display::fmt(data, f)
-        })
-    };
-    let direct_debug = quote! {
-        Some(|data, f| {
-            let data = unsafe { data.get::<Self>() };
-            core::fmt::Debug::fmt(data, f)
-        })
-    };
-    let direct_default = quote! {
-        Some(|target| unsafe {
-            target.put(<Self as core::default::Default>::default())
-        })
-    };
-    let direct_clone = quote! {
-        Some(|src, dst| unsafe {
-            let src = src.get::<Self>();
-            dst.put(<Self as core::clone::Clone>::clone(src))
-        })
-    };
-    let direct_partial_eq = quote! {
-        Some(|left, right| {
-            let left = unsafe { left.get::<Self>() };
-            let right = unsafe { right.get::<Self>() };
-            <Self as core::cmp::PartialEq>::eq(left, right)
-        })
-    };
-    let direct_partial_ord = quote! {
-        Some(|left, right| {
-            let left = unsafe { left.get::<Self>() };
-            let right = unsafe { right.get::<Self>() };
-            <Self as core::cmp::PartialOrd>::partial_cmp(left, right)
-        })
-    };
-    let direct_ord = quote! {
-        Some(|left, right| {
-            let left = unsafe { left.get::<Self>() };
-            let right = unsafe { right.get::<Self>() };
-            <Self as core::cmp::Ord>::cmp(left, right)
-        })
-    };
-    let direct_hash = quote! {
-        Some(|value, hasher| {
-            let value = unsafe { value.get::<Self>() };
-            <Self as core::hash::Hash>::hash(value, hasher)
-        })
-    };
+    // If auto_traits is enabled, use VTableIndirect with runtime trait detection.
+    if sources.auto_traits {
+        return gen_vtable_indirect(
+            facet_crate,
+            type_name_fn,
+            sources,
+            struct_type,
+            invariants_fn,
+        );
+    }
 
-    // Auto-detection versions using spez
-    let auto_display = quote! {
-        if #facet_crate::spez::impls!(Self: core::fmt::Display) {
-            Some(|data, f| {
-                let data = unsafe { data.get::<Self>() };
-                use #facet_crate::spez::*;
-                (&&Spez(data)).spez_display(f)
-            })
-        } else {
-            None
-        }
-    };
-    let auto_debug = quote! {
-        if #facet_crate::spez::impls!(Self: core::fmt::Debug) {
-            Some(|data, f| {
-                let data = unsafe { data.get::<Self>() };
-                use #facet_crate::spez::*;
-                (&&Spez(data)).spez_debug(f)
-            })
-        } else {
-            None
-        }
-    };
-    let auto_default = quote! {
-        if #facet_crate::spez::impls!(Self: core::default::Default) {
-            Some(|target| unsafe {
-                use #facet_crate::spez::*;
-                (&&SpezEmpty::<Self>::SPEZ).spez_default_in_place(target)
-            })
-        } else {
-            None
-        }
-    };
-    let auto_clone = quote! {
-        if #facet_crate::spez::impls!(Self: core::clone::Clone) {
-            Some(|src, dst| unsafe {
-                use #facet_crate::spez::*;
-                let src = src.get::<Self>();
-                (&&Spez(src)).spez_clone_into(dst)
-            })
-        } else {
-            None
-        }
-    };
-    let auto_partial_eq = quote! {
-        if #facet_crate::spez::impls!(Self: core::cmp::PartialEq) {
-            Some(|left, right| {
-                let left = unsafe { left.get::<Self>() };
-                let right = unsafe { right.get::<Self>() };
-                use #facet_crate::spez::*;
-                (&&Spez(left)).spez_partial_eq(&&Spez(right))
-            })
-        } else {
-            None
-        }
-    };
-    let auto_partial_ord = quote! {
-        if #facet_crate::spez::impls!(Self: core::cmp::PartialOrd) {
-            Some(|left, right| {
-                let left = unsafe { left.get::<Self>() };
-                let right = unsafe { right.get::<Self>() };
-                use #facet_crate::spez::*;
-                (&&Spez(left)).spez_partial_cmp(&&Spez(right))
-            })
-        } else {
-            None
-        }
-    };
-    let auto_ord = quote! {
-        if #facet_crate::spez::impls!(Self: core::cmp::Ord) {
-            Some(|left, right| {
-                let left = unsafe { left.get::<Self>() };
-                let right = unsafe { right.get::<Self>() };
-                use #facet_crate::spez::*;
-                (&&Spez(left)).spez_cmp(&&Spez(right))
-            })
-        } else {
-            None
-        }
-    };
-    let auto_hash = quote! {
-        if #facet_crate::spez::impls!(Self: core::hash::Hash) {
-            Some(|value, hasher| {
-                let value = unsafe { value.get::<Self>() };
-                use #facet_crate::spez::*;
-                (&&Spez(value)).spez_hash(&mut { hasher })
-            })
-        } else {
-            None
-        }
-    };
-    let auto_parse = quote! {
-        if #facet_crate::spez::impls!(Self: core::str::FromStr) {
-            Some(|s, target| {
-                use #facet_crate::spez::*;
-                unsafe { (&&SpezEmpty::<Self>::SPEZ).spez_parse(s, target) }
-            })
-        } else {
-            None
-        }
-    };
+    // Otherwise, use VTableDirect with compile-time trait resolution.
+    gen_vtable_direct(
+        facet_crate,
+        type_name_fn,
+        sources,
+        transparent,
+        struct_type,
+        invariants_fn,
+    )
+}
 
-    // For each trait: derive > declared > auto > none
-    // Only emit the builder call if we have a value (not None)
-
-    // Display: no derive exists, so check declared then auto
+/// Generates a VTableDirect using direct trait method references.
+/// This avoids closures and uses the pattern from vtable_direct! macro.
+/// Uses `Self` inside the const block, which properly resolves to the implementing type
+/// without requiring that lifetime parameters outlive 'static.
+fn gen_vtable_direct(
+    facet_crate: &TokenStream,
+    _type_name_fn: &TokenStream,
+    sources: &TraitSources<'_>,
+    transparent: Option<&TransparentInfo<'_>>,
+    struct_type: &TokenStream,
+    invariants_fn: Option<&TokenStream>,
+) -> TokenStream {
+    // Display: no standard derive, only check declared
     let display_call = if sources.has_declared(|d| d.display) {
-        quote! { .display_opt(#direct_display) }
-    } else if sources.should_auto() {
-        quote! { .display_opt(#auto_display) }
+        quote! { .display(<Self as ::core::fmt::Display>::fmt) }
     } else {
         quote! {}
+    };
+
+    // Debug: check derive, then declared
+    let debug_call = if sources.has_derive(|d| d.debug) || sources.has_declared(|d| d.debug) {
+        quote! { .debug(<Self as ::core::fmt::Debug>::fmt) }
+    } else {
+        quote! {}
+    };
+
+    // PartialEq: check derive, then declared
+    let partial_eq_call =
+        if sources.has_derive(|d| d.partial_eq) || sources.has_declared(|d| d.partial_eq) {
+            quote! { .partial_eq(<Self as ::core::cmp::PartialEq>::eq) }
+        } else {
+            quote! {}
+        };
+
+    // PartialOrd: check derive, then declared
+    let partial_ord_call =
+        if sources.has_derive(|d| d.partial_ord) || sources.has_declared(|d| d.partial_ord) {
+            quote! { .partial_cmp(<Self as ::core::cmp::PartialOrd>::partial_cmp) }
+        } else {
+            quote! {}
+        };
+
+    // Ord: check derive, then declared
+    let ord_call = if sources.has_derive(|d| d.ord) || sources.has_declared(|d| d.ord) {
+        quote! { .cmp(<Self as ::core::cmp::Ord>::cmp) }
+    } else {
+        quote! {}
+    };
+
+    // Hash: check derive, then declared
+    let hash_call = if sources.has_derive(|d| d.hash) || sources.has_declared(|d| d.hash) {
+        quote! { .hash(<Self as ::core::hash::Hash>::hash::<#facet_crate::HashProxy>) }
+    } else {
+        quote! {}
+    };
+
+    // Transparent type functions: try_borrow_inner
+    // For transparent types (newtypes), we generate a function to borrow the inner value
+    // Note: We still need the concrete struct_type here because we're dealing with field access
+    let try_borrow_inner_call = if let Some(info) = transparent {
+        if info.inner_is_opaque {
+            // Opaque inner field - no borrow possible
+            quote! {}
+        } else if info.is_zst {
+            // ZST case - no inner value to borrow
+            quote! {}
+        } else if let Some(inner_ty) = info.inner_field_type {
+            // Transparent struct with one field - generate try_borrow_inner
+            // The function signature for VTableDirect is: unsafe fn(*const T) -> Result<Ptr, String>
+            quote! {
+                .try_borrow_inner({
+                    unsafe fn __try_borrow_inner(src: *const #struct_type) -> ::core::result::Result<#facet_crate::PtrMut, #facet_crate::𝟋::𝟋Str> {
+                        // src points to the wrapper (tuple struct), field 0 is the inner value
+                        // We cast away const because try_borrow_inner returns PtrMut for flexibility
+                        // (caller can downgrade to PtrConst if needed)
+                        let wrapper_ptr = src as *mut #struct_type;
+                        let inner_ptr: *mut #inner_ty = unsafe { &raw mut (*wrapper_ptr).0 };
+                        ::core::result::Result::Ok(#facet_crate::PtrMut::new(inner_ptr as *mut u8))
+                    }
+                    __try_borrow_inner
+                })
+            }
+        } else {
+            quote! {}
+        }
+    } else {
+        quote! {}
+    };
+
+    // Invariants: container-level invariants function
+    let invariants_call = if let Some(inv_fn) = invariants_fn {
+        quote! { .invariants(#inv_fn) }
+    } else {
+        quote! {}
+    };
+
+    // Generate VTableErased::Direct with a static VTableDirect
+    // Uses prelude aliases for compact output (𝟋VtE, 𝟋VtD)
+    // NOTE: drop_in_place, default_in_place, clone_into are now in TypeOps, not VTable
+    quote! {
+        𝟋VtE::Direct(&const {
+            𝟋VtD::builder_for::<Self>()
+                #display_call
+                #debug_call
+                #partial_eq_call
+                #partial_ord_call
+                #ord_call
+                #hash_call
+                #invariants_call
+                #try_borrow_inner_call
+                .build()
+        })
+    }
+}
+
+/// Generates a VTableIndirect using the specialization-based auto_traits approach.
+/// Used when `#[facet(auto_traits)]` is enabled for runtime trait detection.
+///
+/// This generates functions that use `OxRef`/`OxMut` and return `Option<T>` to indicate
+/// whether the trait is implemented.
+fn gen_vtable_indirect(
+    facet_crate: &TokenStream,
+    _type_name_fn: &TokenStream,
+    sources: &TraitSources<'_>,
+    struct_type: &TokenStream,
+    invariants_fn: Option<&TokenStream>,
+) -> TokenStream {
+    // For VTableIndirect, functions take OxRef/OxMut and return Option<T>
+    // The Option layer allows returning None when trait is not implemented
+
+    // Display: check declared then auto
+    let display_field = if sources.has_declared(|d| d.display) {
+        quote! {
+            display: ::core::option::Option::Some({
+                unsafe fn __display(data: #facet_crate::OxPtrConst, f: &mut ::core::fmt::Formatter<'_>) -> ::core::option::Option<::core::fmt::Result> {
+                    let data: &#struct_type = data.ptr().get();
+                    ::core::option::Option::Some(::core::fmt::Display::fmt(data, f))
+                }
+                __display
+            }),
+        }
+    } else if sources.should_auto() {
+        quote! {
+            display: ::core::option::Option::Some({
+                unsafe fn __display(data: #facet_crate::OxPtrConst, f: &mut ::core::fmt::Formatter<'_>) -> ::core::option::Option<::core::fmt::Result> {
+                    if impls!(#struct_type: ::core::fmt::Display) {
+                        let data: &#struct_type = data.ptr().get();
+                        ::core::option::Option::Some((&&Spez(data)).spez_display(f))
+                    } else {
+                        ::core::option::Option::None
+                    }
+                }
+                __display
+            }),
+        }
+    } else {
+        quote! { display: ::core::option::Option::None, }
     };
 
     // Debug: check derive, then declared, then auto
-    let debug_call = if sources.has_derive(|d| d.debug) || sources.has_declared(|d| d.debug) {
-        quote! { .debug_opt(#direct_debug) }
+    let debug_field = if sources.has_derive(|d| d.debug) || sources.has_declared(|d| d.debug) {
+        quote! {
+            debug: ::core::option::Option::Some({
+                unsafe fn __debug(data: #facet_crate::OxPtrConst, f: &mut ::core::fmt::Formatter<'_>) -> ::core::option::Option<::core::fmt::Result> {
+                    let data: &#struct_type = data.ptr().get();
+                    ::core::option::Option::Some(::core::fmt::Debug::fmt(data, f))
+                }
+                __debug
+            }),
+        }
     } else if sources.should_auto() {
-        quote! { .debug_opt(#auto_debug) }
+        quote! {
+            debug: ::core::option::Option::Some({
+                unsafe fn __debug(data: #facet_crate::OxPtrConst, f: &mut ::core::fmt::Formatter<'_>) -> ::core::option::Option<::core::fmt::Result> {
+                    if impls!(#struct_type: ::core::fmt::Debug) {
+                        let data: &#struct_type = data.ptr().get();
+                        ::core::option::Option::Some((&&Spez(data)).spez_debug(f))
+                    } else {
+                        ::core::option::Option::None
+                    }
+                }
+                __debug
+            }),
+        }
     } else {
-        quote! {}
-    };
-
-    // Default: check derive, then declared, then facet(default), then auto
-    // Note: #[facet(default)] implies the type implements Default
-    let default_call = if sources.has_derive(|d| d.default)
-        || sources.has_declared(|d| d.default)
-        || sources.facet_default
-    {
-        quote! { .default_in_place_opt(#direct_default) }
-    } else if sources.should_auto() {
-        quote! { .default_in_place_opt(#auto_default) }
-    } else {
-        quote! {}
-    };
-
-    // Clone: check derive (including Copy which implies Clone), then declared, then auto
-    let clone_call = if sources.has_derive(|d| d.clone || d.copy)
-        || sources.has_declared(|d| d.clone || d.copy)
-    {
-        quote! { .clone_into_opt(#direct_clone) }
-    } else if sources.should_auto() {
-        quote! { .clone_into_opt(#auto_clone) }
-    } else {
-        quote! {}
+        quote! { debug: ::core::option::Option::None, }
     };
 
     // PartialEq: check derive, then declared, then auto
-    let partial_eq_call =
-        if sources.has_derive(|d| d.partial_eq) || sources.has_declared(|d| d.partial_eq) {
-            quote! { .partial_eq_opt(#direct_partial_eq) }
-        } else if sources.should_auto() {
-            quote! { .partial_eq_opt(#auto_partial_eq) }
-        } else {
-            quote! {}
-        };
+    let partial_eq_field = if sources.has_derive(|d| d.partial_eq)
+        || sources.has_declared(|d| d.partial_eq)
+    {
+        quote! {
+            partial_eq: ::core::option::Option::Some({
+                unsafe fn __partial_eq(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<bool> {
+                    let left: &#struct_type = left.ptr().get();
+                    let right: &#struct_type = right.ptr().get();
+                    ::core::option::Option::Some(<#struct_type as ::core::cmp::PartialEq>::eq(left, right))
+                }
+                __partial_eq
+            }),
+        }
+    } else if sources.should_auto() {
+        quote! {
+            partial_eq: ::core::option::Option::Some({
+                unsafe fn __partial_eq(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<bool> {
+                    if impls!(#struct_type: ::core::cmp::PartialEq) {
+                        let left: &#struct_type = left.ptr().get();
+                        let right: &#struct_type = right.ptr().get();
+                        ::core::option::Option::Some((&&Spez(left)).spez_partial_eq(&&Spez(right)))
+                    } else {
+                        ::core::option::Option::None
+                    }
+                }
+                __partial_eq
+            }),
+        }
+    } else {
+        quote! { partial_eq: ::core::option::Option::None, }
+    };
 
     // PartialOrd: check derive, then declared, then auto
-    let partial_ord_call =
-        if sources.has_derive(|d| d.partial_ord) || sources.has_declared(|d| d.partial_ord) {
-            quote! { .partial_ord_opt(#direct_partial_ord) }
-        } else if sources.should_auto() {
-            quote! { .partial_ord_opt(#auto_partial_ord) }
-        } else {
-            quote! {}
-        };
+    let partial_cmp_field = if sources.has_derive(|d| d.partial_ord)
+        || sources.has_declared(|d| d.partial_ord)
+    {
+        quote! {
+            partial_cmp: ::core::option::Option::Some({
+                unsafe fn __partial_cmp(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<::core::option::Option<::core::cmp::Ordering>> {
+                    let left: &#struct_type = left.ptr().get();
+                    let right: &#struct_type = right.ptr().get();
+                    ::core::option::Option::Some(<#struct_type as ::core::cmp::PartialOrd>::partial_cmp(left, right))
+                }
+                __partial_cmp
+            }),
+        }
+    } else if sources.should_auto() {
+        quote! {
+            partial_cmp: ::core::option::Option::Some({
+                unsafe fn __partial_cmp(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<::core::option::Option<::core::cmp::Ordering>> {
+                    if impls!(#struct_type: ::core::cmp::PartialOrd) {
+                        let left: &#struct_type = left.ptr().get();
+                        let right: &#struct_type = right.ptr().get();
+                        ::core::option::Option::Some((&&Spez(left)).spez_partial_cmp(&&Spez(right)))
+                    } else {
+                        ::core::option::Option::None
+                    }
+                }
+                __partial_cmp
+            }),
+        }
+    } else {
+        quote! { partial_cmp: ::core::option::Option::None, }
+    };
 
     // Ord: check derive, then declared, then auto
-    let ord_call = if sources.has_derive(|d| d.ord) || sources.has_declared(|d| d.ord) {
-        quote! { .ord_opt(#direct_ord) }
+    let cmp_field = if sources.has_derive(|d| d.ord) || sources.has_declared(|d| d.ord) {
+        quote! {
+            cmp: ::core::option::Option::Some({
+                unsafe fn __cmp(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<::core::cmp::Ordering> {
+                    let left: &#struct_type = left.ptr().get();
+                    let right: &#struct_type = right.ptr().get();
+                    ::core::option::Option::Some(<#struct_type as ::core::cmp::Ord>::cmp(left, right))
+                }
+                __cmp
+            }),
+        }
     } else if sources.should_auto() {
-        quote! { .ord_opt(#auto_ord) }
+        quote! {
+            cmp: ::core::option::Option::Some({
+                unsafe fn __cmp(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<::core::cmp::Ordering> {
+                    if impls!(#struct_type: ::core::cmp::Ord) {
+                        let left: &#struct_type = left.ptr().get();
+                        let right: &#struct_type = right.ptr().get();
+                        ::core::option::Option::Some((&&Spez(left)).spez_cmp(&&Spez(right)))
+                    } else {
+                        ::core::option::Option::None
+                    }
+                }
+                __cmp
+            }),
+        }
     } else {
-        quote! {}
+        quote! { cmp: ::core::option::Option::None, }
     };
 
     // Hash: check derive, then declared, then auto
-    let hash_call = if sources.has_derive(|d| d.hash) || sources.has_declared(|d| d.hash) {
-        quote! { .hash_opt(#direct_hash) }
+    let hash_field = if sources.has_derive(|d| d.hash) || sources.has_declared(|d| d.hash) {
+        quote! {
+            hash: ::core::option::Option::Some({
+                unsafe fn __hash(value: #facet_crate::OxPtrConst, hasher: &mut #facet_crate::HashProxy<'_>) -> ::core::option::Option<()> {
+                    let value: &#struct_type = value.ptr().get();
+                    <#struct_type as ::core::hash::Hash>::hash(value, hasher);
+                    ::core::option::Option::Some(())
+                }
+                __hash
+            }),
+        }
     } else if sources.should_auto() {
-        quote! { .hash_opt(#auto_hash) }
+        quote! {
+            hash: ::core::option::Option::Some({
+                unsafe fn __hash(value: #facet_crate::OxPtrConst, hasher: &mut #facet_crate::HashProxy<'_>) -> ::core::option::Option<()> {
+                    if impls!(#struct_type: ::core::hash::Hash) {
+                        let value: &#struct_type = value.ptr().get();
+                        (&&Spez(value)).spez_hash(hasher);
+                        ::core::option::Option::Some(())
+                    } else {
+                        ::core::option::Option::None
+                    }
+                }
+                __hash
+            }),
+        }
     } else {
-        quote! {}
+        quote! { hash: ::core::option::Option::None, }
     };
 
     // Parse (FromStr): no derive exists, only auto-detect if enabled
-    let parse_call = if sources.should_auto() {
-        quote! { .parse_opt(#auto_parse) }
+    let parse_field = if sources.should_auto() {
+        quote! {
+            parse: ::core::option::Option::Some({
+                unsafe fn __parse(s: &str, target: #facet_crate::OxPtrMut) -> ::core::option::Option<::core::result::Result<(), #facet_crate::ParseError>> {
+                    if impls!(#struct_type: ::core::str::FromStr) {
+                        ::core::option::Option::Some(
+                            match (&&SpezEmpty::<#struct_type>::SPEZ).spez_parse(s, target.ptr().as_uninit()) {
+                                ::core::result::Result::Ok(_) => ::core::result::Result::Ok(()),
+                                ::core::result::Result::Err(e) => ::core::result::Result::Err(e),
+                            }
+                        )
+                    } else {
+                        ::core::option::Option::None
+                    }
+                }
+                __parse
+            }),
+        }
     } else {
-        quote! {}
+        quote! { parse: ::core::option::Option::None, }
     };
 
-    // Marker traits - these set bitflags in MarkerTraits
-    // Copy: derive (Copy implies Clone), declared, or auto
-    let has_copy =
-        sources.has_derive(|d| d.copy) || sources.has_declared(|d| d.copy) || sources.auto_traits;
-    // Send: declared or auto (no standard derive for Send)
-    let has_send = sources.has_declared(|d| d.send) || sources.auto_traits;
-    // Sync: declared or auto (no standard derive for Sync)
-    let has_sync = sources.has_declared(|d| d.sync) || sources.auto_traits;
-    // Eq: derive (PartialEq + Eq), declared, or auto
-    let has_eq =
-        sources.has_derive(|d| d.eq) || sources.has_declared(|d| d.eq) || sources.auto_traits;
-    // Unpin: declared or auto (no standard derive for Unpin)
-    let has_unpin = sources.has_declared(|d| d.unpin) || sources.auto_traits;
-
-    // Build markers expression
-    let markers_entry = if has_copy || has_send || has_sync || has_eq || has_unpin {
-        // At least one marker trait might be set
-        let copy_check = if has_copy
-            && sources.auto_traits
-            && !sources.has_derive(|d| d.copy)
-            && !sources.has_declared(|d| d.copy)
-        {
-            // Auto-detect Copy
-            quote! {
-                if #facet_crate::spez::impls!(Self: core::marker::Copy) {
-                    markers = markers.with_copy();
+    // Invariants: container-level invariants function (wrapped for OxRef signature)
+    let invariants_field = if let Some(inv_fn) = invariants_fn {
+        quote! {
+            invariants: ::core::option::Option::Some({
+                unsafe fn __invariants(data: #facet_crate::OxPtrConst) -> ::core::option::Option<#facet_crate::𝟋::𝟋Result<(), #facet_crate::𝟋::𝟋Str>> {
+                    let value: &#struct_type = data.ptr().get();
+                    ::core::option::Option::Some(#inv_fn(value))
                 }
-            }
-        } else if sources.has_derive(|d| d.copy) || sources.has_declared(|d| d.copy) {
-            // Directly known to be Copy
-            quote! { markers = markers.with_copy(); }
-        } else {
-            quote! {}
-        };
-
-        let send_check = if has_send && sources.auto_traits && !sources.has_declared(|d| d.send) {
-            quote! {
-                if #facet_crate::spez::impls!(Self: core::marker::Send) {
-                    markers = markers.with_send();
-                }
-            }
-        } else if sources.has_declared(|d| d.send) {
-            quote! { markers = markers.with_send(); }
-        } else {
-            quote! {}
-        };
-
-        let sync_check = if has_sync && sources.auto_traits && !sources.has_declared(|d| d.sync) {
-            quote! {
-                if #facet_crate::spez::impls!(Self: core::marker::Sync) {
-                    markers = markers.with_sync();
-                }
-            }
-        } else if sources.has_declared(|d| d.sync) {
-            quote! { markers = markers.with_sync(); }
-        } else {
-            quote! {}
-        };
-
-        let eq_check = if has_eq
-            && sources.auto_traits
-            && !sources.has_derive(|d| d.eq)
-            && !sources.has_declared(|d| d.eq)
-        {
-            quote! {
-                if #facet_crate::spez::impls!(Self: core::cmp::Eq) {
-                    markers = markers.with_eq();
-                }
-            }
-        } else if sources.has_derive(|d| d.eq) || sources.has_declared(|d| d.eq) {
-            quote! { markers = markers.with_eq(); }
-        } else {
-            quote! {}
-        };
-
-        let unpin_check = if has_unpin && sources.auto_traits && !sources.has_declared(|d| d.unpin)
-        {
-            quote! {
-                if #facet_crate::spez::impls!(Self: core::marker::Unpin) {
-                    markers = markers.with_unpin();
-                }
-            }
-        } else if sources.has_declared(|d| d.unpin) {
-            quote! { markers = markers.with_unpin(); }
-        } else {
-            quote! {}
-        };
-
-        quote! {{
-            let mut markers = #facet_crate::MarkerTraits::EMPTY;
-            #copy_check
-            #send_check
-            #sync_check
-            #eq_check
-            #unpin_check
-            markers
-        }}
+                __invariants
+            }),
+        }
     } else {
-        quote! { #facet_crate::MarkerTraits::EMPTY }
+        quote! { invariants: ::core::option::Option::None, }
     };
 
+    // Return VTableErased::Indirect wrapping a VTableIndirect using struct literal syntax
+    // Uses prelude aliases for compact output (𝟋VtE)
+    // NOTE: drop_in_place, default_in_place, clone_into are now in TypeOps, not VTable
     quote! {
-        #facet_crate::ValueVTable::builder(#type_name_fn)
-            .drop_in_place(#facet_crate::ValueVTable::drop_in_place_for::<Self>())
-            #display_call
-            #debug_call
-            #default_call
-            #clone_call
-            #partial_eq_call
-            #partial_ord_call
-            #ord_call
-            #hash_call
-            #parse_call
-            .markers(#markers_entry)
-            .build()
+        𝟋VtE::Indirect(&const {
+            #facet_crate::VTableIndirect {
+                #display_field
+                #debug_field
+                #hash_field
+                #invariants_field
+                #parse_field
+                try_from: ::core::option::Option::None,
+                try_into_inner: ::core::option::Option::None,
+                try_borrow_inner: ::core::option::Option::None,
+                #partial_eq_field
+                #partial_cmp_field
+                #cmp_field
+            }
+        })
     }
+}
+
+/// Generates TypeOps for per-type operations (drop, default, clone).
+/// Returns `Option<TokenStream>` - Some if any TypeOps is needed, None if no ops.
+///
+/// Uses TypeOpsDirect for non-generic types, TypeOpsIndirect for generic types.
+pub(crate) fn gen_type_ops(
+    facet_crate: &TokenStream,
+    sources: &TraitSources<'_>,
+    struct_type: &TokenStream,
+    has_type_or_const_generics: bool,
+) -> Option<TokenStream> {
+    // Only use TypeOpsIndirect when there are actual type or const generics.
+    // For auto_traits WITHOUT generics, we can still use TypeOpsDirect since
+    // the helper functions can use `Self` which resolves to the concrete type.
+    if has_type_or_const_generics {
+        return gen_type_ops_indirect(facet_crate, sources, struct_type);
+    }
+
+    // Use TypeOpsDirect for non-generic types (including auto_traits without generics)
+    gen_type_ops_direct(facet_crate, sources, struct_type)
+}
+
+/// Generates TypeOpsDirect for non-generic types.
+/// Returns Some(TokenStream) if any ops are needed, None otherwise.
+///
+/// Uses raw pointers (`*mut ()`, `*const ()`) for type-erased function signatures,
+/// matching VTableDirect's approach. The `Self` type is used inside the const block
+/// which properly resolves without capturing lifetime parameters.
+fn gen_type_ops_direct(
+    facet_crate: &TokenStream,
+    sources: &TraitSources<'_>,
+    struct_type: &TokenStream,
+) -> Option<TokenStream> {
+    // Check if Default is available (from derive or declared traits or #[facet(default)])
+    let has_default = sources.has_derive(|d| d.default)
+        || sources.has_declared(|d| d.default)
+        || sources.facet_default;
+
+    // Check if Clone is available (from derive or declared traits)
+    let has_clone = sources.has_derive(|d| d.clone) || sources.has_declared(|d| d.clone);
+
+    // Generate default_in_place field
+    // Uses helper function 𝟋default_for::<Self>() which returns fn(*mut Self),
+    // then transmutes to fn(*mut ()) for the erased signature
+    let default_field = if has_default {
+        quote! {
+            default_in_place: ::core::option::Option::Some(
+                unsafe { ::core::mem::transmute(#facet_crate::𝟋::𝟋default_for::<Self>() as unsafe fn(*mut Self)) }
+            ),
+        }
+    } else if sources.should_auto() {
+        // For auto_traits, generate an inline function that uses the Spez pattern.
+        // The function hardcodes struct_type, so specialization resolves correctly.
+        // The impls! check determines whether we return Some or None at const-eval time.
+        quote! {
+            default_in_place: if #facet_crate::𝟋::impls!(#struct_type: ::core::default::Default) {
+                ::core::option::Option::Some({
+                    unsafe fn __default_in_place(ptr: *mut ()) {
+                        let target = #facet_crate::PtrUninit::new(ptr as *mut u8);
+                        unsafe { (&&&#facet_crate::𝟋::SpezEmpty::<#struct_type>::SPEZ).spez_default_in_place(target) };
+                    }
+                    __default_in_place
+                })
+            } else {
+                ::core::option::Option::None
+            },
+        }
+    } else {
+        quote! { default_in_place: ::core::option::Option::None, }
+    };
+
+    // Generate clone_into field
+    // Uses helper function 𝟋clone_for::<Self>() which returns fn(*const Self, *mut Self),
+    // then transmutes to fn(*const (), *mut ()) for the erased signature
+    let clone_field = if has_clone {
+        quote! {
+            clone_into: ::core::option::Option::Some(
+                unsafe { ::core::mem::transmute(#facet_crate::𝟋::𝟋clone_for::<Self>() as unsafe fn(*const Self, *mut Self)) }
+            ),
+        }
+    } else if sources.should_auto() {
+        // For auto_traits, generate an inline function that uses the Spez pattern.
+        // The function hardcodes struct_type, so specialization resolves correctly.
+        // The impls! check determines whether we return Some or None at const-eval time.
+        quote! {
+            clone_into: if #facet_crate::𝟋::impls!(#struct_type: ::core::clone::Clone) {
+                ::core::option::Option::Some({
+                    unsafe fn __clone_into(src: *const (), dst: *mut ()) {
+                        let src_ref: &#struct_type = unsafe { &*(src as *const #struct_type) };
+                        let target = #facet_crate::PtrUninit::new(dst as *mut u8);
+                        unsafe { (&&&#facet_crate::𝟋::Spez(src_ref)).spez_clone_into(target) };
+                    }
+                    __clone_into
+                })
+            } else {
+                ::core::option::Option::None
+            },
+        }
+    } else {
+        quote! { clone_into: ::core::option::Option::None, }
+    };
+
+    // Generate TypeOpsDirect struct literal
+    // Uses transmute to convert typed fn pointers to erased fn(*mut ()) etc.
+    // Uses Self inside the const block which resolves to the implementing type
+    Some(quote! {
+        #facet_crate::TypeOps::Direct(&const {
+            #facet_crate::TypeOpsDirect {
+                drop_in_place: unsafe { ::core::mem::transmute(::core::ptr::drop_in_place::<Self> as unsafe fn(*mut Self)) },
+                #default_field
+                #clone_field
+            }
+        })
+    })
+}
+
+/// Generates TypeOpsIndirect for generic types with auto_traits.
+/// Returns Some(TokenStream) if any ops are needed, None otherwise.
+///
+/// Uses helper functions that take a type parameter to avoid the "can't use Self
+/// from outer item" error in function items.
+fn gen_type_ops_indirect(
+    facet_crate: &TokenStream,
+    sources: &TraitSources<'_>,
+    _struct_type: &TokenStream,
+) -> Option<TokenStream> {
+    // For TypeOpsIndirect, we always need drop_in_place
+    // default_in_place and clone_into are optional based on available traits
+    // Note: We use helper functions 𝟋indirect_*_for::<Self>() which have their own
+    // generic parameter, avoiding the "can't use Self from outer item" issue.
+
+    // Check if Default is available
+    // Note: For auto_traits, we could use specialization but it's complex.
+    // For now, only generate default_in_place when Default is explicitly known.
+    let default_field = if sources.has_derive(|d| d.default)
+        || sources.has_declared(|d| d.default)
+        || sources.facet_default
+    {
+        quote! {
+            default_in_place: ::core::option::Option::Some(#facet_crate::𝟋::𝟋indirect_default_for::<Self>()),
+        }
+    } else {
+        // For auto_traits or no default, set to None
+        // Runtime detection of Default not supported in TypeOps yet
+        quote! { default_in_place: ::core::option::Option::None, }
+    };
+
+    // Check if Clone is available
+    // Note: For auto_traits, we could use specialization but it's complex.
+    // For now, only generate clone_into when Clone is explicitly known.
+    let clone_field = if sources.has_derive(|d| d.clone) || sources.has_declared(|d| d.clone) {
+        quote! {
+            clone_into: ::core::option::Option::Some(#facet_crate::𝟋::𝟋indirect_clone_for::<Self>()),
+        }
+    } else {
+        // For auto_traits or no clone, set to None
+        // Runtime detection of Clone not supported in TypeOps yet
+        quote! { clone_into: ::core::option::Option::None, }
+    };
+
+    Some(quote! {
+        #facet_crate::TypeOps::Indirect(&const {
+            #facet_crate::TypeOpsIndirect {
+                drop_in_place: #facet_crate::𝟋::𝟋indirect_drop_for::<Self>(),
+                #default_field
+                #clone_field
+            }
+        })
+    })
 }
 
 /// Generate trait bounds for static assertions.
@@ -596,9 +824,19 @@ pub(crate) fn gen_field_from_pfield(
     // Field attrs: rename, alias
     // Note: default also sets HAS_DEFAULT flag (handled below)
 
+    // Track what kind of default was specified
+    enum DefaultKind {
+        FromTrait,
+        Custom(TokenStream),
+    }
+
     let mut flags: Vec<TokenStream> = Vec::new();
     let mut rename_value: Option<TokenStream> = None;
     let mut alias_value: Option<TokenStream> = None;
+    let mut default_value: Option<DefaultKind> = None;
+    let mut skip_serializing_if_value: Option<TokenStream> = None;
+    let mut invariants_value: Option<TokenStream> = None;
+    let mut proxy_value: Option<TokenStream> = None;
     let mut attribute_list: Vec<TokenStream> = Vec::new();
 
     for attr in &field.attrs.facet {
@@ -625,11 +863,19 @@ pub(crate) fn gen_field_from_pfield(
                     flags.push(quote! { 𝟋FF::SKIP_DESERIALIZING });
                 }
                 "default" => {
-                    // Default sets the HAS_DEFAULT flag AND goes into attributes
-                    flags.push(quote! { 𝟋FF::HAS_DEFAULT });
-                    let ext_attr =
-                        emit_attr_for_field(attr, field_name_raw, field_type, facet_crate);
-                    attribute_list.push(quote! { #ext_attr });
+                    // Default goes into dedicated field, not attributes
+                    let args = &attr.args;
+                    if args.is_empty() {
+                        // #[facet(default)] - use Default trait
+                        default_value = Some(DefaultKind::FromTrait);
+                    } else {
+                        // #[facet(default = expr)] - use custom expression
+                        // Parse `= expr` to get just the expr
+                        let args_str = args.to_string();
+                        let expr_str = args_str.trim_start_matches('=').trim();
+                        let expr: TokenStream = expr_str.parse().unwrap_or_else(|_| args.clone());
+                        default_value = Some(DefaultKind::Custom(expr));
+                    }
                 }
                 "recursive_type" => {
                     // recursive_type sets a flag
@@ -646,6 +892,73 @@ pub(crate) fn gen_field_from_pfield(
                     let args = &attr.args;
                     alias_value = Some(quote! { #args });
                 }
+                "skip_serializing_if" => {
+                    // User provides a function name: #[facet(skip_serializing_if = fn_name)]
+                    // We need to wrap it in a type-erased function that takes PtrConst
+                    let args = &attr.args;
+                    let args_str = args.to_string();
+                    let fn_name_str = args_str.trim_start_matches('=').trim();
+                    let fn_name: TokenStream = fn_name_str.parse().unwrap_or_else(|_| args.clone());
+                    // Generate a wrapper function that converts PtrConst to the expected type
+                    skip_serializing_if_value = Some(quote! {
+                        {
+                            unsafe fn __skip_ser_if_wrapper(ptr: #facet_crate::PtrConst) -> bool {
+                                let value: &#field_type = unsafe { ptr.get() };
+                                #fn_name(value)
+                            }
+                            __skip_ser_if_wrapper
+                        }
+                    });
+                }
+                "invariants" => {
+                    // User provides a function name: #[facet(invariants = fn_name)]
+                    let args = &attr.args;
+                    let args_str = args.to_string();
+                    let fn_name_str = args_str.trim_start_matches('=').trim();
+                    let fn_name: TokenStream = fn_name_str.parse().unwrap_or_else(|_| args.clone());
+                    invariants_value = Some(quote! { #fn_name });
+                }
+                "proxy" => {
+                    // User provides a type: #[facet(proxy = ProxyType)]
+                    let args = &attr.args;
+                    let args_str = args.to_string();
+                    let type_str = args_str.trim_start_matches('=').trim();
+                    let proxy_type: TokenStream = type_str.parse().unwrap_or_else(|_| args.clone());
+                    // Generate a full ProxyDef with convert functions for field-level proxy
+                    proxy_value = Some(quote! {
+                        &const {
+                            extern crate alloc as __alloc;
+
+                            unsafe fn __proxy_convert_in(
+                                proxy_ptr: #facet_crate::PtrConst,
+                                field_ptr: #facet_crate::PtrUninit,
+                            ) -> ::core::result::Result<#facet_crate::PtrMut, __alloc::string::String> {
+                                let proxy: #proxy_type = proxy_ptr.read();
+                                match <#field_type as ::core::convert::TryFrom<#proxy_type>>::try_from(proxy) {
+                                    ::core::result::Result::Ok(value) => ::core::result::Result::Ok(field_ptr.put(value)),
+                                    ::core::result::Result::Err(e) => ::core::result::Result::Err(__alloc::string::ToString::to_string(&e)),
+                                }
+                            }
+
+                            unsafe fn __proxy_convert_out(
+                                field_ptr: #facet_crate::PtrConst,
+                                proxy_ptr: #facet_crate::PtrUninit,
+                            ) -> ::core::result::Result<#facet_crate::PtrMut, __alloc::string::String> {
+                                let field_ref: &#field_type = field_ptr.get();
+                                match <#proxy_type as ::core::convert::TryFrom<&#field_type>>::try_from(field_ref) {
+                                    ::core::result::Result::Ok(proxy) => ::core::result::Result::Ok(proxy_ptr.put(proxy)),
+                                    ::core::result::Result::Err(e) => ::core::result::Result::Err(__alloc::string::ToString::to_string(&e)),
+                                }
+                            }
+
+                            #facet_crate::ProxyDef {
+                                shape: <#proxy_type as #facet_crate::Facet>::SHAPE,
+                                convert_in: __proxy_convert_in,
+                                convert_out: __proxy_convert_out,
+                            }
+                        }
+                    });
+                }
                 // Everything else goes to attributes slice
                 _ => {
                     let ext_attr =
@@ -658,62 +971,6 @@ pub(crate) fn gen_field_from_pfield(
             let ext_attr = emit_attr_for_field(attr, field_name_raw, field_type, facet_crate);
             attribute_list.push(quote! { #ext_attr });
         }
-    }
-
-    // Generate proxy conversion function pointers when proxy attribute is present
-    if let Some(attr) = field
-        .attrs
-        .facet
-        .iter()
-        .find(|a| a.is_builtin() && a.key_str() == "proxy")
-    {
-        let proxy_type = &attr.args;
-
-        // Generate __proxy_in: converts proxy -> field type via TryFrom
-        attribute_list.push(quote! {
-            #facet_crate::ExtensionAttr {
-                ns: ::core::option::Option::None,
-                key: "__proxy_in",
-                data: &const {
-                    extern crate alloc as __alloc;
-                    unsafe fn __proxy_convert_in<'mem>(
-                        proxy_ptr: #facet_crate::PtrConst<'mem>,
-                        field_ptr: #facet_crate::PtrUninit<'mem>,
-                    ) -> ::core::result::Result<#facet_crate::PtrMut<'mem>, __alloc::string::String> {
-                        let proxy: #proxy_type = proxy_ptr.read();
-                        match <#field_type as ::core::convert::TryFrom<#proxy_type>>::try_from(proxy) {
-                            ::core::result::Result::Ok(value) => ::core::result::Result::Ok(field_ptr.put(value)),
-                            ::core::result::Result::Err(e) => ::core::result::Result::Err(__alloc::string::ToString::to_string(&e)),
-                        }
-                    }
-                    __proxy_convert_in as #facet_crate::ProxyConvertInFn
-                } as *const #facet_crate::ProxyConvertInFn as *const (),
-                shape: <() as #facet_crate::Facet>::SHAPE,
-            }
-        });
-
-        // Generate __proxy_out: converts &field type -> proxy via TryFrom
-        attribute_list.push(quote! {
-            #facet_crate::ExtensionAttr {
-                ns: ::core::option::Option::None,
-                key: "__proxy_out",
-                data: &const {
-                    extern crate alloc as __alloc;
-                    unsafe fn __proxy_convert_out<'mem>(
-                        field_ptr: #facet_crate::PtrConst<'mem>,
-                        proxy_ptr: #facet_crate::PtrUninit<'mem>,
-                    ) -> ::core::result::Result<#facet_crate::PtrMut<'mem>, __alloc::string::String> {
-                        let field_ref: &#field_type = field_ptr.get();
-                        match <#proxy_type as ::core::convert::TryFrom<&#field_type>>::try_from(field_ref) {
-                            ::core::result::Result::Ok(proxy) => ::core::result::Result::Ok(proxy_ptr.put(proxy)),
-                            ::core::result::Result::Err(e) => ::core::result::Result::Err(__alloc::string::ToString::to_string(&e)),
-                        }
-                    }
-                    __proxy_convert_out as #facet_crate::ProxyConvertOutFn
-                } as *const #facet_crate::ProxyConvertOutFn as *const (),
-                shape: <() as #facet_crate::Facet>::SHAPE,
-            }
-        });
     }
 
     let maybe_attributes = if attribute_list.is_empty() {
@@ -738,69 +995,134 @@ pub(crate) fn gen_field_from_pfield(
         }
     };
 
-    // Use FieldBuilder for more compact generated code
-    // NOTE: Uses short alias from `use #facet_crate::𝟋::*` in the enclosing const block
-    //
-    // For most fields, use `new` with a direct shape reference (more efficient).
-    // For recursive type fields (marked with #[facet(recursive_type)]), use `new_lazy`
-    // with a closure to break cycles.
-    let builder = if is_recursive {
-        quote! {
-            𝟋FldB::new_lazy(
-                #field_name_effective,
-                || #shape_expr,
-                #final_offset,
-            )
-        }
+    // === Direct Field construction (avoiding builder pattern for faster const eval) ===
+    // Uses short aliases from `use #facet_crate::𝟋::*` in the enclosing const block
+
+    // Shape reference: always use a function for lazy evaluation
+    // This moves const eval from compile time to runtime, improving compile times
+    // ShapeRef is a tuple struct: ShapeRef(fn() -> &'static Shape)
+    let is_opaque = field.attrs.has_builtin("opaque");
+    let shape_ref_expr = if is_recursive {
+        // Recursive types need a closure to break the cycle
+        quote! { 𝟋ShpR(|| #shape_expr) }
+    } else if is_opaque {
+        // Opaque fields use Opaque<T> wrapper
+        quote! { 𝟋ShpR(𝟋shp::<#facet_crate::Opaque<#field_type>>) }
     } else {
-        quote! {
-            𝟋FldB::new(
-                #field_name_effective,
-                #shape_expr,
-                #final_offset,
-            )
-        }
+        // Normal fields use shape_of::<T> which is monomorphized per type
+        quote! { 𝟋ShpR(𝟋shp::<#field_type>) }
     };
 
-    // Build the chain of builder method calls
-    let mut builder_chain = builder;
+    // Flags: combine all flags or use empty
+    let flags_expr = if flags.is_empty() {
+        quote! { 𝟋NOFL }
+    } else if flags.len() == 1 {
+        let f = &flags[0];
+        quote! { #f }
+    } else {
+        let first = &flags[0];
+        let rest = &flags[1..];
+        quote! { #first #(.union(#rest))* }
+    };
 
-    // Add flags if any were collected
-    if !flags.is_empty() {
-        let flags_expr = if flags.len() == 1 {
-            let f = &flags[0];
-            quote! { #f }
-        } else {
-            // Union multiple flags together
-            let first = &flags[0];
-            let rest = &flags[1..];
-            quote! { #first #(.union(#rest))* }
-        };
-        builder_chain = quote! { #builder_chain.flags(#flags_expr) };
+    // Rename: Option
+    let rename_expr = match &rename_value {
+        Some(rename) => quote! { ::core::option::Option::Some(#rename) },
+        None => quote! { ::core::option::Option::None },
+    };
+
+    // Alias: Option
+    let alias_expr = match &alias_value {
+        Some(alias) => quote! { ::core::option::Option::Some(#alias) },
+        None => quote! { ::core::option::Option::None },
+    };
+
+    // Default: Option<DefaultSource>
+    let default_expr = match &default_value {
+        Some(DefaultKind::FromTrait) => {
+            // When a field has 'opaque' attribute, the field shape doesn't have Default vtable
+            // because Opaque<T> doesn't expose T's vtable. Instead, generate a custom default
+            // function. Special case: Option<T> always defaults to None regardless of T's traits.
+            if field.attrs.has_builtin("opaque") {
+                // Check if the field type looks like Option<...>
+                let type_str = field_type.to_token_stream().to_string();
+                let is_option = type_str.starts_with("Option") || type_str.contains(":: Option");
+
+                if is_option {
+                    // Option<T> always defaults to None
+                    quote! {
+                        ::core::option::Option::Some(𝟋DS::Custom({
+                            unsafe fn __default(__ptr: #facet_crate::PtrUninit) -> #facet_crate::PtrMut {
+                                __ptr.put(<#field_type>::None)
+                            }
+                            __default
+                        }))
+                    }
+                } else {
+                    // For non-Option opaque types, call Default::default()
+                    quote! {
+                        ::core::option::Option::Some(𝟋DS::Custom({
+                            unsafe fn __default(__ptr: #facet_crate::PtrUninit) -> #facet_crate::PtrMut {
+                                __ptr.put(<#field_type as ::core::default::Default>::default())
+                            }
+                            __default
+                        }))
+                    }
+                }
+            } else {
+                quote! { ::core::option::Option::Some(𝟋DS::FromTrait) }
+            }
+        }
+        Some(DefaultKind::Custom(expr)) => {
+            quote! {
+                ::core::option::Option::Some(𝟋DS::Custom({
+                    unsafe fn __default(__ptr: #facet_crate::PtrUninit) -> #facet_crate::PtrMut {
+                        __ptr.put(#expr)
+                    }
+                    __default
+                }))
+            }
+        }
+        None => quote! { ::core::option::Option::None },
+    };
+
+    // Skip serializing if: Option
+    let skip_ser_if_expr = match &skip_serializing_if_value {
+        Some(skip_ser_if) => quote! { ::core::option::Option::Some(#skip_ser_if) },
+        None => quote! { ::core::option::Option::None },
+    };
+
+    // Invariants: Option
+    let invariants_expr = match &invariants_value {
+        Some(inv) => quote! { ::core::option::Option::Some(#inv) },
+        None => quote! { ::core::option::Option::None },
+    };
+
+    // Proxy: Option (requires alloc feature in facet-core)
+    // We always emit this field since we can't check facet-core's features from generated code.
+    // If facet-core was built without alloc, this will cause a compile error (acceptable trade-off).
+    let proxy_expr = match &proxy_value {
+        Some(proxy) => quote! { ::core::option::Option::Some(#proxy) },
+        None => quote! { ::core::option::Option::None },
+    };
+
+    // Direct Field struct literal
+    quote! {
+        𝟋Fld {
+            name: #field_name_effective,
+            shape: #shape_ref_expr,
+            offset: #final_offset,
+            flags: #flags_expr,
+            rename: #rename_expr,
+            alias: #alias_expr,
+            attributes: #maybe_attributes,
+            doc: #maybe_field_doc,
+            default: #default_expr,
+            skip_serializing_if: #skip_ser_if_expr,
+            invariants: #invariants_expr,
+            proxy: #proxy_expr,
+        }
     }
-
-    // Add rename if present
-    if let Some(rename) = &rename_value {
-        builder_chain = quote! { #builder_chain.rename(#rename) };
-    }
-
-    // Add alias if present
-    if let Some(alias) = &alias_value {
-        builder_chain = quote! { #builder_chain.alias(#alias) };
-    }
-
-    // Add attributes if any
-    if !attribute_list.is_empty() {
-        builder_chain = quote! { #builder_chain.attributes(#maybe_attributes) };
-    }
-
-    // Add doc if present
-    if !doc_lines.is_empty() {
-        builder_chain = quote! { #builder_chain.doc(#maybe_field_doc) };
-    }
-
-    // Finally call build
-    quote! { #builder_chain.build() }
 }
 
 /// Processes a regular struct to implement Facet
@@ -837,10 +1159,131 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let type_name_fn =
         generate_type_name_fn(struct_name, parsed.generics.as_ref(), opaque, &facet_crate);
 
+    // Determine if this struct should use transparent semantics (needed for vtable generation)
+    // Transparent is enabled if:
+    // 1. #[facet(transparent)] is explicitly set, OR
+    // 2. #[repr(transparent)] is set AND the struct is a tuple struct with exactly 0 or 1 field
+    let has_explicit_facet_transparent = ps.container.attrs.has_builtin("transparent");
+    let has_repr_transparent = ps.container.attrs.is_repr_transparent();
+
+    let repr_implies_facet_transparent = if has_repr_transparent && !has_explicit_facet_transparent
+    {
+        match &ps.kind {
+            PStructKind::TupleStruct { fields } => fields.len() <= 1,
+            _ => false,
+        }
+    } else {
+        false
+    };
+
+    let use_transparent_semantics =
+        has_explicit_facet_transparent || repr_implies_facet_transparent;
+
+    // For transparent types, get the inner field info
+    let inner_field: Option<PStructField> = if use_transparent_semantics {
+        match &ps.kind {
+            PStructKind::TupleStruct { fields } => {
+                if fields.len() > 1 {
+                    return quote! {
+                        compile_error!("Transparent structs must be tuple structs with zero or one field");
+                    };
+                }
+                fields.first().cloned()
+            }
+            _ => {
+                return quote! {
+                    compile_error!("Transparent structs must be tuple structs");
+                };
+            }
+        }
+    } else {
+        None
+    };
+
+    // Build transparent info for vtable generation
+    let transparent_info = if use_transparent_semantics {
+        Some(TransparentInfo {
+            inner_field_type: inner_field.as_ref().map(|f| &f.ty),
+            inner_is_opaque: inner_field
+                .as_ref()
+                .is_some_and(|f| f.attrs.has_builtin("opaque")),
+            is_zst: inner_field.is_none(),
+        })
+    } else {
+        None
+    };
+
     // Determine trait sources and generate vtable accordingly
     let trait_sources = TraitSources::from_attrs(&ps.container.attrs);
-    let vtable_code = gen_vtable(&facet_crate, &type_name_fn, &trait_sources);
-    let vtable_init = quote! { const { #vtable_code } };
+    // Build the struct type token stream (e.g., `MyStruct` or `MyStruct<T, U>`)
+    // We need this because `Self` is not available inside `&const { }` blocks
+    let bgp_for_vtable = ps.container.bgp.display_without_bounds();
+    let struct_type_for_vtable = quote! { #struct_name_ident #bgp_for_vtable };
+
+    // Extract container-level invariants and generate wrapper function
+    let invariants_wrapper: Option<TokenStream> = {
+        let invariant_exprs: Vec<&TokenStream> = ps
+            .container
+            .attrs
+            .facet
+            .iter()
+            .filter(|attr| attr.is_builtin() && attr.key_str() == "invariants")
+            .map(|attr| &attr.args)
+            .collect();
+
+        if !invariant_exprs.is_empty() {
+            let tests = invariant_exprs.iter().map(|expr| {
+                quote! {
+                    if !#expr(value) {
+                        return 𝟋Result::Err(𝟋Str::from("invariant check failed"));
+                    }
+                }
+            });
+
+            Some(quote! {
+                {
+                    fn __invariants_wrapper(value: &#struct_type_for_vtable) -> 𝟋Result<(), 𝟋Str> {
+                        use #facet_crate::𝟋::*;
+                        #(#tests)*
+                        𝟋Result::Ok(())
+                    }
+                    __invariants_wrapper
+                }
+            })
+        } else {
+            None
+        }
+    };
+
+    let vtable_code = gen_vtable(
+        &facet_crate,
+        &type_name_fn,
+        &trait_sources,
+        transparent_info.as_ref(),
+        &struct_type_for_vtable,
+        invariants_wrapper.as_ref(),
+    );
+    // Note: vtable_code already contains &const { ... } for the VTableDirect,
+    // no need for an extra const { } wrapper around VTableErased
+    let vtable_init = vtable_code;
+
+    // Generate TypeOps for drop, default, clone operations
+    // Check if the type has any type or const generics (NOT lifetimes)
+    // Lifetimes don't affect layout, so types like RawJson<'a> can use TypeOpsDirect
+    // Only types like Vec<T> need TypeOpsIndirect
+    let has_type_or_const_generics = ps.container.bgp.params.iter().any(|p| {
+        matches!(
+            p.param,
+            facet_macro_parse::GenericParamName::Type(_)
+                | facet_macro_parse::GenericParamName::Const(_)
+        )
+    });
+    let type_ops_init = gen_type_ops(
+        &facet_crate,
+        &trait_sources,
+        &struct_type_for_vtable,
+        has_type_or_const_generics,
+    );
 
     // TODO: I assume the `PrimitiveRepr` is only relevant for enums, and does not need to be preserved?
     // NOTE: Uses short aliases from `use #facet_crate::𝟋::*` in the const block
@@ -886,12 +1329,10 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     // Compute variance - delegate to Shape::computed_variance() at runtime
     let variance_call = if opaque {
         // Opaque types don't expose internals, use invariant for safety
-        quote! { .variance(#facet_crate::Variance::INVARIANT) }
+        quote! { .variance(𝟋Vnc::INVARIANT) }
     } else {
         // Point to Shape::computed_variance - it takes &Shape and walks fields
-        quote! {
-            .variance(#facet_crate::Shape::computed_variance)
-        }
+        quote! { .variance(𝟋CV) }
     };
 
     // Still need original AST for where clauses and type params for build_ helpers
@@ -908,12 +1349,8 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     );
     let type_params_call = build_type_params_call(parsed.generics.as_ref(), opaque, &facet_crate);
 
-    // Static decl using PStruct BGP
-    let static_decl = if ps.container.bgp.params.is_empty() {
-        generate_static_decl(struct_name, &facet_crate)
-    } else {
-        TokenStream::new()
-    };
+    // Static decl removed - the TYPENAME_SHAPE static was redundant since
+    // <T as Facet>::SHAPE is already accessible and nobody was using the static
 
     // Doc comments from PStruct - returns value for struct literal
     // doc call - only emit if there are doc comments and doc feature is enabled
@@ -1027,10 +1464,10 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 #proxy_where
                 {
                     #[doc(hidden)]
-                    unsafe fn __facet_proxy_convert_in<'mem>(
-                        proxy_ptr: #facet_crate::PtrConst<'mem>,
-                        field_ptr: #facet_crate::PtrUninit<'mem>,
-                    ) -> ::core::result::Result<#facet_crate::PtrMut<'mem>, #facet_crate::𝟋::𝟋Str> {
+                    unsafe fn __facet_proxy_convert_in(
+                        proxy_ptr: #facet_crate::PtrConst,
+                        field_ptr: #facet_crate::PtrUninit,
+                    ) -> ::core::result::Result<#facet_crate::PtrMut, #facet_crate::𝟋::𝟋Str> {
                         extern crate alloc as __alloc;
                         let proxy: #proxy_type = proxy_ptr.read();
                         match <#struct_type #bgp_display as ::core::convert::TryFrom<#proxy_type>>::try_from(proxy) {
@@ -1040,10 +1477,10 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     }
 
                     #[doc(hidden)]
-                    unsafe fn __facet_proxy_convert_out<'mem>(
-                        field_ptr: #facet_crate::PtrConst<'mem>,
-                        proxy_ptr: #facet_crate::PtrUninit<'mem>,
-                    ) -> ::core::result::Result<#facet_crate::PtrMut<'mem>, #facet_crate::𝟋::𝟋Str> {
+                    unsafe fn __facet_proxy_convert_out(
+                        field_ptr: #facet_crate::PtrConst,
+                        proxy_ptr: #facet_crate::PtrUninit,
+                    ) -> ::core::result::Result<#facet_crate::PtrMut, #facet_crate::𝟋::𝟋Str> {
                         extern crate alloc as __alloc;
                         let field_ref: &#struct_type #bgp_display = field_ptr.get();
                         match <#proxy_type as ::core::convert::TryFrom<&#struct_type #bgp_display>>::try_from(field_ref) {
@@ -1059,14 +1496,15 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                 }
             };
 
-            // Reference the inherent methods from within the SHAPE const block
-            // Self::method works because Self in the Facet impl refers to the struct type
+            // Reference the inherent methods from within the SHAPE const block.
+            // We use <Self> syntax which works inside &const { } blocks and properly
+            // refers to the monomorphized type from the enclosing impl.
             let proxy_ref = quote! {
                 .proxy(&const {
                     #facet_crate::ProxyDef {
-                        shape: Self::__facet_proxy_shape(),
-                        convert_in: Self::__facet_proxy_convert_in,
-                        convert_out: Self::__facet_proxy_convert_out,
+                        shape: <Self>::__facet_proxy_shape(),
+                        convert_in: <Self>::__facet_proxy_convert_in,
+                        convert_out: <Self>::__facet_proxy_convert_out,
                     }
                 })
             };
@@ -1075,189 +1513,6 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         } else {
             (quote! {}, quote! {})
         }
-    };
-
-    // Invariants from PStruct - extract invariant function expressions
-    let invariant_maybe = {
-        let invariant_exprs: Vec<&TokenStream> = ps
-            .container
-            .attrs
-            .facet
-            .iter()
-            .filter(|attr| attr.is_builtin() && attr.key_str() == "invariants")
-            .map(|attr| &attr.args)
-            .collect();
-
-        if !invariant_exprs.is_empty() {
-            let tests = invariant_exprs.iter().map(|expr| {
-                quote! {
-                    if !#expr(value) {
-                        return false;
-                    }
-                }
-            });
-
-            let bgp_display = ps.container.bgp.display_without_bounds();
-            quote! {
-                unsafe fn invariants<'mem>(value: #facet_crate::PtrConst<'mem>) -> bool {
-                    let value = value.get::<#struct_name_ident #bgp_display>();
-                    #(#tests)*
-                    true
-                }
-
-                {
-                    vtable.invariants = Some(invariants);
-                }
-            }
-        } else {
-            quote! {}
-        }
-    };
-
-    // Determine if this struct should use transparent semantics
-    // Transparent is enabled if:
-    // 1. #[facet(transparent)] is explicitly set, OR
-    // 2. #[repr(transparent)] is set AND the struct is a tuple struct with exactly 0 or 1 field
-    //
-    // Note: Rust's repr(transparent) allows multiple fields if all but one are ZST,
-    // but facet(transparent) only supports 0 or 1 field for serialization purposes.
-    // When repr(transparent) is used with multiple fields, the user must explicitly
-    // add #[facet(transparent)] if they want facet transparent semantics.
-    let has_explicit_facet_transparent = ps.container.attrs.has_builtin("transparent");
-    let has_repr_transparent = ps.container.attrs.is_repr_transparent();
-
-    // Check if repr(transparent) should imply facet transparent
-    let repr_implies_facet_transparent = if has_repr_transparent && !has_explicit_facet_transparent
-    {
-        match &ps.kind {
-            PStructKind::TupleStruct { fields } => fields.len() <= 1,
-            _ => false,
-        }
-    } else {
-        false
-    };
-
-    let use_transparent_semantics =
-        has_explicit_facet_transparent || repr_implies_facet_transparent;
-
-    // Transparent logic using PStruct
-    let inner_field = if use_transparent_semantics {
-        match &ps.kind {
-            PStructKind::TupleStruct { fields } => {
-                if fields.len() > 1 {
-                    return quote! {
-                        compile_error!("Transparent structs must be tuple structs with zero or one field");
-                    };
-                }
-                fields.first().cloned() // Use first field if it exists, None otherwise (ZST case)
-            }
-            _ => {
-                return quote! {
-                    compile_error!("Transparent structs must be tuple structs");
-                };
-            }
-        }
-    } else {
-        None
-    };
-
-    // Add try_from_inner implementation for transparent types
-    let try_from_inner_code = if use_transparent_semantics {
-        if let Some(inner_field) = &inner_field {
-            if !inner_field.attrs.has_builtin("opaque") {
-                // Transparent struct with one field
-                let inner_field_type = &inner_field.ty;
-                let bgp_without_bounds = ps.container.bgp.display_without_bounds();
-
-                quote! {
-                    // Define the try_from function for the value vtable
-                    unsafe fn try_from<'src, 'dst>(
-                        src_ptr: #facet_crate::PtrConst<'src>,
-                        src_shape: &'static #facet_crate::Shape,
-                        dst: #facet_crate::PtrUninit<'dst>
-                    ) -> Result<#facet_crate::PtrMut<'dst>, #facet_crate::TryFromError> {
-                        // Try the inner type's try_from function if it exists
-                        let inner_result = match <#inner_field_type as #facet_crate::Facet>::SHAPE.vtable.try_from {
-                            Some(inner_try) => unsafe { (inner_try)(src_ptr, src_shape, dst) },
-                            None => Err(#facet_crate::TryFromError::UnsupportedSourceShape {
-                                src_shape,
-                                expected: const { &[ &<#inner_field_type as #facet_crate::Facet>::SHAPE ] },
-                            })
-                        };
-
-                        match inner_result {
-                            Ok(result) => Ok(result),
-                            Err(_) => {
-                                // If inner_try failed, check if source shape is exactly the inner shape
-                                if src_shape != <#inner_field_type as #facet_crate::Facet>::SHAPE {
-                                    return Err(#facet_crate::TryFromError::UnsupportedSourceShape {
-                                        src_shape,
-                                        expected: const { &[ &<#inner_field_type as #facet_crate::Facet>::SHAPE ] },
-                                    });
-                                }
-                                // Read the inner value and construct the wrapper.
-                                let inner: #inner_field_type = unsafe { src_ptr.read() };
-                                Ok(unsafe { dst.put(inner) }) // Construct wrapper
-                            }
-                        }
-                    }
-
-                    // Define the try_into_inner function for the value vtable
-                    unsafe fn try_into_inner<'src, 'dst>(
-                        src_ptr: #facet_crate::PtrMut<'src>,
-                        dst: #facet_crate::PtrUninit<'dst>
-                    ) -> Result<#facet_crate::PtrMut<'dst>, #facet_crate::TryIntoInnerError> {
-                        let wrapper = unsafe { src_ptr.get::<#struct_name_ident #bgp_without_bounds>() };
-                        Ok(unsafe { dst.put(wrapper.0.clone()) }) // Assume tuple struct field 0
-                    }
-
-                    // Define the try_borrow_inner function for the value vtable
-                    unsafe fn try_borrow_inner<'src>(
-                        src_ptr: #facet_crate::PtrConst<'src>
-                    ) -> Result<#facet_crate::PtrConst<'src>, #facet_crate::TryBorrowInnerError> {
-                        let wrapper = unsafe { src_ptr.get::<#struct_name_ident #bgp_without_bounds>() };
-                        // Return a pointer to the inner field (field 0 for tuple struct)
-                        Ok(#facet_crate::PtrConst::new(::core::ptr::NonNull::from(&wrapper.0)))
-                    }
-
-                    {
-                        vtable.try_from = Some(try_from);
-                        vtable.try_into_inner = Some(try_into_inner);
-                        vtable.try_borrow_inner = Some(try_borrow_inner);
-                    }
-                }
-            } else {
-                quote! {} // No try_from can be done for opaque
-            }
-        } else {
-            // Transparent ZST struct (like struct Unit;)
-            quote! {
-                // Define the try_from function for the value vtable (ZST case)
-                unsafe fn try_from<'src, 'dst>(
-                    src_ptr: #facet_crate::PtrConst<'src>,
-                    src_shape: &'static #facet_crate::Shape,
-                    dst: #facet_crate::PtrUninit<'dst>
-                ) -> Result<#facet_crate::PtrMut<'dst>, #facet_crate::TryFromError> {
-                    if src_shape.layout.size() == 0 {
-                         Ok(unsafe { dst.put(#struct_name_ident) }) // Construct ZST
-                    } else {
-                        Err(#facet_crate::TryFromError::UnsupportedSourceShape {
-                            src_shape,
-                            expected: const { &[ <() as #facet_crate::Facet>::SHAPE ] }, // Expect unit-like shape
-                        })
-                    }
-                }
-
-                {
-                    vtable.try_from = Some(try_from);
-                }
-
-                // ZSTs cannot be meaningfully borrowed or converted *into* an inner value
-                // try_into_inner and try_borrow_inner remain None
-            }
-        }
-    } else {
-        quote! {} // Not transparent
     };
 
     // Generate the inner shape field value for transparent types
@@ -1279,6 +1534,13 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         quote! {}
     };
 
+    // Type name function - for generic types, this formats with type parameters
+    let type_name_call = if parsed.generics.is_some() && !opaque {
+        quote! { .type_name(#type_name_fn) }
+    } else {
+        quote! {}
+    };
+
     // Generics from PStruct
     let facet_bgp = ps
         .container
@@ -1287,35 +1549,41 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     let bgp_def = facet_bgp.display_with_bounds();
     let bgp_without_bounds = ps.container.bgp.display_without_bounds();
 
-    let (ty_field, fields) = if opaque {
+    // Generate ty_field and optionally a hoisted __FIELDS const
+    // Hoisting avoids &const { [...] } which causes 12+ promotions per struct
+    let (ty_field, fields_const) = if opaque {
         (
             quote! {
                 #facet_crate::Type::User(#facet_crate::UserType::Opaque)
             },
             quote! {},
         )
-    } else {
+    } else if fields_vec.is_empty() {
         // Optimize: use &[] for empty fields to avoid const block overhead
-        if fields_vec.is_empty() {
-            (
-                quote! {
-                    𝟋Ty::User(𝟋UTy::Struct(
-                        𝟋STyB::new(#kind, &[]).repr(#repr).build()
-                    ))
-                },
-                quote! {},
-            )
-        } else {
-            // Inline the const block directly into the builder call
-            (
-                quote! {
-                    𝟋Ty::User(𝟋UTy::Struct(
-                        𝟋STyB::new(#kind, &const {[#(#fields_vec),*]}).repr(#repr).build()
-                    ))
-                },
-                quote! {},
-            )
-        }
+        (
+            quote! {
+                𝟋Ty::User(𝟋UTy::Struct(
+                    𝟋STyB::new(#kind, &[]).repr(#repr).build()
+                ))
+            },
+            quote! {},
+        )
+    } else {
+        // Hoist fields array to associated const to avoid promotions
+        let num_fields = fields_vec.len();
+        (
+            quote! {
+                𝟋Ty::User(𝟋UTy::Struct(
+                    𝟋STyB::new(#kind, &Self::__FIELDS).repr(#repr).build()
+                ))
+            },
+            quote! {
+                const __FIELDS: [#facet_crate::Field; #num_fields] = {
+                    use #facet_crate::𝟋::*;
+                    [#(#fields_vec),*]
+                };
+            },
+        )
     };
 
     // Generate code to suppress dead_code warnings on structs constructed via reflection.
@@ -1353,52 +1621,32 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         quote! {}
     };
 
-    // Check if we need vtable mutations (invariants or transparent type functions)
-    let has_invariants = ps
-        .container
-        .attrs
-        .facet
-        .iter()
-        .any(|attr| attr.is_builtin() && attr.key_str() == "invariants");
-    let is_transparent = use_transparent_semantics;
-    let needs_vtable_mutations = has_invariants || is_transparent;
+    // Vtable is now fully built in gen_vtable, including invariants
+    let vtable_field = quote! { #vtable_init };
 
-    // Generate vtable field - use simpler form when no mutations needed
-    let vtable_field = if needs_vtable_mutations {
-        quote! {
-            {
-                let mut vtable = #vtable_init;
-                #invariant_maybe
-                #try_from_inner_code
-                vtable
-            }
-        }
-    } else {
-        quote! { #vtable_init }
+    // TypeOps for drop, default, clone - convert Option<TokenStream> to a call
+    let type_ops_call = match type_ops_init {
+        Some(ops) => quote! { .type_ops(#ops) },
+        None => quote! {},
     };
 
-    // Final quote block using refactored parts
-    let result = quote! {
-        #static_decl
+    // Hoist the entire SHAPE construction to an inherent impl const
+    // This avoids &const {} promotions - the reference is to a plain const, not an inline const block
+    let shape_inherent_impl = quote! {
+        #[doc(hidden)]
+        impl #bgp_def #struct_name_ident #bgp_without_bounds #where_clauses {
+            #fields_const
 
-        #dead_code_suppression
-
-        #trait_assertion_fn
-
-        // Proxy inherent impl (outside the Facet impl so generic params are in scope)
-        #proxy_inherent_impl
-
-        #[automatically_derived]
-        unsafe impl #bgp_def #facet_crate::Facet<'ʄ> for #struct_name_ident #bgp_without_bounds #where_clauses {
-            const SHAPE: &'static #facet_crate::Shape = &const {
+            const __SHAPE_DATA: #facet_crate::Shape = {
                 use #facet_crate::𝟋::*;
-                #fields
 
-                𝟋ShpB::for_sized::<Self>(#type_name_fn, #struct_name_str)
+                𝟋ShpB::for_sized::<Self>(#struct_name_str)
                     .vtable(#vtable_field)
+                    #type_ops_call
                     .ty(#ty_field)
                     .def(𝟋Def::Undefined)
                     #type_params_call
+                    #type_name_call
                     #doc_call
                     #attributes_call
                     #type_tag_call
@@ -1408,6 +1656,29 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     .build()
             };
         }
+    };
+
+    // Static declaration for release builds (pre-evaluates SHAPE)
+    let static_decl = crate::derive::generate_static_decl(&struct_name_ident, &facet_crate);
+
+    // Final quote block using refactored parts
+    let result = quote! {
+        #dead_code_suppression
+
+        #trait_assertion_fn
+
+        // Proxy inherent impl (outside the Facet impl so generic params are in scope)
+        #proxy_inherent_impl
+
+        // Hoisted SHAPE data const (avoids &const {} promotions)
+        #shape_inherent_impl
+
+        #[automatically_derived]
+        unsafe impl #bgp_def #facet_crate::Facet<'ʄ> for #struct_name_ident #bgp_without_bounds #where_clauses {
+            const SHAPE: &'static #facet_crate::Shape = &Self::__SHAPE_DATA;
+        }
+
+        #static_decl
     };
 
     result

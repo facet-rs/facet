@@ -147,14 +147,20 @@ impl Shape {
     pub const fn is(&self, characteristic: Characteristic) -> bool {
         match characteristic {
             // Functionality traits
-            Characteristic::Clone => self.vtable.has_clone_into(),
+            Characteristic::Clone => match self.type_ops {
+                Some(ops) => ops.has_clone_into(),
+                None => false,
+            },
             Characteristic::Display => self.vtable.has_display(),
             Characteristic::Debug => self.vtable.has_debug(),
             Characteristic::PartialEq => self.vtable.has_partial_eq(),
             Characteristic::PartialOrd => self.vtable.has_partial_ord(),
             Characteristic::Ord => self.vtable.has_ord(),
             Characteristic::Hash => self.vtable.has_hash(),
-            Characteristic::Default => self.vtable.has_default_in_place(),
+            Characteristic::Default => match self.type_ops {
+                Some(ops) => ops.has_default_in_place(),
+                None => false,
+            },
             Characteristic::FromStr => self.vtable.has_parse(),
         }
     }
@@ -213,9 +219,54 @@ impl Shape {
         self.is(Characteristic::FromStr)
     }
 
-    /// Writes the name of this type to the given formatter
+    /// Writes the name of this type to the given formatter.
+    ///
+    /// If the type has a custom type_name function, it will be used.
+    /// Otherwise, falls back to the type_identifier.
     #[inline]
-    pub fn write_type_name(&self, f: &mut fmt::Formatter<'_>, opts: TypeNameOpts) -> fmt::Result {
-        (self.vtable.type_name())(f, opts)
+    pub fn write_type_name(
+        &'static self,
+        f: &mut fmt::Formatter<'_>,
+        opts: TypeNameOpts,
+    ) -> fmt::Result {
+        if let Some(type_name_fn) = self.type_name {
+            type_name_fn(self, f, opts)
+        } else {
+            write!(f, "{}", self.type_identifier)
+        }
+    }
+
+    /// Returns a wrapper that implements `Display` for the full type name
+    /// including generic parameters.
+    ///
+    /// # Example
+    /// ```
+    /// extern crate alloc;
+    /// use facet_core::Facet;
+    /// use alloc::vec::Vec;
+    ///
+    /// let shape = <Vec<u32>>::SHAPE;
+    /// assert_eq!(format!("{}", shape.type_name()), "Vec<u32>");
+    /// ```
+    #[inline]
+    pub fn type_name(&'static self) -> TypeNameDisplay {
+        TypeNameDisplay(self)
+    }
+}
+
+/// A wrapper around `&'static Shape` that implements `Display` using the
+/// full type name (including generic parameters).
+#[derive(Clone, Copy)]
+pub struct TypeNameDisplay(&'static Shape);
+
+impl fmt::Display for TypeNameDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.write_type_name(f, TypeNameOpts::default())
+    }
+}
+
+impl fmt::Debug for TypeNameDisplay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }

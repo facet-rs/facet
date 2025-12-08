@@ -170,29 +170,28 @@ impl NestedValues {
 
     fn insert(&mut self, key: &str, value: String) {
         // For bracket notation like user[name] or user[address][city]
-        if let Some(open_bracket) = key.find('[') {
-            if let Some(close_bracket) = key.find(']') {
-                if open_bracket < close_bracket {
-                    let parent_key = &key[0..open_bracket];
-                    let nested_key = &key[(open_bracket + 1)..close_bracket];
-                    let remainder = &key[(close_bracket + 1)..];
+        if let Some(open_bracket) = key.find('[')
+            && let Some(close_bracket) = key.find(']')
+            && open_bracket < close_bracket
+        {
+            let parent_key = &key[0..open_bracket];
+            let nested_key = &key[(open_bracket + 1)..close_bracket];
+            let remainder = &key[(close_bracket + 1)..];
 
-                    let nested = self
-                        .nested
-                        .entry(parent_key.to_string())
-                        .or_insert_with(NestedValues::new);
+            let nested = self
+                .nested
+                .entry(parent_key.to_string())
+                .or_insert_with(NestedValues::new);
 
-                    if remainder.is_empty() {
-                        // Simple case: user[name]=value
-                        nested.flat.insert(nested_key.to_string(), value);
-                    } else {
-                        // Handle deeply nested case like user[address][city]=value
-                        let new_key = format!("{nested_key}{remainder}");
-                        nested.insert(&new_key, value);
-                    }
-                    return;
-                }
+            if remainder.is_empty() {
+                // Simple case: user[name]=value
+                nested.flat.insert(nested_key.to_string(), value);
+            } else {
+                // Handle deeply nested case like user[address][city]=value
+                let new_key = format!("{nested_key}{remainder}");
+                nested.insert(&new_key, value);
             }
+            return;
         }
 
         // If we get here, it's a flat key-value pair

@@ -76,7 +76,7 @@ impl<'mem, 'facet> PeekNdArray<'mem, 'facet> {
 
     /// Get a pointer to the start of the array
     #[inline]
-    pub fn as_ptr(&self) -> Result<PtrConst<'mem>, StrideError> {
+    pub fn as_ptr(&self) -> Result<PtrConst, StrideError> {
         let Some(as_ptr) = self.def.vtable.as_ptr else {
             return Err(StrideError::NotStrided);
         };

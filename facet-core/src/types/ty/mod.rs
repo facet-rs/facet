@@ -1,9 +1,12 @@
-use super::*;
+use core::fmt;
 
-mod bitflags;
+use super::*;
 
 mod field;
 pub use field::*;
+
+mod proxy;
+pub use proxy::*;
 
 mod struct_;
 pub use struct_::*;
@@ -32,6 +35,8 @@ pub use pointer::*;
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
 pub enum Type {
+    /// Undefined type - used as default in ShapeBuilder.
+    Undefined,
     /// Built-in primitive.
     Primitive(PrimitiveType),
     /// Sequence (array, slice).
@@ -42,13 +47,114 @@ pub enum Type {
     Pointer(PointerType),
 }
 
+impl Type {
+    /// Create a builder for a struct type.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ty = Type::struct_builder(StructKind::Struct, &FIELDS)
+    ///     .repr(Repr::c())
+    ///     .build();
+    /// ```
+    #[inline]
+    pub const fn struct_builder(kind: StructKind, fields: &'static [Field]) -> TypeStructBuilder {
+        TypeStructBuilder(StructTypeBuilder::new(kind, fields))
+    }
+
+    /// Create a builder for an enum type.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ty = Type::enum_builder(EnumRepr::U8, &VARIANTS)
+    ///     .repr(Repr::c())
+    ///     .build();
+    /// ```
+    #[inline]
+    pub const fn enum_builder(
+        enum_repr: EnumRepr,
+        variants: &'static [Variant],
+    ) -> TypeEnumBuilder {
+        TypeEnumBuilder(EnumTypeBuilder::new(enum_repr, variants))
+    }
+
+    /// Create a builder for a union type.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let ty = Type::union_builder(&FIELDS)
+    ///     .repr(Repr::c())
+    ///     .build();
+    /// ```
+    #[inline]
+    pub const fn union_builder(fields: &'static [Field]) -> TypeUnionBuilder {
+        TypeUnionBuilder(UnionTypeBuilder::new(fields))
+    }
+}
+
+/// Builder that produces `Type::User(UserType::Struct(...))`.
+#[derive(Clone, Copy, Debug)]
+pub struct TypeStructBuilder(StructTypeBuilder);
+
+impl TypeStructBuilder {
+    /// Set the representation for the struct type.
+    #[inline]
+    pub const fn repr(self, repr: Repr) -> Self {
+        Self(self.0.repr(repr))
+    }
+
+    /// Build the final `Type`.
+    #[inline]
+    pub const fn build(self) -> Type {
+        Type::User(UserType::Struct(self.0.build()))
+    }
+}
+
+/// Builder that produces `Type::User(UserType::Enum(...))`.
+#[derive(Clone, Copy, Debug)]
+pub struct TypeEnumBuilder(EnumTypeBuilder);
+
+impl TypeEnumBuilder {
+    /// Set the representation for the enum type.
+    #[inline]
+    pub const fn repr(self, repr: Repr) -> Self {
+        Self(self.0.repr(repr))
+    }
+
+    /// Build the final `Type`.
+    #[inline]
+    pub const fn build(self) -> Type {
+        Type::User(UserType::Enum(self.0.build()))
+    }
+}
+
+/// Builder that produces `Type::User(UserType::Union(...))`.
+#[derive(Clone, Copy, Debug)]
+pub struct TypeUnionBuilder(UnionTypeBuilder);
+
+impl TypeUnionBuilder {
+    /// Set the representation for the union type.
+    #[inline]
+    pub const fn repr(self, repr: Repr) -> Self {
+        Self(self.0.repr(repr))
+    }
+
+    /// Build the final `Type`.
+    #[inline]
+    pub const fn build(self) -> Type {
+        Type::User(UserType::Union(self.0.build()))
+    }
+}
+
 // This implementation of `Display` is user-facing output, where the users are developers.
 // It is intended to show structure up to a certain depth, but for readability and brevity,
 // some complicated types have custom formatting surrounded by guillemet characters
 // (`«` and `»`) to indicate divergence from AST.
-impl core::fmt::Display for Type {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl fmt::Display for Type {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Type::Undefined => {
+                write!(f, "Undefined")?;
+            }
             Type::Primitive(_) => {
                 // Defer to `Debug`, which correctly produces the intended formatting.
                 write!(f, "{self:?}")?;
@@ -61,8 +167,8 @@ impl core::fmt::Display for Type {
             }
             Type::User(UserType::Struct(struct_type)) => {
                 struct __Display<'a>(&'a StructType);
-                impl core::fmt::Display for __Display<'_> {
-                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                impl fmt::Display for __Display<'_> {
+                    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                         write!(f, "«")?;
                         write!(f, "kind: {:?}", self.0.kind)?;
                         // Field count for `TupleStruct` and `Tuple`, and field names for `Struct`.
@@ -108,8 +214,8 @@ impl core::fmt::Display for Type {
             }
             Type::User(UserType::Enum(enum_type)) => {
                 struct __Display<'a>(&'a EnumType);
-                impl<'a> core::fmt::Display for __Display<'a> {
-                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                impl<'a> fmt::Display for __Display<'a> {
+                    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                         write!(f, "«")?;
                         write!(f, "variants: (")?;
                         let mut variants_iter = self.0.variants.iter();
@@ -159,8 +265,8 @@ impl core::fmt::Display for Type {
             }
             Type::User(UserType::Union(union_type)) => {
                 struct __Display<'a>(&'a UnionType);
-                impl<'a> core::fmt::Display for __Display<'a> {
-                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                impl<'a> fmt::Display for __Display<'a> {
+                    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                         write!(f, "«")?;
                         write!(f, "fields: (")?;
                         let mut fields_iter = self.0.fields.iter();
@@ -215,8 +321,8 @@ impl core::fmt::Display for Type {
             }
             Type::Pointer(PointerType::Function(fn_ptr_def)) => {
                 struct __Display<'a>(&'a FunctionPointerDef);
-                impl core::fmt::Display for __Display<'_> {
-                    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                impl fmt::Display for __Display<'_> {
+                    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                         write!(f, "«")?;
                         write!(f, "fn(")?;
                         let mut args_iter = self.0.parameters.iter();

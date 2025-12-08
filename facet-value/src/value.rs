@@ -169,7 +169,7 @@ impl Value {
     /// Safety: Pointer must be non-null and aligned to at least ALIGNMENT.
     pub(crate) unsafe fn new_ptr(p: *mut u8, tag: TypeTag) -> Self {
         debug_assert!(!p.is_null());
-        debug_assert!(p as usize % ALIGNMENT == 0);
+        debug_assert!((p as usize).is_multiple_of(ALIGNMENT));
         unsafe {
             Self {
                 ptr: NonNull::new_unchecked(p.wrapping_add(tag as usize)),

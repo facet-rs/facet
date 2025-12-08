@@ -16,6 +16,7 @@ rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
 [features]
 ci = [] # CI feature
 default = ["std", "helpful-derive"]
+auto-traits = ["facet-core/auto-traits"]
 function = ["facet-macros/function"] # Enable function shape introspection
 reflect = ["dep:facet-reflect"] # Enable reflection via Peek and Poke types
 testfeat = [] # Does nothing, only used for tests

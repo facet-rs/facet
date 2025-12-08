@@ -69,11 +69,11 @@ impl quote::ToTokens for AsPhantomData<'_> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         // Optimization: if there's exactly one parameter and it's a lifetime,
         // use the short 𝟋Ph<'lifetime> alias from the prelude
-        if self.0.params.len() == 1 {
-            if let GenericParamName::Lifetime(name) = &self.0.params[0].param {
-                tokens.extend(quote! { 𝟋Ph<#name> });
-                return;
-            }
+        if self.0.params.len() == 1
+            && let GenericParamName::Lifetime(name) = &self.0.params[0].param
+        {
+            tokens.extend(quote! { 𝟋Ph<#name> });
+            return;
         }
 
         // General case: build PhantomData<(...)> with all parameters

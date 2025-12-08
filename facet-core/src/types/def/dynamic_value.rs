@@ -3,7 +3,7 @@
 //! This is used for types like `facet_value::Value` or `serde_json::Value`
 //! that determine their structure at runtime rather than compile time.
 
-use crate::ptr::{PtrConst, PtrMut, PtrUninit};
+use super::{PtrConst, PtrMut, PtrUninit};
 
 /// Definition for dynamic value types.
 ///
@@ -34,7 +34,7 @@ impl DynamicValueDef {
 ///
 /// `dst` must point to uninitialized memory of the correct size and alignment.
 /// After this call, `dst` is fully initialized.
-pub type DynSetNullFn = unsafe fn(dst: PtrUninit<'_>);
+pub type DynSetNullFn = unsafe fn(dst: PtrUninit);
 
 /// Set the value to a boolean.
 ///
@@ -42,7 +42,7 @@ pub type DynSetNullFn = unsafe fn(dst: PtrUninit<'_>);
 ///
 /// `dst` must point to uninitialized memory of the correct size and alignment.
 /// After this call, `dst` is fully initialized.
-pub type DynSetBoolFn = unsafe fn(dst: PtrUninit<'_>, value: bool);
+pub type DynSetBoolFn = unsafe fn(dst: PtrUninit, value: bool);
 
 /// Set the value to a signed 64-bit integer.
 ///
@@ -50,7 +50,7 @@ pub type DynSetBoolFn = unsafe fn(dst: PtrUninit<'_>, value: bool);
 ///
 /// `dst` must point to uninitialized memory of the correct size and alignment.
 /// After this call, `dst` is fully initialized.
-pub type DynSetI64Fn = unsafe fn(dst: PtrUninit<'_>, value: i64);
+pub type DynSetI64Fn = unsafe fn(dst: PtrUninit, value: i64);
 
 /// Set the value to an unsigned 64-bit integer.
 ///
@@ -58,7 +58,7 @@ pub type DynSetI64Fn = unsafe fn(dst: PtrUninit<'_>, value: i64);
 ///
 /// `dst` must point to uninitialized memory of the correct size and alignment.
 /// After this call, `dst` is fully initialized.
-pub type DynSetU64Fn = unsafe fn(dst: PtrUninit<'_>, value: u64);
+pub type DynSetU64Fn = unsafe fn(dst: PtrUninit, value: u64);
 
 /// Set the value to a 64-bit float.
 ///
@@ -67,7 +67,7 @@ pub type DynSetU64Fn = unsafe fn(dst: PtrUninit<'_>, value: u64);
 /// `dst` must point to uninitialized memory of the correct size and alignment.
 /// After this call, `dst` is fully initialized.
 /// Returns `false` if the value is not representable (e.g., NaN/Infinity when not supported).
-pub type DynSetF64Fn = unsafe fn(dst: PtrUninit<'_>, value: f64) -> bool;
+pub type DynSetF64Fn = unsafe fn(dst: PtrUninit, value: f64) -> bool;
 
 /// Set the value to a string.
 ///
@@ -75,7 +75,7 @@ pub type DynSetF64Fn = unsafe fn(dst: PtrUninit<'_>, value: f64) -> bool;
 ///
 /// `dst` must point to uninitialized memory of the correct size and alignment.
 /// After this call, `dst` is fully initialized.
-pub type DynSetStrFn = unsafe fn(dst: PtrUninit<'_>, value: &str);
+pub type DynSetStrFn = unsafe fn(dst: PtrUninit, value: &str);
 
 /// Set the value to bytes.
 ///
@@ -83,7 +83,7 @@ pub type DynSetStrFn = unsafe fn(dst: PtrUninit<'_>, value: &str);
 ///
 /// `dst` must point to uninitialized memory of the correct size and alignment.
 /// After this call, `dst` is fully initialized.
-pub type DynSetBytesFn = unsafe fn(dst: PtrUninit<'_>, value: &[u8]);
+pub type DynSetBytesFn = unsafe fn(dst: PtrUninit, value: &[u8]);
 
 /// The kind of datetime value (for dynamic value datetime support).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,7 +108,7 @@ pub enum DynDateTimeKind {
 /// `dst` must point to uninitialized memory of the correct size and alignment.
 /// After this call, `dst` is fully initialized.
 pub type DynSetDateTimeFn = unsafe fn(
-    dst: PtrUninit<'_>,
+    dst: PtrUninit,
     year: i32,
     month: u8,
     day: u8,
@@ -127,7 +127,7 @@ pub type DynSetDateTimeFn = unsafe fn(
 ///
 /// `value` must point to an initialized dynamic value.
 pub type DynGetDateTimeFn =
-    unsafe fn(value: PtrConst<'_>) -> Option<(i32, u8, u8, u8, u8, u8, u32, DynDateTimeKind)>;
+    unsafe fn(value: PtrConst) -> Option<(i32, u8, u8, u8, u8, u8, u32, DynDateTimeKind)>;
 
 // ============================================================================
 // Array operations
@@ -139,7 +139,7 @@ pub type DynGetDateTimeFn =
 ///
 /// `dst` must point to uninitialized memory of the correct size and alignment.
 /// After this call, `dst` is initialized as an empty array.
-pub type DynBeginArrayFn = unsafe fn(dst: PtrUninit<'_>);
+pub type DynBeginArrayFn = unsafe fn(dst: PtrUninit);
 
 /// Push an element to the array.
 ///
@@ -149,14 +149,14 @@ pub type DynBeginArrayFn = unsafe fn(dst: PtrUninit<'_>);
 ///
 /// `array` must point to an initialized dynamic value that is an array.
 /// `element` must point to an initialized dynamic value to push.
-pub type DynPushArrayElementFn = unsafe fn(array: PtrMut<'_>, element: PtrMut<'_>);
+pub type DynPushArrayElementFn = unsafe fn(array: PtrMut, element: PtrMut);
 
 /// Finalize the array (optional, for shrinking capacity etc.).
 ///
 /// # Safety
 ///
 /// `array` must point to an initialized dynamic value that is an array.
-pub type DynEndArrayFn = unsafe fn(array: PtrMut<'_>);
+pub type DynEndArrayFn = unsafe fn(array: PtrMut);
 
 // ============================================================================
 // Object operations
@@ -168,7 +168,7 @@ pub type DynEndArrayFn = unsafe fn(array: PtrMut<'_>);
 ///
 /// `dst` must point to uninitialized memory of the correct size and alignment.
 /// After this call, `dst` is initialized as an empty object.
-pub type DynBeginObjectFn = unsafe fn(dst: PtrUninit<'_>);
+pub type DynBeginObjectFn = unsafe fn(dst: PtrUninit);
 
 /// Insert a key-value pair into the object.
 ///
@@ -178,14 +178,14 @@ pub type DynBeginObjectFn = unsafe fn(dst: PtrUninit<'_>);
 ///
 /// `object` must point to an initialized dynamic value that is an object.
 /// `value` must point to an initialized dynamic value to insert.
-pub type DynInsertObjectEntryFn = unsafe fn(object: PtrMut<'_>, key: &str, value: PtrMut<'_>);
+pub type DynInsertObjectEntryFn = unsafe fn(object: PtrMut, key: &str, value: PtrMut);
 
 /// Finalize the object (optional, for shrinking capacity etc.).
 ///
 /// # Safety
 ///
 /// `object` must point to an initialized dynamic value that is an object.
-pub type DynEndObjectFn = unsafe fn(object: PtrMut<'_>);
+pub type DynEndObjectFn = unsafe fn(object: PtrMut);
 
 // ============================================================================
 // Read operations (for Peek / serialization)
@@ -221,35 +221,35 @@ pub enum DynValueKind {
 /// # Safety
 ///
 /// `value` must point to an initialized dynamic value.
-pub type DynGetKindFn = unsafe fn(value: PtrConst<'_>) -> DynValueKind;
+pub type DynGetKindFn = unsafe fn(value: PtrConst) -> DynValueKind;
 
 /// Get a boolean value. Returns None if not a bool.
 ///
 /// # Safety
 ///
 /// `value` must point to an initialized dynamic value.
-pub type DynGetBoolFn = unsafe fn(value: PtrConst<'_>) -> Option<bool>;
+pub type DynGetBoolFn = unsafe fn(value: PtrConst) -> Option<bool>;
 
 /// Get a signed 64-bit integer value. Returns None if not representable as i64.
 ///
 /// # Safety
 ///
 /// `value` must point to an initialized dynamic value.
-pub type DynGetI64Fn = unsafe fn(value: PtrConst<'_>) -> Option<i64>;
+pub type DynGetI64Fn = unsafe fn(value: PtrConst) -> Option<i64>;
 
 /// Get an unsigned 64-bit integer value. Returns None if not representable as u64.
 ///
 /// # Safety
 ///
 /// `value` must point to an initialized dynamic value.
-pub type DynGetU64Fn = unsafe fn(value: PtrConst<'_>) -> Option<u64>;
+pub type DynGetU64Fn = unsafe fn(value: PtrConst) -> Option<u64>;
 
 /// Get a 64-bit float value. Returns None if not a number.
 ///
 /// # Safety
 ///
 /// `value` must point to an initialized dynamic value.
-pub type DynGetF64Fn = unsafe fn(value: PtrConst<'_>) -> Option<f64>;
+pub type DynGetF64Fn = unsafe fn(value: PtrConst) -> Option<f64>;
 
 /// Get a string reference. Returns None if not a string.
 ///
@@ -257,7 +257,7 @@ pub type DynGetF64Fn = unsafe fn(value: PtrConst<'_>) -> Option<f64>;
 ///
 /// `value` must point to an initialized dynamic value.
 /// The returned reference is valid for the lifetime of the value.
-pub type DynGetStrFn = for<'a> unsafe fn(value: PtrConst<'a>) -> Option<&'a str>;
+pub type DynGetStrFn = unsafe fn(value: PtrConst) -> Option<&'static str>;
 
 /// Get a bytes reference. Returns None if not bytes.
 ///
@@ -265,28 +265,28 @@ pub type DynGetStrFn = for<'a> unsafe fn(value: PtrConst<'a>) -> Option<&'a str>
 ///
 /// `value` must point to an initialized dynamic value.
 /// The returned reference is valid for the lifetime of the value.
-pub type DynGetBytesFn = for<'a> unsafe fn(value: PtrConst<'a>) -> Option<&'a [u8]>;
+pub type DynGetBytesFn = unsafe fn(value: PtrConst) -> Option<&'static [u8]>;
 
 /// Get the length of an array. Returns None if not an array.
 ///
 /// # Safety
 ///
 /// `value` must point to an initialized dynamic value.
-pub type DynArrayLenFn = unsafe fn(value: PtrConst<'_>) -> Option<usize>;
+pub type DynArrayLenFn = unsafe fn(value: PtrConst) -> Option<usize>;
 
 /// Get an element from an array by index. Returns None if not an array or index out of bounds.
 ///
 /// # Safety
 ///
 /// `value` must point to an initialized dynamic value.
-pub type DynArrayGetFn = unsafe fn(value: PtrConst<'_>, index: usize) -> Option<PtrConst<'_>>;
+pub type DynArrayGetFn = unsafe fn(value: PtrConst, index: usize) -> Option<PtrConst>;
 
 /// Get the length of an object. Returns None if not an object.
 ///
 /// # Safety
 ///
 /// `value` must point to an initialized dynamic value.
-pub type DynObjectLenFn = unsafe fn(value: PtrConst<'_>) -> Option<usize>;
+pub type DynObjectLenFn = unsafe fn(value: PtrConst) -> Option<usize>;
 
 /// Get a key-value pair from an object by index. Returns None if not an object or index out of bounds.
 ///
@@ -294,14 +294,14 @@ pub type DynObjectLenFn = unsafe fn(value: PtrConst<'_>) -> Option<usize>;
 ///
 /// `value` must point to an initialized dynamic value.
 pub type DynObjectGetEntryFn =
-    for<'a> unsafe fn(value: PtrConst<'a>, index: usize) -> Option<(&'a str, PtrConst<'a>)>;
+    unsafe fn(value: PtrConst, index: usize) -> Option<(&'static str, PtrConst)>;
 
 /// Get a value from an object by key. Returns None if not an object or key not found.
 ///
 /// # Safety
 ///
 /// `value` must point to an initialized dynamic value.
-pub type DynObjectGetFn = for<'a> unsafe fn(value: PtrConst<'a>, key: &str) -> Option<PtrConst<'a>>;
+pub type DynObjectGetFn = for<'a> unsafe fn(value: PtrConst, key: &str) -> Option<PtrConst>;
 
 /// Get a mutable reference to a value from an object by key.
 /// Returns None if not an object or key not found.
@@ -312,7 +312,7 @@ pub type DynObjectGetFn = for<'a> unsafe fn(value: PtrConst<'a>, key: &str) -> O
 /// # Safety
 ///
 /// `value` must point to an initialized dynamic value that is an object.
-pub type DynObjectGetMutFn = for<'a> unsafe fn(value: PtrMut<'a>, key: &str) -> Option<PtrMut<'a>>;
+pub type DynObjectGetMutFn = for<'a> unsafe fn(value: PtrMut, key: &str) -> Option<PtrMut>;
 
 // ============================================================================
 // VTable
