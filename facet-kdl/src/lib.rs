@@ -31,6 +31,7 @@ pub use self::axum::KdlRejection;
 // After importing `use facet_kdl as kdl;`, users can write:
 //   #[facet(kdl::child)]
 //   #[facet(kdl::children)]
+//   #[facet(kdl::children = "custom_name")]
 //   #[facet(kdl::property)]
 //   #[facet(kdl::argument)]
 //   #[facet(kdl::arguments)]
@@ -47,8 +48,12 @@ facet::define_attr_grammar! {
 
     /// KDL attribute types for field and container configuration.
     pub enum Attr {
-        /// Marks a field as a single KDL child node
-        Child,
+        /// Marks a field as a single KDL child node.
+        ///
+        /// Can optionally specify a custom node name to match:
+        /// - `#[facet(kdl::child)]` - matches by field name
+        /// - `#[facet(kdl::child = "custom")]` - matches nodes named "custom"
+        Child(Option<&'static str>),
         /// Marks a field as collecting multiple KDL children into a Vec, HashMap, or Set.
         ///
         /// When a struct has a single `#[facet(kdl::children)]` field, all child nodes
@@ -65,9 +70,9 @@ facet::define_attr_grammar! {
         /// - `ies` ending: `dependency` → `dependencies`
         /// - `es` ending: `box` → `boxes`
         ///
-        /// To override automatic singularization, use `node_name`:
-        /// - `#[facet(kdl::children, kdl::node_name = "kiddo")]` matches nodes named `kiddo`
-        Children,
+        /// To override automatic singularization, specify a custom node name:
+        /// - `#[facet(kdl::children = "kiddo")]` matches nodes named `kiddo`
+        Children(Option<&'static str>),
         /// Marks a field as a KDL property (key=value)
         Property,
         /// Marks a field as a single KDL positional argument
@@ -81,16 +86,10 @@ facet::define_attr_grammar! {
         /// ```ignore
         /// #[derive(Facet)]
         /// struct Node {
-        ///     #[facet(kdl::name)]
+        ///     #[facet(kdl::node_name)]
         ///     name: String,
         /// }
         /// ```
-        Name,
-        /// Override the expected node name for matching children in `kdl::children` fields.
-        /// By default, nodes are matched by singularizing the field name.
-        /// Use this alongside `kdl::children` to specify a custom node name.
-        ///
-        /// Example: `#[facet(kdl::children, kdl::node_name = "kiddo")]`
-        NodeName(&'static str),
+        NodeName,
     }
 }

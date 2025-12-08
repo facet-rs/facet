@@ -469,16 +469,16 @@ fn multiple_children_fields_deny_unknown() {
     );
 }
 
-/// Test custom node_name override for kdl::children
+/// Test custom node name override for kdl::children
 /// This allows using node names that don't follow standard singular/plural patterns
 #[test]
 fn multiple_children_fields_custom_node_name() {
     #[derive(Facet, Debug)]
     struct Family {
-        #[facet(kdl::children, kdl::node_name = "kiddo", default)]
+        #[facet(kdl::children = "kiddo", default)]
         children: Vec<Child>,
 
-        #[facet(kdl::children, kdl::node_name = "grownup", default)]
+        #[facet(kdl::children = "grownup", default)]
         adults: Vec<Adult>,
     }
 
@@ -525,7 +525,7 @@ fn multiple_children_fields_custom_node_name() {
     );
 }
 
-/// Test mixing custom node_name with automatic singularization
+/// Test mixing custom node name with automatic singularization
 #[test]
 fn multiple_children_fields_mixed_node_name() {
     #[derive(Facet, Debug)]
@@ -535,7 +535,7 @@ fn multiple_children_fields_mixed_node_name() {
         dependencies: Vec<Dependency>,
 
         // Uses custom node name
-        #[facet(kdl::children, kdl::node_name = "extra", default)]
+        #[facet(kdl::children = "extra", default)]
         extras: Vec<Extra>,
     }
 
@@ -580,4 +580,61 @@ fn multiple_children_fields_mixed_node_name() {
             value: "debug-mode".to_string()
         }
     );
+}
+
+/// Test that custom node names round-trip correctly through serialization
+#[test]
+fn custom_node_name_round_trip() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Family {
+        #[facet(kdl::children = "kiddo", default)]
+        children: Vec<Child>,
+
+        #[facet(kdl::children = "grownup", default)]
+        adults: Vec<Adult>,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Child {
+        #[facet(kdl::argument)]
+        name: String,
+    }
+
+    #[derive(Facet, Debug, PartialEq)]
+    struct Adult {
+        #[facet(kdl::argument)]
+        name: String,
+    }
+
+    let original = Family {
+        children: vec![
+            Child {
+                name: "Alice".to_string(),
+            },
+            Child {
+                name: "Charlie".to_string(),
+            },
+        ],
+        adults: vec![Adult {
+            name: "Bob".to_string(),
+        }],
+    };
+
+    // Serialize
+    let kdl_string = facet_kdl::to_string(&original).unwrap();
+
+    // Verify it uses the custom node names
+    assert!(
+        kdl_string.contains("kiddo"),
+        "Expected 'kiddo' nodes, got:\n{kdl_string}"
+    );
+    assert!(
+        kdl_string.contains("grownup"),
+        "Expected 'grownup' nodes, got:\n{kdl_string}"
+    );
+
+    // Round-trip: deserialize back
+    let deserialized: Family = facet_kdl::from_str(&kdl_string).unwrap();
+
+    assert_eq!(original, deserialized);
 }

@@ -24,7 +24,7 @@ struct KdlAttributes {
     arg: bool,
     #[facet(kdl::arguments)]
     args: Vec<i32>,
-    #[facet(kdl::name)]
+    #[facet(kdl::node_name)]
     name: String,
 }
 

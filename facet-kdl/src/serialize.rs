@@ -5,7 +5,7 @@ use std::io::Write;
 use facet_core::{Facet, Field};
 use facet_reflect::{HasFields, Peek, is_spanned_shape};
 
-use crate::deserialize::KdlFieldExt;
+use crate::deserialize::{KdlChildrenFieldExt, KdlFieldExt};
 use crate::error::{KdlError, KdlErrorKind};
 
 pub(crate) type Result<T> = std::result::Result<T, KdlError>;
@@ -197,17 +197,42 @@ impl<W: Write> KdlSerializer<W> {
 
     fn serialize_children_field<'mem, 'facet>(
         &mut self,
-        _field: &Field,
+        field: &Field,
         peek: Peek<'mem, 'facet>,
     ) -> Result<()> {
         let list_peek = peek
             .into_list()
             .map_err(|_| KdlErrorKind::SerializeNotList)?;
 
+        // Check if the field has a custom node name override
+        let custom_node_name = field.kdl_children_node_name();
+
         for item_peek in list_peek.iter() {
-            self.serialize_node_from_value(item_peek)?;
+            if let Some(node_name) = custom_node_name {
+                // Use the field-level custom node name
+                self.serialize_node_with_name(node_name, item_peek)?;
+            } else {
+                // Fall back to inferring the node name from the value
+                self.serialize_node_from_value(item_peek)?;
+            }
         }
 
+        Ok(())
+    }
+
+    /// Serialize a node with an explicit node name (used for custom node name overrides)
+    fn serialize_node_with_name<'mem, 'facet>(
+        &mut self,
+        node_name: &str,
+        peek: Peek<'mem, 'facet>,
+    ) -> Result<()> {
+        self.write_indent()?;
+        write!(self.writer, "{}", escape_node_name(node_name))
+            .map_err(|e| KdlErrorKind::Io(e.to_string()))?;
+
+        self.serialize_node_contents(peek)?;
+
+        writeln!(self.writer).map_err(|e| KdlErrorKind::Io(e.to_string()))?;
         Ok(())
     }
 
@@ -288,7 +313,7 @@ impl<W: Write> KdlSerializer<W> {
 
         // First pass: serialize arguments and properties inline
         for (field, field_peek) in enum_peek.fields() {
-            if field.has_attr(Some("kdl"), "name") {
+            if field.has_attr(Some("kdl"), "node_name") {
                 // Skip node_name field - it's used for the node name itself
                 continue;
             }
@@ -342,7 +367,7 @@ impl<W: Write> KdlSerializer<W> {
 
         // First pass: serialize arguments and properties inline
         for (field, field_peek) in struct_peek.fields() {
-            if field.has_attr(Some("kdl"), "name") {
+            if field.has_attr(Some("kdl"), "node_name") {
                 // Skip node_name field - it's used for the node name itself
                 continue;
             }
@@ -606,7 +631,7 @@ impl<W: Write> KdlSerializer<W> {
         type_name: Option<&'static str>,
     ) -> Result<String> {
         for (field, field_peek) in struct_peek.fields() {
-            if field.has_attr(Some("kdl"), "name") {
+            if field.has_attr(Some("kdl"), "node_name") {
                 // Try direct string first
                 if let Some(s) = field_peek.as_str() {
                     return Ok(s.to_string());
