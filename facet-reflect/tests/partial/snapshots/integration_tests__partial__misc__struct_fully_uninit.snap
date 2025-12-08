@@ -1,5 +1,6 @@
 ---
 source: facet-reflect/tests/partial/misc.rs
+assertion_line: 840
 expression: "Partial::alloc::<FooBar>()?.build().unwrap_err()"
 ---
-Value 'FooBar' was not initialized
+Value 'FooBar' was not initialized. If you need to leave values partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred)

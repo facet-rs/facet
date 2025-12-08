@@ -1,5 +1,6 @@
 ---
 source: facet-reflect/tests/partial/tuples.rs
-expression: partial.end().unwrap_err()
+assertion_line: 154
+expression: err
 ---
-Field '(String, i32)::1' was not initialized
+Field '(String, i32)::1' was not initialized. If you need to leave fields partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred)

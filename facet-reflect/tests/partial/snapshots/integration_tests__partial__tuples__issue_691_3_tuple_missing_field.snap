@@ -1,5 +1,6 @@
 ---
 source: facet-reflect/tests/partial/tuples.rs
+assertion_line: 137
 expression: partial.build().unwrap_err()
 ---
-Field '(String, i32, bool)::2' was not initialized
+Field '(String, i32, bool)::2' was not initialized. If you need to leave fields partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred)

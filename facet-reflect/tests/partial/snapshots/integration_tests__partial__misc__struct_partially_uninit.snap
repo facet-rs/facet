@@ -1,5 +1,6 @@
 ---
 source: facet-reflect/tests/partial/misc.rs
+assertion_line: 853
 expression: "partial.set_field(\"foo\", 42_u64)?.build().unwrap_err()"
 ---
-Field 'FooBar::bar' was not initialized
+Field 'FooBar::bar' was not initialized. If you need to leave fields partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred)
