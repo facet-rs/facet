@@ -9,6 +9,7 @@ pub mod header;
 pub mod frame;
 pub mod error;
 pub mod codec;
+pub mod control;
 pub mod channel;
 pub mod session;
 pub mod fault;

@@ -3,14 +3,14 @@
 use std::sync::atomic::{AtomicU32, AtomicU64};
 
 /// Magic number for segment validation
-pub(crate) const MAGIC: u64 = u64::from_le_bytes(*b"RAPACE2\0");
+pub const MAGIC: u64 = u64::from_le_bytes(*b"RAPACE2\0");
 
 /// Size of inline payload in descriptor
 pub const INLINE_PAYLOAD_SIZE: usize = 24;
 
 /// Segment header (64 bytes, cache-line aligned)
 #[repr(C, align(64))]
-pub(crate) struct SegmentHeader {
+pub struct SegmentHeader {
     pub magic: u64,
     pub version: u32,
     pub flags: u32,
@@ -44,23 +44,23 @@ pub struct MsgDescHot {
 
 /// Descriptor ring header
 #[repr(C, align(64))]
-pub(crate) struct DescRingHeader {
+pub struct DescRingHeader {
     // Producer publication index (cache-line aligned)
     pub visible_head: AtomicU64,
-    _pad1: [u8; 56],
+    pub _pad1: [u8; 56],
 
     // Consumer side (separate cache line)
     pub tail: AtomicU64,
-    _pad2: [u8; 56],
+    pub _pad2: [u8; 56],
 
     // Ring configuration
     pub capacity: u32,
-    _pad3: [u8; 60],
+    pub _pad3: [u8; 60],
 }
 
 /// Slot metadata for data segment
 #[repr(C)]
-pub(crate) struct SlotMeta {
+pub struct SlotMeta {
     pub generation: AtomicU32,
     pub state: AtomicU32,
 }

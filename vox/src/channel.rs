@@ -1,8 +1,11 @@
 // src/channel.rs
 
 use std::marker::PhantomData;
-use crate::types::{ChannelId, MethodId};
+use std::sync::Arc;
+use crate::types::{ChannelId, MethodId, MsgId, ByteLen};
 use crate::flow::ChannelFlowSender;
+use crate::frame::{FrameFlags};
+use tokio::sync::mpsc;
 
 /// Typestate marker for an open channel (both directions active).
 ///
@@ -52,6 +55,7 @@ pub struct Channel<State> {
     method_id: MethodId,
     flow: ChannelFlowSender,
     stats: ChannelStats,
+    inner: Option<Arc<tokio::sync::Mutex<ChannelInner>>>,
     _state: PhantomData<State>,
 }
 
@@ -107,20 +111,70 @@ pub struct ChannelStats {
     pub flow_control_stalls: u64,
 }
 
+/// Internal channel state shared between send/recv operations.
+/// This will be connected to the session layer for actual frame transport.
+struct ChannelInner {
+    /// Sender for outbound frames (frames we're sending to the peer).
+    /// Connected to the session's outbound frame processing.
+    outbound_tx: mpsc::UnboundedSender<OutboundFrame>,
+    /// Receiver for inbound frames (frames we're receiving from the peer).
+    /// Fed by the session's inbound frame dispatcher.
+    inbound_rx: mpsc::UnboundedReceiver<Frame>,
+    /// Message ID counter for building frames.
+    next_msg_id: std::sync::atomic::AtomicU64,
+}
+
+/// An outbound frame ready to be sent through the session layer.
+/// This is a placeholder - the session layer will convert this to actual wire frames.
+#[derive(Debug)]
+pub struct OutboundFrame {
+    pub channel_id: ChannelId,
+    pub method_id: MethodId,
+    pub msg_id: MsgId,
+    pub data: Vec<u8>,
+    pub flags: FrameFlags,
+}
+
+impl ChannelInner {
+    fn new() -> (Self, mpsc::UnboundedSender<Frame>, mpsc::UnboundedReceiver<OutboundFrame>) {
+        let (outbound_tx, outbound_rx) = mpsc::unbounded_channel();
+        let (inbound_tx, inbound_rx) = mpsc::unbounded_channel();
+
+        (
+            ChannelInner {
+                outbound_tx,
+                inbound_rx,
+                next_msg_id: std::sync::atomic::AtomicU64::new(1),
+            },
+            inbound_tx,
+            outbound_rx,
+        )
+    }
+
+    fn next_msg_id(&self) -> MsgId {
+        let id = self.next_msg_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        MsgId::new(id)
+    }
+}
+
 // === Open state: bidirectional I/O ===
 
 impl Channel<Open> {
     /// Create a new open channel.
     ///
     /// This is an internal constructor; channels are typically opened via the session API.
-    pub(crate) fn new(id: ChannelId, method_id: MethodId, initial_credits: u32) -> Self {
-        Channel {
+    /// Returns the channel along with the inbound sender and outbound receiver for session wiring.
+    pub(crate) fn new(id: ChannelId, method_id: MethodId, initial_credits: u32) -> (Self, mpsc::UnboundedSender<Frame>, mpsc::UnboundedReceiver<OutboundFrame>) {
+        let (inner, inbound_tx, outbound_rx) = ChannelInner::new();
+        let channel = Channel {
             id,
             method_id,
             flow: ChannelFlowSender::new(initial_credits),
             stats: ChannelStats::default(),
+            inner: Some(Arc::new(tokio::sync::Mutex::new(inner))),
             _state: PhantomData,
-        }
+        };
+        (channel, inbound_tx, outbound_rx)
     }
 
     /// Send data on this channel.
@@ -128,46 +182,120 @@ impl Channel<Open> {
     /// This method will wait for sufficient flow control credits before sending.
     /// Returns an error if the channel is closed or credits cannot be acquired.
     pub async fn send(&mut self, data: &[u8]) -> Result<(), SendError> {
-        // TODO: implement actual send logic
-        // 1. Acquire credits from flow controller
-        // 2. Allocate payload slot or use inline
-        // 3. Build frame descriptor
-        // 4. Enqueue to ring
-        // 5. Update stats
-        // 6. Ring doorbell
-        let _ = data;
-        todo!("send will be wired up when session.rs is complete")
+        // 1. Check if we have enough credits
+        let data_len = data.len() as u32;
+        let byte_len = ByteLen::new(data_len, u32::MAX).ok_or(SendError::PayloadTooLarge)?;
+
+        // Try to acquire credits (non-blocking for now, in future could wait)
+        let permit = self.flow.try_acquire(byte_len)
+            .map_err(|_| SendError::InsufficientCredits)?;
+
+        // 2. Get the inner state
+        let inner = self.inner.as_ref().ok_or(SendError::ChannelClosed)?;
+        let inner_guard = inner.lock().await;
+
+        // 3. Build and send the frame
+        let msg_id = inner_guard.next_msg_id();
+        let frame = OutboundFrame {
+            channel_id: self.id,
+            method_id: self.method_id,
+            msg_id,
+            data: data.to_vec(),
+            flags: FrameFlags::DATA,
+        };
+
+        inner_guard.outbound_tx.send(frame)
+            .map_err(|_| SendError::SessionClosed)?;
+
+        // 4. Update stats
+        self.stats.bytes_sent += data_len as u64;
+        self.stats.messages_sent += 1;
+
+        // 5. Consume the credits (data was sent successfully)
+        permit.consume();
+
+        Ok(())
     }
 
     /// Send data and immediately half-close the send side (set EOS flag).
     ///
     /// After this call, the channel transitions to `HalfClosedLocal` and cannot
     /// send more data, but can still receive data from the peer.
-    pub fn send_and_close(self, data: &[u8]) -> Channel<HalfClosedLocal> {
-        // TODO: implement send + EOS
-        let _ = data;
-        Channel {
+    pub async fn send_and_close(mut self, data: &[u8]) -> Result<Channel<HalfClosedLocal>, SendError> {
+        // Similar to send, but with EOS flag
+        let data_len = data.len() as u32;
+        let byte_len = ByteLen::new(data_len, u32::MAX).ok_or(SendError::PayloadTooLarge)?;
+
+        let permit = self.flow.try_acquire(byte_len)
+            .map_err(|_| SendError::InsufficientCredits)?;
+
+        let inner = self.inner.as_ref().ok_or(SendError::ChannelClosed)?;
+        let inner_guard = inner.lock().await;
+
+        let msg_id = inner_guard.next_msg_id();
+        let frame = OutboundFrame {
+            channel_id: self.id,
+            method_id: self.method_id,
+            msg_id,
+            data: data.to_vec(),
+            flags: FrameFlags::DATA | FrameFlags::EOS,
+        };
+
+        inner_guard.outbound_tx.send(frame)
+            .map_err(|_| SendError::SessionClosed)?;
+
+        self.stats.bytes_sent += data_len as u64;
+        self.stats.messages_sent += 1;
+
+        permit.consume();
+
+        // Drop the guard before moving self.inner
+        drop(inner_guard);
+
+        // Transition to HalfClosedLocal
+        Ok(Channel {
             id: self.id,
             method_id: self.method_id,
             flow: self.flow,
             stats: self.stats,
+            inner: self.inner,
             _state: PhantomData,
-        }
+        })
     }
 
     /// Half-close the send side without sending data (just send EOS).
     ///
     /// Transitions the channel to `HalfClosedLocal`. The channel can still receive
     /// data from the peer.
-    pub fn close_send(self) -> Channel<HalfClosedLocal> {
-        // TODO: send EOS frame
-        Channel {
+    pub async fn close_send(self) -> Result<Channel<HalfClosedLocal>, SendError> {
+        // Send an empty frame with EOS flag
+        let inner = self.inner.as_ref().ok_or(SendError::ChannelClosed)?;
+        let inner_guard = inner.lock().await;
+
+        let msg_id = inner_guard.next_msg_id();
+        let frame = OutboundFrame {
+            channel_id: self.id,
+            method_id: self.method_id,
+            msg_id,
+            data: Vec::new(),
+            flags: FrameFlags::DATA | FrameFlags::EOS,
+        };
+
+        inner_guard.outbound_tx.send(frame)
+            .map_err(|_| SendError::SessionClosed)?;
+
+        // Drop the guard before moving self.inner
+        drop(inner_guard);
+
+        // Transition to HalfClosedLocal
+        Ok(Channel {
             id: self.id,
             method_id: self.method_id,
             flow: self.flow,
             stats: self.stats,
+            inner: self.inner,
             _state: PhantomData,
-        }
+        })
     }
 
     /// Receive data from the peer.
@@ -176,9 +304,17 @@ impl Channel<Open> {
     /// data will be received. In that case, the channel should transition to
     /// `HalfClosedRemote` via internal session handling.
     pub async fn recv(&mut self) -> Option<Frame> {
-        // TODO: implement actual receive logic
-        // This will be wired up through the session's channel dispatch
-        todo!("recv will be wired up when session.rs is complete")
+        let inner = self.inner.as_ref()?;
+        let mut inner_guard = inner.lock().await;
+
+        // Receive from the inbound channel
+        let frame = inner_guard.inbound_rx.recv().await?;
+
+        // Update stats
+        self.stats.bytes_received += frame.data.len() as u64;
+        self.stats.messages_received += 1;
+
+        Some(frame)
     }
 }
 
@@ -191,8 +327,17 @@ impl Channel<HalfClosedLocal> {
     /// Returns `None` when the peer sends EOS, at which point the channel
     /// should transition to `Closed`.
     pub async fn recv(&mut self) -> Option<Frame> {
-        // TODO: implement actual receive logic
-        todo!("recv will be wired up when session.rs is complete")
+        let inner = self.inner.as_ref()?;
+        let mut inner_guard = inner.lock().await;
+
+        // Receive from the inbound channel
+        let frame = inner_guard.inbound_rx.recv().await?;
+
+        // Update stats
+        self.stats.bytes_received += frame.data.len() as u64;
+        self.stats.messages_received += 1;
+
+        Some(frame)
     }
 
     /// Called internally when the peer sends EOS, transitioning to `Closed`.
@@ -205,6 +350,7 @@ impl Channel<HalfClosedLocal> {
             method_id: self.method_id,
             flow: self.flow,
             stats: self.stats,
+            inner: None, // Drop the inner state when closed
             _state: PhantomData,
         }
     }
@@ -218,23 +364,65 @@ impl Channel<HalfClosedRemote> {
     /// The peer has sent EOS and will not send more data, but we can still
     /// send until we close our send side.
     pub async fn send(&mut self, data: &[u8]) -> Result<(), SendError> {
-        // TODO: implement actual send logic
-        let _ = data;
-        todo!("send will be wired up when session.rs is complete")
+        // Same logic as Open::send
+        let data_len = data.len() as u32;
+        let byte_len = ByteLen::new(data_len, u32::MAX).ok_or(SendError::PayloadTooLarge)?;
+
+        let permit = self.flow.try_acquire(byte_len)
+            .map_err(|_| SendError::InsufficientCredits)?;
+
+        let inner = self.inner.as_ref().ok_or(SendError::ChannelClosed)?;
+        let inner_guard = inner.lock().await;
+
+        let msg_id = inner_guard.next_msg_id();
+        let frame = OutboundFrame {
+            channel_id: self.id,
+            method_id: self.method_id,
+            msg_id,
+            data: data.to_vec(),
+            flags: FrameFlags::DATA,
+        };
+
+        inner_guard.outbound_tx.send(frame)
+            .map_err(|_| SendError::SessionClosed)?;
+
+        self.stats.bytes_sent += data_len as u64;
+        self.stats.messages_sent += 1;
+
+        permit.consume();
+
+        Ok(())
     }
 
     /// Close the send side, transitioning to `Closed`.
     ///
     /// After this call, both sides have sent EOS and the channel is fully closed.
-    pub fn close_send(self) -> Channel<Closed> {
-        // TODO: send EOS frame
-        Channel {
+    pub async fn close_send(self) -> Result<Channel<Closed>, SendError> {
+        // Send an empty frame with EOS flag
+        let inner = self.inner.as_ref().ok_or(SendError::ChannelClosed)?;
+        let inner_guard = inner.lock().await;
+
+        let msg_id = inner_guard.next_msg_id();
+        let frame = OutboundFrame {
+            channel_id: self.id,
+            method_id: self.method_id,
+            msg_id,
+            data: Vec::new(),
+            flags: FrameFlags::DATA | FrameFlags::EOS,
+        };
+
+        inner_guard.outbound_tx.send(frame)
+            .map_err(|_| SendError::SessionClosed)?;
+
+        // Transition to Closed
+        Ok(Channel {
             id: self.id,
             method_id: self.method_id,
             flow: self.flow,
             stats: self.stats,
+            inner: None, // Drop the inner state when closed
             _state: PhantomData,
-        }
+        })
     }
 }
 
@@ -259,13 +447,29 @@ impl<S> Channel<S> {
     /// but there may be in-flight frames that arrive after cancellation.
     ///
     /// Cancellation is idempotent and can be called from any state.
-    pub fn cancel(self) -> Channel<Closed> {
-        // TODO: send CANCEL frame
+    pub async fn cancel(self) -> Channel<Closed> {
+        // Try to send a CANCEL frame if the channel is still open
+        if let Some(inner) = self.inner.as_ref() {
+            let inner_guard = inner.lock().await;
+            let msg_id = inner_guard.next_msg_id();
+            let frame = OutboundFrame {
+                channel_id: self.id,
+                method_id: self.method_id,
+                msg_id,
+                data: Vec::new(),
+                flags: FrameFlags::CANCEL,
+            };
+
+            // Best effort - ignore errors since we're cancelling anyway
+            let _ = inner_guard.outbound_tx.send(frame);
+        }
+
         Channel {
             id: self.id,
             method_id: self.method_id,
             flow: self.flow,
             stats: self.stats,
+            inner: None, // Drop the inner state when closed
             _state: PhantomData,
         }
     }
@@ -301,28 +505,28 @@ mod tests {
     ///
     /// This test primarily exists to verify the typestate API - if this compiles,
     /// the type system is enforcing our state machine correctly.
-    #[test]
-    fn typestate_transitions_compile() {
+    #[tokio::test]
+    async fn typestate_transitions_compile() {
         let channel_id = ChannelId::new(1).unwrap();
         let method_id = MethodId::new(42);
 
         // Open -> HalfClosedLocal
-        let channel: Channel<Open> = Channel::new(channel_id, method_id, 1024);
-        let channel: Channel<HalfClosedLocal> = channel.close_send();
+        let (channel, _inbound_tx, _outbound_rx): (Channel<Open>, _, _) = Channel::new(channel_id, method_id, 1024);
+        let channel: Channel<HalfClosedLocal> = channel.close_send().await.unwrap();
 
         // HalfClosedLocal -> Closed (via peer_closed)
         let channel: Channel<Closed> = channel.peer_closed();
         let _ = channel.stats();
     }
 
-    #[test]
-    fn open_to_half_closed_remote_via_cancel() {
+    #[tokio::test]
+    async fn open_to_half_closed_remote_via_cancel() {
         let channel_id = ChannelId::new(2).unwrap();
         let method_id = MethodId::new(99);
 
-        let channel: Channel<Open> = Channel::new(channel_id, method_id, 1024);
+        let (channel, _inbound_tx, _outbound_rx): (Channel<Open>, _, _) = Channel::new(channel_id, method_id, 1024);
         // Can cancel from any state
-        let _closed: Channel<Closed> = channel.cancel();
+        let _closed: Channel<Closed> = channel.cancel().await;
     }
 
     #[test]
@@ -330,7 +534,7 @@ mod tests {
         let channel_id = ChannelId::new(3).unwrap();
         let method_id = MethodId::new(123);
 
-        let channel: Channel<Open> = Channel::new(channel_id, method_id, 1024);
+        let (channel, _inbound_tx, _outbound_rx): (Channel<Open>, _, _) = Channel::new(channel_id, method_id, 1024);
 
         assert_eq!(channel.id(), channel_id);
         assert_eq!(channel.method_id(), method_id);
@@ -342,7 +546,7 @@ mod tests {
         let channel_id = ChannelId::new(4).unwrap();
         let method_id = MethodId::new(456);
 
-        let channel: Channel<Open> = Channel::new(channel_id, method_id, 1024);
+        let (channel, _inbound_tx, _outbound_rx): (Channel<Open>, _, _) = Channel::new(channel_id, method_id, 1024);
         let stats = channel.current_stats();
 
         assert_eq!(stats.bytes_sent, 0);
@@ -353,17 +557,90 @@ mod tests {
 
     /// This test demonstrates what CANNOT compile - uncomment to verify type safety
     #[allow(dead_code)]
-    fn typestate_prevents_invalid_operations() {
+    async fn typestate_prevents_invalid_operations() {
         let channel_id = ChannelId::new(5).unwrap();
         let method_id = MethodId::new(789);
 
-        let channel: Channel<HalfClosedLocal> = Channel::new(channel_id, method_id, 1024).close_send();
+        let (channel, _inbound_tx, _outbound_rx): (Channel<Open>, _, _) = Channel::new(channel_id, method_id, 1024);
+        let channel: Channel<HalfClosedLocal> = channel.close_send().await.unwrap();
 
         // These should NOT compile:
         // channel.send(&[1, 2, 3]).await; // Error: HalfClosedLocal has no send method
         // channel.close_send(); // Error: HalfClosedLocal has no close_send method
 
         // This SHOULD compile:
-        let _ = channel.cancel();
+        let _ = channel.cancel().await;
+    }
+
+    #[tokio::test]
+    async fn test_send_and_receive() {
+        let channel_id = ChannelId::new(10).unwrap();
+        let method_id = MethodId::new(42);
+
+        // Create channel
+        let (mut channel, inbound_tx, mut outbound_rx): (Channel<Open>, _, _) =
+            Channel::new(channel_id, method_id, 1024);
+
+        // Send data
+        let data = b"Hello, World!";
+        channel.send(data).await.unwrap();
+
+        // Receive the outbound frame
+        let outbound_frame = outbound_rx.recv().await.unwrap();
+        assert_eq!(outbound_frame.data, data);
+        assert_eq!(outbound_frame.channel_id, channel_id);
+        assert_eq!(outbound_frame.method_id, method_id);
+
+        // Send inbound frame
+        let inbound_frame = Frame {
+            data: b"Response".to_vec(),
+            is_eos: false,
+            is_error: false,
+        };
+        inbound_tx.send(inbound_frame).unwrap();
+
+        // Receive the inbound frame
+        let received = channel.recv().await.unwrap();
+        assert_eq!(received.data, b"Response");
+
+        // Check stats
+        let stats = channel.current_stats();
+        assert_eq!(stats.bytes_sent, data.len() as u64);
+        assert_eq!(stats.messages_sent, 1);
+        assert_eq!(stats.bytes_received, 8);
+        assert_eq!(stats.messages_received, 1);
+    }
+
+    #[tokio::test]
+    async fn test_close_send_emits_eos() {
+        let channel_id = ChannelId::new(11).unwrap();
+        let method_id = MethodId::new(99);
+
+        let (channel, _inbound_tx, mut outbound_rx): (Channel<Open>, _, _) =
+            Channel::new(channel_id, method_id, 1024);
+
+        // Close the send side
+        let _half_closed = channel.close_send().await.unwrap();
+
+        // Check that an EOS frame was sent
+        let outbound_frame = outbound_rx.recv().await.unwrap();
+        assert!(outbound_frame.flags.contains(FrameFlags::EOS));
+        assert_eq!(outbound_frame.data.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_cancel_emits_cancel_frame() {
+        let channel_id = ChannelId::new(12).unwrap();
+        let method_id = MethodId::new(123);
+
+        let (channel, _inbound_tx, mut outbound_rx): (Channel<Open>, _, _) =
+            Channel::new(channel_id, method_id, 1024);
+
+        // Cancel the channel
+        let _closed = channel.cancel().await;
+
+        // Check that a CANCEL frame was sent
+        let outbound_frame = outbound_rx.recv().await.unwrap();
+        assert!(outbound_frame.flags.contains(FrameFlags::CANCEL));
     }
 }

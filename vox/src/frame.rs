@@ -122,7 +122,7 @@ impl FrameBuilder {
     }
 
     /// Build the final descriptor.
-    pub(crate) fn build(self) -> MsgDescHot {
+    pub fn build(self) -> MsgDescHot {
         self.desc
     }
 }
