@@ -202,10 +202,12 @@ struct MsgDescHot {
 const INLINE_PAYLOAD_SIZE: usize = 24;  // 64 - 40 bytes of header fields
 ```
 
-**Inline payload alignment:** The `inline_payload` field has no alignment guarantees beyond
-`u8` (byte-aligned). Serializers reading from inline payloads **MUST NOT** assume any
-particular alignment. Use `ptr::read_unaligned` or copy to an aligned buffer before
-casting to structured types.
+**Inline payload rules:**
+- The `inline_payload` field has no alignment guarantees beyond `u8` (byte-aligned).
+  Serializers **MUST NOT** assume alignment. Use `ptr::read_unaligned` or copy to an
+  aligned buffer before casting to structured types.
+- When `payload_slot == u32::MAX` (inline mode), `payload_generation` and `payload_offset`
+  MUST be zero and MUST be ignored by receivers. This sanitizes the wire format.
 
 ### Message Descriptor - Cold Path (Observability)
 
@@ -457,18 +459,37 @@ payload = [ MsgHeader ][ body bytes ]
 #[repr(C)]
 struct MsgHeader {
     version: u16,                  // Message format version (see below)
-    header_len: u16,               // Bytes including this header
+    header_len: u16,               // Total header size in bytes (see below)
     encoding: u16,                 // Body encoding (see Encoding enum)
     flags: u16,                    // Compression, etc.
 
     correlation_id: u64,           // Reply-to: msg_id of request
     deadline_ns: u64,              // Absolute deadline (0 = none)
 
-    // Variable-length fields follow:
-    // - metadata (key-value pairs for headers)
-    // - body
+    // Variable-length metadata follows (optional)
 }
+
+const MSG_HEADER_FIXED_SIZE: usize = 24;  // size_of::<MsgHeader>()
 ```
+
+### Header Layout
+
+```
+payload:
+┌────────────────────────────────────────────────────────────┐
+│ MsgHeader (fixed 24 bytes)                                  │
+├────────────────────────────────────────────────────────────┤
+│ Metadata (variable, header_len - 24 bytes)                 │  ← optional
+├────────────────────────────────────────────────────────────┤
+│ Body (payload_len - header_len bytes)                      │
+└────────────────────────────────────────────────────────────┘
+```
+
+**Invariants:**
+- `header_len >= MSG_HEADER_FIXED_SIZE` (24 bytes minimum)
+- `header_len <= payload_len`
+- Metadata lives within `[24..header_len)` (may be empty if `header_len == 24`)
+- Body starts at offset `header_len` within the payload
 
 ### Version Fields
 
@@ -590,12 +611,17 @@ bitflags! {
         const EOS           = 0b00000100;  // End of stream (half-close)
         const CANCEL        = 0b00001000;  // Cancel this channel
         const ERROR         = 0b00010000;  // Error response
-        const HIGH_PRIORITY = 0b00100000;  // Skip normal queue
+        const HIGH_PRIORITY = 0b00100000;  // Priority scheduling hint
         const CREDITS       = 0b01000000;  // Contains credit grant
         const METADATA_ONLY = 0b10000000;  // Headers/trailers, no body
     }
 }
 ```
+
+**HIGH_PRIORITY semantics:** Frames with this flag set SHOULD be processed before
+normal-priority frames when possible. Implementation strategies include separate
+priority queues or front-of-queue insertion. However, HIGH_PRIORITY frames MUST NOT
+starve normal frames indefinitely—implementations SHOULD enforce fairness bounds.
 
 ### Control Frame Payloads
 
@@ -895,7 +921,11 @@ When observability is disabled (`debug_level = 0`), implementations MAY:
 
 ### Telemetry Ring (Optional)
 
-A separate ring for telemetry events, readable by observer processes:
+A separate ring for telemetry events, readable by observer processes.
+
+**Backpressure policy:** When the telemetry ring is full, events MAY be dropped (oldest
+or newest, implementation choice). Telemetry overflow MUST NOT backpressure the data path.
+Implementations SHOULD track `telemetry_events_dropped` for observability.
 
 ```rust
 #[repr(C)]
@@ -1055,6 +1085,7 @@ impl Session {
         // All in-flight descriptors are considered lost.
         // The SPSC ring has no per-slot ownership; we just reset positions.
         self.inbound_ring.reset();  // Sets visible_head = tail = 0
+        // NOTE: See ring reset safety requirements below
 
         // 2. Reclaim all data segment slots
         // With per-direction allocation (sender allocs, receiver frees),
@@ -1081,6 +1112,25 @@ impl Session {
 ownership is implicit: if a slot is IN_FLIGHT in the A→B data segment, peer A allocated
 it and peer B will free it. On crash, the surviving peer can safely reclaim all non-FREE
 slots because the dead peer can no longer reference them.
+
+### Ring Reset Safety
+
+`reset()` MUST only be called when the peer is **confirmed dead** and no other thread
+is concurrently reading/writing the ring. Before reusing the ring after reset,
+implementations MUST issue a full memory fence (`std::sync::atomic::fence(SeqCst)`)
+to ensure all prior writes are visible.
+
+```rust
+impl DescRing {
+    /// Reset ring to empty state. ONLY call after confirming peer death.
+    /// Caller MUST ensure no concurrent access during reset.
+    fn reset(&self) {
+        self.visible_head.store(0, Ordering::Relaxed);
+        self.tail.store(0, Ordering::Relaxed);
+        std::sync::atomic::fence(Ordering::SeqCst);  // Full barrier before reuse
+    }
+}
+```
 
 ## API Surface
 
@@ -1338,7 +1388,14 @@ SHOULD NOT rely solely on the CONTROL flag for correctness.
 | 11 | SET_DEBUG_LEVEL | Either | Change debug level for channel |
 | 12 | INJECT_FAULT | Either | Fault injection control |
 
+**Authoritative source:** This method_id table is the authoritative definition. The
+`ControlPayload` enum in the code is illustrative; implementations MUST match this table.
+
 Data channels use `channel_id > 0` with `method_id` indicating the RPC method.
+
+**Channel ID allocation:** Channel IDs are allocated by the channel initiator (the peer
+sending OPEN_CHANNEL) and must be unique within the session. Implementations SHOULD use
+monotonically increasing IDs. Peers MUST NOT reuse a channel_id while that channel is active.
 
 ## Service Registry Mutability
 
