@@ -31,7 +31,7 @@ rapace-testkit = { path = "crates/rapace-testkit" }
 # External dependencies
 libc = "0.2"
 bitflags = "2"
-tokio = { version = "1", features = ["sync", "rt", "macros"] }
+tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
 paste = "1"
 futures = "0.3"
 pin-project-lite = "0.2"

@@ -155,18 +155,19 @@ A method call flows through all layers:
 Trait → Facet → Encoder → Transport → [wire] → Transport → Decoder → Facet → Trait
 ```
 
-## Prior Art & Acknowledgments
+## The Giants Whose Shoulders We Stand On
 
-rapace stands on the shoulders of:
+rapace draws inspiration and lessons from many projects. This isn't copying—it's standing in a well-lit lineage:
 
-- **gRPC** — status codes, streaming RPC patterns, cancellation semantics
-- **Cap'n Proto** — capability-based zero-copy thinking, arena allocation
-- **D-Bus** — method-id-based RPC over shared transports
-- **LMAX Disruptor** — SPSC ring buffer patterns, cache-line separation
-- **io_uring** — submission/completion ring design inspiration
-- **facet** — reflection without IDLs, the encoding spine
-
-We're not copying — we're standing in a well-lit lineage.
+- **gRPC / HTTP/2** — Streaming RPC, status codes, deadlines, and the basic "service trait ↔ wire method" mental model.
+- **tonic / tower (Rust)** — Ergonomic async service traits and middleware-style layering between "transport" and "RPC semantics".
+- **Cap'n Proto / FlatBuffers** — Schema-driven, zero-copy thinking and the idea of treating messages as structured views over bytes.
+- **ZeroMQ / nanomsg / NNG** — Patterned messaging, separation of transport mechanics from higher-level semantics.
+- **Aeron / Disruptor / SPSC ring literature** — Cache-line-aware descriptor rings, single-producer/single-consumer queues, and careful publication barriers.
+- **Boost.Interprocess / POSIX shared memory patterns** — Practical shared-memory layouts, generation counters, and crash-resilient resource ownership.
+- **Linux I/O stack (io_uring, epoll, eventfd)** — Event-driven, async I/O and doorbell primitives that inspired the SHM + eventfd design.
+- **Tracing / OpenTelemetry ecosystem** — The emphasis on trace/span IDs, structured telemetry, and observability as first-class concerns.
+- **facet & schema-first systems (protobuf, Smithy, etc.)** — Reflection-driven schemas, type shapes, and the idea of using a single schema layer to power encoding, registry, and tooling.
 
 ## License
 

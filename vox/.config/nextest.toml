@@ -1,0 +1,9 @@
+[profile.default]
+# Fail fast - stop on first failure
+fail-fast = true
+
+# Timeout for individual tests (10 seconds should be plenty for unit tests)
+slow-timeout = { period = "5s", terminate-after = 2 }
+
+# Status level
+status-level = "pass"

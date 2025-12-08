@@ -364,4 +364,31 @@ mod conformance_tests {
     async fn error_response() {
         rapace_testkit::run_error_response::<InProcFactory>().await;
     }
+
+    // Session-level tests (semantic enforcement)
+
+    #[tokio::test]
+    async fn session_credit_exhaustion() {
+        rapace_testkit::run_session_credit_exhaustion::<InProcFactory>().await;
+    }
+
+    #[tokio::test]
+    async fn session_cancelled_channel_drop() {
+        rapace_testkit::run_session_cancelled_channel_drop::<InProcFactory>().await;
+    }
+
+    #[tokio::test]
+    async fn session_cancel_control_frame() {
+        rapace_testkit::run_session_cancel_control_frame::<InProcFactory>().await;
+    }
+
+    #[tokio::test]
+    async fn session_grant_credits_control_frame() {
+        rapace_testkit::run_session_grant_credits_control_frame::<InProcFactory>().await;
+    }
+
+    #[tokio::test]
+    async fn session_deadline_check() {
+        rapace_testkit::run_session_deadline_check::<InProcFactory>().await;
+    }
 }

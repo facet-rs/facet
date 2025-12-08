@@ -8,9 +8,9 @@ description = "TCP/Unix socket transport for rapace"
 
 [dependencies]
 rapace-core.workspace = true
-tokio.workspace = true
-futures.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
+parking_lot.workspace = true
 
 [dev-dependencies]
 rapace-testkit.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "net"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "io-util"] }

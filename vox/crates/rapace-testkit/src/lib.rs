@@ -34,6 +34,9 @@ use rapace_core::{
     RpcError, Transport, NO_DEADLINE,
 };
 
+mod session;
+pub use session::Session;
+
 /// Error type for test scenarios.
 #[derive(Debug)]
 pub enum TestError {
@@ -504,6 +507,14 @@ async fn run_deadline_exceeded_inner<F: TransportFactory>() -> Result<(), TestEr
     let client_transport = Arc::new(client_transport);
     let server_transport = Arc::new(server_transport);
 
+    // Initialize the time base and capture current time
+    // This ensures now_ns() is properly initialized before we set an expired deadline
+    let baseline = now_ns();
+    // A small sleep to ensure time advances
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    // The expired deadline is set to the baseline, which is now in the past
+    let expired_deadline = baseline;
+
     // Server checks deadline before dispatch
     let server_handle = tokio::spawn({
         let server_transport = server_transport.clone();
@@ -539,14 +550,6 @@ async fn run_deadline_exceeded_inner<F: TransportFactory>() -> Result<(), TestEr
             ))
         }
     });
-
-    // Client sends a request with an already-expired deadline
-    // Build frame manually since generated client doesn't support deadlines yet
-    // Yield to ensure tokio runtime is running, then use an already-expired deadline
-    tokio::task::yield_now().await;
-    // Use 1ns as the deadline - this is definitely in the past since now_ns() returns
-    // nanoseconds since a static Instant that was created well before this point
-    let expired_deadline = 1;
 
     let request_payload = facet_postcard::to_vec(&(1i32, 2i32)).unwrap();
 
@@ -827,6 +830,322 @@ async fn run_credit_grant_inner<F: TransportFactory>() -> Result<(), TestError> 
         .await
         .map_err(|e| TestError::Setup(format!("server task panicked: {}", e)))?
         .map_err(|e| TestError::Setup(format!("server error: {}", e)))?;
+
+    Ok(())
+}
+
+// ============================================================================
+// Session-level conformance tests
+// ============================================================================
+// These tests exercise Session's enforcement of RPC semantics.
+
+/// Test that Session enforces credit limits on data channels.
+///
+/// When send_credits are exhausted, send_frame should fail with ResourceExhausted.
+pub async fn run_session_credit_exhaustion<F: TransportFactory>() {
+    let result = run_session_credit_exhaustion_inner::<F>().await;
+    if let Err(e) = result {
+        panic!("run_session_credit_exhaustion failed: {}", e);
+    }
+}
+
+async fn run_session_credit_exhaustion_inner<F: TransportFactory>() -> Result<(), TestError> {
+    use session::DEFAULT_INITIAL_CREDITS;
+
+    let (client_transport, _server_transport) = F::connect_pair().await?;
+    let client_transport = Arc::new(client_transport);
+
+    // Wrap transport in Session
+    let session = Session::new(client_transport);
+
+    // Create a data frame that exceeds available credits
+    // Default credits are 64KB, so send a frame larger than that
+    let large_payload = vec![0u8; DEFAULT_INITIAL_CREDITS as usize + 1];
+
+    let mut desc = MsgDescHot::new();
+    desc.msg_id = 1;
+    desc.channel_id = 1; // data channel (not control)
+    desc.method_id = 1;
+    desc.flags = FrameFlags::DATA | FrameFlags::EOS;
+    desc.payload_len = large_payload.len() as u32;
+
+    let frame = Frame::with_payload(desc, large_payload);
+
+    // Should fail with ResourceExhausted
+    let result = session.send_frame(&frame).await;
+
+    match result {
+        Err(RpcError::Status {
+            code: ErrorCode::ResourceExhausted,
+            ..
+        }) => {
+            // Expected
+            Ok(())
+        }
+        Ok(()) => Err(TestError::Assertion(
+            "expected ResourceExhausted error, got success".into(),
+        )),
+        Err(e) => Err(TestError::Assertion(format!(
+            "expected ResourceExhausted, got {:?}",
+            e
+        ))),
+    }
+}
+
+/// Test that Session silently drops frames for cancelled channels.
+pub async fn run_session_cancelled_channel_drop<F: TransportFactory>() {
+    let result = run_session_cancelled_channel_drop_inner::<F>().await;
+    if let Err(e) = result {
+        panic!("run_session_cancelled_channel_drop failed: {}", e);
+    }
+}
+
+async fn run_session_cancelled_channel_drop_inner<F: TransportFactory>() -> Result<(), TestError> {
+    let (client_transport, server_transport) = F::connect_pair().await?;
+    let client_transport = Arc::new(client_transport);
+    let server_transport = Arc::new(server_transport);
+
+    let session = Session::new(client_transport);
+    let channel_id = 42u32;
+
+    // Cancel the channel before sending
+    session.cancel_channel(channel_id);
+
+    // Verify the channel is marked cancelled
+    if !session.is_cancelled(channel_id) {
+        return Err(TestError::Assertion("channel should be cancelled".into()));
+    }
+
+    // Send a frame on the cancelled channel - should succeed (silent drop)
+    let mut desc = MsgDescHot::new();
+    desc.msg_id = 1;
+    desc.channel_id = channel_id;
+    desc.method_id = 1;
+    desc.flags = FrameFlags::DATA | FrameFlags::EOS;
+
+    let frame = Frame::with_inline_payload(desc, b"test").expect("should fit");
+
+    // Should succeed (frame is silently dropped, not sent)
+    session.send_frame(&frame).await?;
+
+    // The server should not receive anything - let's verify by sending on another channel
+    // and checking only that frame arrives
+    let mut desc2 = MsgDescHot::new();
+    desc2.msg_id = 2;
+    desc2.channel_id = 99; // different channel
+    desc2.method_id = 1;
+    desc2.flags = FrameFlags::DATA | FrameFlags::EOS;
+
+    let frame2 = Frame::with_inline_payload(desc2, b"marker").expect("should fit");
+    session.transport().send_frame(&frame2).await?;
+
+    // Server receives only the marker frame
+    let received = server_transport.recv_frame().await?;
+    if received.desc.channel_id != 99 {
+        return Err(TestError::Assertion(format!(
+            "expected channel 99, got {}",
+            received.desc.channel_id
+        )));
+    }
+    if received.payload != b"marker" {
+        return Err(TestError::Assertion("expected marker payload".into()));
+    }
+
+    Ok(())
+}
+
+/// Test that Session processes CANCEL control frames and filters subsequent frames.
+pub async fn run_session_cancel_control_frame<F: TransportFactory>() {
+    let result = run_session_cancel_control_frame_inner::<F>().await;
+    if let Err(e) = result {
+        panic!("run_session_cancel_control_frame failed: {}", e);
+    }
+}
+
+async fn run_session_cancel_control_frame_inner<F: TransportFactory>() -> Result<(), TestError> {
+    let (client_transport, server_transport) = F::connect_pair().await?;
+    let client_transport = Arc::new(client_transport);
+    let server_transport = Arc::new(server_transport);
+
+    let session = Session::new(server_transport);
+    let channel_to_cancel = 42u32;
+
+    // Client sends a CANCEL control frame
+    let cancel_payload = ControlPayload::CancelChannel {
+        channel_id: channel_to_cancel,
+        reason: CancelReason::ClientCancel,
+    };
+    let cancel_bytes = facet_postcard::to_vec(&cancel_payload).unwrap();
+
+    let mut cancel_desc = MsgDescHot::new();
+    cancel_desc.msg_id = 1;
+    cancel_desc.channel_id = 0; // control channel
+    cancel_desc.method_id = control_method::CANCEL_CHANNEL;
+    cancel_desc.flags = FrameFlags::CONTROL | FrameFlags::EOS;
+
+    let cancel_frame = Frame::with_inline_payload(cancel_desc, &cancel_bytes).expect("should fit");
+    client_transport.send_frame(&cancel_frame).await?;
+
+    // Client sends a data frame on the cancelled channel
+    let mut data_desc = MsgDescHot::new();
+    data_desc.msg_id = 2;
+    data_desc.channel_id = channel_to_cancel;
+    data_desc.method_id = 1;
+    data_desc.flags = FrameFlags::DATA | FrameFlags::EOS;
+
+    let data_frame =
+        Frame::with_inline_payload(data_desc, b"dropped").expect("should fit");
+    client_transport.send_frame(&data_frame).await?;
+
+    // Client sends a data frame on a different channel
+    let mut marker_desc = MsgDescHot::new();
+    marker_desc.msg_id = 3;
+    marker_desc.channel_id = 99;
+    marker_desc.method_id = 1;
+    marker_desc.flags = FrameFlags::DATA | FrameFlags::EOS;
+
+    let marker_frame = Frame::with_inline_payload(marker_desc, b"marker").expect("should fit");
+    client_transport.send_frame(&marker_frame).await?;
+
+    // Session receives control frame first (processes it internally)
+    let frame1 = session.recv_frame().await?;
+    if frame1.desc.channel_id != 0 {
+        return Err(TestError::Assertion(
+            "first frame should be control frame".into(),
+        ));
+    }
+
+    // Channel should now be marked cancelled
+    if !session.is_cancelled(channel_to_cancel) {
+        return Err(TestError::Assertion(
+            "channel should be cancelled after control frame".into(),
+        ));
+    }
+
+    // Session should skip the cancelled channel frame and return the marker
+    let frame2 = session.recv_frame().await?;
+    if frame2.desc.channel_id != 99 {
+        return Err(TestError::Assertion(format!(
+            "expected channel 99 (marker), got {}",
+            frame2.desc.channel_id
+        )));
+    }
+    if frame2.payload != b"marker" {
+        return Err(TestError::Assertion("expected marker payload".into()));
+    }
+
+    Ok(())
+}
+
+/// Test that Session processes GRANT_CREDITS control frames.
+pub async fn run_session_grant_credits_control_frame<F: TransportFactory>() {
+    let result = run_session_grant_credits_control_frame_inner::<F>().await;
+    if let Err(e) = result {
+        panic!("run_session_grant_credits_control_frame failed: {}", e);
+    }
+}
+
+async fn run_session_grant_credits_control_frame_inner<F: TransportFactory>(
+) -> Result<(), TestError> {
+    use session::DEFAULT_INITIAL_CREDITS;
+
+    let (client_transport, server_transport) = F::connect_pair().await?;
+    let client_transport = Arc::new(client_transport);
+    let server_transport = Arc::new(server_transport);
+
+    let session = Session::new(client_transport);
+    let channel_id = 1u32;
+
+    // Check initial credits
+    let initial = session.get_credits(channel_id);
+    if initial != DEFAULT_INITIAL_CREDITS {
+        return Err(TestError::Assertion(format!(
+            "expected initial credits {}, got {}",
+            DEFAULT_INITIAL_CREDITS, initial
+        )));
+    }
+
+    // Server sends a GRANT_CREDITS control frame
+    let grant_payload = ControlPayload::GrantCredits {
+        channel_id,
+        bytes: 10000,
+    };
+    let grant_bytes = facet_postcard::to_vec(&grant_payload).unwrap();
+
+    let mut grant_desc = MsgDescHot::new();
+    grant_desc.msg_id = 1;
+    grant_desc.channel_id = 0;
+    grant_desc.method_id = control_method::GRANT_CREDITS;
+    grant_desc.flags = FrameFlags::CONTROL | FrameFlags::CREDITS | FrameFlags::EOS;
+    grant_desc.credit_grant = 10000;
+
+    let grant_frame = Frame::with_inline_payload(grant_desc, &grant_bytes).expect("should fit");
+    server_transport.send_frame(&grant_frame).await?;
+
+    // Session receives and processes the control frame
+    let frame = session.recv_frame().await?;
+    if frame.desc.channel_id != 0 {
+        return Err(TestError::Assertion("expected control frame".into()));
+    }
+
+    // Credits should be updated
+    let updated = session.get_credits(channel_id);
+    let expected = DEFAULT_INITIAL_CREDITS + 10000;
+    if updated != expected {
+        return Err(TestError::Assertion(format!(
+            "expected credits {}, got {}",
+            expected, updated
+        )));
+    }
+
+    Ok(())
+}
+
+/// Test Session deadline checking.
+pub async fn run_session_deadline_check<F: TransportFactory>() {
+    let result = run_session_deadline_check_inner::<F>().await;
+    if let Err(e) = result {
+        panic!("run_session_deadline_check failed: {}", e);
+    }
+}
+
+async fn run_session_deadline_check_inner<F: TransportFactory>() -> Result<(), TestError> {
+    let (client_transport, _server_transport) = F::connect_pair().await?;
+    let client_transport = Arc::new(client_transport);
+
+    let session = Session::new(client_transport);
+
+    // Test 1: No deadline should not be exceeded
+    let mut desc1 = MsgDescHot::new();
+    desc1.deadline_ns = NO_DEADLINE;
+
+    if session.is_deadline_exceeded(&desc1) {
+        return Err(TestError::Assertion(
+            "NO_DEADLINE should not be exceeded".into(),
+        ));
+    }
+
+    // Test 2: Future deadline should not be exceeded
+    let mut desc2 = MsgDescHot::new();
+    desc2.deadline_ns = now_ns() + 10_000_000_000; // 10 seconds in future
+
+    if session.is_deadline_exceeded(&desc2) {
+        return Err(TestError::Assertion(
+            "future deadline should not be exceeded".into(),
+        ));
+    }
+
+    // Test 3: Past deadline should be exceeded
+    // Sleep briefly to ensure time advances
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    let mut desc3 = MsgDescHot::new();
+    desc3.deadline_ns = 1; // 1ns from start, definitely in the past
+
+    if !session.is_deadline_exceeded(&desc3) {
+        return Err(TestError::Assertion(
+            "past deadline should be exceeded".into(),
+        ));
+    }
 
     Ok(())
 }
