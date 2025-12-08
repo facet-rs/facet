@@ -1103,8 +1103,34 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         }
     };
 
+    // Determine if this struct should use transparent semantics
+    // Transparent is enabled if:
+    // 1. #[facet(transparent)] is explicitly set, OR
+    // 2. #[repr(transparent)] is set AND the struct is a tuple struct with exactly 0 or 1 field
+    //
+    // Note: Rust's repr(transparent) allows multiple fields if all but one are ZST,
+    // but facet(transparent) only supports 0 or 1 field for serialization purposes.
+    // When repr(transparent) is used with multiple fields, the user must explicitly
+    // add #[facet(transparent)] if they want facet transparent semantics.
+    let has_explicit_facet_transparent = ps.container.attrs.has_builtin("transparent");
+    let has_repr_transparent = ps.container.attrs.is_repr_transparent();
+
+    // Check if repr(transparent) should imply facet transparent
+    let repr_implies_facet_transparent = if has_repr_transparent && !has_explicit_facet_transparent
+    {
+        match &ps.kind {
+            PStructKind::TupleStruct { fields } => fields.len() <= 1,
+            _ => false,
+        }
+    } else {
+        false
+    };
+
+    let use_transparent_semantics =
+        has_explicit_facet_transparent || repr_implies_facet_transparent;
+
     // Transparent logic using PStruct
-    let inner_field = if ps.container.attrs.has_builtin("transparent") {
+    let inner_field = if use_transparent_semantics {
         match &ps.kind {
             PStructKind::TupleStruct { fields } => {
                 if fields.len() > 1 {
@@ -1125,7 +1151,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     };
 
     // Add try_from_inner implementation for transparent types
-    let try_from_inner_code = if ps.container.attrs.has_builtin("transparent") {
+    let try_from_inner_code = if use_transparent_semantics {
         if let Some(inner_field) = &inner_field {
             if !inner_field.attrs.has_builtin("opaque") {
                 // Transparent struct with one field
@@ -1225,7 +1251,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
     // Generate the inner shape field value for transparent types
     // inner call - only emit for transparent types
-    let inner_call = if ps.container.attrs.has_builtin("transparent") {
+    let inner_call = if use_transparent_semantics {
         let inner_shape_val = if let Some(inner_field) = &inner_field {
             let ty = &inner_field.ty;
             if inner_field.attrs.has_builtin("opaque") {
@@ -1323,7 +1349,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         .facet
         .iter()
         .any(|attr| attr.is_builtin() && attr.key_str() == "invariants");
-    let is_transparent = ps.container.attrs.has_builtin("transparent");
+    let is_transparent = use_transparent_semantics;
     let needs_vtable_mutations = has_invariants || is_transparent;
 
     // Generate vtable field - use simpler form when no mutations needed

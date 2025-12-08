@@ -735,6 +735,11 @@ impl PAttrs {
             .any(|a| a.is_builtin() && a.key_str() == key)
     }
 
+    /// Check if `#[repr(transparent)]` is present
+    pub fn is_repr_transparent(&self) -> bool {
+        matches!(self.repr, PRepr::Transparent)
+    }
+
     /// Get the args of a builtin attribute with the given key (if present)
     pub fn get_builtin_args(&self, key: &str) -> Option<String> {
         self.facet
