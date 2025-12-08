@@ -1,0 +1,49 @@
+[package]
+name = "rapace"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "High-performance RPC framework with shared memory transport"
+
+[dependencies]
+# Core types and traits
+rapace-core = { workspace = true }
+
+# Proc macros (re-exported as #[rapace::service])
+rapace-macros = { workspace = true }
+
+# Transports (behind feature flags)
+rapace-transport-mem = { workspace = true, optional = true }
+rapace-transport-stream = { workspace = true, optional = true }
+rapace-transport-websocket = { workspace = true, optional = true }
+rapace-transport-shm = { workspace = true, optional = true }
+
+# Session layer
+rapace-testkit = { workspace = true, optional = true }
+
+# Serialization
+facet = { workspace = true }
+facet-postcard = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true, features = ["net", "io-util"] }
+tokio-stream = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+
+[features]
+default = ["mem", "stream"]
+
+# Transport features
+mem = ["dep:rapace-transport-mem"]
+stream = ["dep:rapace-transport-stream"]
+websocket = ["dep:rapace-transport-websocket"]
+shm = ["dep:rapace-transport-shm"]
+
+# Include session layer (for advanced use)
+session = ["dep:rapace-testkit"]
+
+# All transports
+full = ["mem", "stream", "websocket", "shm", "session"]

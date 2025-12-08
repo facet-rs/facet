@@ -1,5 +1,9 @@
 # rapace
 
+> **⚠️ EXPERIMENTAL - DO NOT USE ⚠️**
+>
+> This is an early-stage research project. The API is unstable, features are incomplete, and there are no performance guarantees. **Do not use this in production or for anything important.**
+
 A Rust-native RPC system with transport-agnostic service traits, facet-driven encoding,
 and zero-copy shared memory as the reference transport.
 
@@ -8,38 +12,78 @@ and zero-copy shared memory as the reference transport.
 rapace lets you write normal Rust traits:
 
 ```rust
+use rapace::prelude::*;
+
 #[rapace::service]
-trait Hasher {
-    async fn sha256(&self, data: &[u8]) -> [u8; 32];
+trait Calculator {
+    async fn add(&self, a: i32, b: i32) -> i32;
+    async fn range(&self, n: u32) -> Streaming<u32>;  // Server-streaming
 }
 ```
 
-...and call them transparently across process boundaries:
+The `#[rapace::service]` macro generates a client stub and server dispatcher:
 
 ```rust
-// Same process (direct call, no serialization)
-let hasher = HasherClient::new_inproc(Box::new(MyHasher));
+// Implement the service
+struct CalculatorImpl;
 
-// Sibling process (shared memory, zero-copy when possible)
-let hasher = HasherClient::new(ShmSession::connect("/tmp/hasher.sock")?);
+impl Calculator for CalculatorImpl {
+    async fn add(&self, a: i32, b: i32) -> i32 {
+        a + b
+    }
 
-// Remote machine (TCP, full serialization)
-let hasher = HasherClient::new(StreamTransport::connect("192.168.1.100:8080")?);
+    async fn range(&self, n: u32) -> Streaming<u32> {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        tokio::spawn(async move {
+            for i in 0..n {
+                let _ = tx.send(Ok(i)).await;
+            }
+        });
+        Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx))
+    }
+}
 
-// All three have identical APIs
-let hash = hasher.sha256(data).await?;
+// Create transport pair (in-memory for this example)
+let (client_transport, server_transport) = rapace::InProcTransport::pair();
+
+// Server side
+let server = CalculatorServer::new(CalculatorImpl);
+// ... run server loop calling server.dispatch_streaming() on incoming frames
+
+// Client side
+let client = CalculatorClient::new(Arc::new(client_transport));
+let result = client.add(2, 3).await?;  // Returns 5
 ```
 
 The same trait works on any transport. The transport chooses how to move the data.
 
+## Getting Started
+
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+rapace = "0.1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio-stream = "0.1"
+```
+
+Run the example:
+
+```bash
+cargo run --example basic -p rapace
+```
+
 ## Why rapace?
 
-| vs. | rapace advantage |
-|-----|-------------------|
-| Unix domain sockets | Zero-copy for large payloads, no kernel transitions on hot path |
-| gRPC over loopback | ~10-100× lower latency, no HTTP/2 overhead, SHM for bulk data |
-| boost::interprocess | Async-native, built-in RPC semantics, observability, flow control |
-| Custom SHM queues | Production-ready: cancellation, deadlines, crash recovery, introspection |
+rapace is designed for **host ↔ plugin architectures** where plugins run in separate processes on the same machine. The goals:
+
+- **Rust-native**: Define services as normal async traits, no IDL
+- **Transport-agnostic**: Same trait works over TCP, WebSocket, or shared memory
+- **Streaming**: First-class support for server-streaming RPCs
+- **Async**: Built on tokio, no busy polling
+
+> **Status**: Extremely basic and experimental. No benchmarks, no stability guarantees, many missing features. This exists to explore ideas, not to be used.
 
 ## Core Ideas
 
@@ -122,8 +166,16 @@ The existing plugin architecture: [dodeca](https://github.com/bearcove/dodeca)
 
 | Area | Status |
 |------|--------|
-| Design | ✅ Mostly written down |
-| Implementation | 🧪 Starting |
+| Design | ✅ Documented (DESIGN.md) |
+| Core types | ✅ Frame, Transport, RpcError, Streaming |
+| Proc macros | ✅ `#[rapace::service]` generates client/server |
+| In-memory transport | ✅ For testing |
+| Stream transport | ✅ TCP/Unix sockets |
+| WebSocket transport | ✅ For browser clients |
+| SHM transport | 🧪 Basic implementation |
+| Session layer | ✅ Flow control, cancellation |
+| Browser tests | ✅ Playwright + wasm-pack |
+| Conformance tests | ✅ Shared test scenarios |
 | API stability | ❌ Not stable |
 | Benchmarks | ❌ None yet |
 | Production readiness | ❌ Not ready |

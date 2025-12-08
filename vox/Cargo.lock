@@ -687,6 +687,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rapace"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "facet-postcard",
+ "rapace-core",
+ "rapace-macros",
+ "rapace-testkit",
+ "rapace-transport-mem",
+ "rapace-transport-shm",
+ "rapace-transport-stream",
+ "rapace-transport-websocket",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "rapace-core"
 version = "0.1.0"
 dependencies = [

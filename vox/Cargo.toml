@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/rapace",
     "crates/rapace-core",
     "crates/rapace-macros",
     "crates/rapace-transport-mem",
@@ -22,6 +23,7 @@ repository = "https://github.com/bearcove/rapace"
 
 [workspace.dependencies]
 # Internal crates
+rapace = { path = "crates/rapace" }
 rapace-core = { path = "crates/rapace-core" }
 rapace-macros = { path = "crates/rapace-macros" }
 rapace-transport-mem = { path = "crates/rapace-transport-mem" }
