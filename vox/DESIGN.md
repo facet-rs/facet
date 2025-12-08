@@ -68,11 +68,16 @@ Peers MUST only use features that both sides advertise support for.
 
 ## Error Taxonomy
 
-Standard error codes for interoperability across implementations:
+Standard error codes for interoperability across implementations.
+
+**Note:** Codes 0-99 are aligned with gRPC status codes for familiarity.
+Codes 100+ are rapace-specific extensions.
 
 ```rust
 #[repr(u32)]
 enum ErrorCode {
+    // ===== gRPC-aligned codes (0-99) =====
+
     // Success (not an error)
     Ok = 0,
 
@@ -100,16 +105,14 @@ enum ErrorCode {
     Unavailable = 13,        // Service temporarily unavailable
     DataLoss = 14,           // Unrecoverable data loss
 
-    // rapace-specific
+    // ===== rapace-specific codes (100+) =====
+
     PeerDied = 100,          // Peer process crashed
     SessionClosed = 101,     // Session shut down
     ValidationFailed = 102,  // Descriptor validation failed
     StaleGeneration = 103,   // Generation counter mismatch
 }
 ```
-
-Error codes 0-99 are aligned with gRPC status codes for familiarity.
-Codes 100+ are rapace-specific extensions.
 
 ## Goals
 
@@ -359,6 +362,15 @@ struct DataSegment {
     // slot_meta: [SlotMeta; slot_count]
     // Then actual slot data
 }
+```
+
+**Size invariants:**
+- `max_frame_size <= slot_size` (enforced at segment creation)
+- `DescriptorLimits.max_payload_len <= max_frame_size` (enforced at validation)
+
+If `max_payload_len` exceeds `max_frame_size`, validation MUST reject the descriptor.
+
+```rust
 
 #[repr(C)]
 struct SlotMeta {
@@ -435,12 +447,18 @@ This avoids contention and simplifies ownership tracking.
 
 ## Message Header (in payload)
 
+The payload (inline or in a slot) begins with a `MsgHeader`, followed by the body:
+
+```
+payload = [ MsgHeader ][ body bytes ]
+```
+
 ```rust
 #[repr(C)]
 struct MsgHeader {
-    version: u16,                  // Protocol version for this message
+    version: u16,                  // Message format version (see below)
     header_len: u16,               // Bytes including this header
-    encoding: u16,                 // 1=postcard, 2=json, 3=raw
+    encoding: u16,                 // Body encoding (see Encoding enum)
     flags: u16,                    // Compression, etc.
 
     correlation_id: u64,           // Reply-to: msg_id of request
@@ -448,9 +466,97 @@ struct MsgHeader {
 
     // Variable-length fields follow:
     // - metadata (key-value pairs for headers)
-    // - payload
+    // - body
 }
 ```
+
+### Version Fields
+
+There are two version fields with different purposes:
+
+| Field | Type | Scope | Purpose |
+|-------|------|-------|---------|
+| `SegmentHeader.version` | u32 | Session | Protocol version (major.minor), negotiated at handshake |
+| `MsgHeader.version` | u16 | Message | Message format version within the protocol |
+
+**For v1:** `MsgHeader.version` MUST equal the negotiated minor version from handshake.
+This ties message format to protocol version for simplicity.
+
+**Future extension:** If message format needs to evolve independently of protocol
+version, `MsgHeader.version` can be decoupled. For now, they're synchronized.
+
+```rust
+// During message creation
+fn create_msg_header(session: &Session) -> MsgHeader {
+    MsgHeader {
+        version: session.negotiated_minor_version(),  // From handshake
+        header_len: size_of::<MsgHeader>() as u16,
+        encoding: Encoding::Postcard as u16,
+        ..Default::default()
+    }
+}
+```
+
+/// Body encoding format
+#[repr(u16)]
+enum Encoding {
+    /// postcard via facet-postcard - default for all control messages
+    Postcard = 1,
+    /// JSON - for debugging, external tooling
+    Json = 2,
+    /// Raw bytes - app-defined, no schema
+    Raw = 3,
+}
+```
+
+### Encoding Rules
+
+1. **Control messages (channel 0)**: MUST use `Encoding::Postcard`. The body is
+   `postcard::to_vec(&control_payload)` where `control_payload: ControlPayload`.
+
+2. **RPC messages (channel > 0)**: MAY use any encoding. The encoding is typically
+   negotiated per-method via the service registry or fixed by convention.
+
+3. **facet-postcard**: For Rust services, we use [facet](https://crates.io/crates/facet)
+   with postcard as the wire format. This gives us:
+   - Compact binary encoding
+   - Schema derivation from Rust types
+   - Forward/backward compatibility via postcard's encoding rules
+
+### Payload Layering
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ MsgDescHot (64 bytes, in ring)                          │
+│   - msg_id, channel_id, method_id                       │
+│   - payload_slot / inline_payload                       │
+│   - flags, credits                                      │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼ (payload_slot or inline)
+┌─────────────────────────────────────────────────────────┐
+│ MsgHeader (fixed size)                                   │
+│   - version, encoding, flags                            │
+│   - correlation_id, deadline_ns                         │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼ (after header_len bytes)
+┌─────────────────────────────────────────────────────────┐
+│ Body (encoding-dependent)                               │
+│   - Postcard: postcard(ControlPayload) or postcard(T)  │
+│   - Json: JSON string                                   │
+│   - Raw: opaque bytes                                   │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Schema Storage
+
+The service registry's `schema` field contains:
+- For Rust/facet services: a facet schema descriptor serialized via postcard
+- For other languages: implementation-defined (MAY be JSON Schema, protobuf descriptor, etc.)
+
+Implementations SHOULD document their schema format. Cross-language interop requires
+agreeing on schema representation.
 
 ## Channel Model
 
@@ -493,27 +599,70 @@ bitflags! {
 
 ### Control Frame Payloads
 
+Control frames on channel 0 carry a `ControlPayload` in the body. The `method_id` field
+in the descriptor determines which variant to expect.
+
 ```rust
+/// Control payloads - serialized via postcard in the frame body
 enum ControlPayload {
+    /// method_id = 1: Open a new data channel
     OpenChannel {
+        channel_id: u32,
         service_name: String,
         method_name: String,
         metadata: Vec<(String, Vec<u8>)>,
     },
+
+    /// method_id = 2: Close a channel gracefully (both sides should EOS)
     CloseChannel {
+        channel_id: u32,
         reason: CloseReason,
     },
+
+    /// method_id = 3: Cancel a channel (advisory, may race with in-flight frames)
+    CancelChannel {
+        channel_id: u32,
+        reason: CancelReason,
+    },
+
+    /// method_id = 4: Grant flow control credits to peer
     GrantCredits {
+        channel_id: u32,
         bytes: u32,
     },
+
+    /// method_id = 5: Liveness probe
     Ping {
         payload: [u8; 8],
     },
+
+    /// method_id = 6: Response to Ping
     Pong {
         payload: [u8; 8],
     },
 }
+
+#[derive(Debug, Clone, Copy)]
+enum CloseReason {
+    Normal = 0,
+    GoingAway = 1,
+    ProtocolError = 2,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CancelReason {
+    UserRequested = 0,
+    Timeout = 1,
+    DeadlineExceeded = 2,
+    ResourceExhausted = 3,
+    PeerDied = 4,
+}
 ```
+
+**CANCEL semantics:** The `FrameFlags::CANCEL` flag on data frames is a shorthand for
+"this frame cancels the channel". For control channel, use `ControlPayload::CancelChannel`.
+Both are equivalent; the flag is an optimization to avoid parsing the payload when
+only the cancellation signal matters.
 
 ## Service Registry
 
@@ -688,7 +837,7 @@ struct CancellationToken {
 }
 
 // Sending cancellation
-conn.send_control(ControlPayload::Cancel {
+conn.send_control(ControlPayload::CancelChannel {
     channel_id,
     reason: CancelReason::Timeout,
 });
@@ -727,11 +876,22 @@ impl DeadlineEnforcer {
 
 ## Observability
 
-### Every Message Has
+### Every Message Has (Logically)
 
 - `trace_id`: 64-bit, propagated from caller or generated
 - `span_id`: 64-bit, unique per message
 - `timestamp_ns`: When enqueued
+
+**Physical vs logical:** These fields are *logically* present on every message, but
+*physically* they may be:
+- Stored in `MsgDescCold` (when `debug_level >= 1`)
+- Synthesized/defaulted (e.g., `trace_id = 0` when `debug_level = 0`)
+- Stored only in process-local memory (not in SHM)
+
+When observability is disabled (`debug_level = 0`), implementations MAY:
+- Skip writing `MsgDescCold` entirely
+- Default `trace_id`/`span_id` to 0 in metrics
+- Still track `timestamp_ns` for latency calculations (implementation choice)
 
 ### Telemetry Ring (Optional)
 
@@ -828,21 +988,31 @@ fn process_frame(&self, desc: &MsgDescHot) -> Result<(), ProcessError> {
 
 ## Crash Safety
 
-### Generation Counters
+### Design Philosophy
 
-Every reusable resource has a generation:
+The SPSC ring is intentionally "dumb" — it has no per-slot generation or ownership tracking.
+All crash safety is handled at two layers:
+1. **Data segment**: Generation counters on payload slots (SlotMeta)
+2. **Channel state**: Tracked in process-local memory, not SHM
+
+This keeps the hot path simple while still enabling safe recovery.
+
+### Generation Counters (Data Segment Only)
+
+Payload slots have generations to detect stale references after crash recovery:
 
 ```rust
-// Descriptor slot reuse
-struct DescSlot {
-    generation: AtomicU32,
-    desc: MsgDesc,
+// In SlotMeta (already defined above)
+struct SlotMeta {
+    generation: AtomicU32,  // Incremented on each alloc
+    state: AtomicU32,       // FREE / ALLOCATED / IN_FLIGHT
 }
 
-// On dequeue, verify generation matches
-if slot.generation.load(Ordering::Acquire) != expected_gen {
-    // Stale reference, ignore
-    continue;
+// When processing a descriptor, verify generation matches
+let meta = segment.slot_meta(desc.payload_slot);
+if meta.generation.load(Ordering::Acquire) != desc.payload_generation {
+    // Stale reference from before crash recovery - ignore
+    return Err(ValidationError::StaleGeneration);
 }
 ```
 
@@ -876,33 +1046,41 @@ fn is_peer_alive(header: &SegmentHeader, is_peer_a: bool) -> bool {
 
 ### Cleanup on Crash
 
+When a peer dies, the surviving peer performs cleanup:
+
 ```rust
 impl Session {
     fn cleanup_dead_peer(&self) {
-        // 1. Mark all descriptors from dead peer as stale
-        for slot in self.ring.slots() {
-            if slot.owner == dead_peer_id {
-                slot.generation.fetch_add(1, Ordering::Release);
-                slot.owner.store(0, Ordering::Release);  // Free
+        // 1. Reset ring indices
+        // All in-flight descriptors are considered lost.
+        // The SPSC ring has no per-slot ownership; we just reset positions.
+        self.inbound_ring.reset();  // Sets visible_head = tail = 0
+
+        // 2. Reclaim all data segment slots
+        // With per-direction allocation (sender allocs, receiver frees),
+        // the surviving peer can safely reclaim everything that isn't FREE.
+        for (idx, meta) in self.data_segment.slot_metas().enumerate() {
+            let state = meta.state.swap(SlotState::Free as u32, Ordering::AcqRel);
+            if state != SlotState::Free as u32 {
+                // Bump generation to invalidate any stale descriptors
+                meta.generation.fetch_add(1, Ordering::Release);
+                // Return to free list
+                self.data_segment.push_free(idx as u32);
             }
         }
 
-        // 2. Return all payload slots to free list
-        for slot in self.data_segment.slots() {
-            if slot.owner == dead_peer_id {
-                self.data_segment.free(slot);
-            }
-        }
-
-        // 3. Cancel all channels owned by dead peer
+        // 3. Cancel all channels (local state, not in SHM)
         for channel in self.channels.values() {
-            if channel.owner == dead_peer_id {
-                channel.cancel(CancelReason::PeerDied);
-            }
+            channel.cancel(CancelReason::PeerDied);
         }
     }
 }
 ```
+
+**Why no per-slot owner field?** With SPSC rings and per-direction allocation pools,
+ownership is implicit: if a slot is IN_FLIGHT in the A→B data segment, peer A allocated
+it and peer B will free it. On crash, the surviving peer can safely reclaim all non-FREE
+slots because the dead peer can no longer reference them.
 
 ## API Surface
 
@@ -1136,6 +1314,10 @@ per-channel credit-based flow control. This ensures that critical operations lik
 PING, and credit grants cannot be blocked behind data backpressure. Implementations MUST
 process control frames even when data channels are stalled.
 
+**Global limits still apply:** Control frames ARE subject to global resource limits
+(e.g., `max_frames_in_flight_total`), but MUST NOT be blocked by per-channel credit
+exhaustion. Implementations SHOULD reserve headroom in global limits for control traffic.
+
 **CONTROL flag semantics:** The CONTROL flag in FrameFlags is a convenience hint for fast-path
 dispatch. Authoritative routing is based on `channel_id` and `method_id`. Implementations
 SHOULD NOT rely solely on the CONTROL flag for correctness.
@@ -1143,17 +1325,18 @@ SHOULD NOT rely solely on the CONTROL flag for correctness.
 | method_id | Name | Direction | Description |
 |-----------|------|-----------|-------------|
 | 0 | Reserved | - | Invalid |
-| 1 | OPEN_CHANNEL | Either | Open a new channel |
+| 1 | OPEN_CHANNEL | Either | Open a new data channel |
 | 2 | CLOSE_CHANNEL | Either | Close a channel gracefully |
-| 3 | GRANT_CREDITS | Either | Grant flow control credits |
-| 4 | PING | Either | Liveness check |
-| 5 | PONG | Either | Response to PING |
-| 6 | LIST_SERVICES | Request | Introspection: list services |
-| 7 | GET_SERVICE | Request | Introspection: get service info |
-| 8 | GET_METHOD | Request | Introspection: get method info |
-| 9 | GET_SCHEMA | Request | Introspection: get schema |
-| 10 | SET_DEBUG_LEVEL | Either | Change debug level for channel |
-| 11 | INJECT_FAULT | Either | Fault injection control |
+| 3 | CANCEL_CHANNEL | Either | Cancel a channel (advisory) |
+| 4 | GRANT_CREDITS | Either | Grant flow control credits |
+| 5 | PING | Either | Liveness check |
+| 6 | PONG | Either | Response to PING |
+| 7 | LIST_SERVICES | Request | Introspection: list services |
+| 8 | GET_SERVICE | Request | Introspection: get service info |
+| 9 | GET_METHOD | Request | Introspection: get method info |
+| 10 | GET_SCHEMA | Request | Introspection: get schema |
+| 11 | SET_DEBUG_LEVEL | Either | Change debug level for channel |
+| 12 | INJECT_FAULT | Either | Fault injection control |
 
 Data channels use `channel_id > 0` with `method_id` indicating the RPC method.
 
@@ -1251,6 +1434,10 @@ When a channel is cancelled:
 **Rule:** Frames received after local cancellation MAY be dropped silently. Implementations
 SHOULD NOT attempt to process stale data after cancellation, unless required for protocol
 teardown (e.g., waiting for final EOS to confirm clean shutdown).
+
+**Metrics:** Dropped-after-cancel frames SHOULD still be counted in metrics (e.g.,
+`frames_dropped_after_cancel` counter) to aid debugging "why is this channel still
+sending data after cancel?" scenarios.
 
 ```rust
 fn on_frame_received(&self, channel_id: u32, desc: &MsgDescHot) {
