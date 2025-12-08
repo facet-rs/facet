@@ -239,7 +239,14 @@ impl DataSegment {
         }
     }
 
-    /// Get mutable data slice for a slot (used by sender)
+    /// Get mutable data slice for a slot (used by sender).
+    ///
+    /// # Safety Note
+    /// This uses interior mutability: the underlying shared memory can be mutated
+    /// through a shared reference. This is safe because:
+    /// 1. Only the allocating peer writes to a slot
+    /// 2. Slot states enforce exclusive access patterns
+    #[allow(clippy::mut_from_ref)]
     pub fn slot_data_mut(&self, slot: SlotIndex) -> &mut [u8] {
         assert!(slot.get() < self.slot_count);
 
@@ -324,6 +331,11 @@ impl CommittedSlot {
     /// Get the committed length
     pub fn len(&self) -> u32 {
         self.len
+    }
+
+    /// Check if the committed slot has zero length
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 }
 
