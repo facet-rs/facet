@@ -247,3 +247,196 @@ fn test_proxy_conversion_error() {
     let result: Result<Wrapper, _> = json::from_str(json);
     assert!(result.is_err());
 }
+
+/// Test container-level proxy on a generic struct.
+/// This is a regression test for https://github.com/facet-rs/facet/issues/1109
+#[test]
+fn test_generic_struct_with_container_proxy() {
+    use core::fmt::Debug;
+
+    /// A simple proxy that wraps a value
+    #[derive(Facet, Clone, Debug)]
+    pub struct ValueProxy<T: Clone + Debug + 'static> {
+        pub wrapped: T,
+    }
+
+    /// A generic struct that uses a generic proxy
+    /// Note: The TryFrom impls must be blanket (for all T) or match the bounds here
+    #[derive(Facet, Clone, Debug, PartialEq)]
+    #[facet(proxy = ValueProxy<T>)]
+    pub struct GenericValue<T: Clone + Debug + 'static> {
+        pub inner: T,
+    }
+
+    // Blanket TryFrom impls that work for all T
+    impl<T: Clone + Debug + 'static> TryFrom<ValueProxy<T>> for GenericValue<T> {
+        type Error = core::convert::Infallible;
+        fn try_from(proxy: ValueProxy<T>) -> Result<Self, Self::Error> {
+            Ok(GenericValue {
+                inner: proxy.wrapped,
+            })
+        }
+    }
+
+    impl<T: Clone + Debug + 'static> TryFrom<&GenericValue<T>> for ValueProxy<T> {
+        type Error = core::convert::Infallible;
+        fn try_from(v: &GenericValue<T>) -> Result<Self, Self::Error> {
+            Ok(ValueProxy {
+                wrapped: v.inner.clone(),
+            })
+        }
+    }
+
+    // Test with i32
+    #[derive(Facet, Debug, Clone, PartialEq)]
+    pub struct WrapperI32 {
+        pub item: GenericValue<i32>,
+    }
+
+    let json = r#"{"item":{"wrapped":42}}"#;
+    let wrapper: WrapperI32 = json::from_str(json).unwrap();
+    assert_eq!(wrapper.item, GenericValue { inner: 42 });
+
+    let serialized = json::to_string(&wrapper);
+    assert_eq!(serialized, r#"{"item":{"wrapped":42}}"#);
+
+    // Test with String
+    #[derive(Facet, Debug, Clone, PartialEq)]
+    pub struct WrapperString {
+        pub item: GenericValue<String>,
+    }
+
+    let json = r#"{"item":{"wrapped":"hello"}}"#;
+    let wrapper: WrapperString = json::from_str(json).unwrap();
+    assert_eq!(
+        wrapper.item,
+        GenericValue {
+            inner: "hello".to_string()
+        }
+    );
+
+    let serialized = json::to_string(&wrapper);
+    assert_eq!(serialized, r#"{"item":{"wrapped":"hello"}}"#);
+}
+
+/// Test multiple structs using the same generic proxy type.
+/// This ensures the inherent impl pattern works correctly when the same proxy
+/// is reused across different concrete types.
+#[test]
+fn test_multiple_structs_same_generic_proxy() {
+    use core::fmt::Debug;
+
+    /// A shared proxy type used by multiple structs
+    #[derive(Facet, Clone, Debug)]
+    pub struct SharedProxy<T: Clone + Debug + 'static> {
+        pub data: T,
+    }
+
+    /// First struct using SharedProxy
+    #[derive(Facet, Clone, Debug, PartialEq)]
+    #[facet(proxy = SharedProxy<i32>)]
+    pub struct IntHolder {
+        pub value: i32,
+    }
+
+    impl TryFrom<SharedProxy<i32>> for IntHolder {
+        type Error = core::convert::Infallible;
+        fn try_from(proxy: SharedProxy<i32>) -> Result<Self, Self::Error> {
+            Ok(IntHolder { value: proxy.data })
+        }
+    }
+
+    impl TryFrom<&IntHolder> for SharedProxy<i32> {
+        type Error = core::convert::Infallible;
+        fn try_from(v: &IntHolder) -> Result<Self, Self::Error> {
+            Ok(SharedProxy { data: v.value })
+        }
+    }
+
+    /// Second struct using SharedProxy with a different type parameter
+    #[derive(Facet, Clone, Debug, PartialEq)]
+    #[facet(proxy = SharedProxy<String>)]
+    pub struct StringHolder {
+        pub text: String,
+    }
+
+    impl TryFrom<SharedProxy<String>> for StringHolder {
+        type Error = core::convert::Infallible;
+        fn try_from(proxy: SharedProxy<String>) -> Result<Self, Self::Error> {
+            Ok(StringHolder { text: proxy.data })
+        }
+    }
+
+    impl TryFrom<&StringHolder> for SharedProxy<String> {
+        type Error = core::convert::Infallible;
+        fn try_from(v: &StringHolder) -> Result<Self, Self::Error> {
+            Ok(SharedProxy {
+                data: v.text.clone(),
+            })
+        }
+    }
+
+    /// Third struct also using SharedProxy<i32> - same monomorphization as IntHolder
+    #[derive(Facet, Clone, Debug, PartialEq)]
+    #[facet(proxy = SharedProxy<i32>)]
+    pub struct AnotherIntHolder {
+        pub num: i32,
+    }
+
+    impl TryFrom<SharedProxy<i32>> for AnotherIntHolder {
+        type Error = core::convert::Infallible;
+        fn try_from(proxy: SharedProxy<i32>) -> Result<Self, Self::Error> {
+            Ok(AnotherIntHolder { num: proxy.data })
+        }
+    }
+
+    impl TryFrom<&AnotherIntHolder> for SharedProxy<i32> {
+        type Error = core::convert::Infallible;
+        fn try_from(v: &AnotherIntHolder) -> Result<Self, Self::Error> {
+            Ok(SharedProxy { data: v.num })
+        }
+    }
+
+    // Test IntHolder
+    let json = r#"{"data":42}"#;
+    let holder: IntHolder = json::from_str(json).unwrap();
+    assert_eq!(holder, IntHolder { value: 42 });
+    assert_eq!(json::to_string(&holder), r#"{"data":42}"#);
+
+    // Test StringHolder
+    let json = r#"{"data":"hello"}"#;
+    let holder: StringHolder = json::from_str(json).unwrap();
+    assert_eq!(
+        holder,
+        StringHolder {
+            text: "hello".to_string()
+        }
+    );
+    assert_eq!(json::to_string(&holder), r#"{"data":"hello"}"#);
+
+    // Test AnotherIntHolder (same proxy type as IntHolder)
+    let json = r#"{"data":99}"#;
+    let holder: AnotherIntHolder = json::from_str(json).unwrap();
+    assert_eq!(holder, AnotherIntHolder { num: 99 });
+    assert_eq!(json::to_string(&holder), r#"{"data":99}"#);
+
+    // Test all three in a combined struct
+    #[derive(Facet, Debug, Clone, PartialEq)]
+    pub struct Combined {
+        pub int_holder: IntHolder,
+        pub string_holder: StringHolder,
+        pub another_int: AnotherIntHolder,
+    }
+
+    let json =
+        r#"{"int_holder":{"data":1},"string_holder":{"data":"test"},"another_int":{"data":2}}"#;
+    let combined: Combined = json::from_str(json).unwrap();
+    assert_eq!(combined.int_holder, IntHolder { value: 1 });
+    assert_eq!(
+        combined.string_holder,
+        StringHolder {
+            text: "test".to_string()
+        }
+    );
+    assert_eq!(combined.another_int, AnotherIntHolder { num: 2 });
+}

@@ -965,7 +965,14 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     };
 
     // Container-level proxy from PStruct - generates ProxyDef with conversion functions
-    let proxy_call = {
+    //
+    // The challenge: Generic type parameters aren't available inside `const { }` blocks.
+    // Solution: We define the proxy functions as inherent methods on the type (outside const),
+    // then reference them via Self::method inside the Facet impl. This works because:
+    // 1. Inherent impl methods CAN use generic parameters from their impl block
+    // 2. Inside the Facet impl's const SHAPE, `Self` refers to the concrete monomorphized type
+    // 3. Function pointers to Self::method get properly monomorphized
+    let (proxy_inherent_impl, proxy_call) = {
         if let Some(attr) = ps
             .container
             .attrs
@@ -976,15 +983,44 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             let proxy_type = &attr.args;
             let struct_type = &struct_name_ident;
             let bgp_display = ps.container.bgp.display_without_bounds();
+            // Compute bgp locally for the inherent impl
+            let helper_bgp = ps
+                .container
+                .bgp
+                .with_lifetime(LifetimeName(format_ident!("ʄ")));
+            let bgp_def_for_helper = helper_bgp.display_with_bounds();
 
-            quote! {
-                .proxy(&const {
-                    extern crate alloc as __alloc;
+            // Define an inherent impl with the proxy helper methods
+            // These are NOT in a const block, so generic params ARE available
+            // We need where clauses for:
+            // 1. The proxy type must implement Facet (for __facet_proxy_shape)
+            // 2. The TryFrom conversions (checked when methods are called)
+            // Compute the where_clauses for the helper impl by adding the proxy Facet bound
+            // Build the combined where clause - we need to add proxy: Facet to existing clauses
+            let proxy_where = {
+                // Build additional clause tokens (comma-separated)
+                let additional_clauses = quote! { #proxy_type: #facet_crate::Facet<'ʄ> };
 
-                    unsafe fn __proxy_convert_in<'mem>(
+                // where_clauses is either empty or "where X: Y, ..."
+                // We need to append our clause
+                if where_clauses.is_empty() {
+                    quote! { where #additional_clauses }
+                } else {
+                    quote! { #where_clauses, #additional_clauses }
+                }
+            };
+
+            let proxy_impl = quote! {
+                #[doc(hidden)]
+                impl #bgp_def_for_helper #struct_type #bgp_display
+                #proxy_where
+                {
+                    #[doc(hidden)]
+                    unsafe fn __facet_proxy_convert_in<'mem>(
                         proxy_ptr: #facet_crate::PtrConst<'mem>,
                         field_ptr: #facet_crate::PtrUninit<'mem>,
-                    ) -> ::core::result::Result<#facet_crate::PtrMut<'mem>, __alloc::string::String> {
+                    ) -> ::core::result::Result<#facet_crate::PtrMut<'mem>, #facet_crate::𝟋::𝟋Str> {
+                        extern crate alloc as __alloc;
                         let proxy: #proxy_type = proxy_ptr.read();
                         match <#struct_type #bgp_display as ::core::convert::TryFrom<#proxy_type>>::try_from(proxy) {
                             ::core::result::Result::Ok(value) => ::core::result::Result::Ok(field_ptr.put(value)),
@@ -992,10 +1028,12 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         }
                     }
 
-                    unsafe fn __proxy_convert_out<'mem>(
+                    #[doc(hidden)]
+                    unsafe fn __facet_proxy_convert_out<'mem>(
                         field_ptr: #facet_crate::PtrConst<'mem>,
                         proxy_ptr: #facet_crate::PtrUninit<'mem>,
-                    ) -> ::core::result::Result<#facet_crate::PtrMut<'mem>, __alloc::string::String> {
+                    ) -> ::core::result::Result<#facet_crate::PtrMut<'mem>, #facet_crate::𝟋::𝟋Str> {
+                        extern crate alloc as __alloc;
                         let field_ref: &#struct_type #bgp_display = field_ptr.get();
                         match <#proxy_type as ::core::convert::TryFrom<&#struct_type #bgp_display>>::try_from(field_ref) {
                             ::core::result::Result::Ok(proxy) => ::core::result::Result::Ok(proxy_ptr.put(proxy)),
@@ -1003,15 +1041,28 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                         }
                     }
 
+                    #[doc(hidden)]
+                    const fn __facet_proxy_shape() -> &'static #facet_crate::Shape {
+                        <#proxy_type as #facet_crate::Facet>::SHAPE
+                    }
+                }
+            };
+
+            // Reference the inherent methods from within the SHAPE const block
+            // Self::method works because Self in the Facet impl refers to the struct type
+            let proxy_ref = quote! {
+                .proxy(&const {
                     #facet_crate::ProxyDef {
-                        shape: <#proxy_type as #facet_crate::Facet>::SHAPE,
-                        convert_in: __proxy_convert_in,
-                        convert_out: __proxy_convert_out,
+                        shape: Self::__facet_proxy_shape(),
+                        convert_in: Self::__facet_proxy_convert_in,
+                        convert_out: Self::__facet_proxy_convert_out,
                     }
                 })
-            }
+            };
+
+            (proxy_impl, proxy_ref)
         } else {
-            quote! {}
+            (quote! {}, quote! {})
         }
     };
 
@@ -1296,6 +1347,9 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         #dead_code_suppression
 
         #trait_assertion_fn
+
+        // Proxy inherent impl (outside the Facet impl so generic params are in scope)
+        #proxy_inherent_impl
 
         #[automatically_derived]
         unsafe impl #bgp_def #facet_crate::Facet<'ʄ> for #struct_name_ident #bgp_without_bounds #where_clauses {
