@@ -26,6 +26,91 @@ Non-goals for v1:
 - Cross-machine transport (use sockets for that)
 - Encryption (peers are on same machine, use OS isolation)
 
+## Version Negotiation
+
+Protocol version is a `u32` split into major (high 16 bits) and minor (low 16 bits).
+
+```rust
+const PROTOCOL_VERSION: u32 = 0x0001_0000;  // v1.0
+
+fn parse_version(v: u32) -> (u16, u16) {
+    ((v >> 16) as u16, v as u16)
+}
+```
+
+### Negotiation Rules
+
+During handshake, peers exchange their supported version:
+
+| Condition | Action |
+|-----------|--------|
+| Major versions match | Proceed, use minimum of minor versions |
+| Major mismatch | **Abort session** with `IncompatibleVersion` error |
+| Minor mismatch | Proceed with feature flags for optional capabilities |
+
+**Feature flags** (in `SegmentHeader.flags`) indicate optional capabilities:
+- Bit 0: Telemetry ring support
+- Bit 1: Fault injection support
+- Bit 2: Extended introspection
+- Bits 3-31: Reserved for future use
+
+```rust
+bitflags! {
+    struct FeatureFlags: u32 {
+        const TELEMETRY       = 0b0001;
+        const FAULT_INJECTION = 0b0010;
+        const EXTENDED_INTRO  = 0b0100;
+    }
+}
+```
+
+Peers MUST only use features that both sides advertise support for.
+
+## Error Taxonomy
+
+Standard error codes for interoperability across implementations:
+
+```rust
+#[repr(u32)]
+enum ErrorCode {
+    // Success (not an error)
+    Ok = 0,
+
+    // Cancellation & timeouts
+    Cancelled = 1,           // Operation was cancelled
+    DeadlineExceeded = 2,    // Deadline passed before completion
+
+    // Request errors
+    InvalidArgument = 3,     // Malformed request
+    NotFound = 4,            // Service/method not found
+    AlreadyExists = 5,       // Resource already exists
+    PermissionDenied = 6,    // Caller lacks permission
+
+    // Resource errors
+    ResourceExhausted = 7,   // Out of credits, slots, channels, etc.
+    FailedPrecondition = 8,  // System not in required state
+
+    // Protocol errors
+    Aborted = 9,             // Operation aborted (conflict, etc.)
+    OutOfRange = 10,         // Value out of valid range
+    Unimplemented = 11,      // Method not implemented
+
+    // System errors
+    Internal = 12,           // Internal error (bug)
+    Unavailable = 13,        // Service temporarily unavailable
+    DataLoss = 14,           // Unrecoverable data loss
+
+    // rapace-specific
+    PeerDied = 100,          // Peer process crashed
+    SessionClosed = 101,     // Session shut down
+    ValidationFailed = 102,  // Descriptor validation failed
+    StaleGeneration = 103,   // Generation counter mismatch
+}
+```
+
+Error codes 0-99 are aligned with gRPC status codes for familiarity.
+Codes 100+ are rapace-specific extensions.
+
 ## Goals
 
 1. **Zero or one copy** on the hot path
@@ -109,7 +194,15 @@ struct MsgDescHot {
     // Used when payload_slot == u32::MAX and payload_len <= 24
     inline_payload: [u8; 24],
 }
+
+/// Inline payload size derived from cache-line math
+const INLINE_PAYLOAD_SIZE: usize = 24;  // 64 - 40 bytes of header fields
 ```
+
+**Inline payload alignment:** The `inline_payload` field has no alignment guarantees beyond
+`u8` (byte-aligned). Serializers reading from inline payloads **MUST NOT** assume any
+particular alignment. Use `ptr::read_unaligned` or copy to an aligned buffer before
+casting to structured types.
 
 ### Message Descriptor - Cold Path (Observability)
 
@@ -141,22 +234,18 @@ struct MsgDescCold {
 ```rust
 #[repr(C)]
 struct DescRing {
-    // Producer side (cache-line aligned)
-    head: AtomicU64,               // Next slot to write
+    // Producer publication index (cache-line aligned)
+    // This is the ONLY producer index visible to consumer
+    visible_head: AtomicU64,
     _pad1: [u8; 56],
 
     // Consumer side (separate cache line)
     tail: AtomicU64,               // Next slot to read
     _pad2: [u8; 56],
 
-    // Published position (separate cache line)
-    // Producer writes here after descriptor is ready
-    visible_head: AtomicU64,
-    _pad3: [u8; 56],
-
     // Ring configuration
     capacity: u32,                 // Power of 2
-    _pad4: [u8; 60],
+    _pad3: [u8; 60],
 
     // Descriptors follow (capacity * sizeof(MsgDescHot))
 }
@@ -165,33 +254,40 @@ struct DescRing {
 ### Ring Algorithm (SPSC with explicit memory orderings)
 
 The ring uses the high bits of head/tail as implicit generation/lap counters.
-Slot index is computed as `idx = head & (capacity - 1)`.
+Slot index is computed as `idx = position & (capacity - 1)`.
+
+**Key design decision:** We use a single `visible_head` instead of separate `head` + `visible_head`.
+The producer tracks its private head position in a local variable, reducing cache traffic
+and eliminating confusion about which index is authoritative.
 
 ```rust
 impl DescRing {
     /// Producer: enqueue a descriptor
+    /// `local_head` is producer-private state (not in shared memory)
     /// Returns Err if ring is full
-    fn enqueue(&self, desc: &MsgDescHot) -> Result<(), RingFull> {
-        let head = self.head.load(Ordering::Relaxed);
+    fn enqueue(&self, local_head: &mut u64, desc: &MsgDescHot) -> Result<(), RingFull> {
         let tail = self.tail.load(Ordering::Acquire);  // Sync with consumer
 
         // Check if full: (head - tail) >= capacity
-        if head.wrapping_sub(tail) >= self.capacity as u64 {
+        if local_head.wrapping_sub(tail) >= self.capacity as u64 {
             return Err(RingFull);
         }
 
-        let idx = (head & (self.capacity as u64 - 1)) as usize;
+        let idx = (*local_head & (self.capacity as u64 - 1)) as usize;
 
         // Write descriptor (non-atomic, we own this slot)
+        // The Release store on visible_head provides the happens-before guarantee,
+        // so we use normal ptr::write here (not volatile)
         unsafe {
             let slot = self.desc_slot(idx);
-            std::ptr::write_volatile(slot, *desc);
+            std::ptr::write(slot, *desc);
         }
 
+        *local_head += 1;
+
         // Publish: make descriptor visible to consumer
-        // Release ordering ensures desc write is visible before head update
-        self.visible_head.store(head + 1, Ordering::Release);
-        self.head.store(head + 1, Ordering::Relaxed);
+        // Release ordering ensures desc write completes before consumer sees new head
+        self.visible_head.store(*local_head, Ordering::Release);
 
         Ok(())
     }
@@ -210,12 +306,15 @@ impl DescRing {
         let idx = (tail & (self.capacity as u64 - 1)) as usize;
 
         // Read descriptor
+        // The Acquire load on visible_head provides the happens-before guarantee,
+        // so we use normal ptr::read here (not volatile)
         let desc = unsafe {
             let slot = self.desc_slot(idx);
-            std::ptr::read_volatile(slot)
+            std::ptr::read(slot)
         };
 
-        // Advance tail (release not needed, producer only reads tail)
+        // Advance tail
+        // Release ordering ensures desc read completes before producer sees freed slot
         self.tail.store(tail + 1, Ordering::Release);
 
         Some(desc)
@@ -228,12 +327,18 @@ impl DescRing {
 }
 ```
 
+**Memory ordering rationale:**
+- `visible_head.store(Release)` → `visible_head.load(Acquire)` forms a synchronizes-with relationship
+- This ensures the descriptor write happens-before the consumer's read
+- `tail.store(Release)` → `tail.load(Acquire)` ensures the consumer's read happens-before producer reuses slot
+- No volatile needed: atomics with proper ordering provide all necessary guarantees
+
 **Invariants:**
-- `head` is only written by producer
-- `tail` is only written by consumer
-- `visible_head` is written by producer, read by consumer
+- Producer's `local_head` is stack-local, never shared
+- `visible_head` is the publication barrier (producer writes, consumer reads)
+- `tail` is only written by consumer, read by producer for fullness check
 - Ring is empty when `tail == visible_head`
-- Ring is full when `head - tail >= capacity`
+- Ring is full when `local_head - tail >= capacity`
 - No per-slot generation needed for SPSC (monotonic indices are sufficient)
 
 ### Data Segment (Slab Allocator)
@@ -258,9 +363,43 @@ struct DataSegment {
 #[repr(C)]
 struct SlotMeta {
     generation: AtomicU32,         // Incremented on each alloc
-    state: AtomicU32,              // 0 = free, 1 = allocated, 2 = in-flight
+    state: AtomicU32,              // See SlotState enum
+}
+
+/// Slot states for the data segment allocator
+enum SlotState {
+    Free = 0,       // Available for allocation
+    Allocated = 1,  // Sender owns, writing payload
+    InFlight = 2,   // Descriptor enqueued, awaiting receiver
 }
 ```
+
+### Slot State Machine
+
+```
+                     ┌─────────────────────────────────────────┐
+                     │                                         │
+                     ▼                                         │
+┌──────────┐    alloc()    ┌───────────┐   enqueue()   ┌───────────┐
+│   FREE   │──────────────>│ ALLOCATED │──────────────>│ IN_FLIGHT │
+│          │               │           │               │           │
+│ (owner:  │               │ (owner:   │               │ (owner:   │
+│  none)   │               │  sender)  │               │  receiver)│
+└──────────┘               └───────────┘               └───────────┘
+     ▲                                                       │
+     │                                                       │
+     │                      free()                           │
+     └───────────────────────────────────────────────────────┘
+```
+
+| Transition | Actor | Operation | Notes |
+|------------|-------|-----------|-------|
+| FREE → ALLOCATED | Sender | `alloc()` | Generation incremented |
+| ALLOCATED → IN_FLIGHT | Sender | `enqueue()` | Descriptor published to ring |
+| IN_FLIGHT → FREE | Receiver | `free()` | After processing payload |
+
+**Crash recovery:** If sender crashes in ALLOCATED state, slot is leaked until
+session cleanup. If sender crashes after IN_FLIGHT, receiver still frees normally.
 
 ### Payload Allocation Protocol
 
@@ -665,6 +804,28 @@ enum FaultCommand {
 }
 ```
 
+**Fault injection timing:** Fault injection MUST happen **after** descriptor validation.
+This ensures that:
+1. Bugs in validation logic are not masked by fault injection
+2. Invalid descriptors are caught regardless of fault injection settings
+3. Metrics accurately reflect validation failures vs. injected faults
+
+```rust
+fn process_frame(&self, desc: &MsgDescHot) -> Result<(), ProcessError> {
+    // Step 1: Always validate first
+    validate_descriptor(desc, &self.data_segment)?;
+
+    // Step 2: Then apply fault injection (if enabled)
+    if self.fault_injector.should_drop(desc.channel_id) {
+        self.metrics.injected_drops.fetch_add(1, Ordering::Relaxed);
+        return Ok(());  // Silently drop valid frame
+    }
+
+    // Step 3: Normal processing
+    self.dispatch(desc)
+}
+```
+
 ## Crash Safety
 
 ### Generation Counters
@@ -916,6 +1077,47 @@ const MAX_METADATA_VALUE_LEN: usize = 4096;
 const MAX_METADATA_PAIRS: usize = 32;
 ```
 
+### Descriptor Sanity Caps
+
+In addition to bounds checking, implementations SHOULD enforce these recommended caps
+to limit DoS exposure and make resource usage predictable:
+
+```rust
+/// Recommended limits (tunable per-deployment)
+struct DescriptorLimits {
+    /// Maximum payload size even if slot allows more
+    /// Default: 1MB. Prevents single frame from consuming excessive resources.
+    max_payload_len: u32,
+
+    /// Maximum concurrent channels per session
+    /// Default: 1024. Prevents channel ID exhaustion attacks.
+    max_channels: u32,
+
+    /// Maximum in-flight frames per channel (before backpressure kicks in)
+    /// Default: 64. Bounds memory usage per channel.
+    max_frames_in_flight_per_channel: u32,
+
+    /// Maximum total in-flight frames across all channels
+    /// Default: 4096. Global cap for memory budgeting.
+    max_frames_in_flight_total: u32,
+}
+
+impl Default for DescriptorLimits {
+    fn default() -> Self {
+        Self {
+            max_payload_len: 1024 * 1024,      // 1MB
+            max_channels: 1024,
+            max_frames_in_flight_per_channel: 64,
+            max_frames_in_flight_total: 4096,
+        }
+    }
+}
+```
+
+These limits are **advisory** — implementations may adjust based on deployment
+requirements. However, having explicit, documented defaults helps operators
+reason about resource consumption.
+
 ### Error Handling
 
 On validation failure:
@@ -927,7 +1129,16 @@ On validation failure:
 ## Control Channel Semantics
 
 **Channel 0 is reserved** for control and introspection messages.
-The `method_id` field indicates the control verb:
+The `method_id` field indicates the control verb.
+
+**Flow control exemption:** Control channel frames (channel_id == 0) are **NOT** subject to
+per-channel credit-based flow control. This ensures that critical operations like CANCEL,
+PING, and credit grants cannot be blocked behind data backpressure. Implementations MUST
+process control frames even when data channels are stalled.
+
+**CONTROL flag semantics:** The CONTROL flag in FrameFlags is a convenience hint for fast-path
+dispatch. Authoritative routing is based on `channel_id` and `method_id`. Implementations
+SHOULD NOT rely solely on the CONTROL flag for correctness.
 
 | method_id | Name | Direction | Description |
 |-----------|------|-----------|-------------|
@@ -956,26 +1167,42 @@ The service registry in SHM is **mostly immutable** after session setup:
 
 ```rust
 impl ServiceRegistry {
-    /// Write-once during setup, panics if called twice
-    fn initialize(&mut self, services: &[ServiceDef]) {
-        assert!(self.version.load(Ordering::Acquire) == 0, "Already initialized");
+    /// Write-once during setup, returns error if called twice
+    fn initialize(&mut self, services: &[ServiceDef]) -> Result<(), RegistryError> {
+        if self.version.load(Ordering::Acquire) != 0 {
+            return Err(RegistryError::AlreadyInitialized);
+        }
         // ... write services ...
         self.version.store(1, Ordering::Release);
+        Ok(())
     }
 
     /// Read services, verify version hasn't changed
-    fn read<F, R>(&self, f: F) -> R
+    /// Returns Err if registry was modified during read (should be rare)
+    fn read<F, R>(&self, f: F) -> Result<R, RegistryError>
     where
         F: FnOnce(&[ServiceEntry]) -> R,
     {
         let v1 = self.version.load(Ordering::Acquire);
         let result = f(self.services());
         let v2 = self.version.load(Ordering::Acquire);
-        assert_eq!(v1, v2, "Registry changed during read");
-        result
+        if v1 != v2 {
+            return Err(RegistryError::ModifiedDuringRead);
+        }
+        Ok(result)
     }
 }
+
+#[derive(Debug)]
+enum RegistryError {
+    AlreadyInitialized,
+    ModifiedDuringRead,
+}
 ```
+
+**Error handling policy:** Implementations MAY choose to panic in debug builds for
+`ModifiedDuringRead` (indicates a serious bug), but SHOULD return errors in release
+builds to avoid crashing production systems due to unexpected registry updates.
 
 For dynamic service registration, use the control channel to notify peers,
 then coordinate a registry update with proper synchronization.
@@ -1016,6 +1243,28 @@ When a channel is cancelled:
 2. CANCEL frame is sent to peer
 3. Peer should stop processing and send CANCEL or EOS back
 4. Both sides clean up resources
+
+### Late Frames After CANCEL
+
+**Race condition:** A sender may enqueue DATA frames before receiving a CANCEL from the receiver.
+
+**Rule:** Frames received after local cancellation MAY be dropped silently. Implementations
+SHOULD NOT attempt to process stale data after cancellation, unless required for protocol
+teardown (e.g., waiting for final EOS to confirm clean shutdown).
+
+```rust
+fn on_frame_received(&self, channel_id: u32, desc: &MsgDescHot) {
+    if self.is_cancelled(channel_id) {
+        // Late frame after cancellation - drop silently
+        // Still free the payload slot to avoid leaks
+        if desc.payload_slot != u32::MAX {
+            self.data_segment.free(desc.payload_slot, desc.payload_generation);
+        }
+        return;
+    }
+    // Normal processing...
+}
+```
 
 ## Unary RPC Definition
 
@@ -1092,3 +1341,7 @@ impl PluginHost {
 
 This gives us "logical MPSC" (many plugins sending to one host) with
 physical SPSC isolation (each plugin has its own ring).
+
+**Scaling:** This model scales linearly with CPU cores by sharding sessions across
+multiple pollers/threads. Each poller owns a subset of sessions with no cross-thread
+synchronization on the hot path.
