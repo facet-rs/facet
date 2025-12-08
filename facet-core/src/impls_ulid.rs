@@ -69,7 +69,8 @@ unsafe impl Facet<'_> for Ulid {
             type_tag: None,
             inner: Some(<String as Facet>::SHAPE),
             proxy: None,
-            variance: Variance::Invariant,
+            // Ulid has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }

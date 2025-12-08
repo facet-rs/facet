@@ -94,7 +94,8 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                     type_tag: None,
                     inner: Some(<$float as Facet>::SHAPE),
                     proxy: None,
-                    variance: Variance::Invariant,
+                    // OrderedFloat has no lifetime parameters, so it's covariant
+                    variance: Variance::COVARIANT,
                 }
             };
         }
@@ -196,7 +197,8 @@ macro_rules! impl_facet_for_ordered_float_and_notnan {
                     type_tag: None,
                     inner: Some(<$float as Facet>::SHAPE),
                     proxy: None,
-                    variance: Variance::Invariant,
+                    // NotNan has no lifetime parameters, so it's covariant
+                    variance: Variance::COVARIANT,
                 }
             };
         }

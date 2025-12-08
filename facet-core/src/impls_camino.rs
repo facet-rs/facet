@@ -61,7 +61,8 @@ unsafe impl Facet<'_> for Utf8PathBuf {
             type_tag: None,
             inner: Some(<String as Facet>::SHAPE),
             proxy: None,
-            variance: Variance::Invariant,
+            // Utf8PathBuf has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }
@@ -85,7 +86,8 @@ unsafe impl Facet<'_> for Utf8Path {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // Utf8Path has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }

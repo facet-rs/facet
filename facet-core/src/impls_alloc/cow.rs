@@ -1,6 +1,5 @@
-use crate::Variance;
 use crate::{
-    Def, Facet, FormatVTable, PtrConst, Shape, Type, UserType, ValueVTable,
+    Def, Facet, FormatVTable, PtrConst, Shape, Type, UserType, ValueVTable, Variance,
     shape_util::vtable_for_ptr,
 };
 use alloc::borrow::Cow;
@@ -73,6 +72,9 @@ where
         type_tag: None,
         inner: None,
         proxy: None,
-        variance: Variance::Invariant,
+        // Cow<'a, T> is covariant in 'a - it can borrow short-lived data
+        // but not extend lifetimes. Since Cow is a wrapper, we conservatively
+        // use INVARIANT as the default.
+        variance: Variance::INVARIANT,
     };
 }

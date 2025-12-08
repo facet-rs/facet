@@ -1,4 +1,3 @@
-use crate::Variance;
 use core::{fmt, mem};
 
 use crate::{
@@ -114,8 +113,8 @@ macro_rules! impl_facet_for_tuple {
                     attributes: &[],
                     type_tag: None,
                     inner: None,
-            proxy: None,
-            variance: Variance::Invariant,
+                    proxy: None,
+                    variance: Shape::computed_variance,
                 }
             };
         }

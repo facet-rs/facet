@@ -27,6 +27,7 @@ unsafe impl Facet<'_> for ConstTypeId {
                 value.hash(&mut { hasher })
             })
             .markers(MarkerTraits::EMPTY.with_eq().with_copy())
+            .variance(Variance::COVARIANT)
             .build()
     };
 }
@@ -51,6 +52,7 @@ unsafe impl Facet<'_> for core::any::TypeId {
                 value.hash(&mut { hasher })
             })
             .markers(MarkerTraits::EMPTY.with_eq().with_copy())
+            .variance(Variance::COVARIANT)
             .build()
     };
 }
@@ -83,6 +85,7 @@ unsafe impl Facet<'_> for () {
                 // () hashes to nothing, but we need to call the hasher for consistency
             })
             .markers(MarkerTraits::EMPTY.with_eq().with_copy())
+            .variance(Variance::COVARIANT)
             .build()
     };
 }
@@ -110,6 +113,7 @@ unsafe impl<'a, T: ?Sized + 'a> Facet<'a> for core::marker::PhantomData<T> {
             // PhantomData hashes to nothing
         })
         .markers(MarkerTraits::EMPTY.with_eq().with_copy())
+        .variance(Variance::COVARIANT)
         .build()
     };
 }
@@ -144,6 +148,7 @@ unsafe impl Facet<'_> for char {
                 value.hash(&mut { hasher })
             })
             .markers(MarkerTraits::EMPTY.with_eq().with_copy())
+            .variance(Variance::COVARIANT)
             .build()
     };
 }
@@ -172,6 +177,7 @@ unsafe impl Facet<'_> for str {
                 value.hash(&mut { hasher })
             })
             .markers(MarkerTraits::EMPTY.with_eq())
+            .variance(Variance::COVARIANT)
             .build()
     };
 }
@@ -206,6 +212,7 @@ unsafe impl Facet<'_> for bool {
                 value.hash(&mut { hasher })
             })
             .markers(MarkerTraits::EMPTY.with_eq().with_copy())
+            .variance(Variance::COVARIANT)
             .build()
     };
 }
@@ -251,6 +258,7 @@ macro_rules! impl_facet_for_integer {
                     value.hash(&mut { hasher })
                 })
                 .markers(MarkerTraits::EMPTY.with_eq().with_copy())
+                .variance(Variance::COVARIANT)
                 .build()
             };
         }
@@ -408,7 +416,7 @@ macro_rules! impl_facet_for_nonzero {
                     type_tag: None,
                     inner: Some(<$type as Facet>::SHAPE),
                     proxy: None,
-                    variance: Variance::Invariant,
+                    variance: Variance::COVARIANT,
                 }
             };
         }
@@ -477,6 +485,7 @@ unsafe impl Facet<'_> for f32 {
             .partial_ord(|left, right| unsafe { left.get::<f32>().partial_cmp(right.get::<f32>()) })
             // f32 does not implement Ord or Hash (because of NaN)
             .markers(MarkerTraits::EMPTY.with_copy())
+            .variance(Variance::COVARIANT)
             .build()
     };
 }
@@ -529,6 +538,7 @@ unsafe impl Facet<'_> for f64 {
             .partial_ord(|left, right| unsafe { left.get::<f64>().partial_cmp(right.get::<f64>()) })
             // f64 does not implement Ord or Hash (because of NaN)
             .markers(MarkerTraits::EMPTY.with_copy())
+            .variance(Variance::COVARIANT)
             .build()
     };
 }
@@ -571,6 +581,7 @@ macro_rules! impl_facet_for_net_type {
                         value.hash(&mut { hasher })
                     })
                     .markers(MarkerTraits::EMPTY.with_eq().with_copy())
+                    .variance(Variance::COVARIANT)
                     .build()
             };
         }

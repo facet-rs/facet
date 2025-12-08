@@ -113,7 +113,10 @@ where
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // HashMap<K, V> is covariant in both K and V, but we use INVARIANT
+            // as a safe conservative default since computed_variance doesn't
+            // yet support multiple type parameters
+            variance: Variance::INVARIANT,
         }
     };
 }
@@ -133,7 +136,8 @@ unsafe impl Facet<'_> for RandomState {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // RandomState has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }

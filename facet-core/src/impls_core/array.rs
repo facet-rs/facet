@@ -1,4 +1,3 @@
-use crate::Variance;
 use core::ptr::NonNull;
 
 use crate::*;
@@ -96,9 +95,11 @@ where
             doc: &[],
             attributes: &[],
             type_tag: None,
+            // Array uses Def::Array, not inner, for element access
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // [T; N] is covariant in T, computed from the element type
+            variance: Shape::computed_variance,
         }
     };
 }

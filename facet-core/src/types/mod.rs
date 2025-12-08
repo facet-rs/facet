@@ -16,34 +16,115 @@ use core::alloc::Layout;
 /// This is used by `Peek` to safely allow lifetime manipulation based on the actual
 /// variance of the underlying type.
 ///
+/// # Built-in Type Variance
+///
+/// The Rust Reference specifies variance for built-in types at
+/// [§Variance of built-in types](https://doc.rust-lang.org/reference/subtyping.html#r-subtyping.variance.builtin-types):
+///
+/// | Type                          | Variance in `'a` | Variance in `T`   |
+/// |-------------------------------|------------------|-------------------|
+/// | `&'a T`                       | covariant        | covariant         |
+/// | `&'a mut T`                   | covariant        | **invariant**     |
+/// | `*const T`                    |                  | covariant         |
+/// | `*mut T`                      |                  | **invariant**     |
+/// | `[T]` and `[T; n]`            |                  | covariant         |
+/// | `fn(T) -> U`                  |                  | **contra** in `T`, covariant in `U` |
+/// | `Box<T>`, `Vec<T>`, etc.      |                  | covariant         |
+/// | `Cell<T>`, `UnsafeCell<T>`    |                  | **invariant**     |
+/// | `PhantomData<T>`              |                  | covariant         |
+///
 /// # Examples
 ///
 /// - `&'a T` is covariant in `'a` (a longer-lived reference can be used as a shorter one)
 /// - `fn(&'a T)` is contravariant in `'a` (a function accepting short-lived refs can accept long-lived ones)
-/// - `&'a mut T` is invariant in `'a` (mutable references can't change lifetimes)
-/// - `Cell<&'a T>` is invariant in `'a` (interior mutability prevents variance)
+/// - `&'a mut T` is invariant in `T` (mutable references can't change the type)
+/// - `Cell<T>` is invariant in `T` (interior mutability prevents variance)
+///
+/// # References
+///
+/// - [Rust Reference: Subtyping and Variance](https://doc.rust-lang.org/reference/subtyping.html)
+/// - [Rust Reference: Variance of built-in types](https://doc.rust-lang.org/reference/subtyping.html#r-subtyping.variance.builtin-types)
+/// - [The Rustonomicon: Subtyping and Variance](https://doc.rust-lang.org/nomicon/subtyping.html)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum Variance {
     /// Type is covariant: can safely shrink lifetimes (`'static` → `'a`).
     ///
-    /// Examples: `&'a T`, `Box<&'a T>`, `Vec<&'a T>`, `fn() -> &'a T`
+    /// A type `F<T>` is covariant if `F<Sub>` is a subtype of `F<Super>` when `Sub` is a
+    /// subtype of `Super`. This means the type "preserves" the subtyping relationship.
+    ///
+    /// Examples: `&'a T`, `*const T`, `Box<T>`, `Vec<T>`, `[T; N]`
+    ///
+    /// See [Rust Reference: Covariance](https://doc.rust-lang.org/reference/subtyping.html#r-subtyping.variance.covariant)
     Covariant = 0,
 
     /// Type is contravariant: can safely grow lifetimes (`'a` → `'static`).
     ///
-    /// Examples: `fn(&'a T)`, `fn(&'a T) -> ()`
+    /// A type `F<T>` is contravariant if `F<Super>` is a subtype of `F<Sub>` when `Sub` is a
+    /// subtype of `Super`. This means the type "reverses" the subtyping relationship.
+    ///
+    /// Examples: `fn(T)` is contravariant in `T`
+    ///
+    /// See [Rust Reference: Contravariance](https://doc.rust-lang.org/reference/subtyping.html#r-subtyping.variance.contravariant)
     Contravariant = 1,
 
-    /// Type is invariant: no lifetime changes allowed.
+    /// Type is invariant: no lifetime or type parameter changes allowed.
     ///
-    /// Examples: `&'a mut T`, `Cell<&'a T>`, `UnsafeCell<&'a T>`,
-    /// or any type with mixed covariant/contravariant positions.
+    /// A type `F<T>` is invariant if neither `F<Sub>` nor `F<Super>` is a subtype of the other,
+    /// regardless of the relationship between `Sub` and `Super`.
+    ///
+    /// Examples: `&'a mut T` (invariant in `T`), `Cell<T>`, `UnsafeCell<T>`, `*mut T`
+    ///
+    /// See [Rust Reference: Invariance](https://doc.rust-lang.org/reference/subtyping.html#r-subtyping.variance.invariant)
     #[default]
     Invariant = 2,
 }
 
+/// Returns [`Variance::Covariant`], ignoring the shape parameter.
+const fn covariant(_: &'static Shape) -> Variance {
+    Variance::Covariant
+}
+
+/// Returns [`Variance::Contravariant`], ignoring the shape parameter.
+const fn contravariant(_: &'static Shape) -> Variance {
+    Variance::Contravariant
+}
+
+/// Returns [`Variance::Invariant`], ignoring the shape parameter.
+const fn invariant(_: &'static Shape) -> Variance {
+    Variance::Invariant
+}
+
 impl Variance {
+    /// Function that returns [`Variance::Covariant`].
+    ///
+    /// Use this for types that are covariant over their type/lifetime parameter,
+    /// such as `&'a T`, `*const T`, `Box<T>`, `Vec<T>`, `[T; N]`.
+    ///
+    /// Also use for types with **no lifetime parameters** (like `i32`, `String`),
+    /// since they impose no constraints on lifetimes.
+    ///
+    /// See [Rust Reference: Variance of built-in types](https://doc.rust-lang.org/reference/subtyping.html#r-subtyping.variance.builtin-types)
+    pub const COVARIANT: fn(&'static Shape) -> Variance = covariant;
+
+    /// Function that returns [`Variance::Contravariant`].
+    ///
+    /// Use this for types that are contravariant over their type/lifetime parameter,
+    /// such as `fn(T)` (contravariant in `T`).
+    ///
+    /// See [Rust Reference: Variance of built-in types](https://doc.rust-lang.org/reference/subtyping.html#r-subtyping.variance.builtin-types)
+    pub const CONTRAVARIANT: fn(&'static Shape) -> Variance = contravariant;
+
+    /// Function that returns [`Variance::Invariant`].
+    ///
+    /// Use this for types that are invariant over their type/lifetime parameter,
+    /// such as `&'a mut T` (invariant in `T`), `*mut T`, `Cell<T>`, `UnsafeCell<T>`.
+    ///
+    /// This is the **safe default** when variance is unknown.
+    ///
+    /// See [Rust Reference: Variance of built-in types](https://doc.rust-lang.org/reference/subtyping.html#r-subtyping.variance.builtin-types)
+    pub const INVARIANT: fn(&'static Shape) -> Variance = invariant;
+
     /// Combine two variances (used when a type contains multiple lifetime-carrying fields).
     ///
     /// The rules follow Rust's variance composition:
@@ -190,6 +271,10 @@ pub struct Shape {
 
     /// Variance of this type with respect to its lifetime parameter.
     ///
+    /// This is a function that computes the variance lazily, taking the shape
+    /// as a parameter. This allows the function to walk the type's fields
+    /// without needing to capture generic parameters.
+    ///
     /// This determines whether lifetimes can be safely shrunk (covariant),
     /// grown (contravariant), or must remain unchanged (invariant).
     ///
@@ -197,7 +282,7 @@ pub struct Shape {
     /// allow lifetime manipulation at runtime.
     ///
     /// Defaults to `Invariant` (the safe default) if not explicitly set.
-    pub variance: Variance,
+    pub variance: fn(&'static Shape) -> Variance,
 }
 
 impl PartialOrd for Shape {
@@ -714,7 +799,96 @@ impl core::fmt::Debug for Shape {
     }
 }
 
+/// Maximum recursion depth for computing variance.
+/// This prevents stack overflow on deeply nested or recursive types.
+const MAX_VARIANCE_DEPTH: usize = 64;
+
 impl Shape {
+    /// Compute variance by walking the type structure.
+    ///
+    /// This computes the variance of a type by combining the variances of all its fields.
+    /// For structs, this iterates over all fields. For enums, this iterates over all
+    /// variants and their fields.
+    ///
+    /// The result is the intersection (most restrictive) of all field variances:
+    /// - If all fields are covariant, the type is covariant
+    /// - If any field is invariant, the type is invariant
+    /// - Mixed covariant/contravariant becomes invariant
+    ///
+    /// This method handles recursive types by limiting recursion depth. When the
+    /// maximum depth is exceeded, we return `Covariant` which is the identity
+    /// element for `combine`.
+    ///
+    /// This method is called by the generated variance function in derived types.
+    pub fn computed_variance(&'static self) -> Variance {
+        self.computed_variance_impl(0)
+    }
+
+    /// Internal implementation with depth tracking for cycle detection.
+    fn computed_variance_impl(&'static self, depth: usize) -> Variance {
+        // Cycle/depth limit detection - return Covariant (identity for combine)
+        if depth >= MAX_VARIANCE_DEPTH {
+            return Variance::Covariant;
+        }
+
+        match &self.ty {
+            Type::User(UserType::Struct(s)) => {
+                let mut v = Variance::Covariant;
+                for field in s.fields {
+                    let field_shape = field.shape();
+                    v = v.combine(field_shape.computed_variance_impl(depth + 1));
+                }
+                v
+            }
+            Type::User(UserType::Enum(e)) => {
+                let mut v = Variance::Covariant;
+                for variant in e.variants {
+                    for field in variant.data.fields {
+                        let field_shape = field.shape();
+                        v = v.combine(field_shape.computed_variance_impl(depth + 1));
+                    }
+                }
+                v
+            }
+            // For types with an inner shape, check if they use computed_variance.
+            // If they have a different variance function (like INVARIANT for *mut T),
+            // use that directly. Otherwise recurse into the inner type.
+            _ if self.inner.is_some() => {
+                if self.variance as usize == Self::computed_variance as usize {
+                    // This type delegates to computed_variance, recurse into inner
+                    let inner = self.inner.unwrap();
+                    inner.computed_variance_impl(depth + 1)
+                } else {
+                    // This type has its own variance declaration (e.g., *mut T is INVARIANT)
+                    (self.variance)(self)
+                }
+            }
+            // For container types (whether opaque or sequence), check the def for element types
+            _ => {
+                match &self.def {
+                    // List<T> - covariant in T
+                    Def::List(list_def) => list_def.t().computed_variance_impl(depth + 1),
+                    // Array<T, N> - covariant in T
+                    Def::Array(array_def) => array_def.t().computed_variance_impl(depth + 1),
+                    // Set<T> - covariant in T
+                    Def::Set(set_def) => set_def.t().computed_variance_impl(depth + 1),
+                    // Map<K, V> - combine variance of K and V
+                    Def::Map(map_def) => {
+                        let k_var = map_def.k().computed_variance_impl(depth + 1);
+                        let v_var = map_def.v().computed_variance_impl(depth + 1);
+                        k_var.combine(v_var)
+                    }
+                    // Slice<T> - covariant in T
+                    Def::Slice(slice_def) => slice_def.t().computed_variance_impl(depth + 1),
+                    // NdArray<T> - covariant in T
+                    Def::NdArray(ndarray_def) => ndarray_def.t().computed_variance_impl(depth + 1),
+                    // Other types (Scalar, Undefined, Pointer, Option) - use declared variance
+                    _ => (self.variance)(self),
+                }
+            }
+        }
+    }
+
     /// Heap-allocate a value of this shape
     #[cfg(feature = "alloc")]
     #[inline]
@@ -835,7 +1009,7 @@ pub struct ShapeBuilder {
     type_tag: Option<&'static str>,
     inner: Option<&'static Shape>,
     proxy: Option<&'static ()>,
-    variance: Variance,
+    variance: fn(&'static Shape) -> Variance,
 }
 
 impl ShapeBuilder {
@@ -858,7 +1032,8 @@ impl ShapeBuilder {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant, // Safe default
+            // Default to COVARIANT - types without lifetime parameters are covariant
+            variance: Variance::COVARIANT,
         }
     }
 
@@ -881,7 +1056,8 @@ impl ShapeBuilder {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant, // Safe default
+            // Default to COVARIANT - types without lifetime parameters are covariant
+            variance: Variance::COVARIANT,
         }
     }
 
@@ -954,14 +1130,21 @@ impl ShapeBuilder {
         self
     }
 
-    /// Set the variance of this type.
+    /// Set the variance of this type using a function.
     ///
     /// Variance determines how lifetimes can be safely manipulated:
-    /// - `Covariant`: lifetimes can be shrunk (`'static` → `'a`)
+    /// - `Covariant`: lifetimes can be shrunk (`'static` → `'a`) - default for ShapeBuilder
     /// - `Contravariant`: lifetimes can be grown (`'a` → `'static`)
-    /// - `Invariant`: no lifetime changes allowed (default)
+    /// - `Invariant`: no lifetime changes allowed
+    ///
+    /// The function takes the shape as a parameter, allowing it to compute
+    /// variance by walking the type's fields without needing to capture
+    /// generic parameters.
+    ///
+    /// For derived types, use `Shape::computed_variance` which walks fields.
+    /// For leaf types, use `Variance::COVARIANT`, `Variance::INVARIANT`, etc.
     #[inline]
-    pub const fn variance(mut self, variance: Variance) -> Self {
+    pub const fn variance(mut self, variance: fn(&'static Shape) -> Variance) -> Self {
         self.variance = variance;
         self
     }

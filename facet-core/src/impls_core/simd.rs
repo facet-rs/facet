@@ -29,6 +29,7 @@ macro_rules! impl_facet_for_simd {
                     type_tag: None,
                     inner: None,
                     proxy: None,
+                    variance: Variance::COVARIANT,
                 }
             };
         }

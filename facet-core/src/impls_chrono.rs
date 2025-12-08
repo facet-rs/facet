@@ -66,7 +66,8 @@ unsafe impl Facet<'_> for DateTime<Utc> {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // DateTime<Utc> has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }
@@ -129,7 +130,8 @@ unsafe impl Facet<'_> for DateTime<FixedOffset> {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // DateTime<FixedOffset> has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }
@@ -194,7 +196,8 @@ unsafe impl Facet<'_> for DateTime<Local> {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // DateTime<Local> has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }
@@ -267,7 +270,8 @@ unsafe impl Facet<'_> for NaiveDateTime {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // NaiveDateTime has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }
@@ -330,7 +334,8 @@ unsafe impl Facet<'_> for NaiveDate {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // NaiveDate has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }
@@ -397,7 +402,8 @@ unsafe impl Facet<'_> for NaiveTime {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // NaiveTime has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }

@@ -1,4 +1,3 @@
-use crate::Variance;
 use crate::{
     Def, Facet, Field, FieldFlags, Shape, ShapeRef, StructType, Type, VTableView, ValueVTable,
 };
@@ -74,7 +73,7 @@ unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            variance: Shape::computed_variance,
         }
     };
 }

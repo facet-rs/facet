@@ -96,7 +96,10 @@ where
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // HashSet<T, S> is covariant in T, but we use INVARIANT as a safe
+            // conservative default since computed_variance doesn't yet support
+            // multiple type parameters
+            variance: Variance::INVARIANT,
         }
     };
 }

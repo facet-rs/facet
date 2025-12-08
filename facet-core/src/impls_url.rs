@@ -77,7 +77,8 @@ unsafe impl Facet<'_> for Url {
             type_tag: None,
             inner: Some(<String as Facet>::SHAPE),
             proxy: None,
-            variance: Variance::Invariant,
+            // Url has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }

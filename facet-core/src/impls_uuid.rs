@@ -70,7 +70,8 @@ unsafe impl Facet<'_> for Uuid {
             type_tag: None,
             inner: Some(<String as Facet>::SHAPE),
             proxy: None,
-            variance: Variance::Invariant,
+            // Uuid has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }

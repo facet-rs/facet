@@ -444,7 +444,7 @@ pub static VALUE_SHAPE: Shape = Shape {
     type_tag: None,
     inner: None,
     proxy: None,
-    variance: Variance::Invariant,
+    variance: Variance::INVARIANT,
 };
 
 unsafe impl Facet<'_> for Value {
