@@ -1,7 +1,10 @@
 //! Control channel payloads.
 
+use facet::Facet;
+
 /// Reasons for closing a channel.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Facet)]
+#[repr(u8)]
 pub enum CloseReason {
     /// Normal completion.
     Normal,
@@ -10,7 +13,8 @@ pub enum CloseReason {
 }
 
 /// Reasons for cancelling a channel.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Facet)]
+#[repr(u8)]
 pub enum CancelReason {
     /// Client requested cancellation.
     ClientCancel,
@@ -29,7 +33,8 @@ pub enum CancelReason {
 /// - 4: GrantCredits
 /// - 5: Ping
 /// - 6: Pong
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Facet)]
+#[repr(u8)]
 pub enum ControlPayload {
     /// Open a new data channel.
     OpenChannel {

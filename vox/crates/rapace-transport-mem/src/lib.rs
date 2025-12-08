@@ -334,4 +334,34 @@ mod conformance_tests {
     async fn unary_multiple_calls() {
         rapace_testkit::run_unary_multiple_calls::<InProcFactory>().await;
     }
+
+    #[tokio::test]
+    async fn ping_pong() {
+        rapace_testkit::run_ping_pong::<InProcFactory>().await;
+    }
+
+    #[tokio::test]
+    async fn deadline_success() {
+        rapace_testkit::run_deadline_success::<InProcFactory>().await;
+    }
+
+    #[tokio::test]
+    async fn deadline_exceeded() {
+        rapace_testkit::run_deadline_exceeded::<InProcFactory>().await;
+    }
+
+    #[tokio::test]
+    async fn cancellation() {
+        rapace_testkit::run_cancellation::<InProcFactory>().await;
+    }
+
+    #[tokio::test]
+    async fn credit_grant() {
+        rapace_testkit::run_credit_grant::<InProcFactory>().await;
+    }
+
+    #[tokio::test]
+    async fn error_response() {
+        rapace_testkit::run_error_response::<InProcFactory>().await;
+    }
 }

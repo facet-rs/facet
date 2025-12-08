@@ -3,10 +3,13 @@
 use crate::FrameFlags;
 
 /// Size of inline payload in bytes.
-pub const INLINE_PAYLOAD_SIZE: usize = 24;
+pub const INLINE_PAYLOAD_SIZE: usize = 16;
 
 /// Sentinel value indicating payload is inline (not in a slot).
 pub const INLINE_PAYLOAD_SLOT: u32 = u32::MAX;
+
+/// Sentinel value indicating no deadline.
+pub const NO_DEADLINE: u64 = u64::MAX;
 
 /// Hot-path message descriptor (64 bytes, one cache line).
 ///
@@ -33,13 +36,15 @@ pub struct MsgDescHot {
     /// Actual payload length.
     pub payload_len: u32,
 
-    // Flow control & flags (8 bytes)
+    // Flow control & timing (16 bytes)
     /// Frame flags (EOS, CANCEL, ERROR, etc.).
     pub flags: FrameFlags,
     /// Credits being granted to peer.
     pub credit_grant: u32,
+    /// Deadline in nanoseconds (monotonic clock). NO_DEADLINE = no deadline.
+    pub deadline_ns: u64,
 
-    // Inline payload for small messages (24 bytes)
+    // Inline payload for small messages (16 bytes)
     /// When payload_slot == u32::MAX, payload lives here.
     /// No alignment guarantees beyond u8.
     pub inline_payload: [u8; INLINE_PAYLOAD_SIZE],
@@ -60,8 +65,23 @@ impl MsgDescHot {
             payload_len: 0,
             flags: FrameFlags::empty(),
             credit_grant: 0,
+            deadline_ns: NO_DEADLINE,
             inline_payload: [0; INLINE_PAYLOAD_SIZE],
         }
+    }
+
+    /// Returns true if this frame has a deadline set.
+    #[inline]
+    pub const fn has_deadline(&self) -> bool {
+        self.deadline_ns != NO_DEADLINE
+    }
+
+    /// Check if the deadline has passed.
+    ///
+    /// Returns `true` if the frame has a deadline and it has expired.
+    #[inline]
+    pub fn is_expired(&self, now_ns: u64) -> bool {
+        self.deadline_ns != NO_DEADLINE && now_ns > self.deadline_ns
     }
 
     /// Returns true if payload is inline (not in a slot).
@@ -101,6 +121,7 @@ impl core::fmt::Debug for MsgDescHot {
             .field("payload_len", &self.payload_len)
             .field("flags", &self.flags)
             .field("credit_grant", &self.credit_grant)
+            .field("deadline_ns", &self.deadline_ns)
             .field("is_inline", &self.is_inline())
             .finish()
     }

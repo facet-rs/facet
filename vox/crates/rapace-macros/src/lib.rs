@@ -257,10 +257,41 @@ fn generate_client_method(method: &MethodInfo, method_id: u32) -> TokenStream2 {
 
             // Check for error flag
             if response.desc.flags.contains(FrameFlags::ERROR) {
-                return Err(::rapace_core::RpcError::Status {
-                    code: ::rapace_core::ErrorCode::Internal,
-                    message: "remote error".into(),
-                });
+                // Parse error payload: [ErrorCode as u32 LE][message_len as u32 LE][message bytes]
+                if response.payload.len() < 8 {
+                    return Err(::rapace_core::RpcError::Status {
+                        code: ::rapace_core::ErrorCode::Internal,
+                        message: "malformed error response".into(),
+                    });
+                }
+
+                let error_code = u32::from_le_bytes([
+                    response.payload[0],
+                    response.payload[1],
+                    response.payload[2],
+                    response.payload[3]
+                ]);
+                let message_len = u32::from_le_bytes([
+                    response.payload[4],
+                    response.payload[5],
+                    response.payload[6],
+                    response.payload[7]
+                ]) as usize;
+
+                if response.payload.len() < 8 + message_len {
+                    return Err(::rapace_core::RpcError::Status {
+                        code: ::rapace_core::ErrorCode::Internal,
+                        message: "malformed error response".into(),
+                    });
+                }
+
+                let code = ::rapace_core::ErrorCode::from_u32(error_code)
+                    .unwrap_or(::rapace_core::ErrorCode::Internal);
+                let message = ::std::string::String::from_utf8_lossy(
+                    &response.payload[8..8 + message_len]
+                ).into_owned();
+
+                return Err(::rapace_core::RpcError::Status { code, message });
             }
 
             // Decode response using facet_postcard
