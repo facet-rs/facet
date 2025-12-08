@@ -16,6 +16,11 @@ pub mod fault;
 pub mod observe;
 pub mod dispatch;
 pub mod registry;
+pub mod callback;
+pub mod service_macro;
+
+// Note: The define_service! macro is automatically exported at the crate root
+// due to #[macro_export], so no re-export is needed
 
 #[cfg(test)]
 mod proptests;

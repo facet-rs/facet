@@ -10,6 +10,9 @@ serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["alloc"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "rt"] }
+facet = "0.31"
+facet-core = "0.31"
+paste = "1"
 
 [dev-dependencies]
 proptest = "1"
