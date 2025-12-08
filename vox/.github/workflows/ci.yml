@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  merge_group:
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,19 +14,12 @@ env:
 jobs:
   test:
     name: Test
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        rust: [stable, beta]
+    runs-on: depot-ubuntu-24.04-16
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-action@stable
-        with:
-          toolchain: ${{ matrix.rust }}
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@nextest
@@ -41,14 +35,13 @@ jobs:
 
   browser-test:
     name: Browser / WebSocket
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04-16
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust (with wasm target)
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           targets: wasm32-unknown-unknown
 
       - name: Cache cargo
@@ -73,14 +66,12 @@ jobs:
 
   fuzz-smoke:
     name: Fuzz smoke tests
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04-16
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-action@stable
-        with:
-          toolchain: stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -90,14 +81,13 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04-16
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           components: clippy
 
       - name: Cache cargo
@@ -108,14 +98,13 @@ jobs:
 
   fmt:
     name: Format
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04-4
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           components: rustfmt
 
       - name: Check formatting
@@ -123,14 +112,12 @@ jobs:
 
   doc:
     name: Documentation
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04-16
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-action@stable
-        with:
-          toolchain: stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -142,12 +129,12 @@ jobs:
 
   miri:
     name: Miri (undefined behavior)
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04-16
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-action@nightly
+        uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
 
@@ -164,14 +151,13 @@ jobs:
 
   coverage:
     name: Coverage
-    runs-on: ubuntu-latest
+    runs-on: depot-ubuntu-24.04-16
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           components: llvm-tools-preview
 
       - name: Install cargo-llvm-cov

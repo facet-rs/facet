@@ -219,6 +219,17 @@ Trait → Facet → Encoder → Transport → [wire] → Transport → Decoder �
 - **Tracing / OpenTelemetry ecosystem** — The emphasis on trace/span IDs, structured telemetry, and observability as first-class concerns.
 - **facet & schema-first systems (protobuf, Smithy, etc.)** — Reflection-driven schemas, type shapes, and the idea of using a single schema layer to power encoding, registry, and tooling.
 
+## Sponsors
+
+CI runs on [Depot](https://depot.dev?utm_source=rapace):
+
+<p><a href="https://depot.dev?utm_source=rapace">
+<picture>
+<source media="(prefers-color-scheme: dark)" srcset="https://github.com/bearcove/rapace/raw/main/static/depot-dark.svg">
+<img src="https://github.com/bearcove/rapace/raw/main/static/depot-light.svg" height="40" alt="Depot">
+</picture>
+</a></p>
+
 ## License
 
 Licensed under either of Apache License, Version 2.0 or MIT license at your option.
