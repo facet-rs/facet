@@ -35,6 +35,7 @@ tokio = { version = "1", features = ["sync", "rt", "macros"] }
 paste = "1"
 futures = "0.3"
 pin-project-lite = "0.2"
+parking_lot = "0.12"
 
 # facet ecosystem (from git until published)
 facet = { git = "https://github.com/facet-rs/facet" }

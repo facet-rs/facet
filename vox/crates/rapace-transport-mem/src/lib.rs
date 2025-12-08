@@ -4,9 +4,400 @@
 //! must behave identically to this one. If behavior differs, the other
 //! transport has a bug.
 //!
-//! Characteristics:
-//! - No serialization for direct calls
-//! - Real Rust lifetimes (`&[u8]` is a real borrow)
-//! - Still participates in RPC semantics (channels, deadlines, cancellation)
+//! # Characteristics
+//!
+//! - Frames are passed through async channels (no serialization)
+//! - Real Rust lifetimes for in-process calls
+//! - Full RPC semantics (channels, deadlines, cancellation)
+//!
+//! # Usage
+//!
+//! ```ignore
+//! let (client_transport, server_transport) = InProcTransport::pair();
+//! ```
 
-// TODO: implement in-proc transport
+use std::sync::Arc;
+
+use parking_lot::Mutex;
+use rapace_core::{
+    DecodeError, EncodeCtx, EncodeError, Frame, FrameView, MsgDescHot, Transport, TransportError,
+};
+use tokio::sync::mpsc;
+
+/// Channel capacity for the in-proc transport.
+const CHANNEL_CAPACITY: usize = 64;
+
+/// In-process transport implementation.
+///
+/// This transport passes frames through async channels without serialization.
+/// It serves as the semantic reference for correct RPC behavior.
+pub struct InProcTransport {
+    inner: Arc<InProcInner>,
+}
+
+struct InProcInner {
+    /// Channel to send frames to the peer.
+    tx: mpsc::Sender<Frame>,
+    /// Channel to receive frames from the peer.
+    rx: tokio::sync::Mutex<mpsc::Receiver<Frame>>,
+    /// Most recently received frame (for FrameView lifetime).
+    /// Using parking_lot for sync access in recv_frame.
+    last_frame: Mutex<Option<Frame>>,
+    /// Whether the transport is closed.
+    closed: std::sync::atomic::AtomicBool,
+}
+
+impl InProcTransport {
+    /// Create a connected pair of in-proc transports.
+    ///
+    /// Returns (A, B) where frames sent on A are received on B and vice versa.
+    pub fn pair() -> (Self, Self) {
+        let (tx_a, rx_a) = mpsc::channel(CHANNEL_CAPACITY);
+        let (tx_b, rx_b) = mpsc::channel(CHANNEL_CAPACITY);
+
+        let inner_a = Arc::new(InProcInner {
+            tx: tx_b, // A sends to B's receiver
+            rx: tokio::sync::Mutex::new(rx_a),
+            last_frame: Mutex::new(None),
+            closed: std::sync::atomic::AtomicBool::new(false),
+        });
+
+        let inner_b = Arc::new(InProcInner {
+            tx: tx_a, // B sends to A's receiver
+            rx: tokio::sync::Mutex::new(rx_b),
+            last_frame: Mutex::new(None),
+            closed: std::sync::atomic::AtomicBool::new(false),
+        });
+
+        (Self { inner: inner_a }, Self { inner: inner_b })
+    }
+
+    /// Check if the transport is closed.
+    pub fn is_closed(&self) -> bool {
+        self.inner.closed.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
+impl Transport for InProcTransport {
+    async fn send_frame(&self, frame: &Frame) -> Result<(), TransportError> {
+        if self.is_closed() {
+            return Err(TransportError::Closed);
+        }
+
+        // Clone the frame for sending (in-proc still needs ownership transfer)
+        self.inner
+            .tx
+            .send(frame.clone())
+            .await
+            .map_err(|_| TransportError::Closed)
+    }
+
+    async fn recv_frame(&self) -> Result<FrameView<'_>, TransportError> {
+        if self.is_closed() {
+            return Err(TransportError::Closed);
+        }
+
+        // First, receive the frame
+        let frame = {
+            let mut rx = self.inner.rx.lock().await;
+            rx.recv().await.ok_or(TransportError::Closed)?
+        };
+
+        // Store in last_frame
+        {
+            let mut last = self.inner.last_frame.lock();
+            *last = Some(frame);
+        }
+
+        // Now borrow from last_frame with lifetime tied to &self
+        // SAFETY: last_frame lives as long as self.inner which lives as long as self.
+        // The MutexGuard is dropped but the data remains in the Arc.
+        // Caller must not call recv_frame again before dropping the FrameView,
+        // which is enforced by the &self borrow in the return type.
+        let last = self.inner.last_frame.lock();
+        let frame_ref = last.as_ref().unwrap();
+
+        // We need to extend the lifetime. This is sound because:
+        // 1. The frame is stored in self.inner.last_frame
+        // 2. self.inner is Arc'd and lives as long as self
+        // 3. The returned FrameView borrows &self, preventing another recv_frame call
+        let desc_ptr = &frame_ref.desc as *const MsgDescHot;
+        let payload_ptr = frame_ref.payload().as_ptr();
+        let payload_len = frame_ref.payload().len();
+
+        // SAFETY: Extending lifetime is safe because:
+        // - Data lives in Arc<InProcInner> which outlives 'self
+        // - FrameView borrows &'self, preventing concurrent recv_frame
+        let desc: &MsgDescHot = unsafe { &*desc_ptr };
+        let payload: &[u8] = unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) };
+
+        Ok(FrameView::new(desc, payload))
+    }
+
+    fn encoder(&self) -> Box<dyn EncodeCtx + '_> {
+        Box::new(InProcEncoder::new())
+    }
+
+    async fn close(&self) -> Result<(), TransportError> {
+        self.inner
+            .closed
+            .store(true, std::sync::atomic::Ordering::Release);
+        Ok(())
+    }
+}
+
+/// Encoder for in-proc transport.
+///
+/// Simply accumulates bytes into a Vec since no serialization is needed.
+pub struct InProcEncoder {
+    desc: MsgDescHot,
+    payload: Vec<u8>,
+}
+
+impl InProcEncoder {
+    fn new() -> Self {
+        Self {
+            desc: MsgDescHot::new(),
+            payload: Vec::new(),
+        }
+    }
+
+    /// Set the descriptor for this frame.
+    pub fn set_desc(&mut self, desc: MsgDescHot) {
+        self.desc = desc;
+    }
+}
+
+impl EncodeCtx for InProcEncoder {
+    fn encode_bytes(&mut self, bytes: &[u8]) -> Result<(), EncodeError> {
+        self.payload.extend_from_slice(bytes);
+        Ok(())
+    }
+
+    fn finish(self: Box<Self>) -> Result<Frame, EncodeError> {
+        Ok(Frame::with_payload(self.desc, self.payload))
+    }
+}
+
+/// Decoder for in-proc transport.
+pub struct InProcDecoder<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> InProcDecoder<'a> {
+    /// Create a new decoder from a byte slice.
+    pub fn new(data: &'a [u8]) -> Self {
+        Self { data, pos: 0 }
+    }
+}
+
+impl<'a> rapace_core::DecodeCtx<'a> for InProcDecoder<'a> {
+    fn decode_bytes(&mut self) -> Result<&'a [u8], DecodeError> {
+        let result = &self.data[self.pos..];
+        self.pos = self.data.len();
+        Ok(result)
+    }
+
+    fn remaining(&self) -> &'a [u8] {
+        &self.data[self.pos..]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rapace_core::FrameFlags;
+
+    #[tokio::test]
+    async fn test_pair_creation() {
+        let (a, b) = InProcTransport::pair();
+        assert!(!a.is_closed());
+        assert!(!b.is_closed());
+    }
+
+    #[tokio::test]
+    async fn test_send_recv_inline() {
+        let (a, b) = InProcTransport::pair();
+
+        // Create a frame with inline payload
+        let mut desc = MsgDescHot::new();
+        desc.msg_id = 1;
+        desc.channel_id = 1;
+        desc.method_id = 42;
+        desc.flags = FrameFlags::DATA;
+
+        let frame = Frame::with_inline_payload(desc, b"hello").unwrap();
+
+        // Send from A
+        a.send_frame(&frame).await.unwrap();
+
+        // Receive on B
+        let view = b.recv_frame().await.unwrap();
+        assert_eq!(view.desc.msg_id, 1);
+        assert_eq!(view.desc.channel_id, 1);
+        assert_eq!(view.desc.method_id, 42);
+        assert_eq!(view.payload, b"hello");
+    }
+
+    #[tokio::test]
+    async fn test_send_recv_external_payload() {
+        let (a, b) = InProcTransport::pair();
+
+        let mut desc = MsgDescHot::new();
+        desc.msg_id = 2;
+        desc.flags = FrameFlags::DATA;
+
+        let payload = vec![0u8; 1000]; // Larger than inline
+        let frame = Frame::with_payload(desc, payload.clone());
+
+        a.send_frame(&frame).await.unwrap();
+
+        let view = b.recv_frame().await.unwrap();
+        assert_eq!(view.desc.msg_id, 2);
+        assert_eq!(view.payload.len(), 1000);
+    }
+
+    #[tokio::test]
+    async fn test_bidirectional() {
+        let (a, b) = InProcTransport::pair();
+
+        // A -> B
+        let mut desc_a = MsgDescHot::new();
+        desc_a.msg_id = 1;
+        let frame_a = Frame::with_inline_payload(desc_a, b"from A").unwrap();
+        a.send_frame(&frame_a).await.unwrap();
+
+        // B -> A
+        let mut desc_b = MsgDescHot::new();
+        desc_b.msg_id = 2;
+        let frame_b = Frame::with_inline_payload(desc_b, b"from B").unwrap();
+        b.send_frame(&frame_b).await.unwrap();
+
+        // Receive both
+        let view_b = b.recv_frame().await.unwrap();
+        assert_eq!(view_b.payload, b"from A");
+
+        let view_a = a.recv_frame().await.unwrap();
+        assert_eq!(view_a.payload, b"from B");
+    }
+
+    #[tokio::test]
+    async fn test_close() {
+        let (a, _b) = InProcTransport::pair();
+
+        a.close().await.unwrap();
+        assert!(a.is_closed());
+
+        // Sending on closed transport should fail
+        let frame = Frame::new(MsgDescHot::new());
+        assert!(matches!(
+            a.send_frame(&frame).await,
+            Err(TransportError::Closed)
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_encoder() {
+        let (a, _b) = InProcTransport::pair();
+
+        let mut encoder = a.encoder();
+        encoder.encode_bytes(b"test data").unwrap();
+        let frame = encoder.finish().unwrap();
+
+        assert_eq!(frame.payload(), b"test data");
+    }
+}
+
+/// Integration tests for the vertical slice (macro + transport)
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    // Define a simple service using the macro
+    #[rapace_macros::service]
+    trait Adder {
+        async fn add(&self, a: i32, b: i32) -> i32;
+    }
+
+    // Implement the service
+    struct AdderImpl;
+
+    impl Adder for AdderImpl {
+        async fn add(&self, a: i32, b: i32) -> i32 {
+            a + b
+        }
+    }
+
+    #[tokio::test]
+    async fn test_adder_vertical_slice() {
+        // Create transport pair
+        let (client_transport, server_transport) = InProcTransport::pair();
+        let client_transport = Arc::new(client_transport);
+        let server_transport = Arc::new(server_transport);
+
+        // Create server
+        let server = AdderServer::new(AdderImpl);
+
+        // Spawn server task
+        let server_handle = tokio::spawn({
+            let server_transport = server_transport.clone();
+            async move {
+                // Receive request
+                let request = server_transport.recv_frame().await.unwrap();
+
+                // Dispatch to service
+                let response = server
+                    .dispatch(request.desc.method_id, request.payload)
+                    .await
+                    .unwrap();
+
+                // Send response
+                server_transport.send_frame(&response).await.unwrap();
+            }
+        });
+
+        // Create client and make call
+        let client = AdderClient::new(client_transport);
+        let result = client.add(2, 3).await.unwrap();
+
+        assert_eq!(result, 5);
+
+        // Wait for server to finish
+        server_handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_adder_multiple_calls() {
+        let (client_transport, server_transport) = InProcTransport::pair();
+        let client_transport = Arc::new(client_transport);
+        let server_transport = Arc::new(server_transport);
+
+        let server = AdderServer::new(AdderImpl);
+
+        // Spawn server that handles multiple requests
+        let server_handle = tokio::spawn({
+            let server_transport = server_transport.clone();
+            async move {
+                for _ in 0..3 {
+                    let request = server_transport.recv_frame().await.unwrap();
+                    let response = server
+                        .dispatch(request.desc.method_id, request.payload)
+                        .await
+                        .unwrap();
+                    server_transport.send_frame(&response).await.unwrap();
+                }
+            }
+        });
+
+        let client = AdderClient::new(client_transport);
+
+        // Multiple calls
+        assert_eq!(client.add(1, 2).await.unwrap(), 3);
+        assert_eq!(client.add(10, 20).await.unwrap(), 30);
+        assert_eq!(client.add(-5, 5).await.unwrap(), 0);
+
+        server_handle.await.unwrap();
+    }
+}

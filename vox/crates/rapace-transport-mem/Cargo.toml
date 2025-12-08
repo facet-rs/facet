@@ -10,7 +10,11 @@ description = "In-process transport for rapace (semantic reference implementatio
 rapace-core.workspace = true
 tokio.workspace = true
 futures.workspace = true
+parking_lot.workspace = true
 
 [dev-dependencies]
 rapace-testkit.workspace = true
+rapace-macros.workspace = true
+facet.workspace = true
+facet-postcard.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }

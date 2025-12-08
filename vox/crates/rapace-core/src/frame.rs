@@ -37,7 +37,13 @@ impl Frame {
     }
 
     /// Create a frame with external payload.
+    ///
+    /// Note: For owned frames with external payload, we use a sentinel slot value (0)
+    /// to distinguish from inline. The actual slot is only meaningful for SHM transport.
     pub fn with_payload(mut desc: MsgDescHot, payload: Vec<u8>) -> Self {
+        // Mark as non-inline by setting slot to 0 (or any non-MAX value)
+        // This is a sentinel for "payload is in the Frame::payload field"
+        desc.payload_slot = 0;
         desc.payload_len = payload.len() as u32;
         Self {
             desc,
