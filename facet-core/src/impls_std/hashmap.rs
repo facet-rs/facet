@@ -1,3 +1,4 @@
+use crate::Variance;
 use core::hash::BuildHasher;
 use core::ptr::NonNull;
 use std::collections::HashMap;
@@ -112,6 +113,7 @@ where
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }
@@ -131,6 +133,7 @@ unsafe impl Facet<'_> for RandomState {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }

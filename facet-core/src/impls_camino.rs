@@ -5,7 +5,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::{
     Def, Facet, PtrConst, PtrMut, PtrUninit, Shape, TryFromError, TryIntoInnerError, Type,
-    UserType, value_vtable,
+    UserType, Variance, value_vtable,
 };
 
 unsafe impl Facet<'_> for Utf8PathBuf {
@@ -61,6 +61,7 @@ unsafe impl Facet<'_> for Utf8PathBuf {
             type_tag: None,
             inner: Some(<String as Facet>::SHAPE),
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }
@@ -84,6 +85,7 @@ unsafe impl Facet<'_> for Utf8Path {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }

@@ -1,3 +1,4 @@
+use crate::Variance;
 use crate::*;
 
 unsafe impl Facet<'_> for std::path::PathBuf {
@@ -19,6 +20,7 @@ unsafe impl Facet<'_> for std::path::PathBuf {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }
@@ -42,6 +44,7 @@ unsafe impl Facet<'_> for std::path::Path {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }

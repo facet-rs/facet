@@ -6,7 +6,7 @@ use bytes::{BufMut as _, Bytes, BytesMut};
 
 use crate::{
     Def, Facet, IterVTable, ListDef, ListVTable, PtrConst, PtrMut, PtrUninit, Shape, Type,
-    UserType, value_vtable,
+    UserType, Variance, value_vtable,
 };
 
 type BytesIterator<'mem> = core::slice::Iter<'mem, u8>;
@@ -100,6 +100,7 @@ unsafe impl Facet<'_> for Bytes {
             type_tag: None,
             inner: Some(BytesMut::SHAPE),
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }
@@ -184,6 +185,7 @@ unsafe impl Facet<'_> for BytesMut {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }

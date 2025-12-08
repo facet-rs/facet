@@ -7,6 +7,7 @@ use crate::ptr::{PtrConst, PtrMut};
 
 use crate::{
     Def, Facet, IterVTable, MapDef, MapVTable, Shape, Type, TypeParam, UserType, ValueVTable,
+    Variance,
 };
 
 type IndexMapIterator<'mem, K, V> = indexmap::map::Iter<'mem, K, V>;
@@ -111,6 +112,7 @@ where
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }

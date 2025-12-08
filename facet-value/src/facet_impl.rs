@@ -5,6 +5,7 @@ use core::ptr::NonNull;
 use facet_core::{
     ConstTypeId, Def, DynDateTimeKind, DynValueKind, DynamicValueDef, DynamicValueVTable, Facet,
     PtrConst, PtrMut, PtrUninit, Shape, ShapeLayout, Type, TypeNameOpts, UserType, ValueVTable,
+    Variance,
 };
 
 use crate::{DateTimeKind, VArray, VBytes, VDateTime, VNumber, VObject, VString, Value};
@@ -443,6 +444,7 @@ pub static VALUE_SHAPE: Shape = Shape {
     type_tag: None,
     inner: None,
     proxy: None,
+    variance: Variance::Invariant,
 };
 
 unsafe impl Facet<'_> for Value {

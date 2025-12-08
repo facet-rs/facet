@@ -160,6 +160,7 @@ pub mod 𝟋 {
     pub use crate::Type as 𝟋Ty;
     pub use crate::UserType as 𝟋UTy;
     pub use crate::ValueVTable as 𝟋Vt;
+    pub use crate::Variance as 𝟋Vrnc;
     pub use crate::Variant as 𝟋Var;
 
     // === Builders ===

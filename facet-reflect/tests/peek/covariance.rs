@@ -1,12 +1,15 @@
-//! Tests demonstrating that Peek is covariant over 'facet.
+//! Tests demonstrating that Peek is invariant over 'facet.
 //!
-//! Covariance means Peek<'mem, 'static> can be used where Peek<'mem, 'a> is expected.
-//! This is safe because:
-//! - Covariance only allows shrinking lifetimes ('static -> 'a), not growing
-//! - Data valid for 'static is valid for any shorter lifetime
-//! - The 'mem lifetime and borrow checker prevent references from escaping
+//! Invariance means Peek<'mem, 'a> cannot be cast to Peek<'mem, 'b> even if 'a: 'b.
 //!
-//! See: https://github.com/facet-rs/facet/discussions/1128
+//! This is REQUIRED for soundness! If Peek were covariant over 'facet, we could:
+//! 1. Create Peek<'mem, 'static> from FnWrapper<'static> (contains fn(&'static str))
+//! 2. Use covariance to cast it to Peek<'mem, 'short>
+//! 3. Call get::<FnWrapper<'short>>() to get &FnWrapper<'short>
+//! 4. This would allow calling the function with a &'short str that goes out of scope
+//!    while the original function pointer still holds it as 'static
+//!
+//! See: https://github.com/facet-rs/facet/issues/1168
 
 use facet::Facet;
 use facet_reflect::Peek;
@@ -16,42 +19,35 @@ struct Borrowed<'a> {
     data: &'a str,
 }
 
-/// Demonstrates that Peek<'_, 'static> can be passed where Peek<'_, 'a> is expected.
+/// Demonstrates that Peek can be created and used with the same lifetime.
+/// This is the safe way to use Peek - keeping the 'facet lifetime consistent.
 #[test]
-fn peek_static_usable_as_shorter_lifetime() {
+fn peek_same_lifetime_works() {
     static STATIC_DATA: &str = "I am truly static";
     let borrowed_static: Borrowed<'static> = Borrowed { data: STATIC_DATA };
 
     // Create a Peek<'_, 'static>
     let peek_static: Peek<'_, 'static> = Peek::new(&borrowed_static);
 
-    // This function accepts Peek<'_, 'a> for any 'a
-    fn use_peek<'a>(peek: Peek<'_, 'a>) -> &'a str {
-        let borrowed: &Borrowed<'a> = peek.get::<Borrowed<'a>>().unwrap();
-        borrowed.data
-    }
-
-    // With covariance, peek_static can be used here
-    // The 'static lifetime shrinks to match 'a
-    let result = use_peek(peek_static);
-    assert_eq!(result, "I am truly static");
+    // Using the same 'static lifetime works fine
+    let borrowed: &Borrowed<'static> = peek_static.get::<Borrowed<'static>>().unwrap();
+    assert_eq!(borrowed.data, "I am truly static");
 }
 
-/// Shows that Peek with different 'facet lifetimes can be unified.
+/// Shows that Peek works correctly with non-static lifetimes too.
 #[test]
-fn peek_lifetime_unification() {
-    static STATIC_DATA: &str = "static";
-    let owned = String::from("owned");
+fn peek_with_shorter_lifetime() {
+    let owned = String::from("owned data");
+    let borrowed: Borrowed<'_> = Borrowed { data: &owned };
 
-    let static_borrowed: Borrowed<'static> = Borrowed { data: STATIC_DATA };
-    let owned_borrowed: Borrowed<'_> = Borrowed { data: &owned };
+    // Peek's 'facet lifetime is tied to the owned string's lifetime
+    let peek: Peek<'_, '_> = Peek::new(&borrowed);
 
-    let peek_static: Peek<'_, 'static> = Peek::new(&static_borrowed);
-    let peek_owned: Peek<'_, '_> = Peek::new(&owned_borrowed);
-
-    // Both peeks can be passed to a function expecting the same lifetime
-    // peek_static's 'static shrinks to match peek_owned's shorter lifetime
-    fn takes_two<'a>(_p1: Peek<'_, 'a>, _p2: Peek<'_, 'a>) {}
-
-    takes_two(peek_static, peek_owned);
+    // We can get the value back with the correct lifetime
+    let result: &Borrowed<'_> = peek.get::<Borrowed<'_>>().unwrap();
+    assert_eq!(result.data, "owned data");
 }
+
+// Note: The compile_tests/ directory contains tests that verify Peek's
+// invariance is properly enforced at compile time. Those tests ensure
+// that code attempting to launder lifetimes through Peek fails to compile.

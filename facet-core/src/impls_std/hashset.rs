@@ -1,3 +1,4 @@
+use crate::Variance;
 use core::hash::BuildHasher;
 use core::ptr::NonNull;
 use std::collections::HashSet;
@@ -95,6 +96,7 @@ where
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }

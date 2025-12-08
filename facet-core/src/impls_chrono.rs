@@ -1,7 +1,9 @@
 use alloc::string::{String, ToString};
 use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
-use crate::{Def, Facet, ParseError, PtrConst, PtrUninit, Shape, Type, UserType, value_vtable};
+use crate::{
+    Def, Facet, ParseError, PtrConst, PtrUninit, Shape, Type, UserType, Variance, value_vtable,
+};
 
 unsafe impl Facet<'_> for DateTime<Utc> {
     const SHAPE: &'static Shape = &const {
@@ -64,6 +66,7 @@ unsafe impl Facet<'_> for DateTime<Utc> {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }
@@ -126,6 +129,7 @@ unsafe impl Facet<'_> for DateTime<FixedOffset> {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }
@@ -190,6 +194,7 @@ unsafe impl Facet<'_> for DateTime<Local> {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }
@@ -262,6 +267,7 @@ unsafe impl Facet<'_> for NaiveDateTime {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }
@@ -324,6 +330,7 @@ unsafe impl Facet<'_> for NaiveDate {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }
@@ -390,6 +397,7 @@ unsafe impl Facet<'_> for NaiveTime {
             type_tag: None,
             inner: None,
             proxy: None,
+            variance: Variance::Invariant,
         }
     };
 }

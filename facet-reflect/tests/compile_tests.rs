@@ -286,3 +286,22 @@ fn test_peek_owned_dropped_before_ref() {
 
     run_compilation_test(&test);
 }
+
+/// Soundness test: ensures the fn pointer UB exploit is prevented.
+///
+/// Before making Peek invariant over 'facet, code like this would compile
+/// and lead to use-after-free (miri would detect it). Now it should fail
+/// to compile because Peek is invariant over 'facet.
+///
+/// See: https://github.com/facet-rs/facet/issues/1168
+#[test]
+#[cfg(not(miri))]
+fn test_peek_fn_ptr_ub_exploit() {
+    let test = CompilationTest {
+        name: "fn_ptr_ub_exploit",
+        source: include_str!("peek/compile_tests/fn_ptr_ub_exploit.rs"),
+        expected_errors: &["error[E0521]: borrowed data escapes outside of function"],
+    };
+
+    run_compilation_test(&test);
+}
