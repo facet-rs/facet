@@ -587,8 +587,11 @@ dependencies = [
 name = "rapace-testkit"
 version = "0.1.0"
 dependencies = [
+ "facet",
+ "facet-postcard",
  "futures",
  "rapace-core",
+ "rapace-macros",
  "tokio",
 ]
 
@@ -596,12 +599,9 @@ dependencies = [
 name = "rapace-transport-mem"
 version = "0.1.0"
 dependencies = [
- "facet",
- "facet-postcard",
  "futures",
  "parking_lot",
  "rapace-core",
- "rapace-macros",
  "rapace-testkit",
  "tokio",
 ]

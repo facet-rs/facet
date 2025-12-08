@@ -14,7 +14,4 @@ parking_lot.workspace = true
 
 [dev-dependencies]
 rapace-testkit.workspace = true
-rapace-macros.workspace = true
-facet.workspace = true
-facet-postcard.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }

@@ -309,95 +309,29 @@ mod tests {
     }
 }
 
-/// Integration tests for the vertical slice (macro + transport)
+/// Conformance tests using rapace-testkit.
 #[cfg(test)]
-mod integration_tests {
+mod conformance_tests {
     use super::*;
-    use std::sync::Arc;
+    use rapace_testkit::{TestError, TransportFactory};
 
-    // Define a simple service using the macro
-    #[rapace_macros::service]
-    trait Adder {
-        async fn add(&self, a: i32, b: i32) -> i32;
-    }
+    struct InProcFactory;
 
-    // Implement the service
-    struct AdderImpl;
+    impl TransportFactory for InProcFactory {
+        type Transport = InProcTransport;
 
-    impl Adder for AdderImpl {
-        async fn add(&self, a: i32, b: i32) -> i32 {
-            a + b
+        async fn connect_pair() -> Result<(Self::Transport, Self::Transport), TestError> {
+            Ok(InProcTransport::pair())
         }
     }
 
     #[tokio::test]
-    async fn test_adder_vertical_slice() {
-        // Create transport pair
-        let (client_transport, server_transport) = InProcTransport::pair();
-        let client_transport = Arc::new(client_transport);
-        let server_transport = Arc::new(server_transport);
-
-        // Create server
-        let server = AdderServer::new(AdderImpl);
-
-        // Spawn server task
-        let server_handle = tokio::spawn({
-            let server_transport = server_transport.clone();
-            async move {
-                // Receive request
-                let request = server_transport.recv_frame().await.unwrap();
-
-                // Dispatch to service
-                let response = server
-                    .dispatch(request.desc.method_id, request.payload)
-                    .await
-                    .unwrap();
-
-                // Send response
-                server_transport.send_frame(&response).await.unwrap();
-            }
-        });
-
-        // Create client and make call
-        let client = AdderClient::new(client_transport);
-        let result = client.add(2, 3).await.unwrap();
-
-        assert_eq!(result, 5);
-
-        // Wait for server to finish
-        server_handle.await.unwrap();
+    async fn unary_happy_path() {
+        rapace_testkit::run_unary_happy_path::<InProcFactory>().await;
     }
 
     #[tokio::test]
-    async fn test_adder_multiple_calls() {
-        let (client_transport, server_transport) = InProcTransport::pair();
-        let client_transport = Arc::new(client_transport);
-        let server_transport = Arc::new(server_transport);
-
-        let server = AdderServer::new(AdderImpl);
-
-        // Spawn server that handles multiple requests
-        let server_handle = tokio::spawn({
-            let server_transport = server_transport.clone();
-            async move {
-                for _ in 0..3 {
-                    let request = server_transport.recv_frame().await.unwrap();
-                    let response = server
-                        .dispatch(request.desc.method_id, request.payload)
-                        .await
-                        .unwrap();
-                    server_transport.send_frame(&response).await.unwrap();
-                }
-            }
-        });
-
-        let client = AdderClient::new(client_transport);
-
-        // Multiple calls
-        assert_eq!(client.add(1, 2).await.unwrap(), 3);
-        assert_eq!(client.add(10, 20).await.unwrap(), 30);
-        assert_eq!(client.add(-5, 5).await.unwrap(), 0);
-
-        server_handle.await.unwrap();
+    async fn unary_multiple_calls() {
+        rapace_testkit::run_unary_multiple_calls::<InProcFactory>().await;
     }
 }
