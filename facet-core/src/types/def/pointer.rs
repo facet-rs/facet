@@ -1,8 +1,4 @@
-use bitflags::bitflags;
-
-use crate::{PtrConst, PtrMut, PtrUninit};
-
-use super::Shape;
+use crate::{PtrConst, PtrMut, PtrUninit, Shape, bitflags};
 
 /// Describes a pointer — including a vtable to query and alter its state,
 /// and the inner shape (the pointee type in the pointer).
@@ -59,7 +55,6 @@ impl PointerDef {
 
 bitflags! {
     /// Flags to represent various characteristics of pointers
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct PointerFlags: u8 {
         /// An empty set of flags
         const EMPTY = 0;
@@ -88,8 +83,7 @@ bitflags! {
 /// `strong` must be allocated, and of the right layout for the corresponding pointer.
 ///
 /// `strong` must not have been initialized yet.
-pub type UpgradeIntoFn =
-    for<'ptr> unsafe fn(weak: PtrMut<'ptr>, strong: PtrUninit<'ptr>) -> Option<PtrMut<'ptr>>;
+pub type UpgradeIntoFn = unsafe fn(weak: PtrMut, strong: PtrUninit) -> Option<PtrMut>;
 
 /// Downgrades a strong pointer to a weak one.
 ///
@@ -105,8 +99,7 @@ pub type UpgradeIntoFn =
 /// `weak` must be allocated, and of the right layout for the corresponding weak pointer.
 ///
 /// `weak` must not have been initialized yet.
-pub type DowngradeIntoFn =
-    for<'ptr> unsafe fn(strong: PtrMut<'ptr>, weak: PtrUninit<'ptr>) -> PtrMut<'ptr>;
+pub type DowngradeIntoFn = unsafe fn(strong: PtrMut, weak: PtrUninit) -> PtrMut;
 
 /// Tries to obtain a reference to the inner value of the pointer.
 ///
@@ -115,7 +108,7 @@ pub type DowngradeIntoFn =
 /// # Safety
 ///
 /// `this` must be a valid strong pointer (like [`alloc::sync::Arc`] or [`alloc::rc::Rc`]).
-pub type BorrowFn = for<'ptr> unsafe fn(this: PtrConst<'ptr>) -> PtrConst<'ptr>;
+pub type BorrowFn = unsafe fn(this: PtrConst) -> PtrConst;
 
 /// Creates a new pointer wrapping the given value.
 ///
@@ -134,27 +127,27 @@ pub type BorrowFn = for<'ptr> unsafe fn(this: PtrConst<'ptr>) -> PtrConst<'ptr>;
 ///
 /// `ptr` is moved out of (with [`core::ptr::read`]) — it should be deallocated afterwards (e.g.
 /// with [`core::mem::forget`]) but NOT dropped).
-pub type NewIntoFn = for<'ptr> unsafe fn(this: PtrUninit<'ptr>, ptr: PtrMut<'ptr>) -> PtrMut<'ptr>;
+pub type NewIntoFn = unsafe fn(this: PtrUninit, ptr: PtrMut) -> PtrMut;
 
 /// Type-erased result of locking a mutex-like pointer
-pub struct LockResult<'ptr> {
+pub struct LockResult {
     /// The data that was locked
-    data: PtrMut<'ptr>,
+    data: PtrMut,
     /// The guard that protects the data
-    guard: PtrConst<'ptr>,
+    guard: PtrConst,
     /// The vtable for the guard
     guard_vtable: &'static LockGuardVTable,
 }
 
-impl<'ptr> LockResult<'ptr> {
+impl LockResult {
     /// Returns a reference to the locked data
     #[must_use]
-    pub fn data(&self) -> &PtrMut<'ptr> {
+    pub fn data(&self) -> &PtrMut {
         &self.data
     }
 }
 
-impl Drop for LockResult<'_> {
+impl Drop for LockResult {
     fn drop(&mut self) {
         unsafe {
             (self.guard_vtable.drop_in_place)(self.guard);
@@ -165,17 +158,17 @@ impl Drop for LockResult<'_> {
 /// Functions for manipulating a guard
 pub struct LockGuardVTable {
     /// Drops the guard in place
-    pub drop_in_place: for<'ptr> unsafe fn(guard: PtrConst<'ptr>),
+    pub drop_in_place: unsafe fn(guard: PtrConst),
 }
 
 /// Acquires a lock on a mutex-like pointer
-pub type LockFn = for<'ptr> unsafe fn(opaque: PtrConst<'ptr>) -> Result<LockResult<'ptr>, ()>;
+pub type LockFn = unsafe fn(opaque: PtrConst) -> Result<LockResult, ()>;
 
 /// Acquires a read lock on a reader-writer lock-like pointer
-pub type ReadFn = for<'ptr> unsafe fn(opaque: PtrConst<'ptr>) -> Result<LockResult<'ptr>, ()>;
+pub type ReadFn = unsafe fn(opaque: PtrConst) -> Result<LockResult, ()>;
 
 /// Acquires a write lock on a reader-writer lock-like pointer
-pub type WriteFn = for<'ptr> unsafe fn(opaque: PtrConst<'ptr>) -> Result<LockResult<'ptr>, ()>;
+pub type WriteFn = unsafe fn(opaque: PtrConst) -> Result<LockResult, ()>;
 
 /// Creates a new slice builder for a pointer: ie. for `Arc<[u8]>`, it builds a
 /// `Vec<u8>` internally, to which you can push, and then turn into an `Arc<[u8]>` at
@@ -183,7 +176,7 @@ pub type WriteFn = for<'ptr> unsafe fn(opaque: PtrConst<'ptr>) -> Result<LockRes
 ///
 /// This works for any `U` in `Arc<[U]>` because those have separate concrete implementations, and
 /// thus, separate concrete vtables.
-pub type SliceBuilderNewFn = fn() -> PtrMut<'static>;
+pub type SliceBuilderNewFn = fn() -> PtrMut;
 
 /// Pushes a value into a slice builder.
 ///
@@ -200,14 +193,14 @@ pub type SliceBuilderPushFn = unsafe fn(builder: PtrMut, item: PtrMut);
 ///
 /// The builder must be valid and must not be used after this function is called.
 /// Function is infallible as it uses the global allocator.
-pub type SliceBuilderConvertFn = unsafe fn(builder: PtrMut<'static>) -> PtrConst<'static>;
+pub type SliceBuilderConvertFn = unsafe fn(builder: PtrMut) -> PtrConst;
 
 /// Frees a slice builder without converting it into a pointer
 ///
 /// # Safety
 ///
 /// The builder must be valid and must not be used after this function is called.
-pub type SliceBuilderFreeFn = unsafe fn(builder: PtrMut<'static>);
+pub type SliceBuilderFreeFn = unsafe fn(builder: PtrMut);
 
 /// Functions for creating and manipulating slice builders.
 #[derive(Debug, Clone, Copy)]

@@ -13,10 +13,10 @@ use crate::error::{YamlError, YamlErrorKind};
 /// Get the serialized name of a field (respecting rename attributes).
 fn get_serialized_field_name(field: &Field) -> &'static str {
     // Look for rename attribute using extension syntax: #[facet(serde::rename = "value")]
-    if let Some(ext) = field.get_attr(Some("serde"), "rename") {
-        if let Some(Some(name)) = ext.get_as::<Option<&'static str>>() {
-            return name;
-        }
+    if let Some(ext) = field.get_attr(Some("serde"), "rename")
+        && let Some(Some(name)) = ext.get_as::<Option<&'static str>>()
+    {
+        return name;
     }
     // Default to the field name
     field.name
@@ -520,16 +520,16 @@ impl<W: Write> YamlSerializer<W> {
         if peek.into_struct().is_ok() {
             return true;
         }
-        if peek.into_list().is_ok() {
-            if let Ok(list) = peek.into_list() {
-                // Only complex if non-empty
-                return list.iter().next().is_some();
-            }
+        if peek.into_list().is_ok()
+            && let Ok(list) = peek.into_list()
+        {
+            // Only complex if non-empty
+            return list.iter().next().is_some();
         }
-        if peek.into_map().is_ok() {
-            if let Ok(map) = peek.into_map() {
-                return map.iter().next().is_some();
-            }
+        if peek.into_map().is_ok()
+            && let Ok(map) = peek.into_map()
+        {
+            return map.iter().next().is_some();
         }
         false
     }

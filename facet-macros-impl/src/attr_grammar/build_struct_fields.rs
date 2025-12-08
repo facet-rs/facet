@@ -187,33 +187,31 @@ fn parse_field_defs_with_docs(
 
     while i < tokens.len() {
         // Skip commas
-        if let TokenTree::Punct(p) = &tokens[i] {
-            if p.as_char() == ',' {
-                i += 1;
-                continue;
-            }
+        if let TokenTree::Punct(p) = &tokens[i]
+            && p.as_char() == ','
+        {
+            i += 1;
+            continue;
         }
 
         // Check for doc comment: #[doc = "..."]
-        if let TokenTree::Punct(p) = &tokens[i] {
-            if p.as_char() == '#' && i + 1 < tokens.len() {
-                if let TokenTree::Group(g) = &tokens[i + 1] {
-                    if g.delimiter() == proc_macro2::Delimiter::Bracket {
-                        if let Some(doc) = extract_doc_from_attr(&g.stream()) {
-                            // Accumulate doc comments (for multi-line)
-                            let trimmed = doc.trim();
-                            if let Some(existing) = &mut current_doc {
-                                existing.push(' ');
-                                existing.push_str(trimmed);
-                            } else {
-                                current_doc = Some(trimmed.to_string());
-                            }
-                            i += 2;
-                            continue;
-                        }
-                    }
-                }
+        if let TokenTree::Punct(p) = &tokens[i]
+            && p.as_char() == '#'
+            && i + 1 < tokens.len()
+            && let TokenTree::Group(g) = &tokens[i + 1]
+            && g.delimiter() == proc_macro2::Delimiter::Bracket
+            && let Some(doc) = extract_doc_from_attr(&g.stream())
+        {
+            // Accumulate doc comments (for multi-line)
+            let trimmed = doc.trim();
+            if let Some(existing) = &mut current_doc {
+                existing.push(' ');
+                existing.push_str(trimmed);
+            } else {
+                current_doc = Some(trimmed.to_string());
             }
+            i += 2;
+            continue;
         }
 
         // Expect field: name: kind
@@ -306,22 +304,18 @@ fn extract_doc_from_attr(tokens: &TokenStream2) -> Option<String> {
     let tokens: Vec<TokenTree> = tokens.clone().into_iter().collect();
 
     // Expected: doc = "..."
-    if tokens.len() >= 3 {
-        if let TokenTree::Ident(ident) = &tokens[0] {
-            if *ident == "doc" {
-                if let TokenTree::Punct(p) = &tokens[1] {
-                    if p.as_char() == '=' {
-                        if let TokenTree::Literal(lit) = &tokens[2] {
-                            let lit_str = lit.to_string();
-                            // Remove quotes and unescape
-                            if lit_str.starts_with('"') && lit_str.ends_with('"') {
-                                let inner = &lit_str[1..lit_str.len() - 1];
-                                return Some(unescape_string(inner.trim_start()));
-                            }
-                        }
-                    }
-                }
-            }
+    if tokens.len() >= 3
+        && let TokenTree::Ident(ident) = &tokens[0]
+        && *ident == "doc"
+        && let TokenTree::Punct(p) = &tokens[1]
+        && p.as_char() == '='
+        && let TokenTree::Literal(lit) = &tokens[2]
+    {
+        let lit_str = lit.to_string();
+        // Remove quotes and unescape
+        if lit_str.starts_with('"') && lit_str.ends_with('"') {
+            let inner = &lit_str[1..lit_str.len() - 1];
+            return Some(unescape_string(inner.trim_start()));
         }
     }
     None
@@ -468,11 +462,11 @@ fn parse_input_fields(
 
     while i < tokens.len() {
         // Skip commas
-        if let TokenTree::Punct(p) = &tokens[i] {
-            if p.as_char() == ',' {
-                i += 1;
-                continue;
-            }
+        if let TokenTree::Punct(p) = &tokens[i]
+            && p.as_char() == ','
+        {
+            i += 1;
+            continue;
         }
 
         // Expect identifier (field name)
@@ -1110,23 +1104,23 @@ fn parse_integer_value(
     field_name: &str,
 ) -> std::result::Result<(i64, usize), SpannedError> {
     // Check if the value token is a negative sign
-    if let TokenTree::Punct(p) = value_token {
-        if p.as_char() == '-' {
-            // Next token should be the number
-            if tokens.len() > 1 {
-                if let TokenTree::Literal(lit) = &tokens[1] {
-                    let lit_str = lit.to_string();
-                    if let Ok(n) = lit_str.parse::<i64>() {
-                        return Ok((-n, 1)); // Consumed one extra token
-                    }
-                }
+    if let TokenTree::Punct(p) = value_token
+        && p.as_char() == '-'
+    {
+        // Next token should be the number
+        if tokens.len() > 1
+            && let TokenTree::Literal(lit) = &tokens[1]
+        {
+            let lit_str = lit.to_string();
+            if let Ok(n) = lit_str.parse::<i64>() {
+                return Ok((-n, 1)); // Consumed one extra token
             }
-            return Err(SpannedError {
-                message: "expected integer literal after `-`".to_string(),
-                span: p.span(),
-                help: None,
-            });
         }
+        return Err(SpannedError {
+            message: "expected integer literal after `-`".to_string(),
+            span: p.span(),
+            help: None,
+        });
     }
 
     // Regular positive integer
@@ -1177,11 +1171,11 @@ fn parse_string_list(stream: &TokenStream2) -> std::result::Result<Vec<String>, 
     let mut i = 0;
     while i < tokens.len() {
         // Skip commas
-        if let TokenTree::Punct(p) = &tokens[i] {
-            if p.as_char() == ',' {
-                i += 1;
-                continue;
-            }
+        if let TokenTree::Punct(p) = &tokens[i]
+            && p.as_char() == ','
+        {
+            i += 1;
+            continue;
         }
 
         // Expect string literal
@@ -1225,14 +1219,14 @@ fn parse_i64_list(stream: &TokenStream2) -> std::result::Result<Vec<i64>, Spanne
             }
             // Handle negative numbers
             if p.as_char() == '-' {
-                if i + 1 < tokens.len() {
-                    if let TokenTree::Literal(lit) = &tokens[i + 1] {
-                        let lit_str = lit.to_string();
-                        if let Ok(n) = lit_str.parse::<i64>() {
-                            items.push(-n);
-                            i += 2;
-                            continue;
-                        }
+                if i + 1 < tokens.len()
+                    && let TokenTree::Literal(lit) = &tokens[i + 1]
+                {
+                    let lit_str = lit.to_string();
+                    if let Ok(n) = lit_str.parse::<i64>() {
+                        items.push(-n);
+                        i += 2;
+                        continue;
                     }
                 }
                 return Err(SpannedError {

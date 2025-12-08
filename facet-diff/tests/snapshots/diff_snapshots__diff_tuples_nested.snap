@@ -27,7 +27,7 @@ expression: "format_diff_comparison(&a, &b)"
 │)                         │
 ╰──────────────────────────╯
 ╔Diff══════════════════════╗
-║(structurally equal)      ║
+║.. 1 unchanged item       ║
 ║.. 1 unchanged item       ║
 ║4 → 5                     ║
 ╚══════════════════════════╝

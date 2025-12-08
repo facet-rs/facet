@@ -7,7 +7,7 @@ use super::Peek;
 /// Iterator over key-value pairs in a `PeekMap`
 pub struct PeekMapIter<'mem, 'facet> {
     map: PeekMap<'mem, 'facet>,
-    iter: PtrMut<'mem>,
+    iter: PtrMut,
 }
 
 impl<'mem, 'facet> Iterator for PeekMapIter<'mem, 'facet> {
@@ -68,7 +68,7 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
     /// Get the number of entries in the map
     #[inline]
     pub fn len(&self) -> usize {
-        unsafe { (self.def.vtable.len_fn)(self.value.data()) }
+        unsafe { (self.def.vtable.len)(self.value.data()) }
     }
 
     /// Returns true if the map is empty
@@ -96,7 +96,7 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
     #[inline]
     pub fn contains_key_peek(&self, key: Peek<'_, 'facet>) -> Result<bool, ReflectError> {
         if self.def.k() == key.shape {
-            return Ok(unsafe { (self.def.vtable.contains_key_fn)(self.value.data(), key.data()) });
+            return Ok(unsafe { (self.def.vtable.contains_key)(self.value.data(), key.data()) });
         }
 
         Err(ReflectError::WrongShape {
@@ -114,7 +114,7 @@ impl<'mem, 'facet> PeekMap<'mem, 'facet> {
         if self.def.k() == key.shape {
             return Ok(unsafe {
                 let Some(value_ptr) =
-                    (self.def.vtable.get_value_ptr_fn)(self.value.data(), key.data())
+                    (self.def.vtable.get_value_ptr)(self.value.data(), key.data())
                 else {
                     return Ok(None);
                 };

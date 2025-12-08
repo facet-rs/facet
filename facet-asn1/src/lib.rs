@@ -805,11 +805,10 @@ impl<'input> Asn1DeserializerStack<'input> {
                                     | StructKind::Tuple => v.discriminant.map(|discriminant| {
                                         discriminant as u8 | tag::ASN1_CLASS_CONTEXT_SPECIFIC
                                     }),
-                                } {
-                                    if tag == variant_tag {
-                                        found = true;
-                                        break;
-                                    }
+                                } && tag == variant_tag
+                                {
+                                    found = true;
+                                    break;
                                 }
                             }
                             if found {

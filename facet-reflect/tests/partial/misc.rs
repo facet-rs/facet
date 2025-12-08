@@ -3,10 +3,7 @@
 #![allow(unused_assignments)]
 
 use facet_testhelpers::{IPanic, test};
-use std::{
-    mem::{MaybeUninit, size_of},
-    ptr::NonNull,
-};
+use std::mem::{MaybeUninit, size_of};
 
 use facet::{EnumType, Facet, Field, PtrConst, PtrUninit, StructType, Type, UserType, Variant};
 use facet_reflect::{Partial, ReflectError};
@@ -693,15 +690,13 @@ fn clone_into() -> Result<(), IPanic> {
     assert_eq!(CLONES.load(Ordering::SeqCst), 1);
 
     let mut f3: MaybeUninit<Foo> = MaybeUninit::uninit();
-    let clone_into = <Foo as Facet>::SHAPE
-        .vtable
-        .clone_into
-        .expect("Foo should have clone_into");
+    let shape = <Foo as Facet>::SHAPE;
+    let src = PtrConst::new(&f as *const Foo);
+    let dst = PtrUninit::from_maybe_uninit(&mut f3);
     unsafe {
-        clone_into(
-            PtrConst::new(NonNull::from(&f)),
-            PtrUninit::from_maybe_uninit(&mut f3),
-        );
+        shape
+            .call_clone_into(src, dst.assume_init())
+            .expect("Foo should have clone_into");
     }
     assert_eq!(CLONES.load(Ordering::SeqCst), 2);
 

@@ -3,6 +3,20 @@ use quote::{TokenStreamExt as _, quote};
 
 use crate::{LifetimeName, RenameRule, process_enum, process_struct};
 
+/// Generate a static declaration that pre-evaluates `<T as Facet>::SHAPE`.
+/// Only emitted in release builds to avoid slowing down debug compile times.
+pub(crate) fn generate_static_decl(type_name: &Ident, facet_crate: &TokenStream) -> TokenStream {
+    let type_name_str = type_name.to_string();
+    let screaming_snake_name = RenameRule::ScreamingSnakeCase.apply(&type_name_str);
+
+    let static_name_ident = quote::format_ident!("{}_SHAPE", screaming_snake_name);
+
+    quote! {
+        #[cfg(not(debug_assertions))]
+        static #static_name_ident: &'static #facet_crate::Shape = <#type_name as #facet_crate::Facet>::SHAPE;
+    }
+}
+
 /// Main entry point for the `#[derive(Facet)]` macro. Parses type declarations and generates Facet trait implementations.
 pub fn facet_macros(input: TokenStream) -> TokenStream {
     let mut i = input.clone().to_token_iter();
@@ -16,18 +30,6 @@ pub fn facet_macros(input: TokenStream) -> TokenStream {
         Err(err) => {
             panic!("Could not parse type declaration: {input}\nError: {err}");
         }
-    }
-}
-
-/// Generate a static declaration that exports the crate
-pub(crate) fn generate_static_decl(type_name: &Ident, facet_crate: &TokenStream) -> TokenStream {
-    let type_name_str = type_name.to_string();
-    let screaming_snake_name = RenameRule::ScreamingSnakeCase.apply(&type_name_str);
-
-    let static_name_ident = quote::format_ident!("{}_SHAPE", screaming_snake_name);
-
-    quote! {
-        static #static_name_ident: &'static #facet_crate::Shape = <#type_name as #facet_crate::Facet>::SHAPE;
     }
 }
 
@@ -152,7 +154,7 @@ pub(crate) fn generate_type_name_fn(
                     write!(f, "{:?}", #name)?;
                 }),
                 GenericParam::Type { name, .. } => Some(quote! {
-                    <#name as #facet_crate::Facet>::SHAPE.vtable.type_name()(f, opts)?;
+                    <#name as #facet_crate::Facet>::SHAPE.write_type_name(f, opts)?;
                 }),
             });
             // TODO: is there a way to construct a DelimitedVec from an iterator?
@@ -168,7 +170,7 @@ pub(crate) fn generate_type_name_fn(
     match write_generics {
         Some(write_generics) => {
             quote! {
-                |f, opts| {
+                |_shape, f, opts| {
                     write!(f, #type_name_str)?;
                     if let Some(opts) = opts.for_children() {
                         write!(f, "<")?;
@@ -181,6 +183,6 @@ pub(crate) fn generate_type_name_fn(
                 }
             }
         }
-        None => quote! { |f, _opts| ::core::fmt::Write::write_str(f, #type_name_str) },
+        None => quote! { |_shape, f, _opts| ::core::fmt::Write::write_str(f, #type_name_str) },
     }
 }

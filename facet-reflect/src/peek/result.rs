@@ -26,7 +26,7 @@ impl<'mem, 'facet> PeekResult<'mem, 'facet> {
     /// Returns whether the result is Ok
     #[inline]
     pub fn is_ok(self) -> bool {
-        unsafe { (self.vtable().is_ok_fn)(self.value.data()) }
+        unsafe { (self.vtable().is_ok)(self.value.data()) }
     }
 
     /// Returns whether the result is Err
@@ -39,7 +39,7 @@ impl<'mem, 'facet> PeekResult<'mem, 'facet> {
     #[inline]
     pub fn ok(self) -> Option<crate::Peek<'mem, 'facet>> {
         unsafe {
-            (self.vtable().get_ok_fn)(self.value.data())
+            (self.vtable().get_ok)(self.value.data())
                 .map(|inner_data| crate::Peek::unchecked_new(inner_data, self.def.t()))
         }
     }
@@ -48,7 +48,7 @@ impl<'mem, 'facet> PeekResult<'mem, 'facet> {
     #[inline]
     pub fn err(self) -> Option<crate::Peek<'mem, 'facet>> {
         unsafe {
-            (self.vtable().get_err_fn)(self.value.data())
+            (self.vtable().get_err)(self.value.data())
                 .map(|inner_data| crate::Peek::unchecked_new(inner_data, self.def.e()))
         }
     }

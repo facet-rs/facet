@@ -77,6 +77,64 @@ As of Jul 25, 2025, the 408 tests run in .547 on a MacBook Pro M4.
   - `just fuzz-smoke-inline` hones in on inline string mutations; wire both into CI smoke stages.
 - For long fuzz sessions, prefer `cargo fuzz cmin` + `heaptrack target/debug/fuzz_inline_string ...` or run under `valgrind --tool=memcheck` to confirm no allocator leaks appear when inline/heap transitions churn.
 
+## Measuring Compile Times and Binary Size
+
+facet includes tooling to measure compile-time metrics and track them over time.
+This is useful for benchmarking changes that might affect compilation speed or
+binary size.
+
+### Running a measurement
+
+```bash
+cargo xtask measure <experiment-name>
+```
+
+For example:
+```bash
+cargo xtask measure baseline
+cargo xtask measure after-optimization
+```
+
+This runs three steps:
+1. Clean build with `-Zmacro-stats` + `-Zprint-type-sizes` + `--timings`
+2. `cargo llvm-lines` to measure LLVM IR size
+3. rustc self-profile collection
+
+### Output
+
+- Human-readable report: `reports/YYYY-MM-DD-HHMM-<sha>-<name>.txt`
+- Machine-readable metrics: appended to `reports/metrics.jsonl`
+
+### Metrics collected
+
+| Metric | Description |
+|--------|-------------|
+| `compile_secs` | Total compile time |
+| `bin_unstripped` | Binary size before stripping |
+| `bin_stripped` | Binary size after stripping |
+| `llvm_lines` | Total LLVM IR lines |
+| `llvm_copies` | Number of monomorphized copies |
+| `type_sizes_total` | Sum of facet-related type sizes |
+| `typeck_ms` | Time spent in type checking |
+| `mir_borrowck_ms` | Time spent in borrow checking |
+| `eval_to_allocation_raw_ms` | Time spent in const evaluation |
+| ... | (and more self-profile metrics) |
+
+### Viewing metrics history
+
+```bash
+cargo xtask metrics
+```
+
+This opens an interactive TUI to explore `reports/metrics.jsonl` and compare
+experiments over time.
+
+### Prerequisites
+
+- Rust nightly (for `-Z` flags)
+- `cargo-llvm-lines`: `cargo install cargo-llvm-lines`
+- `summarize` (optional, for self-profile): `cargo install --git https://github.com/rust-lang/measureme summarize`
+
 ## Rust nightly / MSRV
 
 facet does not use Rust nightly, on purpose. It is "the best of stable". However,

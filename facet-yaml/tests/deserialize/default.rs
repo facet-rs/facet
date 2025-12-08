@@ -80,6 +80,7 @@ fn test_nested_struct_with_defaults() {
     }
 
     #[derive(Facet, Debug, PartialEq, Default)]
+    #[facet(traits(Default))]
     struct Nested {
         #[facet(default = 42)]
         answer: i32,

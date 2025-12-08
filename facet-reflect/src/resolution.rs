@@ -244,14 +244,14 @@ impl Resolution {
     /// but comes from a different source (different path). This catches duplicate
     /// field name conflicts between parent structs and flattened fields.
     pub fn add_field(&mut self, info: FieldInfo) -> Result<(), DuplicateFieldError> {
-        if let Some(existing) = self.fields.get(info.serialized_name) {
-            if existing.path != info.path {
-                return Err(DuplicateFieldError {
-                    field_name: info.serialized_name,
-                    first_path: existing.path.clone(),
-                    second_path: info.path,
-                });
-            }
+        if let Some(existing) = self.fields.get(info.serialized_name)
+            && existing.path != info.path
+        {
+            return Err(DuplicateFieldError {
+                field_name: info.serialized_name,
+                first_path: existing.path.clone(),
+                second_path: info.path,
+            });
         }
         if info.required {
             self.required_field_names.insert(info.serialized_name);
@@ -281,14 +281,14 @@ impl Resolution {
     /// field name conflicts between parent structs and flattened fields.
     pub fn merge(&mut self, other: &Resolution) -> Result<(), DuplicateFieldError> {
         for (name, info) in &other.fields {
-            if let Some(existing) = self.fields.get(*name) {
-                if existing.path != info.path {
-                    return Err(DuplicateFieldError {
-                        field_name: name,
-                        first_path: existing.path.clone(),
-                        second_path: info.path.clone(),
-                    });
-                }
+            if let Some(existing) = self.fields.get(*name)
+                && existing.path != info.path
+            {
+                return Err(DuplicateFieldError {
+                    field_name: name,
+                    first_path: existing.path.clone(),
+                    second_path: info.path.clone(),
+                });
             }
             self.fields.insert(*name, info.clone());
             if info.required {

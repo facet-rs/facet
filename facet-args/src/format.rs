@@ -328,11 +328,11 @@ impl<'input> Context<'input> {
                     let fields = self.fields(&p)?;
 
                     // First, check if there's a subcommand field that hasn't been set yet
-                    if let Some((field_index, field)) = find_subcommand_field(fields) {
-                        if !p.is_field_set(field_index)? {
-                            p = self.handle_subcommand_field(p, field_index, field)?;
-                            continue;
-                        }
+                    if let Some((field_index, field)) = find_subcommand_field(fields)
+                        && !p.is_field_set(field_index)?
+                    {
+                        p = self.handle_subcommand_field(p, field_index, field)?;
+                        continue;
                     }
 
                     // Otherwise, look for a positional field
@@ -477,11 +477,11 @@ impl<'input> Context<'input> {
                 }
                 ArgType::Positional => {
                     // Check for subcommand field first (for nested subcommands)
-                    if let Some((field_index, field)) = find_subcommand_field(fields) {
-                        if !p.is_field_set(field_index)? {
-                            p = self.handle_subcommand_field(p, field_index, field)?;
-                            continue;
-                        }
+                    if let Some((field_index, field)) = find_subcommand_field(fields)
+                        && !p.is_field_set(field_index)?
+                    {
+                        p = self.handle_subcommand_field(p, field_index, field)?;
+                        continue;
                     }
 
                     // Look for positional field
@@ -677,12 +677,11 @@ fn find_variant_by_name(
 
     // First check for rename attribute
     for variant in enum_type.variants {
-        if let Some(attr) = variant.get_builtin_attr("rename") {
-            if let Some(rename) = attr.get_as::<&str>() {
-                if *rename == name {
-                    return Ok(variant);
-                }
-            }
+        if let Some(attr) = variant.get_builtin_attr("rename")
+            && let Some(rename) = attr.get_as::<&str>()
+            && *rename == name
+        {
+            return Ok(variant);
         }
     }
 

@@ -22,6 +22,10 @@ Help improve facet! This section covers development setup, architecture, and con
 
 - [Implementing Facet for third-party types](@/contribute/adding-types.md) — Add support for external crates
 
+## Performance
+
+- [Compile-Time Metrics](@/contribute/metrics.md) — Measure and track compile times
+
 ## Community
 
 - [Discord](https://discord.gg/JhD7CwCJ8F) — Discuss changes before starting

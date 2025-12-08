@@ -4,7 +4,7 @@ use facet_core::{PtrMut, SetDef};
 /// Iterator over values in a `PeekSet`
 pub struct PeekSetIter<'mem, 'facet> {
     set: PeekSet<'mem, 'facet>,
-    iter: PtrMut<'mem>,
+    iter: PtrMut,
 }
 
 impl<'mem, 'facet> Iterator for PeekSetIter<'mem, 'facet> {
@@ -66,7 +66,7 @@ impl<'mem, 'facet> PeekSet<'mem, 'facet> {
     /// Get the number of entries in the set
     #[inline]
     pub fn len(&self) -> usize {
-        unsafe { (self.def.vtable.len_fn)(self.value.data()) }
+        unsafe { (self.def.vtable.len)(self.value.data()) }
     }
 
     /// Returns an iterator over the values in the set

@@ -14,11 +14,8 @@ serde_json = { version = "1", optional = true }
 [features]
 ci = [] # CI feature
 default = []
-facet = ["dep:facet", "dep:facet-macros"]
-serde = ["dep:serde"]
-facet_json = ["dep:facet-json"]
-serde_json = ["dep:serde_json"]
-json = ["facet_json", "serde_json"]
+facet = ["dep:facet", "dep:facet-macros", "dep:facet-json"]
+serde = ["dep:serde", "dep:serde_json"]
 
 [[bin]]
 name = "facet-bloatbench"

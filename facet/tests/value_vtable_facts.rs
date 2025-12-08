@@ -1,28 +1,68 @@
 use std::alloc::Layout;
-use std::fmt::Debug;
-use std::ptr::NonNull;
+use std::fmt::{self, Debug, Write};
 use std::rc::Rc;
 use std::{cmp::Ordering, collections::BTreeSet};
 
-use facet_core::{DropInPlaceFn, Facet, PtrConst, PtrMut, PtrUninit, VTableView, ValueVTable};
+use facet_core::{Facet, PtrConst, PtrMut, PtrUninit, Shape};
 use facet_macros::Facet;
+
+/// A no-op writer used to probe whether Debug/Display are actually implemented.
+struct NoopWriter;
+
+impl Write for NoopWriter {
+    fn write_str(&mut self, _s: &str) -> fmt::Result {
+        Ok(())
+    }
+}
+
+/// Helper to check if Debug/Display is actually implemented by trying to format.
+fn probe_debug(shape: &'static Shape, ptr: PtrConst) -> bool {
+    struct DebugProbe(&'static Shape, PtrConst);
+
+    impl Debug for DebugProbe {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match unsafe { self.0.call_debug(self.1, f) } {
+                Some(result) => result,
+                None => Err(fmt::Error),
+            }
+        }
+    }
+
+    let mut writer = NoopWriter;
+    write!(writer, "{:?}", DebugProbe(shape, ptr)).is_ok()
+}
+
+fn probe_display(shape: &'static Shape, ptr: PtrConst) -> bool {
+    struct DisplayProbe(&'static Shape, PtrConst);
+
+    impl fmt::Display for DisplayProbe {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match unsafe { self.0.call_display(self.1, f) } {
+                Some(result) => result,
+                None => Err(fmt::Error),
+            }
+        }
+    }
+
+    let mut writer = NoopWriter;
+    write!(writer, "{}", DisplayProbe(shape, ptr)).is_ok()
+}
 use facet_testhelpers::test;
 use owo_colors::{OwoColorize, Style};
 
 const REMARKABLE: Style = Style::new().blue();
 
-struct BoxPtrUninit<'mem> {
-    ptr: PtrUninit<'mem>,
+struct BoxPtrUninit {
+    ptr: PtrUninit,
     layout: Layout,
-    drop_in_place: Option<DropInPlaceFn>,
+    shape: &'static Shape,
 }
 
-impl<'mem> BoxPtrUninit<'mem> {
+impl BoxPtrUninit {
     // This has a `?Sized` bound to be usable in generic contexts.
     // This will panic when `T` is not `Sized`.
     fn new_sized<'a, T: Facet<'a> + ?Sized>() -> Self {
         let layout = T::SHAPE.layout.sized_layout().expect("T must be Sized");
-        let drop_in_place = T::SHAPE.vtable.drop_in_place;
 
         let ptr = if layout.size() == 0 {
             core::ptr::without_provenance_mut(layout.align())
@@ -31,30 +71,30 @@ impl<'mem> BoxPtrUninit<'mem> {
             unsafe { std::alloc::alloc(layout) }
         };
 
-        let Some(ptr) = NonNull::new(ptr) else {
+        if ptr.is_null() {
             std::alloc::handle_alloc_error(layout)
-        };
+        }
 
         let ptr = PtrUninit::new(ptr);
         Self {
             ptr,
             layout,
-            drop_in_place,
+            shape: T::SHAPE,
         }
     }
 
-    unsafe fn assume_init(self) -> BoxPtrMut<'mem> {
+    unsafe fn assume_init(self) -> BoxPtrMut {
         let r = BoxPtrMut {
             ptr: unsafe { self.ptr.assume_init() },
             layout: self.layout,
-            drop_in_place: self.drop_in_place,
+            shape: self.shape,
         };
         core::mem::forget(self);
         r
     }
 }
 
-impl<'mem> Drop for BoxPtrUninit<'mem> {
+impl Drop for BoxPtrUninit {
     fn drop(&mut self) {
         if self.layout.size() > 0 {
             unsafe { std::alloc::dealloc(self.ptr.as_mut_byte_ptr(), self.layout) };
@@ -62,17 +102,16 @@ impl<'mem> Drop for BoxPtrUninit<'mem> {
     }
 }
 
-struct BoxPtrMut<'mem> {
-    ptr: PtrMut<'mem>,
+struct BoxPtrMut {
+    ptr: PtrMut,
     layout: Layout,
-    drop_in_place: Option<DropInPlaceFn>,
+    shape: &'static Shape,
 }
 
-impl<'mem> Drop for BoxPtrMut<'mem> {
+impl Drop for BoxPtrMut {
     fn drop(&mut self) {
-        if let Some(drop_in_place) = self.drop_in_place {
-            unsafe { drop_in_place(self.ptr) };
-        }
+        // Some types (like references) don't have drop_in_place, which is fine
+        let _ = unsafe { self.shape.call_drop_in_place(self.ptr) };
         if self.layout.size() > 0 {
             unsafe { std::alloc::dealloc(self.ptr.as_mut_byte_ptr(), self.layout) };
         }
@@ -81,43 +120,39 @@ impl<'mem> Drop for BoxPtrMut<'mem> {
 
 struct VTableValueView<'a, T: ?Sized>(&'a T);
 
-impl<'a, 'facet, T: Facet<'facet> + ?Sized> VTableValueView<'a, T> {
-    fn view() -> VTableView<T> {
-        VTableView::of()
-    }
-}
-
-impl<'a, 'facet, T: Facet<'facet> + ?Sized> Display for VTableValueView<'a, T> {
+impl<'f, 'a, T: Facet<'f> + ?Sized> Display for VTableValueView<'a, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        match Self::view().display() {
-            Some(fun) => fun(self.0.into(), f),
+        let ptr = PtrConst::new(core::ptr::from_ref(self.0));
+        match unsafe { T::SHAPE.call_display(ptr, f) } {
+            Some(result) => result,
             None => write!(f, "???"),
         }
     }
 }
 
-impl<'a, 'facet, T: Facet<'facet> + ?Sized> Debug for VTableValueView<'a, T> {
+impl<'f, 'a, T: Facet<'f> + ?Sized> Debug for VTableValueView<'a, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        match Self::view().debug() {
-            Some(fun) => fun(self.0.into(), f),
+        let ptr = PtrConst::new(core::ptr::from_ref(self.0));
+        match unsafe { T::SHAPE.call_debug(ptr, f) } {
+            Some(result) => result,
             None => write!(f, "???"),
         }
     }
 }
 
-unsafe fn debug(vtable: &'static ValueVTable, ptr: PtrConst) -> impl Debug {
-    struct Debugger<'a>(&'static ValueVTable, PtrConst<'a>);
+unsafe fn debug(shape: &'static Shape, ptr: PtrConst) -> impl Debug {
+    struct Debugger(&'static Shape, PtrConst);
 
-    impl<'a> Debug for Debugger<'a> {
+    impl Debug for Debugger {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            match self.0.format.display {
-                Some(fun) => unsafe { fun(self.1, f) },
+            match unsafe { self.0.call_debug(self.1, f) } {
+                Some(result) => result,
                 None => write!(f, "???"),
             }
         }
     }
 
-    Debugger(vtable, ptr)
+    Debugger(shape, ptr)
 }
 
 fn ord_str(ordering: Option<Ordering>) -> &'static str {
@@ -129,20 +164,67 @@ fn ord_str(ordering: Option<Ordering>) -> &'static str {
     }
 }
 
-fn collect_facts<'a, T>(val1: &T, val2: &T) -> BTreeSet<Fact>
+fn collect_facts<'f, 'a, T>(val1: &'a T, val2: &'a T) -> BTreeSet<Fact>
 where
-    T: Facet<'a> + ?Sized,
+    T: Facet<'f> + ?Sized,
 {
     let mut facts: BTreeSet<Fact> = BTreeSet::new();
-    let value_vtable = T::SHAPE.vtable;
+    let shape = T::SHAPE;
+
+    // For VTableIndirect (auto_traits), the function pointers exist but may return None
+    // at runtime. We need to actually try calling them to know if the trait is supported.
+    let ptr1 = PtrConst::new(core::ptr::from_ref(val1));
+    let ptr2 = PtrConst::new(core::ptr::from_ref(val2));
+
+    // Check which traits are actually available by trying to call them
+    // For Debug/Display we need to use a probe that goes through the Formatter API
+    let has_debug = probe_debug(shape, ptr1);
+    let has_display = probe_display(shape, ptr1);
+    let has_partial_eq = unsafe { shape.call_partial_eq(ptr1, ptr2) }.is_some();
+    let has_ord = unsafe { shape.call_cmp(ptr1, ptr2) }.is_some();
+    let has_partial_ord = unsafe { shape.call_partial_cmp(ptr1, ptr2) }.is_some();
+
+    // For default and clone, we need to allocate - check via type_ops flags first
+    let has_default = shape
+        .type_ops
+        .map(|ops| ops.has_default_in_place())
+        .unwrap_or(false)
+        && {
+            let ptr = BoxPtrUninit::new_sized::<T>();
+            let result = unsafe { shape.call_default_in_place(ptr.ptr.assume_init()) };
+            if result.is_some() {
+                // Drop the allocated value
+                let _ = unsafe { ptr.assume_init() };
+                true
+            } else {
+                false
+            }
+        };
+
+    let has_clone = shape
+        .type_ops
+        .map(|ops| ops.has_clone_into())
+        .unwrap_or(false)
+        && {
+            let ptr = BoxPtrUninit::new_sized::<T>();
+            let result = unsafe { shape.call_clone_into(ptr1, ptr.ptr.assume_init()) };
+            if result.is_some() {
+                // Drop the allocated value
+                let _ = unsafe { ptr.assume_init() };
+                true
+            } else {
+                false
+            }
+        };
+
     let traits = [
-        ("Debug", value_vtable.format.debug.is_some()),
-        ("Display", value_vtable.format.display.is_some()),
-        ("Default", value_vtable.default_in_place.is_some()),
-        ("PartialEq", value_vtable.cmp.partial_eq.is_some()),
-        ("Ord", value_vtable.cmp.ord.is_some()),
-        ("PartialOrd", value_vtable.cmp.partial_ord.is_some()),
-        ("Clone", value_vtable.clone_into.is_some()),
+        ("Debug", has_debug),
+        ("Display", has_display),
+        ("Default", has_default),
+        ("PartialEq", has_partial_eq),
+        ("Ord", has_ord),
+        ("PartialOrd", has_partial_ord),
+        ("Clone", has_clone),
     ];
     let trait_str = traits
         .iter()
@@ -157,12 +239,11 @@ where
         .join(" + ");
     eprintln!("{} {}", trait_str, "======".yellow());
 
-    let vtable = VTableView::<T>::of();
     let l = VTableValueView(val1);
     let r = VTableValueView(val2);
 
     // Format display representation
-    if vtable.display().is_some() {
+    if has_display {
         facts.insert(Fact::Display);
         eprintln!(
             "Display:    {}",
@@ -171,7 +252,7 @@ where
     }
 
     // Format debug representation
-    if vtable.debug().is_some() {
+    if has_debug {
         facts.insert(Fact::Debug);
         eprintln!(
             "Debug:      {}",
@@ -180,8 +261,8 @@ where
     }
 
     // Test equality
-    if let Some(eq_fn) = vtable.partial_eq() {
-        let eq_result = eq_fn(val1.into(), val2.into());
+    if has_partial_eq {
+        let eq_result = unsafe { shape.call_partial_eq(ptr1, ptr2) }.unwrap();
         facts.insert(Fact::PartialEqAnd { l_eq_r: eq_result });
         let eq_str = format!(
             "{:?} {} {:?}",
@@ -193,8 +274,8 @@ where
     }
 
     // Test ordering
-    if let Some(cmp_fn) = vtable.ord() {
-        let cmp_result = cmp_fn(val1.into(), val2.into());
+    if has_ord {
+        let cmp_result = unsafe { shape.call_cmp(ptr1, ptr2) }.unwrap();
         facts.insert(Fact::OrdAnd {
             l_ord_r: cmp_result,
         });
@@ -207,8 +288,8 @@ where
         eprintln!("PartialOrd: {cmp_str}");
     }
 
-    if let Some(cmp_fn) = vtable.partial_ord() {
-        let cmp_result = cmp_fn(val1.into(), val2.into());
+    if has_partial_ord {
+        let cmp_result = unsafe { shape.call_partial_cmp(ptr1, ptr2) }.unwrap();
         facts.insert(Fact::PartialOrdAnd {
             l_ord_r: cmp_result,
         });
@@ -222,14 +303,13 @@ where
     }
 
     // Test default_in_place
-    if let Some(default_in_place) = T::SHAPE.vtable.default_in_place {
+    if has_default {
         facts.insert(Fact::Default);
 
         let ptr = BoxPtrUninit::new_sized::<T>();
-
-        unsafe { default_in_place(ptr.ptr) };
+        unsafe { shape.call_default_in_place(ptr.ptr.assume_init()) };
         let ptr = unsafe { ptr.assume_init() };
-        let debug = unsafe { debug(&T::SHAPE.vtable, ptr.ptr.as_const()) };
+        let debug = unsafe { debug(shape, ptr.ptr.as_const()) };
         eprintln!(
             "Default:    {}",
             format_args!("{debug:?}").style(REMARKABLE)
@@ -237,15 +317,15 @@ where
     }
 
     // Test clone
-    if let Some(clone_into) = T::SHAPE.vtable.clone_into {
+    if has_clone {
         facts.insert(Fact::Clone);
 
-        let src_ptr = PtrConst::new(NonNull::from(val1).cast::<u8>());
+        let src_ptr = PtrConst::new(core::ptr::from_ref(val1));
 
         let ptr = BoxPtrUninit::new_sized::<T>();
-        unsafe { clone_into(src_ptr, ptr.ptr) };
+        unsafe { shape.call_clone_into(src_ptr, ptr.ptr.assume_init()) };
         let ptr = unsafe { ptr.assume_init() };
-        let debug = unsafe { debug(&T::SHAPE.vtable, ptr.ptr.as_const()) };
+        let debug = unsafe { debug(shape, ptr.ptr.as_const()) };
         eprintln!(
             "Clone:      {}",
             format_args!("{debug:?}").style(REMARKABLE)
@@ -256,13 +336,13 @@ where
 }
 
 #[track_caller]
-fn report_maybe_mismatch<'a, T>(
-    val1: &T,
-    val2: &T,
+fn report_maybe_mismatch<'f, 'a, T>(
+    val1: &'a T,
+    val2: &'a T,
     expected_facts: BTreeSet<Fact>,
     facts: BTreeSet<Fact>,
 ) where
-    T: Facet<'a> + ?Sized,
+    T: Facet<'f> + ?Sized,
 {
     let name = format!("{}", T::SHAPE);
 
@@ -295,9 +375,9 @@ fn report_maybe_mismatch<'a, T>(
 }
 
 #[track_caller]
-fn check_facts<'a, 'b: 'a, T>(val1: &'b T, val2: &'b T, expected_facts: BTreeSet<Fact>)
+fn check_facts<'f, 'a, T>(val1: &'a T, val2: &'a T, expected_facts: BTreeSet<Fact>)
 where
-    T: Facet<'a> + ?Sized,
+    T: Facet<'f> + ?Sized,
 {
     let name = format!("{}", T::SHAPE);
     eprint!("{}", format_args!("== {name}: ").yellow());
@@ -310,9 +390,9 @@ where
 // slightly different version to overwrite the equality parts as miri juggles the addresses
 #[cfg(feature = "fn-ptr")]
 #[track_caller]
-fn check_facts_no_cmp<'a, 'b: 'a, T>(val1: &'b T, val2: &'b T, expected_facts: BTreeSet<Fact>)
+fn check_facts_no_cmp<'f, 'a, T>(val1: &'a T, val2: &'a T, expected_facts: BTreeSet<Fact>)
 where
-    T: Facet<'a> + ?Sized,
+    T: Facet<'f> + ?Sized,
 {
     #[cfg(not(miri))]
     {
@@ -799,7 +879,17 @@ fn test_slice_ref_traits() {
 #[test]
 fn test_array_traits() {
     // [i32; 1] implements Debug, PartialEq, Ord, Default, and Clone
-    check_facts(&[42], &[24], FactBuilder::new().default().clone().build());
+    check_facts(
+        &[42],
+        &[24],
+        FactBuilder::new()
+            .debug()
+            .partial_eq_and(false)
+            .correct_ord_and(Ordering::Greater)
+            .default()
+            .clone()
+            .build(),
+    );
 }
 
 #[test]
@@ -1299,9 +1389,8 @@ fn test_ipv4_addr_parse_from_str() {
     );
 
     // Check that the vtable has a parse function
-    let parse_fn = shape.vtable.parse;
     assert!(
-        parse_fn.is_some(),
+        shape.vtable.has_parse(),
         "Ipv4Addr should have a parse function in vtable"
     );
 }
@@ -1334,4 +1423,35 @@ fn test_complex_default() {
             .default()
             .build(),
     );
+}
+
+#[test]
+fn test_ref_clone_debug() {
+    let shape = <&()>::SHAPE;
+    eprintln!("Shape for &(): {}", shape);
+    let has_clone = shape
+        .type_ops
+        .map(|ops| ops.has_clone_into())
+        .unwrap_or(false);
+    eprintln!("type_ops has_clone_into: {}", has_clone);
+
+    let unit = ();
+    let ref_to_unit: &() = &unit;
+    let ptr = PtrConst::new(&ref_to_unit as *const &());
+
+    // Try to clone
+    let mut dst: std::mem::MaybeUninit<&()> = std::mem::MaybeUninit::uninit();
+    let dst_ptr = PtrMut::new(dst.as_mut_ptr());
+
+    let result = unsafe { shape.call_clone_into(ptr, dst_ptr) };
+    eprintln!("call_clone_into result: {:?}", result);
+
+    assert!(
+        shape
+            .type_ops
+            .map(|ops| ops.has_clone_into())
+            .unwrap_or(false),
+        "REF type_ops should have clone_into"
+    );
+    assert!(result.is_some(), "clone_into should succeed");
 }

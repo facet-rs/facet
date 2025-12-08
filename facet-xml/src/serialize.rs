@@ -462,12 +462,11 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
         }
 
         // Handle Spanned<T> - unwrap to the inner value
-        if is_spanned_shape(peek.shape()) {
-            if let Ok(struct_peek) = peek.into_struct() {
-                if let Ok(value_field) = struct_peek.field_by_name("value") {
-                    return self.serialize_element(element_name, value_field);
-                }
-            }
+        if is_spanned_shape(peek.shape())
+            && let Ok(struct_peek) = peek.into_struct()
+            && let Ok(value_field) = struct_peek.field_by_name("value")
+        {
+            return self.serialize_element(element_name, value_field);
         }
 
         // Check if this is a struct
@@ -728,56 +727,54 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
         let shape = peek.shape();
 
         // Check for Vec<u8>
-        if let Def::List(ld) = &shape.def {
-            if ld.t().is_type::<u8>() {
-                if let Some(bytes) = peek.as_bytes() {
-                    let encoded = BASE64_STANDARD.encode(bytes);
-                    write!(self.writer, "<{}>", escape_element_name(element_name))
-                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
-                    write!(self.writer, "{}", escape_text(&encoded))
-                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
-                    write!(self.writer, "</{}>", escape_element_name(element_name))
-                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
-                    return Ok(true);
-                }
-            }
+        if let Def::List(ld) = &shape.def
+            && ld.t().is_type::<u8>()
+            && let Some(bytes) = peek.as_bytes()
+        {
+            let encoded = BASE64_STANDARD.encode(bytes);
+            write!(self.writer, "<{}>", escape_element_name(element_name))
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            write!(self.writer, "{}", escape_text(&encoded))
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            write!(self.writer, "</{}>", escape_element_name(element_name))
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            return Ok(true);
         }
 
         // Check for [u8; N]
-        if let Def::Array(ad) = &shape.def {
-            if ad.t().is_type::<u8>() {
-                // Collect bytes from the array
-                if let Ok(list_peek) = peek.into_list_like() {
-                    let bytes: Vec<u8> = list_peek
-                        .iter()
-                        .filter_map(|p| p.get::<u8>().ok().copied())
-                        .collect();
-                    let encoded = BASE64_STANDARD.encode(&bytes);
-                    write!(self.writer, "<{}>", escape_element_name(element_name))
-                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
-                    write!(self.writer, "{}", escape_text(&encoded))
-                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
-                    write!(self.writer, "</{}>", escape_element_name(element_name))
-                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
-                    return Ok(true);
-                }
+        if let Def::Array(ad) = &shape.def
+            && ad.t().is_type::<u8>()
+        {
+            // Collect bytes from the array
+            if let Ok(list_peek) = peek.into_list_like() {
+                let bytes: Vec<u8> = list_peek
+                    .iter()
+                    .filter_map(|p| p.get::<u8>().ok().copied())
+                    .collect();
+                let encoded = BASE64_STANDARD.encode(&bytes);
+                write!(self.writer, "<{}>", escape_element_name(element_name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                write!(self.writer, "{}", escape_text(&encoded))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                write!(self.writer, "</{}>", escape_element_name(element_name))
+                    .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+                return Ok(true);
             }
         }
 
         // Check for &[u8]
-        if let Def::Slice(sd) = &shape.def {
-            if sd.t().is_type::<u8>() {
-                if let Some(bytes) = peek.as_bytes() {
-                    let encoded = BASE64_STANDARD.encode(bytes);
-                    write!(self.writer, "<{}>", escape_element_name(element_name))
-                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
-                    write!(self.writer, "{}", escape_text(&encoded))
-                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
-                    write!(self.writer, "</{}>", escape_element_name(element_name))
-                        .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
-                    return Ok(true);
-                }
-            }
+        if let Def::Slice(sd) = &shape.def
+            && sd.t().is_type::<u8>()
+            && let Some(bytes) = peek.as_bytes()
+        {
+            let encoded = BASE64_STANDARD.encode(bytes);
+            write!(self.writer, "<{}>", escape_element_name(element_name))
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            write!(self.writer, "{}", escape_text(&encoded))
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            write!(self.writer, "</{}>", escape_element_name(element_name))
+                .map_err(|e| XmlErrorKind::Io(e.to_string()))?;
+            return Ok(true);
         }
 
         Ok(false)
@@ -1059,17 +1056,16 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
         }
 
         // Handle Spanned<T> - unwrap to the inner value
-        if is_spanned_shape(peek.shape()) {
-            if let Ok(struct_peek) = peek.into_struct() {
-                if let Ok(value_field) = struct_peek.field_by_name("value") {
-                    return self.serialize_namespaced_element(
-                        element_name,
-                        value_field,
-                        namespace,
-                        default_ns,
-                    );
-                }
-            }
+        if is_spanned_shape(peek.shape())
+            && let Ok(struct_peek) = peek.into_struct()
+            && let Ok(value_field) = struct_peek.field_by_name("value")
+        {
+            return self.serialize_namespaced_element(
+                element_name,
+                value_field,
+                namespace,
+                default_ns,
+            );
         }
 
         // Determine element name and xmlns declaration
@@ -1589,12 +1585,11 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
         }
 
         // Handle Spanned<T>
-        if is_spanned_shape(peek.shape()) {
-            if let Ok(struct_peek) = peek.into_struct() {
-                if let Ok(value_peek) = struct_peek.field_by_name("value") {
-                    return self.serialize_text_value(value_peek);
-                }
-            }
+        if is_spanned_shape(peek.shape())
+            && let Ok(struct_peek) = peek.into_struct()
+            && let Ok(value_peek) = struct_peek.field_by_name("value")
+        {
+            return self.serialize_text_value(value_peek);
         }
 
         self.serialize_value(peek)
@@ -1613,12 +1608,11 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
         }
 
         // Handle Spanned<T>
-        if is_spanned_shape(peek.shape()) {
-            if let Ok(struct_peek) = peek.into_struct() {
-                if let Ok(value_peek) = struct_peek.field_by_name("value") {
-                    return self.serialize_value(value_peek);
-                }
-            }
+        if is_spanned_shape(peek.shape())
+            && let Ok(struct_peek) = peek.into_struct()
+            && let Ok(value_peek) = struct_peek.field_by_name("value")
+        {
+            return self.serialize_value(value_peek);
         }
 
         // Unwrap transparent wrappers
@@ -1716,12 +1710,11 @@ fn value_to_string<'mem, 'facet>(
     }
 
     // Handle Spanned<T>
-    if is_spanned_shape(peek.shape()) {
-        if let Ok(struct_peek) = peek.into_struct() {
-            if let Ok(value_peek) = struct_peek.field_by_name("value") {
-                return value_to_string(value_peek, float_formatter);
-            }
-        }
+    if is_spanned_shape(peek.shape())
+        && let Ok(struct_peek) = peek.into_struct()
+        && let Ok(value_peek) = struct_peek.field_by_name("value")
+    {
+        return value_to_string(value_peek, float_formatter);
     }
 
     // Unwrap transparent wrappers

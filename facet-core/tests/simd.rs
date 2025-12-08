@@ -1,5 +1,5 @@
-// Only run these tests when portable_simd is available (detected via autocfg)
-#![cfg(has_portable_simd)]
+// Only run these tests when the simd feature is enabled AND portable_simd is available
+#![cfg(all(feature = "simd", has_portable_simd))]
 #![feature(portable_simd)]
 
 use core::simd::Simd;

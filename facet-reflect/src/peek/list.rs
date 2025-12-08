@@ -16,16 +16,16 @@ impl<'mem, 'facet> Iterator for PeekListIter<'mem, 'facet> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let item_ptr = match self.state {
-            PeekListIterState::Ptr { data, stride } => {
+        let item_ptr = match &self.state.kind {
+            PeekListIterStateKind::Ptr { data, stride } => {
                 if self.index >= self.len {
                     return None;
                 }
 
                 unsafe { data.field(stride * self.index) }
             }
-            PeekListIterState::Iter { iter } => unsafe {
-                (self.def.vtable.iter_vtable.next)(iter)?
+            PeekListIterStateKind::Iter { iter } => unsafe {
+                (self.def.iter_vtable().unwrap().next)(*iter)?
             },
         };
 
@@ -48,11 +48,11 @@ impl ExactSizeIterator for PeekListIter<'_, '_> {}
 impl Drop for PeekListIter<'_, '_> {
     #[inline]
     fn drop(&mut self) {
-        match self.state {
-            PeekListIterState::Iter { iter } => unsafe {
-                (self.def.vtable.iter_vtable.dealloc)(iter)
+        match &self.state.kind {
+            PeekListIterStateKind::Iter { iter } => unsafe {
+                (self.def.iter_vtable().unwrap().dealloc)(*iter)
             },
-            PeekListIterState::Ptr { .. } => {
+            PeekListIterStateKind::Ptr { .. } => {
                 // Nothing to do
             }
         }
@@ -69,9 +69,14 @@ impl<'mem, 'facet> IntoIterator for &'mem PeekList<'mem, 'facet> {
     }
 }
 
-enum PeekListIterState<'mem> {
-    Ptr { data: PtrConst<'mem>, stride: usize },
-    Iter { iter: PtrMut<'mem> },
+struct PeekListIterState<'mem> {
+    kind: PeekListIterStateKind,
+    _phantom: PhantomData<&'mem ()>,
+}
+
+enum PeekListIterStateKind {
+    Ptr { data: PtrConst, stride: usize },
+    Iter { iter: PtrMut },
 }
 
 /// Lets you read from a list (implements read-only [`facet_core::ListVTable`] proxies)
@@ -109,7 +114,7 @@ impl<'mem, 'facet> PeekList<'mem, 'facet> {
     /// Get an item from the list at the specified index
     #[inline]
     pub fn get(&self, index: usize) -> Option<Peek<'mem, 'facet>> {
-        let item = unsafe { (self.def.vtable.get)(self.value.data(), index)? };
+        let item = unsafe { (self.def.vtable.get)(self.value.data(), index, self.value.shape())? };
 
         Some(unsafe { Peek::unchecked_new(item, self.def.t()) })
     }
@@ -126,12 +131,18 @@ impl<'mem, 'facet> PeekList<'mem, 'facet> {
                 .expect("can only iterate over sized list elements");
             let stride = layout.size();
 
-            PeekListIterState::Ptr { data, stride }
+            PeekListIterState {
+                kind: PeekListIterStateKind::Ptr { data, stride },
+                _phantom: PhantomData,
+            }
         } else {
             let iter = unsafe {
-                (self.def.vtable.iter_vtable.init_with_value.unwrap())(self.value.data())
+                (self.def.iter_vtable().unwrap().init_with_value.unwrap())(self.value.data())
             };
-            PeekListIterState::Iter { iter }
+            PeekListIterState {
+                kind: PeekListIterStateKind::Iter { iter },
+                _phantom: PhantomData,
+            }
         };
 
         PeekListIter {

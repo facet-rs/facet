@@ -117,13 +117,13 @@ mod partial_api;
 
 use crate::{KeyPath, ReflectError, Resolution, TrackerKind, trace};
 
-use core::{marker::PhantomData, ptr::NonNull};
+use core::marker::PhantomData;
 
 mod heap_value;
 pub use heap_value::*;
 
 use facet_core::{
-    Def, EnumType, Field, PtrMut, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
+    Def, EnumType, Field, PtrUninit, Shape, SliceBuilderVTable, Type, UserType, Variant,
 };
 use iset::ISet;
 
@@ -250,7 +250,7 @@ pub(crate) enum MapInsertState {
     /// Pushing key - memory allocated, waiting for initialization
     PushingKey {
         /// Temporary storage for the key being built
-        key_ptr: PtrUninit<'static>,
+        key_ptr: PtrUninit,
         /// Whether the key has been fully initialized
         key_initialized: bool,
     },
@@ -258,9 +258,9 @@ pub(crate) enum MapInsertState {
     /// Pushing value after key is done
     PushingValue {
         /// Temporary storage for the key that was built (always initialized)
-        key_ptr: PtrUninit<'static>,
+        key_ptr: PtrUninit,
         /// Temporary storage for the value being built
-        value_ptr: Option<PtrUninit<'static>>,
+        value_ptr: Option<PtrUninit>,
         /// Whether the value has been fully initialized
         value_initialized: bool,
     },
@@ -291,7 +291,7 @@ pub(crate) enum FrameOwnership {
 #[must_use]
 pub(crate) struct Frame {
     /// Address of the value being initialized
-    pub(crate) data: PtrUninit<'static>,
+    pub(crate) data: PtrUninit,
 
     /// Shape of the value being initialized
     pub(crate) shape: &'static Shape,
@@ -308,9 +308,8 @@ pub(crate) struct Frame {
     /// Whether this frame is for a custom deserialization pipeline
     pub(crate) using_custom_deserialization: bool,
 
-    /// If this frame was created for shape-level proxy deserialization,
-    /// this stores the ProxyDef for the conversion in end().
-    #[cfg(feature = "alloc")]
+    /// Container-level proxy definition (from `#[facet(proxy = ...)]` on the shape).
+    /// Used during custom deserialization to convert from proxy type to target type.
     pub(crate) shape_level_proxy: Option<&'static facet_core::ProxyDef>,
 }
 
@@ -478,7 +477,7 @@ impl Tracker {
 }
 
 impl Frame {
-    fn new(data: PtrUninit<'static>, shape: &'static Shape, ownership: FrameOwnership) -> Self {
+    fn new(data: PtrUninit, shape: &'static Shape, ownership: FrameOwnership) -> Self {
         // For empty structs (structs with 0 fields), start as initialized since there's nothing to initialize
         // This includes empty tuples () which are zero-sized types with no fields to initialize
         let is_init = matches!(
@@ -493,7 +492,6 @@ impl Frame {
             tracker: Tracker::Scalar,
             ownership,
             using_custom_deserialization: false,
-            #[cfg(feature = "alloc")]
             shape_level_proxy: None,
         }
     }
@@ -515,9 +513,7 @@ impl Frame {
             Tracker::Scalar => {
                 // Simple scalar - drop if initialized
                 if self.is_init {
-                    if let Some(drop_fn) = self.shape.vtable.drop_in_place {
-                        unsafe { drop_fn(self.data.assume_init()) };
-                    }
+                    unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
                 }
             }
             Tracker::Array { iset, .. } => {
@@ -528,10 +524,8 @@ impl Frame {
                         for idx in 0..array_def.n {
                             if iset.get(idx) {
                                 let offset = layout.size() * idx;
-                                let element_ptr = unsafe { self.data.field_init_at(offset) };
-                                if let Some(drop_fn) = array_def.t.vtable.drop_in_place {
-                                    unsafe { drop_fn(element_ptr) };
-                                }
+                                let element_ptr = unsafe { self.data.field_init(offset) };
+                                unsafe { array_def.t.call_drop_in_place(element_ptr) };
                             }
                         }
                     }
@@ -540,18 +534,14 @@ impl Frame {
             Tracker::Struct { iset, .. } => {
                 // Drop initialized struct fields
                 if let Type::User(UserType::Struct(struct_type)) = self.shape.ty {
-                    if iset.all_set() && self.shape.vtable.drop_in_place.is_some() {
-                        unsafe {
-                            (self.shape.vtable.drop_in_place.unwrap())(self.data.assume_init())
-                        };
+                    if iset.all_set() {
+                        unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
                     } else {
                         for (idx, field) in struct_type.fields.iter().enumerate() {
                             if iset.get(idx) {
                                 // This field was initialized, drop it
-                                let field_ptr = unsafe { self.data.field_init_at(field.offset) };
-                                if let Some(drop_fn) = field.shape().vtable.drop_in_place {
-                                    unsafe { drop_fn(field_ptr) };
-                                }
+                                let field_ptr = unsafe { self.data.field_init(field.offset) };
+                                unsafe { field.shape().call_drop_in_place(field_ptr) };
                             }
                         }
                     }
@@ -562,19 +552,15 @@ impl Frame {
                 for (idx, field) in variant.data.fields.iter().enumerate() {
                     if data.get(idx) {
                         // This field was initialized, drop it
-                        let field_ptr = unsafe { self.data.as_mut_byte_ptr().add(field.offset) };
-                        if let Some(drop_fn) = field.shape().vtable.drop_in_place {
-                            unsafe { drop_fn(PtrMut::new(NonNull::new_unchecked(field_ptr))) };
-                        }
+                        let field_ptr = unsafe { self.data.field_init(field.offset) };
+                        unsafe { field.shape().call_drop_in_place(field_ptr) };
                     }
                 }
             }
             Tracker::SmartPointer => {
                 // Drop the initialized Box
                 if self.is_init {
-                    if let Some(drop_fn) = self.shape.vtable.drop_in_place {
-                        unsafe { drop_fn(self.data.assume_init()) };
-                    }
+                    unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
                 }
                 // Note: we don't deallocate the inner value here because
                 // the Box's drop will handle that
@@ -589,17 +575,13 @@ impl Frame {
             Tracker::List { .. } => {
                 // Drop the initialized List
                 if self.is_init {
-                    if let Some(drop_fn) = self.shape.vtable.drop_in_place {
-                        unsafe { drop_fn(self.data.assume_init()) };
-                    }
+                    unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
                 }
             }
             Tracker::Map { insert_state } => {
                 // Drop the initialized Map
                 if self.is_init {
-                    if let Some(drop_fn) = self.shape.vtable.drop_in_place {
-                        unsafe { drop_fn(self.data.assume_init()) };
-                    }
+                    unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
                 }
 
                 // Clean up any in-progress insertion state
@@ -611,17 +593,15 @@ impl Frame {
                         if let Def::Map(map_def) = self.shape.def {
                             // Drop the key if it was initialized
                             if *key_initialized {
-                                if let Some(drop_fn) = map_def.k().vtable.drop_in_place {
-                                    unsafe { drop_fn(key_ptr.assume_init()) };
-                                }
+                                unsafe { map_def.k().call_drop_in_place(key_ptr.assume_init()) };
                             }
                             // Deallocate the key buffer
-                            if let Ok(key_shape) = map_def.k().layout.sized_layout() {
-                                if key_shape.size() > 0 {
-                                    unsafe {
-                                        alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_shape)
-                                    };
-                                }
+                            if let Ok(key_shape) = map_def.k().layout.sized_layout()
+                                && key_shape.size() > 0
+                            {
+                                unsafe {
+                                    alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_shape)
+                                };
                             }
                         }
                     }
@@ -633,35 +613,33 @@ impl Frame {
                         // Drop and deallocate both key and value buffers
                         if let Def::Map(map_def) = self.shape.def {
                             // Drop and deallocate the key (always initialized in PushingValue state)
-                            if let Some(drop_fn) = map_def.k().vtable.drop_in_place {
-                                unsafe { drop_fn(key_ptr.assume_init()) };
-                            }
-                            if let Ok(key_shape) = map_def.k().layout.sized_layout() {
-                                if key_shape.size() > 0 {
-                                    unsafe {
-                                        alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_shape)
-                                    };
-                                }
+                            unsafe { map_def.k().call_drop_in_place(key_ptr.assume_init()) };
+                            if let Ok(key_shape) = map_def.k().layout.sized_layout()
+                                && key_shape.size() > 0
+                            {
+                                unsafe {
+                                    alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_shape)
+                                };
                             }
 
                             // Handle the value if it exists
                             if let Some(value_ptr) = value_ptr {
                                 // Drop the value if it was initialized
                                 if *value_initialized {
-                                    if let Some(drop_fn) = map_def.v().vtable.drop_in_place {
-                                        unsafe { drop_fn(value_ptr.assume_init()) };
-                                    }
+                                    unsafe {
+                                        map_def.v().call_drop_in_place(value_ptr.assume_init())
+                                    };
                                 }
                                 // Deallocate the value buffer
-                                if let Ok(value_shape) = map_def.v().layout.sized_layout() {
-                                    if value_shape.size() > 0 {
-                                        unsafe {
-                                            alloc::alloc::dealloc(
-                                                value_ptr.as_mut_byte_ptr(),
-                                                value_shape,
-                                            )
-                                        };
-                                    }
+                                if let Ok(value_shape) = map_def.v().layout.sized_layout()
+                                    && value_shape.size() > 0
+                                {
+                                    unsafe {
+                                        alloc::alloc::dealloc(
+                                            value_ptr.as_mut_byte_ptr(),
+                                            value_shape,
+                                        )
+                                    };
                                 }
                             }
                         }
@@ -672,9 +650,7 @@ impl Frame {
             Tracker::Set { .. } => {
                 // Drop the initialized Set
                 if self.is_init {
-                    if let Some(drop_fn) = self.shape.vtable.drop_in_place {
-                        unsafe { drop_fn(self.data.assume_init()) };
-                    }
+                    unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
                 }
             }
             Tracker::Option { building_inner } => {
@@ -683,9 +659,7 @@ impl Frame {
                 // initialized or remain uninitialized
                 if !building_inner {
                     // Option is fully initialized, drop it normally
-                    if let Some(drop_fn) = self.shape.vtable.drop_in_place {
-                        unsafe { drop_fn(self.data.assume_init()) };
-                    }
+                    unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
                 }
             }
             Tracker::Result { building_inner, .. } => {
@@ -694,17 +668,13 @@ impl Frame {
                 // initialized or remain uninitialized
                 if !building_inner {
                     // Result is fully initialized, drop it normally
-                    if let Some(drop_fn) = self.shape.vtable.drop_in_place {
-                        unsafe { drop_fn(self.data.assume_init()) };
-                    }
+                    unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
                 }
             }
             Tracker::DynamicValue { .. } => {
                 // Drop if initialized
                 if self.is_init {
-                    if let Some(drop_fn) = self.shape.vtable.drop_in_place {
-                        unsafe { drop_fn(self.data.assume_init()) };
-                    }
+                    unsafe { self.shape.call_drop_in_place(self.data.assume_init()) };
                 }
             }
         }
@@ -734,14 +704,13 @@ impl Frame {
         }
 
         // Now, deallocate temporary String allocation if necessary
-        if let FrameOwnership::Owned = self.ownership {
-            if let Ok(layout) = self.shape.layout.sized_layout() {
-                if layout.size() > 0 {
-                    unsafe { alloc::alloc::dealloc(self.data.as_mut_byte_ptr(), layout) };
-                }
-            }
-            // no need to update `self.ownership` since `self` drops at the end of this
+        if let FrameOwnership::Owned = self.ownership
+            && let Ok(layout) = self.shape.layout.sized_layout()
+            && layout.size() > 0
+        {
+            unsafe { alloc::alloc::dealloc(self.data.as_mut_byte_ptr(), layout) };
         }
+        // no need to update `self.ownership` since `self` drops at the end of this
     }
 
     /// Fill in defaults for any unset fields that have default values.
@@ -757,20 +726,22 @@ impl Frame {
     fn fill_defaults(&mut self) -> Result<(), ReflectError> {
         // First, check if we need to upgrade from Scalar to Struct tracker
         // This happens when no fields were visited at all in deferred mode
-        if !self.is_init && matches!(self.tracker, Tracker::Scalar) {
-            if let Type::User(UserType::Struct(struct_type)) = self.shape.ty {
-                // If no fields were visited and the container has a default, use it
-                if let Some(default_fn) = self.shape.vtable.default_in_place {
-                    unsafe { default_fn(self.data) };
-                    self.is_init = true;
-                    return Ok(());
-                }
-                // Otherwise initialize the struct tracker with empty iset
-                self.tracker = Tracker::Struct {
-                    iset: ISet::new(struct_type.fields.len()),
-                    current_child: None,
-                };
+        if !self.is_init
+            && matches!(self.tracker, Tracker::Scalar)
+            && let Type::User(UserType::Struct(struct_type)) = self.shape.ty
+        {
+            // If no fields were visited and the container has a default, use it
+            // SAFETY: We're about to initialize the entire struct with its default value
+            let data_mut = unsafe { self.data.assume_init() };
+            if unsafe { self.shape.call_default_in_place(data_mut) }.is_some() {
+                self.is_init = true;
+                return Ok(());
             }
+            // Otherwise initialize the struct tracker with empty iset
+            self.tracker = Tracker::Struct {
+                iset: ISet::new(struct_type.fields.len()),
+                current_child: None,
+            };
         }
 
         match &mut self.tracker {
@@ -779,8 +750,9 @@ impl Frame {
                     // Check if NO fields have been set and the container has a default
                     let no_fields_set = (0..struct_type.fields.len()).all(|i| !iset.get(i));
                     if no_fields_set {
-                        if let Some(default_fn) = self.shape.vtable.default_in_place {
-                            unsafe { default_fn(self.data) };
+                        // SAFETY: We're about to initialize the entire struct with its default value
+                        let data_mut = unsafe { self.data.assume_init() };
+                        if unsafe { self.shape.call_default_in_place(data_mut) }.is_some() {
                             self.tracker = Tracker::Scalar;
                             self.is_init = true;
                             return Ok(());
@@ -794,14 +766,11 @@ impl Frame {
                             continue;
                         }
 
-                        // Check if field has a default we can use
-                        if let Some(default_fn) = Self::get_field_default_fn(field) {
-                            // Calculate field pointer
-                            let field_ptr = unsafe { self.data.field_uninit_at(field.offset) };
+                        // Calculate field pointer
+                        let field_ptr = unsafe { self.data.field_uninit(field.offset) };
 
-                            // Call the default function to initialize the field
-                            unsafe { default_fn(field_ptr) };
-
+                        // Try to initialize with default
+                        if unsafe { Self::try_init_field_default(field, field_ptr) } {
                             // Mark field as initialized
                             iset.set(idx);
                         } else if field.has_default() {
@@ -822,14 +791,11 @@ impl Frame {
                         continue;
                     }
 
-                    // Check if field has a default we can use
-                    if let Some(default_fn) = Self::get_field_default_fn(field) {
-                        // Calculate field pointer within the variant data
-                        let field_ptr = unsafe { self.data.field_uninit_at(field.offset) };
+                    // Calculate field pointer within the variant data
+                    let field_ptr = unsafe { self.data.field_uninit(field.offset) };
 
-                        // Call the default function to initialize the field
-                        unsafe { default_fn(field_ptr) };
-
+                    // Try to initialize with default
+                    if unsafe { Self::try_init_field_default(field, field_ptr) } {
                         // Mark field as initialized
                         data.set(idx);
                     } else if field.has_default() {
@@ -846,42 +812,58 @@ impl Frame {
         Ok(())
     }
 
-    /// Get the default function for a field, if one is available.
+    /// Initialize a field with its default value if one is available.
     ///
     /// Priority:
     /// 1. Explicit field-level default_fn (from `#[facet(default = ...)]`)
     /// 2. Type-level default_in_place (from Default impl, including `Option<T>`)
     ///    but only if the field has the DEFAULT flag
     /// 3. Special cases: `Option<T>` (defaults to None), () (unit type)
-    fn get_field_default_fn(field: &Field) -> Option<facet_core::DefaultInPlaceFn> {
-        // First check for explicit field-level default
-        if let Some(default_fn) = field.default_fn() {
-            return Some(default_fn);
-        }
+    ///
+    /// Returns true if a default was applied, false otherwise.
+    ///
+    /// # Safety
+    ///
+    /// `field_ptr` must point to uninitialized memory of the appropriate type.
+    unsafe fn try_init_field_default(field: &Field, field_ptr: PtrUninit) -> bool {
+        use facet_core::DefaultSource;
 
-        // Check if field has default attribute and type has default_in_place
-        if field.has_default() {
-            if let Some(default_fn) = field.shape().vtable.default_in_place {
-                return Some(default_fn);
+        // First check for explicit field-level default
+        if let Some(default_source) = field.default {
+            match default_source {
+                DefaultSource::Custom(default_fn) => {
+                    // Custom default function - it expects PtrUninit
+                    unsafe { default_fn(field_ptr) };
+                    return true;
+                }
+                DefaultSource::FromTrait => {
+                    // Use the type's Default trait - needs PtrMut
+                    let field_ptr_mut = unsafe { field_ptr.assume_init() };
+                    if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
+                        return true;
+                    }
+                }
             }
         }
 
         // Special case: Option<T> always defaults to None, even without explicit #[facet(default)]
         // This is because Option is fundamentally "optional" - if not set, it should be None
         if matches!(field.shape().def, Def::Option(_)) {
-            if let Some(default_fn) = field.shape().vtable.default_in_place {
-                return Some(default_fn);
+            let field_ptr_mut = unsafe { field_ptr.assume_init() };
+            if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
+                return true;
             }
         }
 
         // Special case: () unit type always defaults to ()
         if field.shape().is_type::<()>() {
-            if let Some(default_fn) = field.shape().vtable.default_in_place {
-                return Some(default_fn);
+            let field_ptr_mut = unsafe { field_ptr.assume_init() };
+            if unsafe { field.shape().call_default_in_place(field_ptr_mut) }.is_some() {
+                return true;
             }
         }
 
-        None
+        false
     }
 
     /// Returns an error if the value is not fully initialized

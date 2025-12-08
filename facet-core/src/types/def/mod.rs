@@ -1,3 +1,101 @@
+/// Generates a VTable struct and its builder.
+///
+/// # Example
+///
+/// ```ignore
+/// vtable_def! {
+///     /// Documentation for the vtable
+///     #[derive(Clone, Copy, Debug)]
+///     pub struct FooVTable + FooVTableBuilder {
+///         /// Required field
+///         pub field1: Field1Fn,
+///         /// Optional field
+///         pub field2: Option<Field2Fn>,
+///     }
+/// }
+/// ```
+///
+/// This generates:
+/// - The struct as written
+/// - `FooVTable::builder() -> FooVTableBuilder`
+/// - `FooVTableBuilder` with setter methods for each field
+/// - `FooVTableBuilder::build() -> FooVTable`
+///
+/// Fields with type `Option<T>` are optional and don't panic if not set.
+/// Required fields panic in `build()` if not set.
+macro_rules! vtable_def {
+    (
+        $(#[$struct_meta:meta])*
+        $vis:vis struct $name:ident + $builder:ident {
+            $(
+                $(#[$field_meta:meta])*
+                $field_vis:vis $field:ident : $field_ty:ty
+            ),* $(,)?
+        }
+    ) => {
+        $(#[$struct_meta])*
+        $vis struct $name {
+            $(
+                $(#[$field_meta])*
+                $field_vis $field: $field_ty,
+            )*
+        }
+
+        impl $name {
+            /// Creates a new builder for this vtable
+            pub const fn builder() -> $builder {
+                $builder {
+                    $(
+                        $field: None,
+                    )*
+                }
+            }
+        }
+
+        /// Builder for the vtable
+        #[derive(Clone, Copy, Debug)]
+        $vis struct $builder {
+            $(
+                $field: Option<$field_ty>,
+            )*
+        }
+
+        impl $builder {
+            $(
+                #[doc = concat!("Set the `", stringify!($field), "` field")]
+                pub const fn $field(mut self, value: $field_ty) -> Self {
+                    self.$field = Some(value);
+                    self
+                }
+            )*
+
+            /// Build the vtable
+            ///
+            /// # Panics
+            ///
+            /// Panics if any required field was not set.
+            pub const fn build(self) -> $name {
+                $name {
+                    $(
+                        $field: vtable_def!(@unwrap self.$field, stringify!($name), stringify!($field), $field_ty),
+                    )*
+                }
+            }
+        }
+    };
+
+    // Helper to unwrap Option fields - if the field type is Option<T>, pass through; otherwise panic if None
+    (@unwrap $value:expr, $vtable:expr, $field:expr, Option<$inner:ty>) => {
+        $value
+    };
+    (@unwrap $value:expr, $vtable:expr, $field:expr, $ty:ty) => {
+        match $value {
+            Some(v) => v,
+            None => panic!(concat!($vtable, "::builder().", $field, "() must be called")),
+        }
+    };
+}
+
 use super::*;
 
 mod array;
@@ -43,11 +141,11 @@ pub use dynamic_value::*;
 // right?
 #[non_exhaustive]
 pub enum Def {
-    /// Undefined - you can interact with the type through [`Type`] and [`ValueVTable`].
+    /// Undefined - you can interact with the type through [`Type`] and `VTableView`.
     Undefined,
 
     /// Scalar — those don't have a def, they're not composed of other things.
-    /// You can interact with them through [`ValueVTable`].
+    /// You can interact with them through `VTableView`.
     ///
     /// e.g. `u32`, `String`, `bool`, `SocketAddr`, etc.
     Scalar,
@@ -129,6 +227,87 @@ impl core::fmt::Debug for Def {
 }
 
 impl Def {
+    /// Create a builder for a Map definition.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let def = Def::map_builder(&MAP_VTABLE, K::SHAPE, V::SHAPE).build();
+    /// ```
+    #[inline]
+    pub const fn map_builder(
+        vtable: &'static MapVTable,
+        k: &'static Shape,
+        v: &'static Shape,
+    ) -> DefMapBuilder {
+        DefMapBuilder(MapDef::new(vtable, k, v))
+    }
+
+    /// Create a builder for a Set definition.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let def = Def::set_builder(&SET_VTABLE, T::SHAPE).build();
+    /// ```
+    #[inline]
+    pub const fn set_builder(vtable: &'static SetVTable, t: &'static Shape) -> DefSetBuilder {
+        DefSetBuilder(SetDef::new(vtable, t))
+    }
+
+    /// Create a builder for a List definition.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let def = Def::list_builder(&LIST_VTABLE, T::SHAPE).build();
+    /// ```
+    #[inline]
+    pub const fn list_builder(vtable: &'static ListVTable, t: &'static Shape) -> DefListBuilder {
+        DefListBuilder(ListDef::new(vtable, t))
+    }
+
+    /// Create a builder for an Array definition.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let def = Def::array_builder(&ARRAY_VTABLE, T::SHAPE, 10).build();
+    /// ```
+    #[inline]
+    pub const fn array_builder(
+        vtable: &'static ArrayVTable,
+        t: &'static Shape,
+        n: usize,
+    ) -> DefArrayBuilder {
+        DefArrayBuilder(ArrayDef::new(vtable, t, n))
+    }
+
+    /// Create a builder for an Option definition.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let def = Def::option_builder(&OPTION_VTABLE, T::SHAPE).build();
+    /// ```
+    #[inline]
+    pub const fn option_builder(
+        vtable: &'static OptionVTable,
+        t: &'static Shape,
+    ) -> DefOptionBuilder {
+        DefOptionBuilder(OptionDef::new(vtable, t))
+    }
+
+    /// Create a builder for a Result definition.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let def = Def::result_builder(&RESULT_VTABLE, T::SHAPE, E::SHAPE).build();
+    /// ```
+    #[inline]
+    pub const fn result_builder(
+        vtable: &'static ResultVTable,
+        t: &'static Shape,
+        e: &'static Shape,
+    ) -> DefResultBuilder {
+        DefResultBuilder(ResultDef::new(vtable, t, e))
+    }
+
     /// Returns the `ScalarDef` wrapped in an `Ok` if this is a [`Def::Scalar`].
     pub fn into_scalar(self) -> Result<(), Self> {
         match self {
@@ -224,5 +403,77 @@ impl Def {
             Self::Slice(slice) => Type::Sequence(SequenceType::Slice(SliceType { t: slice.t })),
             _ => Type::User(UserType::Opaque),
         }
+    }
+}
+
+/// Builder that produces `Def::Map(...)`.
+#[derive(Clone, Copy, Debug)]
+pub struct DefMapBuilder(MapDef);
+
+impl DefMapBuilder {
+    /// Build the final `Def`.
+    #[inline]
+    pub const fn build(self) -> Def {
+        Def::Map(self.0)
+    }
+}
+
+/// Builder that produces `Def::Set(...)`.
+#[derive(Clone, Copy, Debug)]
+pub struct DefSetBuilder(SetDef);
+
+impl DefSetBuilder {
+    /// Build the final `Def`.
+    #[inline]
+    pub const fn build(self) -> Def {
+        Def::Set(self.0)
+    }
+}
+
+/// Builder that produces `Def::List(...)`.
+#[derive(Clone, Copy, Debug)]
+pub struct DefListBuilder(ListDef);
+
+impl DefListBuilder {
+    /// Build the final `Def`.
+    #[inline]
+    pub const fn build(self) -> Def {
+        Def::List(self.0)
+    }
+}
+
+/// Builder that produces `Def::Array(...)`.
+#[derive(Clone, Copy, Debug)]
+pub struct DefArrayBuilder(ArrayDef);
+
+impl DefArrayBuilder {
+    /// Build the final `Def`.
+    #[inline]
+    pub const fn build(self) -> Def {
+        Def::Array(self.0)
+    }
+}
+
+/// Builder that produces `Def::Option(...)`.
+#[derive(Clone, Copy, Debug)]
+pub struct DefOptionBuilder(OptionDef);
+
+impl DefOptionBuilder {
+    /// Build the final `Def`.
+    #[inline]
+    pub const fn build(self) -> Def {
+        Def::Option(self.0)
+    }
+}
+
+/// Builder that produces `Def::Result(...)`.
+#[derive(Clone, Copy, Debug)]
+pub struct DefResultBuilder(ResultDef);
+
+impl DefResultBuilder {
+    /// Build the final `Def`.
+    #[inline]
+    pub const fn build(self) -> Def {
+        Def::Result(self.0)
     }
 }

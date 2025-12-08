@@ -1,12 +1,10 @@
-use std::ptr::NonNull;
-
 use crate::types::{
     EnumReprLike, FunctionAbi, KnownPointer, PointerFlags, PrimitiveType, ReprLike, ShapeLayout,
     StructKindLike,
 };
-use facet::{Facet, PtrConst};
+use facet::Facet;
 use facet_core::{
-    ArrayDef, Def, EnumType, ExtensionAttr, Field, FunctionPointerDef, ListDef, MapDef, NdArrayDef,
+    ArrayDef, Attr, Def, EnumType, Field, FunctionPointerDef, ListDef, MapDef, NdArrayDef,
     OptionDef, PointerDef, PointerType, ResultDef, SequenceType, SetDef, Shape, SliceDef,
     StructType, Type, UserType, Variant,
 };
@@ -21,7 +19,7 @@ pub struct ShapeLike {
     pub type_identifier: String,
     pub type_params: Vec<TypeParamLike>,
     pub doc: Vec<String>,
-    pub attributes: Vec<ExtensionAttrLike>,
+    pub attributes: Vec<AttrLike>,
     pub type_tag: Option<String>,
     #[facet(recursive_type)]
     pub inner: Option<Box<ShapeLike>>,
@@ -65,7 +63,7 @@ impl From<&facet_core::TypeParam> for TypeParamLike {
 
 #[derive(facet::Facet, Clone)]
 #[repr(C)]
-pub struct ExtensionAttrLike {
+pub struct AttrLike {
     pub ns: Option<String>,
     pub key: String,
     pub data: Vec<u8>,
@@ -73,21 +71,22 @@ pub struct ExtensionAttrLike {
     pub shape: Box<ShapeLike>,
 }
 
-impl From<&ExtensionAttr> for ExtensionAttrLike {
-    fn from(attr: &ExtensionAttr) -> Self {
-        let ptr = PtrConst::new(NonNull::new(attr.data as *mut ()).unwrap());
-        let peek = unsafe { Peek::unchecked_new(ptr, attr.shape) };
+impl From<&Attr> for AttrLike {
+    fn from(attr: &Attr) -> Self {
+        let ptr = attr.data.ptr();
+        let shape = attr.data.shape;
+        let peek = unsafe { Peek::unchecked_new(ptr, shape) };
         let data = facet_postcard::ptr_to_vec(peek).unwrap();
         Self {
             ns: attr.ns.map(|s| s.to_string()),
             key: attr.key.to_string(),
             data,
-            shape: Box::new((attr.shape).into()),
+            shape: Box::new(shape.into()),
         }
     }
 }
 
-impl ExtensionAttrLike {
+impl AttrLike {
     pub fn parse_data<T: Facet<'static>>(&self) -> Result<T, facet_postcard::DeserializeError> {
         facet_postcard::from_bytes(&self.data)
     }
@@ -96,6 +95,7 @@ impl ExtensionAttrLike {
 #[derive(facet::Facet, Clone)]
 #[repr(C)]
 pub enum TypeLike {
+    Undefined,
     Primitive(PrimitiveType),
     Sequence(SequenceTypeLike),
     User(UserTypeLike),
@@ -105,6 +105,7 @@ pub enum TypeLike {
 impl From<&Type> for TypeLike {
     fn from(ty: &Type) -> Self {
         match ty {
+            Type::Undefined => TypeLike::Undefined,
             Type::Primitive(p) => TypeLike::Primitive(match p {
                 facet_core::PrimitiveType::Boolean => PrimitiveType::Boolean,
                 facet_core::PrimitiveType::Numeric(n) => PrimitiveType::Numeric(match n {
@@ -253,7 +254,7 @@ pub struct FieldLike {
     #[facet(recursive_type)]
     pub shape: Box<ShapeLike>,
     pub offset: usize,
-    pub attributes: Vec<ExtensionAttrLike>,
+    pub attributes: Vec<AttrLike>,
     pub doc: Vec<String>,
 }
 
@@ -274,7 +275,7 @@ impl From<&Field> for FieldLike {
 pub struct VariantLike {
     pub name: String,
     pub discriminant: Option<i64>,
-    pub attributes: Vec<ExtensionAttrLike>,
+    pub attributes: Vec<AttrLike>,
     pub data: StructTypeLike,
     pub doc: Vec<String>,
 }

@@ -6,12 +6,7 @@
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-core.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-Defines the core types and traits used throughout the facet ecosystem for runtime reflection:
-
-* `Facet`: exposes a `SHAPE` associated const
-* `Shape`: The central type that describes the memory layout and capabilities of a type
-* Various vtables that define how to manipulate types at runtime
-* The `Def` tree, which describes type definitions (structs, enums, etc.)
+Defines the `Facet` trait and implements it for a lot (a LOT) of builtin types.
 
 This crate is foundational to facet's reflection capabilities, providing the type system that enables runtime type manipulation.
 

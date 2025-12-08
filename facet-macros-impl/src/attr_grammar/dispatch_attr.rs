@@ -252,33 +252,31 @@ fn parse_fields_with_docs(
 
     while i < tokens.len() {
         // Skip commas
-        if let TokenTree::Punct(p) = &tokens[i] {
-            if p.as_char() == ',' {
-                i += 1;
-                continue;
-            }
+        if let TokenTree::Punct(p) = &tokens[i]
+            && p.as_char() == ','
+        {
+            i += 1;
+            continue;
         }
 
         // Check for doc comment: #[doc = "..."]
-        if let TokenTree::Punct(p) = &tokens[i] {
-            if p.as_char() == '#' && i + 1 < tokens.len() {
-                if let TokenTree::Group(g) = &tokens[i + 1] {
-                    if g.delimiter() == proc_macro2::Delimiter::Bracket {
-                        if let Some(doc) = extract_doc_from_attr(&g.stream()) {
-                            // Accumulate doc comments (for multi-line)
-                            let trimmed = doc.trim();
-                            if let Some(existing) = &mut current_doc {
-                                existing.push(' ');
-                                existing.push_str(trimmed);
-                            } else {
-                                current_doc = Some(trimmed.to_string());
-                            }
-                            i += 2;
-                            continue;
-                        }
-                    }
-                }
+        if let TokenTree::Punct(p) = &tokens[i]
+            && p.as_char() == '#'
+            && i + 1 < tokens.len()
+            && let TokenTree::Group(g) = &tokens[i + 1]
+            && g.delimiter() == proc_macro2::Delimiter::Bracket
+            && let Some(doc) = extract_doc_from_attr(&g.stream())
+        {
+            // Accumulate doc comments (for multi-line)
+            let trimmed = doc.trim();
+            if let Some(existing) = &mut current_doc {
+                existing.push(' ');
+                existing.push_str(trimmed);
+            } else {
+                current_doc = Some(trimmed.to_string());
             }
+            i += 2;
+            continue;
         }
 
         // Expect field: name: kind
@@ -372,23 +370,19 @@ fn extract_doc_from_attr(tokens: &TokenStream2) -> Option<String> {
     let tokens: Vec<TokenTree> = tokens.clone().into_iter().collect();
 
     // Expected: doc = "..."
-    if tokens.len() >= 3 {
-        if let TokenTree::Ident(ident) = &tokens[0] {
-            if *ident == "doc" {
-                if let TokenTree::Punct(p) = &tokens[1] {
-                    if p.as_char() == '=' {
-                        if let TokenTree::Literal(lit) = &tokens[2] {
-                            let lit_str = lit.to_string();
-                            // Remove quotes, unescape, and trim leading space
-                            if lit_str.starts_with('"') && lit_str.ends_with('"') {
-                                let inner = &lit_str[1..lit_str.len() - 1];
-                                // Doc comments have a leading space after ///
-                                return Some(unescape_string(inner.trim_start()));
-                            }
-                        }
-                    }
-                }
-            }
+    if tokens.len() >= 3
+        && let TokenTree::Ident(ident) = &tokens[0]
+        && *ident == "doc"
+        && let TokenTree::Punct(p) = &tokens[1]
+        && p.as_char() == '='
+        && let TokenTree::Literal(lit) = &tokens[2]
+    {
+        let lit_str = lit.to_string();
+        // Remove quotes, unescape, and trim leading space
+        if lit_str.starts_with('"') && lit_str.ends_with('"') {
+            let inner = &lit_str[1..lit_str.len() - 1];
+            // Doc comments have a leading space after ///
+            return Some(unescape_string(inner.trim_start()));
         }
     }
     None
@@ -573,12 +567,13 @@ fn generate_unit_value(
     }
 
     // Check for empty parens ()
-    if let Some(TokenTree::Group(g)) = rest_tokens.first() {
-        if g.delimiter() == proc_macro2::Delimiter::Parenthesis && g.stream().is_empty() {
-            return quote_spanned! { span =>
-                #ns_path::Attr::#variant_ident
-            };
-        }
+    if let Some(TokenTree::Group(g)) = rest_tokens.first()
+        && g.delimiter() == proc_macro2::Delimiter::Parenthesis
+        && g.stream().is_empty()
+    {
+        return quote_spanned! { span =>
+            #ns_path::Attr::#variant_ident
+        };
     }
 
     // Error: unit variant doesn't take arguments
@@ -599,30 +594,13 @@ fn generate_newtype_value(
     let attr_str = attr_name.to_string();
 
     // Check for parens style: rename("value")
-    if let Some(TokenTree::Group(g)) = rest_tokens.first() {
-        if g.delimiter() == proc_macro2::Delimiter::Parenthesis {
-            let inner: Vec<TokenTree> = g.stream().into_iter().collect();
-            if inner.len() == 1 {
-                if let TokenTree::Literal(lit) = &inner[0] {
-                    let lit_str = lit.to_string();
-                    if lit_str.starts_with('\"') {
-                        return quote_spanned! { span =>
-                            #ns_path::Attr::#variant_ident(#lit)
-                        };
-                    }
-                }
-            }
-            // Error: non-literal in parens
-            let msg = format!("`{attr_str}` expects a string literal: `{attr_str}(\"name\")`");
-            return quote_spanned! { span =>
-                compile_error!(#msg)
-            };
-        }
-    }
-
-    // Check for bare literal (derive macro strips the `=` sign)
-    if rest_tokens.len() == 1 {
-        if let TokenTree::Literal(lit) = &rest_tokens[0] {
+    if let Some(TokenTree::Group(g)) = rest_tokens.first()
+        && g.delimiter() == proc_macro2::Delimiter::Parenthesis
+    {
+        let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+        if inner.len() == 1
+            && let TokenTree::Literal(lit) = &inner[0]
+        {
             let lit_str = lit.to_string();
             if lit_str.starts_with('\"') {
                 return quote_spanned! { span =>
@@ -630,27 +608,43 @@ fn generate_newtype_value(
                 };
             }
         }
+        // Error: non-literal in parens
+        let msg = format!("`{attr_str}` expects a string literal: `{attr_str}(\"name\")`");
+        return quote_spanned! { span =>
+            compile_error!(#msg)
+        };
+    }
+
+    // Check for bare literal (derive macro strips the `=` sign)
+    if rest_tokens.len() == 1
+        && let TokenTree::Literal(lit) = &rest_tokens[0]
+    {
+        let lit_str = lit.to_string();
+        if lit_str.starts_with('\"') {
+            return quote_spanned! { span =>
+                #ns_path::Attr::#variant_ident(#lit)
+            };
+        }
     }
 
     // Check for equals style: rename = "value"
-    if rest_tokens.len() >= 2 {
-        if let TokenTree::Punct(p) = &rest_tokens[0] {
-            if p.as_char() == '=' {
-                if let TokenTree::Literal(lit) = &rest_tokens[1] {
-                    let lit_str = lit.to_string();
-                    if lit_str.starts_with('\"') {
-                        return quote_spanned! { span =>
-                            #ns_path::Attr::#variant_ident(#lit)
-                        };
-                    }
-                }
-                // Error: non-literal after =
-                let msg = format!("`{attr_str}` expects a string literal: `{attr_str} = \"name\"`");
+    if rest_tokens.len() >= 2
+        && let TokenTree::Punct(p) = &rest_tokens[0]
+        && p.as_char() == '='
+    {
+        if let TokenTree::Literal(lit) = &rest_tokens[1] {
+            let lit_str = lit.to_string();
+            if lit_str.starts_with('\"') {
                 return quote_spanned! { span =>
-                    compile_error!(#msg)
+                    #ns_path::Attr::#variant_ident(#lit)
                 };
             }
         }
+        // Error: non-literal after =
+        let msg = format!("`{attr_str}` expects a string literal: `{attr_str} = \"name\"`");
+        return quote_spanned! { span =>
+            compile_error!(#msg)
+        };
     }
 
     // Error: no value provided
@@ -678,20 +672,20 @@ fn generate_arbitrary_value(
     let rest_tokens: Vec<TokenTree> = rest.clone().into_iter().collect();
 
     // Check for parens style: default(my_func)
-    if let Some(TokenTree::Group(g)) = rest_tokens.first() {
-        if g.delimiter() == proc_macro2::Delimiter::Parenthesis {
-            let inner = g.stream();
-            if !inner.is_empty() {
-                // Wrap in Some() for Option<T> types
-                return quote_spanned! { span =>
-                    #ns_path::Attr::#variant_ident(::core::option::Option::Some(#inner))
-                };
-            }
-            // Empty parens - treat as None for Option types
+    if let Some(TokenTree::Group(g)) = rest_tokens.first()
+        && g.delimiter() == proc_macro2::Delimiter::Parenthesis
+    {
+        let inner = g.stream();
+        if !inner.is_empty() {
+            // Wrap in Some() for Option<T> types
             return quote_spanned! { span =>
-                #ns_path::Attr::#variant_ident(::core::option::Option::None)
+                #ns_path::Attr::#variant_ident(::core::option::Option::Some(#inner))
             };
         }
+        // Empty parens - treat as None for Option types
+        return quote_spanned! { span =>
+            #ns_path::Attr::#variant_ident(::core::option::Option::None)
+        };
     }
 
     // Check for bare tokens (derive macro strips the `=` sign)
@@ -740,22 +734,22 @@ fn generate_make_t_value(
     let rest_tokens: Vec<TokenTree> = rest.clone().into_iter().collect();
 
     // Check for parens style: default(42) or default(my_fn())
-    if let Some(TokenTree::Group(g)) = rest_tokens.first() {
-        if g.delimiter() == proc_macro2::Delimiter::Parenthesis {
-            let inner = g.stream();
-            if !inner.is_empty() {
-                // Wrap expression in a closure that puts the value
-                return quote_spanned! { span =>
-                    #ns_path::Attr::#variant_ident(::core::option::Option::Some(
-                        |__ptr| unsafe { __ptr.put(#inner) }
-                    ))
-                };
-            }
-            // Empty parens - use None (will use Default trait)
+    if let Some(TokenTree::Group(g)) = rest_tokens.first()
+        && g.delimiter() == proc_macro2::Delimiter::Parenthesis
+    {
+        let inner = g.stream();
+        if !inner.is_empty() {
+            // Wrap expression in a closure that puts the value
             return quote_spanned! { span =>
-                #ns_path::Attr::#variant_ident(::core::option::Option::None)
+                #ns_path::Attr::#variant_ident(::core::option::Option::Some(
+                    |__ptr| unsafe { __ptr.put(#inner) }
+                ))
             };
         }
+        // Empty parens - use None (will use Default trait)
+        return quote_spanned! { span =>
+            #ns_path::Attr::#variant_ident(::core::option::Option::None)
+        };
     }
 
     // Check for `= expr` style
@@ -804,20 +798,20 @@ fn generate_fn_ptr_value(
     let rest_tokens: Vec<TokenTree> = rest.clone().into_iter().collect();
 
     // Check for parens style: invariants(my_fn)
-    if let Some(TokenTree::Group(g)) = rest_tokens.first() {
-        if g.delimiter() == proc_macro2::Delimiter::Parenthesis {
-            let inner = g.stream();
-            if !inner.is_empty() {
-                // Store the function pointer directly
-                return quote_spanned! { span =>
-                    #ns_path::Attr::#variant_ident(::core::option::Option::Some(#inner))
-                };
-            }
-            // Empty parens - use None
+    if let Some(TokenTree::Group(g)) = rest_tokens.first()
+        && g.delimiter() == proc_macro2::Delimiter::Parenthesis
+    {
+        let inner = g.stream();
+        if !inner.is_empty() {
+            // Store the function pointer directly
             return quote_spanned! { span =>
-                #ns_path::Attr::#variant_ident(::core::option::Option::None)
+                #ns_path::Attr::#variant_ident(::core::option::Option::Some(#inner))
             };
         }
+        // Empty parens - use None
+        return quote_spanned! { span =>
+            #ns_path::Attr::#variant_ident(::core::option::Option::None)
+        };
     }
 
     // Check for `= expr` style
@@ -868,21 +862,21 @@ fn generate_shape_type_value(
     let attr_str = attr_name.to_string();
 
     // Check for parens style: proxy(MyType)
-    if let Some(TokenTree::Group(g)) = rest_tokens.first() {
-        if g.delimiter() == proc_macro2::Delimiter::Parenthesis {
-            let inner = g.stream();
-            if !inner.is_empty() {
-                // Convert type to Shape reference (NOT wrapped in Attr)
-                return quote_spanned! { span =>
-                    <#inner as ::facet::Facet>::SHAPE
-                };
-            }
-            // Empty parens - error
-            let msg = format!("`{attr_str}` requires a type: `{attr_str}(MyType)`");
+    if let Some(TokenTree::Group(g)) = rest_tokens.first()
+        && g.delimiter() == proc_macro2::Delimiter::Parenthesis
+    {
+        let inner = g.stream();
+        if !inner.is_empty() {
+            // Convert type to Shape reference (NOT wrapped in Attr)
             return quote_spanned! { span =>
-                compile_error!(#msg)
+                <#inner as ::facet::Facet>::SHAPE
             };
         }
+        // Empty parens - error
+        let msg = format!("`{attr_str}` requires a type: `{attr_str}(MyType)`");
+        return quote_spanned! { span =>
+            compile_error!(#msg)
+        };
     }
 
     // Check for `= Type` style or bare type (derive macro strips the `=` sign)
@@ -932,41 +926,23 @@ fn generate_newtype_opt_char_value(
     }
 
     // Check for empty parens ()
-    if let Some(TokenTree::Group(g)) = rest_tokens.first() {
-        if g.delimiter() == proc_macro2::Delimiter::Parenthesis && g.stream().is_empty() {
-            return quote_spanned! { span =>
-                #ns_path::Attr::#variant_ident(::core::option::Option::None)
-            };
-        }
+    if let Some(TokenTree::Group(g)) = rest_tokens.first()
+        && g.delimiter() == proc_macro2::Delimiter::Parenthesis
+        && g.stream().is_empty()
+    {
+        return quote_spanned! { span =>
+            #ns_path::Attr::#variant_ident(::core::option::Option::None)
+        };
     }
 
     // Check for parens style: short('v')
-    if let Some(TokenTree::Group(g)) = rest_tokens.first() {
-        if g.delimiter() == proc_macro2::Delimiter::Parenthesis {
-            let inner: Vec<TokenTree> = g.stream().into_iter().collect();
-            if inner.len() == 1 {
-                if let TokenTree::Literal(lit) = &inner[0] {
-                    let lit_str = lit.to_string();
-                    // Check for char literal: 'x'
-                    if lit_str.starts_with('\'') && lit_str.ends_with('\'') {
-                        return quote_spanned! { span =>
-                            #ns_path::Attr::#variant_ident(::core::option::Option::Some(#lit))
-                        };
-                    }
-                }
-            }
-            // Error: non-char-literal in parens
-            let msg = format!("`{attr_str}` expects a char literal: `{attr_str}('v')`");
-            return quote_spanned! { span =>
-                compile_error!(#msg)
-            };
-        }
-    }
-
-    // Check for bare char literal: the derive macro strips the = sign when processing
-    // `#[facet(attr = value)]` syntax, passing just the value
-    if rest_tokens.len() == 1 {
-        if let TokenTree::Literal(lit) = &rest_tokens[0] {
+    if let Some(TokenTree::Group(g)) = rest_tokens.first()
+        && g.delimiter() == proc_macro2::Delimiter::Parenthesis
+    {
+        let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+        if inner.len() == 1
+            && let TokenTree::Literal(lit) = &inner[0]
+        {
             let lit_str = lit.to_string();
             // Check for char literal: 'x'
             if lit_str.starts_with('\'') && lit_str.ends_with('\'') {
@@ -975,28 +951,46 @@ fn generate_newtype_opt_char_value(
                 };
             }
         }
+        // Error: non-char-literal in parens
+        let msg = format!("`{attr_str}` expects a char literal: `{attr_str}('v')`");
+        return quote_spanned! { span =>
+            compile_error!(#msg)
+        };
+    }
+
+    // Check for bare char literal: the derive macro strips the = sign when processing
+    // `#[facet(attr = value)]` syntax, passing just the value
+    if rest_tokens.len() == 1
+        && let TokenTree::Literal(lit) = &rest_tokens[0]
+    {
+        let lit_str = lit.to_string();
+        // Check for char literal: 'x'
+        if lit_str.starts_with('\'') && lit_str.ends_with('\'') {
+            return quote_spanned! { span =>
+                #ns_path::Attr::#variant_ident(::core::option::Option::Some(#lit))
+            };
+        }
     }
 
     // Check for equals style: short = 'v' (in case it's passed with the equals sign)
-    if rest_tokens.len() >= 2 {
-        if let TokenTree::Punct(p) = &rest_tokens[0] {
-            if p.as_char() == '=' {
-                if let TokenTree::Literal(lit) = &rest_tokens[1] {
-                    let lit_str = lit.to_string();
-                    // Check for char literal: 'x'
-                    if lit_str.starts_with('\'') && lit_str.ends_with('\'') {
-                        return quote_spanned! { span =>
-                            #ns_path::Attr::#variant_ident(::core::option::Option::Some(#lit))
-                        };
-                    }
-                }
-                // Error: non-char-literal after =
-                let msg = format!("`{attr_str}` expects a char literal: `{attr_str} = 'v'`");
+    if rest_tokens.len() >= 2
+        && let TokenTree::Punct(p) = &rest_tokens[0]
+        && p.as_char() == '='
+    {
+        if let TokenTree::Literal(lit) = &rest_tokens[1] {
+            let lit_str = lit.to_string();
+            // Check for char literal: 'x'
+            if lit_str.starts_with('\'') && lit_str.ends_with('\'') {
                 return quote_spanned! { span =>
-                    compile_error!(#msg)
+                    #ns_path::Attr::#variant_ident(::core::option::Option::Some(#lit))
                 };
             }
         }
+        // Error: non-char-literal after =
+        let msg = format!("`{attr_str}` expects a char literal: `{attr_str} = 'v'`");
+        return quote_spanned! { span =>
+            compile_error!(#msg)
+        };
     }
 
     // Error: invalid syntax
@@ -1043,27 +1037,27 @@ fn generate_struct_value(
         .collect();
 
     // Check for parens style: column(name = "foo", primary_key)
-    if let Some(TokenTree::Group(g)) = rest_tokens.first() {
-        if g.delimiter() == proc_macro2::Delimiter::Parenthesis {
-            let inner = g.stream();
+    if let Some(TokenTree::Group(g)) = rest_tokens.first()
+        && g.delimiter() == proc_macro2::Delimiter::Parenthesis
+    {
+        let inner = g.stream();
 
-            // Empty parens - use defaults
-            if inner.is_empty() {
-                return quote_spanned! { span =>
-                    #ns_path::Attr::#variant_ident(#ns_path::#struct_name {
-                        #(#default_fields),*
-                    })
-                };
-            }
-
-            // Non-empty - delegate to __build_struct_fields proc-macro
-            // Note: struct variants with complex field initialization cannot be used in statics,
-            // so this returns a compile_error for now. This case is not used by facet-args.
-            let msg = "struct variant attributes with field values cannot be used with define_attr_grammar! yet";
+        // Empty parens - use defaults
+        if inner.is_empty() {
             return quote_spanned! { span =>
-                compile_error!(#msg)
+                #ns_path::Attr::#variant_ident(#ns_path::#struct_name {
+                    #(#default_fields),*
+                })
             };
         }
+
+        // Non-empty - delegate to __build_struct_fields proc-macro
+        // Note: struct variants with complex field initialization cannot be used in statics,
+        // so this returns a compile_error for now. This case is not used by facet-args.
+        let msg = "struct variant attributes with field values cannot be used with define_attr_grammar! yet";
+        return quote_spanned! { span =>
+            compile_error!(#msg)
+        };
     }
 
     // No parens - use defaults

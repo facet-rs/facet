@@ -605,10 +605,10 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
 
     /// Dereference a pointer/reference to get the underlying value
     fn deref_if_pointer(peek: Peek<'mem, 'facet>) -> Peek<'mem, 'facet> {
-        if let Ok(ptr) = peek.into_pointer() {
-            if let Some(target) = ptr.borrow_inner() {
-                return Self::deref_if_pointer(target);
-            }
+        if let Ok(ptr) = peek.into_pointer()
+            && let Some(target) = ptr.borrow_inner()
+        {
+            return Self::deref_if_pointer(target);
         }
         peek
     }

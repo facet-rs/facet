@@ -346,10 +346,9 @@ fn wip_custom_deserialize_zst() -> Result<(), IPanic> {
         }
     }
 
-    impl TryFrom<&()> for UnitProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(_: &()) -> Result<Self, Self::Error> {
-            Ok(UnitProxy(35))
+    impl From<&()> for UnitProxy {
+        fn from(_: &()) -> Self {
+            UnitProxy(35)
         }
     }
 

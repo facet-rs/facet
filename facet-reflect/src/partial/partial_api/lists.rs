@@ -63,7 +63,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
         match &frame.shape.def {
             Def::List(list_def) => {
                 // Check that we have init_in_place_with_capacity function
-                let init_fn = match list_def.vtable.init_in_place_with_capacity {
+                let init_fn = match list_def.init_in_place_with_capacity() {
                     Some(f) => f,
                     None => {
                         return Err(ReflectError::OperationFailed {
@@ -178,7 +178,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
             // Create and push the element frame
             crate::trace!("Pushing element frame, which we just allocated");
             let element_frame = Frame::new(
-                PtrUninit::new(element_ptr),
+                PtrUninit::new(element_ptr.as_ptr()),
                 element_shape,
                 FrameOwnership::Owned,
             );
@@ -232,7 +232,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
             // Push a new frame for the element
             self.frames_mut().push(Frame::new(
-                PtrUninit::new(element_ptr),
+                PtrUninit::new(element_ptr.as_ptr()),
                 element_shape,
                 FrameOwnership::Owned,
             ));
@@ -303,7 +303,7 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
 
         // Push a new frame for the element
         self.frames_mut().push(Frame::new(
-            PtrUninit::new(element_ptr),
+            PtrUninit::new(element_ptr.as_ptr()),
             element_shape,
             FrameOwnership::Owned,
         ));

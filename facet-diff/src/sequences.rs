@@ -86,11 +86,12 @@ impl<'mem, 'facet> UpdatesGroup<'mem, 'facet> {
         for x in 0..updates.removals.len() {
             let mut row = vec![0];
 
-            for y in 0..updates.additions.len() {
-                row.push(row.last().copied().unwrap().max(
-                    mem[x][y]
-                        + Diff::new_peek(updates.removals[x], updates.additions[y]).closeness(),
-                ));
+            for (y, addition) in updates.additions.iter().enumerate() {
+                row.push(
+                    row.last().copied().unwrap().max(
+                        mem[x][y] + Diff::new_peek(updates.removals[x], *addition).closeness(),
+                    ),
+                );
             }
 
             mem.push(row);

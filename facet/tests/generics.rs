@@ -3,7 +3,7 @@ use facet::{Facet, Type, UserType};
 #[test]
 fn vec_wrapper() {
     #[derive(Facet)]
-    struct VecWrapper<T> {
+    struct VecWrapper<T: 'static> {
         data: Vec<T>,
     }
 
@@ -12,7 +12,7 @@ fn vec_wrapper() {
         Type::User(UserType::Struct(sd)) => {
             assert_eq!(sd.fields.len(), 1);
             let field = sd.fields[0];
-            let shape_name = format!("{}", field.shape());
+            let shape_name = format!("{}", field.shape().type_name());
             assert_eq!(shape_name, "Vec<u32>");
             eprintln!("Shape {shape} looks correct");
         }
@@ -44,7 +44,7 @@ fn hash_map_wrapper() {
         Type::User(UserType::Struct(sd)) => {
             assert_eq!(sd.fields.len(), 1);
             let field = sd.fields[0];
-            let shape_name = format!("{}", field.shape());
+            let shape_name = format!("{}", field.shape().type_name());
             assert_eq!(shape_name, "HashMap<u16, String>");
             eprintln!("Shape {shape} looks correct");
         }
@@ -63,14 +63,14 @@ fn hash_map_wrapper() {
 #[test]
 fn tuple_struct_vec_wrapper() {
     #[derive(Facet)]
-    struct TupleVecWrapper<T>(Vec<T>);
+    struct TupleVecWrapper<T: 'static>(Vec<T>);
 
     let shape = TupleVecWrapper::<u32>::SHAPE;
     match shape.ty {
         Type::User(UserType::Struct(sd)) => {
             assert_eq!(sd.fields.len(), 1);
             let field = sd.fields[0];
-            let shape_name = format!("{}", field.shape());
+            let shape_name = format!("{}", field.shape().type_name());
             assert_eq!(shape_name, "Vec<u32>");
             eprintln!("Shape {shape} looks correct");
         }
@@ -88,7 +88,7 @@ fn enum_vec_variant_wrapper() {
     #[derive(Facet)]
     #[repr(u8)]
     #[allow(dead_code)]
-    enum EnumVecWrapper<T> {
+    enum EnumVecWrapper<T: 'static> {
         VecVariant(Vec<T>),
         None,
     }
@@ -103,7 +103,7 @@ fn enum_vec_variant_wrapper() {
             assert_eq!(v0.name, "VecVariant");
             let fields = &v0.data.fields;
             assert_eq!(fields.len(), 1);
-            let field_shape_name = format!("{}", fields[0].shape());
+            let field_shape_name = format!("{}", fields[0].shape().type_name());
             assert_eq!(field_shape_name, "Vec<u32>");
 
             let v1 = &ed.variants[1];
@@ -138,7 +138,7 @@ fn opaque_struct() {
         _ => unreachable!(),
     }
 
-    assert!(shape.vtable.format.debug.is_some());
+    assert!(shape.vtable.has_debug());
     assert_eq!(shape.type_params.len(), 0);
 }
 
@@ -159,7 +159,7 @@ fn opaque_enum() {
         _ => unreachable!(),
     }
 
-    assert!(shape.vtable.format.debug.is_some());
+    assert!(shape.vtable.has_debug());
     assert_eq!(shape.type_params.len(), 0);
 }
 

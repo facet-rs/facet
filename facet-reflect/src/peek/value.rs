@@ -3,7 +3,7 @@ use core::{cmp::Ordering, marker::PhantomData, ptr::NonNull};
 use facet_core::Field;
 use facet_core::{
     Def, Facet, PointerType, PtrConst, Shape, StructKind, Type, TypeNameOpts, UserType,
-    ValueVTable, Variance,
+    VTableErased, Variance,
 };
 
 use crate::{PeekNdArray, PeekSet, ReflectError, ScalarType};
@@ -63,10 +63,11 @@ impl core::fmt::Debug for ValueId {
 ///
 /// The underlying type's variance is tracked in [`Shape::variance`], which
 /// can be used for future variance-aware APIs.
+#[allow(clippy::type_complexity)]
 #[derive(Clone, Copy)]
 pub struct Peek<'mem, 'facet> {
     /// Underlying data
-    pub(crate) data: PtrConst<'mem>,
+    pub(crate) data: PtrConst,
 
     /// Shape of the value
     pub(crate) shape: &'static Shape,
@@ -81,15 +82,16 @@ pub struct Peek<'mem, 'facet> {
     //    while the original function pointer still holds it as 'static
     //
     // The fn(&'a ()) -> &'a () pattern makes this type invariant over 'facet.
+    // The &'mem () makes this type covariant over 'mem (safe because we only read through it).
     // See: https://github.com/facet-rs/facet/issues/1168
-    _invariant: PhantomData<fn(&'facet ()) -> &'facet ()>,
+    _invariant: PhantomData<(&'mem (), fn(&'facet ()) -> &'facet ())>,
 }
 
 impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// Returns a read-only view over a `T` value.
     pub fn new<T: Facet<'facet> + ?Sized>(t: &'mem T) -> Self {
         Self {
-            data: PtrConst::new(NonNull::from(t)),
+            data: PtrConst::new(NonNull::from(t).as_ptr()),
             shape: T::SHAPE,
             _invariant: PhantomData,
         }
@@ -103,7 +105,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// This function is unsafe because it doesn't check if the provided data
     /// and shape are compatible. The caller must ensure that the data is valid
     /// for the given shape.
-    pub unsafe fn unchecked_new(data: PtrConst<'mem>, shape: &'static Shape) -> Self {
+    pub unsafe fn unchecked_new(data: PtrConst, shape: &'static Shape) -> Self {
         Self {
             data,
             shape,
@@ -111,73 +113,40 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         }
     }
 
-    /// Returns the variance of the underlying type.
+    // =============================================================================
+    // Variance-aware lifetime transformation methods
+    // =============================================================================
+
+    /// Returns the computed variance of the underlying type.
     ///
-    /// This queries the type's [`Shape::computed_variance`] to determine whether
-    /// it is covariant, contravariant, or invariant over its lifetime parameter.
+    /// This walks the type's fields to determine if the type is covariant,
+    /// contravariant, or invariant over its lifetime parameter.
     #[inline]
     pub fn variance(&self) -> Variance {
         self.shape.computed_variance()
     }
 
-    /// Shrink the `'facet` lifetime parameter.
+    /// Shrinks the `'facet` lifetime parameter.
     ///
-    /// This is safe for **covariant** types: if a type is covariant over its
-    /// lifetime parameter, then `T<'long>` is a subtype of `T<'short>` when
-    /// `'long: 'short`. This means we can safely treat a `Peek` of a longer
-    /// lifetime as a `Peek` of a shorter lifetime.
+    /// This is safe for covariant types: if data is valid for `'static`,
+    /// it's also valid for any shorter lifetime `'shorter`.
     ///
     /// # Panics
     ///
-    /// Panics if the underlying type is not covariant.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use facet::Facet;
-    /// use facet_reflect::Peek;
-    ///
-    /// #[derive(Facet)]
-    /// struct Covariant<'a> {
-    ///     data: &'a str,
-    /// }
-    ///
-    /// fn use_shorter<'a>(peek: Peek<'_, 'a>) {
-    ///     // Use the peek with the shorter lifetime
-    ///     let _ = peek;
-    /// }
-    ///
-    /// let data = "hello";
-    /// let value = Covariant { data };
-    /// let peek: Peek<'_, 'static> = Peek::new(&value);
-    ///
-    /// // Shrink from 'static to a shorter lifetime - safe because Covariant is covariant
-    /// use_shorter(peek.shrink_lifetime());
-    /// ```
+    /// Panics if the type is not covariant (i.e., if shrinking would be unsound).
     #[inline]
     pub fn shrink_lifetime<'shorter>(self) -> Peek<'mem, 'shorter>
     where
         'facet: 'shorter,
     {
-        assert!(
-            self.variance() == Variance::Covariant,
-            "shrink_lifetime requires a covariant type, but {} is {:?}",
-            self.shape,
-            self.variance()
-        );
-        Peek {
-            data: self.data,
-            shape: self.shape,
-            _invariant: PhantomData,
-        }
+        self.try_shrink_lifetime()
+            .expect("shrink_lifetime requires a covariant type")
     }
 
-    /// Try to shrink the `'facet` lifetime parameter.
+    /// Tries to shrink the `'facet` lifetime parameter.
     ///
-    /// This is safe for **covariant** types. Returns `None` if the type is not
-    /// covariant.
-    ///
-    /// See [`shrink_lifetime`](Self::shrink_lifetime) for more details.
+    /// Returns `Some` if the type is covariant (shrinking is safe),
+    /// or `None` if the type is invariant or contravariant.
     #[inline]
     pub fn try_shrink_lifetime<'shorter>(self) -> Option<Peek<'mem, 'shorter>>
     where
@@ -194,64 +163,27 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         }
     }
 
-    /// Grow the `'facet` lifetime parameter.
+    /// Grows the `'facet` lifetime parameter.
     ///
-    /// This is safe for **contravariant** types: if a type is contravariant over
-    /// its lifetime parameter, then `T<'short>` is a subtype of `T<'long>` when
-    /// `'long: 'short`. This means we can safely treat a `Peek` of a shorter
-    /// lifetime as a `Peek` of a longer lifetime.
+    /// This is safe for contravariant types: if a function accepts `'short`,
+    /// it can also accept `'longer` (a longer lifetime is more restrictive).
     ///
     /// # Panics
     ///
-    /// Panics if the underlying type is not contravariant.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// use facet::Facet;
-    /// use facet_reflect::Peek;
-    ///
-    /// // Note: fn pointers don't currently implement Facet, so this is illustrative
-    /// #[derive(Facet)]
-    /// struct Contravariant<'a> {
-    ///     callback: fn(&'a str),
-    /// }
-    ///
-    /// fn needs_static(peek: Peek<'_, 'static>) {
-    ///     // Use the peek with 'static lifetime
-    ///     let _ = peek;
-    /// }
-    ///
-    /// fn example<'a>(value: &Contravariant<'a>) {
-    ///     let peek: Peek<'_, 'a> = Peek::new(value);
-    ///     // Grow from 'a to 'static - safe because Contravariant is contravariant
-    ///     needs_static(peek.grow_lifetime());
-    /// }
-    /// ```
+    /// Panics if the type is not contravariant (i.e., if growing would be unsound).
     #[inline]
     pub fn grow_lifetime<'longer>(self) -> Peek<'mem, 'longer>
     where
         'longer: 'facet,
     {
-        assert!(
-            self.variance() == Variance::Contravariant,
-            "grow_lifetime requires a contravariant type, but {} is {:?}",
-            self.shape,
-            self.variance()
-        );
-        Peek {
-            data: self.data,
-            shape: self.shape,
-            _invariant: PhantomData,
-        }
+        self.try_grow_lifetime()
+            .expect("grow_lifetime requires a contravariant type")
     }
 
-    /// Try to grow the `'facet` lifetime parameter.
+    /// Tries to grow the `'facet` lifetime parameter.
     ///
-    /// This is safe for **contravariant** types. Returns `None` if the type is
-    /// not contravariant.
-    ///
-    /// See [`grow_lifetime`](Self::grow_lifetime) for more details.
+    /// Returns `Some` if the type is contravariant (growing is safe),
+    /// or `None` if the type is invariant or covariant.
     #[inline]
     pub fn try_grow_lifetime<'longer>(self) -> Option<Peek<'mem, 'longer>>
     where
@@ -270,20 +202,20 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Returns the vtable
     #[inline(always)]
-    pub fn vtable(&self) -> &'static ValueVTable {
-        &self.shape.vtable
+    pub fn vtable(&self) -> VTableErased {
+        self.shape.vtable
     }
 
     /// Returns a unique identifier for this value, usable for cycle detection
     #[inline]
     pub fn id(&self) -> ValueId {
-        ValueId::new(self.shape, self.data.as_byte_ptr())
+        ValueId::new(self.shape, self.data.raw_ptr())
     }
 
     /// Returns true if the two values are pointer-equal
     #[inline]
     pub fn ptr_eq(&self, other: &Peek<'_, '_>) -> bool {
-        self.data.as_byte_ptr() == other.data.as_byte_ptr()
+        self.data.raw_ptr() == other.data.raw_ptr()
     }
 
     /// Returns true if this scalar is equal to the other scalar
@@ -293,15 +225,15 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// `false` if equality comparison is not supported for this scalar type
     #[inline]
     pub fn partial_eq(&self, other: &Peek<'_, '_>) -> Result<bool, ReflectError> {
-        if let Some(f) = self.vtable().cmp.partial_eq {
-            if self.shape == other.shape {
-                return Ok(unsafe { f(self.data, other.data) });
-            } else {
-                return Err(ReflectError::WrongShape {
-                    expected: self.shape,
-                    actual: other.shape,
-                });
-            }
+        if self.shape != other.shape {
+            return Err(ReflectError::WrongShape {
+                expected: self.shape,
+                actual: other.shape,
+            });
+        }
+
+        if let Some(result) = unsafe { self.shape.call_partial_eq(self.data, other.data) } {
+            return Ok(result);
         }
 
         Err(ReflectError::OperationFailed {
@@ -317,15 +249,15 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// `None` if comparison is not supported for this scalar type
     #[inline]
     pub fn partial_cmp(&self, other: &Peek<'_, '_>) -> Result<Option<Ordering>, ReflectError> {
-        if let Some(f) = self.vtable().cmp.partial_ord {
-            if self.shape == other.shape {
-                return Ok(unsafe { f(self.data, other.data) });
-            } else {
-                return Err(ReflectError::WrongShape {
-                    expected: self.shape,
-                    actual: other.shape,
-                });
-            }
+        if self.shape != other.shape {
+            return Err(ReflectError::WrongShape {
+                expected: self.shape,
+                actual: other.shape,
+            });
+        }
+
+        if let Some(result) = unsafe { self.shape.call_partial_cmp(self.data, other.data) } {
+            return Ok(result);
         }
 
         Err(ReflectError::OperationFailed {
@@ -341,11 +273,9 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// `Err` if hashing is not supported for this scalar type, `Ok` otherwise
     #[inline(always)]
     pub fn hash(&self, hasher: &mut dyn core::hash::Hasher) -> Result<(), ReflectError> {
-        if let Some(hash_fn) = self.vtable().hash.hash {
-            unsafe {
-                hash_fn(self.data, hasher);
-                return Ok(());
-            };
+        let mut proxy = facet_core::HashProxy::new(hasher);
+        if unsafe { self.shape.call_hash(self.data, &mut proxy) }.is_some() {
+            return Ok(());
         }
 
         Err(ReflectError::OperationFailed {
@@ -370,7 +300,11 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         f: &mut core::fmt::Formatter<'_>,
         opts: TypeNameOpts,
     ) -> core::fmt::Result {
-        self.shape.vtable.type_name()(f, opts)
+        if let Some(type_name_fn) = self.shape.type_name {
+            type_name_fn(self.shape, f, opts)
+        } else {
+            write!(f, "{}", self.shape.type_identifier)
+        }
     }
 
     /// Returns the shape
@@ -381,7 +315,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
     /// Returns the data
     #[inline(always)]
-    pub const fn data(&self) -> PtrConst<'mem> {
+    pub const fn data(&self) -> PtrConst {
         self.data
     }
 
@@ -397,7 +331,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     ///
     /// Panics if the shape doesn't match the type `T`.
     #[inline]
-    pub fn get<T: Facet<'facet> + ?Sized>(&self) -> Result<&T, ReflectError> {
+    pub fn get<T: Facet<'facet> + ?Sized>(&self) -> Result<&'mem T, ReflectError> {
         if self.shape != T::SHAPE {
             Err(ReflectError::WrongShape {
                 expected: self.shape,
@@ -415,12 +349,12 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         // ScalarType::Str matches both bare `str` and `&str`.
         // For bare `str` (not a pointer), data points to str bytes directly.
         // For `&str`, let it fall through to the pointer handler below.
-        if let Some(ScalarType::Str) = peek.scalar_type() {
-            if !matches!(peek.shape.ty, Type::Pointer(_)) {
-                // Bare `str`: data is a wide pointer to str bytes.
-                // get::<str>() creates a &str reference to that data.
-                return unsafe { Some(peek.data.get::<str>()) };
-            }
+        if let Some(ScalarType::Str) = peek.scalar_type()
+            && !matches!(peek.shape.ty, Type::Pointer(_))
+        {
+            // Bare `str`: data is a wide pointer to str bytes.
+            // get::<str>() creates a &str reference to that data.
+            return unsafe { Some(peek.data.get::<str>()) };
         }
         #[cfg(feature = "alloc")]
         if let Some(ScalarType::String) = peek.scalar_type() {
@@ -459,10 +393,10 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         // Check if it's a direct &[u8]
         if let Type::Pointer(PointerType::Reference(vpt)) = self.shape.ty {
             let target_shape = vpt.target;
-            if let Def::Slice(sd) = target_shape.def {
-                if sd.t().is_type::<u8>() {
-                    unsafe { return Some(self.data.get::<&[u8]>()) }
-                }
+            if let Def::Slice(sd) = target_shape.def
+                && sd.t().is_type::<u8>()
+            {
+                unsafe { return Some(self.data.get::<&[u8]>()) }
             }
         }
         None
@@ -567,7 +501,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                                 Def::Slice(def) => {
                                     let ptr = unsafe { self.data.as_ptr::<*const [()]>() };
                                     let ptr = PtrConst::new(unsafe {
-                                        NonNull::new_unchecked((*ptr) as *mut [()])
+                                        NonNull::new_unchecked((*ptr) as *mut [()]).as_ptr()
                                     });
                                     let peek = unsafe { Peek::unchecked_new(ptr, def.t) };
 
@@ -679,21 +613,27 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// For example, this will peel through newtype wrappers or smart pointers that have an `inner`.
     pub fn innermost_peek(self) -> Self {
         let mut current_peek = self;
-        while let (Some(try_borrow_inner_fn), Some(inner_shape)) = (
-            current_peek.shape.vtable.try_borrow_inner,
-            current_peek.shape.inner,
-        ) {
-            unsafe {
-                let inner_data = try_borrow_inner_fn(current_peek.data).unwrap_or_else(|e| {
-                    panic!("innermost_peek: try_borrow_inner returned an error! was trying to go from {} to {}. error: {e}", current_peek.shape,
-                        inner_shape)
-                });
-
-                current_peek = Peek {
-                    data: inner_data,
-                    shape: inner_shape,
-                    _invariant: PhantomData,
-                };
+        while let Some(inner_shape) = current_peek.shape.inner {
+            // Try to borrow the inner value
+            let result = unsafe { current_peek.shape.call_try_borrow_inner(current_peek.data) };
+            match result {
+                Some(Ok(inner_data)) => {
+                    current_peek = Peek {
+                        data: inner_data.as_const(),
+                        shape: inner_shape,
+                        _invariant: PhantomData,
+                    };
+                }
+                Some(Err(e)) => {
+                    panic!(
+                        "innermost_peek: try_borrow_inner returned an error! was trying to go from {} to {}. error: {e}",
+                        current_peek.shape, inner_shape
+                    );
+                }
+                None => {
+                    // No try_borrow_inner function, stop here
+                    break;
+                }
             }
         }
         current_peek
@@ -705,49 +645,47 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// of the current peek.
     #[cfg(feature = "alloc")]
     pub fn custom_serialization(&self, field: Field) -> Result<OwnedPeek<'mem>, ReflectError> {
-        if let Some(serialize_with) = field.proxy_convert_out_fn() {
-            // Get the target shape from the proxy attribute
-            let Some(target_shape) = field.proxy_shape() else {
-                panic!("expected proxy attribute to be present with serialize_with");
-            };
-            let tptr = target_shape.allocate().map_err(|_| ReflectError::Unsized {
-                shape: target_shape,
-                operation: "Not a Sized type",
-            })?;
-            let ser_res = unsafe { serialize_with(self.data(), tptr) };
-            let err = match ser_res {
-                Ok(rptr) => {
-                    if rptr.as_uninit() != tptr {
-                        ReflectError::CustomSerializationError {
-                            message: "serialize_with did not return the expected pointer".into(),
-                            src_shape: self.shape,
-                            dst_shape: target_shape,
-                        }
-                    } else {
-                        return Ok(OwnedPeek {
-                            shape: target_shape,
-                            data: rptr,
-                        });
-                    }
-                }
-                Err(message) => ReflectError::CustomSerializationError {
-                    message,
-                    src_shape: self.shape,
-                    dst_shape: target_shape,
-                },
-            };
-            // if we reach here we have an error and we need to deallocate the target allocation
-            unsafe {
-                // SAFETY: unwrap should be ok since the allocation was ok
-                target_shape.deallocate_uninit(tptr).unwrap()
-            };
-            Err(err)
-        } else {
-            Err(ReflectError::OperationFailed {
+        let Some(proxy_def) = field.proxy() else {
+            return Err(ReflectError::OperationFailed {
                 shape: self.shape,
-                operation: "field does not have a serialize_with function",
-            })
-        }
+                operation: "field does not have a proxy definition",
+            });
+        };
+
+        let target_shape = proxy_def.shape;
+        let tptr = target_shape.allocate().map_err(|_| ReflectError::Unsized {
+            shape: target_shape,
+            operation: "Not a Sized type",
+        })?;
+        let ser_res = unsafe { (proxy_def.convert_out)(self.data(), tptr) };
+        let err = match ser_res {
+            Ok(rptr) => {
+                if rptr.as_uninit() != tptr {
+                    ReflectError::CustomSerializationError {
+                        message: "convert_out did not return the expected pointer".into(),
+                        src_shape: self.shape,
+                        dst_shape: target_shape,
+                    }
+                } else {
+                    return Ok(OwnedPeek {
+                        shape: target_shape,
+                        data: rptr,
+                        _phantom: PhantomData,
+                    });
+                }
+            }
+            Err(message) => ReflectError::CustomSerializationError {
+                message,
+                src_shape: self.shape,
+                dst_shape: target_shape,
+            },
+        };
+        // if we reach here we have an error and we need to deallocate the target allocation
+        unsafe {
+            // SAFETY: unwrap should be ok since the allocation was ok
+            target_shape.deallocate_uninit(tptr).unwrap()
+        };
+        Err(err)
     }
 
     /// Returns an `OwnedPeek` using the shape's container-level proxy for serialization.
@@ -759,7 +697,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
     /// Returns `None` if the shape has no container-level proxy.
     #[cfg(feature = "alloc")]
     pub fn custom_serialization_from_shape(&self) -> Result<Option<OwnedPeek<'mem>>, ReflectError> {
-        let Some(proxy_def) = self.shape.proxy() else {
+        let Some(proxy_def) = self.shape.proxy else {
             return Ok(None);
         };
 
@@ -782,6 +720,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                     return Ok(Some(OwnedPeek {
                         shape: target_shape,
                         data: rptr,
+                        _phantom: PhantomData,
                     }));
                 }
             }
@@ -803,8 +742,8 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
 
 impl<'mem, 'facet> core::fmt::Display for Peek<'mem, 'facet> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(display_fn) = self.vtable().format.display {
-            return unsafe { display_fn(self.data, f) };
+        if let Some(result) = unsafe { self.shape.call_display(self.data, f) } {
+            return result;
         }
         write!(f, "⟨{}⟩", self.shape)
     }
@@ -812,8 +751,8 @@ impl<'mem, 'facet> core::fmt::Display for Peek<'mem, 'facet> {
 
 impl<'mem, 'facet> core::fmt::Debug for Peek<'mem, 'facet> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(debug_fn) = self.vtable().format.debug {
-            return unsafe { debug_fn(self.data, f) };
+        if let Some(result) = unsafe { self.shape.call_debug(self.data, f) } {
+            return result;
         }
 
         write!(f, "⟨{}⟩", self.shape)
@@ -887,17 +826,17 @@ impl<'mem, 'facet> core::hash::Hash for Peek<'mem, 'facet> {
 #[derive(Clone, Copy)]
 pub struct CovariantPeek<'mem, 'facet> {
     /// Underlying data
-    data: PtrConst<'mem>,
+    data: PtrConst,
 
     /// Shape of the value
     shape: &'static Shape,
 
-    // Covariant over 'facet: CovariantPeek<'mem, 'static> can be used where
+    // Covariant over both 'mem and 'facet: CovariantPeek<'mem, 'static> can be used where
     // CovariantPeek<'mem, 'a> is expected.
     //
     // This is safe ONLY because we verify at construction time that the underlying
     // type is covariant. For covariant types, shrinking lifetimes is always safe.
-    _covariant: PhantomData<&'facet ()>,
+    _covariant: PhantomData<(&'mem (), &'facet ())>,
 }
 
 impl<'mem, 'facet> CovariantPeek<'mem, 'facet> {
@@ -997,7 +936,7 @@ impl<'mem, 'facet> CovariantPeek<'mem, 'facet> {
 
     /// Returns the data pointer.
     #[inline]
-    pub const fn data(&self) -> PtrConst<'mem> {
+    pub const fn data(&self) -> PtrConst {
         self.data
     }
 }

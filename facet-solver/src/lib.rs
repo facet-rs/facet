@@ -65,7 +65,7 @@ impl ResolutionSet {
         let num_words = num_resolutions.div_ceil(64);
         let mut bits = vec![!0u64; num_words];
         // Clear bits beyond num_resolutions
-        if num_resolutions % 64 != 0 {
+        if !num_resolutions.is_multiple_of(64) {
             let last_word_bits = num_resolutions % 64;
             bits[num_words - 1] = (1u64 << last_word_bits) - 1;
         }
@@ -650,10 +650,10 @@ impl<'a> Solver<'a> {
         let mut shapes: Vec<&'static Shape> = Vec::new();
         for idx in self.candidates.iter() {
             let config = &self.schema.resolutions[idx];
-            if let Some(shape) = self.get_shape_at_path(config, path) {
-                if !shapes.iter().any(|s| core::ptr::eq(*s, shape)) {
-                    shapes.push(shape);
-                }
+            if let Some(shape) = self.get_shape_at_path(config, path)
+                && !shapes.iter().any(|s| core::ptr::eq(*s, shape))
+            {
+                shapes.push(shape);
             }
         }
         shapes
@@ -680,10 +680,10 @@ impl<'a> Solver<'a> {
         let mut new_candidates = ResolutionSet::empty(self.schema.resolutions.len());
         for idx in self.candidates.iter() {
             let config = &self.schema.resolutions[idx];
-            if let Some(shape) = self.get_shape_at_path(config, path) {
-                if satisfied_shapes.iter().any(|s| core::ptr::eq(*s, shape)) {
-                    new_candidates.insert(idx);
-                }
+            if let Some(shape) = self.get_shape_at_path(config, path)
+                && satisfied_shapes.iter().any(|s| core::ptr::eq(*s, shape))
+            {
+                new_candidates.insert(idx);
             }
         }
         self.candidates = new_candidates;

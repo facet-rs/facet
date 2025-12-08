@@ -384,11 +384,35 @@ impl<'input> Decoder<'input> {
             } else {
                 partial = partial.set_default()?;
             }
-        } else if let Def::Pointer(_) = shape.def {
+        } else if let Def::Pointer(ptr_def) = shape.def {
             // Handle smart pointers by deserializing the inner value
-            let inner = partial.begin_inner()?;
-            let inner = self.deserialize_value(inner)?;
-            partial = inner.end()?;
+            // Special case for Cow: deserialize as the Owned type directly
+            if matches!(ptr_def.known, Some(facet_core::KnownPointer::Cow)) {
+                // For Cow<T>, we deserialize T::Owned (e.g., Cow<str> deserializes as String)
+                // The Owned type is the second type param
+                if shape.type_params.len() < 2 {
+                    return Err(DeserializeError::UnsupportedType(
+                        "Cow must have Owned type param",
+                    ));
+                }
+                let owned_shape = shape.type_params[1].shape;
+
+                // For Cow<str>, owned_shape is String
+                // Deserialize the String and set it directly
+                if owned_shape.is_type::<String>() {
+                    let s = self.read_string()?;
+                    partial = partial.set(Cow::<str>::Owned(s))?;
+                } else {
+                    return Err(DeserializeError::UnsupportedType(
+                        "Only Cow<str> is currently supported",
+                    ));
+                }
+            } else {
+                // For other smart pointers (Box, Arc, Rc), use begin_smart_ptr
+                let inner = partial.begin_smart_ptr()?;
+                let inner = self.deserialize_value(inner)?;
+                partial = inner.end()?;
+            }
         } else {
             return Err(DeserializeError::UnsupportedShape);
         }

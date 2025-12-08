@@ -1,0 +1,164 @@
+use alloc::{boxed::Box, collections::BTreeMap};
+
+use crate::{
+    Def, Facet, IterVTable, MapDef, MapVTable, PtrConst, PtrMut, PtrUninit, Shape, ShapeBuilder,
+    TypeNameFn, TypeNameOpts, TypeParam, VTableIndirect,
+};
+
+type BTreeMapIterator<'mem, K, V> = alloc::collections::btree_map::Iter<'mem, K, V>;
+
+unsafe fn btreemap_init_in_place_with_capacity<K, V>(
+    uninit: PtrUninit,
+    _capacity: usize,
+) -> PtrMut {
+    unsafe { uninit.put(BTreeMap::<K, V>::new()) }
+}
+
+unsafe fn btreemap_insert<K: Eq + Ord + 'static, V: 'static>(
+    ptr: PtrMut,
+    key: PtrMut,
+    value: PtrMut,
+) {
+    unsafe {
+        let map = ptr.as_mut::<BTreeMap<K, V>>();
+        let k = key.read::<K>();
+        let v = value.read::<V>();
+        map.insert(k, v);
+    }
+}
+
+unsafe fn btreemap_len<K: 'static, V: 'static>(ptr: PtrConst) -> usize {
+    unsafe { ptr.get::<BTreeMap<K, V>>().len() }
+}
+
+unsafe fn btreemap_contains_key<K: Eq + Ord + 'static, V: 'static>(
+    ptr: PtrConst,
+    key: PtrConst,
+) -> bool {
+    unsafe { ptr.get::<BTreeMap<K, V>>().contains_key(key.get()) }
+}
+
+unsafe fn btreemap_get_value_ptr<K: Eq + Ord + 'static, V: 'static>(
+    ptr: PtrConst,
+    key: PtrConst,
+) -> Option<PtrConst> {
+    unsafe {
+        ptr.get::<BTreeMap<K, V>>()
+            .get(key.get())
+            .map(|v| PtrConst::new(v as *const V))
+    }
+}
+
+unsafe fn btreemap_iter_init<K: 'static, V: 'static>(ptr: PtrConst) -> PtrMut {
+    unsafe {
+        let map = ptr.get::<BTreeMap<K, V>>();
+        let iter: BTreeMapIterator<'_, K, V> = map.iter();
+        let state = Box::new(iter);
+        PtrMut::new(Box::into_raw(state) as *mut u8)
+    }
+}
+
+unsafe fn btreemap_iter_next<K: 'static, V: 'static>(
+    iter_ptr: PtrMut,
+) -> Option<(PtrConst, PtrConst)> {
+    unsafe {
+        let state = iter_ptr.as_mut::<BTreeMapIterator<'static, K, V>>();
+        state.next().map(|(key, value)| {
+            (
+                PtrConst::new(key as *const K),
+                PtrConst::new(value as *const V),
+            )
+        })
+    }
+}
+
+unsafe fn btreemap_iter_next_back<K: 'static, V: 'static>(
+    iter_ptr: PtrMut,
+) -> Option<(PtrConst, PtrConst)> {
+    unsafe {
+        let state = iter_ptr.as_mut::<BTreeMapIterator<'static, K, V>>();
+        state.next_back().map(|(key, value)| {
+            (
+                PtrConst::new(key as *const K),
+                PtrConst::new(value as *const V),
+            )
+        })
+    }
+}
+
+unsafe fn btreemap_iter_dealloc<K, V>(iter_ptr: PtrMut) {
+    unsafe {
+        drop(Box::from_raw(
+            iter_ptr.as_ptr::<BTreeMapIterator<'_, K, V>>() as *mut BTreeMapIterator<'_, K, V>,
+        ))
+    }
+}
+
+// TODO: Debug, Hash, PartialEq, Eq, PartialOrd, Ord, for BTreeMap, BTreeSet
+unsafe impl<'a, K, V> Facet<'a> for BTreeMap<K, V>
+where
+    K: Facet<'a> + core::cmp::Eq + core::cmp::Ord + 'static,
+    V: Facet<'a> + 'static,
+{
+    const SHAPE: &'static crate::Shape = &const {
+        const fn build_map_vtable<K: Eq + Ord + 'static, V: 'static>() -> MapVTable {
+            MapVTable::builder()
+                .init_in_place_with_capacity(btreemap_init_in_place_with_capacity::<K, V>)
+                .insert(btreemap_insert::<K, V>)
+                .len(btreemap_len::<K, V>)
+                .contains_key(btreemap_contains_key::<K, V>)
+                .get_value_ptr(btreemap_get_value_ptr::<K, V>)
+                .iter_vtable(IterVTable {
+                    init_with_value: Some(btreemap_iter_init::<K, V>),
+                    next: btreemap_iter_next::<K, V>,
+                    next_back: Some(btreemap_iter_next_back::<K, V>),
+                    size_hint: None,
+                    dealloc: btreemap_iter_dealloc::<K, V>,
+                })
+                .build()
+        }
+
+        const VTABLE: VTableIndirect = VTableIndirect::EMPTY;
+
+        const fn build_type_name<'a, K: Facet<'a>, V: Facet<'a>>() -> TypeNameFn {
+            fn type_name_impl<'a, K: Facet<'a>, V: Facet<'a>>(
+                _shape: &'static Shape,
+                f: &mut core::fmt::Formatter<'_>,
+                opts: TypeNameOpts,
+            ) -> core::fmt::Result {
+                write!(f, "BTreeMap")?;
+                if let Some(opts) = opts.for_children() {
+                    write!(f, "<")?;
+                    K::SHAPE.write_type_name(f, opts)?;
+                    write!(f, ", ")?;
+                    V::SHAPE.write_type_name(f, opts)?;
+                    write!(f, ">")?;
+                } else {
+                    write!(f, "<…>")?;
+                }
+                Ok(())
+            }
+            type_name_impl::<K, V>
+        }
+
+        ShapeBuilder::for_sized::<Self>("BTreeMap")
+            .type_name(build_type_name::<K, V>())
+            .vtable_indirect(&VTABLE)
+            .def(Def::Map(MapDef::new(
+                &const { build_map_vtable::<K, V>() },
+                K::SHAPE,
+                V::SHAPE,
+            )))
+            .type_params(&[
+                TypeParam {
+                    name: "K",
+                    shape: K::SHAPE,
+                },
+                TypeParam {
+                    name: "V",
+                    shape: V::SHAPE,
+                },
+            ])
+            .build()
+    };
+}

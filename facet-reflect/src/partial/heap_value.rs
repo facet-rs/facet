@@ -19,8 +19,9 @@ pub struct HeapValue<'facet, const BORROW: bool = true> {
 impl<'facet, const BORROW: bool> Drop for HeapValue<'facet, BORROW> {
     fn drop(&mut self) {
         if let Some(guard) = self.guard.take() {
-            if let Some(drop_fn) = self.shape.vtable.drop_in_place {
-                unsafe { drop_fn(PtrMut::new(guard.ptr)) };
+            unsafe {
+                self.shape
+                    .call_drop_in_place(PtrMut::new(guard.ptr.as_ptr()));
             }
             drop(guard);
         }
@@ -30,7 +31,12 @@ impl<'facet, const BORROW: bool> Drop for HeapValue<'facet, BORROW> {
 impl<'facet, const BORROW: bool> HeapValue<'facet, BORROW> {
     /// Returns a peek that allows exploring the heap value.
     pub fn peek(&self) -> Peek<'_, 'facet> {
-        unsafe { Peek::unchecked_new(PtrConst::new(self.guard.as_ref().unwrap().ptr), self.shape) }
+        unsafe {
+            Peek::unchecked_new(
+                PtrConst::new(self.guard.as_ref().unwrap().ptr.as_ptr()),
+                self.shape,
+            )
+        }
     }
 
     /// Returns the shape of this heap value.
@@ -59,7 +65,7 @@ impl<'facet, const BORROW: bool> HeapValue<'facet, BORROW> {
 
         trace!("HeapValue::materialize: Shapes match, proceeding with materialization");
         let guard = self.guard.take().unwrap();
-        let data = PtrConst::new(guard.ptr);
+        let data = PtrConst::new(guard.ptr.as_ptr());
         let res = unsafe { data.read::<T>() };
         drop(guard); // free memory (but don't drop in place)
         trace!("HeapValue::materialize: Successfully materialized value");
@@ -70,16 +76,18 @@ impl<'facet, const BORROW: bool> HeapValue<'facet, BORROW> {
 impl<'facet, const BORROW: bool> HeapValue<'facet, BORROW> {
     /// Formats the value using its Display implementation, if available
     pub fn fmt_display(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(display_fn) = self.shape.vtable.format.display {
-            return unsafe { display_fn(PtrConst::new(self.guard.as_ref().unwrap().ptr), f) };
+        let ptr = PtrConst::new(self.guard.as_ref().unwrap().ptr.as_ptr());
+        if let Some(result) = unsafe { self.shape.call_display(ptr, f) } {
+            return result;
         }
         write!(f, "⟨{}⟩", self.shape)
     }
 
     /// Formats the value using its Debug implementation, if available
     pub fn fmt_debug(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(debug_fn) = self.shape.vtable.format.debug {
-            return unsafe { debug_fn(PtrConst::new(self.guard.as_ref().unwrap().ptr), f) };
+        let ptr = PtrConst::new(self.guard.as_ref().unwrap().ptr.as_ptr());
+        if let Some(result) = unsafe { self.shape.call_debug(ptr, f) } {
+            return result;
         }
         write!(f, "⟨{}⟩", self.shape)
     }
@@ -102,15 +110,9 @@ impl<'facet, const BORROW: bool> PartialEq for HeapValue<'facet, BORROW> {
         if self.shape != other.shape {
             return false;
         }
-        if let Some(eq_fn) = self.shape.vtable.cmp.partial_eq {
-            return unsafe {
-                eq_fn(
-                    PtrConst::new(self.guard.as_ref().unwrap().ptr),
-                    PtrConst::new(other.guard.as_ref().unwrap().ptr),
-                )
-            };
-        }
-        false
+        let self_ptr = PtrConst::new(self.guard.as_ref().unwrap().ptr.as_ptr());
+        let other_ptr = PtrConst::new(other.guard.as_ref().unwrap().ptr.as_ptr());
+        unsafe { self.shape.call_partial_eq(self_ptr, other_ptr) }.unwrap_or(false)
     }
 }
 
@@ -119,15 +121,9 @@ impl<'facet, const BORROW: bool> PartialOrd for HeapValue<'facet, BORROW> {
         if self.shape != other.shape {
             return None;
         }
-        if let Some(partial_ord_fn) = self.shape.vtable.cmp.partial_ord {
-            return unsafe {
-                partial_ord_fn(
-                    PtrConst::new(self.guard.as_ref().unwrap().ptr),
-                    PtrConst::new(other.guard.as_ref().unwrap().ptr),
-                )
-            };
-        }
-        None
+        let self_ptr = PtrConst::new(self.guard.as_ref().unwrap().ptr.as_ptr());
+        let other_ptr = PtrConst::new(other.guard.as_ref().unwrap().ptr.as_ptr());
+        unsafe { self.shape.call_partial_cmp(self_ptr, other_ptr) }.flatten()
     }
 }
 

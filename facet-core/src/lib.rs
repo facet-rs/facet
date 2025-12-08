@@ -11,99 +11,16 @@
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
-mod macros;
-pub use macros::*;
-
-// Macros for vtable fields.
-
-/// Includes vtable fields for Display/Debug.
-#[macro_export]
-macro_rules! vtable_fmt {
-    ($($tt:tt)*) => { $($tt)* };
-}
-
-/// Includes vtable fields for PartialEq/PartialOrd/Ord.
-#[macro_export]
-macro_rules! vtable_cmp {
-    ($($tt:tt)*) => { $($tt)* };
-}
-
-/// Includes vtable fields for Hash.
-#[macro_export]
-macro_rules! vtable_hash {
-    ($($tt:tt)*) => { $($tt)* };
-}
-
-// Opaque pointer utilities
-mod ptr;
-pub use ptr::*;
-
-// Opaque wrapper utility
-mod opaque;
-pub use opaque::*;
-
-// Specialization utilities
-pub mod spez;
-
-// Definition for `core::` types
-mod impls_core;
-
-// Definition for `alloc::` types
-#[cfg(feature = "alloc")]
-mod impls_alloc;
-
-// Definition for `std::` types (that aren't in `alloc` or `core)
-#[cfg(feature = "std")]
-mod impls_std;
-
-#[cfg(feature = "bytes")]
-mod impls_bytes;
-
-#[cfg(feature = "camino")]
-mod impls_camino;
-
-#[cfg(feature = "ordered-float")]
-mod impls_ordered_float;
-
-#[cfg(feature = "uuid")]
-mod impls_uuid;
-
-#[cfg(feature = "ulid")]
-mod impls_ulid;
-
-#[cfg(feature = "time")]
-mod impls_time;
-
-#[cfg(feature = "chrono")]
-mod impls_chrono;
-
-#[cfg(feature = "url")]
-mod impls_url;
-
-#[cfg(feature = "jiff02")]
-mod impls_jiff;
-
-#[cfg(feature = "num-complex")]
-mod impls_num_complex;
-
-#[cfg(feature = "ruint")]
-mod impls_ruint;
-
-#[cfg(feature = "indexmap")]
-mod impls_indexmap;
-
-// Const type Id
-mod typeid;
-pub use typeid::*;
-
-// Scalar type identification
-mod scalar;
-pub use scalar::*;
-
-// Type definitions
+// Core type definitions (merged from facet-core-types)
 mod types;
-#[allow(unused_imports)] // wtf clippy? we're re-exporting?
 pub use types::*;
+
+// Write trait for serializers
+mod write;
+pub use write::Write;
+
+// Implementations of the Shape trait
+mod impls;
 
 /// Allows querying the [`Shape`] of a type, which in turn lets us inspect any fields, build a value of
 /// this type progressively, etc.
@@ -117,21 +34,33 @@ pub use types::*;
 ///
 /// You're responsible for describing the type layout properly, and annotating all the invariants.
 pub unsafe trait Facet<'facet>: 'facet {
-    /// The shape of this type
+    /// The shape of this type, including: whether it's a Struct, an Enum, something else?
     ///
-    /// Shape embeds all other constants of this trait.
+    /// All its fields, with their names, types, attributes, doc comments, etc.
+    /// VTables for list operations, set operations, map operations, option operations,
+    /// and implementations for Display, Debug, etc.—marker traits like Send, Sync, Copy, Eq,
+    /// and probably other things I'm forgetting.
     const SHAPE: &'static Shape;
 }
 
-mod shape_util;
-
-// Write trait for serializers
-mod write;
-pub use write::Write;
-
-/// Re-export paste for use in macros
-#[doc(hidden)]
-pub use paste;
+/// Returns the shape of a type as a function pointer.
+///
+/// This is a helper for lazy shape initialization in field definitions.
+/// Using a function pointer instead of a direct reference moves const
+/// evaluation from compile time to runtime, improving compile times.
+///
+/// # Example
+///
+/// ```ignore
+/// use facet_core::{FieldBuilder, shape_of};
+///
+/// // In field definitions:
+/// FieldBuilder::new("my_field", shape_of::<i32>, 0)
+/// ```
+#[inline]
+pub fn shape_of<'a, T: Facet<'a>>() -> &'static Shape {
+    T::SHAPE
+}
 
 /// Ultra-compact prelude for derive macro codegen (the "digamma" prelude).
 ///
@@ -145,41 +74,36 @@ pub use paste;
 #[allow(nonstandard_style)]
 pub mod 𝟋 {
     // === Type aliases ===
+    pub use crate::Attr as 𝟋Attr;
     pub use crate::Def as 𝟋Def;
+    pub use crate::DefaultSource as 𝟋DS;
     pub use crate::EnumRepr as 𝟋ERpr;
     pub use crate::EnumType as 𝟋ETy;
+    pub use crate::EnumTypeBuilder as 𝟋ETyB;
     pub use crate::Facet as 𝟋Fct;
     pub use crate::Field as 𝟋Fld;
+    pub use crate::FieldBuilder as 𝟋FldB;
     pub use crate::FieldFlags as 𝟋FF;
+    pub use crate::HashProxy as 𝟋HP;
     pub use crate::MarkerTraits as 𝟋Mt;
     pub use crate::Repr as 𝟋Repr;
     pub use crate::Shape as 𝟋Shp;
+    pub use crate::ShapeBuilder as 𝟋ShpB;
+    pub use crate::ShapeFlags as 𝟋ShpF;
     pub use crate::ShapeRef as 𝟋ShpR;
     pub use crate::StructKind as 𝟋Sk;
     pub use crate::StructType as 𝟋STy;
+    pub use crate::StructTypeBuilder as 𝟋STyB;
     pub use crate::Type as 𝟋Ty;
     pub use crate::UserType as 𝟋UTy;
-    pub use crate::ValueVTable as 𝟋Vt;
-    pub use crate::Variance as 𝟋Vrnc;
+    pub use crate::VTableDirect as 𝟋VtD;
+    pub use crate::VTableErased as 𝟋VtE;
+    pub use crate::Variance as 𝟋Vnc;
     pub use crate::Variant as 𝟋Var;
-
-    // === Builders ===
-    pub use crate::EnumTypeBuilder as 𝟋ETyB;
-    pub use crate::FieldBuilder as 𝟋FldB;
-    pub use crate::ShapeBuilder as 𝟋ShpB;
-    pub use crate::StructTypeBuilder as 𝟋STyB;
-    pub use crate::ValueVTableBuilder as 𝟋VtB;
     pub use crate::VariantBuilder as 𝟋VarB;
 
-    // === ShapeRef variants (for compact codegen) ===
-    /// Static shape reference (default, most efficient) - use for most fields
-    pub const fn 𝟋ShpS(shape: &'static crate::Shape) -> crate::ShapeRef {
-        crate::ShapeRef::Static(shape)
-    }
-    /// Lazy shape reference (for recursive types) - use with #[facet(recursive_type)]
-    pub const fn 𝟋ShpL(f: fn() -> &'static crate::Shape) -> crate::ShapeRef {
-        crate::ShapeRef::Lazy(f)
-    }
+    /// Helper to get shape of a type as a function - monomorphized per type
+    pub use crate::shape_of as 𝟋shp;
 
     // === Constants ===
     /// Empty attributes slice
@@ -188,6 +112,8 @@ pub mod 𝟋 {
     pub const 𝟋NODOC: &[&str] = &[];
     /// Empty flags
     pub const 𝟋NOFL: crate::FieldFlags = crate::FieldFlags::empty();
+    /// Computed variance function (for non-opaque types)
+    pub const 𝟋CV: fn(&'static crate::Shape) -> crate::Variance = crate::Shape::computed_variance;
 
     // === Type Aliases ===
     /// PhantomData type for shadow structs, invariant in lifetime `'a`.
@@ -201,4 +127,71 @@ pub mod 𝟋 {
     /// but we need a type for compilation in no_std contexts.
     #[cfg(not(feature = "alloc"))]
     pub type 𝟋Str = &'static str;
+
+    /// Result type alias for macro-generated code.
+    pub type 𝟋Result<T, E> = ::core::result::Result<T, E>;
+
+    // === Helper functions ===
+    /// Returns `drop_in_place::<T>` as a function pointer for vtable construction.
+    pub const fn 𝟋drop_for<T>() -> unsafe fn(*mut T) {
+        ::core::ptr::drop_in_place::<T>
+    }
+
+    /// Returns a default_in_place function pointer for TypeOpsDirect.
+    /// # Safety
+    /// The pointer must point to uninitialized memory of sufficient size and alignment for T.
+    pub const fn 𝟋default_for<T: Default>() -> unsafe fn(*mut T) {
+        unsafe fn default_in_place<T: Default>(ptr: *mut T) {
+            unsafe { ptr.write(T::default()) };
+        }
+        default_in_place::<T>
+    }
+
+    /// Returns a clone_into function pointer for TypeOpsDirect.
+    /// # Safety
+    /// - `src` must point to a valid, initialized value of type T
+    /// - `dst` must point to uninitialized memory of sufficient size and alignment for T
+    pub const fn 𝟋clone_for<T: Clone>() -> unsafe fn(*const T, *mut T) {
+        unsafe fn clone_into<T: Clone>(src: *const T, dst: *mut T) {
+            unsafe { dst.write((*src).clone()) };
+        }
+        clone_into::<T>
+    }
+
+    // === TypeOpsIndirect helpers ===
+    // These take OxPtrMut/OxPtrConst and work with wide pointers
+
+    /// Returns a drop_in_place function pointer for TypeOpsIndirect.
+    pub const fn 𝟋indirect_drop_for<T>() -> unsafe fn(crate::OxPtrMut) {
+        unsafe fn drop_in_place<T>(ox: crate::OxPtrMut) {
+            unsafe { ::core::ptr::drop_in_place(ox.ptr().as_ptr::<T>() as *mut T) };
+        }
+        drop_in_place::<T>
+    }
+
+    /// Returns a default_in_place function pointer for TypeOpsIndirect.
+    pub const fn 𝟋indirect_default_for<T: Default>() -> unsafe fn(crate::OxPtrMut) {
+        unsafe fn default_in_place<T: Default>(ox: crate::OxPtrMut) {
+            unsafe { ox.ptr().as_uninit().put(T::default()) };
+        }
+        default_in_place::<T>
+    }
+
+    /// Returns a clone_into function pointer for TypeOpsIndirect.
+    pub const fn 𝟋indirect_clone_for<T: Clone>() -> unsafe fn(crate::OxPtrConst, crate::OxPtrMut) {
+        unsafe fn clone_into<T: Clone>(src: crate::OxPtrConst, dst: crate::OxPtrMut) {
+            let src_val = unsafe { &*(src.ptr().as_byte_ptr() as *const T) };
+            unsafe { dst.ptr().as_uninit().put(src_val.clone()) };
+        }
+        clone_into::<T>
+    }
+
+    // === Specialization ===
+    pub use crate::types::specialization::impls;
+    pub use crate::types::specialization::{
+        Spez, SpezCloneIntoNo, SpezCloneIntoYes, SpezDebugNo, SpezDebugYes, SpezDefaultInPlaceNo,
+        SpezDefaultInPlaceYes, SpezDisplayNo, SpezDisplayYes, SpezEmpty, SpezHashNo, SpezHashYes,
+        SpezOrdNo, SpezOrdYes, SpezParseNo, SpezParseYes, SpezPartialEqNo, SpezPartialEqYes,
+        SpezPartialOrdNo, SpezPartialOrdYes,
+    };
 }

@@ -287,13 +287,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             // If the tracker is Scalar but this is a struct type, upgrade to Struct tracker.
             // This can happen if the frame was deinit'd (e.g., by a failed set_default)
             // which resets the tracker to Scalar.
-            if matches!(frame.tracker, Tracker::Scalar) {
-                if let Type::User(UserType::Struct(struct_type)) = frame.shape.ty {
-                    frame.tracker = Tracker::Struct {
-                        iset: ISet::new(struct_type.fields.len()),
-                        current_child: None,
-                    };
-                }
+            if matches!(frame.tracker, Tracker::Scalar)
+                && let Type::User(UserType::Struct(struct_type)) = frame.shape.ty
+            {
+                frame.tracker = Tracker::Struct {
+                    iset: ISet::new(struct_type.fields.len()),
+                    current_child: None,
+                };
             }
 
             match &mut frame.tracker {
@@ -316,7 +316,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     fn complete_option_frame(option_frame: &mut Frame, inner_frame: Frame) {
         if let Def::Option(option_def) = option_frame.shape.def {
             // Use the Option vtable to initialize Some(inner_value)
-            let init_some_fn = option_def.vtable.init_some_fn;
+            let init_some_fn = option_def.vtable.init_some;
 
             // The inner frame contains the inner value
             let inner_value_ptr = unsafe { inner_frame.data.assume_init().as_const() };
@@ -327,13 +327,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }
 
             // Deallocate the inner value's memory since init_some_fn moved it
-            if let FrameOwnership::Owned = inner_frame.ownership {
-                if let Ok(layout) = inner_frame.shape.layout.sized_layout() {
-                    if layout.size() > 0 {
-                        unsafe {
-                            ::alloc::alloc::dealloc(inner_frame.data.as_mut_byte_ptr(), layout);
-                        }
-                    }
+            if let FrameOwnership::Owned = inner_frame.ownership
+                && let Ok(layout) = inner_frame.shape.layout.sized_layout()
+                && layout.size() > 0
+            {
+                unsafe {
+                    ::alloc::alloc::dealloc(inner_frame.data.as_mut_byte_ptr(), layout);
                 }
             }
 
@@ -398,9 +397,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 let arc_ptr = unsafe { (vtable.convert_fn)(builder_ptr) };
 
                 // Update the frame to store the Arc
-                frames[0].data = PtrUninit::new(unsafe {
-                    NonNull::new_unchecked(arc_ptr.as_byte_ptr() as *mut u8)
-                });
+                frames[0].data = PtrUninit::new(arc_ptr.as_byte_ptr() as *mut u8);
                 frames[0].tracker = Tracker::Scalar;
                 frames[0].is_init = true;
                 // The builder memory has been consumed by convert_fn, so we no longer own it
@@ -419,13 +416,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         }
 
         // In deferred mode, cannot pop below the start depth
-        if let Some(start_depth) = self.start_depth() {
-            if self.frames().len() <= start_depth {
-                // No need to poison - returning Err consumes self, Drop will handle cleanup
-                return Err(ReflectError::InvariantViolation {
-                    invariant: "Partial::end() called but would pop below deferred start depth",
-                });
-            }
+        if let Some(start_depth) = self.start_depth()
+            && self.frames().len() <= start_depth
+        {
+            // No need to poison - returning Err consumes self, Drop will handle cleanup
+            return Err(ReflectError::InvariantViolation {
+                invariant: "Partial::end() called but would pop below deferred start depth",
+            });
         }
 
         // Require that the top frame is fully initialized before popping.
@@ -541,13 +538,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         // check if this needs deserialization from a different shape
         if popped_frame.using_custom_deserialization {
-            // First try field-level proxy
-            let deserialize_with = self
+            // Check for field-level proxy first, then fall back to shape-level proxy
+            let deserialize_with: Option<facet_core::ProxyConvertInFn> = self
                 .parent_field()
-                .and_then(|field| field.proxy_convert_in_fn());
+                .and_then(|f| f.proxy().map(|p| p.convert_in));
 
             // Fall back to shape-level proxy stored in the frame
-            #[cfg(feature = "alloc")]
             let deserialize_with =
                 deserialize_with.or_else(|| popped_frame.shape_level_proxy.map(|p| p.convert_in));
 
@@ -611,7 +607,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             && matches!(parent_frame.tracker, Tracker::Scalar)
             && parent_frame.shape.inner.is_some()
             && parent_frame.shape.inner.unwrap() == popped_frame.shape
-            && parent_frame.shape.vtable.try_from.is_some();
+            && match parent_frame.shape.vtable {
+                facet_core::VTableErased::Direct(vt) => vt.try_from.is_some(),
+                facet_core::VTableErased::Indirect(vt) => vt.try_from.is_some(),
+            };
 
         if needs_conversion {
             trace!(
@@ -623,87 +622,114 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             // (we're about to call assume_init() and pass to try_from)
             if let Err(e) = popped_frame.require_full_initialization() {
                 // Deallocate the memory since the frame wasn't fully initialized
-                if let FrameOwnership::Owned = popped_frame.ownership {
-                    if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
-                        if layout.size() > 0 {
-                            trace!(
-                                "Deallocating uninitialized conversion frame memory: size={}, align={}",
-                                layout.size(),
-                                layout.align()
-                            );
-                            unsafe {
-                                ::alloc::alloc::dealloc(
-                                    popped_frame.data.as_mut_byte_ptr(),
-                                    layout,
-                                );
-                            }
-                        }
+                if let FrameOwnership::Owned = popped_frame.ownership
+                    && let Ok(layout) = popped_frame.shape.layout.sized_layout()
+                    && layout.size() > 0
+                {
+                    trace!(
+                        "Deallocating uninitialized conversion frame memory: size={}, align={}",
+                        layout.size(),
+                        layout.align()
+                    );
+                    unsafe {
+                        ::alloc::alloc::dealloc(popped_frame.data.as_mut_byte_ptr(), layout);
                     }
                 }
                 return Err(e);
             }
 
             // Perform the conversion
-            if let Some(try_from_fn) = parent_frame.shape.vtable.try_from {
-                let inner_ptr = unsafe { popped_frame.data.assume_init().as_const() };
-                let inner_shape = popped_frame.shape;
+            let inner_ptr = unsafe { popped_frame.data.assume_init().as_const() };
+            let inner_shape = popped_frame.shape;
 
-                trace!("Converting from {} to {}", inner_shape, parent_frame.shape);
-                let result = unsafe { try_from_fn(inner_ptr, inner_shape, parent_frame.data) };
+            trace!("Converting from {} to {}", inner_shape, parent_frame.shape);
 
-                if let Err(e) = result {
-                    trace!("Conversion failed: {e:?}");
-
-                    // Deallocate the inner value's memory since conversion failed
-                    if let FrameOwnership::Owned = popped_frame.ownership {
-                        if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
-                            if layout.size() > 0 {
-                                trace!(
-                                    "Deallocating conversion frame memory after failure: size={}, align={}",
-                                    layout.size(),
-                                    layout.align()
-                                );
-                                unsafe {
-                                    ::alloc::alloc::dealloc(
-                                        popped_frame.data.as_mut_byte_ptr(),
-                                        layout,
-                                    );
-                                }
-                            }
+            // Handle Direct and Indirect vtables differently due to different return types
+            let result = match parent_frame.shape.vtable {
+                facet_core::VTableErased::Direct(vt) => {
+                    if let Some(try_from_fn) = vt.try_from {
+                        unsafe {
+                            try_from_fn(
+                                inner_ptr.as_byte_ptr() as *const (),
+                                parent_frame.data.as_mut_byte_ptr() as *mut (),
+                            )
                         }
-                    }
-
-                    return Err(ReflectError::TryFromError {
-                        src_shape: inner_shape,
-                        dst_shape: parent_frame.shape,
-                        inner: e,
-                    });
-                }
-
-                trace!("Conversion succeeded, marking parent as initialized");
-                parent_frame.is_init = true;
-
-                // Deallocate the inner value's memory since try_from consumed it
-                if let FrameOwnership::Owned = popped_frame.ownership {
-                    if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
-                        if layout.size() > 0 {
-                            trace!(
-                                "Deallocating conversion frame memory: size={}, align={}",
-                                layout.size(),
-                                layout.align()
-                            );
-                            unsafe {
-                                ::alloc::alloc::dealloc(
-                                    popped_frame.data.as_mut_byte_ptr(),
-                                    layout,
-                                );
-                            }
-                        }
+                    } else {
+                        return Err(ReflectError::OperationFailed {
+                            shape: parent_frame.shape,
+                            operation: "try_from not available for this type",
+                        });
                     }
                 }
+                facet_core::VTableErased::Indirect(vt) => {
+                    if let Some(try_from_fn) = vt.try_from {
+                        let ox_ref = facet_core::OxRef::new(inner_ptr, inner_shape);
+                        let ox_mut = facet_core::OxMut::new(
+                            unsafe { parent_frame.data.assume_init() },
+                            parent_frame.shape,
+                        );
+                        match unsafe { try_from_fn(ox_ref.into(), ox_mut.into()) } {
+                            Some(result) => result,
+                            None => {
+                                return Err(ReflectError::OperationFailed {
+                                    shape: parent_frame.shape,
+                                    operation: "try_from not available for inner type",
+                                });
+                            }
+                        }
+                    } else {
+                        return Err(ReflectError::OperationFailed {
+                            shape: parent_frame.shape,
+                            operation: "try_from not available for this type",
+                        });
+                    }
+                }
+            };
 
-                return Ok(self);
+            if let Err(e) = result {
+                trace!("Conversion failed: {e:?}");
+
+                // Deallocate the inner value's memory since conversion failed
+                if let FrameOwnership::Owned = popped_frame.ownership
+                    && let Ok(layout) = popped_frame.shape.layout.sized_layout()
+                    && layout.size() > 0
+                {
+                    trace!(
+                        "Deallocating conversion frame memory after failure: size={}, align={}",
+                        layout.size(),
+                        layout.align()
+                    );
+                    unsafe {
+                        ::alloc::alloc::dealloc(popped_frame.data.as_mut_byte_ptr(), layout);
+                    }
+                }
+
+                return Err(ReflectError::TryFromError {
+                    src_shape: inner_shape,
+                    dst_shape: parent_frame.shape,
+                    inner: facet_core::TryFromError::Generic(e),
+                });
             }
+
+            trace!("Conversion succeeded, marking parent as initialized");
+            parent_frame.is_init = true;
+
+            // Deallocate the inner value's memory since try_from consumed it
+            if let FrameOwnership::Owned = popped_frame.ownership
+                && let Ok(layout) = popped_frame.shape.layout.sized_layout()
+                && layout.size() > 0
+            {
+                trace!(
+                    "Deallocating conversion frame memory: size={}, align={}",
+                    layout.size(),
+                    layout.align()
+                );
+                unsafe {
+                    ::alloc::alloc::dealloc(popped_frame.data.as_mut_byte_ptr(), layout);
+                }
+            }
+
+            return Ok(self);
         }
 
         // For Field-owned frames, reclaim responsibility in parent's tracker
@@ -773,9 +799,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     };
 
                     // The child frame contained the inner value
-                    let inner_ptr = PtrMut::new(unsafe {
-                        NonNull::new_unchecked(popped_frame.data.as_mut_byte_ptr())
-                    });
+                    let inner_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
 
                     // Use new_into_fn to create the Box
                     unsafe {
@@ -796,7 +820,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 if *current_child {
                     // We just popped an element frame, now push it to the list
                     if let Def::List(list_def) = parent_frame.shape.def {
-                        let Some(push_fn) = list_def.vtable.push else {
+                        let Some(push_fn) = list_def.push() else {
                             return Err(ReflectError::OperationFailed {
                                 shape: parent_frame.shape,
                                 operation: "List missing push function",
@@ -804,16 +828,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         };
 
                         // The child frame contained the element value
-                        let element_ptr = PtrMut::new(unsafe {
-                            NonNull::new_unchecked(popped_frame.data.as_mut_byte_ptr())
-                        });
+                        let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
 
                         // Use push to add element to the list
                         unsafe {
                             push_fn(
-                                PtrMut::new(NonNull::new_unchecked(
-                                    parent_frame.data.as_mut_byte_ptr(),
-                                )),
+                                PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
                                 element_ptr,
                             );
                         }
@@ -845,18 +865,14 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         if let (Some(value_ptr), Def::Map(map_def)) =
                             (value_ptr, parent_frame.shape.def)
                         {
-                            let insert_fn = map_def.vtable.insert_fn;
+                            let insert = map_def.vtable.insert;
 
                             // Use insert to add key-value pair to the map
                             unsafe {
-                                insert_fn(
-                                    PtrMut::new(NonNull::new_unchecked(
-                                        parent_frame.data.as_mut_byte_ptr(),
-                                    )),
-                                    PtrMut::new(NonNull::new_unchecked(key_ptr.as_mut_byte_ptr())),
-                                    PtrMut::new(NonNull::new_unchecked(
-                                        value_ptr.as_mut_byte_ptr(),
-                                    )),
+                                insert(
+                                    PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
+                                    PtrMut::new(key_ptr.as_mut_byte_ptr()),
+                                    PtrMut::new(value_ptr.as_mut_byte_ptr()),
                                 );
                             }
 
@@ -865,24 +881,21 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             // but we still need to deallocate the temporary buffers.
                             // However, since we don't have frames for them anymore (they were popped),
                             // we need to handle deallocation here.
-                            if let Ok(key_shape) = map_def.k().layout.sized_layout() {
-                                if key_shape.size() > 0 {
-                                    unsafe {
-                                        ::alloc::alloc::dealloc(
-                                            key_ptr.as_mut_byte_ptr(),
-                                            key_shape,
-                                        );
-                                    }
+                            if let Ok(key_shape) = map_def.k().layout.sized_layout()
+                                && key_shape.size() > 0
+                            {
+                                unsafe {
+                                    ::alloc::alloc::dealloc(key_ptr.as_mut_byte_ptr(), key_shape);
                                 }
                             }
-                            if let Ok(value_shape) = map_def.v().layout.sized_layout() {
-                                if value_shape.size() > 0 {
-                                    unsafe {
-                                        ::alloc::alloc::dealloc(
-                                            value_ptr.as_mut_byte_ptr(),
-                                            value_shape,
-                                        );
-                                    }
+                            if let Ok(value_shape) = map_def.v().layout.sized_layout()
+                                && value_shape.size() > 0
+                            {
+                                unsafe {
+                                    ::alloc::alloc::dealloc(
+                                        value_ptr.as_mut_byte_ptr(),
+                                        value_shape,
+                                    );
                                 }
                             }
 
@@ -899,19 +912,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 if *current_child {
                     // We just popped an element frame, now insert it into the set
                     if let Def::Set(set_def) = parent_frame.shape.def {
-                        let insert_fn = set_def.vtable.insert_fn;
+                        let insert = set_def.vtable.insert;
 
                         // The child frame contained the element value
-                        let element_ptr = PtrMut::new(unsafe {
-                            NonNull::new_unchecked(popped_frame.data.as_mut_byte_ptr())
-                        });
+                        let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
 
                         // Use insert to add element to the set
                         unsafe {
-                            insert_fn(
-                                PtrMut::new(NonNull::new_unchecked(
-                                    parent_frame.data.as_mut_byte_ptr(),
-                                )),
+                            insert(
+                                PtrMut::new(parent_frame.data.as_mut_byte_ptr()),
                                 element_ptr,
                             );
                         }
@@ -934,7 +943,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 if *building_inner {
                     if let Def::Option(option_def) = parent_frame.shape.def {
                         // Use the Option vtable to initialize Some(inner_value)
-                        let init_some_fn = option_def.vtable.init_some_fn;
+                        let init_some_fn = option_def.vtable.init_some;
 
                         // The popped frame contains the inner value
                         let inner_value_ptr = unsafe { popped_frame.data.assume_init().as_const() };
@@ -945,16 +954,15 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                         }
 
                         // Deallocate the inner value's memory since init_some_fn moved it
-                        if let FrameOwnership::Owned = popped_frame.ownership {
-                            if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
-                                if layout.size() > 0 {
-                                    unsafe {
-                                        ::alloc::alloc::dealloc(
-                                            popped_frame.data.as_mut_byte_ptr(),
-                                            layout,
-                                        );
-                                    }
-                                }
+                        if let FrameOwnership::Owned = popped_frame.ownership
+                            && let Ok(layout) = popped_frame.shape.layout.sized_layout()
+                            && layout.size() > 0
+                        {
+                            unsafe {
+                                ::alloc::alloc::dealloc(
+                                    popped_frame.data.as_mut_byte_ptr(),
+                                    layout,
+                                );
                             }
                         }
 
@@ -975,16 +983,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     // begin_some was called again. The popped frame was not used to
                     // initialize the Option, so we need to clean it up.
                     popped_frame.deinit();
-                    if let FrameOwnership::Owned = popped_frame.ownership {
-                        if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
-                            if layout.size() > 0 {
-                                unsafe {
-                                    ::alloc::alloc::dealloc(
-                                        popped_frame.data.as_mut_byte_ptr(),
-                                        layout,
-                                    );
-                                }
-                            }
+                    if let FrameOwnership::Owned = popped_frame.ownership
+                        && let Ok(layout) = popped_frame.shape.layout.sized_layout()
+                        && layout.size() > 0
+                    {
+                        unsafe {
+                            ::alloc::alloc::dealloc(popped_frame.data.as_mut_byte_ptr(), layout);
                         }
                     }
                 }
@@ -1006,28 +1010,27 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
                         // Initialize the Result as Ok(inner_value) or Err(inner_value)
                         if *is_ok {
-                            let init_ok_fn = result_def.vtable.init_ok_fn;
+                            let init_ok_fn = result_def.vtable.init_ok;
                             unsafe {
                                 init_ok_fn(parent_frame.data, inner_value_ptr);
                             }
                         } else {
-                            let init_err_fn = result_def.vtable.init_err_fn;
+                            let init_err_fn = result_def.vtable.init_err;
                             unsafe {
                                 init_err_fn(parent_frame.data, inner_value_ptr);
                             }
                         }
 
                         // Deallocate the inner value's memory since init_ok/err_fn moved it
-                        if let FrameOwnership::Owned = popped_frame.ownership {
-                            if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
-                                if layout.size() > 0 {
-                                    unsafe {
-                                        ::alloc::alloc::dealloc(
-                                            popped_frame.data.as_mut_byte_ptr(),
-                                            layout,
-                                        );
-                                    }
-                                }
+                        if let FrameOwnership::Owned = popped_frame.ownership
+                            && let Ok(layout) = popped_frame.shape.layout.sized_layout()
+                            && layout.size() > 0
+                        {
+                            unsafe {
+                                ::alloc::alloc::dealloc(
+                                    popped_frame.data.as_mut_byte_ptr(),
+                                    layout,
+                                );
                             }
                         }
 
@@ -1048,16 +1051,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     // begin_ok/begin_err was called again. The popped frame was not used to
                     // initialize the Result, so we need to clean it up.
                     popped_frame.deinit();
-                    if let FrameOwnership::Owned = popped_frame.ownership {
-                        if let Ok(layout) = popped_frame.shape.layout.sized_layout() {
-                            if layout.size() > 0 {
-                                unsafe {
-                                    ::alloc::alloc::dealloc(
-                                        popped_frame.data.as_mut_byte_ptr(),
-                                        layout,
-                                    );
-                                }
-                            }
+                    if let FrameOwnership::Owned = popped_frame.ownership
+                        && let Ok(layout) = popped_frame.shape.layout.sized_layout()
+                        && layout.size() > 0
+                    {
+                        unsafe {
+                            ::alloc::alloc::dealloc(popped_frame.data.as_mut_byte_ptr(), layout);
                         }
                     }
                 }
@@ -1167,9 +1166,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             } => {
                 if *building_item {
                     // We just popped an element frame, now push it to the slice builder
-                    let element_ptr = PtrMut::new(unsafe {
-                        NonNull::new_unchecked(popped_frame.data.as_mut_byte_ptr())
-                    });
+                    let element_ptr = PtrMut::new(popped_frame.data.as_mut_byte_ptr());
 
                     // Use the slice builder's push_fn to add the element
                     crate::trace!("Pushing element to slice builder");
@@ -1289,10 +1286,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                             current_child: Some(idx),
                             ..
                         } = &frame.tracker
+                            && let Some(field) = struct_type.fields.get(*idx)
                         {
-                            if let Some(field) = struct_type.fields.get(*idx) {
-                                field_str = Some(field.name);
-                            }
+                            field_str = Some(field.name);
                         }
                         if i == 0 {
                             // Use Display for the root struct shape
@@ -1315,10 +1311,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                                 path_components.push(format!("{}", frame.shape));
                             }
                             path_components.push(format!("::{}", variant.name));
-                            if let Some(idx) = *current_child {
-                                if let Some(field) = variant.data.fields.get(idx) {
-                                    path_components.push(format!(".{}", field.name));
-                                }
+                            if let Some(idx) = *current_child
+                                && let Some(field) = variant.data.fields.get(idx)
+                            {
+                                path_components.push(format!(".{}", field.name));
                             }
                         } else if i == 0 {
                             // just the enum display

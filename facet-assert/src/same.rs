@@ -276,14 +276,14 @@ impl Differ {
         // with tolerance configured.
         if matches!(left.shape().def, Def::Scalar) && matches!(right.shape().def, Def::Scalar) {
             // Try float comparison with tolerance if configured
-            if self.options.float_tolerance.is_some() {
-                if let Some((left_f64, right_f64)) = self.extract_floats(left, right) {
-                    if self.floats_equal(left_f64, right_f64) {
-                        return CheckResult::Same;
-                    } else {
-                        self.record_changed(left, right);
-                        return CheckResult::Different;
-                    }
+            if self.options.float_tolerance.is_some()
+                && let Some((left_f64, right_f64)) = self.extract_floats(left, right)
+            {
+                if self.floats_equal(left_f64, right_f64) {
+                    return CheckResult::Same;
+                } else {
+                    self.record_changed(left, right);
+                    return CheckResult::Different;
                 }
             }
 
@@ -1070,13 +1070,13 @@ impl Differ {
 
         // Check entries only in right
         for i in 0..right_len {
-            if let Some((key, right_value)) = right_dyn.object_get_entry(i) {
-                if !seen_keys.contains(key) {
-                    self.path.push(PathSegment::Key(key.to_owned()));
-                    self.record_only_right(right_value);
-                    any_different = true;
-                    self.path.pop();
-                }
+            if let Some((key, right_value)) = right_dyn.object_get_entry(i)
+                && !seen_keys.contains(key)
+            {
+                self.path.push(PathSegment::Key(key.to_owned()));
+                self.record_only_right(right_value);
+                any_different = true;
+                self.path.pop();
             }
         }
 

@@ -30,7 +30,8 @@ fn test_peek_value_twostrings() {
     let a = Some(42_i32);
     let av = Peek::new(&a);
 
-    assert_eq!(av.to_string(), "⟨Option<i32>⟩");
+    // Option<i32> now delegates Display to i32's display
+    assert_eq!(av.to_string(), "42");
     assert_eq!(format!("{a:?}"), format!("{av:?}"));
 }
 

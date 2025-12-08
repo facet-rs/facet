@@ -30,10 +30,9 @@ impl TryFrom<IntAsString> for MyInt {
 }
 
 /// Convert to proxy (serialization)
-impl TryFrom<&MyInt> for IntAsString {
-    type Error = std::convert::Infallible;
-    fn try_from(v: &MyInt) -> Result<Self, Self::Error> {
-        Ok(IntAsString(v.value.to_string()))
+impl From<&MyInt> for IntAsString {
+    fn from(v: &MyInt) -> Self {
+        IntAsString(v.value.to_string())
     }
 }
 
@@ -110,10 +109,9 @@ fn test_field_proxy_overrides_container_proxy() {
         }
     }
 
-    impl TryFrom<&MyInt> for HexIntProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &MyInt) -> Result<Self, Self::Error> {
-            Ok(HexIntProxy(format!("{:x}", v.value)))
+    impl From<&MyInt> for HexIntProxy {
+        fn from(v: &MyInt) -> Self {
+            HexIntProxy(format!("{:x}", v.value))
         }
     }
 

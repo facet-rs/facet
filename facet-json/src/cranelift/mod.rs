@@ -20,8 +20,6 @@
 //! On first call for a type, compiles a specialized deserializer using Cranelift.
 //! Subsequent calls use the cached native code directly.
 
-#![allow(unsafe_op_in_unsafe_fn)]
-
 mod cache;
 mod compiler;
 mod helpers;

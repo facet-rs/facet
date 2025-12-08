@@ -8,7 +8,7 @@ pub use generated::*;
 
 // Public probes to force monomorphization in both stacks.
 
-#[cfg(all(feature = "facet", feature = "facet_json"))]
+#[cfg(feature = "facet")]
 pub fn facet_json_roundtrip() -> usize {
     use generated::facet_types::*;
     let mut total = 0usize;
@@ -30,7 +30,7 @@ pub fn facet_json_roundtrip() -> usize {
     total
 }
 
-#[cfg(all(feature = "serde", feature = "serde_json"))]
+#[cfg(feature = "serde")]
 pub fn serde_json_roundtrip() -> usize {
     use generated::serde_types::*;
     let mut total = 0usize;

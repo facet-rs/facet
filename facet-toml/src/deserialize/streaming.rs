@@ -288,12 +288,12 @@ fn parse_offset(s: &str) -> Option<i16> {
 /// - `value` (the inner value)
 /// - `span` (for storing source location)
 fn is_spanned_shape(shape: &Shape) -> bool {
-    if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
-        if struct_def.fields.len() == 2 {
-            let has_value = struct_def.fields.iter().any(|f| f.name == "value");
-            let has_span = struct_def.fields.iter().any(|f| f.name == "span");
-            return has_value && has_span;
-        }
+    if let Type::User(UserType::Struct(struct_def)) = &shape.ty
+        && struct_def.fields.len() == 2
+    {
+        let has_value = struct_def.fields.iter().any(|f| f.name == "value");
+        let has_span = struct_def.fields.iter().any(|f| f.name == "span");
+        return has_value && has_span;
     }
     false
 }
@@ -729,17 +729,17 @@ fn collect_top_level_keys<'input>(source: &'input str, events: &[Event]) -> Vec<
                 depth = 0;
                 // The next SimpleKey is part of the table path
                 // For [foo.bar], the first key "foo" is a top-level key
-                if let Some(next) = iter.peek() {
-                    if next.kind() == EventKind::SimpleKey {
-                        let span = next.span();
-                        let key_str = &source[span.start()..span.end()];
-                        // Decode if it's a quoted string
-                        let key = decode_simple_key(source, next);
-                        if !keys.contains(&key) {
-                            keys.push(key);
-                        }
-                        _ = key_str;
+                if let Some(next) = iter.peek()
+                    && next.kind() == EventKind::SimpleKey
+                {
+                    let span = next.span();
+                    let key_str = &source[span.start()..span.end()];
+                    // Decode if it's a quoted string
+                    let key = decode_simple_key(source, next);
+                    if !keys.contains(&key) {
+                        keys.push(key);
                     }
+                    _ = key_str;
                 }
             }
             EventKind::StdTableClose | EventKind::ArrayTableClose => {
@@ -872,10 +872,10 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 field_error: FieldError::NoSuchField,
             } => {
                 // Check if this is a struct with a single field
-                if let Type::User(UserType::Struct(st)) = shape.ty {
-                    if st.fields.len() == 1 {
-                        return TomlDeErrorKind::ExpectedFieldWithName(st.fields[0].name);
-                    }
+                if let Type::User(UserType::Struct(st)) = shape.ty
+                    && st.fields.len() == 1
+                {
+                    return TomlDeErrorKind::ExpectedFieldWithName(st.fields[0].name);
                 }
                 TomlDeErrorKind::GenericReflect(ReflectError::FieldError {
                     shape,
@@ -950,10 +950,10 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 shape,
                 field_error: FieldError::NoSuchField,
             } => {
-                if let Type::User(UserType::Struct(st)) = shape.ty {
-                    if st.fields.len() == 1 {
-                        return TomlDeErrorKind::ExpectedFieldWithName(st.fields[0].name);
-                    }
+                if let Type::User(UserType::Struct(st)) = shape.ty
+                    && st.fields.len() == 1
+                {
+                    return TomlDeErrorKind::ExpectedFieldWithName(st.fields[0].name);
                 }
                 TomlDeErrorKind::GenericReflect(ReflectError::FieldError {
                     shape,
@@ -1925,19 +1925,18 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
 
         // Handle tuple structs (newtype wrappers) - unwrap into field "0"
         // Check if we have a TupleStruct with a single field and a scalar value
-        if let Type::User(UserType::Struct(StructType { kind, fields, .. })) = partial.shape().ty {
-            if matches!(kind, StructKind::TupleStruct)
-                && fields.len() == 1
-                && matches!(event.kind(), EventKind::Scalar)
-            {
-                // Unwrap into the single field and deserialize recursively
-                // (the inner type might also be a tuple struct, e.g. NestedUnit(Unit(i32)))
-                trace!("Unwrapping tuple struct into field 0");
-                partial = self.begin_field(partial, "0")?;
-                partial = self.deserialize_value(partial)?;
-                partial = self.end_frame(partial)?;
-                return Ok(partial);
-            }
+        if let Type::User(UserType::Struct(StructType { kind, fields, .. })) = partial.shape().ty
+            && matches!(kind, StructKind::TupleStruct)
+            && fields.len() == 1
+            && matches!(event.kind(), EventKind::Scalar)
+        {
+            // Unwrap into the single field and deserialize recursively
+            // (the inner type might also be a tuple struct, e.g. NestedUnit(Unit(i32)))
+            trace!("Unwrapping tuple struct into field 0");
+            partial = self.begin_field(partial, "0")?;
+            partial = self.deserialize_value(partial)?;
+            partial = self.end_frame(partial)?;
+            return Ok(partial);
         }
 
         // Handle enum variants with data after variant selection
@@ -2172,15 +2171,15 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
             }
 
             // Check if this is a struct with multiple fields
-            if let Type::User(UserType::Struct(st)) = &partial.shape().ty {
-                if st.fields.len() > 1 {
-                    return Err(TomlDeError::new(
-                        self.source,
-                        TomlDeErrorKind::ParseSingleValueAsMultipleFieldStruct,
-                        Some(event_span.clone()),
-                        partial.path(),
-                    ));
-                }
+            if let Type::User(UserType::Struct(st)) = &partial.shape().ty
+                && st.fields.len() > 1
+            {
+                return Err(TomlDeError::new(
+                    self.source,
+                    TomlDeErrorKind::ParseSingleValueAsMultipleFieldStruct,
+                    Some(event_span.clone()),
+                    partial.path(),
+                ));
             }
 
             return Err(TomlDeError::new(
@@ -2787,10 +2786,10 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     let key_owned = key.into_owned();
 
                     // Consume the KeyValSep (=)
-                    if let Some(sep_event) = self.iter.peek() {
-                        if matches!(sep_event.kind(), EventKind::KeyValSep) {
-                            self.iter.next();
-                        }
+                    if let Some(sep_event) = self.iter.peek()
+                        && matches!(sep_event.kind(), EventKind::KeyValSep)
+                    {
+                        self.iter.next();
                     }
 
                     // Start an object entry with this key
@@ -3027,10 +3026,10 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     let key = self.decode_key(key_event);
 
                     // Skip KeyValSep (=)
-                    if let Some(e) = self.iter.peek() {
-                        if e.kind() == EventKind::KeyValSep {
-                            self.iter.next();
-                        }
+                    if let Some(e) = self.iter.peek()
+                        && e.kind() == EventKind::KeyValSep
+                    {
+                        self.iter.next();
                     }
 
                     if is_map {
@@ -3087,10 +3086,10 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                         }
                     } else {
                         // Regular struct field - track which field we're setting
-                        if let Some((fields, ref mut set)) = fields_set {
-                            if let Some(idx) = fields.iter().position(|f| f.name == key) {
-                                set[idx] = true;
-                            }
+                        if let Some((fields, ref mut set)) = fields_set
+                            && let Some(idx) = fields.iter().position(|f| f.name == key)
+                        {
+                            set[idx] = true;
                         }
                         partial = self.begin_field(partial, &key)?;
                         partial = self.deserialize_value(partial)?;
@@ -3112,9 +3111,13 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                 }
 
                 // Check if field has a default available
-                let has_default_fn = field.default_fn().is_some();
+                let has_default_fn = field.has_default();
                 let has_default_flag = field.has_default();
-                let shape_has_default = field.shape().vtable.default_in_place.is_some();
+                let shape_has_default = field
+                    .shape()
+                    .type_ops
+                    .map(|ops| ops.has_default_in_place())
+                    .unwrap_or(false);
 
                 if has_default_fn || has_default_flag || shape_has_default {
                     // Apply default for this field

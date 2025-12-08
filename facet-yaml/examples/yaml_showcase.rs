@@ -333,15 +333,15 @@ fn showcase_maps_string_keys(runner: &mut ShowcaseRunner) {
 
 fn showcase_maps_integer_keys(runner: &mut ShowcaseRunner) {
     let mut int_map = HashMap::new();
-    int_map.insert(1, "one");
-    int_map.insert(2, "two");
+    int_map.insert(1, "one".to_string());
+    int_map.insert(2, "two".to_string());
 
     let yaml_output = facet_yaml::to_string(&int_map).unwrap();
 
     runner
         .scenario("Maps with Integer Keys")
         .description("HashMap with integer keys - YAML supports non-string keys natively.")
-        .target_type::<HashMap<i32, &str>>()
+        .target_type::<HashMap<i32, String>>()
         .success(&int_map)
         .serialized_output(Language::Yaml, &yaml_output)
         .finish();

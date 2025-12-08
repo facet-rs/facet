@@ -634,7 +634,7 @@ impl<'input> YamlDeserializer<'input> {
         }
 
         // Try parse_from_str for other types (IpAddr, DateTime, etc.)
-        if partial.shape().vtable.parse.is_some() {
+        if partial.shape().vtable.has_parse() {
             partial = partial.parse_from_str(value).map_err(|e| {
                 YamlError::new(YamlErrorKind::Reflect(e), span).with_source(self.input)
             })?;
@@ -847,15 +847,14 @@ impl<'input> YamlDeserializer<'input> {
 
         let mut partial = partial;
         // Check if the next value is null
-        if let Some(event) = self.peek() {
-            if let OwnedEvent::Scalar { value, .. } = &event.event {
-                if is_yaml_null(value) {
-                    self.next(); // consume the null
-                    // Option stays as None (set_default)
-                    partial = partial.set_default()?;
-                    return Ok(partial);
-                }
-            }
+        if let Some(event) = self.peek()
+            && let OwnedEvent::Scalar { value, .. } = &event.event
+            && is_yaml_null(value)
+        {
+            self.next(); // consume the null
+            // Option stays as None (set_default)
+            partial = partial.set_default()?;
+            return Ok(partial);
         }
 
         // Non-null value: wrap in Some
@@ -1113,14 +1112,10 @@ impl<'input> YamlDeserializer<'input> {
                 continue;
             }
 
-            let field_has_default_flag = field.has_default();
-            let field_has_default_fn = field.default_fn().is_some();
+            let field_has_default = field.has_default();
             let field_type_has_default = field.shape().is(Characteristic::Default);
 
-            if field_has_default_fn
-                || field_has_default_flag
-                || (struct_has_default && field_type_has_default)
-            {
+            if field_has_default || (struct_has_default && field_type_has_default) {
                 partial = partial.set_nth_field_to_default(idx)?;
             }
         }
@@ -1209,12 +1204,11 @@ impl<'input> YamlDeserializer<'input> {
                 match variant.data.kind {
                     StructKind::Unit => {
                         // Unit variant: expect null or skip
-                        if let Some(event) = self.peek() {
-                            if let OwnedEvent::Scalar { value, .. } = &event.event {
-                                if is_yaml_null(value) {
-                                    self.next();
-                                }
-                            }
+                        if let Some(event) = self.peek()
+                            && let OwnedEvent::Scalar { value, .. } = &event.event
+                            && is_yaml_null(value)
+                        {
+                            self.next();
                         }
                     }
                     StructKind::TupleStruct | StructKind::Tuple => {
@@ -1589,7 +1583,7 @@ impl<'input> YamlDeserializer<'input> {
 
             if is_plain_string {
                 string_fallbacks.push((variant, *shape));
-            } else if shape.vtable.parse.is_some() {
+            } else if shape.vtable.has_parse() {
                 // Has a parse function - could be IpAddr, custom proxy type, etc.
                 parseable_variants.push((variant, *shape));
             }
@@ -2102,13 +2096,12 @@ fn parse_yaml_bool(value: &str) -> Option<bool> {
 /// Try to parse a scalar value into a type that has a vtable.parse function.
 /// Returns true if parsing would succeed, false otherwise.
 /// This is used for trial parsing when selecting between multiple string-like variants.
-fn try_parse_scalar(value: &str, shape: &Shape) -> bool {
+fn try_parse_scalar(value: &str, shape: &'static Shape) -> bool {
     use alloc::alloc::{Layout, alloc, dealloc};
-    use core::ptr::NonNull;
 
-    let Some(parse_fn) = shape.vtable.parse else {
+    if !shape.vtable.has_parse() {
         return false;
-    };
+    }
 
     // Get the layout for the type
     let layout = match shape.layout {
@@ -2119,11 +2112,12 @@ fn try_parse_scalar(value: &str, shape: &Shape) -> bool {
     // Don't allocate for zero-sized types
     if layout.size() == 0 {
         // For ZSTs, just try calling the parse function with a dangling pointer
+        // SAFETY: For ZST, we use a non-null aligned pointer - alignment 1 works for all ZST
         #[allow(unsafe_code)]
-        let ptr = facet_core::PtrUninit::new(NonNull::<u8>::dangling());
+        let ptr = facet_core::PtrMut::new(core::ptr::NonNull::<u8>::dangling().as_ptr());
         #[allow(unsafe_code)]
-        let result = unsafe { parse_fn(value, ptr) };
-        return result.is_ok();
+        let result = unsafe { shape.call_parse(value, ptr) };
+        return matches!(result, Some(Ok(())));
     }
 
     // Allocate memory for the trial parse
@@ -2134,26 +2128,19 @@ fn try_parse_scalar(value: &str, shape: &Shape) -> bool {
         return false;
     }
 
-    // SAFETY: We just allocated this memory and checked it's not null
-    #[allow(unsafe_code)]
-    let non_null = unsafe { NonNull::new_unchecked(raw_ptr) };
-    let ptr = facet_core::PtrUninit::new(non_null);
+    let ptr = facet_core::PtrMut::new(raw_ptr);
 
     // Try parsing
     #[allow(unsafe_code)]
-    let result = unsafe { parse_fn(value, ptr) };
-    let success = result.is_ok();
+    let result = unsafe { shape.call_parse(value, ptr) };
+    let success = matches!(result, Some(Ok(())));
 
     // If successful, we need to drop the value properly before deallocating
     if success {
-        if let Some(drop_in_place) = shape.vtable.drop_in_place {
-            // SAFETY: parse succeeded, so the memory is now initialized
-            #[allow(unsafe_code)]
-            let init_ptr = unsafe { ptr.assume_init() };
-            #[allow(unsafe_code)]
-            unsafe {
-                drop_in_place(init_ptr);
-            }
+        // SAFETY: parse succeeded, so the memory is now initialized
+        #[allow(unsafe_code)]
+        unsafe {
+            let _ = shape.call_drop_in_place(ptr);
         }
     }
 
@@ -2177,10 +2164,10 @@ fn is_yaml_null(value: &str) -> bool {
 /// Get the serialized name of a field (respecting rename attributes).
 fn get_serialized_name(field: &Field) -> &'static str {
     // Look for rename attribute using extension syntax: #[facet(serde::rename = "value")]
-    if let Some(ext) = field.get_attr(Some("serde"), "rename") {
-        if let Some(Some(name)) = ext.get_as::<Option<&'static str>>() {
-            return name;
-        }
+    if let Some(ext) = field.get_attr(Some("serde"), "rename")
+        && let Some(Some(name)) = ext.get_as::<Option<&'static str>>()
+    {
+        return name;
     }
     // Default to the field name
     field.name

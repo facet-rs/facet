@@ -6,7 +6,13 @@ use std::{
     process::{Command, Stdio},
     sync::mpsc,
     thread,
+    time::Instant,
 };
+
+use facet::Facet;
+use facet_json::to_string;
+
+mod metrics_tui_impl;
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -15,6 +21,8 @@ fn main() {
         Some("showcases") => generate_showcases(),
         Some("schema-build") => schema_build(&args[1..]),
         Some("schema") => generate_schema(),
+        Some("measure") => measure(&args[1..]),
+        Some("metrics") => metrics_tui_impl::run().expect("TUI failed"),
         Some("help") | None => print_help(),
         Some(cmd) => {
             eprintln!("Unknown command: {cmd}");
@@ -29,10 +37,19 @@ fn print_help() {
     eprintln!("Usage: cargo xtask <command>");
     eprintln!();
     eprintln!("Commands:");
-    eprintln!("  showcases    Generate all showcase markdown files for the website");
-    eprintln!("  schema       Generate deterministic schema set for bloat/compile benches");
-    eprintln!("  schema-build Generate schema, then build facet/serde variants (debug or release)");
-    eprintln!("  help         Show this help message");
+    eprintln!("  showcases              Generate all showcase markdown files for the website");
+    eprintln!(
+        "  schema                 Generate deterministic schema set for bloat/compile benches"
+    );
+    eprintln!(
+        "  schema-build           Generate schema, then build facet/serde variants (debug or release)"
+    );
+    eprintln!("  measure <name>         Measure compile times, binary size, LLVM lines, etc.");
+    eprintln!("                         Generates a report in reports/YYYY-MM-DD-<sha>-<name>.txt");
+    eprintln!(
+        "  metrics                Interactive TUI to explore metrics from reports/metrics.jsonl"
+    );
+    eprintln!("  help                   Show this help message");
 }
 
 fn generate_showcases() {
@@ -62,12 +79,12 @@ fn generate_showcases() {
             let example = example.expect("Failed to read example");
             let example_path = example.path();
 
-            if let Some(name) = example_path.file_name().and_then(|n| n.to_str()) {
-                if name.ends_with("_showcase.rs") {
-                    let example_name = name.trim_end_matches(".rs").to_string();
-                    let output_name = example_name.trim_end_matches("_showcase").to_string();
-                    showcases.push((pkg_name.clone(), example_name, output_name));
-                }
+            if let Some(name) = example_path.file_name().and_then(|n| n.to_str())
+                && name.ends_with("_showcase.rs")
+            {
+                let example_name = name.trim_end_matches(".rs").to_string();
+                let output_name = example_name.trim_end_matches("_showcase").to_string();
+                showcases.push((pkg_name.clone(), example_name, output_name));
             }
         }
     }
@@ -162,6 +179,595 @@ fn workspace_root() -> PathBuf {
         .parent()
         .expect("No parent directory")
         .to_path_buf()
+}
+
+// ============================================================================
+// Compile-time measurement
+
+#[derive(Debug, Default, Facet)]
+struct Metrics {
+    timestamp: String,
+    commit: String,
+    branch: String,
+    experiment: String,
+    compile_secs: f64,
+    bin_unstripped: u64,
+    bin_stripped: u64,
+    llvm_lines: u64,
+    llvm_copies: u64,
+    type_sizes_total: u64,
+    // Self-profile metrics (in milliseconds)
+    selfprof: SelfProfileMetrics,
+}
+
+#[derive(Debug, Default, Facet)]
+struct SelfProfileMetrics {
+    llvm_module_optimize_ms: u64,
+    llvm_module_codegen_ms: u64,
+    llvm_lto_optimize_ms: u64,
+    llvm_thin_lto_ms: u64,
+    typeck_ms: u64,
+    mir_borrowck_ms: u64,
+    expand_proc_macro_ms: u64,
+    eval_to_allocation_raw_ms: u64,
+    codegen_module_ms: u64,
+}
+
+impl Metrics {
+    fn to_jsonl(&self) -> String {
+        to_string(self)
+    }
+}
+
+fn measure(args: &[String]) {
+    // Parse experiment name (required)
+    let experiment_name = match args.first() {
+        Some(name) => name.clone(),
+        None => {
+            eprintln!("Usage: cargo xtask measure <experiment-name>");
+            eprintln!();
+            eprintln!("Example: cargo xtask measure baseline");
+            eprintln!("         cargo xtask measure after-hrtb-removal");
+            std::process::exit(1);
+        }
+    };
+
+    // Sanitize experiment name for filename
+    let experiment_name: String = experiment_name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+
+    let workspace = workspace_root();
+    let reports_dir = workspace.join("reports");
+    fs::create_dir_all(&reports_dir).expect("Failed to create reports directory");
+
+    // Get git info
+    let datetime = get_datetime();
+    let timestamp = get_iso_timestamp();
+    let commit_sha_short = get_git_output(&["rev-parse", "--short", "HEAD"]);
+    let commit_sha_full = get_git_output(&["rev-parse", "HEAD"]);
+    let branch = get_git_output(&["rev-parse", "--abbrev-ref", "HEAD"]);
+
+    let report_filename = format!("{datetime}-{commit_sha_short}-{experiment_name}.txt");
+
+    // Metrics we'll collect for JSONL
+    let mut metrics = Metrics {
+        timestamp: timestamp.clone(),
+        commit: commit_sha_short.clone(),
+        branch: branch.clone(),
+        experiment: experiment_name.clone(),
+        ..Default::default()
+    };
+    let report_path = reports_dir.join(&report_filename);
+
+    println!("=== Facet Compile-Time Measurement ===");
+    println!("Experiment: {experiment_name}");
+    println!("Report: {}", report_path.display());
+    println!();
+
+    let mut report = String::new();
+    report.push_str("=== Facet Compile-Time Measurement Report ===\n");
+    report.push_str(&format!("Date: {datetime}\n"));
+    report.push_str(&format!("Commit: {commit_sha_full}\n"));
+    report.push_str(&format!("Branch: {branch}\n"));
+    report.push_str(&format!("Experiment: {experiment_name}\n"));
+    report.push('\n');
+    report.push_str("=== Build Configuration ===\n");
+    report.push_str("Package: facet-bloatbench\n");
+    report.push_str("Features: facet\n");
+    report.push_str("Profile: release\n");
+    report.push_str("Toolchain: nightly\n");
+    report.push('\n');
+
+    let target_dir = workspace.join("target").join("measure");
+
+    // Touch source file to ensure recompilation
+    let generated_rs = workspace.join("facet-bloatbench/src/generated.rs");
+    if let Ok(file) = fs::OpenOptions::new().write(true).open(&generated_rs) {
+        let _ = file.set_modified(std::time::SystemTime::now());
+    }
+
+    // Step 1: Combined build with macro-stats, type-sizes, timings, and binary size
+    println!("Step 1/3: Clean build with macro-stats + type-sizes + timings...");
+    if target_dir.exists() {
+        let _ = fs::remove_dir_all(&target_dir);
+    }
+
+    let start = Instant::now();
+    let build_output = Command::new("cargo")
+        .arg("+nightly")
+        .args([
+            "rustc",
+            "-p",
+            "facet-bloatbench",
+            "--lib",
+            "--features",
+            "facet",
+            "--release",
+            "-Zunstable-options",
+            "--timings=json",
+        ])
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .args(["--", "-Zmacro-stats", "-Zprint-type-sizes"])
+        .env("CARGO_INCREMENTAL", "0")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("Failed to run cargo build");
+
+    if !build_output.status.success() {
+        let stderr = String::from_utf8_lossy(&build_output.stderr);
+        eprintln!("Build failed:\n{stderr}");
+        std::process::exit(1);
+    }
+
+    // Build binary (quick - deps already built)
+    let _ = Command::new("cargo")
+        .arg("+nightly")
+        .args([
+            "build",
+            "-p",
+            "facet-bloatbench",
+            "--features",
+            "facet",
+            "--release",
+        ])
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+
+    let compile_time = start.elapsed();
+
+    // Parse outputs
+    let stdout = String::from_utf8_lossy(&build_output.stdout);
+    let stderr = String::from_utf8_lossy(&build_output.stderr);
+
+    metrics.compile_secs = compile_time.as_secs_f64();
+    report.push_str("=== Compile Time ===\n");
+    report.push_str(&format!("Total: {:.2}s\n", metrics.compile_secs));
+    report.push('\n');
+    println!("  Compile time: {:.2}s", metrics.compile_secs);
+
+    // Binary size
+    let binary_path = target_dir.join("release").join("facet-bloatbench");
+    let unstripped_size = fs::metadata(&binary_path).map(|m| m.len()).unwrap_or(0);
+
+    let stripped_path = target_dir.join("release").join("facet-bloatbench.stripped");
+    let stripped_size = if unstripped_size > 0 {
+        fs::copy(&binary_path, &stripped_path).ok();
+        Command::new("strip").arg(&stripped_path).status().ok();
+        let size = fs::metadata(&stripped_path).map(|m| m.len()).unwrap_or(0);
+        let _ = fs::remove_file(&stripped_path);
+        size
+    } else {
+        0
+    };
+
+    metrics.bin_unstripped = unstripped_size;
+    metrics.bin_stripped = stripped_size;
+    report.push_str("=== Binary Size ===\n");
+    report.push_str(&format!(
+        "Unstripped: {} KB ({} bytes)\n",
+        unstripped_size / 1024,
+        unstripped_size
+    ));
+    report.push_str(&format!(
+        "Stripped:   {} KB ({} bytes)\n",
+        stripped_size / 1024,
+        stripped_size
+    ));
+    report.push('\n');
+    println!(
+        "  Binary size: {} KB (stripped: {} KB)",
+        unstripped_size / 1024,
+        stripped_size / 1024
+    );
+
+    // Macro stats from stderr
+    report.push_str("=== Macro Stats ===\n");
+    let mut in_bloatbench_section = false;
+    let mut macro_lines = Vec::new();
+    for line in stderr.lines() {
+        if line.contains("MACRO EXPANSION STATS: facet_bloatbench")
+            || line.contains("MACRO EXPANSION STATS: facet-bloatbench")
+        {
+            in_bloatbench_section = true;
+            macro_lines.push(line);
+        } else if in_bloatbench_section {
+            if line.starts_with("macro-stats ===") && !macro_lines.is_empty() {
+                macro_lines.push(line);
+                in_bloatbench_section = false;
+            } else {
+                macro_lines.push(line);
+            }
+        }
+    }
+    if macro_lines.is_empty() {
+        report.push_str("(No macro stats found for facet-bloatbench)\n");
+    } else {
+        for line in &macro_lines {
+            report.push_str(line);
+            report.push('\n');
+        }
+    }
+    println!("  Macro stats: {} lines", macro_lines.len());
+    report.push('\n');
+
+    // Type sizes from stdout
+    report.push_str("=== Type Sizes ===\n");
+    let print_type_lines = stdout
+        .lines()
+        .filter(|l| l.contains("print-type-size"))
+        .count();
+    let type_lines: Vec<&str> = stdout
+        .lines()
+        .filter(|l| {
+            l.contains("print-type-size")
+                && (l.contains("facet_bloatbench")
+                    || l.contains("facet_core::")
+                    || l.contains("facet_reflect::")
+                    || l.contains("facet_json::")
+                    || l.contains("facet_solver::"))
+        })
+        .collect();
+
+    // Sum up type sizes - parse lines like "print-type-size type: `Foo`: 123 bytes, alignment: 8 bytes"
+    let mut total_type_size: u64 = 0;
+    for line in &type_lines {
+        if line.contains(" type: ") {
+            // Extract size from "... : NNN bytes, alignment..."
+            if let Some(bytes_pos) = line.find(" bytes,") {
+                // Find the number before " bytes,"
+                let before_bytes = &line[..bytes_pos];
+                if let Some(last_colon) = before_bytes.rfind(": ") {
+                    let size_str = before_bytes[last_colon + 2..].trim();
+                    if let Ok(size) = size_str.parse::<u64>() {
+                        total_type_size += size;
+                    }
+                }
+            }
+        }
+    }
+    metrics.type_sizes_total = total_type_size;
+
+    if type_lines.is_empty() {
+        report.push_str(&format!(
+            "(No facet-related type sizes found, {print_type_lines} total lines)\n",
+        ));
+    } else {
+        report.push_str(&format!(
+            "Total size of facet types: {total_type_size} bytes\n\n",
+        ));
+        for line in &type_lines {
+            report.push_str(line);
+            report.push('\n');
+        }
+    }
+    println!(
+        "  Type sizes: {} facet lines, {} total, {} bytes total",
+        type_lines.len(),
+        print_type_lines,
+        total_type_size
+    );
+    report.push('\n');
+
+    // Build timings from JSON file
+    report.push_str("=== Build Timings ===\n");
+    let timings_dir = target_dir.join("cargo-timings");
+    if let Ok(entries) = fs::read_dir(&timings_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map(|s| s == "json").unwrap_or(false) {
+                if let Ok(contents) = fs::read_to_string(&path) {
+                    report.push_str(&format!("Timings file: {}\n", path.display()));
+                    report.push_str(&contents);
+                    report.push('\n');
+                }
+                break;
+            }
+        }
+    }
+    println!("  Build timings collected");
+
+    // Step 2: cargo llvm-lines (separate because it needs different invocation)
+    println!("Step 2/3: Running cargo llvm-lines...");
+    let llvm_lines_output = Command::new("cargo")
+        .arg("+nightly")
+        .args([
+            "llvm-lines",
+            "-p",
+            "facet-bloatbench",
+            "--lib",
+            "--features",
+            "facet",
+            "--release",
+        ])
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+
+    report.push_str("\n=== LLVM Lines (top 200) ===\n");
+    match llvm_lines_output {
+        Ok(output) if output.status.success() => {
+            let llvm_stdout = String::from_utf8_lossy(&output.stdout);
+            let lines: Vec<&str> = llvm_stdout.lines().take(200).collect();
+            for line in &lines {
+                report.push_str(line);
+                report.push('\n');
+            }
+            // Parse TOTAL line: "  Lines         Copies       Function name"
+            // First line after header is typically total: "  123456          789  (TOTAL)"
+            if let Some(total_line) = llvm_stdout.lines().find(|l| l.contains("(TOTAL)")) {
+                println!("  {total_line}");
+                // Parse: "  123456          789  (TOTAL)"
+                let parts: Vec<&str> = total_line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    if let Ok(lines_count) = parts[0].parse::<u64>() {
+                        metrics.llvm_lines = lines_count;
+                    }
+                    if let Ok(copies_count) = parts[1].parse::<u64>() {
+                        metrics.llvm_copies = copies_count;
+                    }
+                }
+            }
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            report.push_str(&format!(
+                "(cargo-llvm-lines failed: {})\n",
+                stderr.lines().next().unwrap_or("unknown")
+            ));
+            println!("  (cargo-llvm-lines failed)");
+        }
+        Err(e) => {
+            report.push_str(&format!("(cargo-llvm-lines not available: {e})\n"));
+            println!("  (cargo-llvm-lines not installed)");
+        }
+    }
+
+    // Step 3: Self-profile (separate because it needs -Zself-profile)
+    println!("Step 3/3: Collecting rustc self-profile...");
+    let selfprof_target_dir = workspace.join("target").join("measure-selfprof");
+    let selfprof_output_dir = selfprof_target_dir.join("self-profile");
+    if selfprof_target_dir.exists() {
+        let _ = fs::remove_dir_all(&selfprof_target_dir);
+    }
+    fs::create_dir_all(&selfprof_output_dir).ok();
+
+    // Touch to force recompile
+    if let Ok(file) = fs::OpenOptions::new().write(true).open(&generated_rs) {
+        let _ = file.set_modified(std::time::SystemTime::now());
+    }
+
+    let selfprof_output = Command::new("cargo")
+        .arg("+nightly")
+        .args([
+            "rustc",
+            "-p",
+            "facet-bloatbench",
+            "--lib",
+            "--features",
+            "facet",
+            "--release",
+        ])
+        .arg("--target-dir")
+        .arg(&selfprof_target_dir)
+        .arg("--")
+        .arg(format!("-Zself-profile={}", selfprof_output_dir.display()))
+        .arg("-Zself-profile-events=default")
+        .env("CARGO_INCREMENTAL", "0")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+
+    report.push_str("\n=== Rustc Self-Profile ===\n");
+    match selfprof_output {
+        Ok(output) => {
+            if output.status.success() {
+                let mut found_profile = false;
+                if let Ok(entries) = fs::read_dir(&selfprof_output_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path
+                            .extension()
+                            .map(|s| s == "mm_profdata")
+                            .unwrap_or(false)
+                        {
+                            report.push_str(&format!("Self-profile data: {}\n", path.display()));
+                            found_profile = true;
+
+                            // Try summarize tool
+                            let summarize = Command::new("summarize")
+                                .arg("summarize")
+                                .arg(&path)
+                                .stdout(Stdio::piped())
+                                .stderr(Stdio::piped())
+                                .output();
+
+                            match summarize {
+                                Ok(sum_out) if sum_out.status.success() => {
+                                    let stdout = String::from_utf8_lossy(&sum_out.stdout);
+                                    report.push_str("--- summarize output ---\n");
+                                    report.push_str(&stdout);
+                                    report.push('\n');
+
+                                    // Parse self-profile metrics from summarize output
+                                    parse_selfprof_metrics(&stdout, &mut metrics.selfprof);
+                                }
+                                _ => {
+                                    report.push_str("(summarize tool not available)\n");
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+                if !found_profile {
+                    report.push_str("(No self-profile data found)\n");
+                }
+                println!("  Self-profile data collected");
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                report.push_str(&format!(
+                    "(Self-profile failed: {})\n",
+                    stderr.lines().next().unwrap_or("unknown")
+                ));
+                println!("  (Self-profile failed)");
+            }
+        }
+        Err(e) => {
+            report.push_str(&format!("(Failed to collect self-profile: {e})\n"));
+            println!("  (Failed to collect self-profile)");
+        }
+    }
+
+    // Write report
+    fs::write(&report_path, &report).expect("Failed to write report");
+
+    // Append to metrics.jsonl
+    let metrics_path = reports_dir.join("metrics.jsonl");
+    let mut jsonl_file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&metrics_path)
+        .expect("Failed to open metrics.jsonl");
+    use std::io::Write;
+    writeln!(jsonl_file, "{}", metrics.to_jsonl()).expect("Failed to write metrics");
+
+    println!();
+    println!("=== Report written to {} ===", report_path.display());
+    println!("=== Metrics appended to {} ===", metrics_path.display());
+    println!();
+    println!("Summary:");
+    println!("  Compile time: {:.2}s", metrics.compile_secs);
+    println!(
+        "  Binary size:  {} KB (stripped: {} KB)",
+        metrics.bin_unstripped / 1024,
+        metrics.bin_stripped / 1024
+    );
+    println!(
+        "  LLVM lines:   {} ({} copies)",
+        metrics.llvm_lines, metrics.llvm_copies
+    );
+    println!("  Type sizes:   {} bytes total", metrics.type_sizes_total);
+}
+
+fn get_datetime() -> String {
+    let output = Command::new("date")
+        .arg("+%Y-%m-%d-%H%M")
+        .output()
+        .expect("Failed to get date");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn get_iso_timestamp() -> String {
+    let output = Command::new("date")
+        .arg("-Iseconds")
+        .output()
+        .expect("Failed to get date");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn get_git_output(args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args(args)
+        .output()
+        .expect("Failed to run git command");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// Parse self-profile summarize output to extract key metrics.
+/// Lines look like:
+/// | LLVM_module_optimize ..................................................  | 1.45s     | 12.030          | ...
+fn parse_selfprof_metrics(output: &str, metrics: &mut SelfProfileMetrics) {
+    for line in output.lines() {
+        if !line.starts_with('|') {
+            continue;
+        }
+        let parts: Vec<&str> = line.split('|').collect();
+        if parts.len() < 3 {
+            continue;
+        }
+
+        let item = parts[1].trim();
+        let self_time = parts[2].trim();
+
+        // Parse time like "1.45s" or "986.56ms" into milliseconds
+        let ms = parse_time_to_ms(self_time);
+
+        // Match against known items (they have dots padding them)
+        if item.starts_with("LLVM_module_optimize ") {
+            metrics.llvm_module_optimize_ms = ms;
+        } else if item.starts_with("LLVM_module_codegen_emit_obj ") {
+            metrics.llvm_module_codegen_ms = ms;
+        } else if item.starts_with("LLVM_lto_optimize ") {
+            metrics.llvm_lto_optimize_ms = ms;
+        } else if item.starts_with("LLVM_thinlto ") {
+            metrics.llvm_thin_lto_ms = ms;
+        } else if item.starts_with("typeck ") {
+            metrics.typeck_ms = ms;
+        } else if item.starts_with("mir_borrowck ") {
+            metrics.mir_borrowck_ms = ms;
+        } else if item.starts_with("expand_proc_macro ") {
+            metrics.expand_proc_macro_ms = ms;
+        } else if item.starts_with("eval_to_allocation_raw ") {
+            metrics.eval_to_allocation_raw_ms = ms;
+        } else if item.starts_with("codegen_module ") {
+            metrics.codegen_module_ms = ms;
+        }
+    }
+}
+
+/// Parse time string like "1.45s" or "986.56ms" into milliseconds
+fn parse_time_to_ms(s: &str) -> u64 {
+    let s = s.trim();
+    if let Some(secs) = s.strip_suffix('s') {
+        if let Some(ms_str) = secs.strip_suffix('m') {
+            // It's actually "XXXms" - strip the 'm' we already took
+            ms_str.parse::<f64>().map(|v| v as u64).unwrap_or(0)
+        } else {
+            // It's seconds
+            secs.parse::<f64>()
+                .map(|v| (v * 1000.0) as u64)
+                .unwrap_or(0)
+        }
+    } else if let Some(ms_str) = s.strip_suffix("ms") {
+        ms_str.parse::<f64>().map(|v| v as u64).unwrap_or(0)
+    } else {
+        0
+    }
 }
 
 // ============================================================================
@@ -274,11 +880,10 @@ fn schema_build(args: &[String]) {
             .arg("--no-default-features")
             .arg("--features");
 
-        let mut feature_list = vec![feature.to_string()];
-        if include_json {
-            feature_list.push("json".to_string());
-        }
-        cmd.arg(feature_list.join(","));
+        // facet feature now always includes facet-json, serde feature includes serde_json
+        // The include_json flag is now a no-op but kept for backwards compatibility
+        let _ = include_json;
+        cmd.arg(feature);
 
         if release {
             cmd.arg("--release");
@@ -336,18 +941,17 @@ fn schema_build(args: &[String]) {
                 let mut newest = None;
                 for e in entries.flatten() {
                     let path = e.path();
-                    if path.extension().map(|s| s == "json").unwrap_or(false) {
-                        if let Ok(meta) = e.metadata() {
-                            let mtime = meta.modified().ok();
-                            if newest
-                                .as_ref()
-                                .map(|(_, t)| mtime > Some(*t))
-                                .unwrap_or(true)
-                            {
-                                if let Some(t) = mtime {
-                                    newest = Some((path.clone(), t));
-                                }
-                            }
+                    if path.extension().map(|s| s == "json").unwrap_or(false)
+                        && let Ok(meta) = e.metadata()
+                    {
+                        let mtime = meta.modified().ok();
+                        if newest
+                            .as_ref()
+                            .map(|(_, t)| mtime > Some(*t))
+                            .unwrap_or(true)
+                            && let Some(t) = mtime
+                        {
+                            newest = Some((path.clone(), t));
                         }
                     }
                 }
@@ -550,7 +1154,7 @@ impl SchemaGenerator {
         ];
 
         if depth >= self.cfg.max_depth {
-            return if self.rng.next_u32() % 5 == 0 {
+            return if self.rng.next_u32().is_multiple_of(5) {
                 self.user_type()
             } else {
                 TypeSpec::Primitive(PRIMS[(self.rng.next_u32() as usize) % PRIMS.len()])

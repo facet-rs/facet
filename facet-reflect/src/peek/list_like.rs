@@ -48,15 +48,15 @@ impl<'mem, 'facet> Iterator for PeekListLikeIter<'mem, 'facet> {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let item_ptr = match self.state {
-            PeekListLikeIterState::Ptr { data, stride } => {
+        let item_ptr = match &self.state.kind {
+            PeekListLikeIterStateKind::Ptr { data, stride } => {
                 if self.index >= self.len {
                     return None;
                 }
 
                 unsafe { data.field(stride * self.index) }
             }
-            PeekListLikeIterState::Iter { iter, vtable } => unsafe { (vtable.next)(iter)? },
+            PeekListLikeIterStateKind::Iter { iter, vtable } => unsafe { (vtable.next)(*iter)? },
         };
 
         // Update the index. This is used pointer iteration and for
@@ -85,23 +85,28 @@ impl<'mem, 'facet> IntoIterator for &'mem PeekListLike<'mem, 'facet> {
     }
 }
 
-enum PeekListLikeIterState<'mem> {
+struct PeekListLikeIterState<'mem> {
+    kind: PeekListLikeIterStateKind,
+    _phantom: PhantomData<&'mem ()>,
+}
+
+enum PeekListLikeIterStateKind {
     Ptr {
-        data: PtrConst<'mem>,
+        data: PtrConst,
         stride: usize,
     },
     Iter {
-        iter: PtrMut<'mem>,
-        vtable: IterVTable<PtrConst<'static>>,
+        iter: PtrMut,
+        vtable: &'static IterVTable<PtrConst>,
     },
 }
 
 impl Drop for PeekListLikeIterState<'_> {
     #[inline]
     fn drop(&mut self) {
-        match self {
-            Self::Iter { iter, vtable } => unsafe { (vtable.dealloc)(*iter) },
-            Self::Ptr { .. } => {
+        match &self.kind {
+            PeekListLikeIterStateKind::Iter { iter, vtable } => unsafe { (vtable.dealloc)(*iter) },
+            PeekListLikeIterStateKind::Ptr { .. } => {
                 // Nothing to do
             }
         }
@@ -166,7 +171,7 @@ impl<'mem, 'facet> PeekListLike<'mem, 'facet> {
             };
 
             // Get the data pointer directly from the wide pointer
-            let data_ptr = self.value.data().as_byte_ptr();
+            let data_ptr = self.value.data().raw_ptr();
 
             // Calculate the element pointer
             let elem_ptr = unsafe { data_ptr.add(index * elem_layout.size()) };
@@ -174,7 +179,7 @@ impl<'mem, 'facet> PeekListLike<'mem, 'facet> {
             // Create a Peek for the element
             return Some(unsafe {
                 Peek::unchecked_new(
-                    PtrConst::new(NonNull::new_unchecked(elem_ptr as *mut u8)),
+                    PtrConst::new(NonNull::new_unchecked(elem_ptr as *mut u8).as_ptr()),
                     self.def.t(),
                 )
             });
@@ -183,7 +188,8 @@ impl<'mem, 'facet> PeekListLike<'mem, 'facet> {
         let as_ptr = match self.def {
             ListLikeDef::List(def) => {
                 // Call get from the list's vtable directly if available
-                let item = unsafe { (def.vtable.get)(self.value.data(), index)? };
+                let item =
+                    unsafe { (def.vtable.get)(self.value.data(), index, self.value.shape())? };
                 return Some(unsafe { Peek::unchecked_new(item, self.def.t()) });
             }
             ListLikeDef::Array(def) => def.vtable.as_ptr,
@@ -215,7 +221,7 @@ impl<'mem, 'facet> PeekListLike<'mem, 'facet> {
     /// Returns an iterator over the list
     pub fn iter(self) -> PeekListLikeIter<'mem, 'facet> {
         let (as_ptr_fn, iter_vtable) = match self.def {
-            ListLikeDef::List(def) => (def.vtable.as_ptr, Some(def.vtable.iter_vtable)),
+            ListLikeDef::List(def) => (def.vtable.as_ptr, def.iter_vtable()),
             ListLikeDef::Array(def) => (Some(def.vtable.as_ptr), None),
             ListLikeDef::Slice(def) => (Some(def.vtable.as_ptr), None),
         };
@@ -226,7 +232,7 @@ impl<'mem, 'facet> PeekListLike<'mem, 'facet> {
                 let data = if let ListLikeDef::Slice(_) = &self.def {
                     // Get the data pointer directly from the wide pointer
                     PtrConst::new(unsafe {
-                        NonNull::new_unchecked(self.value.data().as_byte_ptr() as *mut u8)
+                        NonNull::new_unchecked(self.value.data().raw_ptr() as *mut u8).as_ptr()
                     })
                 } else {
                     unsafe { as_ptr_fn(self.value.data()) }
@@ -240,11 +246,17 @@ impl<'mem, 'facet> PeekListLike<'mem, 'facet> {
                     .expect("can only iterate over sized list elements");
                 let stride = layout.size();
 
-                PeekListLikeIterState::Ptr { data, stride }
+                PeekListLikeIterState {
+                    kind: PeekListLikeIterStateKind::Ptr { data, stride },
+                    _phantom: PhantomData,
+                }
             }
             (None, Some(vtable)) => {
                 let iter = unsafe { (vtable.init_with_value.unwrap())(self.value.data()) };
-                PeekListLikeIterState::Iter { iter, vtable }
+                PeekListLikeIterState {
+                    kind: PeekListLikeIterStateKind::Iter { iter, vtable },
+                    _phantom: PhantomData,
+                }
             }
             (None, None) => unreachable!(),
         };

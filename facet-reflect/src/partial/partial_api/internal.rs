@@ -114,6 +114,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     pub(crate) fn get_fields(&self) -> Result<&'static [Field], ReflectError> {
         let frame = self.frames().last().unwrap();
         match frame.shape.ty {
+            Type::Undefined => Err(ReflectError::OperationFailed {
+                shape: frame.shape,
+                operation: "shape type is undefined - shape was not properly configured",
+            }),
             Type::Primitive(_) => Err(ReflectError::OperationFailed {
                 shape: frame.shape,
                 operation: "cannot select a field from a primitive type",
@@ -192,7 +196,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         };
 
         // Push a new frame for this field onto the frames stack.
-        let field_ptr = unsafe { frame.data.field_uninit_at(field.offset) };
+        let field_ptr = unsafe { frame.data.field_uninit(field.offset) };
         let field_shape = field.shape();
 
         let mut next_frame = Frame::new(
@@ -267,7 +271,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     });
                 };
                 let offset = element_layout.size() * idx;
-                let element_data = unsafe { frame.data.field_uninit_at(offset) };
+                let element_data = unsafe { frame.data.field_uninit(offset) };
 
                 let mut next_frame = Frame::new(
                     element_data,
@@ -323,7 +327,7 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
 
         // SAFETY: the field offset comes from an unsafe impl of the Facet trait, we trust it.
         // also, we checked that the variant was selected.
-        let field_ptr = unsafe { frame.data.field_uninit_at(field.offset) };
+        let field_ptr = unsafe { frame.data.field_uninit(field.offset) };
         let field_shape = field.shape();
 
         let mut next_frame = Frame::new(

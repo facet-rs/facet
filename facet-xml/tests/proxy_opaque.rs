@@ -37,12 +37,9 @@ fn test_proxy_without_opaque() {
     }
 
     // Convert &Option<StyleData> -> proxy (serialization)
-    impl TryFrom<&Option<StyleData>> for StyleProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &Option<StyleData>) -> Result<Self, Self::Error> {
-            Ok(StyleProxy(
-                v.as_ref().map(|d| d.value.clone()).unwrap_or_default(),
-            ))
+    impl From<&Option<StyleData>> for StyleProxy {
+        fn from(v: &Option<StyleData>) -> Self {
+            StyleProxy(v.as_ref().map(|d| d.value.clone()).unwrap_or_default())
         }
     }
 
@@ -110,12 +107,9 @@ fn test_opaque_with_proxy_option_simple() {
     }
 
     // Convert &Option<PathData> -> proxy (serialization)
-    impl TryFrom<&Option<PathData>> for PathDataProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &Option<PathData>) -> Result<Self, Self::Error> {
-            Ok(PathDataProxy(
-                v.as_ref().map(|d| d.commands.join(",")).unwrap_or_default(),
-            ))
+    impl From<&Option<PathData>> for PathDataProxy {
+        fn from(v: &Option<PathData>) -> Self {
+            PathDataProxy(v.as_ref().map(|d| d.commands.join(",")).unwrap_or_default())
         }
     }
 
@@ -164,12 +158,9 @@ fn test_opaque_with_proxy_nested_enum() {
     }
 
     // Convert &Option<PathData> -> proxy (serialization)
-    impl TryFrom<&Option<PathData>> for PathDataProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &Option<PathData>) -> Result<Self, Self::Error> {
-            Ok(PathDataProxy(
-                v.as_ref().map(|d| d.commands.join(",")).unwrap_or_default(),
-            ))
+    impl From<&Option<PathData>> for PathDataProxy {
+        fn from(v: &Option<PathData>) -> Self {
+            PathDataProxy(v.as_ref().map(|d| d.commands.join(",")).unwrap_or_default())
         }
     }
 
@@ -237,10 +228,9 @@ fn test_proxy_for_validation() {
         }
     }
 
-    impl TryFrom<&ValidatedEmail> for EmailProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &ValidatedEmail) -> Result<Self, Self::Error> {
-            Ok(EmailProxy(v.address.clone()))
+    impl From<&ValidatedEmail> for EmailProxy {
+        fn from(v: &ValidatedEmail) -> Self {
+            EmailProxy(v.address.clone())
         }
     }
 

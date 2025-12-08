@@ -571,11 +571,11 @@ fn analyze_variant_payload(tokens: &[TokenTree]) -> std::result::Result<VariantK
     // &'static SomeType → Newtype
     {
         let mut iter = token_stream.clone().to_token_iter();
-        if let Ok(parsed) = iter.parse::<StaticRef>() {
-            if iter.next().is_none() {
-                let typ = convert_ident(&parsed.typ);
-                return Ok(VariantKind::Newtype(quote! { &'static #typ }));
-            }
+        if let Ok(parsed) = iter.parse::<StaticRef>()
+            && iter.next().is_none()
+        {
+            let typ = convert_ident(&parsed.typ);
+            return Ok(VariantKind::Newtype(quote! { &'static #typ }));
         }
     }
 
@@ -598,35 +598,35 @@ fn analyze_variant_payload(tokens: &[TokenTree]) -> std::result::Result<VariantK
     // make_t or make_t or $ty::default() → MakeT
     {
         let mut iter = token_stream.clone().to_token_iter();
-        if let Ok(make_t) = iter.parse::<MakeTPayload>() {
-            if iter.next().is_none() {
-                let use_ty_default_fallback = make_t.fallback.is_some();
-                return Ok(VariantKind::MakeT {
-                    use_ty_default_fallback,
-                });
-            }
+        if let Ok(make_t) = iter.parse::<MakeTPayload>()
+            && iter.next().is_none()
+        {
+            let use_ty_default_fallback = make_t.fallback.is_some();
+            return Ok(VariantKind::MakeT {
+                use_ty_default_fallback,
+            });
         }
     }
 
     // predicate TypeName → Predicate
     {
         let mut iter = token_stream.clone().to_token_iter();
-        if let Ok(parsed) = iter.parse::<PredicatePayload>() {
-            if iter.next().is_none() {
-                let type_name = convert_ident(&parsed.type_name);
-                return Ok(VariantKind::Predicate(quote! { #type_name }));
-            }
+        if let Ok(parsed) = iter.parse::<PredicatePayload>()
+            && iter.next().is_none()
+        {
+            let type_name = convert_ident(&parsed.type_name);
+            return Ok(VariantKind::Predicate(quote! { #type_name }));
         }
     }
 
     // fn_ptr TypeName → FnPtr
     {
         let mut iter = token_stream.clone().to_token_iter();
-        if let Ok(parsed) = iter.parse::<FnPtrPayload>() {
-            if iter.next().is_none() {
-                let type_name = convert_ident(&parsed.type_name);
-                return Ok(VariantKind::FnPtr(quote! { #type_name }));
-            }
+        if let Ok(parsed) = iter.parse::<FnPtrPayload>()
+            && iter.next().is_none()
+        {
+            let type_name = convert_ident(&parsed.type_name);
+            return Ok(VariantKind::FnPtr(quote! { #type_name }));
         }
     }
 
@@ -641,17 +641,17 @@ fn analyze_variant_payload(tokens: &[TokenTree]) -> std::result::Result<VariantK
     // Single identifier → Struct reference
     {
         let mut iter = token_stream.clone().to_token_iter();
-        if let Ok(ident) = iter.parse::<Ident>() {
-            if iter.next().is_none() {
-                let ident_str = ident.to_string();
-                // Check if it's a valid identifier (starts with letter/underscore)
-                if ident_str
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_alphabetic() || c == '_')
-                {
-                    return Ok(VariantKind::Struct(convert_ident(&ident)));
-                }
+        if let Ok(ident) = iter.parse::<Ident>()
+            && iter.next().is_none()
+        {
+            let ident_str = ident.to_string();
+            // Check if it's a valid identifier (starts with letter/underscore)
+            if ident_str
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphabetic() || c == '_')
+            {
+                return Ok(VariantKind::Struct(convert_ident(&ident)));
             }
         }
     }
@@ -1037,7 +1037,7 @@ impl ParsedGrammar {
                             // Note: $field is tt not ident because tuple struct fields are literals (0, 1, etc.)
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
                                 static __UNIT: () = ();
-                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__UNIT)
+                                ::facet::Attr::new(#ns_expr, #key_str, &__UNIT)
                             }};
                             // Field-level with args: not expected for unit variants
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $first:tt $($rest:tt)* }) => {{
@@ -1046,7 +1046,7 @@ impl ParsedGrammar {
                             // Container-level: @ns { path } attr { }
                             (@ns { $ns:path } #key_ident { }) => {{
                                 static __UNIT: () = ();
-                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__UNIT)
+                                ::facet::Attr::new(#ns_expr, #key_str, &__UNIT)
                             }};
                             // Container-level with args: not expected for unit variants
                             (@ns { $ns:path } #key_ident { | $first:tt $($rest:tt)* }) => {{
@@ -1069,7 +1069,7 @@ impl ParsedGrammar {
                             }};
                             // Field-level with args: parse type and store just the Shape
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
-                                ::facet::ExtensionAttr::new_shape(
+                                ::facet::Attr::new_shape(
                                     #ns_expr,
                                     #key_str,
                                     ::facet::__dispatch_attr!{
@@ -1087,7 +1087,7 @@ impl ParsedGrammar {
                             }};
                             // Container-level with args: parse type and store just the Shape
                             (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
-                                ::facet::ExtensionAttr::new_shape(
+                                ::facet::Attr::new_shape(
                                     #ns_expr,
                                     #key_str,
                                     ::facet::__dispatch_attr!{
@@ -1124,21 +1124,23 @@ impl ParsedGrammar {
                             // enables auto-deref at the call site.
                             // Store the function pointer directly (not wrapped in Attr enum)
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
-                                ::facet::ExtensionAttr {
+                                ::facet::Attr {
                                     ns: #ns_expr,
                                     key: #key_str,
-                                    data: &const {
-                                        // Define a wrapper function that calls the user's predicate.
-                                        // The call site `predicate(ptr.get::<$ty>())` enables auto-deref,
-                                        // so `fn(&str) -> bool` works for a `String` field.
-                                        unsafe fn __predicate_wrapper(ptr: ::facet::PtrConst<'_>) -> bool {
-                                            let predicate = ($($args)*);
-                                            predicate(ptr.get::<$ty>())
-                                        }
-                                        // Coerce function item to function pointer
-                                        __predicate_wrapper as #qualified_target_ty
-                                    } as *const #qualified_target_ty as *const (),
-                                    shape: <() as ::facet::Facet>::SHAPE,
+                                    data: ::facet::OxRef::new(
+                                        ::facet::PtrConst::new_sized(&const {
+                                            // Define a wrapper function that calls the user's predicate.
+                                            // The call site `predicate(ptr.get::<$ty>())` enables auto-deref,
+                                            // so `fn(&str) -> bool` works for a `String` field.
+                                            unsafe fn __predicate_wrapper(ptr: ::facet::PtrConst) -> bool {
+                                                let predicate = ($($args)*);
+                                                predicate(ptr.get::<$ty>())
+                                            }
+                                            // Coerce function item to function pointer
+                                            __predicate_wrapper as #qualified_target_ty
+                                        } as *const #qualified_target_ty as *const ()),
+                                        <() as ::facet::Facet>::SHAPE
+                                    ),
                                 }
                             }};
                             // Field-level: @ns { path } attr { field : Type } - no args is an error for predicate
@@ -1188,29 +1190,33 @@ impl ParsedGrammar {
                                 // Use <$ty as Default>::default() - $ty is already a metavariable
                                 // in the generated macro, so it will reference the field type
                                 quote! {
-                                    ::facet::ExtensionAttr {
+                                    ::facet::Attr {
                                         ns: #ns_expr,
                                         key: #key_str,
-                                        data: &const {
-                                            ::core::option::Option::Some(
-                                                (|__ptr: ::facet::PtrUninit<'_>| unsafe {
-                                                    __ptr.put(<$ty as ::core::default::Default>::default())
-                                                }) as ::facet::DefaultInPlaceFn
-                                            )
-                                        } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
-                                        shape: <() as ::facet::Facet>::SHAPE,
+                                        data: ::facet::OxRef::new(
+                                            ::facet::PtrConst::new_sized(&const {
+                                                ::core::option::Option::Some(
+                                                    (|__ptr: ::facet::PtrUninit| unsafe {
+                                                        __ptr.put(<$ty as ::core::default::Default>::default())
+                                                    }) as ::facet::DefaultInPlaceFn
+                                                )
+                                            } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
+                                            <() as ::facet::Facet>::SHAPE
+                                        ),
                                     }
                                 }
                             } else {
                                 // No fallback - use None (runtime Default trait lookup)
                                 quote! {
-                                    ::facet::ExtensionAttr {
+                                    ::facet::Attr {
                                         ns: #ns_expr,
                                         key: #key_str,
-                                        data: &const {
-                                            ::core::option::Option::<::facet::DefaultInPlaceFn>::None
-                                        } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
-                                        shape: <() as ::facet::Facet>::SHAPE,
+                                        data: ::facet::OxRef::new(
+                                            ::facet::PtrConst::new_sized(&const {
+                                                ::core::option::Option::<::facet::DefaultInPlaceFn>::None
+                                            } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
+                                            <() as ::facet::Facet>::SHAPE
+                                        ),
                                     }
                                 }
                             };
@@ -1222,30 +1228,34 @@ impl ParsedGrammar {
                                 }};
                                 // Field-level with `= expr`: wrap in closure
                                 (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $expr:expr }) => {{
-                                    ::facet::ExtensionAttr {
+                                    ::facet::Attr {
                                         ns: #ns_expr,
                                         key: #key_str,
-                                        data: &const {
-                                            ::core::option::Option::Some(
-                                                (|__ptr: ::facet::PtrUninit<'_>| unsafe { __ptr.put($expr) })
-                                                    as ::facet::DefaultInPlaceFn
-                                            )
-                                        } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
-                                        shape: <() as ::facet::Facet>::SHAPE,
+                                        data: ::facet::OxRef::new(
+                                            ::facet::PtrConst::new_sized(&const {
+                                                ::core::option::Option::Some(
+                                                    (|__ptr: ::facet::PtrUninit| unsafe { __ptr.put($expr) })
+                                                        as ::facet::DefaultInPlaceFn
+                                                )
+                                            } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
+                                            <() as ::facet::Facet>::SHAPE
+                                        ),
                                     }
                                 }};
                                 // Field-level with just expr (no =): also wrap in closure
                                 (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $expr:expr }) => {{
-                                    ::facet::ExtensionAttr {
+                                    ::facet::Attr {
                                         ns: #ns_expr,
                                         key: #key_str,
-                                        data: &const {
-                                            ::core::option::Option::Some(
-                                                (|__ptr: ::facet::PtrUninit<'_>| unsafe { __ptr.put($expr) })
-                                                    as ::facet::DefaultInPlaceFn
-                                            )
-                                        } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
-                                        shape: <() as ::facet::Facet>::SHAPE,
+                                        data: ::facet::OxRef::new(
+                                            ::facet::PtrConst::new_sized(&const {
+                                                ::core::option::Option::Some(
+                                                    (|__ptr: ::facet::PtrUninit| unsafe { __ptr.put($expr) })
+                                                        as ::facet::DefaultInPlaceFn
+                                                )
+                                            } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
+                                            <() as ::facet::Facet>::SHAPE
+                                        ),
                                     }
                                 }};
                             }
@@ -1274,13 +1284,15 @@ impl ParsedGrammar {
                             quote! {
                                 // Container-level: no args means use Default trait (no fallback - no $ty available)
                                 (@ns { $ns:path } #key_ident { }) => {{
-                                    ::facet::ExtensionAttr {
+                                    ::facet::Attr {
                                         ns: #ns_expr,
                                         key: #key_str,
-                                        data: &const {
-                                            ::core::option::Option::<::facet::DefaultInPlaceFn>::None
-                                        } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const (),
-                                        shape: <() as ::facet::Facet>::SHAPE,
+                                        data: ::facet::OxRef::new(
+                                            ::facet::PtrConst::new_sized(&const {
+                                                ::core::option::Option::<::facet::DefaultInPlaceFn>::None
+                                            } as *const ::core::option::Option<::facet::DefaultInPlaceFn> as *const ()),
+                                            <() as ::facet::Facet>::SHAPE
+                                        ),
                                     }
                                 }};
                                 // Container-level with args: not typical, error
@@ -1337,11 +1349,11 @@ impl ParsedGrammar {
                             }};
                             // Field-level with `= "value"`: store string directly
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $val:expr }) => {{
-                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &$val)
+                                ::facet::Attr::new(#ns_expr, #key_str, &$val)
                             }};
                             // Field-level with just expr
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $val:expr }) => {{
-                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &$val)
+                                ::facet::Attr::new(#ns_expr, #key_str, &$val)
                             }};
                             // Container-level: no args is an error
                             (@ns { $ns:path } #key_ident { }) => {{
@@ -1355,11 +1367,11 @@ impl ParsedGrammar {
                             }};
                             // Container-level with `= "value"`: store string directly
                             (@ns { $ns:path } #key_ident { | = $val:expr }) => {{
-                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &$val)
+                                ::facet::Attr::new(#ns_expr, #key_str, &$val)
                             }};
                             // Container-level with just expr
                             (@ns { $ns:path } #key_ident { | $val:expr }) => {{
-                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &$val)
+                                ::facet::Attr::new(#ns_expr, #key_str, &$val)
                             }};
                         }
                     }
@@ -1375,32 +1387,32 @@ impl ParsedGrammar {
                             // Field-level: no args → None
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::None);
-                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Field-level with `= "value"` → Some(value)
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $val:expr }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::Some($val));
-                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Field-level with just expr → Some(value)
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $val:expr }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::Some($val));
-                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Container-level: no args → None
                             (@ns { $ns:path } #key_ident { }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::None);
-                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Container-level with `= "value"` → Some(value)
                             (@ns { $ns:path } #key_ident { | = $val:expr }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::Some($val));
-                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Container-level with just expr → Some(value)
                             (@ns { $ns:path } #key_ident { | $val:expr }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::Some($val));
-                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                         }
                     }
@@ -1421,7 +1433,7 @@ impl ParsedGrammar {
                                     @name { #key_ident }
                                     @rest { }
                                 };
-                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $($args:tt)* }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
@@ -1431,7 +1443,7 @@ impl ParsedGrammar {
                                     @name { #key_ident }
                                     @rest { $($args)* }
                                 };
-                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             // Container-level: @ns { path } attr { } or with args
                             (@ns { $ns:path } #key_ident { }) => {{
@@ -1442,7 +1454,7 @@ impl ParsedGrammar {
                                     @name { #key_ident }
                                     @rest { }
                                 };
-                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                             (@ns { $ns:path } #key_ident { | $($args:tt)* }) => {{
                                 static __ATTR_DATA: #crate_path::Attr = ::facet::__dispatch_attr!{
@@ -1452,7 +1464,7 @@ impl ParsedGrammar {
                                     @name { #key_ident }
                                     @rest { $($args)* }
                                 };
-                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                                ::facet::Attr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                         }
                     }

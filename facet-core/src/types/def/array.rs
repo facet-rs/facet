@@ -1,6 +1,4 @@
-use crate::{PtrMut, ptr::PtrConst};
-
-use super::Shape;
+use super::{PtrConst, PtrMut, Shape};
 
 /// Fields for array types
 #[derive(Clone, Copy, Debug)]
@@ -42,20 +40,14 @@ pub type ArrayAsPtrFn = unsafe fn(array: PtrConst) -> PtrConst;
 /// The `array` parameter must point to aligned, initialized memory of the correct type.
 pub type ArrayAsMutPtrFn = unsafe fn(array: PtrMut) -> PtrMut;
 
-/// Virtual table for an array
-#[derive(Clone, Copy, Debug)]
-#[repr(C)]
-pub struct ArrayVTable {
-    /// cf. [`ArrayAsPtrFn`]
-    pub as_ptr: ArrayAsPtrFn,
-
-    /// cf. [`ArrayAsMutPtrFn`]
-    pub as_mut_ptr: ArrayAsMutPtrFn,
-}
-
-impl ArrayVTable {
-    /// Const ctor for array vtable.
-    pub const fn new(as_ptr: ArrayAsPtrFn, as_mut_ptr: ArrayAsMutPtrFn) -> Self {
-        Self { as_ptr, as_mut_ptr }
+vtable_def! {
+    /// Virtual table for an array
+    #[derive(Clone, Copy, Debug)]
+    #[repr(C)]
+    pub struct ArrayVTable + ArrayVTableBuilder {
+        /// cf. [`ArrayAsPtrFn`]
+        pub as_ptr: ArrayAsPtrFn,
+        /// cf. [`ArrayAsMutPtrFn`]
+        pub as_mut_ptr: ArrayAsMutPtrFn,
     }
 }

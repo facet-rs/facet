@@ -32,10 +32,9 @@ impl TryFrom<IntAsString> for MyInt {
 }
 
 /// Convert to proxy (serialization)
-impl TryFrom<&MyInt> for IntAsString {
-    type Error = std::convert::Infallible;
-    fn try_from(v: &MyInt) -> Result<Self, Self::Error> {
-        Ok(IntAsString(v.value.to_string()))
+impl From<&MyInt> for IntAsString {
+    fn from(v: &MyInt) -> Self {
+        IntAsString(v.value.to_string())
     }
 }
 
@@ -146,10 +145,9 @@ fn test_field_proxy_overrides_container_proxy() {
         }
     }
 
-    impl TryFrom<&MyInt> for HexIntProxy {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &MyInt) -> Result<Self, Self::Error> {
-            Ok(HexIntProxy(format!("{:x}", v.value)))
+    impl From<&MyInt> for HexIntProxy {
+        fn from(v: &MyInt) -> Self {
+            HexIntProxy(format!("{:x}", v.value))
         }
     }
 
@@ -212,11 +210,10 @@ fn test_enum_container_proxy() {
         }
     }
 
-    impl TryFrom<&MyIntEnum> for IntAsString {
-        type Error = std::convert::Infallible;
-        fn try_from(v: &MyIntEnum) -> Result<Self, Self::Error> {
+    impl From<&MyIntEnum> for IntAsString {
+        fn from(v: &MyIntEnum) -> Self {
             match v {
-                MyIntEnum::Value { value } => Ok(IntAsString(value.to_string())),
+                MyIntEnum::Value { value } => IntAsString(value.to_string()),
             }
         }
     }
@@ -268,22 +265,20 @@ fn test_generic_struct_with_container_proxy() {
         pub inner: T,
     }
 
-    // Blanket TryFrom impls that work for all T
-    impl<T: Clone + Debug + 'static> TryFrom<ValueProxy<T>> for GenericValue<T> {
-        type Error = core::convert::Infallible;
-        fn try_from(proxy: ValueProxy<T>) -> Result<Self, Self::Error> {
-            Ok(GenericValue {
+    // Blanket From impls that work for all T
+    impl<T: Clone + Debug + 'static> From<ValueProxy<T>> for GenericValue<T> {
+        fn from(proxy: ValueProxy<T>) -> Self {
+            GenericValue {
                 inner: proxy.wrapped,
-            })
+            }
         }
     }
 
-    impl<T: Clone + Debug + 'static> TryFrom<&GenericValue<T>> for ValueProxy<T> {
-        type Error = core::convert::Infallible;
-        fn try_from(v: &GenericValue<T>) -> Result<Self, Self::Error> {
-            Ok(ValueProxy {
+    impl<T: Clone + Debug + 'static> From<&GenericValue<T>> for ValueProxy<T> {
+        fn from(v: &GenericValue<T>) -> Self {
+            ValueProxy {
                 wrapped: v.inner.clone(),
-            })
+            }
         }
     }
 
@@ -339,17 +334,15 @@ fn test_multiple_structs_same_generic_proxy() {
         pub value: i32,
     }
 
-    impl TryFrom<SharedProxy<i32>> for IntHolder {
-        type Error = core::convert::Infallible;
-        fn try_from(proxy: SharedProxy<i32>) -> Result<Self, Self::Error> {
-            Ok(IntHolder { value: proxy.data })
+    impl From<SharedProxy<i32>> for IntHolder {
+        fn from(proxy: SharedProxy<i32>) -> Self {
+            IntHolder { value: proxy.data }
         }
     }
 
-    impl TryFrom<&IntHolder> for SharedProxy<i32> {
-        type Error = core::convert::Infallible;
-        fn try_from(v: &IntHolder) -> Result<Self, Self::Error> {
-            Ok(SharedProxy { data: v.value })
+    impl From<&IntHolder> for SharedProxy<i32> {
+        fn from(v: &IntHolder) -> Self {
+            SharedProxy { data: v.value }
         }
     }
 
@@ -360,19 +353,17 @@ fn test_multiple_structs_same_generic_proxy() {
         pub text: String,
     }
 
-    impl TryFrom<SharedProxy<String>> for StringHolder {
-        type Error = core::convert::Infallible;
-        fn try_from(proxy: SharedProxy<String>) -> Result<Self, Self::Error> {
-            Ok(StringHolder { text: proxy.data })
+    impl From<SharedProxy<String>> for StringHolder {
+        fn from(proxy: SharedProxy<String>) -> Self {
+            StringHolder { text: proxy.data }
         }
     }
 
-    impl TryFrom<&StringHolder> for SharedProxy<String> {
-        type Error = core::convert::Infallible;
-        fn try_from(v: &StringHolder) -> Result<Self, Self::Error> {
-            Ok(SharedProxy {
+    impl From<&StringHolder> for SharedProxy<String> {
+        fn from(v: &StringHolder) -> Self {
+            SharedProxy {
                 data: v.text.clone(),
-            })
+            }
         }
     }
 
@@ -383,17 +374,15 @@ fn test_multiple_structs_same_generic_proxy() {
         pub num: i32,
     }
 
-    impl TryFrom<SharedProxy<i32>> for AnotherIntHolder {
-        type Error = core::convert::Infallible;
-        fn try_from(proxy: SharedProxy<i32>) -> Result<Self, Self::Error> {
-            Ok(AnotherIntHolder { num: proxy.data })
+    impl From<SharedProxy<i32>> for AnotherIntHolder {
+        fn from(proxy: SharedProxy<i32>) -> Self {
+            AnotherIntHolder { num: proxy.data }
         }
     }
 
-    impl TryFrom<&AnotherIntHolder> for SharedProxy<i32> {
-        type Error = core::convert::Infallible;
-        fn try_from(v: &AnotherIntHolder) -> Result<Self, Self::Error> {
-            Ok(SharedProxy { data: v.num })
+    impl From<&AnotherIntHolder> for SharedProxy<i32> {
+        fn from(v: &AnotherIntHolder) -> Self {
+            SharedProxy { data: v.num }
         }
     }
 

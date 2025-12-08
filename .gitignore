@@ -25,3 +25,7 @@ tarpaulin-report.html
 
 # Profiling
 *.mm_profdata
+
+# Rustc output
+rust_out
+chrome_profiler.json*

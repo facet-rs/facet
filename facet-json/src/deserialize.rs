@@ -379,12 +379,12 @@ pub type Result<T> = core::result::Result<T, JsonError>;
 /// - `value` (the inner value)
 /// - `span` (for storing source location)
 fn is_spanned_shape(shape: &Shape) -> bool {
-    if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
-        if struct_def.fields.len() == 2 {
-            let has_value = struct_def.fields.iter().any(|f| f.name == "value");
-            let has_span = struct_def.fields.iter().any(|f| f.name == "span");
-            return has_value && has_span;
-        }
+    if let Type::User(UserType::Struct(struct_def)) = &shape.ty
+        && struct_def.fields.len() == 2
+    {
+        let has_value = struct_def.fields.iter().any(|f| f.name == "value");
+        let has_span = struct_def.fields.iter().any(|f| f.name == "span");
+        return has_value && has_span;
     }
     false
 }
@@ -762,7 +762,7 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
         match token.token {
             Token::String(s) => {
                 // Try parse_from_str first if the type supports it (e.g., chrono types)
-                if wip.shape().vtable.parse.is_some() {
+                if wip.shape().vtable.has_parse() {
                     wip = wip.parse_from_str(&s)?;
                 } else if wip.shape().type_identifier == "Cow" {
                     // Zero-copy Cow<str>: preserve borrowed/owned status
@@ -973,34 +973,38 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
         let shape = wip.shape();
 
         // Check if target is &str (shared reference to str)
-        if let Def::Pointer(ptr_def) = shape.def {
-            if matches!(ptr_def.known, Some(KnownPointer::SharedReference))
-                && ptr_def
-                    .pointee()
-                    .is_some_and(|p| p.type_identifier == "str")
-            {
-                // In owned mode, we cannot borrow from input at all
-                if !BORROW {
-                    return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
-                        message: "cannot deserialize into &str when borrowing is disabled - use String or Cow<str> instead".into(),
-                    }));
+        if let Def::Pointer(ptr_def) = shape.def
+            && matches!(ptr_def.known, Some(KnownPointer::SharedReference))
+            && ptr_def
+                .pointee()
+                .is_some_and(|p| p.type_identifier == "str")
+        {
+            // In owned mode, we cannot borrow from input at all
+            if !BORROW {
+                return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                    message: "cannot deserialize into &str when borrowing is disabled - use String or Cow<str> instead".into(),
+                }));
+            }
+            match s {
+                Cow::Borrowed(borrowed) => {
+                    wip = wip.set(borrowed)?;
+                    return Ok(wip);
                 }
-                match s {
-                    Cow::Borrowed(borrowed) => {
-                        wip = wip.set(borrowed)?;
-                        return Ok(wip);
-                    }
-                    Cow::Owned(_) => {
-                        return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
-                            message: "cannot borrow &str from JSON string containing escape sequences - use String instead".into(),
-                        }));
-                    }
+                Cow::Owned(_) => {
+                    return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                        message: "cannot borrow &str from JSON string containing escape sequences - use String instead".into(),
+                    }));
                 }
             }
         }
 
         // Check if target is Cow<str>
-        if shape.type_identifier == "Cow" {
+        if let Def::Pointer(ptr_def) = shape.def
+            && matches!(ptr_def.known, Some(KnownPointer::Cow))
+            && ptr_def
+                .pointee()
+                .is_some_and(|p| p.type_identifier == "str")
+        {
             wip = wip.set(s)?;
             return Ok(wip);
         }
@@ -1600,14 +1604,12 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
             }
 
             // Check if the field has a default available:
-            // 1. Field has ::DEFAULT (explicit #[facet(default)] on field)
-            // 2. Field has a default_fn in vtable
-            // 3. Struct has #[facet(default)] and field type implements Default
-            let field_has_default_flag = field.has_default();
-            let field_has_default_fn = field.default_fn().is_some();
+            // 1. Field has #[facet(default)] or #[facet(default = expr)]
+            // 2. Struct has #[facet(default)] and field type implements Default
+            let field_has_default = field.has_default();
             let field_type_has_default = field.shape().is(Characteristic::Default);
 
-            if field_has_default_fn || field_has_default_flag {
+            if field_has_default {
                 // Use set_nth_field_to_default which handles both default_fn and Default impl
                 wip = wip.set_nth_field_to_default(idx)?;
             } else if struct_has_default && field_type_has_default {
@@ -1798,10 +1800,10 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
                 .last()
                 .is_some_and(|s| matches!(s, PathSegment::Variant(_, _)));
 
-            if ends_with_variant {
-                if let Some(PathSegment::Variant(_, variant_name)) = segments.last() {
-                    wip = wip.select_variant_named(variant_name)?;
-                }
+            if ends_with_variant
+                && let Some(PathSegment::Variant(_, variant_name)) = segments.last()
+            {
+                wip = wip.select_variant_named(variant_name)?;
             }
 
             // Create sub-deserializer and deserialize the value
@@ -2465,8 +2467,10 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
             // Set key - begin_key pushes a frame for the key type
             wip = wip.begin_key()?;
             // For transparent types (like UserId(String)), we need to use begin_inner
-            // to set the inner String value
-            if wip.shape().inner.is_some() {
+            // to set the inner String value. But NOT for pointer types like &str or Cow<str>
+            // which are handled directly by set_string_value.
+            let is_pointer = matches!(wip.shape().def, Def::Pointer(_));
+            if wip.shape().inner.is_some() && !is_pointer {
                 wip = wip.begin_inner()?;
                 wip = self.set_string_value(wip, key)?;
                 wip = wip.end()?;
@@ -2522,7 +2526,7 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
         log::trace!("deserialize_pointer");
 
         // Check what kind of pointer this is BEFORE calling begin_smart_ptr
-        let (is_slice_pointer, is_reference, is_str_ref) =
+        let (is_slice_pointer, is_reference, is_str_ref, is_cow_str) =
             if let Def::Pointer(ptr_def) = wip.shape().def {
                 let is_slice = if let Some(pointee) = ptr_def.pointee() {
                     matches!(pointee.ty, Type::Sequence(SequenceType::Slice(_)))
@@ -2538,10 +2542,37 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
                     && ptr_def
                         .pointee()
                         .is_some_and(|p| p.type_identifier == "str");
-                (is_slice, is_ref, is_str_ref)
+                // Special case: Cow<str> can borrow or own depending on whether escaping was needed
+                let is_cow_str = matches!(ptr_def.known, Some(KnownPointer::Cow))
+                    && ptr_def
+                        .pointee()
+                        .is_some_and(|p| p.type_identifier == "str");
+                (is_slice, is_ref, is_str_ref, is_cow_str)
             } else {
-                (false, false, false)
+                (false, false, false, false)
             };
+
+        // Special case: Cow<str> can be deserialized directly from string tokens
+        // preserving borrowed/owned status based on whether escaping was needed
+        if is_cow_str {
+            let token = self.next()?;
+            match token.token {
+                Token::String(s) => {
+                    // Zero-copy Cow<str>: preserve borrowed/owned status
+                    wip = wip.set(s)?;
+                    return Ok(wip);
+                }
+                _ => {
+                    return Err(JsonError::new(
+                        JsonErrorKind::UnexpectedToken {
+                            got: format!("{:?}", token.token),
+                            expected: "string",
+                        },
+                        token.span,
+                    ));
+                }
+            }
+        }
 
         // Special case: &str can borrow directly from input if no escaping needed
         if is_str_ref {
