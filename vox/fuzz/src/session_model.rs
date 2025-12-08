@@ -9,18 +9,13 @@ use std::collections::HashMap;
 pub const DEFAULT_INITIAL_CREDITS: u32 = 65536;
 
 /// Channel lifecycle state (matches rapace-testkit::session).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ChannelLifecycle {
+    #[default]
     Open,
     HalfClosedLocal,
     HalfClosedRemote,
     Closed,
-}
-
-impl Default for ChannelLifecycle {
-    fn default() -> Self {
-        Self::Open
-    }
 }
 
 /// Model of ChannelState.
@@ -80,15 +75,14 @@ impl ChannelStateModel {
 }
 
 /// Model of Session's channel map.
+#[derive(Default)]
 pub struct SessionModel {
     channels: HashMap<u32, ChannelStateModel>,
 }
 
 impl SessionModel {
     pub fn new() -> Self {
-        Self {
-            channels: HashMap::new(),
-        }
+        Self::default()
     }
 
     /// Get or create a channel state.
@@ -269,13 +263,13 @@ pub fn execute_and_verify(ops: &[SessionOp]) -> Result<(), String> {
 
                         // INVARIANT: If EOS, lifecycle should transition
                         if *eos && channel != 0 {
-                            let valid_transition = match (lifecycle_before, lifecycle_after) {
-                                (ChannelLifecycle::Open, ChannelLifecycle::HalfClosedLocal) => true,
-                                (ChannelLifecycle::HalfClosedRemote, ChannelLifecycle::Closed) => true,
-                                (ChannelLifecycle::HalfClosedLocal, ChannelLifecycle::HalfClosedLocal) => true,
-                                (ChannelLifecycle::Closed, ChannelLifecycle::Closed) => true,
-                                _ => false,
-                            };
+                            let valid_transition = matches!(
+                            (lifecycle_before, lifecycle_after),
+                            (ChannelLifecycle::Open, ChannelLifecycle::HalfClosedLocal)
+                                | (ChannelLifecycle::HalfClosedRemote, ChannelLifecycle::Closed)
+                                | (ChannelLifecycle::HalfClosedLocal, ChannelLifecycle::HalfClosedLocal)
+                                | (ChannelLifecycle::Closed, ChannelLifecycle::Closed)
+                        );
                             if !valid_transition {
                                 return Err(format!(
                                     "op {}: invalid lifecycle transition after send EOS: {:?} -> {:?}",
@@ -341,13 +335,13 @@ pub fn execute_and_verify(ops: &[SessionOp]) -> Result<(), String> {
                 if delivered {
                     // INVARIANT: If EOS, lifecycle should transition
                     if *eos && channel != 0 {
-                        let valid_transition = match (lifecycle_before, lifecycle_after) {
-                            (ChannelLifecycle::Open, ChannelLifecycle::HalfClosedRemote) => true,
-                            (ChannelLifecycle::HalfClosedLocal, ChannelLifecycle::Closed) => true,
-                            (ChannelLifecycle::HalfClosedRemote, ChannelLifecycle::HalfClosedRemote) => true,
-                            (ChannelLifecycle::Closed, ChannelLifecycle::Closed) => true,
-                            _ => false,
-                        };
+                        let valid_transition = matches!(
+                            (lifecycle_before, lifecycle_after),
+                            (ChannelLifecycle::Open, ChannelLifecycle::HalfClosedRemote)
+                                | (ChannelLifecycle::HalfClosedLocal, ChannelLifecycle::Closed)
+                                | (ChannelLifecycle::HalfClosedRemote, ChannelLifecycle::HalfClosedRemote)
+                                | (ChannelLifecycle::Closed, ChannelLifecycle::Closed)
+                        );
                         if !valid_transition {
                             return Err(format!(
                                 "op {}: invalid lifecycle transition after recv EOS: {:?} -> {:?}",

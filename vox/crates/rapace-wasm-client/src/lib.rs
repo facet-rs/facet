@@ -30,7 +30,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use rapace_core::{Frame, FrameFlags, MsgDescHot, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT};
-use transport::WasmWebSocket;
+use transport::{recv_from, WasmWebSocket};
 use wasm_bindgen::prelude::*;
 
 /// Size of MsgDescHot in bytes (must be 64).
@@ -62,7 +62,7 @@ impl RapaceClient {
 
     /// Call the Adder service's add method.
     ///
-    /// Returns a Promise<number>.
+    /// Returns a `Promise<number>`.
     #[wasm_bindgen]
     pub async fn call_adder(&mut self, a: i32, b: i32) -> Result<i32, JsValue> {
         // Encode request: AdderRequest { a, b }
@@ -97,7 +97,7 @@ impl RapaceClient {
         };
 
         // Send request
-        self.send_frame(&frame).await?;
+        self.send_frame(&frame)?;
 
         // Wait for response
         let response_frame = self.recv_frame().await?;
@@ -147,16 +147,16 @@ impl RapaceClient {
         self.ws.borrow().close();
     }
 
-    async fn send_frame(&self, frame: &Frame) -> Result<(), JsValue> {
+    fn send_frame(&self, frame: &Frame) -> Result<(), JsValue> {
         let mut data = Vec::with_capacity(DESC_SIZE + frame.payload().len());
         data.extend_from_slice(&desc_to_bytes(&frame.desc));
         data.extend_from_slice(frame.payload());
 
-        self.ws.borrow().send(&data).await
+        self.ws.borrow().send(&data)
     }
 
     async fn recv_frame(&self) -> Result<Frame, JsValue> {
-        let data = self.ws.borrow_mut().recv().await?;
+        let data = recv_from(&self.ws).await?;
 
         if data.len() < DESC_SIZE {
             return Err(JsValue::from_str(&format!(
@@ -231,7 +231,7 @@ impl RangeStream {
                 Frame::with_payload(desc, payload.clone())
             };
 
-            self.send_frame(&frame).await?;
+            self.send_frame(&frame)?;
         }
 
         // Receive next frame
@@ -259,16 +259,16 @@ impl RangeStream {
         Ok(JsValue::from(value))
     }
 
-    async fn send_frame(&self, frame: &Frame) -> Result<(), JsValue> {
+    fn send_frame(&self, frame: &Frame) -> Result<(), JsValue> {
         let mut data = Vec::with_capacity(DESC_SIZE + frame.payload().len());
         data.extend_from_slice(&desc_to_bytes(&frame.desc));
         data.extend_from_slice(frame.payload());
 
-        self.ws.borrow().send(&data).await
+        self.ws.borrow().send(&data)
     }
 
-    async fn recv_frame(&mut self) -> Result<Frame, JsValue> {
-        let data = self.ws.borrow_mut().recv().await?;
+    async fn recv_frame(&self) -> Result<Frame, JsValue> {
+        let data = recv_from(&self.ws).await?;
 
         if data.len() < DESC_SIZE {
             return Err(JsValue::from_str(&format!(

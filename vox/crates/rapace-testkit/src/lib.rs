@@ -87,7 +87,8 @@ pub trait TransportFactory: Send + Sync + 'static {
     ///
     /// Returns (client_side, server_side) where frames sent from client
     /// are received by server and vice versa.
-    fn connect_pair() -> impl Future<Output = Result<(Self::Transport, Self::Transport), TestError>> + Send;
+    fn connect_pair(
+    ) -> impl Future<Output = Result<(Self::Transport, Self::Transport), TestError>> + Send;
 }
 
 // ============================================================================
@@ -684,8 +685,8 @@ async fn run_cancellation_inner<F: TransportFactory>() -> Result<(), TestError> 
             }
 
             // Parse CancelChannel payload
-            let cancel_payload: ControlPayload =
-                facet_postcard::from_bytes(cancel.payload).map_err(|e| {
+            let cancel_payload: ControlPayload = facet_postcard::from_bytes(cancel.payload)
+                .map_err(|e| {
                     TestError::Assertion(format!("failed to decode CancelChannel: {:?}", e))
                 })?;
 
@@ -793,8 +794,7 @@ async fn run_credit_grant_inner<F: TransportFactory>() -> Result<(), TestError> 
             desc.flags = FrameFlags::CONTROL | FrameFlags::CREDITS | FrameFlags::EOS;
             desc.credit_grant = credit_amount; // Also in descriptor for fast path
 
-            let frame =
-                Frame::with_inline_payload(desc, &grant_bytes).expect("should fit inline");
+            let frame = Frame::with_inline_payload(desc, &grant_bytes).expect("should fit inline");
             server_transport.send_frame(&frame).await?;
 
             Ok::<_, TestError>(())
@@ -826,10 +826,8 @@ async fn run_credit_grant_inner<F: TransportFactory>() -> Result<(), TestError> 
     }
 
     // Parse payload for full verification
-    let grant_payload: ControlPayload =
-        facet_postcard::from_bytes(grant.payload).map_err(|e| {
-            TestError::Assertion(format!("failed to decode GrantCredits: {:?}", e))
-        })?;
+    let grant_payload: ControlPayload = facet_postcard::from_bytes(grant.payload)
+        .map_err(|e| TestError::Assertion(format!("failed to decode GrantCredits: {:?}", e)))?;
 
     match grant_payload {
         ControlPayload::GrantCredits {
@@ -1024,8 +1022,7 @@ async fn run_session_cancel_control_frame_inner<F: TransportFactory>() -> Result
     data_desc.method_id = 1;
     data_desc.flags = FrameFlags::DATA | FrameFlags::EOS;
 
-    let data_frame =
-        Frame::with_inline_payload(data_desc, b"dropped").expect("should fit");
+    let data_frame = Frame::with_inline_payload(data_desc, b"dropped").expect("should fit");
     client_transport.send_frame(&data_frame).await?;
 
     // Client sends a data frame on a different channel
@@ -1242,8 +1239,8 @@ async fn run_server_streaming_happy_path_inner<F: TransportFactory>() -> Result<
                 desc.flags = FrameFlags::DATA; // No EOS yet
 
                 let item_bytes = facet_postcard::to_vec(&i).unwrap();
-                let frame = Frame::with_inline_payload(desc, &item_bytes)
-                    .expect("item should fit inline");
+                let frame =
+                    Frame::with_inline_payload(desc, &item_bytes).expect("item should fit inline");
                 server_session.send_frame(&frame).await?;
             }
 
@@ -1254,8 +1251,8 @@ async fn run_server_streaming_happy_path_inner<F: TransportFactory>() -> Result<
             eos_desc.method_id = request.desc.method_id;
             eos_desc.flags = FrameFlags::DATA | FrameFlags::EOS;
 
-            let eos_frame = Frame::with_inline_payload(eos_desc, &[])
-                .expect("empty frame should fit inline");
+            let eos_frame =
+                Frame::with_inline_payload(eos_desc, &[]).expect("empty frame should fit inline");
             server_session.send_frame(&eos_frame).await?;
 
             Ok::<_, TestError>(())
@@ -1263,7 +1260,7 @@ async fn run_server_streaming_happy_path_inner<F: TransportFactory>() -> Result<
     });
 
     // Client: send request, receive N items + EOS
-    let request_bytes = facet_postcard::to_vec(&(item_count as i32)).unwrap();
+    let request_bytes = facet_postcard::to_vec(&item_count).unwrap();
 
     let mut desc = MsgDescHot::new();
     desc.msg_id = 1;
@@ -1306,7 +1303,7 @@ async fn run_server_streaming_happy_path_inner<F: TransportFactory>() -> Result<
     }
 
     // Verify received items
-    let expected: Vec<i32> = (0..item_count as i32).collect();
+    let expected: Vec<i32> = (0..item_count).collect();
     if received != expected {
         return Err(TestError::Assertion(format!(
             "expected {:?}, got {:?}",
@@ -1403,8 +1400,8 @@ async fn run_client_streaming_happy_path_inner<F: TransportFactory>() -> Result<
             desc.flags = FrameFlags::DATA | FrameFlags::EOS;
 
             let response_bytes = facet_postcard::to_vec(&sum).unwrap();
-            let frame = Frame::with_inline_payload(desc, &response_bytes)
-                .expect("should fit inline");
+            let frame =
+                Frame::with_inline_payload(desc, &response_bytes).expect("should fit inline");
             server_session.send_frame(&frame).await?;
 
             Ok::<_, TestError>(())
@@ -1513,8 +1510,8 @@ async fn run_bidirectional_streaming_inner<F: TransportFactory>() -> Result<(), 
                 };
 
                 let item_bytes = facet_postcard::to_vec(item).unwrap();
-                let frame = Frame::with_inline_payload(desc, &item_bytes)
-                    .expect("should fit inline");
+                let frame =
+                    Frame::with_inline_payload(desc, &item_bytes).expect("should fit inline");
                 server_session.send_frame(&frame).await?;
             }
 
@@ -1661,7 +1658,11 @@ async fn run_macro_server_streaming_inner<F: TransportFactory>() -> Result<(), T
 
             // Dispatch via streaming dispatch (it sends frames directly)
             server
-                .dispatch_streaming(request.desc.method_id, request.payload, server_transport.as_ref())
+                .dispatch_streaming(
+                    request.desc.method_id,
+                    request.payload,
+                    server_transport.as_ref(),
+                )
                 .await
                 .map_err(TestError::Rpc)?;
 
@@ -1721,8 +1722,8 @@ async fn run_streaming_cancellation_inner<F: TransportFactory>() -> Result<(), T
                 desc.flags = FrameFlags::DATA;
 
                 let item_bytes = facet_postcard::to_vec(&i).unwrap();
-                let frame = Frame::with_inline_payload(desc, &item_bytes)
-                    .expect("should fit inline");
+                let frame =
+                    Frame::with_inline_payload(desc, &item_bytes).expect("should fit inline");
                 server_session.send_frame(&frame).await?;
             }
 
@@ -1739,8 +1740,8 @@ async fn run_streaming_cancellation_inner<F: TransportFactory>() -> Result<(), T
             cancel_desc.method_id = control_method::CANCEL_CHANNEL;
             cancel_desc.flags = FrameFlags::CONTROL | FrameFlags::EOS;
 
-            let cancel_frame = Frame::with_inline_payload(cancel_desc, &cancel_bytes)
-                .expect("should fit inline");
+            let cancel_frame =
+                Frame::with_inline_payload(cancel_desc, &cancel_bytes).expect("should fit inline");
             server_session.transport().send_frame(&cancel_frame).await?;
 
             // Send marker on different channel (to signal end of test)
@@ -1750,8 +1751,8 @@ async fn run_streaming_cancellation_inner<F: TransportFactory>() -> Result<(), T
             marker_desc.method_id = 1;
             marker_desc.flags = FrameFlags::DATA | FrameFlags::EOS;
 
-            let marker_frame = Frame::with_inline_payload(marker_desc, b"done")
-                .expect("should fit inline");
+            let marker_frame =
+                Frame::with_inline_payload(marker_desc, b"done").expect("should fit inline");
             server_session.transport().send_frame(&marker_frame).await?;
 
             Ok::<_, TestError>(())
@@ -1792,9 +1793,7 @@ async fn run_streaming_cancellation_inner<F: TransportFactory>() -> Result<(), T
 
     // Channel should be cancelled
     if !client_session.is_cancelled(channel_id) {
-        return Err(TestError::Assertion(
-            "channel should be cancelled".into(),
-        ));
+        return Err(TestError::Assertion("channel should be cancelled".into()));
     }
 
     server_handle

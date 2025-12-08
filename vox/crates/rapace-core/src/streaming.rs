@@ -84,6 +84,7 @@ pub trait StreamSink<T>: Send {
 /// This is an internal building block for future client-streaming support.
 pub trait StreamSource<T> {
     /// Receive the next item, or `None` if the stream is complete.
+    #[allow(clippy::type_complexity)]
     fn recv(&mut self) -> Pin<Box<dyn Future<Output = Option<Result<T, RpcError>>> + Send + '_>>;
 }
 

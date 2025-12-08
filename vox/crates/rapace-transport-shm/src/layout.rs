@@ -34,7 +34,7 @@ pub const MAGIC: [u8; 8] = *b"RAPACE\0\0";
 
 /// Current protocol version (major.minor packed into u32).
 /// Major = high 16 bits, minor = low 16 bits.
-pub const PROTOCOL_VERSION: u32 = (1 << 16) | 0; // v1.0
+pub const PROTOCOL_VERSION: u32 = 1 << 16; // v1.0
 
 /// Default descriptor ring capacity (power of 2).
 pub const DEFAULT_RING_CAPACITY: u32 = 256;
@@ -758,11 +758,8 @@ mod tests {
 
     #[test]
     fn test_calculate_segment_size() {
-        let size = calculate_segment_size(
-            DEFAULT_RING_CAPACITY,
-            DEFAULT_SLOT_SIZE,
-            DEFAULT_SLOT_COUNT,
-        );
+        let size =
+            calculate_segment_size(DEFAULT_RING_CAPACITY, DEFAULT_SLOT_SIZE, DEFAULT_SLOT_COUNT);
         // Rough sanity check
         assert!(size > 0);
         // Header (64) + 2 rings (2 * (192 + 256*64)) + data header (64) + meta (64*8) + data (64*4096)

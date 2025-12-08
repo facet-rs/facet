@@ -20,17 +20,19 @@ fn slot_error_to_transport(e: SlotError, context: &str) -> TransportError {
             slot: u32::MAX,
             max: 0,
         }),
-        SlotError::StaleGeneration => TransportError::Validation(ValidationError::StaleGeneration {
-            expected: 0,
-            actual: 0,
-        }),
-        SlotError::InvalidState => {
-            TransportError::Encode(EncodeError::EncodeFailed(format!("{}: invalid state", context)))
+        SlotError::StaleGeneration => {
+            TransportError::Validation(ValidationError::StaleGeneration {
+                expected: 0,
+                actual: 0,
+            })
         }
-        SlotError::PayloadTooLarge => TransportError::Validation(ValidationError::PayloadTooLarge {
-            len: 0,
-            max: 0,
-        }),
+        SlotError::InvalidState => TransportError::Encode(EncodeError::EncodeFailed(format!(
+            "{}: invalid state",
+            context
+        ))),
+        SlotError::PayloadTooLarge => {
+            TransportError::Validation(ValidationError::PayloadTooLarge { len: 0, max: 0 })
+        }
     }
 }
 
@@ -220,7 +222,8 @@ impl Transport for ShmTransport {
                 let payload_len = frame_ref.payload.len();
 
                 let desc: &MsgDescHot = unsafe { &*desc_ptr };
-                let payload: &[u8] = unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) };
+                let payload: &[u8] =
+                    unsafe { std::slice::from_raw_parts(payload_ptr, payload_len) };
 
                 return Ok(FrameView::new(desc, payload));
             }
@@ -278,7 +281,8 @@ impl ShmEncoder {
 impl EncodeCtx for ShmEncoder {
     fn encode_bytes(&mut self, bytes: &[u8]) -> Result<(), EncodeError> {
         // Check if bytes are already in our SHM segment's slot data region.
-        if let Some((slot_idx, offset)) = self.session.find_slot_location(bytes.as_ptr(), bytes.len())
+        if let Some((slot_idx, offset)) =
+            self.session.find_slot_location(bytes.as_ptr(), bytes.len())
         {
             // Zero-copy: just record the slot reference.
             // Note: This assumes the caller has ownership of the slot.

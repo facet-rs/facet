@@ -33,8 +33,8 @@ mod session;
 mod transport;
 
 pub use layout::{
-    calculate_segment_size, DataSegment, DataSegmentHeader, DescRing, DescRingHeader,
-    LayoutError, RingError, SegmentHeader, SegmentOffsets, SlotError, SlotMeta, SlotState,
+    calculate_segment_size, DataSegment, DataSegmentHeader, DescRing, DescRingHeader, LayoutError,
+    RingError, SegmentHeader, SegmentOffsets, SlotError, SlotMeta, SlotState,
     DEFAULT_RING_CAPACITY, DEFAULT_SLOT_COUNT, DEFAULT_SLOT_SIZE,
 };
 pub use session::{ShmSession, ShmSessionConfig};

@@ -25,12 +25,18 @@ pub struct SlotMetaModel {
     pub state: SlotState,
 }
 
-impl SlotMetaModel {
-    pub fn new() -> Self {
+impl Default for SlotMetaModel {
+    fn default() -> Self {
         Self {
             generation: 0,
             state: SlotState::Free,
         }
+    }
+}
+
+impl SlotMetaModel {
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
@@ -50,7 +56,7 @@ pub struct SlabModel {
 impl SlabModel {
     /// Create a new slab with given slot count.
     pub fn new(slot_count: u32) -> Self {
-        let slot_count = slot_count.max(MIN_SLOT_COUNT).min(MAX_SLOT_COUNT);
+        let slot_count = slot_count.clamp(MIN_SLOT_COUNT, MAX_SLOT_COUNT);
         Self {
             slots: (0..slot_count).map(|_| SlotMetaModel::new()).collect(),
             slot_count,
@@ -181,7 +187,7 @@ pub enum SlabOp {
 }
 
 /// State tracker for verification.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SlabTracker {
     /// Handles that are Allocated (not yet in-flight).
     allocated: Vec<SlotHandle>,
@@ -193,11 +199,7 @@ pub struct SlabTracker {
 
 impl SlabTracker {
     pub fn new() -> Self {
-        Self {
-            allocated: Vec::new(),
-            in_flight: Vec::new(),
-            all_seen: HashSet::new(),
-        }
+        Self::default()
     }
 }
 

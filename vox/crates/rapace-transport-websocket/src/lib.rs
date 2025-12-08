@@ -159,9 +159,9 @@ where
 
         // Send as binary WebSocket message
         let mut sink = self.inner.sink.lock().await;
-        sink.send(Message::Binary(data.into()))
-            .await
-            .map_err(|e| TransportError::Io(std::io::Error::other(format!("websocket send: {}", e))))?;
+        sink.send(Message::Binary(data.into())).await.map_err(|e| {
+            TransportError::Io(std::io::Error::other(format!("websocket send: {}", e)))
+        })?;
 
         Ok(())
     }
@@ -175,11 +175,13 @@ where
 
         // Read next message
         loop {
-            let msg = stream.next().await.ok_or(TransportError::Closed)?.map_err(
-                |e| {
+            let msg = stream
+                .next()
+                .await
+                .ok_or(TransportError::Closed)?
+                .map_err(|e| {
                     TransportError::Io(std::io::Error::other(format!("websocket recv: {}", e)))
-                },
-            )?;
+                })?;
 
             match msg {
                 Message::Binary(data) => {

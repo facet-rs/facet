@@ -147,12 +147,31 @@ impl From<DecodeError> for TransportError {
 /// Descriptor validation errors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationError {
-    SlotOutOfBounds { slot: u32, max: u32 },
-    PayloadOutOfBounds { offset: u32, len: u32, slot_size: u32 },
-    InlinePayloadTooLarge { len: u32, max: u32 },
-    PayloadTooLarge { len: u32, max: u32 },
-    StaleGeneration { expected: u32, actual: u32 },
-    ChannelOutOfBounds { channel: u32, max: u32 },
+    SlotOutOfBounds {
+        slot: u32,
+        max: u32,
+    },
+    PayloadOutOfBounds {
+        offset: u32,
+        len: u32,
+        slot_size: u32,
+    },
+    InlinePayloadTooLarge {
+        len: u32,
+        max: u32,
+    },
+    PayloadTooLarge {
+        len: u32,
+        max: u32,
+    },
+    StaleGeneration {
+        expected: u32,
+        actual: u32,
+    },
+    ChannelOutOfBounds {
+        channel: u32,
+        max: u32,
+    },
     InvalidInlineDescriptor,
 }
 
@@ -162,8 +181,15 @@ impl fmt::Display for ValidationError {
             Self::SlotOutOfBounds { slot, max } => {
                 write!(f, "slot {slot} out of bounds (max {max})")
             }
-            Self::PayloadOutOfBounds { offset, len, slot_size } => {
-                write!(f, "payload [{offset}..{offset}+{len}] exceeds slot size {slot_size}")
+            Self::PayloadOutOfBounds {
+                offset,
+                len,
+                slot_size,
+            } => {
+                write!(
+                    f,
+                    "payload [{offset}..{offset}+{len}] exceeds slot size {slot_size}"
+                )
             }
             Self::InlinePayloadTooLarge { len, max } => {
                 write!(f, "inline payload {len} bytes exceeds max {max}")

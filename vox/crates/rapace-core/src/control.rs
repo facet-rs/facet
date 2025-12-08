@@ -54,18 +54,11 @@ pub enum ControlPayload {
         reason: CancelReason,
     },
     /// Grant flow control credits.
-    GrantCredits {
-        channel_id: u32,
-        bytes: u32,
-    },
+    GrantCredits { channel_id: u32, bytes: u32 },
     /// Liveness probe.
-    Ping {
-        payload: [u8; 8],
-    },
+    Ping { payload: [u8; 8] },
     /// Response to Ping.
-    Pong {
-        payload: [u8; 8],
-    },
+    Pong { payload: [u8; 8] },
 }
 
 /// Control method IDs.

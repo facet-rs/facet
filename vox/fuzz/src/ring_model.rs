@@ -76,7 +76,7 @@ pub struct RingModel {
 impl RingModel {
     /// Create a new ring with given capacity.
     pub fn new(capacity: u32) -> Self {
-        let capacity = capacity.next_power_of_two().max(MIN_CAPACITY).min(MAX_CAPACITY);
+        let capacity = capacity.next_power_of_two().clamp(MIN_CAPACITY, MAX_CAPACITY);
         Self {
             header: RingHeaderModel::new(capacity),
             descriptors: vec![TestDescriptor { id: 0 }; capacity as usize],

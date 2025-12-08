@@ -45,7 +45,10 @@ struct RangeRequest {
 async fn main() {
     let addr = "0.0.0.0:9000";
     let listener = TcpListener::bind(addr).await.expect("Failed to bind");
-    println!("WebSocket server listening on ws://127.0.0.1:9000 (bound to {})", addr);
+    println!(
+        "WebSocket server listening on ws://127.0.0.1:9000 (bound to {})",
+        addr
+    );
     println!();
     println!("To test:");
     println!("  1. cd examples/browser_ws");

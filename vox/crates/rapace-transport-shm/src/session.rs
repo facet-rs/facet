@@ -8,9 +8,9 @@ use std::sync::Arc;
 use rapace_core::MsgDescHot;
 
 use crate::layout::{
-    calculate_segment_size, DataSegment, DataSegmentHeader, DescRing, DescRingHeader,
-    LayoutError, SegmentHeader, SegmentOffsets, SlotMeta, DEFAULT_RING_CAPACITY,
-    DEFAULT_SLOT_COUNT, DEFAULT_SLOT_SIZE,
+    calculate_segment_size, DataSegment, DataSegmentHeader, DescRing, DescRingHeader, LayoutError,
+    SegmentHeader, SegmentOffsets, SlotMeta, DEFAULT_RING_CAPACITY, DEFAULT_SLOT_COUNT,
+    DEFAULT_SLOT_SIZE,
 };
 
 /// Configuration for creating an SHM session.
@@ -96,7 +96,8 @@ impl ShmSession {
             return Err(SessionError::InvalidConfig("slot_count must be > 0"));
         }
 
-        let size = calculate_segment_size(config.ring_capacity, config.slot_size, config.slot_count);
+        let size =
+            calculate_segment_size(config.ring_capacity, config.slot_size, config.slot_count);
         let offsets = SegmentOffsets::calculate(config.ring_capacity, config.slot_count);
 
         // Create anonymous mmap.
@@ -145,8 +146,14 @@ impl ShmSession {
     /// Get our send ring (we write, peer reads).
     pub fn send_ring(&self) -> DescRing {
         let (header_offset, descs_offset) = match self.role {
-            PeerRole::A => (self.offsets.ring_a_to_b_header, self.offsets.ring_a_to_b_descs),
-            PeerRole::B => (self.offsets.ring_b_to_a_header, self.offsets.ring_b_to_a_descs),
+            PeerRole::A => (
+                self.offsets.ring_a_to_b_header,
+                self.offsets.ring_a_to_b_descs,
+            ),
+            PeerRole::B => (
+                self.offsets.ring_b_to_a_header,
+                self.offsets.ring_b_to_a_descs,
+            ),
         };
 
         unsafe {
@@ -160,8 +167,14 @@ impl ShmSession {
     /// Get our receive ring (peer writes, we read).
     pub fn recv_ring(&self) -> DescRing {
         let (header_offset, descs_offset) = match self.role {
-            PeerRole::A => (self.offsets.ring_b_to_a_header, self.offsets.ring_b_to_a_descs),
-            PeerRole::B => (self.offsets.ring_a_to_b_header, self.offsets.ring_a_to_b_descs),
+            PeerRole::A => (
+                self.offsets.ring_b_to_a_header,
+                self.offsets.ring_b_to_a_descs,
+            ),
+            PeerRole::B => (
+                self.offsets.ring_a_to_b_header,
+                self.offsets.ring_a_to_b_descs,
+            ),
         };
 
         unsafe {
@@ -324,12 +337,8 @@ unsafe fn create_anonymous_mmap(size: usize) -> Result<NonNull<u8>, SessionError
         return Err(SessionError::System(std::io::Error::last_os_error()));
     }
 
-    NonNull::new(ptr as *mut u8).ok_or_else(|| {
-        SessionError::System(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "mmap returned null",
-        ))
-    })
+    NonNull::new(ptr as *mut u8)
+        .ok_or_else(|| SessionError::System(std::io::Error::other("mmap returned null")))
 }
 
 /// Initialize the SHM segment.
@@ -347,11 +356,13 @@ unsafe fn initialize_segment(
     header.init();
 
     // Initialize A→B ring.
-    let ring_a_to_b = unsafe { &mut *(base.add(offsets.ring_a_to_b_header) as *mut DescRingHeader) };
+    let ring_a_to_b =
+        unsafe { &mut *(base.add(offsets.ring_a_to_b_header) as *mut DescRingHeader) };
     ring_a_to_b.init(config.ring_capacity);
 
     // Initialize B→A ring.
-    let ring_b_to_a = unsafe { &mut *(base.add(offsets.ring_b_to_a_header) as *mut DescRingHeader) };
+    let ring_b_to_a =
+        unsafe { &mut *(base.add(offsets.ring_b_to_a_header) as *mut DescRingHeader) };
     ring_b_to_a.init(config.ring_capacity);
 
     // Initialize data segment header.
@@ -421,7 +432,9 @@ mod tests {
         desc.method_id = 100;
 
         // Enqueue on A.
-        let mut local_head = a.local_send_head().load(std::sync::atomic::Ordering::Relaxed);
+        let mut local_head = a
+            .local_send_head()
+            .load(std::sync::atomic::Ordering::Relaxed);
         send_ring.enqueue(&mut local_head, &desc).unwrap();
         a.local_send_head()
             .store(local_head, std::sync::atomic::Ordering::Release);

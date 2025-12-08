@@ -82,13 +82,20 @@ pub use rapace_macros::service;
 // Re-export core types
 pub use rapace_core::{
     // Error types
-    DecodeError, EncodeError, ErrorCode, RpcError, TransportError, ValidationError,
+    DecodeError,
+    EncodeError,
+    ErrorCode,
+    // Frame types (for advanced use)
+    Frame,
+    FrameFlags,
+    MsgDescHot,
+    RpcError,
     // Streaming
     Streaming,
     // Transport trait (for advanced use)
     Transport,
-    // Frame types (for advanced use)
-    Frame, FrameFlags, MsgDescHot,
+    TransportError,
+    ValidationError,
 };
 
 // Re-export serialization
@@ -138,7 +145,7 @@ pub mod transport {
 /// Enable with `features = ["session"]`.
 #[cfg(feature = "session")]
 pub mod session {
-    pub use rapace_testkit::{Session, ChannelLifecycle, ChannelState, DEFAULT_INITIAL_CREDITS};
+    pub use rapace_testkit::{ChannelLifecycle, ChannelState, Session, DEFAULT_INITIAL_CREDITS};
 }
 
 #[cfg(feature = "mem")]

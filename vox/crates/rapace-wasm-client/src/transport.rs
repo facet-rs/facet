@@ -112,7 +112,9 @@ impl WasmWebSocket {
     }
 
     /// Send binary data.
-    pub async fn send(&self, data: &[u8]) -> Result<(), JsValue> {
+    ///
+    /// This is synchronous since WebSocket.send() doesn't block.
+    pub fn send(&self, data: &[u8]) -> Result<(), JsValue> {
         if *self.closed.borrow() {
             return Err(JsValue::from_str("WebSocket is closed"));
         }
@@ -124,29 +126,27 @@ impl WasmWebSocket {
         self.ws.send_with_u8_array(data)
     }
 
-    /// Receive binary data.
+    /// Try to receive binary data without blocking.
     ///
-    /// This polls until a message is available.
-    pub async fn recv(&mut self) -> Result<Vec<u8>, JsValue> {
-        loop {
-            // Check for errors
-            if let Some(err) = self.error.borrow().as_ref() {
-                return Err(JsValue::from_str(err));
-            }
-
-            // Check if closed
-            if *self.closed.borrow() && self.received.borrow().is_empty() {
-                return Err(JsValue::from_str("WebSocket closed"));
-            }
-
-            // Check for received data
-            if let Some(data) = self.received.borrow_mut().pop_front() {
-                return Ok(data);
-            }
-
-            // Yield to allow other tasks to run and messages to arrive
-            gloo_timers::future::TimeoutFuture::new(1).await;
+    /// Returns `Ok(Some(data))` if data is available, `Ok(None)` if no data yet,
+    /// or `Err` if the socket is closed or errored.
+    pub fn try_recv(&self) -> Result<Option<Vec<u8>>, JsValue> {
+        // Check for errors
+        if let Some(err) = self.error.borrow().as_ref() {
+            return Err(JsValue::from_str(err));
         }
+
+        // Check for received data
+        if let Some(data) = self.received.borrow_mut().pop_front() {
+            return Ok(Some(data));
+        }
+
+        // Check if closed (after checking for data, since there might be buffered messages)
+        if *self.closed.borrow() {
+            return Err(JsValue::from_str("WebSocket closed"));
+        }
+
+        Ok(None)
     }
 
     /// Close the WebSocket.
@@ -155,7 +155,30 @@ impl WasmWebSocket {
     }
 
     /// Check if the WebSocket is closed.
+    #[allow(dead_code)]
     pub fn is_closed(&self) -> bool {
         *self.closed.borrow()
+    }
+}
+
+/// Receive binary data from a WebSocket wrapped in Rc<RefCell<...>>.
+///
+/// This is a free function to avoid holding the RefCell borrow across await points.
+pub async fn recv_from(ws: &Rc<RefCell<WasmWebSocket>>) -> Result<Vec<u8>, JsValue> {
+    loop {
+        // Try to get data without holding borrow across await.
+        // We use a block to ensure the borrow is dropped before the await.
+        let result = {
+            let ws_ref = ws.borrow();
+            ws_ref.try_recv()
+        };
+
+        match result? {
+            Some(data) => return Ok(data),
+            None => {
+                // Yield to allow other tasks to run and messages to arrive
+                gloo_timers::future::TimeoutFuture::new(1).await;
+            }
+        }
     }
 }

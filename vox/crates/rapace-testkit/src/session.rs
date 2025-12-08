@@ -26,9 +26,10 @@ pub const DEFAULT_INITIAL_CREDITS: u32 = 65536;
 /// - HalfClosedLocal: We sent EOS, peer can still send
 /// - HalfClosedRemote: Peer sent EOS, we can still send
 /// - Closed: Both sides sent EOS (or cancelled)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ChannelLifecycle {
     /// Channel is open, both sides can send.
+    #[default]
     Open,
     /// We sent EOS, waiting for peer's EOS.
     HalfClosedLocal,
@@ -36,12 +37,6 @@ pub enum ChannelLifecycle {
     HalfClosedRemote,
     /// Channel is fully closed (both EOS received, or cancelled).
     Closed,
-}
-
-impl Default for ChannelLifecycle {
-    fn default() -> Self {
-        Self::Open
-    }
 }
 
 /// Per-channel state tracked by the session.
@@ -292,10 +287,7 @@ impl<T: Transport + Send + Sync> Session<T> {
     /// Get a snapshot of the channel state.
     pub fn get_channel_state(&self, channel_id: u32) -> ChannelState {
         let channels = self.channels.lock();
-        channels
-            .get(&channel_id)
-            .cloned()
-            .unwrap_or_default()
+        channels.get(&channel_id).cloned().unwrap_or_default()
     }
 
     /// Check if a channel is fully closed.
@@ -344,8 +336,6 @@ fn now_ns() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // Session tests would go here, but they need a transport implementation.
     // The conformance tests in testkit exercise Session behavior.
 }

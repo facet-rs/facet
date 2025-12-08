@@ -24,7 +24,7 @@ impl Default for DescriptorLimits {
             max_channels: 1024,
             max_frames_in_flight_per_channel: 64,
             max_frames_in_flight_total: 4096,
-            slot_count: 0,  // No slots by default (non-SHM)
+            slot_count: 0, // No slots by default (non-SHM)
             slot_size: 0,
         }
     }

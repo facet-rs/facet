@@ -224,6 +224,7 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
 
 /// Method kind: unary or server-streaming.
 #[derive(Clone, Debug)]
+#[allow(clippy::large_enum_variant)]
 enum MethodKind {
     /// Unary RPC: single request, single response.
     Unary,

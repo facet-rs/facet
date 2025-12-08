@@ -249,7 +249,10 @@ fn run_browser_test(
 }
 
 /// Wait for a server process to output a ready message, then spawn a thread to drain remaining output.
-fn wait_for_server_ready(process: &mut Child, ready_marker: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn wait_for_server_ready(
+    process: &mut Child,
+    ready_marker: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let stdout = process.stdout.take().ok_or("no stdout")?;
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
@@ -261,10 +264,8 @@ fn wait_for_server_ready(process: &mut Child, ready_marker: &str) -> Result<(), 
         if line.contains(ready_marker) {
             // Spawn thread to drain remaining output so process doesn't block
             std::thread::spawn(move || {
-                for line in lines {
-                    if let Ok(line) = line {
-                        println!("  [server] {}", line);
-                    }
+                for line in lines.map_while(Result::ok) {
+                    println!("  [server] {}", line);
                 }
             });
             return Ok(());
