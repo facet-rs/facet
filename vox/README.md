@@ -157,8 +157,6 @@ Trait → Facet → Encoder → Transport → [wire] → Transport → Decoder �
 
 ## The Giants Whose Shoulders We Stand On
 
-rapace draws inspiration and lessons from many projects. This isn't copying—it's standing in a well-lit lineage:
-
 - **gRPC / HTTP/2** — Streaming RPC, status codes, deadlines, and the basic "service trait ↔ wire method" mental model.
 - **tonic / tower (Rust)** — Ergonomic async service traits and middleware-style layering between "transport" and "RPC semantics".
 - **Cap'n Proto / FlatBuffers** — Schema-driven, zero-copy thinking and the idea of treating messages as structured views over bytes.
