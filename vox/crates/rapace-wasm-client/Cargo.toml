@@ -1,0 +1,23 @@
+[package]
+name = "rapace-wasm-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "WebAssembly client for rapace RPC (browser support)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rapace-core = { workspace = true }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true }
+gloo-timers = { workspace = true }
+facet = { workspace = true }
+facet-postcard = { workspace = true }
+
+[features]
+default = []

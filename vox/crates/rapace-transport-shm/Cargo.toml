@@ -10,6 +10,7 @@ description = "Shared memory transport for rapace (performance reference impleme
 rapace-core.workspace = true
 tokio.workspace = true
 libc.workspace = true
+parking_lot.workspace = true
 
 [dev-dependencies]
 rapace-testkit.workspace = true

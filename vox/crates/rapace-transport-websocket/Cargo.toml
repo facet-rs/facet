@@ -10,7 +10,8 @@ description = "WebSocket transport for rapace"
 rapace-core.workspace = true
 tokio.workspace = true
 futures.workspace = true
-# TODO: add websocket library (tokio-tungstenite or similar)
+tokio-tungstenite.workspace = true
+parking_lot.workspace = true
 
 [dev-dependencies]
 rapace-testkit.workspace = true

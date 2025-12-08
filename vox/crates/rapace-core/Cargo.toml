@@ -10,6 +10,7 @@ description = "Core types and traits for rapace RPC"
 bitflags.workspace = true
 facet.workspace = true
 facet-core.workspace = true
+futures.workspace = true
 
 [dev-dependencies]
 proptest = "1"

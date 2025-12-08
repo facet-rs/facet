@@ -20,6 +20,7 @@ mod flags;
 mod frame;
 mod header;
 mod limits;
+mod streaming;
 mod transport;
 mod validation;
 
@@ -31,5 +32,6 @@ pub use flags::*;
 pub use frame::*;
 pub use header::*;
 pub use limits::*;
+pub use streaming::*;
 pub use transport::*;
 pub use validation::*;

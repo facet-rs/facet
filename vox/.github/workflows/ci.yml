@@ -27,14 +27,66 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@nextest
+
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
       - name: Build
         run: cargo build --all-features
 
-      - name: Run tests
-        run: cargo test --all-features
+      - name: Run tests (xtask)
+        run: cargo xtask test
+
+  browser-test:
+    name: Browser / WebSocket
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (with wasm target)
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright
+        working-directory: examples/browser_ws
+        run: |
+          npm install
+          npx playwright install chromium --with-deps
+
+      - name: Run browser tests
+        run: cargo xtask browser-test
+
+  fuzz-smoke:
+    name: Fuzz smoke tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run fuzz harnesses (test mode)
+        run: cargo xtask fuzz
 
   clippy:
     name: Clippy
@@ -51,8 +103,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Clippy
-        run: cargo clippy --all-features -- -D warnings
+      - name: Clippy (xtask)
+        run: cargo xtask clippy
 
   fmt:
     name: Format
@@ -67,7 +119,7 @@ jobs:
           components: rustfmt
 
       - name: Check formatting
-        run: cargo fmt --all -- --check
+        run: cargo xtask fmt
 
   doc:
     name: Documentation

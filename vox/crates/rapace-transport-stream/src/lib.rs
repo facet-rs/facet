@@ -505,4 +505,33 @@ mod conformance_tests {
     async fn session_deadline_check() {
         rapace_testkit::run_session_deadline_check::<StreamFactory>().await;
     }
+
+    // Streaming tests
+
+    #[tokio::test]
+    async fn server_streaming_happy_path() {
+        rapace_testkit::run_server_streaming_happy_path::<StreamFactory>().await;
+    }
+
+    #[tokio::test]
+    async fn client_streaming_happy_path() {
+        rapace_testkit::run_client_streaming_happy_path::<StreamFactory>().await;
+    }
+
+    #[tokio::test]
+    async fn bidirectional_streaming() {
+        rapace_testkit::run_bidirectional_streaming::<StreamFactory>().await;
+    }
+
+    #[tokio::test]
+    async fn streaming_cancellation() {
+        rapace_testkit::run_streaming_cancellation::<StreamFactory>().await;
+    }
+
+    // Macro-generated streaming tests
+
+    #[tokio::test]
+    async fn macro_server_streaming() {
+        rapace_testkit::run_macro_server_streaming::<StreamFactory>().await;
+    }
 }

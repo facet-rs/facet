@@ -10,6 +10,7 @@ description = "Conformance test suite for rapace transports"
 rapace-core.workspace = true
 rapace-macros.workspace = true
 tokio.workspace = true
+tokio-stream.workspace = true
 futures.workspace = true
 facet.workspace = true
 facet-postcard.workspace = true

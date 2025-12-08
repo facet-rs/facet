@@ -2,6 +2,7 @@
 //!
 //! The Session handles:
 //! - Per-channel credit tracking (flow control)
+//! - Channel state machine (Open → HalfClosedLocal/Remote → Closed)
 //! - Cancellation (marking channels as cancelled, dropping late frames)
 //! - Deadline checking before dispatch
 //! - Control frame processing (PING/PONG, CANCEL, CREDITS)
@@ -18,21 +19,93 @@ use rapace_core::{
 /// Default initial credits for new channels (64KB).
 pub const DEFAULT_INITIAL_CREDITS: u32 = 65536;
 
+/// Channel lifecycle state.
+///
+/// Follows HTTP/2-style half-close semantics:
+/// - Open: Both sides can send
+/// - HalfClosedLocal: We sent EOS, peer can still send
+/// - HalfClosedRemote: Peer sent EOS, we can still send
+/// - Closed: Both sides sent EOS (or cancelled)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelLifecycle {
+    /// Channel is open, both sides can send.
+    Open,
+    /// We sent EOS, waiting for peer's EOS.
+    HalfClosedLocal,
+    /// Peer sent EOS, we can still send.
+    HalfClosedRemote,
+    /// Channel is fully closed (both EOS received, or cancelled).
+    Closed,
+}
+
+impl Default for ChannelLifecycle {
+    fn default() -> Self {
+        Self::Open
+    }
+}
+
 /// Per-channel state tracked by the session.
 #[derive(Debug, Clone)]
-struct ChannelState {
+pub struct ChannelState {
+    /// Channel lifecycle state.
+    pub lifecycle: ChannelLifecycle,
     /// Available credits for sending on this channel.
-    send_credits: u32,
+    pub send_credits: u32,
     /// Whether this channel has been cancelled.
-    cancelled: bool,
+    pub cancelled: bool,
+    /// Number of data frames sent.
+    pub frames_sent: u64,
+    /// Number of data frames received.
+    pub frames_received: u64,
 }
 
 impl Default for ChannelState {
     fn default() -> Self {
         Self {
+            lifecycle: ChannelLifecycle::Open,
             send_credits: DEFAULT_INITIAL_CREDITS,
             cancelled: false,
+            frames_sent: 0,
+            frames_received: 0,
         }
+    }
+}
+
+impl ChannelState {
+    /// Check if we can send on this channel.
+    pub fn can_send(&self) -> bool {
+        !self.cancelled
+            && matches!(
+                self.lifecycle,
+                ChannelLifecycle::Open | ChannelLifecycle::HalfClosedRemote
+            )
+    }
+
+    /// Check if we can receive on this channel.
+    pub fn can_receive(&self) -> bool {
+        !self.cancelled
+            && matches!(
+                self.lifecycle,
+                ChannelLifecycle::Open | ChannelLifecycle::HalfClosedLocal
+            )
+    }
+
+    /// Transition state after we send EOS.
+    pub fn mark_local_eos(&mut self) {
+        self.lifecycle = match self.lifecycle {
+            ChannelLifecycle::Open => ChannelLifecycle::HalfClosedLocal,
+            ChannelLifecycle::HalfClosedRemote => ChannelLifecycle::Closed,
+            other => other, // Already half-closed or closed
+        };
+    }
+
+    /// Transition state after receiving EOS from peer.
+    pub fn mark_remote_eos(&mut self) {
+        self.lifecycle = match self.lifecycle {
+            ChannelLifecycle::Open => ChannelLifecycle::HalfClosedRemote,
+            ChannelLifecycle::HalfClosedLocal => ChannelLifecycle::Closed,
+            other => other, // Already half-closed or closed
+        };
     }
 }
 
@@ -69,23 +142,25 @@ impl<T: Transport + Send + Sync> Session<T> {
         &self.transport
     }
 
-    /// Send a frame, enforcing credit limits for data channels.
+    /// Send a frame, enforcing credit limits and channel state for data channels.
     ///
     /// - Control channel (0) is exempt from credit checks.
     /// - Data channels require `payload_len <= available_credits`.
+    /// - Tracks EOS to transition channel state.
     /// - Returns `RpcError::Status { code: ResourceExhausted }` if insufficient credits.
     pub async fn send_frame(&self, frame: &Frame) -> Result<(), RpcError> {
         let channel_id = frame.desc.channel_id;
         let payload_len = frame.desc.payload_len;
+        let has_eos = frame.desc.flags.contains(FrameFlags::EOS);
 
-        // Control channel is exempt from credit checks
+        // Control channel is exempt from credit checks and state tracking
         if channel_id != 0 && frame.desc.flags.contains(FrameFlags::DATA) {
             let mut channels = self.channels.lock();
             let state = channels.entry(channel_id).or_default();
 
-            // Check if channel is cancelled
-            if state.cancelled {
-                // Silently drop frames for cancelled channels
+            // Check if we can send on this channel
+            if !state.can_send() {
+                // Silently drop frames for cancelled/closed channels
                 return Ok(());
             }
 
@@ -102,6 +177,12 @@ impl<T: Transport + Send + Sync> Session<T> {
 
             // Deduct credits
             state.send_credits -= payload_len;
+            state.frames_sent += 1;
+
+            // Track EOS
+            if has_eos {
+                state.mark_local_eos();
+            }
         }
 
         self.transport
@@ -110,11 +191,12 @@ impl<T: Transport + Send + Sync> Session<T> {
             .map_err(RpcError::Transport)
     }
 
-    /// Receive a frame, processing control frames and filtering cancelled channels.
+    /// Receive a frame, processing control frames and filtering cancelled/closed channels.
     ///
     /// - Processes CANCEL control frames to mark channels as cancelled.
     /// - Processes CREDITS control frames to update send credits.
-    /// - Drops data frames for cancelled channels.
+    /// - Tracks EOS to transition channel state.
+    /// - Drops data frames for cancelled/closed channels.
     /// - Returns frames that should be dispatched.
     pub async fn recv_frame(&self) -> Result<FrameView<'_>, TransportError> {
         loop {
@@ -127,14 +209,27 @@ impl<T: Transport + Send + Sync> Session<T> {
                 return Ok(frame);
             }
 
-            // Check if this channel is cancelled
+            let channel_id = frame.desc.channel_id;
+            let has_eos = frame.desc.flags.contains(FrameFlags::EOS);
+
+            // Check if this channel can receive and update state
             {
-                let channels = self.channels.lock();
-                if let Some(state) = channels.get(&frame.desc.channel_id) {
-                    if state.cancelled {
-                        // Drop frames for cancelled channels, continue receiving
-                        continue;
-                    }
+                let mut channels = self.channels.lock();
+                let state = channels.entry(channel_id).or_default();
+
+                if !state.can_receive() {
+                    // Drop frames for cancelled/closed channels, continue receiving
+                    continue;
+                }
+
+                // Track received frame
+                if frame.desc.flags.contains(FrameFlags::DATA) {
+                    state.frames_received += 1;
+                }
+
+                // Track EOS from peer
+                if has_eos {
+                    state.mark_remote_eos();
                 }
             }
 
@@ -183,6 +278,29 @@ impl<T: Transport + Send + Sync> Session<T> {
             .get(&channel_id)
             .map(|s| s.send_credits)
             .unwrap_or(DEFAULT_INITIAL_CREDITS)
+    }
+
+    /// Get the lifecycle state of a channel.
+    pub fn get_lifecycle(&self, channel_id: u32) -> ChannelLifecycle {
+        let channels = self.channels.lock();
+        channels
+            .get(&channel_id)
+            .map(|s| s.lifecycle)
+            .unwrap_or(ChannelLifecycle::Open)
+    }
+
+    /// Get a snapshot of the channel state.
+    pub fn get_channel_state(&self, channel_id: u32) -> ChannelState {
+        let channels = self.channels.lock();
+        channels
+            .get(&channel_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Check if a channel is fully closed.
+    pub fn is_closed(&self, channel_id: u32) -> bool {
+        self.get_lifecycle(channel_id) == ChannelLifecycle::Closed
     }
 
     /// Process a control frame, updating session state.

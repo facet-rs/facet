@@ -35,7 +35,7 @@ use rapace_core::{
 };
 
 mod session;
-pub use session::Session;
+pub use session::{ChannelLifecycle, ChannelState, Session, DEFAULT_INITIAL_CREDITS};
 
 /// Error type for test scenarios.
 #[derive(Debug)]
@@ -108,6 +108,37 @@ pub struct AdderImpl;
 impl Adder for AdderImpl {
     async fn add(&self, a: i32, b: i32) -> i32 {
         a + b
+    }
+}
+
+// ============================================================================
+// Test service: RangeService (server-streaming)
+// ============================================================================
+
+/// Service with server-streaming RPC for testing.
+///
+/// Uses the new `Streaming<T>` return type pattern.
+#[allow(async_fn_in_trait)]
+#[rapace_macros::service]
+pub trait RangeService {
+    /// Stream numbers from 0 to n-1.
+    async fn range(&self, n: u32) -> rapace_core::Streaming<u32>;
+}
+
+/// Implementation of the RangeService for testing.
+pub struct RangeServiceImpl;
+
+impl RangeService for RangeServiceImpl {
+    async fn range(&self, n: u32) -> rapace_core::Streaming<u32> {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        tokio::spawn(async move {
+            for i in 0..n {
+                if tx.send(Ok(i)).await.is_err() {
+                    break;
+                }
+            }
+        });
+        Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx))
     }
 }
 
@@ -1146,6 +1177,630 @@ async fn run_session_deadline_check_inner<F: TransportFactory>() -> Result<(), T
             "past deadline should be exceeded".into(),
         ));
     }
+
+    Ok(())
+}
+
+// ============================================================================
+// Streaming scenarios
+// ============================================================================
+// These tests exercise streaming semantics: multiple frames per channel,
+// EOS handling, and half-close state transitions.
+
+/// Test server-streaming: client sends request, server sends N responses + EOS.
+///
+/// Verifies:
+/// - Multiple DATA frames on the same channel
+/// - EOS flag properly terminates the stream
+/// - Channel state transitions to HalfClosedRemote after EOS
+pub async fn run_server_streaming_happy_path<F: TransportFactory>() {
+    let result = run_server_streaming_happy_path_inner::<F>().await;
+    if let Err(e) = result {
+        panic!("run_server_streaming_happy_path failed: {}", e);
+    }
+}
+
+async fn run_server_streaming_happy_path_inner<F: TransportFactory>() -> Result<(), TestError> {
+    let (client_transport, server_transport) = F::connect_pair().await?;
+    let client_transport = Arc::new(client_transport);
+    let server_transport = Arc::new(server_transport);
+
+    let client_session = Session::new(client_transport.clone());
+    let server_session = Session::new(server_transport.clone());
+
+    let channel_id = 1u32;
+    let item_count = 5;
+
+    // Server: receive request, send N items, then EOS
+    let server_handle = tokio::spawn({
+        let server_session = server_session;
+        async move {
+            // Receive request
+            let request = server_session.recv_frame().await?;
+            if request.desc.channel_id != channel_id {
+                return Err(TestError::Assertion(format!(
+                    "expected channel {}, got {}",
+                    channel_id, request.desc.channel_id
+                )));
+            }
+
+            // Request should have EOS (client done sending)
+            if !request.desc.flags.contains(FrameFlags::EOS) {
+                return Err(TestError::Assertion("request should have EOS".into()));
+            }
+
+            // Parse request to get count
+            let count: i32 = facet_postcard::from_bytes(request.payload)
+                .map_err(|e| TestError::Assertion(format!("decode request: {:?}", e)))?;
+
+            // Send N items (DATA without EOS)
+            for i in 0..count {
+                let mut desc = MsgDescHot::new();
+                desc.msg_id = (i + 1) as u64;
+                desc.channel_id = channel_id;
+                desc.method_id = request.desc.method_id;
+                desc.flags = FrameFlags::DATA; // No EOS yet
+
+                let item_bytes = facet_postcard::to_vec(&i).unwrap();
+                let frame = Frame::with_inline_payload(desc, &item_bytes)
+                    .expect("item should fit inline");
+                server_session.send_frame(&frame).await?;
+            }
+
+            // Send final EOS frame (empty payload)
+            let mut eos_desc = MsgDescHot::new();
+            eos_desc.msg_id = (count + 1) as u64;
+            eos_desc.channel_id = channel_id;
+            eos_desc.method_id = request.desc.method_id;
+            eos_desc.flags = FrameFlags::DATA | FrameFlags::EOS;
+
+            let eos_frame = Frame::with_inline_payload(eos_desc, &[])
+                .expect("empty frame should fit inline");
+            server_session.send_frame(&eos_frame).await?;
+
+            Ok::<_, TestError>(())
+        }
+    });
+
+    // Client: send request, receive N items + EOS
+    let request_bytes = facet_postcard::to_vec(&(item_count as i32)).unwrap();
+
+    let mut desc = MsgDescHot::new();
+    desc.msg_id = 1;
+    desc.channel_id = channel_id;
+    desc.method_id = 1;
+    desc.flags = FrameFlags::DATA | FrameFlags::EOS; // Client sends request + EOS
+
+    let frame = Frame::with_inline_payload(desc, &request_bytes).expect("should fit inline");
+    client_session.send_frame(&frame).await?;
+
+    // After sending EOS, client channel should be HalfClosedLocal
+    let state = client_session.get_lifecycle(channel_id);
+    if state != session::ChannelLifecycle::HalfClosedLocal {
+        return Err(TestError::Assertion(format!(
+            "expected HalfClosedLocal after client EOS, got {:?}",
+            state
+        )));
+    }
+
+    // Receive items
+    let mut received = Vec::new();
+    loop {
+        let frame = client_session.recv_frame().await?;
+        if frame.desc.channel_id != channel_id {
+            return Err(TestError::Assertion(format!(
+                "expected channel {}, got {}",
+                channel_id, frame.desc.channel_id
+            )));
+        }
+
+        // Check if this is EOS
+        if frame.desc.flags.contains(FrameFlags::EOS) {
+            break;
+        }
+
+        // Parse item
+        let item: i32 = facet_postcard::from_bytes(frame.payload)
+            .map_err(|e| TestError::Assertion(format!("decode item: {:?}", e)))?;
+        received.push(item);
+    }
+
+    // Verify received items
+    let expected: Vec<i32> = (0..item_count as i32).collect();
+    if received != expected {
+        return Err(TestError::Assertion(format!(
+            "expected {:?}, got {:?}",
+            expected, received
+        )));
+    }
+
+    // After receiving EOS, channel should be Closed (both sides sent EOS)
+    let final_state = client_session.get_lifecycle(channel_id);
+    if final_state != session::ChannelLifecycle::Closed {
+        return Err(TestError::Assertion(format!(
+            "expected Closed after both EOS, got {:?}",
+            final_state
+        )));
+    }
+
+    server_handle
+        .await
+        .map_err(|e| TestError::Setup(format!("server task panicked: {}", e)))?
+        .map_err(|e| TestError::Setup(format!("server error: {}", e)))?;
+
+    Ok(())
+}
+
+/// Test client-streaming: client sends N items + EOS, server sends single response.
+///
+/// Verifies:
+/// - Multiple DATA frames from client
+/// - Server waits for EOS before responding
+/// - Proper state transitions
+pub async fn run_client_streaming_happy_path<F: TransportFactory>() {
+    let result = run_client_streaming_happy_path_inner::<F>().await;
+    if let Err(e) = result {
+        panic!("run_client_streaming_happy_path failed: {}", e);
+    }
+}
+
+async fn run_client_streaming_happy_path_inner<F: TransportFactory>() -> Result<(), TestError> {
+    let (client_transport, server_transport) = F::connect_pair().await?;
+    let client_transport = Arc::new(client_transport);
+    let server_transport = Arc::new(server_transport);
+
+    let client_session = Session::new(client_transport.clone());
+    let server_session = Session::new(server_transport.clone());
+
+    let channel_id = 1u32;
+    let items_to_send: Vec<i32> = vec![10, 20, 30, 40, 50];
+
+    // Server: receive N items until EOS, compute sum, send response + EOS
+    let server_handle = tokio::spawn({
+        let server_session = server_session;
+        let expected_items = items_to_send.clone();
+        async move {
+            let mut sum = 0i32;
+            let mut count = 0;
+
+            loop {
+                let frame = server_session.recv_frame().await?;
+                if frame.desc.channel_id != channel_id {
+                    return Err(TestError::Assertion(format!(
+                        "expected channel {}, got {}",
+                        channel_id, frame.desc.channel_id
+                    )));
+                }
+
+                // Parse item (if not just EOS marker)
+                if !frame.payload.is_empty() {
+                    let item: i32 = facet_postcard::from_bytes(frame.payload)
+                        .map_err(|e| TestError::Assertion(format!("decode item: {:?}", e)))?;
+                    sum += item;
+                    count += 1;
+                }
+
+                // Check for EOS
+                if frame.desc.flags.contains(FrameFlags::EOS) {
+                    break;
+                }
+            }
+
+            // Verify we got all items
+            if count != expected_items.len() {
+                return Err(TestError::Assertion(format!(
+                    "expected {} items, got {}",
+                    expected_items.len(),
+                    count
+                )));
+            }
+
+            // Send response + EOS
+            let mut desc = MsgDescHot::new();
+            desc.msg_id = 1;
+            desc.channel_id = channel_id;
+            desc.method_id = 1;
+            desc.flags = FrameFlags::DATA | FrameFlags::EOS;
+
+            let response_bytes = facet_postcard::to_vec(&sum).unwrap();
+            let frame = Frame::with_inline_payload(desc, &response_bytes)
+                .expect("should fit inline");
+            server_session.send_frame(&frame).await?;
+
+            Ok::<_, TestError>(())
+        }
+    });
+
+    // Client: send N items + EOS, receive response
+    for (i, &item) in items_to_send.iter().enumerate() {
+        let is_last = i == items_to_send.len() - 1;
+
+        let mut desc = MsgDescHot::new();
+        desc.msg_id = (i + 1) as u64;
+        desc.channel_id = channel_id;
+        desc.method_id = 1;
+        desc.flags = if is_last {
+            FrameFlags::DATA | FrameFlags::EOS
+        } else {
+            FrameFlags::DATA
+        };
+
+        let item_bytes = facet_postcard::to_vec(&item).unwrap();
+        let frame = Frame::with_inline_payload(desc, &item_bytes).expect("should fit inline");
+        client_session.send_frame(&frame).await?;
+    }
+
+    // Receive response
+    let response = client_session.recv_frame().await?;
+    if response.desc.channel_id != channel_id {
+        return Err(TestError::Assertion(format!(
+            "expected channel {}, got {}",
+            channel_id, response.desc.channel_id
+        )));
+    }
+    if !response.desc.flags.contains(FrameFlags::EOS) {
+        return Err(TestError::Assertion("response should have EOS".into()));
+    }
+
+    let sum: i32 = facet_postcard::from_bytes(response.payload)
+        .map_err(|e| TestError::Assertion(format!("decode response: {:?}", e)))?;
+
+    let expected_sum: i32 = items_to_send.iter().sum();
+    if sum != expected_sum {
+        return Err(TestError::Assertion(format!(
+            "expected sum {}, got {}",
+            expected_sum, sum
+        )));
+    }
+
+    // Channel should be closed
+    let final_state = client_session.get_lifecycle(channel_id);
+    if final_state != session::ChannelLifecycle::Closed {
+        return Err(TestError::Assertion(format!(
+            "expected Closed, got {:?}",
+            final_state
+        )));
+    }
+
+    server_handle
+        .await
+        .map_err(|e| TestError::Setup(format!("server task panicked: {}", e)))?
+        .map_err(|e| TestError::Setup(format!("server error: {}", e)))?;
+
+    Ok(())
+}
+
+/// Test bidirectional streaming: both sides send multiple items.
+///
+/// Verifies:
+/// - Concurrent DATA frames in both directions
+/// - Independent EOS per direction (half-close)
+/// - Proper state machine transitions
+pub async fn run_bidirectional_streaming<F: TransportFactory>() {
+    let result = run_bidirectional_streaming_inner::<F>().await;
+    if let Err(e) = result {
+        panic!("run_bidirectional_streaming failed: {}", e);
+    }
+}
+
+async fn run_bidirectional_streaming_inner<F: TransportFactory>() -> Result<(), TestError> {
+    let (client_transport, server_transport) = F::connect_pair().await?;
+    let client_transport = Arc::new(client_transport);
+    let server_transport = Arc::new(server_transport);
+
+    let client_session = Session::new(client_transport.clone());
+    let server_session = Session::new(server_transport.clone());
+
+    let channel_id = 1u32;
+
+    // Server: send items 100, 200, 300 then EOS; receive items until EOS
+    let server_handle = tokio::spawn({
+        let server_session = server_session;
+        async move {
+            let mut received = Vec::new();
+
+            // Send our items
+            for (i, item) in [100i32, 200, 300].iter().enumerate() {
+                let is_last = i == 2;
+                let mut desc = MsgDescHot::new();
+                desc.msg_id = (i + 1) as u64;
+                desc.channel_id = channel_id;
+                desc.method_id = 1;
+                desc.flags = if is_last {
+                    FrameFlags::DATA | FrameFlags::EOS
+                } else {
+                    FrameFlags::DATA
+                };
+
+                let item_bytes = facet_postcard::to_vec(item).unwrap();
+                let frame = Frame::with_inline_payload(desc, &item_bytes)
+                    .expect("should fit inline");
+                server_session.send_frame(&frame).await?;
+            }
+
+            // Receive items until client sends EOS
+            loop {
+                let frame = server_session.recv_frame().await?;
+                if frame.desc.channel_id != channel_id {
+                    continue; // Skip other channels
+                }
+
+                if !frame.payload.is_empty() {
+                    let item: i32 = facet_postcard::from_bytes(frame.payload)
+                        .map_err(|e| TestError::Assertion(format!("decode: {:?}", e)))?;
+                    received.push(item);
+                }
+
+                if frame.desc.flags.contains(FrameFlags::EOS) {
+                    break;
+                }
+            }
+
+            // Verify received items
+            let expected = vec![1, 2, 3, 4, 5];
+            if received != expected {
+                return Err(TestError::Assertion(format!(
+                    "server expected {:?}, got {:?}",
+                    expected, received
+                )));
+            }
+
+            Ok::<_, TestError>(())
+        }
+    });
+
+    // Client: send items 1, 2, 3, 4, 5 then EOS; receive items until EOS
+    let mut client_received = Vec::new();
+
+    // Send client items
+    for (i, item) in [1i32, 2, 3, 4, 5].iter().enumerate() {
+        let is_last = i == 4;
+        let mut desc = MsgDescHot::new();
+        desc.msg_id = (i + 100) as u64;
+        desc.channel_id = channel_id;
+        desc.method_id = 1;
+        desc.flags = if is_last {
+            FrameFlags::DATA | FrameFlags::EOS
+        } else {
+            FrameFlags::DATA
+        };
+
+        let item_bytes = facet_postcard::to_vec(item).unwrap();
+        let frame = Frame::with_inline_payload(desc, &item_bytes).expect("should fit inline");
+        client_session.send_frame(&frame).await?;
+    }
+
+    // Receive server items until EOS
+    loop {
+        let frame = client_session.recv_frame().await?;
+        if frame.desc.channel_id != channel_id {
+            continue;
+        }
+
+        if !frame.payload.is_empty() {
+            let item: i32 = facet_postcard::from_bytes(frame.payload)
+                .map_err(|e| TestError::Assertion(format!("decode: {:?}", e)))?;
+            client_received.push(item);
+        }
+
+        if frame.desc.flags.contains(FrameFlags::EOS) {
+            break;
+        }
+    }
+
+    // Verify client received items
+    let expected = vec![100, 200, 300];
+    if client_received != expected {
+        return Err(TestError::Assertion(format!(
+            "client expected {:?}, got {:?}",
+            expected, client_received
+        )));
+    }
+
+    // Channel should be closed
+    let final_state = client_session.get_lifecycle(channel_id);
+    if final_state != session::ChannelLifecycle::Closed {
+        return Err(TestError::Assertion(format!(
+            "expected Closed, got {:?}",
+            final_state
+        )));
+    }
+
+    server_handle
+        .await
+        .map_err(|e| TestError::Setup(format!("server task panicked: {}", e)))?
+        .map_err(|e| TestError::Setup(format!("server error: {}", e)))?;
+
+    Ok(())
+}
+
+/// Test streaming with cancellation mid-stream.
+///
+/// Verifies:
+/// - Cancel control frame interrupts streaming
+/// - Frames after cancel are dropped
+pub async fn run_streaming_cancellation<F: TransportFactory>() {
+    let result = run_streaming_cancellation_inner::<F>().await;
+    if let Err(e) = result {
+        panic!("run_streaming_cancellation failed: {}", e);
+    }
+}
+
+// ============================================================================
+// Macro-generated streaming scenarios
+// ============================================================================
+
+/// Test server-streaming using the macro-generated client and server.
+///
+/// This uses the `RangeService` trait which has a streaming method.
+/// The macro generates:
+/// - Client `range()` method that returns `impl Stream<Item = Result<u32, RpcError>>`
+/// - Server `dispatch_streaming()` method that handles the streaming dispatch
+pub async fn run_macro_server_streaming<F: TransportFactory>() {
+    let result = run_macro_server_streaming_inner::<F>().await;
+    if let Err(e) = result {
+        panic!("run_macro_server_streaming failed: {}", e);
+    }
+}
+
+async fn run_macro_server_streaming_inner<F: TransportFactory>() -> Result<(), TestError> {
+    use futures::StreamExt;
+
+    let (client_transport, server_transport) = F::connect_pair().await?;
+    let client_transport = Arc::new(client_transport);
+    let server_transport = Arc::new(server_transport);
+
+    let server = RangeServiceServer::new(RangeServiceImpl);
+
+    // Spawn server task to handle the streaming request
+    let server_handle = tokio::spawn({
+        let server_transport = server_transport.clone();
+        async move {
+            // Receive request
+            let request = server_transport.recv_frame().await?;
+
+            // Dispatch via streaming dispatch (it sends frames directly)
+            server
+                .dispatch_streaming(request.desc.method_id, request.payload, server_transport.as_ref())
+                .await
+                .map_err(TestError::Rpc)?;
+
+            Ok::<_, TestError>(())
+        }
+    });
+
+    // Create client and make streaming call
+    let client = RangeServiceClient::new(client_transport);
+    let mut stream = client.range(5).await?;
+
+    // Collect all items from the stream
+    let mut items = Vec::new();
+    while let Some(result) = stream.next().await {
+        let item = result?;
+        items.push(item);
+    }
+
+    // Verify we got all items
+    let expected: Vec<u32> = (0..5).collect();
+    if items != expected {
+        return Err(TestError::Assertion(format!(
+            "expected {:?}, got {:?}",
+            expected, items
+        )));
+    }
+
+    // Wait for server to finish
+    server_handle
+        .await
+        .map_err(|e| TestError::Setup(format!("server task panicked: {}", e)))?
+        .map_err(|e| TestError::Setup(format!("server error: {}", e)))?;
+
+    Ok(())
+}
+
+async fn run_streaming_cancellation_inner<F: TransportFactory>() -> Result<(), TestError> {
+    let (client_transport, server_transport) = F::connect_pair().await?;
+    let client_transport = Arc::new(client_transport);
+    let server_transport = Arc::new(server_transport);
+
+    let client_session = Session::new(client_transport.clone());
+    let server_session = Session::new(server_transport.clone());
+
+    let channel_id = 1u32;
+
+    // Server: send items, then send cancel, then more items (which should be dropped)
+    let server_handle = tokio::spawn({
+        let server_session = server_session;
+        async move {
+            // Send first two items
+            for i in 0..2 {
+                let mut desc = MsgDescHot::new();
+                desc.msg_id = (i + 1) as u64;
+                desc.channel_id = channel_id;
+                desc.method_id = 1;
+                desc.flags = FrameFlags::DATA;
+
+                let item_bytes = facet_postcard::to_vec(&i).unwrap();
+                let frame = Frame::with_inline_payload(desc, &item_bytes)
+                    .expect("should fit inline");
+                server_session.send_frame(&frame).await?;
+            }
+
+            // Send cancel control frame
+            let cancel_payload = ControlPayload::CancelChannel {
+                channel_id,
+                reason: CancelReason::ClientCancel,
+            };
+            let cancel_bytes = facet_postcard::to_vec(&cancel_payload).unwrap();
+
+            let mut cancel_desc = MsgDescHot::new();
+            cancel_desc.msg_id = 100;
+            cancel_desc.channel_id = 0;
+            cancel_desc.method_id = control_method::CANCEL_CHANNEL;
+            cancel_desc.flags = FrameFlags::CONTROL | FrameFlags::EOS;
+
+            let cancel_frame = Frame::with_inline_payload(cancel_desc, &cancel_bytes)
+                .expect("should fit inline");
+            server_session.transport().send_frame(&cancel_frame).await?;
+
+            // Send marker on different channel (to signal end of test)
+            let mut marker_desc = MsgDescHot::new();
+            marker_desc.msg_id = 200;
+            marker_desc.channel_id = 99;
+            marker_desc.method_id = 1;
+            marker_desc.flags = FrameFlags::DATA | FrameFlags::EOS;
+
+            let marker_frame = Frame::with_inline_payload(marker_desc, b"done")
+                .expect("should fit inline");
+            server_session.transport().send_frame(&marker_frame).await?;
+
+            Ok::<_, TestError>(())
+        }
+    });
+
+    // Client: receive items until we see the marker on channel 99
+    let mut received = Vec::new();
+
+    loop {
+        let frame = client_session.recv_frame().await?;
+
+        if frame.desc.channel_id == 99 {
+            // Got marker, done
+            break;
+        }
+
+        if frame.desc.channel_id == 0 {
+            // Control frame, skip (already processed by session)
+            continue;
+        }
+
+        if frame.desc.channel_id == channel_id && !frame.payload.is_empty() {
+            let item: i32 = facet_postcard::from_bytes(frame.payload)
+                .map_err(|e| TestError::Assertion(format!("decode: {:?}", e)))?;
+            received.push(item);
+        }
+    }
+
+    // Should have received items 0, 1 (before cancel was processed)
+    // The cancel should have been processed, marking the channel cancelled
+    if received.len() > 2 {
+        return Err(TestError::Assertion(format!(
+            "expected at most 2 items (before cancel), got {:?}",
+            received
+        )));
+    }
+
+    // Channel should be cancelled
+    if !client_session.is_cancelled(channel_id) {
+        return Err(TestError::Assertion(
+            "channel should be cancelled".into(),
+        ));
+    }
+
+    server_handle
+        .await
+        .map_err(|e| TestError::Setup(format!("server task panicked: {}", e)))?
+        .map_err(|e| TestError::Setup(format!("server error: {}", e)))?;
 
     Ok(())
 }
