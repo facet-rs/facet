@@ -133,11 +133,11 @@ pub use write::Write;
 #[doc(hidden)]
 pub use paste;
 
-/// Ultra-compact prelude for derive macro codegen.
+/// Ultra-compact prelude for derive macro codegen (the "digamma" prelude).
 ///
 /// All exports are prefixed with `𝟋` to avoid collisions after `use ::facet::𝟋::*;`
 ///
-/// The `𝟋` character (U+1D4CB, Mathematical Script Small F) was chosen because:
+/// The `𝟋` character (U+1D4CB, Mathematical Script Small F, "digamma") was chosen because:
 /// - It's a valid Rust identifier (XID_Start)
 /// - It's visually distinctive ("this is internal macro stuff")
 /// - It won't collide with any user-defined names
@@ -191,4 +191,13 @@ pub mod 𝟋 {
     // === Type Aliases ===
     /// PhantomData type for shadow structs, invariant in lifetime `'a`.
     pub type 𝟋Ph<'a> = ::core::marker::PhantomData<*mut &'a ()>;
+
+    /// String type for proxy conversion errors (requires alloc feature).
+    #[cfg(feature = "alloc")]
+    pub type 𝟋Str = ::alloc::string::String;
+
+    /// Fallback when alloc is not available - proxy requires alloc at runtime,
+    /// but we need a type for compilation in no_std contexts.
+    #[cfg(not(feature = "alloc"))]
+    pub type 𝟋Str = &'static str;
 }
