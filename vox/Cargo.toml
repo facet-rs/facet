@@ -6,13 +6,13 @@ edition = "2021"
 [dependencies]
 libc = "0.2"
 bitflags = "2"
-serde = { version = "1", features = ["derive"] }
-postcard = { version = "1", features = ["alloc"] }
-serde_json = "1"
 tokio = { version = "1", features = ["sync", "rt"] }
-facet = "0.31"
-facet-core = "0.31"
 paste = "1"
+
+# facet ecosystem (from git until published)
+facet = { git = "https://github.com/facet-rs/facet" }
+facet-core = { git = "https://github.com/facet-rs/facet" }
+facet-postcard = { git = "https://github.com/facet-rs/facet" }
 
 [dev-dependencies]
 proptest = "1"

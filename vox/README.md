@@ -1,100 +1,105 @@
 # rapace
 
-rapace is a design-driven Rust crate for a shared-memory RPC / IPC system, intended primarily to support out-of-process plugin systems running on the same machine.
+A Rust-native RPC system with transport-agnostic service traits, facet-driven encoding,
+and zero-copy shared memory as the reference transport.
 
-At the moment, rapace is a design and implementation-in-progress, not a finished transport. The focus so far is on defining clear invariants, correct concurrency primitives, and a coherent type-driven API, before worrying about benchmarks or polish.
+## What is rapace?
 
-## Motivation
+rapace lets you write normal Rust traits:
 
-Plugin systems often need:
+```rust
+#[rapace::service]
+trait Hasher {
+    async fn sha256(&self, data: &[u8]) -> [u8; 32];
+}
+```
 
-- **Isolation** — crashy or slow plugins shouldn't take down the host
-- **Low overhead** — IPC on local workloads is often the bottleneck
-- **Structured, typed APIs** — not stringly-typed messages
-- **Observability** — debugging plugins is hard enough already
+...and call them transparently across process boundaries:
 
-Existing solutions tend to trade one of these off against the others.
+```rust
+// Same process (direct call, no serialization)
+let hasher = HasherClient::new_inproc(Box::new(MyHasher));
 
-rapace explores an alternative design:
+// Sibling process (shared memory, zero-copy when possible)
+let hasher = HasherClient::new(ShmSession::connect("/tmp/hasher.sock")?);
 
-- Shared memory for data transfer
-- Event-driven wakeups (eventfd) instead of polling
-- Channel-based RPC instead of request–reply-only APIs
-- Strong typing at the edges, not just byte-level framing
+// Remote machine (TCP, full serialization)
+let hasher = HasherClient::new(StreamTransport::connect("192.168.1.100:8080")?);
 
-## Scope
+// All three have identical APIs
+let hash = hasher.sha256(data).await?;
+```
 
-rapace is intentionally narrow in scope.
+The same trait works on any transport. The transport chooses how to move the data.
 
-**What it is trying to be:**
+## Why rapace?
 
-- A Rust-native IPC transport
-- Optimized for same-machine, trusted peers
-- Suitable as the runtime layer for a plugin system
-- Explicit about correctness, failure modes, and recovery
+| vs. | rapace advantage |
+|-----|-------------------|
+| Unix domain sockets | Zero-copy for large payloads, no kernel transitions on hot path |
+| gRPC over loopback | ~10-100× lower latency, no HTTP/2 overhead, SHM for bulk data |
+| boost::interprocess | Async-native, built-in RPC semantics, observability, flow control |
+| Custom SHM queues | Production-ready: cancellation, deadlines, crash recovery, introspection |
 
-**What it is not trying to be:**
+## Core Ideas
 
-- A general network protocol
-- A cross-machine RPC system
-- A C ABI or language-agnostic interface
-- A drop-in replacement for gRPC or Cap'n Proto
-- "Fast at all costs" before correctness is understood
+### Single API, Multiple Transports
 
-## Core ideas
+Plugin authors write pure Rust traits. No transport-specific types leak into signatures.
+The RPC layer handles serialization, framing, and delivery—differently per transport:
 
-These are design goals, not yet stable APIs.
+- **In-proc**: Direct trait calls, real borrows, no serialization
+- **SHM**: Zero-copy when data is already in shared memory; memcpy otherwise
+- **Network**: Full serialization (postcard by default)
 
-### Sessions over shared memory
+### Facet at the Center
 
-- One session = one SHM segment between exactly two peers
-- Two SPSC rings (A→B, B→A) for message descriptors
+All types implement [facet](https://github.com/bearcove/facet). This gives us:
 
-### Descriptors + data slabs
+- Transport-specific encoding (postcard for wire, slot references for SHM)
+- Service registry schemas
+- Runtime introspection
+- Future: diff/patch for `&mut T` across transports
 
-- Rings carry fixed-size descriptors
-- Payloads live in a separate slab allocator
-- Inline payloads for small messages
+### Channels, Not Just Request/Response
 
-### Channels as the primitive
+Everything is a channel. Unary RPC is sugar on top.
 
-- Unary calls are a special case of channels
-- Client-streaming, server-streaming, bidi come "for free"
-- Cancellation and deadlines are first-class
+```
+Client                          Server
+  │                                │
+  │── DATA ────────────────────────>│
+  │<────────────────────── DATA ───│
+  │── DATA ────────────────────────>│  (bidirectional streaming)
+  │<────────────────────── DATA ───│
+  │── EOS ─────────────────────────>│
+  │<─────────────────────── EOS ───│
+```
 
-### Async integration
+Client-streaming, server-streaming, and bidirectional streaming come "for free."
 
-- No busy polling
-- eventfd doorbells integrate cleanly with tokio
+### Async-Native
 
-### Crash-aware
+No busy polling. eventfd doorbells integrate cleanly with tokio.
 
-- Generation counters on reusable memory
+### Crash-Aware
+
+- Generation counters detect stale references after recovery
 - Heartbeats for peer liveness
 - Explicit cleanup rules after peer death
 
-## Relationship with facet
+## rapace is NOT
 
-rapace itself operates below the serialization layer: it moves frames, not Rust types.
+- A general-purpose network RPC framework
+- A language-agnostic wire protocol (Rust-native by design)
+- A capability-secure sandbox
+- A replacement for gRPC / HTTP APIs for internet services
 
-However, the intended use of rapace is with [facet](https://github.com/bearcove/facet)-based APIs:
+It is a **Rust-native RPC spine optimized for host ↔ plugin architectures**.
 
-- RPC request / response types implement `Facet`
-- Payloads are serialized with facet-postcard
-- Services expose schemas and metadata via reflection
-- Introspection and tooling become possible without hand-written IDLs
+## Intended Use
 
-In practice:
-
-- The transport layer does not depend on facet
-- The RPC layer built on top of rapace does
-- Plugin-facing APIs are typed, reflected, and self-describing
-
-This separation keeps the transport simple while allowing rich semantics above it.
-
-## Intended use
-
-rapace is being designed as the IPC layer for a plugin system used in a static site generator, where plugins may provide:
+rapace is being designed as the IPC layer for plugin systems where plugins may provide:
 
 - HTML or AST diffing
 - Template rendering
@@ -104,11 +109,16 @@ rapace is being designed as the IPC layer for a plugin system used in a static s
 
 Each plugin runs in its own process and communicates with the host via rapace.
 
-The existing plugin architecture can be seen here: [dodeca](https://github.com/bearcove/dodeca)
+The existing plugin architecture: [dodeca](https://github.com/bearcove/dodeca)
 
-rapace aims to eventually replace or underpin the current IPC mechanism used there.
+## Documentation
 
-## Current status
+| Document | Purpose |
+|----------|---------|
+| [DESIGN.md](DESIGN.md) | Full technical design (transports, RPC, facet, lifetimes) |
+| [IMPLEMENTORS.md](IMPLEMENTORS.md) | Rules for contributors (invariants, checklist) |
+
+## Current Status
 
 | Area | Status |
 |------|--------|
@@ -118,19 +128,45 @@ rapace aims to eventually replace or underpin the current IPC mechanism used the
 | Benchmarks | ❌ None yet |
 | Production readiness | ❌ Not ready |
 
-This repository currently reflects thinking and direction, not a production-ready crate.
+## Quick Architecture Overview
 
-## Philosophy
+```
+┌─────────────────────────────────────────────────────────┐
+│ Service Traits                                           │
+│   #[rapace::service] trait Foo { ... }                  │
+├─────────────────────────────────────────────────────────┤
+│ Facet Reflection                                         │
+│   Schema, encoding, introspection                        │
+├─────────────────────────────────────────────────────────┤
+│ RPC Framing                                              │
+│   Channels, flow control, deadlines, errors              │
+├─────────────────────────────────────────────────────────┤
+│ Transport-Specific Encoding                              │
+│   In-proc: pass-through | SHM: slots | Stream: postcard │
+├─────────────────────────────────────────────────────────┤
+│ Transport Implementation                                 │
+│   SHM rings | TCP streams | WebSocket frames            │
+└─────────────────────────────────────────────────────────┘
+```
 
-rapace is deliberately designed as if correctness matters.
+A method call flows through all layers:
 
-Instead of relying on *"be careful"*, it aims to rely on **types, invariants, and explicit states**.
+```
+Trait → Facet → Encoder → Transport → [wire] → Transport → Decoder → Facet → Trait
+```
 
-Especially compared to C-style shared memory systems, the goal is to make:
+## Prior Art & Acknowledgments
 
-- Illegal states unrepresentable
-- Race conditions structurally harder to express
-- Crash recovery a design concern, not an afterthought
+rapace stands on the shoulders of:
+
+- **gRPC** — status codes, streaming RPC patterns, cancellation semantics
+- **Cap'n Proto** — capability-based zero-copy thinking, arena allocation
+- **D-Bus** — method-id-based RPC over shared transports
+- **LMAX Disruptor** — SPSC ring buffer patterns, cache-line separation
+- **io_uring** — submission/completion ring design inspiration
+- **facet** — reflection without IDLs, the encoding spine
+
+We're not copying — we're standing in a well-lit lineage.
 
 ## License
 

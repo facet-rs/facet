@@ -5,6 +5,56 @@ and zero-copy shared memory as the reference transport.
 
 ---
 
+## Non-Goals (Read This First)
+
+**rapace is not:**
+- A general-purpose network RPC framework
+- A language-agnostic wire protocol
+- A capability-secure sandbox
+- A replacement for gRPC / HTTP APIs
+
+**rapace is:**
+A Rust-native RPC spine optimized for host ↔ plugin architectures.
+
+If you're looking for internet-facing RPC, cross-language interop, or sandboxed untrusted
+code execution, this is not the right tool.
+
+---
+
+## Safety Boundary
+
+rapace assumes **memory-safe but potentially buggy** peers.
+It does **not** defend against malicious peers.
+
+| Threat | Mitigation |
+|--------|------------|
+| Buggy peer sends malformed data | All inputs validated; no UB |
+| Buggy peer crashes | Generation counters, heartbeats, cleanup |
+| Malicious peer attempts DoS | Resource limits (partial mitigation) |
+| Malicious peer attempts memory corruption | **Not defended** — same-machine trust assumed |
+
+All inputs are validated to prevent undefined behavior.
+Denial-of-service from a determined malicious peer is possible.
+
+---
+
+## Two Reference Transports
+
+rapace has two reference implementations with different roles:
+
+| Transport | Role |
+|-----------|------|
+| **In-proc** | **Semantic reference** — defines correct behavior |
+| **SHM** | **Performance reference** — defines layout and zero-copy patterns |
+
+If behavior differs between in-proc and another transport, the other transport has a bug.
+If layout or performance patterns differ from SHM, the deviation must be justified.
+
+**Design workflow:** When in doubt, write the feature assuming in-proc first, then map it
+faithfully onto SHM, then degrade to stream/WebSocket.
+
+---
+
 # Part I — Transport Layer
 
 This section describes how bytes move between peers. The SHM transport is the reference
@@ -16,8 +66,9 @@ implementation; other transports implement the same abstract interface.
 
 1. **Single API, no transport leakage** — Plugin authors write normal Rust traits:
    ```rust
+   #[rapace::service]
    trait Hasher {
-       fn calculate_sha256sum(&self, buf: &[u8]) -> [u8; 32];
+       async fn calculate_sha256sum(&self, buf: &[u8]) -> [u8; 32];
    }
    ```
    The same trait works whether the peer is in-proc, SHM, TCP, or WebSocket.
@@ -78,6 +129,9 @@ trait Transport: Send + Sync {
     /// Caller must process or copy before calling recv_frame again.
     fn recv_frame(&self) -> impl Future<Output = Result<FrameView<'_>, TransportError>>;
 
+    // Invariant: A transport may buffer internally, but must not reorder frames
+    // within a channel, and must uphold the lifetime guarantees implied by FrameView.
+
     /// Create an encoder context for building outbound frames.
     ///
     /// The encoder is transport-specific: SHM encoders can reference
@@ -91,7 +145,7 @@ trait Transport: Send + Sync {
 /// Object-safe version for dynamic dispatch
 trait DynTransport: Send + Sync {
     fn send_frame_boxed(&self, frame: &Frame) -> BoxFuture<'_, Result<(), TransportError>>;
-    fn recv_frame_boxed(&self) -> BoxFuture<'_, Result<OwnedFrame, TransportError>>;
+    fn recv_frame_boxed(&self) -> BoxFuture<'_, Result<Frame, TransportError>>;  // Returns owned Frame
     fn encoder_boxed(&self) -> Box<dyn EncodeCtx + '_>;
     fn close_boxed(&self) -> BoxFuture<'_, Result<(), TransportError>>;
 }
@@ -143,7 +197,7 @@ Non-goals for v1:
 ```rust
 #[repr(C, align(64))]
 struct SegmentHeader {
-    magic: u64,                    // "RAPACE2\0"
+    magic: [u8; 8],                // *b"RAPACE\0\0" (8 bytes, null-padded)
     version: u32,                  // Protocol version (major.minor)
     flags: u32,                    // Feature flags
 
@@ -376,6 +430,14 @@ struct InProcTransport {
 - Still participates in RPC semantics (channels, deadlines, cancellation)
 - Many parts are degenerate (no rings, no slots, no encoding)
 
+**Why in-proc exists:**
+
+The in-proc transport is not an optimization; it is a **semantic reference**.
+All other transports must behave as if they were calling the service directly.
+
+This makes in-proc the gold standard for correctness tests: if behavior differs
+between in-proc and SHM/stream, the latter has a bug.
+
 ### 4.2 rapace-transport-stream (TCP/Unix Socket)
 
 For cross-machine or cross-container communication.
@@ -426,7 +488,47 @@ This section defines the transport-agnostic RPC semantics and facet integration.
 
 ## 5. RPC Model & Channel Semantics
 
-### 5.1 Sessions and Channels
+### 5.1 Terminology
+
+```
+Frame   = transport-visible scheduling unit (descriptor + optional payload)
+Payload = bytes carried by a frame (header + body)
+Message = logical RPC element (request, response, stream item)
+```
+
+A **frame** is the smallest unit of:
+- **Ordering** — frames within a channel are totally ordered
+- **Cancellation** — you cancel a channel, affecting all its frames
+- **Accounting** — credits, telemetry events
+
+A frame may contain zero bytes (CONTROL flag, METADATA_ONLY flag).
+
+```
+Frame   = MsgDescHot + optional payload
+Payload = MsgHeader + body
+Body    = encoded arguments/results (postcard, JSON, raw)
+```
+
+### 5.1.1 Frame and FrameView
+
+```rust
+/// Owned frame for sending or storage
+struct Frame {
+    desc: MsgDescHot,
+    payload: Option<Vec<u8>>,  // Or transport-specific owned buffer
+}
+
+/// Borrowed view for zero-copy receive
+struct FrameView<'a> {
+    desc: &'a MsgDescHot,
+    payload: &'a [u8],
+}
+```
+
+**Invariant:** `FrameView` must never outlive the receive call that produced it.
+Exact ownership semantics are transport-specific.
+
+### 5.2 Sessions and Channels
 
 A **session** is a connection between two peers over some transport.
 A **channel** is a logical stream within a session for a single RPC call.
@@ -435,7 +537,23 @@ A **channel** is a logical stream within a session for a single RPC call.
 - Channels 1+ are for RPC method calls
 - Channel IDs are allocated by the initiator and must be unique within the session
 
-### 5.2 RPC Patterns
+### 5.3 Ordering Guarantees
+
+**What we guarantee:**
+- Frames are delivered **in-order per channel**
+- Control channel (0) is ordered relative to itself
+
+**What we do NOT guarantee:**
+- No global total order across channels
+- No ordering between control and data channels
+
+**Implication:** A CANCEL on channel 0 may arrive after data frames it was meant to cancel.
+This is normal. Handle late frames gracefully.
+
+**Cancellation is advisory, not a hard fence.** Late frames are expected and must be
+dropped safely. This mirrors HTTP/2, gRPC, and QUIC cancellation semantics.
+
+### 5.4 RPC Patterns
 
 **Unary RPC:**
 
@@ -501,7 +619,7 @@ Client                          Server
   └── channel closed ──────────────┘
 ```
 
-### 5.3 Control Channel (Channel 0)
+### 5.5 Control Channel (Channel 0)
 
 Control frames carry a `ControlPayload` in the body. The `method_id` indicates the verb.
 
@@ -543,8 +661,24 @@ enum ControlPayload {
 
 **Control channel flow control:** Control frames are exempt from per-channel credit flow
 control. This ensures CANCEL, PING, and credit grants cannot be blocked by data backpressure.
+Control frames are still subject to global resource limits and validation — "exempt" means
+priority, not unbounded.
 
-### 5.4 Error Taxonomy
+**Backpressure + cancellation interaction:** Cancellation bypasses data backpressure but
+not global resource exhaustion. Control frames get priority, but unlimited control frames
+would still be a DoS vector — global limits apply.
+
+**Control channel encoding:** Control channel (channel 0) frames MUST use `Encoding::Postcard`.
+Other encodings on channel 0 are reserved for future use. Implementations MUST reject
+non-Postcard frames on channel 0:
+
+```rust
+if channel_id == 0 && header.encoding != Encoding::Postcard as u16 {
+    return Err(RpcError::UnsupportedEncoding);
+}
+```
+
+### 5.6 Error Taxonomy
 
 Codes 0-99 align with gRPC for familiarity. Codes 100+ are rapace-specific.
 
@@ -576,7 +710,7 @@ enum ErrorCode {
 }
 ```
 
-### 5.5 Frame Flags
+### 5.7 Frame Flags
 
 ```rust
 bitflags! {
@@ -679,6 +813,8 @@ struct ShmEncoder<'a> {
 impl EncodeCtx for ShmEncoder<'_> {
     fn encode_bytes(&mut self, bytes: &[u8]) -> Result<(), EncodeError> {
         // Check if bytes are already in a known SHM mapping
+        // (find_shm_location is a pure address-range check against known mappings;
+        // it does not imply ownership or lifetime extension)
         if let Some((slot, offset)) = self.session.find_shm_location(bytes) {
             // Zero-copy: encode as slot reference
             self.builder.encode_slot_ref(slot, offset, bytes.len());
@@ -744,6 +880,26 @@ enum Encoding {
 }
 ```
 
+### 6.5 Method ID vs Encoding
+
+Two fields determine how to interpret a frame's body:
+
+- `method_id` (in MsgDescHot) determines **semantics** — which method to call
+- `encoding` (in MsgHeader) determines **representation** — how the body is serialized
+
+**Rule:** A method MUST be able to reject unsupported encodings.
+
+```rust
+fn dispatch(&self, method_id: u32, header: &MsgHeader, body: &[u8]) -> Result<...> {
+    if header.encoding != Encoding::Postcard as u16 {
+        return Err(RpcError::UnsupportedEncoding);
+    }
+    // Proceed with postcard decoding...
+}
+```
+
+This matters for tooling (JSON for debugging), mixed-language interop, and forward compatibility.
+
 ## 7. Service Traits, Codegen & Stubs
 
 ### 7.1 The `#[rapace::service]` Macro
@@ -753,12 +909,30 @@ Users write pure Rust traits with no transport awareness:
 ```rust
 #[rapace::service]
 trait Calculator {
-    fn add(&self, a: i32, b: i32) -> i32;
-    fn divide(&self, a: i32, b: i32) -> Result<i32, DivideByZero>;
+    async fn add(&self, a: i32, b: i32) -> i32;
+    async fn divide(&self, a: i32, b: i32) -> Result<i32, DivideByZero>;
 
     // Streaming
-    fn sum_stream(&self, numbers: impl Stream<Item = i32>) -> i32;
+    async fn sum_stream(&self, numbers: impl Stream<Item = i32>) -> i32;
     fn fibonacci(&self, count: u32) -> impl Stream<Item = u64>;
+}
+```
+
+**Async expectation:** `#[rapace::service]` always produces async RPC calls.
+Service implementations may be sync internally, but the generated client stubs are async.
+This is true even for "simple" methods — the transport may suspend.
+
+Even if the trait method is written without `async`:
+
+```rust
+fn foo(&self, x: i32) -> i32;
+```
+
+The generated client stub will still be async:
+
+```rust
+impl<T: Transport> FooClient<T> {
+    pub async fn foo(&self, x: i32) -> Result<i32, RpcError> { ... }
 }
 ```
 
@@ -839,7 +1013,10 @@ This section codifies how lifetimes work across transports.
 
 ### 8.1 Public API Lifetimes
 
-Traits and stubs always expose normal Rust signatures:
+Traits and stubs always expose normal Rust signatures.
+
+*(For clarity, traits in this section are shown without `async`. In real code, you'd
+typically use `async fn` — see Section 7.1.)*
 
 ```rust
 trait Hasher {
@@ -899,7 +1076,7 @@ fn send_request(&self, data: &[u8]) {
 **Inbound side:**
 
 ```rust
-fn handle_frame<'frame>(&self, frame: ShmFrameView<'frame>) {
+fn handle_frame<'frame>(&self, frame: FrameView<'frame>) {
     // View lifetime is tied to frame processing
     let data: &'frame [u8] = frame.payload();
 
@@ -937,6 +1114,9 @@ For `&mut T` across non-in-proc transports:
 4. Client applies patch to original
 
 This is marked as future work — for now, `&mut T` is snapshot-only.
+
+**Warning:** Until diff/patch is implemented, methods taking `&mut T` across non-in-proc
+transports observe snapshot semantics only. Mutations are **not** reflected back to the caller.
 
 ### 8.4 Soundness Constraints
 
@@ -1061,12 +1241,12 @@ Plugins implement traits like:
 ```rust
 #[rapace::service]
 trait HtmlDiffer {
-    fn diff(&self, old: &str, new: &str) -> HtmlDiff;
+    async fn diff(&self, old: &str, new: &str) -> HtmlDiff;
 }
 
 #[rapace::service]
 trait ImageProcessor {
-    fn resize(&self, image: &[u8], width: u32, height: u32) -> Vec<u8>;
+    async fn resize(&self, image: &[u8], width: u32, height: u32) -> Vec<u8>;
 }
 ```
 
@@ -1163,6 +1343,9 @@ struct FaultInjector {
 
 **Timing:** Fault injection happens AFTER descriptor validation.
 
+**Scope:** Fault injection is transport-agnostic and applies at the frame boundary,
+not at the service or facet level. Faults simulate transport failures, not application errors.
+
 # Appendix D: Mental Model — RPC as a Spine
 
 The RPC layer is not a single layer in the stack; it's a spine through multiple layers:
@@ -1203,3 +1386,20 @@ This vertical integration means:
 - The same trait works on any transport
 - Each transport optimizes for its medium
 - No transport-specific types leak into user code
+
+---
+
+# Appendix E: Design Invariants Checklist
+
+Use this as a regression test. If a change violates any of these, stop and reconsider.
+
+1. **No user-visible API exposes transport-specific types**
+2. **No borrow outlives a frame** (except in-proc with real Rust lifetimes)
+3. **Control frames must always be deliverable** (bypass per-channel credits)
+4. **Validation happens before fault injection**
+5. **Hot-path structs fit in a single cache line** (64 bytes)
+6. **SHM is the reference transport** — others degrade gracefully
+7. **In-proc is the semantic reference** — others must match its behavior
+8. **Frames are ordered per-channel, not globally**
+9. **Never manufacture `'static` from SHM mappings**
+10. **Cancellation is advisory** — handle late frames gracefully
