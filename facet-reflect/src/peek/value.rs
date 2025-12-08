@@ -841,6 +841,199 @@ impl<'mem, 'facet> core::hash::Hash for Peek<'mem, 'facet> {
     }
 }
 
+/// A covariant wrapper around [`Peek`] for types that are covariant over their lifetime parameter.
+///
+/// Unlike [`Peek`], which is invariant over `'facet` for soundness reasons,
+/// `CovariantPeek` is **covariant** over `'facet`. This means a `CovariantPeek<'mem, 'static>`
+/// can be used where a `CovariantPeek<'mem, 'a>` is expected.
+///
+/// # When to Use
+///
+/// Use `CovariantPeek` when you need to:
+/// - Store multiple `Peek` values with different lifetimes in a single collection
+/// - Pass `Peek` values to functions expecting shorter lifetimes
+/// - Build data structures that wrap `Peek` without forcing invariance on the wrapper
+///
+/// # Safety
+///
+/// `CovariantPeek` can only be constructed from types that are actually covariant.
+/// The constructor verifies this at runtime by checking [`Shape::computed_variance`].
+/// This ensures that lifetime shrinking is always safe.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_reflect::{Peek, CovariantPeek};
+///
+/// #[derive(Facet)]
+/// struct Data<'a> {
+///     value: &'a str,
+/// }
+///
+/// // Data<'a> is covariant in 'a because &'a str is covariant
+/// let data = Data { value: "hello" };
+/// let peek: Peek<'_, 'static> = Peek::new(&data);
+///
+/// // Convert to CovariantPeek - this verifies covariance
+/// let covariant = CovariantPeek::new(peek).expect("Data is covariant");
+///
+/// // Now we can use it where shorter lifetimes are expected
+/// fn use_shorter<'a>(p: CovariantPeek<'_, 'a>) {
+///     let _ = p;
+/// }
+/// use_shorter(covariant);
+/// ```
+#[derive(Clone, Copy)]
+pub struct CovariantPeek<'mem, 'facet> {
+    /// Underlying data
+    data: PtrConst<'mem>,
+
+    /// Shape of the value
+    shape: &'static Shape,
+
+    // Covariant over 'facet: CovariantPeek<'mem, 'static> can be used where
+    // CovariantPeek<'mem, 'a> is expected.
+    //
+    // This is safe ONLY because we verify at construction time that the underlying
+    // type is covariant. For covariant types, shrinking lifetimes is always safe.
+    _covariant: PhantomData<&'facet ()>,
+}
+
+impl<'mem, 'facet> CovariantPeek<'mem, 'facet> {
+    /// Creates a new `CovariantPeek` from a `Peek`, verifying that the underlying type is covariant.
+    ///
+    /// Returns `None` if the type is not covariant (i.e., it's contravariant or invariant).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use facet::Facet;
+    /// use facet_reflect::{Peek, CovariantPeek};
+    ///
+    /// // i32 has no lifetime parameters, so it's covariant
+    /// let value = 42i32;
+    /// let peek = Peek::new(&value);
+    /// let covariant = CovariantPeek::new(peek);
+    /// assert!(covariant.is_some());
+    /// ```
+    #[inline]
+    pub fn new(peek: Peek<'mem, 'facet>) -> Option<Self> {
+        if peek.variance() == Variance::Covariant {
+            Some(Self {
+                data: peek.data,
+                shape: peek.shape,
+                _covariant: PhantomData,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Creates a new `CovariantPeek` from a `Peek`, panicking if the type is not covariant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the underlying type is not covariant.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use facet::Facet;
+    /// use facet_reflect::{Peek, CovariantPeek};
+    ///
+    /// let value = "hello";
+    /// let peek = Peek::new(&value);
+    /// let covariant = CovariantPeek::new_unchecked(peek); // Will succeed
+    /// ```
+    #[inline]
+    pub fn new_unchecked(peek: Peek<'mem, 'facet>) -> Self {
+        Self::new(peek).unwrap_or_else(|| {
+            panic!(
+                "CovariantPeek::new_unchecked called on non-covariant type {} (variance: {:?})",
+                peek.shape,
+                peek.variance()
+            )
+        })
+    }
+
+    /// Creates a `CovariantPeek` directly from a covariant `Facet` type.
+    ///
+    /// Returns `None` if the type is not covariant.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use facet::Facet;
+    /// use facet_reflect::CovariantPeek;
+    ///
+    /// let value = 42i32;
+    /// let covariant = CovariantPeek::from_ref(&value);
+    /// assert!(covariant.is_some());
+    /// ```
+    #[inline]
+    pub fn from_ref<T: Facet<'facet> + ?Sized>(t: &'mem T) -> Option<Self> {
+        Self::new(Peek::new(t))
+    }
+
+    /// Returns the underlying `Peek`.
+    ///
+    /// Note that the returned `Peek` is invariant, so you cannot use it to
+    /// shrink lifetimes directly. Use `CovariantPeek` for lifetime flexibility.
+    #[inline]
+    pub fn into_peek(self) -> Peek<'mem, 'facet> {
+        Peek {
+            data: self.data,
+            shape: self.shape,
+            _invariant: PhantomData,
+        }
+    }
+
+    /// Returns the shape of the underlying value.
+    #[inline]
+    pub const fn shape(&self) -> &'static Shape {
+        self.shape
+    }
+
+    /// Returns the data pointer.
+    #[inline]
+    pub const fn data(&self) -> PtrConst<'mem> {
+        self.data
+    }
+}
+
+impl<'mem, 'facet> core::ops::Deref for CovariantPeek<'mem, 'facet> {
+    type Target = Peek<'mem, 'facet>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: CovariantPeek and Peek have the same memory layout for the
+        // data and shape fields. The PhantomData fields don't affect layout.
+        // We're creating a reference to a Peek that views the same data.
+        //
+        // This is safe because:
+        // 1. We only construct CovariantPeek from covariant types
+        // 2. The Peek reference we return has the same lifetime bounds
+        // 3. We're not allowing mutation through this reference
+        unsafe { &*(self as *const CovariantPeek<'mem, 'facet> as *const Peek<'mem, 'facet>) }
+    }
+}
+
+impl<'mem, 'facet> core::fmt::Debug for CovariantPeek<'mem, 'facet> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CovariantPeek")
+            .field("shape", &self.shape)
+            .field("data", &self.data)
+            .finish()
+    }
+}
+
+impl<'mem, 'facet> core::fmt::Display for CovariantPeek<'mem, 'facet> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(&**self, f)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -875,5 +1068,79 @@ mod tests {
         let value = &"hello";
         let peek = Peek::new(&value);
         assert_eq!(peek.as_str(), Some("hello"));
+    }
+
+    #[test]
+    fn test_covariant_peek_from_covariant_type() {
+        // i32 has no lifetime parameters, so it's covariant
+        let value = 42i32;
+        let peek = Peek::new(&value);
+        let covariant = CovariantPeek::new(peek);
+        assert!(covariant.is_some());
+
+        // Verify we can access Peek methods through Deref
+        let covariant = covariant.unwrap();
+        assert_eq!(covariant.shape(), peek.shape());
+    }
+
+    #[test]
+    fn test_covariant_peek_from_ref() {
+        let value = 42i32;
+        let covariant = CovariantPeek::from_ref(&value);
+        assert!(covariant.is_some());
+    }
+
+    #[test]
+    fn test_covariant_peek_deref_to_peek() {
+        let value = "hello";
+        let peek = Peek::new(&value);
+        let covariant = CovariantPeek::new(peek).unwrap();
+
+        // Test that Deref works - we can call Peek methods directly
+        assert_eq!(covariant.as_str(), Some("hello"));
+        assert_eq!(covariant.shape(), peek.shape());
+    }
+
+    #[test]
+    fn test_covariant_peek_into_peek() {
+        let value = 42i32;
+        let original_peek = Peek::new(&value);
+        let covariant = CovariantPeek::new(original_peek).unwrap();
+        let recovered_peek = covariant.into_peek();
+
+        assert_eq!(recovered_peek.shape(), original_peek.shape());
+    }
+
+    #[test]
+    fn test_covariant_peek_lifetime_covariance() {
+        // This test verifies that CovariantPeek is actually covariant over 'facet
+        // by passing a CovariantPeek<'_, 'static> to a function expecting CovariantPeek<'_, 'a>
+        fn use_shorter<'a>(_p: CovariantPeek<'_, 'a>) {}
+
+        let value = 42i32;
+        let covariant: CovariantPeek<'_, 'static> = CovariantPeek::from_ref(&value).unwrap();
+
+        // This compiles because CovariantPeek is covariant over 'facet
+        use_shorter(covariant);
+    }
+
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_covariant_peek_vec_type() {
+        // Vec<T> is covariant in T
+        let vec = alloc::vec![1i32, 2, 3];
+        let peek = Peek::new(&vec);
+        let covariant = CovariantPeek::new(peek);
+        assert!(covariant.is_some());
+    }
+
+    #[test]
+    #[cfg(feature = "alloc")]
+    fn test_covariant_peek_option_type() {
+        // Option<T> is covariant in T
+        let opt = Some(42i32);
+        let peek = Peek::new(&opt);
+        let covariant = CovariantPeek::new(peek);
+        assert!(covariant.is_some());
     }
 }
