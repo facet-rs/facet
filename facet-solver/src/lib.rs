@@ -350,7 +350,11 @@ impl std::error::Error for SolverError {}
 /// This is used to disambiguate when a value could satisfy multiple types.
 /// For example, the value `42` fits both `u8` and `u16`, but `u8` is more
 /// specific (lower score), so it should be preferred.
-fn specificity_score(shape: &'static Shape) -> u64 {
+/// Compute a specificity score for a shape.
+///
+/// Lower score = more specific type. Used for type-based disambiguation
+/// where we want to try more specific types first (e.g., u8 before u16).
+pub fn specificity_score(shape: &'static Shape) -> u64 {
     // Use type_identifier to determine specificity
     // Smaller integer types are more specific
     match shape.type_identifier {
@@ -1375,6 +1379,202 @@ impl<'a> ProbingSolver<'a> {
             1 => ProbeResult::Solved(self.candidates[0]),
             _ => ProbeResult::KeepGoing, // Still ambiguous
         }
+    }
+}
+
+// ============================================================================
+// Variant Format Classification
+// ============================================================================
+
+/// Classification of an enum variant's expected serialized format.
+///
+/// This is used by deserializers to determine how to parse untagged enum variants
+/// based on the YAML/JSON/etc. value type they encounter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VariantFormat {
+    /// Unit variant: no fields, serializes as the variant name or nothing for untagged
+    Unit,
+
+    /// Newtype variant wrapping a scalar type (String, numbers, bool, etc.)
+    /// Serializes as just the scalar value for untagged enums.
+    NewtypeScalar {
+        /// The shape of the inner scalar type
+        inner_shape: &'static Shape,
+    },
+
+    /// Newtype variant wrapping a struct
+    /// Serializes as a mapping for untagged enums.
+    NewtypeStruct {
+        /// The shape of the inner struct type
+        inner_shape: &'static Shape,
+    },
+
+    /// Newtype variant wrapping another type (enum, sequence, etc.)
+    NewtypeOther {
+        /// The shape of the inner type
+        inner_shape: &'static Shape,
+    },
+
+    /// Tuple variant with multiple fields
+    /// Serializes as a sequence for untagged enums.
+    Tuple {
+        /// Number of fields in the tuple
+        arity: usize,
+    },
+
+    /// Struct variant with named fields
+    /// Serializes as a mapping for untagged enums.
+    Struct,
+}
+
+impl VariantFormat {
+    /// Classify a variant's expected serialized format.
+    pub fn from_variant(variant: &'static Variant) -> Self {
+        use facet_core::{StructKind, Type, UserType};
+
+        let fields = variant.data.fields;
+        let kind = variant.data.kind;
+
+        match kind {
+            StructKind::Unit => VariantFormat::Unit,
+            // TupleStruct and Tuple are both used for tuple-like variants
+            // depending on how they're defined. Handle them the same way.
+            StructKind::TupleStruct | StructKind::Tuple => {
+                if fields.len() == 1 {
+                    // Newtype variant - classify by inner type
+                    let inner_shape = fields[0].shape();
+                    if is_scalar_shape(inner_shape) {
+                        VariantFormat::NewtypeScalar { inner_shape }
+                    } else if matches!(inner_shape.ty, Type::User(UserType::Struct(_))) {
+                        VariantFormat::NewtypeStruct { inner_shape }
+                    } else {
+                        VariantFormat::NewtypeOther { inner_shape }
+                    }
+                } else {
+                    // Multi-field tuple variant
+                    VariantFormat::Tuple {
+                        arity: fields.len(),
+                    }
+                }
+            }
+            StructKind::Struct => VariantFormat::Struct,
+        }
+    }
+
+    /// Returns true if this variant expects a scalar value in untagged format.
+    pub fn expects_scalar(&self) -> bool {
+        matches!(self, VariantFormat::NewtypeScalar { .. })
+    }
+
+    /// Returns true if this variant expects a sequence in untagged format.
+    pub fn expects_sequence(&self) -> bool {
+        matches!(self, VariantFormat::Tuple { .. })
+    }
+
+    /// Returns true if this variant expects a mapping in untagged format.
+    pub fn expects_mapping(&self) -> bool {
+        matches!(
+            self,
+            VariantFormat::Struct | VariantFormat::NewtypeStruct { .. }
+        )
+    }
+
+    /// Returns true if this is a unit variant (no data).
+    pub fn is_unit(&self) -> bool {
+        matches!(self, VariantFormat::Unit)
+    }
+}
+
+/// Check if a shape represents a scalar type.
+fn is_scalar_shape(shape: &'static Shape) -> bool {
+    shape.scalar_type().is_some()
+}
+
+/// Information about variants grouped by their expected format.
+///
+/// Used by deserializers to efficiently dispatch untagged enum parsing
+/// based on the type of value encountered.
+#[derive(Debug, Default)]
+pub struct VariantsByFormat {
+    /// Variants that expect a scalar value (newtype wrapping String, i32, etc.)
+    pub scalar_variants: Vec<(&'static Variant, &'static Shape)>,
+
+    /// Variants that expect a sequence (tuple variants)
+    /// Grouped by arity for efficient matching.
+    pub tuple_variants: Vec<(&'static Variant, usize)>,
+
+    /// Variants that expect a mapping (struct variants, newtype wrapping struct)
+    pub struct_variants: Vec<&'static Variant>,
+
+    /// Unit variants (no data)
+    pub unit_variants: Vec<&'static Variant>,
+
+    /// Other variants that don't fit the above categories
+    pub other_variants: Vec<&'static Variant>,
+}
+
+impl VariantsByFormat {
+    /// Build variant classification for an enum shape.
+    ///
+    /// Returns None if the shape is not an enum.
+    pub fn from_shape(shape: &'static Shape) -> Option<Self> {
+        use facet_core::{Type, UserType};
+
+        let enum_type = match shape.ty {
+            Type::User(UserType::Enum(e)) => e,
+            _ => return None,
+        };
+
+        let mut result = Self::default();
+
+        for variant in enum_type.variants {
+            match VariantFormat::from_variant(variant) {
+                VariantFormat::Unit => {
+                    result.unit_variants.push(variant);
+                }
+                VariantFormat::NewtypeScalar { inner_shape } => {
+                    result.scalar_variants.push((variant, inner_shape));
+                }
+                VariantFormat::NewtypeStruct { .. } => {
+                    result.struct_variants.push(variant);
+                }
+                VariantFormat::NewtypeOther { .. } => {
+                    result.other_variants.push(variant);
+                }
+                VariantFormat::Tuple { arity } => {
+                    result.tuple_variants.push((variant, arity));
+                }
+                VariantFormat::Struct => {
+                    result.struct_variants.push(variant);
+                }
+            }
+        }
+
+        Some(result)
+    }
+
+    /// Get tuple variants with a specific arity.
+    pub fn tuple_variants_with_arity(&self, arity: usize) -> Vec<&'static Variant> {
+        self.tuple_variants
+            .iter()
+            .filter(|(_, a)| *a == arity)
+            .map(|(v, _)| *v)
+            .collect()
+    }
+
+    /// Check if there are any scalar-expecting variants.
+    pub fn has_scalar_variants(&self) -> bool {
+        !self.scalar_variants.is_empty()
+    }
+
+    /// Check if there are any tuple-expecting variants.
+    pub fn has_tuple_variants(&self) -> bool {
+        !self.tuple_variants.is_empty()
+    }
+
+    /// Check if there are any struct-expecting variants.
+    pub fn has_struct_variants(&self) -> bool {
+        !self.struct_variants.is_empty()
     }
 }
 
