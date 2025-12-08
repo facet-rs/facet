@@ -25,11 +25,15 @@ keyword! {
     KNs = "ns";
     KCratePath = "crate_path";
     KChar = "char";
+    KStr = "str";
     KBuiltin = "builtin";
     KMakeT = "make_t";
     KOr = "or";
     KDefault = "default";
     KTy = "ty";
+    KPredicate = "predicate";
+    KFnPtr = "fn_ptr";
+    KShapeType = "shape_type";
 }
 
 operator! {
@@ -133,8 +137,16 @@ unsynn! {
         tokens: Vec<TokenTree>,
     }
 
-    /// A reference type: `&'static str`
-    struct RefType {
+    /// A static str reference: `&'static str`
+    struct StaticStrRef {
+        _amp: Amp,
+        _apos: Apos,
+        _static: KStatic,
+        _str: KStr,
+    }
+
+    /// A static reference to some other type: `&'static SomeType`
+    struct StaticRef {
         _amp: Amp,
         _apos: Apos,
         _static: KStatic,
@@ -147,6 +159,31 @@ unsynn! {
         _lt: Lt,
         _char: KChar,
         _gt: Gt,
+    }
+
+    /// Option<&'static str> type
+    struct OptionStaticStrType {
+        _option: KOption,
+        _lt: Lt,
+        _inner: StaticStrRef,
+        _gt: Gt,
+    }
+
+    /// `predicate TypeName` payload
+    struct PredicatePayload {
+        _kw: KPredicate,
+        type_name: Ident,
+    }
+
+    /// `fn_ptr TypeName` payload
+    struct FnPtrPayload {
+        _kw: KFnPtr,
+        type_name: Ident,
+    }
+
+    /// `shape_type` payload (just the keyword)
+    struct ShapeTypePayload {
+        _kw: KShapeType,
     }
 
     /// A struct definition: `pub struct Column { ... }`
@@ -292,6 +329,11 @@ enum VariantKind {
     /// The user's type is converted to `<Type as Facet>::SHAPE`.
     /// Grammar syntax: `Proxy(shape_type)`
     ShapeType,
+    /// Optional `&'static str` - can be used with or without a value.
+    /// Grammar syntax: `Children(Option<&'static str>)`
+    /// - `#[facet(kdl::children)]` → None
+    /// - `#[facet(kdl::children = "kiddo")]` → Some("kiddo")
+    OptionalStr,
 }
 
 struct ParsedStruct {
@@ -501,48 +543,62 @@ fn parse_storage_attr(attrs: &[OuterAttr]) -> std::result::Result<Storage, Strin
 }
 
 /// Analyze variant payload tokens to determine the variant kind.
-/// This handles:
-/// - `&'static str` → Newtype
+///
+/// Uses unsynn grammar parsing to handle:
+/// - `&'static str` → NewtypeStr
+/// - `&'static SomeType` → Newtype
 /// - `Option<char>` → NewtypeOptionChar
+/// - `Option<&'static str>` → OptionalStr
+/// - `make_t` or `make_t or $ty::default()` → MakeT
+/// - `predicate TypeName` → Predicate
+/// - `fn_ptr TypeName` → FnPtr
+/// - `shape_type` → ShapeType
 /// - Single identifier like `Column` → Struct reference
-/// - Everything else like `Option<DefaultInPlaceFn>` → ArbitraryType
+/// - Everything else → ArbitraryType
 fn analyze_variant_payload(tokens: &[TokenTree]) -> std::result::Result<VariantKind, String> {
-    // Convert tokens to strings for pattern matching
-    let token_strs: Vec<String> = tokens.iter().map(|t| t.to_string()).collect();
+    let token_stream: TokenStream2 = tokens.iter().cloned().collect();
 
-    // Check for &'static str pattern: ["&", "'", "static", "str"]
-    if token_strs.len() >= 4
-        && token_strs[0] == "&"
-        && token_strs[1] == "'"
-        && token_strs[2] == "static"
+    // Try each grammar in order of specificity
+
+    // &'static str → NewtypeStr (must come before StaticRef)
     {
-        let typ_str = &token_strs[3];
-        // For &'static str, use NewtypeStr which stores directly for facet-core access
-        if typ_str == "str" {
+        let mut iter = token_stream.clone().to_token_iter();
+        if iter.parse::<StaticStrRef>().is_ok() && iter.next().is_none() {
             return Ok(VariantKind::NewtypeStr);
         }
-        let typ = proc_macro2::Ident::new(typ_str, Span::call_site());
-        return Ok(VariantKind::Newtype(quote! { &'static #typ }));
     }
 
-    // Check for Option<char> pattern: ["Option", "<", "char", ">"]
-    if token_strs.len() == 4
-        && token_strs[0] == "Option"
-        && token_strs[1] == "<"
-        && token_strs[2] == "char"
-        && token_strs[3] == ">"
+    // &'static SomeType → Newtype
     {
-        return Ok(VariantKind::NewtypeOptionChar);
+        let mut iter = token_stream.clone().to_token_iter();
+        if let Ok(parsed) = iter.parse::<StaticRef>() {
+            if iter.next().is_none() {
+                let typ = convert_ident(&parsed.typ);
+                return Ok(VariantKind::Newtype(quote! { &'static #typ }));
+            }
+        }
     }
 
-    // Check for make_t - expression that "makes a T", wrapped in closure
-    // Syntax: `Default(make_t)` or `Default(make_t or $ty::default())`
-    // Use proper unsynn parsing instead of string matching
+    // Option<&'static str> → OptionalStr (must come before OptionCharType)
     {
-        let token_stream: TokenStream2 = tokens.iter().cloned().collect();
-        let mut iter = token_stream.to_token_iter();
+        let mut iter = token_stream.clone().to_token_iter();
+        if iter.parse::<OptionStaticStrType>().is_ok() && iter.next().is_none() {
+            return Ok(VariantKind::OptionalStr);
+        }
+    }
+
+    // Option<char> → NewtypeOptionChar
+    {
+        let mut iter = token_stream.clone().to_token_iter();
+        if iter.parse::<OptionCharType>().is_ok() && iter.next().is_none() {
+            return Ok(VariantKind::NewtypeOptionChar);
+        }
+    }
+
+    // make_t or make_t or $ty::default() → MakeT
+    {
+        let mut iter = token_stream.clone().to_token_iter();
         if let Ok(make_t) = iter.parse::<MakeTPayload>() {
-            // Check that we consumed all tokens
             if iter.next().is_none() {
                 let use_ty_default_fallback = make_t.fallback.is_some();
                 return Ok(VariantKind::MakeT {
@@ -552,57 +608,50 @@ fn analyze_variant_payload(tokens: &[TokenTree]) -> std::result::Result<VariantK
         }
     }
 
-    // Check for predicate TypeName - predicate function wrapped in type-erased closure
-    // User provides fn(&T) -> bool, wrapped in |ptr| unsafe { expr(ptr.get::<T>()) }
-    // Syntax: `SkipSerializingIf(predicate SkipSerializingIfFn)`
-    if token_strs.len() >= 2 && token_strs[0] == "predicate" {
-        // Collect the remaining tokens as the type
-        let type_tokens: TokenStream2 = tokens[1..]
-            .iter()
-            .map(|tt| {
-                let s = tt.to_string();
-                s.parse::<TokenStream2>().unwrap_or_default()
-            })
-            .collect();
-        return Ok(VariantKind::Predicate(type_tokens));
+    // predicate TypeName → Predicate
+    {
+        let mut iter = token_stream.clone().to_token_iter();
+        if let Ok(parsed) = iter.parse::<PredicatePayload>() {
+            if iter.next().is_none() {
+                let type_name = convert_ident(&parsed.type_name);
+                return Ok(VariantKind::Predicate(quote! { #type_name }));
+            }
+        }
     }
 
-    // Check for fn_ptr TypeName - function pointer stored directly
-    // Syntax: `Foo(fn_ptr FooFn)`
-    if token_strs.len() >= 2 && token_strs[0] == "fn_ptr" {
-        // Collect the remaining tokens as the type
-        let type_tokens: TokenStream2 = tokens[1..]
-            .iter()
-            .map(|tt| {
-                let s = tt.to_string();
-                s.parse::<TokenStream2>().unwrap_or_default()
-            })
-            .collect();
-        return Ok(VariantKind::FnPtr(type_tokens));
+    // fn_ptr TypeName → FnPtr
+    {
+        let mut iter = token_stream.clone().to_token_iter();
+        if let Ok(parsed) = iter.parse::<FnPtrPayload>() {
+            if iter.next().is_none() {
+                let type_name = convert_ident(&parsed.type_name);
+                return Ok(VariantKind::FnPtr(quote! { #type_name }));
+            }
+        }
     }
 
-    // Check for shape_type - type converted to Shape reference
-    // Syntax: `Proxy(shape_type)`
-    if token_strs.len() == 1 && token_strs[0] == "shape_type" {
-        return Ok(VariantKind::ShapeType);
+    // shape_type → ShapeType
+    {
+        let mut iter = token_stream.clone().to_token_iter();
+        if iter.parse::<ShapeTypePayload>().is_ok() && iter.next().is_none() {
+            return Ok(VariantKind::ShapeType);
+        }
     }
 
-    // Check for single identifier (struct reference)
-    if tokens.len() == 1 {
-        if let Some(ident_str) = tokens[0]
-            .to_string()
-            .strip_prefix("")
-            .map(|s| s.to_string())
-        {
-            // Check if it's a valid identifier (not a keyword, starts with letter/underscore)
-            if ident_str
-                .chars()
-                .next()
-                .map(|c| c.is_alphabetic() || c == '_')
-                .unwrap_or(false)
-            {
-                let ident = proc_macro2::Ident::new(&ident_str, Span::call_site());
-                return Ok(VariantKind::Struct(ident));
+    // Single identifier → Struct reference
+    {
+        let mut iter = token_stream.clone().to_token_iter();
+        if let Ok(ident) = iter.parse::<Ident>() {
+            if iter.next().is_none() {
+                let ident_str = ident.to_string();
+                // Check if it's a valid identifier (starts with letter/underscore)
+                if ident_str
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_alphabetic() || c == '_')
+                {
+                    return Ok(VariantKind::Struct(convert_ident(&ident)));
+                }
             }
         }
     }
@@ -764,6 +813,9 @@ impl ParsedGrammar {
                         };
                         quote! { #(#attrs)* #name(&'static #shape_path) }
                     }
+                    VariantKind::OptionalStr => {
+                        quote! { #(#attrs)* #name(Option<&'static str>) }
+                    }
                 }
             })
             .collect();
@@ -817,7 +869,7 @@ impl ParsedGrammar {
                         }
                     }
                     // Simple value types: use regular equality
-                    VariantKind::NewtypeStr | VariantKind::NewtypeOptionChar => {
+                    VariantKind::NewtypeStr | VariantKind::NewtypeOptionChar | VariantKind::OptionalStr => {
                         quote! {
                             (Self::#variant_name(a), Self::#variant_name(b)) => a == b
                         }
@@ -954,6 +1006,7 @@ impl ParsedGrammar {
                     VariantKind::Predicate(_) => quote! { #name: predicate },
                     VariantKind::FnPtr(_) => quote! { #name: fn_ptr },
                     VariantKind::ShapeType => quote! { #name: shape_type },
+                    VariantKind::OptionalStr => quote! { #name: opt_str },
                 }
             })
             .collect();
@@ -1307,6 +1360,47 @@ impl ParsedGrammar {
                             // Container-level with just expr
                             (@ns { $ns:path } #key_ident { | $val:expr }) => {{
                                 ::facet::ExtensionAttr::new(#ns_expr, #key_str, &$val)
+                            }};
+                        }
+                    }
+                    VariantKind::OptionalStr => {
+                        // OptionalStr stores Option<&'static str> directly.
+                        // - No args → None
+                        // - `= "value"` → Some("value")
+                        let crate_path = self.crate_path.as_ref().expect(
+                            "crate_path is required for opt_str variants; add `crate_path ::your_crate;` to the grammar"
+                        );
+                        let variant_name = &v.name;
+                        quote! {
+                            // Field-level: no args → None
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty }) => {{
+                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::None);
+                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                            }};
+                            // Field-level with `= "value"` → Some(value)
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | = $val:expr }) => {{
+                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::Some($val));
+                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                            }};
+                            // Field-level with just expr → Some(value)
+                            (@ns { $ns:path } #key_ident { $field:tt : $ty:ty | $val:expr }) => {{
+                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::Some($val));
+                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                            }};
+                            // Container-level: no args → None
+                            (@ns { $ns:path } #key_ident { }) => {{
+                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::None);
+                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                            }};
+                            // Container-level with `= "value"` → Some(value)
+                            (@ns { $ns:path } #key_ident { | = $val:expr }) => {{
+                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::Some($val));
+                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
+                            }};
+                            // Container-level with just expr → Some(value)
+                            (@ns { $ns:path } #key_ident { | $val:expr }) => {{
+                                static __ATTR_DATA: #crate_path::Attr = #crate_path::Attr::#variant_name(::core::option::Option::Some($val));
+                                ::facet::ExtensionAttr::new(#ns_expr, #key_str, &__ATTR_DATA)
                             }};
                         }
                     }

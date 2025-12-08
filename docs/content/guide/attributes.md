@@ -678,6 +678,18 @@ struct Dependency {
     #[facet(kdl::property)]
     features: Vec<String>,
 }
+
+// For children collections, you can specify a custom node name:
+#[derive(Facet)]
+struct Config {
+    // Matches "dependency" nodes (auto-singularized from field name)
+    #[facet(kdl::children)]
+    dependencies: Vec<Dependency>,
+
+    // Matches "extra" nodes (custom node name)
+    #[facet(kdl::children = "extra")]
+    extras: Vec<Extra>,
+}
 ```
 
 ### Args attributes

@@ -39,7 +39,7 @@ pub(crate) trait KdlChildrenFieldExt {
     /// Returns true if this field has the kdl::children attribute
     fn is_kdl_children(&self) -> bool;
 
-    /// Returns the custom node_name from #[facet(kdl::children(node_name = "..."))]
+    /// Returns the custom node name from `#[facet(kdl::children = "...")]`
     /// if specified, otherwise None.
     fn kdl_children_node_name(&self) -> Option<&'static str>;
 }
@@ -50,11 +50,15 @@ impl KdlChildrenFieldExt for Field {
     }
 
     fn kdl_children_node_name(&self) -> Option<&'static str> {
-        // Get the kdl::node_name attribute if present (separate from kdl::children)
-        self.get_attr(Some("kdl"), "node_name").map(|attr| {
-            // SAFETY: We know the attribute data is of type &'static str because
-            // kdl::node_name is a newtype_str variant
-            unsafe { *attr.data_ref::<&'static str>() }
+        // Get the kdl::children attribute and extract the Option<&'static str> value
+        self.get_attr(Some("kdl"), "children").and_then(|attr| {
+            // SAFETY: We know the attribute data is of type Attr::Children(Option<&'static str>)
+            // We read the inner Option<&'static str> from the Attr enum
+            let kdl_attr = unsafe { attr.data_ref::<crate::Attr>() };
+            match kdl_attr {
+                crate::Attr::Children(opt) => *opt,
+                _ => None,
+            }
         })
     }
 }
@@ -669,10 +673,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             &[]
         };
 
-        // Handle kdl::name attribute (stores the node name into a field)
+        // Handle kdl::node_name attribute (stores the node name into a field)
         if let Some(node_name_field) = fields_for_matching
             .iter()
-            .find(|field| field.has_attr(Some("kdl"), "name"))
+            .find(|field| field.has_attr(Some("kdl"), "node_name"))
         {
             let field_shape = node_name_field.shape();
             if is_spanned_shape(field_shape) {

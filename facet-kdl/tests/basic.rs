@@ -98,7 +98,7 @@ fn canon_example() {
 
     #[derive(Facet, PartialEq, Debug)]
     struct Dependency {
-        #[facet(kdl::name)]
+        #[facet(kdl::node_name)]
         name: String,
         #[facet(kdl::argument)]
         version: String,
@@ -110,7 +110,7 @@ fn canon_example() {
 
     #[derive(Facet, PartialEq, Debug)]
     struct Script {
-        #[facet(kdl::name)]
+        #[facet(kdl::node_name)]
         name: String,
         #[facet(kdl::argument)]
         body: String,
@@ -216,7 +216,7 @@ fn key_value_map_with_node_name() {
 
     #[derive(Facet, PartialEq, Debug)]
     struct Setting {
-        #[facet(kdl::name)]
+        #[facet(kdl::node_name)]
         key: String,
         #[facet(kdl::argument)]
         value: String,
