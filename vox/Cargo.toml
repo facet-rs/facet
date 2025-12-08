@@ -8,3 +8,4 @@ libc = "0.2"
 bitflags = "2"
 
 [dev-dependencies]
+proptest = "1"

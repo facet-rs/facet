@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64};
 pub(crate) const MAGIC: u64 = u64::from_le_bytes(*b"RAPACE2\0");
 
 /// Size of inline payload in descriptor
-pub(crate) const INLINE_PAYLOAD_SIZE: usize = 24;
+pub const INLINE_PAYLOAD_SIZE: usize = 24;
 
 /// Segment header (64 bytes, cache-line aligned)
 #[repr(C, align(64))]
@@ -22,7 +22,7 @@ pub(crate) struct SegmentHeader {
 
 /// Message descriptor - hot path (64 bytes, one cache line)
 #[repr(C, align(64))]
-pub(crate) struct MsgDescHot {
+pub struct MsgDescHot {
     // Identity (16 bytes)
     pub msg_id: u64,
     pub channel_id: u32,
