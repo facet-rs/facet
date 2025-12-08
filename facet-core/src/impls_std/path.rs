@@ -20,7 +20,8 @@ unsafe impl Facet<'_> for std::path::PathBuf {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // PathBuf has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }
@@ -44,7 +45,8 @@ unsafe impl Facet<'_> for std::path::Path {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // Path has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }

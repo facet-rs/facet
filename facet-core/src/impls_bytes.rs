@@ -100,7 +100,8 @@ unsafe impl Facet<'_> for Bytes {
             type_tag: None,
             inner: Some(BytesMut::SHAPE),
             proxy: None,
-            variance: Variance::Invariant,
+            // Bytes has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }
@@ -185,7 +186,8 @@ unsafe impl Facet<'_> for BytesMut {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // BytesMut has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }

@@ -1,4 +1,3 @@
-use crate::Variance;
 use core::ptr::NonNull;
 
 use crate::shape_util::vtable_for_list;
@@ -105,9 +104,11 @@ where
             doc: &[],
             attributes: &[],
             type_tag: None,
+            // Vec uses Def::List, not inner, for element access
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // Vec<T> is covariant in T, computed from the element type
+            variance: Shape::computed_variance,
         }
     };
 }

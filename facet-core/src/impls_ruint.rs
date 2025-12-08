@@ -20,7 +20,8 @@ unsafe impl<'facet, const BITS: usize, const LIMBS: usize> Facet<'facet> for Uin
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // Uint has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }
@@ -43,7 +44,8 @@ unsafe impl<'facet, const BITS: usize, const LIMBS: usize> Facet<'facet> for Bit
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // Bits has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }

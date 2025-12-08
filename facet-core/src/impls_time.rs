@@ -71,7 +71,8 @@ unsafe impl Facet<'_> for UtcDateTime {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // UtcDateTime has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }
@@ -142,7 +143,8 @@ unsafe impl Facet<'_> for OffsetDateTime {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // OffsetDateTime has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }

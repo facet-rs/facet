@@ -112,7 +112,10 @@ where
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // IndexMap<K, V, S> is covariant in K and V, but we use INVARIANT as a
+            // safe conservative default since computed_variance doesn't yet support
+            // multiple type parameters
+            variance: Variance::INVARIANT,
         }
     };
 }

@@ -82,7 +82,9 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *const T {
             type_tag: None,
             inner: Some(T::SHAPE),
             proxy: None,
-            variance: Variance::Invariant,
+            // *const T is covariant in T per the Rust Reference:
+            // https://doc.rust-lang.org/reference/subtyping.html#r-subtyping.variance.builtin-types
+            variance: Variance::COVARIANT,
         }
     };
 }
@@ -162,7 +164,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
             type_tag: None,
             inner: Some(T::SHAPE),
             proxy: None,
-            variance: Variance::Invariant,
+            variance: Variance::INVARIANT,
         }
     };
 }

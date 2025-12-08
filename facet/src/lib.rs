@@ -219,7 +219,7 @@ pub mod builtin {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: crate::Variance::Invariant,
+            variance: crate::Variance::INVARIANT,
         };
     }
 }

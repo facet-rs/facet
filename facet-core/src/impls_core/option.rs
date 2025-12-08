@@ -269,6 +269,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
             shape: T::SHAPE,
         }])
         .inner(T::SHAPE)
+        .variance(Shape::computed_variance)
         .build()
     };
 }

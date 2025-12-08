@@ -756,6 +756,17 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         })
         .collect();
 
+    // Compute variance - delegate to Shape::computed_variance() at runtime
+    let variance_call = if opaque {
+        // Opaque types don't expose internals, use invariant for safety
+        quote! { .variance(#facet_crate::Variance::INVARIANT) }
+    } else {
+        // Point to Shape::computed_variance - it takes &Shape and walks fields
+        quote! {
+            .variance(#facet_crate::Shape::computed_variance)
+        }
+    };
+
     // Generate static assertions for declared traits (catches lies at compile time)
     // We put this in a generic function outside the const block so it can reference generic parameters
     let facet_default = pe.container.attrs.has_builtin("default");
@@ -810,6 +821,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                     #attributes_call
                     #type_tag_call
                     #proxy_call
+                    #variance_call
                     .build()
             };
         }

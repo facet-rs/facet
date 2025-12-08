@@ -883,6 +883,17 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         }
     };
 
+    // Compute variance - delegate to Shape::computed_variance() at runtime
+    let variance_call = if opaque {
+        // Opaque types don't expose internals, use invariant for safety
+        quote! { .variance(#facet_crate::Variance::INVARIANT) }
+    } else {
+        // Point to Shape::computed_variance - it takes &Shape and walks fields
+        quote! {
+            .variance(#facet_crate::Shape::computed_variance)
+        }
+    };
+
     // Still need original AST for where clauses and type params for build_ helpers
     let where_clauses_ast = match &parsed.kind {
         StructKind::Struct { clauses, .. } => clauses.as_ref(),
@@ -1393,6 +1404,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     #type_tag_call
                     #proxy_call
                     #inner_call
+                    #variance_call
                     .build()
             };
         }

@@ -61,7 +61,8 @@ unsafe impl Facet<'_> for Zoned {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // Zoned has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }
@@ -125,7 +126,8 @@ unsafe impl Facet<'_> for Timestamp {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // Timestamp has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }
@@ -188,7 +190,8 @@ unsafe impl Facet<'_> for DateTime {
             type_tag: None,
             inner: None,
             proxy: None,
-            variance: Variance::Invariant,
+            // DateTime has no lifetime parameters, so it's covariant
+            variance: Variance::COVARIANT,
         }
     };
 }

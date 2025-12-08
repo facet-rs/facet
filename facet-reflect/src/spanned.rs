@@ -104,7 +104,7 @@ unsafe impl Facet<'_> for Span {
         type_tag: None,
         inner: None,
         proxy: None,
-        variance: Variance::Invariant,
+        variance: Variance::INVARIANT,
     };
 }
 
@@ -236,7 +236,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Spanned<T> {
         type_tag: None,
         inner: None,
         proxy: None,
-        variance: Variance::Invariant,
+        variance: Variance::INVARIANT,
     };
 }
 

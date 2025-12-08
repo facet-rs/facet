@@ -1,4 +1,3 @@
-use crate::Variance;
 use core::{alloc::Layout, ptr::NonNull};
 
 use alloc::boxed::Box;
@@ -121,7 +120,7 @@ unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for Box<T> {
             type_tag: None,
             inner: Some(T::SHAPE),
             proxy: None,
-            variance: Variance::Invariant,
+            variance: Shape::computed_variance,
         }
     };
 }
