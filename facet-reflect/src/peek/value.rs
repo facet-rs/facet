@@ -2,7 +2,8 @@ use core::{cmp::Ordering, marker::PhantomData, ptr::NonNull};
 #[cfg(feature = "alloc")]
 use facet_core::Field;
 use facet_core::{
-    Def, Facet, PointerType, PtrConst, Shape, StructKind, Type, TypeNameOpts, UserType, ValueVTable,
+    Def, Facet, PointerType, PtrConst, Shape, StructKind, Type, TypeNameOpts, UserType,
+    ValueVTable, Variance,
 };
 
 use crate::{PeekNdArray, PeekSet, ReflectError, ScalarType};
@@ -107,6 +108,163 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
             data,
             shape,
             _invariant: PhantomData,
+        }
+    }
+
+    /// Returns the variance of the underlying type.
+    ///
+    /// This queries the type's [`Shape::computed_variance`] to determine whether
+    /// it is covariant, contravariant, or invariant over its lifetime parameter.
+    #[inline]
+    pub fn variance(&self) -> Variance {
+        self.shape.computed_variance()
+    }
+
+    /// Shrink the `'facet` lifetime parameter.
+    ///
+    /// This is safe for **covariant** types: if a type is covariant over its
+    /// lifetime parameter, then `T<'long>` is a subtype of `T<'short>` when
+    /// `'long: 'short`. This means we can safely treat a `Peek` of a longer
+    /// lifetime as a `Peek` of a shorter lifetime.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the underlying type is not covariant.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use facet::Facet;
+    /// use facet_reflect::Peek;
+    ///
+    /// #[derive(Facet)]
+    /// struct Covariant<'a> {
+    ///     data: &'a str,
+    /// }
+    ///
+    /// fn use_shorter<'a>(peek: Peek<'_, 'a>) {
+    ///     // Use the peek with the shorter lifetime
+    ///     let _ = peek;
+    /// }
+    ///
+    /// let data = "hello";
+    /// let value = Covariant { data };
+    /// let peek: Peek<'_, 'static> = Peek::new(&value);
+    ///
+    /// // Shrink from 'static to a shorter lifetime - safe because Covariant is covariant
+    /// use_shorter(peek.shrink_lifetime());
+    /// ```
+    #[inline]
+    pub fn shrink_lifetime<'shorter>(self) -> Peek<'mem, 'shorter>
+    where
+        'facet: 'shorter,
+    {
+        assert!(
+            self.variance() == Variance::Covariant,
+            "shrink_lifetime requires a covariant type, but {} is {:?}",
+            self.shape,
+            self.variance()
+        );
+        Peek {
+            data: self.data,
+            shape: self.shape,
+            _invariant: PhantomData,
+        }
+    }
+
+    /// Try to shrink the `'facet` lifetime parameter.
+    ///
+    /// This is safe for **covariant** types. Returns `None` if the type is not
+    /// covariant.
+    ///
+    /// See [`shrink_lifetime`](Self::shrink_lifetime) for more details.
+    #[inline]
+    pub fn try_shrink_lifetime<'shorter>(self) -> Option<Peek<'mem, 'shorter>>
+    where
+        'facet: 'shorter,
+    {
+        if self.variance() == Variance::Covariant {
+            Some(Peek {
+                data: self.data,
+                shape: self.shape,
+                _invariant: PhantomData,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Grow the `'facet` lifetime parameter.
+    ///
+    /// This is safe for **contravariant** types: if a type is contravariant over
+    /// its lifetime parameter, then `T<'short>` is a subtype of `T<'long>` when
+    /// `'long: 'short`. This means we can safely treat a `Peek` of a shorter
+    /// lifetime as a `Peek` of a longer lifetime.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the underlying type is not contravariant.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use facet::Facet;
+    /// use facet_reflect::Peek;
+    ///
+    /// // Note: fn pointers don't currently implement Facet, so this is illustrative
+    /// #[derive(Facet)]
+    /// struct Contravariant<'a> {
+    ///     callback: fn(&'a str),
+    /// }
+    ///
+    /// fn needs_static(peek: Peek<'_, 'static>) {
+    ///     // Use the peek with 'static lifetime
+    ///     let _ = peek;
+    /// }
+    ///
+    /// fn example<'a>(value: &Contravariant<'a>) {
+    ///     let peek: Peek<'_, 'a> = Peek::new(value);
+    ///     // Grow from 'a to 'static - safe because Contravariant is contravariant
+    ///     needs_static(peek.grow_lifetime());
+    /// }
+    /// ```
+    #[inline]
+    pub fn grow_lifetime<'longer>(self) -> Peek<'mem, 'longer>
+    where
+        'longer: 'facet,
+    {
+        assert!(
+            self.variance() == Variance::Contravariant,
+            "grow_lifetime requires a contravariant type, but {} is {:?}",
+            self.shape,
+            self.variance()
+        );
+        Peek {
+            data: self.data,
+            shape: self.shape,
+            _invariant: PhantomData,
+        }
+    }
+
+    /// Try to grow the `'facet` lifetime parameter.
+    ///
+    /// This is safe for **contravariant** types. Returns `None` if the type is
+    /// not contravariant.
+    ///
+    /// See [`grow_lifetime`](Self::grow_lifetime) for more details.
+    #[inline]
+    pub fn try_grow_lifetime<'longer>(self) -> Option<Peek<'mem, 'longer>>
+    where
+        'longer: 'facet,
+    {
+        if self.variance() == Variance::Contravariant {
+            Some(Peek {
+                data: self.data,
+                shape: self.shape,
+                _invariant: PhantomData,
+            })
+        } else {
+            None
         }
     }
 
