@@ -4,6 +4,9 @@ use crate::layout::{MsgDescHot, INLINE_PAYLOAD_SIZE};
 use crate::types::{ChannelId, MethodId, MsgId, SlotIndex, Generation};
 use crate::alloc::{CommittedSlot, DataSegment, InboundPayload};
 
+// Re-export ControlMethod from dispatch module
+pub use crate::dispatch::ControlMethod;
+
 /// Frame flags matching the spec
 bitflags::bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,24 +20,6 @@ bitflags::bitflags! {
         const CREDITS       = 0b0100_0000;
         const METADATA_ONLY = 0b1000_0000;
     }
-}
-
-/// Control channel method IDs
-#[repr(u32)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ControlMethod {
-    OpenChannel = 1,
-    CloseChannel = 2,
-    CancelChannel = 3,
-    GrantCredits = 4,
-    Ping = 5,
-    Pong = 6,
-    ListServices = 7,
-    GetService = 8,
-    GetMethod = 9,
-    GetSchema = 10,
-    SetDebugLevel = 11,
-    InjectFault = 12,
 }
 
 /// Builder for outbound frames. Enforces invariants at construction time.

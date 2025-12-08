@@ -6,6 +6,9 @@ edition = "2021"
 [dependencies]
 libc = "0.2"
 bitflags = "2"
+serde = { version = "1", features = ["derive"] }
+postcard = { version = "1", features = ["alloc"] }
+serde_json = "1"
 
 [dev-dependencies]
 proptest = "1"

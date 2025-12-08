@@ -8,8 +8,13 @@ pub mod flow;
 pub mod header;
 pub mod frame;
 pub mod error;
+pub mod codec;
 pub mod channel;
 pub mod session;
+pub mod fault;
+pub mod observe;
+pub mod dispatch;
+pub mod registry;
 
 #[cfg(test)]
 mod proptests;
