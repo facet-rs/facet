@@ -1,3 +1,5 @@
+extern crate alloc;
+
 use crate::span::Span;
 use core::fmt;
 use facet_core::{Field, Shape, Type, UserType, Variant};
@@ -15,8 +17,24 @@ pub struct ArgsErrorWithInput {
     pub(crate) flattened_args: String,
 }
 
+impl ArgsErrorWithInput {
+    /// Returns true if this is a help request (not a real error)
+    pub fn is_help_request(&self) -> bool {
+        self.inner.kind.is_help_request()
+    }
+
+    /// If this is a help request, returns the help text
+    pub fn help_text(&self) -> Option<&str> {
+        self.inner.kind.help_text()
+    }
+}
+
 impl core::fmt::Display for ArgsErrorWithInput {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // For help requests, just display the help text directly
+        if let Some(help) = self.help_text() {
+            return write!(f, "{}", help);
+        }
         write!(f, "Could not parse CLI arguments")
     }
 }
@@ -77,6 +95,15 @@ pub struct ArgsError {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum ArgsErrorKind {
+    /// Help was requested via -h, --help, -help, or /?
+    ///
+    /// This is not really an "error" but uses the error path to return
+    /// help text when the user explicitly requests it.
+    HelpRequested {
+        /// The generated help text
+        help_text: alloc::string::String,
+    },
+
     /// Did not expect a positional argument at this position
     UnexpectedPositionalArgument {
         /// Fields of the struct/variant being parsed (for help text)
@@ -152,6 +179,7 @@ impl ArgsErrorKind {
     /// Returns an error code for this error kind.
     pub fn code(&self) -> &'static str {
         match self {
+            ArgsErrorKind::HelpRequested { .. } => "args::help",
             ArgsErrorKind::UnexpectedPositionalArgument { .. } => "args::unexpected_positional",
             ArgsErrorKind::NoFields { .. } => "args::no_fields",
             ArgsErrorKind::UnknownLongFlag { .. } => "args::unknown_long_flag",
@@ -167,6 +195,7 @@ impl ArgsErrorKind {
     /// Returns a short label for the error (shown inline in the source)
     pub fn label(&self) -> String {
         match self {
+            ArgsErrorKind::HelpRequested { .. } => "help requested".to_string(),
             ArgsErrorKind::UnexpectedPositionalArgument { .. } => {
                 "unexpected positional argument".to_string()
             }
@@ -278,7 +307,22 @@ impl ArgsErrorKind {
             ArgsErrorKind::ExpectedValueGotEof { .. } => {
                 Some(Box::new("provide a value after the flag"))
             }
-            ArgsErrorKind::NoFields { .. } | ArgsErrorKind::ReflectError(_) => None,
+            ArgsErrorKind::HelpRequested { .. }
+            | ArgsErrorKind::NoFields { .. }
+            | ArgsErrorKind::ReflectError(_) => None,
+        }
+    }
+
+    /// Returns true if this is a help request (not a real error)
+    pub fn is_help_request(&self) -> bool {
+        matches!(self, ArgsErrorKind::HelpRequested { .. })
+    }
+
+    /// If this is a help request, returns the help text
+    pub fn help_text(&self) -> Option<&str> {
+        match self {
+            ArgsErrorKind::HelpRequested { help_text } => Some(help_text),
+            _ => None,
         }
     }
 }

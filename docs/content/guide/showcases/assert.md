@@ -30,8 +30,8 @@ title = "Assertions"
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">host</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">localhost</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">port</span><span style="opacity:0.7">: </span><span style="color:rgb(112,224,81)">8080</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">true</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">port</span><span style="opacity:0.7">: </span><span style="color:rgb(224,186,81)">8080</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">tags</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
     "<span style="color:rgb(158,206,106)">prod</span>"<span style="opacity:0.7">,</span>
     "<span style="color:rgb(158,206,106)">api</span>"<span style="opacity:0.7">,</span>
@@ -63,8 +63,8 @@ title = "Assertions"
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">host</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">localhost</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">port</span><span style="opacity:0.7">: </span><span style="color:rgb(112,224,81)">8080</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">true</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">port</span><span style="opacity:0.7">: </span><span style="color:rgb(224,186,81)">8080</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">tags</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
     "<span style="color:rgb(158,206,106)">prod</span>"<span style="opacity:0.7">,</span>
   <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
@@ -100,7 +100,7 @@ title = "Assertions"
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Person</span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Alice</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">30</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">address</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Address</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">street</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">123 Main St</span>"<span style="opacity:0.7">,</span>
     <span style="color:rgb(115,218,202)">city</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Springfield</span>"<span style="opacity:0.7">,</span>
@@ -144,4 +144,14 @@ title = "Assertions"
 </code></pre>
 </div>
 </section>
+
+<footer class="showcase-provenance">
+<p>This showcase was auto-generated from source code.</p>
+<dl>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6/facet-assert/examples/assert_showcase.rs"><code>facet-assert/examples/assert_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6"><code>0d55a3ebf</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2025-12-09T19:29:12+01:00">2025-12-09T19:29:12+01:00</time></dd>
+<dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
+</dl>
+</footer>
 </div>

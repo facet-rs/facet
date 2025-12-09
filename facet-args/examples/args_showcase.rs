@@ -169,6 +169,7 @@ fn main() {
     runner.section("Help Generation");
 
     showcase_help_simple(&mut runner);
+    showcase_help_auto_detection(&mut runner);
     showcase_help_subcommands(&mut runner);
 
     // =========================================================================
@@ -315,6 +316,18 @@ fn showcase_help_simple(runner: &mut ShowcaseRunner) {
         .description("Auto-generated help text from struct definition and doc comments.")
         .target_type::<SimpleArgs>()
         .serialized_output(Language::Rust, &help)
+        .finish();
+}
+
+fn showcase_help_auto_detection(runner: &mut ShowcaseRunner) {
+    let result: Result<SimpleArgs, _> = args::from_slice(&["--help"]);
+
+    runner
+        .scenario("Automatic --help Detection")
+        .description("When `-h`, `--help`, `-help`, or `/?` is the first argument, help is automatically generated and returned.")
+        .target_type::<SimpleArgs>()
+        .input(Language::Rust, "from_slice(&[\"--help\"])")
+        .result(&result)
         .finish();
 }
 

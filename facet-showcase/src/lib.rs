@@ -27,4 +27,4 @@ mod runner;
 
 pub use highlighter::{Highlighter, Language, ansi_to_html, html_escape};
 pub use output::OutputMode;
-pub use runner::{Scenario, ShowcaseRunner};
+pub use runner::{Provenance, Scenario, ShowcaseRunner};

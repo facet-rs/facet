@@ -45,8 +45,8 @@ title = "KDL"
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">PersonDoc</span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">person</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Person</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Alice</span>"<span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">30</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;String&gt;</span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">alice@example.com</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">alice@example.com</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -91,7 +91,7 @@ title = "KDL"
   <span style="color:rgb(115,218,202)">server</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Server</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">web-01</span>"<span style="opacity:0.7">,</span>
     <span style="color:rgb(115,218,202)">host</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">localhost</span>"<span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">port</span><span style="opacity:0.7">: </span><span style="color:rgb(112,224,81)">8080</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">port</span><span style="opacity:0.7">: </span><span style="color:rgb(224,186,81)">8080</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -320,9 +320,9 @@ title = "KDL"
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">ConfigDoc</span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">config</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="opacity:0.7"> {</span>
-    <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">true</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">100</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">timeout_ms</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">5000</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">100</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">timeout_ms</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">5000</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -842,7 +842,7 @@ title = "KDL"
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">kdl::reflect</span>
 
-  <span style="color:#e06c75">×</span> Field 'SimpleServer::port' was not initialized
+  <span style="color:#e06c75">×</span> Field 'SimpleServer::port' was not initialized. If you need to leave fields partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred)
 </code></pre>
 </div>
 </section>
@@ -953,4 +953,14 @@ Error: 
 </code></pre>
 </div>
 </section>
+
+<footer class="showcase-provenance">
+<p>This showcase was auto-generated from source code.</p>
+<dl>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6/facet-kdl/examples/kdl_showcase.rs"><code>facet-kdl/examples/kdl_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6"><code>0d55a3ebf</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2025-12-09T19:29:12+01:00">2025-12-09T19:29:12+01:00</time></dd>
+<dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
+</dl>
+</footer>
 </div>

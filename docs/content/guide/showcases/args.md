@@ -47,10 +47,10 @@ title = "Args"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleArgs</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(115,218,202)">verbose</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">true</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">jobs</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;usize&gt;</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(81,157,224)">4</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">verbose</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">jobs</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(81,114,224)">4</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">input</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">input.txt</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">output</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;String&gt;</span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">output.txt</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">output</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">output.txt</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -92,10 +92,10 @@ title = "Args"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleArgs</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(115,218,202)">verbose</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">false</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">jobs</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;usize&gt;</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(81,157,224)">4</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">verbose</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">jobs</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(81,114,224)">4</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">input</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">input.txt</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">output</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;String&gt;</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">output</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -137,10 +137,120 @@ title = "Args"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">SimpleArgs</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(115,218,202)">verbose</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">true</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">jobs</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;usize&gt;</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">verbose</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">jobs</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">input</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">input.txt</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">output</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;String&gt;</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">output</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
+<span style="opacity:0.7">}</span></code></pre>
+</div>
+</section>
+
+### Short Flag Chaining
+
+<section class="scenario">
+<p class="description">Multiple boolean short flags can be combined: <code>-sb</code> is equivalent to <code>-s -b</code>.</p>
+<details class="target-type">
+<summary>Target Type</summary>
+<pre style="background-color:#1a1b26;">
+<span style="font-style:italic;color:#565f89;">/// Git-like CLI with subcommands.
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">GitLikeArgs </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Show version information
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">named)]
+</span><span style="color:#9abdf5;">    version</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">bool</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Git command to run
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">subcommand)]
+</span><span style="color:#9abdf5;">    command</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> GitCommand,
+</span><span style="color:#9abdf5;">}
+</span><span style="color:#c0caf5;">
+</span><span style="font-style:italic;color:#565f89;">/// Available commands
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">u8</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">enum </span><span style="color:#c0caf5;">GitCommand </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Clone a repository into a new directory
+</span><span style="color:#9abdf5;">    </span><span style="color:#0db9d7;">Clone </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">        </span><span style="font-style:italic;color:#565f89;">/// The repository URL to clone
+</span><span style="color:#9abdf5;">        </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(args::positional)]
+</span><span style="color:#9abdf5;">        url</span><span style="color:#89ddff;">: </span><span style="color:#0db9d7;">String</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">        </span><span style="font-style:italic;color:#565f89;">/// Directory to clone into
+</span><span style="color:#9abdf5;">        </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(args::positional)]
+</span><span style="color:#9abdf5;">        directory</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#9abdf5;">String</span><span style="color:#89ddff;">&gt;,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">        </span><span style="font-style:italic;color:#565f89;">/// Clone only the specified branch
+</span><span style="color:#9abdf5;">        </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(args::named</span><span style="color:#89ddff;">,</span><span style="color:#9abdf5;"> args::short)]
+</span><span style="color:#9abdf5;">        branch</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#9abdf5;">String</span><span style="color:#89ddff;">&gt;,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">        </span><span style="font-style:italic;color:#565f89;">/// Create a shallow clone with limited history
+</span><span style="color:#9abdf5;">        </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(args::named)]
+</span><span style="color:#9abdf5;">        depth</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#bb9af7;">usize</span><span style="color:#89ddff;">&gt;,
+</span><span style="color:#9abdf5;">    }</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Show the working tree status
+</span><span style="color:#9abdf5;">    Status {
+</span><span style="color:#9abdf5;">        </span><span style="font-style:italic;color:#565f89;">/// Show short-format output
+</span><span style="color:#9abdf5;">        </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(args::named</span><span style="color:#89ddff;">,</span><span style="color:#9abdf5;"> args::short)]
+</span><span style="color:#9abdf5;">        short</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">bool</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">        </span><span style="font-style:italic;color:#565f89;">/// Show the branch even in short-format
+</span><span style="color:#9abdf5;">        </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(args::named</span><span style="color:#89ddff;">,</span><span style="color:#9abdf5;"> args::short)]
+</span><span style="color:#9abdf5;">        branch</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">bool</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">    }</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Manage set of tracked repositories
+</span><span style="color:#9abdf5;">    Remote {
+</span><span style="color:#9abdf5;">        </span><span style="font-style:italic;color:#565f89;">/// Remote action to perform
+</span><span style="color:#9abdf5;">        </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(args::subcommand)]
+</span><span style="color:#9abdf5;">        action</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> RemoteAction</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">    }</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">}
+</span><span style="color:#c0caf5;">
+</span><span style="font-style:italic;color:#565f89;">/// Remote management commands
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">repr</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">u8</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">enum </span><span style="color:#c0caf5;">RemoteAction </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Add a remote named &lt;name&gt; for the repository at &lt;url&gt;
+</span><span style="color:#9abdf5;">    Add {
+</span><span style="color:#9abdf5;">        </span><span style="font-style:italic;color:#565f89;">/// Name of the remote
+</span><span style="color:#9abdf5;">        </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(args::positional)]
+</span><span style="color:#9abdf5;">        name</span><span style="color:#89ddff;">: </span><span style="color:#0db9d7;">String</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">        </span><span style="font-style:italic;color:#565f89;">/// URL of the remote repository
+</span><span style="color:#9abdf5;">        </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(args::positional)]
+</span><span style="color:#9abdf5;">        url</span><span style="color:#89ddff;">: </span><span style="color:#0db9d7;">String</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">    }</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Remove the remote named &lt;name&gt;
+</span><span style="color:#9abdf5;">    rm {
+</span><span style="color:#9abdf5;">        </span><span style="font-style:italic;color:#565f89;">/// Name of the remote to remove
+</span><span style="color:#9abdf5;">        </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(args::positional)]
+</span><span style="color:#9abdf5;">        name</span><span style="color:#89ddff;">: </span><span style="color:#0db9d7;">String</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">    }</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// List all remotes
+</span><span style="color:#9abdf5;">    ls {
+</span><span style="color:#9abdf5;">        </span><span style="font-style:italic;color:#565f89;">/// Show remote URLs after names
+</span><span style="color:#9abdf5;">        </span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">facet</span><span style="color:#9abdf5;">(args::named</span><span style="color:#89ddff;">,</span><span style="color:#9abdf5;"> args::short)]
+</span><span style="color:#9abdf5;">        verbose</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">bool</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">    }</span><span style="color:#89ddff;">,
+</span><span style="color:#9abdf5;">}</span></pre>
+
+</details>
+<div class="input">
+<h4>Rust Input</h4>
+<pre style="background-color:#1a1b26;">
+<span style="color:#2ac3de;">from_slice</span><span style="color:#9abdf5;">(</span><span style="color:#89ddff;">&amp;</span><span style="color:#9abdf5;">[</span><span style="color:#89ddff;">&quot;</span><span style="color:#9ece6a;">status</span><span style="color:#89ddff;">&quot;, &quot;</span><span style="color:#9ece6a;">-sb</span><span style="color:#89ddff;">&quot;</span><span style="color:#9abdf5;">])</span></pre>
+
+</div>
+<div class="success">
+<h4>Success</h4>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitLikeArgs</span><span style="opacity:0.7"> {</span>
+  <span style="color:rgb(115,218,202)">version</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">command</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitCommand</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Status</span><span style="opacity:0.7"> {</span>
+    <span style="color:rgb(115,218,202)">short</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">branch</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
+  <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -246,12 +356,12 @@ title = "Args"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitLikeArgs</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(115,218,202)">version</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">false</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">version</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">command</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitCommand</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Clone</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">url</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">https://github.com/user/repo</span>"<span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">directory</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;String&gt;</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">branch</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;String&gt;</span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">main</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">depth</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;usize&gt;</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">directory</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">branch</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">main</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">depth</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -358,7 +468,7 @@ title = "Args"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitLikeArgs</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(115,218,202)">version</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">false</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">version</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">command</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">GitCommand</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Remote</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">action</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">RemoteAction</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Add</span><span style="opacity:0.7"> {</span>
       <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">origin</span>"<span style="opacity:0.7">,</span>
@@ -424,6 +534,73 @@ title = "Args"
 </span><span style="color:#c0caf5;">
 </span></pre>
 
+</div>
+</section>
+
+### Automatic --help Detection
+
+<section class="scenario">
+<p class="description">When <code>-h</code>, <code>--help</code>, <code>-help</code>, or <code>/?</code> is the first argument, help is automatically generated and returned.</p>
+<details class="target-type">
+<summary>Target Type</summary>
+<pre style="background-color:#1a1b26;">
+<span style="font-style:italic;color:#565f89;">/// A simple CLI tool for file processing.
+</span><span style="color:#89ddff;">#</span><span style="color:#9abdf5;">[</span><span style="color:#c0caf5;">derive</span><span style="color:#9abdf5;">(</span><span style="color:#c0caf5;">Facet</span><span style="color:#9abdf5;">)]
+</span><span style="color:#bb9af7;">struct </span><span style="color:#c0caf5;">SimpleArgs </span><span style="color:#9abdf5;">{
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Enable verbose output
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">named, </span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">short)]
+</span><span style="color:#9abdf5;">    verbose</span><span style="color:#89ddff;">: </span><span style="color:#bb9af7;">bool</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Number of parallel jobs to run
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">named, </span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">short)]
+</span><span style="color:#9abdf5;">    jobs</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#bb9af7;">usize</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Input file to process
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">positional)]
+</span><span style="color:#9abdf5;">    input</span><span style="color:#89ddff;">:</span><span style="color:#9abdf5;"> String,
+</span><span style="color:#9abdf5;">
+</span><span style="color:#9abdf5;">    </span><span style="font-style:italic;color:#565f89;">/// Output file (defaults to stdout)
+</span><span style="color:#9abdf5;">    #[facet(</span><span style="color:#7dcfff;">args</span><span style="color:#89ddff;">::</span><span style="color:#9abdf5;">positional)]
+</span><span style="color:#9abdf5;">    output</span><span style="color:#89ddff;">: </span><span style="color:#9abdf5;">Option</span><span style="color:#89ddff;">&lt;</span><span style="color:#9abdf5;">String</span><span style="color:#89ddff;">&gt;</span><span style="color:#9abdf5;">,
+</span><span style="color:#9abdf5;">}</span></pre>
+
+</details>
+<div class="input">
+<h4>Rust Input</h4>
+<pre style="background-color:#1a1b26;">
+<span style="color:#2ac3de;">from_slice</span><span style="color:#9abdf5;">(</span><span style="color:#89ddff;">&amp;</span><span style="color:#9abdf5;">[</span><span style="color:#89ddff;">&quot;</span><span style="color:#9ece6a;">--help</span><span style="color:#89ddff;">&quot;</span><span style="color:#9abdf5;">])</span></pre>
+
+</div>
+<div class="error">
+<h4>Error</h4>
+<pre><code><span style="color:#e06c75">args::help</span>
+
+  <span style="color:#e06c75">×</span> target/debug/examples/args_showcase
+  <span style="color:#e06c75">│</span> 
+  <span style="color:#e06c75">│</span> A simple CLI tool for file processing.
+  <span style="color:#e06c75">│</span> 
+  <span style="color:#e06c75">│</span> USAGE:
+  <span style="color:#e06c75">│</span>     target/debug/examples/args_showcase [OPTIONS] &lt;INPUT&gt; [OUTPUT]
+  <span style="color:#e06c75">│</span> 
+  <span style="color:#e06c75">│</span> ARGUMENTS:
+  <span style="color:#e06c75">│</span>         &lt;INPUT&gt;
+  <span style="color:#e06c75">│</span>             Input file to process
+  <span style="color:#e06c75">│</span>         &lt;OUTPUT&gt;
+  <span style="color:#e06c75">│</span>             Output file (defaults to stdout)
+  <span style="color:#e06c75">│</span> 
+  <span style="color:#e06c75">│</span> OPTIONS:
+  <span style="color:#e06c75">│</span>     -v, --verbose
+  <span style="color:#e06c75">│</span>             Enable verbose output
+  <span style="color:#e06c75">│</span>     -j, --jobs &lt;OPTION&gt;
+  <span style="color:#e06c75">│</span>             Number of parallel jobs to run
+  <span style="color:#e06c75">│</span> 
+  <span style="color:#e06c75">│</span> 
+   ╭────
+ <span style="opacity:0.7">1</span> │ --help
+   · <span style="color:#c678dd;font-weight:bold">───┬──</span>
+   ·    <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">help requested</span>
+   ╰────
+</code></pre>
 </div>
 </section>
 
@@ -844,10 +1021,10 @@ title = "Args"
 </div>
 </section>
 
-### Invalid Short Flag
+### Invalid Short Flag in Chain
 
 <section class="scenario">
-<p class="description">Boolean short flags cannot have trailing characters attached.</p>
+<p class="description">When chaining short flags, an unknown flag is reported with available options.</p>
 <details class="target-type">
 <summary>Target Type</summary>
 <pre style="background-color:#1a1b26;">
@@ -885,10 +1062,14 @@ title = "Args"
   <span style="color:#e06c75">×</span> Could not parse CLI arguments
    ╭────
  <span style="opacity:0.7">1</span> │ -vxyz input.txt 
-   · <span style="color:#c678dd;font-weight:bold">──┬──</span>
-   ·   <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown flag &#96;-vxyz&#96;</span>
+   · <span style="color:#c678dd;font-weight:bold">  ┬</span>
+   ·   <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown flag &#96;-x&#96;</span>
    ╰────
-<span style="color:#56b6c2">  help: </span>&#96;-vxyz&#96; is &#96;--verbose&#96;
+<span style="color:#56b6c2">  help: </span>available options:
+          -v, --verbose  Enable verbose output
+          -j, --jobs     Number of parallel jobs to run
+              &lt;input&gt;    Input file to process
+              &lt;output&gt;   Output file (defaults to stdout)
 </code></pre>
 </div>
 </section>
@@ -987,10 +1168,14 @@ title = "Args"
   <span style="color:#e06c75">×</span> Could not parse CLI arguments
    ╭────
  <span style="opacity:0.7">1</span> │ -verbose input.txt 
-   · <span style="color:#c678dd;font-weight:bold">────┬───</span>
-   ·     <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown flag &#96;-verbose&#96;</span>
+   · <span style="color:#c678dd;font-weight:bold">  ┬</span>
+   ·   <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unknown flag &#96;-e&#96;</span>
    ╰────
-<span style="color:#56b6c2">  help: </span>&#96;-verbose&#96; is &#96;--verbose&#96;
+<span style="color:#56b6c2">  help: </span>available options:
+          -v, --verbose  Enable verbose output
+          -j, --jobs     Number of parallel jobs to run
+              &lt;input&gt;    Input file to process
+              &lt;output&gt;   Output file (defaults to stdout)
 </code></pre>
 </div>
 </section>
@@ -1539,4 +1724,14 @@ title = "Args"
 </code></pre>
 </div>
 </section>
+
+<footer class="showcase-provenance">
+<p>This showcase was auto-generated from source code.</p>
+<dl>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6/facet-args/examples/args_showcase.rs"><code>facet-args/examples/args_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6"><code>0d55a3ebf</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2025-12-09T19:29:12+01:00">2025-12-09T19:29:12+01:00</time></dd>
+<dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
+</dl>
+</footer>
 </div>

@@ -28,8 +28,8 @@ title = "YAML"
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Person</span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Alice</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">30</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;String&gt;</span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">alice@example.com</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">alice@example.com</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -115,7 +115,7 @@ title = "YAML"
   <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Text</span><span style="opacity:0.7">(</span>"<span style="color:rgb(158,206,106)">Hello, world!</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Image</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">url</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">https://example.com/cat.jpg</span>"<span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">width</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">800</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">width</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">800</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Ping</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
@@ -146,7 +146,7 @@ title = "YAML"
     <span style="color:rgb(115,218,202)">data</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Operation completed</span>"<span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">ApiResponse</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Error</span><span style="opacity:0.7"> {</span>
-    <span style="color:rgb(115,218,202)">code</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,95)">404</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">code</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">404</span><span style="opacity:0.7">,</span>
     <span style="color:rgb(115,218,202)">message</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Not found</span>"<span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
@@ -174,10 +174,10 @@ title = "YAML"
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">[Event; 3]</span><span style="opacity:0.7"> [</span>
   <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Click</span><span style="opacity:0.7"> {</span>
-    <span style="color:rgb(115,218,202)">x</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,95)">100</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">y</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,95)">200</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">x</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">100</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">y</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">200</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">KeyPress</span><span style="opacity:0.7">(</span><span style="color:rgb(81,122,224)">A</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">KeyPress</span><span style="opacity:0.7">(</span><span style="color:rgb(81,224,91)">A</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Resize</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
@@ -204,7 +204,7 @@ title = "YAML"
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">[StringOrNumber; 2]</span><span style="opacity:0.7"> [</span>
   <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Str</span><span style="opacity:0.7">(</span>"<span style="color:rgb(158,206,106)">hello</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Num</span><span style="opacity:0.7">(</span><span style="color:rgb(224,88,81)">42</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Num</span><span style="opacity:0.7">(</span><span style="color:rgb(222,81,224)">42</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -229,16 +229,16 @@ title = "YAML"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
-  "<span style="color:rgb(158,206,106)">two</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">2</span><span style="opacity:0.7">,</span>
-  "<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">1</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">two</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
 <h4>YAML Output</h4>
 <pre style="background-color:#1a1b26;">
 <span style="color:#c0caf5;">---
-</span><span style="color:#f7768e;">two</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">2
-</span><span style="color:#f7768e;">one</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">1</span></pre>
+</span><span style="color:#f7768e;">one</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">1
+</span><span style="color:#f7768e;">two</span><span style="color:#89ddff;">: </span><span style="color:#ff9e64;">2</span></pre>
 
 </div>
 </section>
@@ -255,17 +255,17 @@ title = "YAML"
 </details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;i32, &amp;str&gt;</span><span style="opacity:0.7"> [</span>
-  <span style="color:rgb(224,81,95)">2</span><span style="opacity:0.7"> =&gt; </span>"<span style="color:rgb(158,206,106)">two</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,95)">1</span><span style="opacity:0.7"> =&gt; </span>"<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;i32, String&gt;</span><span style="opacity:0.7"> [</span>
+  <span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7"> =&gt; </span>"<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7"> =&gt; </span>"<span style="color:rgb(158,206,106)">two</span>"<span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
 <h4>YAML Output</h4>
 <pre style="background-color:#1a1b26;">
 <span style="color:#c0caf5;">---
-</span><span style="color:#ff9e64;">2</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">two
-</span><span style="color:#ff9e64;">1</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">one</span></pre>
+</span><span style="color:#ff9e64;">1</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">one
+</span><span style="color:#ff9e64;">2</span><span style="color:#89ddff;">: </span><span style="color:#9ece6a;">two</span></pre>
 
 </div>
 </section>
@@ -284,9 +284,9 @@ title = "YAML"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Point</span><span style="opacity:0.7">(</span>
-  <span style="color:rgb(224,81,95)">10</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,95)">20</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,95)">30</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">10</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">20</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">30</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">)</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -381,19 +381,19 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">AppConfig</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">true</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">server</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">ServerConfig</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">host</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">localhost</span>"<span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">port</span><span style="opacity:0.7">: </span><span style="color:rgb(112,224,81)">8080</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">tls</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;TlsConfig&gt;</span><span style="opacity:0.7">::Some(</span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">TlsConfig</span><span style="opacity:0.7"> {</span>
+    <span style="color:rgb(115,218,202)">port</span><span style="opacity:0.7">: </span><span style="color:rgb(224,186,81)">8080</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">tls</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::Some(</span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">TlsConfig</span><span style="opacity:0.7"> {</span>
       <span style="color:rgb(115,218,202)">cert_path</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">/etc/ssl/cert.pem</span>"<span style="opacity:0.7">,</span>
       <span style="color:rgb(115,218,202)">key_path</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">/etc/ssl/key.pem</span>"<span style="opacity:0.7">,</span>
     <span style="opacity:0.7">}</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">database</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">DatabaseConfig</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">url</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">postgres://localhost/mydb</span>"<span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">pool_size</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">10</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">timeout_secs</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">30</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">pool_size</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">10</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">timeout_secs</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">features</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
     "<span style="color:rgb(158,206,106)">auth</span>"<span style="opacity:0.7">,</span>
@@ -446,8 +446,8 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">true</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">100</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">100</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">endpoints</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
     "<span style="color:rgb(158,206,106)">https://api1.example.com</span>"<span style="opacity:0.7">,</span>
     "<span style="color:rgb(158,206,106)">https://api2.example.com</span>"<span style="opacity:0.7">,</span>
@@ -469,8 +469,8 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">true</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">100</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">100</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">endpoints</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
     "<span style="color:rgb(158,206,106)">https://api1.example.com</span>"<span style="opacity:0.7">,</span>
     "<span style="color:rgb(158,206,106)">https://api2.example.com</span>"<span style="opacity:0.7">,</span>
@@ -668,7 +668,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Item</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(115,218,202)">id</span><span style="opacity:0.7">: </span><span style="color:rgb(81,126,224)">42</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">id</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,179)">42</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">123</span>"<span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -698,7 +698,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::reflect</span>
 
-  <span style="color:#e06c75">×</span> reflection error: Field 'ServerConfig::port' was not initialized
+  <span style="color:#e06c75">×</span> reflection error: Field 'ServerConfig::port' was not initialized. If you need to leave fields partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred)
 </code></pre>
 </div>
 </section>
@@ -940,7 +940,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">second</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">value</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,95)">42</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">value</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">42</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -991,7 +991,7 @@ and demonstrates YAML's string handling.</span>"<span style="opacity:0.7">,<
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">yaml::reflect</span>
 
-  <span style="color:#e06c75">×</span> reflection error: Field 'ServerConfig::host' was not initialized
+  <span style="color:#e06c75">×</span> reflection error: Field 'ServerConfig::host' was not initialized. If you need to leave fields partially initialized and come back later, use deferred mode (begin_deferred/finish_deferred)
 </code></pre>
 </div>
 </section>
@@ -1089,7 +1089,7 @@ Newlines are preserved.
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Item</span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">~</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">count</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,95)">42</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">count</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">42</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -1240,4 +1240,14 @@ Newlines are preserved.
 </code></pre>
 </div>
 </section>
+
+<footer class="showcase-provenance">
+<p>This showcase was auto-generated from source code.</p>
+<dl>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6/facet-yaml/examples/yaml_showcase.rs"><code>facet-yaml/examples/yaml_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6"><code>0d55a3ebf</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2025-12-09T19:29:12+01:00">2025-12-09T19:29:12+01:00</time></dd>
+<dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
+</dl>
+</footer>
 </div>

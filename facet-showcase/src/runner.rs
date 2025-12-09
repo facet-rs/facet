@@ -5,6 +5,60 @@ use crate::output::OutputMode;
 use miette::{Diagnostic, GraphicalReportHandler, GraphicalTheme};
 use owo_colors::OwoColorize;
 
+/// Build provenance information for tracking where showcase output came from.
+#[derive(Debug, Clone, Default)]
+pub struct Provenance {
+    /// Git commit SHA (full)
+    pub commit: Option<String>,
+    /// Git commit SHA (short, 7 chars)
+    pub commit_short: Option<String>,
+    /// Timestamp when generated (ISO 8601)
+    pub timestamp: Option<String>,
+    /// Rust compiler version
+    pub rustc_version: Option<String>,
+    /// GitHub repository (e.g., "facet-rs/facet")
+    pub github_repo: Option<String>,
+    /// Relative path to the source file from repo root
+    pub source_file: Option<String>,
+}
+
+impl Provenance {
+    /// Create provenance from environment variables set by xtask.
+    ///
+    /// Expected env vars:
+    /// - `FACET_SHOWCASE_COMMIT`: full git commit SHA
+    /// - `FACET_SHOWCASE_COMMIT_SHORT`: short git commit SHA
+    /// - `FACET_SHOWCASE_TIMESTAMP`: ISO 8601 timestamp
+    /// - `FACET_SHOWCASE_RUSTC_VERSION`: rustc version string
+    /// - `FACET_SHOWCASE_GITHUB_REPO`: GitHub repo (e.g., "facet-rs/facet")
+    /// - `FACET_SHOWCASE_SOURCE_FILE`: relative path to source file
+    pub fn from_env() -> Self {
+        Self {
+            commit: std::env::var("FACET_SHOWCASE_COMMIT").ok(),
+            commit_short: std::env::var("FACET_SHOWCASE_COMMIT_SHORT").ok(),
+            timestamp: std::env::var("FACET_SHOWCASE_TIMESTAMP").ok(),
+            rustc_version: std::env::var("FACET_SHOWCASE_RUSTC_VERSION").ok(),
+            github_repo: std::env::var("FACET_SHOWCASE_GITHUB_REPO").ok(),
+            source_file: std::env::var("FACET_SHOWCASE_SOURCE_FILE").ok(),
+        }
+    }
+
+    /// Generate a GitHub URL to the source file at the exact commit.
+    pub fn github_source_url(&self) -> Option<String> {
+        match (&self.github_repo, &self.commit, &self.source_file) {
+            (Some(repo), Some(commit), Some(file)) => {
+                Some(format!("https://github.com/{repo}/blob/{commit}/{file}"))
+            }
+            _ => None,
+        }
+    }
+
+    /// Check if we have meaningful provenance info.
+    pub fn has_info(&self) -> bool {
+        self.commit.is_some() || self.timestamp.is_some() || self.rustc_version.is_some()
+    }
+}
+
 /// Main entry point for running showcases.
 pub struct ShowcaseRunner {
     /// Title of the showcase collection
@@ -23,6 +77,8 @@ pub struct ShowcaseRunner {
     in_section: bool,
     /// Filter for scenario names (case-insensitive contains)
     filter: Option<String>,
+    /// Build provenance information
+    provenance: Provenance,
 }
 
 impl ShowcaseRunner {
@@ -40,6 +96,7 @@ impl ShowcaseRunner {
             scenario_count: 0,
             in_section: false,
             filter: std::env::var("SHOWCASE_FILTER").ok(),
+            provenance: Provenance::from_env(),
         }
     }
 
@@ -153,8 +210,57 @@ impl ShowcaseRunner {
             OutputMode::Terminal => {
                 println!();
                 self.print_box("END OF SHOWCASE", "green");
+                if self.provenance.has_info() {
+                    println!();
+                    println!("{}", "Provenance:".dimmed());
+                    if let Some(ref commit) = self.provenance.commit_short {
+                        println!("  {} {}", "Commit:".dimmed(), commit);
+                    }
+                    if let Some(ref ts) = self.provenance.timestamp {
+                        println!("  {} {}", "Generated:".dimmed(), ts);
+                    }
+                    if let Some(ref rustc) = self.provenance.rustc_version {
+                        println!("  {} {}", "Rustc:".dimmed(), rustc);
+                    }
+                    if let Some(url) = self.provenance.github_source_url() {
+                        println!("  {} {}", "Source:".dimmed(), url);
+                    }
+                }
             }
             OutputMode::Markdown => {
+                // Add provenance footer before closing the showcase div
+                if self.provenance.has_info() {
+                    println!();
+                    println!("<footer class=\"showcase-provenance\">");
+                    println!("<p>This showcase was auto-generated from source code.</p>");
+                    println!("<dl>");
+                    if let Some(url) = self.provenance.github_source_url() {
+                        if let Some(ref file) = self.provenance.source_file {
+                            println!(
+                                "<dt>Source</dt><dd><a href=\"{url}\"><code>{file}</code></a></dd>"
+                            );
+                        }
+                    }
+                    if let Some(ref commit) = self.provenance.commit_short {
+                        if let Some(ref repo) = self.provenance.github_repo {
+                            if let Some(ref full_commit) = self.provenance.commit {
+                                println!(
+                                    "<dt>Commit</dt><dd><a href=\"https://github.com/{repo}/commit/{full_commit}\"><code>{commit}</code></a></dd>"
+                                );
+                            }
+                        } else {
+                            println!("<dt>Commit</dt><dd><code>{commit}</code></dd>");
+                        }
+                    }
+                    if let Some(ref ts) = self.provenance.timestamp {
+                        println!("<dt>Generated</dt><dd><time datetime=\"{ts}\">{ts}</time></dd>");
+                    }
+                    if let Some(ref rustc) = self.provenance.rustc_version {
+                        println!("<dt>Compiler</dt><dd><code>{rustc}</code></dd>");
+                    }
+                    println!("</dl>");
+                    println!("</footer>");
+                }
                 println!("</div>");
             }
         }

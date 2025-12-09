@@ -130,3 +130,78 @@ fn test_help_enum_only() {
     let help = facet_args::generate_help::<GitCommand>(&config);
     insta::assert_snapshot!(help);
 }
+
+// =============================================================================
+// Automatic --help detection tests
+// =============================================================================
+
+#[test]
+fn test_auto_help_long_flag() {
+    let result = facet_args::from_slice::<SimpleArgs>(&["--help"]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.is_help_request());
+    assert!(err.help_text().is_some());
+    let help = err.help_text().unwrap();
+    assert!(help.contains("USAGE:"));
+    assert!(help.contains("--verbose"));
+}
+
+#[test]
+fn test_auto_help_short_flag() {
+    let result = facet_args::from_slice::<SimpleArgs>(&["-h"]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.is_help_request());
+}
+
+#[test]
+fn test_auto_help_single_dash() {
+    let result = facet_args::from_slice::<SimpleArgs>(&["-help"]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.is_help_request());
+}
+
+#[test]
+fn test_auto_help_windows_style() {
+    let result = facet_args::from_slice::<SimpleArgs>(&["/?"]);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.is_help_request());
+}
+
+#[test]
+fn test_auto_help_with_custom_config() {
+    let config = facet_args::HelpConfig {
+        program_name: Some("myapp".to_string()),
+        version: Some("2.0.0".to_string()),
+        ..Default::default()
+    };
+    let result = facet_args::from_slice_with_config::<SimpleArgs>(&["--help"], &config);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(err.is_help_request());
+    let help = err.help_text().unwrap();
+    assert!(help.contains("myapp 2.0.0"));
+}
+
+#[test]
+fn test_auto_help_display() {
+    let result = facet_args::from_slice::<SimpleArgs>(&["--help"]);
+    let err = result.unwrap_err();
+    // When displayed, help requests should show the help text
+    let display = format!("{}", err);
+    assert!(display.contains("USAGE:"));
+}
+
+#[test]
+fn test_help_not_triggered_with_other_args() {
+    // --help in the middle of other args should NOT trigger help
+    // (it would be treated as an unknown flag in this case)
+    let result = facet_args::from_slice::<SimpleArgs>(&["input.txt", "--help"]);
+    // This should fail, but not with a help request
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert!(!err.is_help_request());
+}
