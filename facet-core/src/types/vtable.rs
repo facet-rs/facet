@@ -218,7 +218,9 @@ pub struct VTableDirect {
     pub parse: Option<unsafe fn(&str, *mut ()) -> Result<(), crate::ParseError>>,
 
     /// Try from function - converts from another value type.
-    pub try_from: Option<unsafe fn(*const (), *mut ()) -> Result<(), String>>,
+    /// Arguments: (dst, src_shape, src_ptr)
+    pub try_from:
+        Option<unsafe fn(*mut (), &'static crate::Shape, crate::PtrConst) -> Result<(), String>>,
 
     /// Try into inner function - extracts inner value (consuming).
     pub try_into_inner: Option<unsafe fn(*mut ()) -> Result<PtrMut, String>>,
@@ -311,7 +313,10 @@ pub struct VTableIndirect {
     pub parse: Option<unsafe fn(&str, OxPtrMut) -> Option<Result<(), crate::ParseError>>>,
 
     /// Try from function - converts from another value type.
-    pub try_from: Option<unsafe fn(OxPtrConst, OxPtrMut) -> Option<Result<(), String>>>,
+    /// Arguments: (dst, src_shape, src_ptr)
+    pub try_from: Option<
+        unsafe fn(OxPtrMut, &'static crate::Shape, crate::PtrConst) -> Option<Result<(), String>>,
+    >,
 
     /// Try into inner function - extracts inner value (consuming).
     pub try_into_inner: Option<unsafe fn(OxPtrMut) -> Option<Result<PtrMut, String>>>,
@@ -441,11 +446,15 @@ impl<T> TypedVTableDirectBuilder<T> {
     }
 
     /// Set the try_from function.
-    pub const fn try_from(mut self, f: unsafe fn(&T, *mut T) -> Result<(), String>) -> Self {
+    /// Arguments: (dst, src_shape, src_ptr)
+    pub const fn try_from(
+        mut self,
+        f: unsafe fn(*mut T, &'static crate::Shape, crate::PtrConst) -> Result<(), String>,
+    ) -> Self {
         self.vtable.try_from = Some(unsafe {
             transmute::<
-                unsafe fn(&T, *mut T) -> Result<(), String>,
-                unsafe fn(*const (), *mut ()) -> Result<(), String>,
+                unsafe fn(*mut T, &'static crate::Shape, crate::PtrConst) -> Result<(), String>,
+                unsafe fn(*mut (), &'static crate::Shape, crate::PtrConst) -> Result<(), String>,
             >(f)
         });
         self

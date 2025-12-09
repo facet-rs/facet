@@ -275,6 +275,38 @@ fn test_unit_variant_subcommand() {
     assert_eq!(cmd, Command::Version);
 }
 
+/// Regression test for issue #1193: enum variant with String default value
+#[test]
+fn test_enum_variant_string_default() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[repr(u8)]
+    enum Command {
+        E2e {
+            // String literals work directly via Into<String>
+            #[facet(args::named, default = "0.0.0-test")]
+            version: String,
+        },
+    }
+
+    // Without --version, should use the default
+    let cmd: Command = facet_args::from_slice(&["e2e"]).unwrap();
+    assert_eq!(
+        cmd,
+        Command::E2e {
+            version: "0.0.0-test".to_string()
+        }
+    );
+
+    // With --version, should override the default
+    let cmd: Command = facet_args::from_slice(&["e2e", "--version", "1.2.3"]).unwrap();
+    assert_eq!(
+        cmd,
+        Command::E2e {
+            version: "1.2.3".to_string()
+        }
+    );
+}
+
 /// Test nested subcommands wrapped in a struct (bug reproduction)
 /// This is different from test_nested_subcommands because the outer type is a struct, not an enum
 #[test]

@@ -685,24 +685,24 @@ impl Shape {
     /// Call the try_from function, regardless of vtable style.
     ///
     /// # Safety
-    /// `src` must point to a valid value of the source type.
+    /// `src` must point to a valid value of the source type (described by `src_shape`).
     /// `dst` must point to uninitialized memory suitable for this shape's type.
     #[inline]
     pub unsafe fn call_try_from(
         &'static self,
+        src_shape: &'static Shape,
         src: crate::PtrConst,
         dst: crate::PtrMut,
     ) -> Option<Result<(), alloc::string::String>> {
         match self.vtable {
             VTableErased::Direct(vt) => {
                 let try_from_fn = vt.try_from?;
-                Some(unsafe { try_from_fn(src.raw_ptr() as *const (), dst.data_ptr() as *mut ()) })
+                Some(unsafe { try_from_fn(dst.data_ptr() as *mut (), src_shape, src) })
             }
             VTableErased::Indirect(vt) => {
                 let try_from_fn = vt.try_from?;
-                let ox_src = crate::OxPtrConst::new(src, self);
                 let ox_dst = crate::OxPtrMut::new(dst, self);
-                unsafe { try_from_fn(ox_src, ox_dst) }
+                unsafe { try_from_fn(ox_dst, src_shape, src) }
             }
         }
     }

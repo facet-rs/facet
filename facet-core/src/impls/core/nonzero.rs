@@ -3,8 +3,8 @@
 use core::num::NonZero;
 
 use crate::{
-    Def, Facet, FieldBuilder, Repr, Shape, ShapeBuilder, StructKind, StructType, Type, UserType,
-    VTableDirect, vtable_direct,
+    Def, Facet, FieldBuilder, PtrConst, Repr, Shape, ShapeBuilder, StructKind, StructType, Type,
+    UserType, VTableDirect, vtable_direct,
 };
 
 macro_rules! impl_facet_for_nonzero {
@@ -38,10 +38,22 @@ macro_rules! impl_facet_for_nonzero {
                     // This is called by facet-reflect's end() when finishing a begin_inner() frame
                     [try_from = {
                         /// # Safety
-                        /// `src` must point to a valid `$type`, `dst` must be valid for writes
-                        unsafe fn try_from(src: &$type, dst: *mut NonZero<$type>) -> Result<(), alloc::string::String> {
+                        /// `dst` must be valid for writes, `src` must point to valid data
+                        unsafe fn try_from(
+                            dst: *mut NonZero<$type>,
+                            src_shape: &'static Shape,
+                            src: PtrConst,
+                        ) -> Result<(), alloc::string::String> {
+                            // Only accept the inner type
+                            if src_shape.type_identifier != stringify!($type) {
+                                return Err(alloc::format!(
+                                    "cannot convert {} to NonZero<{}>",
+                                    src_shape.type_identifier,
+                                    stringify!($type)
+                                ));
+                            }
                             unsafe {
-                                let value: $type = core::ptr::read(src);
+                                let value: $type = core::ptr::read(src.as_byte_ptr() as *const $type);
                                 match NonZero::new(value) {
                                     Some(nonzero) => {
                                         dst.write(nonzero);
@@ -51,15 +63,7 @@ macro_rules! impl_facet_for_nonzero {
                                 }
                             }
                         }
-                        // Transmute to match the expected signature (src type becomes the target type)
-                        // This is safe because the vtable is type-erased and the actual types come from
-                        // the shape's inner field
-                        unsafe {
-                            core::mem::transmute::<
-                                unsafe fn(&$type, *mut NonZero<$type>) -> Result<(), alloc::string::String>,
-                                unsafe fn(&NonZero<$type>, *mut NonZero<$type>) -> Result<(), alloc::string::String>,
-                            >(try_from)
-                        }
+                        try_from
                     }],
                 );
 

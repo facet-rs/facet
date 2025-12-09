@@ -4,10 +4,72 @@
 //! Note: (), PhantomData are in tuple_empty.rs and phantom.rs
 //! Note: str, char are in char_str.rs
 
+extern crate alloc;
+
 use crate::{
-    Def, Facet, NumericType, PrimitiveType, Shape, ShapeBuilder, Type, TypeOpsDirect, VTableDirect,
-    type_ops_direct, vtable_direct,
+    Def, Facet, NumericType, PrimitiveType, PtrConst, Shape, ShapeBuilder, Type, TypeOpsDirect,
+    VTableDirect, type_ops_direct, vtable_direct,
 };
+
+/// Generate a try_from function for an integer type that converts from any other integer.
+macro_rules! integer_try_from {
+    ($target:ty) => {{
+        /// # Safety
+        /// `dst` must be valid for writes, `src` must point to valid data of type described by `src_shape`
+        unsafe fn try_from_any(
+            dst: *mut $target,
+            src_shape: &'static Shape,
+            src: PtrConst,
+        ) -> Result<(), alloc::string::String> {
+            use core::convert::TryInto;
+
+            // Helper macro to handle the conversion with proper error handling
+            macro_rules! convert {
+                ($src_ty:ty) => {{
+                    let src_val = unsafe { *(src.as_byte_ptr() as *const $src_ty) };
+                    <$src_ty as TryInto<$target>>::try_into(src_val).map_err(|_| {
+                        alloc::format!(
+                            "conversion from {} to {} failed: value {} out of range",
+                            src_shape.type_identifier,
+                            stringify!($target),
+                            src_val
+                        )
+                    })
+                }};
+            }
+
+            // Match on the source shape to determine its type
+            let result: Result<$target, alloc::string::String> = match src_shape.type_identifier {
+                "i8" => convert!(i8),
+                "i16" => convert!(i16),
+                "i32" => convert!(i32),
+                "i64" => convert!(i64),
+                "i128" => convert!(i128),
+                "isize" => convert!(isize),
+                "u8" => convert!(u8),
+                "u16" => convert!(u16),
+                "u32" => convert!(u32),
+                "u64" => convert!(u64),
+                "u128" => convert!(u128),
+                "usize" => convert!(usize),
+                _ => Err(alloc::format!(
+                    "cannot convert {} to {}",
+                    src_shape.type_identifier,
+                    stringify!($target)
+                )),
+            };
+
+            match result {
+                Ok(value) => {
+                    unsafe { dst.write(value) };
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
+        try_from_any
+    }};
+}
 
 // TypeOps lifted out of const blocks - shared statics
 static BOOL_TYPE_OPS: TypeOpsDirect = type_ops_direct!(bool => Default, Clone);
@@ -63,6 +125,7 @@ macro_rules! impl_facet_for_integer {
                     PartialEq,
                     PartialOrd,
                     Ord,
+                    [try_from = integer_try_from!($type)],
                 );
 
                 ShapeBuilder::for_sized::<$type>(stringify!($type))

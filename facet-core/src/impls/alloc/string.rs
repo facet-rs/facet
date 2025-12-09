@@ -1,10 +1,40 @@
 use crate::{
-    Def, Facet, Shape, ShapeBuilder, Type, TypeOpsDirect, UserType, VTableDirect, type_ops_direct,
-    vtable_direct,
+    Def, Facet, PtrConst, Shape, ShapeBuilder, Type, TypeOpsDirect, UserType, VTableDirect,
+    type_ops_direct, vtable_direct,
 };
 
 // TypeOps lifted out - shared static
 static STRING_TYPE_OPS: TypeOpsDirect = type_ops_direct!(alloc::string::String => Default, Clone);
+
+/// Try to convert from &str or String to String
+///
+/// # Safety
+/// `dst` must be valid for writes, `src` must point to valid data of type described by `src_shape`
+unsafe fn string_try_from(
+    dst: *mut alloc::string::String,
+    src_shape: &'static Shape,
+    src: PtrConst,
+) -> Result<(), alloc::string::String> {
+    // Check if source is &str
+    if src_shape.id == <&str as crate::Facet>::SHAPE.id {
+        let str_ref: &str = unsafe { src.get::<&str>() };
+        unsafe { dst.write(alloc::string::String::from(str_ref)) };
+        return Ok(());
+    }
+
+    // Check if source is String (clone it)
+    if src_shape.id == <alloc::string::String as crate::Facet>::SHAPE.id {
+        let src_string: &alloc::string::String =
+            unsafe { &*(src.as_byte_ptr() as *const alloc::string::String) };
+        unsafe { dst.write(src_string.clone()) };
+        return Ok(());
+    }
+
+    Err(alloc::format!(
+        "cannot convert {} to String",
+        src_shape.type_identifier
+    ))
+}
 
 unsafe impl Facet<'_> for alloc::string::String {
     // String implements: Display, Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, FromStr
@@ -17,6 +47,7 @@ unsafe impl Facet<'_> for alloc::string::String {
             PartialEq,
             PartialOrd,
             Ord,
+            [try_from = string_try_from],
         );
 
         ShapeBuilder::for_sized::<alloc::string::String>("String")

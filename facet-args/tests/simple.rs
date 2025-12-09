@@ -164,3 +164,26 @@ fn test_option_string_positional() {
     let args: Args = facet_args::from_slice(&[]).unwrap();
     assert_eq!(args.path, None);
 }
+
+/// Regression test for issue #1193: String field defaults should work with string literals
+#[test]
+fn test_string_default_value() {
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(args::named)]
+        name: String,
+        // String literals work directly via Into<String>
+        #[facet(args::named, default = "0.0.0-test")]
+        version: String,
+    }
+
+    // Test that when version is not provided, it uses the default
+    let args: Args = facet_args::from_slice(&["--name", "myapp"]).unwrap();
+    assert_eq!(args.name, "myapp");
+    assert_eq!(args.version, "0.0.0-test");
+
+    // Test that when version is provided, it overrides the default
+    let args: Args = facet_args::from_slice(&["--name", "myapp", "--version", "1.0.0"]).unwrap();
+    assert_eq!(args.name, "myapp");
+    assert_eq!(args.version, "1.0.0");
+}

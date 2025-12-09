@@ -650,8 +650,9 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                     if let Some(try_from_fn) = vt.try_from {
                         unsafe {
                             try_from_fn(
-                                inner_ptr.as_byte_ptr() as *const (),
                                 parent_frame.data.as_mut_byte_ptr() as *mut (),
+                                inner_shape,
+                                inner_ptr,
                             )
                         }
                     } else {
@@ -663,12 +664,11 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 }
                 facet_core::VTableErased::Indirect(vt) => {
                     if let Some(try_from_fn) = vt.try_from {
-                        let ox_ref = facet_core::OxRef::new(inner_ptr, inner_shape);
                         let ox_mut = facet_core::OxMut::new(
                             unsafe { parent_frame.data.assume_init() },
                             parent_frame.shape,
                         );
-                        match unsafe { try_from_fn(ox_ref.into(), ox_mut.into()) } {
+                        match unsafe { try_from_fn(ox_mut.into(), inner_shape, inner_ptr) } {
                             Some(result) => result,
                             None => {
                                 return Err(ReflectError::OperationFailed {
