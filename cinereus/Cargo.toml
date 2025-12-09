@@ -1,0 +1,14 @@
+[package]
+name = "cinereus"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "GumTree-style tree diffing with Chawathe edit script generation"
+repository = "https://github.com/facet-rs/facet"
+keywords = ["tree", "diff", "gumtree", "chawathe", "edit-script"]
+categories = ["algorithms", "data-structures"]
+
+[dependencies]
+indextree = "4"
+
+[dev-dependencies]
