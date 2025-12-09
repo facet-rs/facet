@@ -114,6 +114,10 @@ pub enum PathSegment {
     Field(Cow<'static, str>),
     /// A variant name in an enum
     Variant(Cow<'static, str>),
+    /// An index in a list/array/tuple
+    Index(usize),
+    /// A key in a map (stored as formatted string representation)
+    Key(Cow<'static, str>),
 }
 
 /// A path to a location within a type structure
