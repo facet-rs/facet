@@ -9,12 +9,15 @@ description = "Conformance test suite for rapace transports"
 [dependencies]
 rapace-core.workspace = true
 rapace-macros.workspace = true
+rapace-registry.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 futures.workspace = true
 facet.workspace = true
+facet-core.workspace = true
 facet-postcard.workspace = true
 parking_lot.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+rapace-transport-mem.workspace = true

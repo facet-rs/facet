@@ -1,0 +1,1032 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rapace Service Explorer</title>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --border-color: #30363d;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --text-muted: #6e7681;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-purple: #a371f7;
+            --accent-orange: #d29922;
+            --accent-red: #f85149;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 280px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+        }
+
+        .sidebar-header {
+            padding: 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .sidebar-header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .sidebar-header h1::before {
+            content: '';
+            display: inline-block;
+            width: 24px;
+            height: 24px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            border-radius: 6px;
+        }
+
+        .search-box {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        .search-box input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+
+        .search-box input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .service-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .service-item {
+            padding: 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background 0.15s;
+            margin-bottom: 4px;
+        }
+
+        .service-item:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .service-item.active {
+            background: var(--bg-tertiary);
+            border-left: 2px solid var(--accent-blue);
+        }
+
+        .service-item-name {
+            font-weight: 500;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .service-item-meta {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        /* Main content */
+        .main-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px 32px;
+        }
+
+        .welcome-screen {
+            text-align: center;
+            padding: 64px 32px;
+            color: var(--text-secondary);
+        }
+
+        .welcome-screen h2 {
+            font-size: 24px;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .welcome-screen p {
+            font-size: 14px;
+        }
+
+        /* Service detail */
+        .service-detail {
+            max-width: 900px;
+        }
+
+        .service-header {
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .service-name {
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .service-doc {
+            color: var(--text-secondary);
+            font-size: 15px;
+            white-space: pre-wrap;
+        }
+
+        .methods-section h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .method-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 16px 20px;
+            margin-bottom: 12px;
+        }
+
+        .method-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+
+        .method-name {
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--accent-blue);
+        }
+
+        .method-badge {
+            font-size: 11px;
+            font-weight: 500;
+            padding: 2px 8px;
+            border-radius: 12px;
+            text-transform: uppercase;
+        }
+
+        .badge-unary {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--accent-green);
+        }
+
+        .badge-streaming {
+            background: rgba(163, 113, 247, 0.15);
+            color: var(--accent-purple);
+        }
+
+        .method-doc {
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin-bottom: 12px;
+            white-space: pre-wrap;
+        }
+
+        .method-signature {
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            padding: 12px 16px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 13px;
+            margin-bottom: 12px;
+        }
+
+        .sig-label {
+            color: var(--text-muted);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .sig-type {
+            color: var(--accent-orange);
+        }
+
+        .sig-arg-name {
+            color: var(--accent-blue);
+        }
+
+        .sig-arrow {
+            color: var(--text-muted);
+            margin: 0 8px;
+        }
+
+        /* Call section */
+        .call-section {
+            margin-top: 12px;
+            border-top: 1px solid var(--border-color);
+            padding-top: 12px;
+        }
+
+        .call-toggle {
+            background: none;
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.15s;
+        }
+
+        .call-toggle:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+
+        .call-toggle.active {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+            color: white;
+        }
+
+        .call-form {
+            display: none;
+            margin-top: 12px;
+        }
+
+        .call-form.visible {
+            display: block;
+        }
+
+        .call-form label {
+            display: block;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .call-form textarea {
+            width: 100%;
+            min-height: 80px;
+            padding: 10px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 13px;
+            resize: vertical;
+            margin-bottom: 12px;
+        }
+
+        .call-form textarea:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+
+        .binary-attachments {
+            margin-bottom: 12px;
+        }
+
+        .binary-attachment {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+            align-items: center;
+        }
+
+        .binary-attachment input[type="text"] {
+            width: 120px;
+            padding: 6px 10px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 13px;
+        }
+
+        .binary-attachment input[type="file"] {
+            flex: 1;
+            padding: 6px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+
+        .binary-attachment input[type="file"]::file-selector-button {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            color: var(--text-primary);
+            padding: 4px 8px;
+            cursor: pointer;
+            margin-right: 8px;
+        }
+
+        .remove-attachment {
+            background: none;
+            border: none;
+            color: var(--accent-red);
+            cursor: pointer;
+            font-size: 16px;
+            padding: 4px;
+        }
+
+        .add-attachment {
+            background: none;
+            border: 1px dashed var(--border-color);
+            color: var(--text-secondary);
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            width: 100%;
+            transition: all 0.15s;
+        }
+
+        .add-attachment:hover {
+            border-color: var(--accent-blue);
+            color: var(--accent-blue);
+        }
+
+        .call-button {
+            background: var(--accent-green);
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: opacity 0.15s;
+        }
+
+        .call-button:hover {
+            opacity: 0.9;
+        }
+
+        .call-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .call-result {
+            margin-top: 12px;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .call-result.success {
+            background: rgba(63, 185, 80, 0.1);
+            border: 1px solid rgba(63, 185, 80, 0.3);
+            color: var(--accent-green);
+        }
+
+        .call-result.error {
+            background: rgba(248, 81, 73, 0.1);
+            border: 1px solid rgba(248, 81, 73, 0.3);
+            color: var(--accent-red);
+        }
+
+        /* Loading state */
+        .loading {
+            text-align: center;
+            padding: 32px;
+            color: var(--text-secondary);
+        }
+
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--border-color);
+            border-top-color: var(--accent-blue);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Error state */
+        .error {
+            background: rgba(248, 81, 73, 0.1);
+            border: 1px solid rgba(248, 81, 73, 0.4);
+            color: #f85149;
+            padding: 16px;
+            border-radius: 6px;
+            margin: 16px 0;
+        }
+
+        .streaming-note {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-style: italic;
+            margin-top: 8px;
+        }
+
+        /* Streaming output */
+        .stream-output {
+            margin-top: 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 13px;
+        }
+
+        .stream-output.active {
+            border-color: var(--accent-purple);
+        }
+
+        .stream-item {
+            padding: 4px 0;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }
+
+        .stream-item:last-child {
+            border-bottom: none;
+        }
+
+        .stream-item.error {
+            color: var(--accent-red);
+        }
+
+        .stream-item .item-index {
+            color: var(--text-muted);
+            margin-right: 8px;
+        }
+
+        .stream-status {
+            font-size: 12px;
+            padding: 8px;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+
+        .stream-status.streaming {
+            background: rgba(163, 113, 247, 0.15);
+            color: var(--accent-purple);
+        }
+
+        .stream-status.completed {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--accent-green);
+        }
+
+        .stream-status.error {
+            background: rgba(248, 81, 73, 0.15);
+            color: var(--accent-red);
+        }
+
+        .stop-stream-button {
+            background: var(--accent-red);
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            margin-left: 8px;
+        }
+
+        .stop-stream-button:hover {
+            opacity: 0.9;
+        }
+
+        .stream-button {
+            background: var(--accent-purple);
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: opacity 0.15s;
+        }
+
+        .stream-button:hover {
+            opacity: 0.9;
+        }
+
+        .stream-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1>Rapace Explorer</h1>
+            </div>
+            <div class="search-box">
+                <input type="text" id="search" placeholder="Search services...">
+            </div>
+            <div class="service-list" id="service-list">
+                <div class="loading">Loading services</div>
+            </div>
+        </aside>
+        <main class="main-content" id="main-content">
+            <div class="welcome-screen">
+                <h2>Service Explorer</h2>
+                <p>Select a service from the sidebar to view its methods and documentation.</p>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // State
+        let services = [];
+        let selectedServiceId = null;
+        let currentService = null;
+
+        // DOM elements
+        const serviceListEl = document.getElementById('service-list');
+        const mainContentEl = document.getElementById('main-content');
+        const searchInput = document.getElementById('search');
+
+        // Fetch and render services
+        async function loadServices() {
+            try {
+                const response = await fetch('/api/services');
+                if (!response.ok) throw new Error('Failed to load services');
+                services = await response.json();
+                renderServiceList();
+            } catch (error) {
+                serviceListEl.innerHTML = `<div class="error">${error.message}</div>`;
+            }
+        }
+
+        function renderServiceList(filter = '') {
+            const filtered = services.filter(s =>
+                s.name.toLowerCase().includes(filter.toLowerCase()) ||
+                s.doc.toLowerCase().includes(filter.toLowerCase())
+            );
+
+            if (filtered.length === 0) {
+                serviceListEl.innerHTML = '<div class="loading" style="animation: none;">No services found</div>';
+                return;
+            }
+
+            serviceListEl.innerHTML = filtered.map(service => `
+                <div class="service-item ${service.id === selectedServiceId ? 'active' : ''}"
+                     data-id="${service.id}">
+                    <div class="service-item-name">${escapeHtml(service.name)}</div>
+                    <div class="service-item-meta">${service.method_count} method${service.method_count !== 1 ? 's' : ''}</div>
+                </div>
+            `).join('');
+
+            // Add click handlers
+            document.querySelectorAll('.service-item').forEach(item => {
+                item.addEventListener('click', () => selectService(parseInt(item.dataset.id)));
+            });
+        }
+
+        async function selectService(id) {
+            selectedServiceId = id;
+            renderServiceList(searchInput.value);
+            mainContentEl.innerHTML = '<div class="loading">Loading service details</div>';
+
+            try {
+                const response = await fetch(`/api/services/${id}`);
+                if (!response.ok) throw new Error('Failed to load service');
+                currentService = await response.json();
+                renderServiceDetail(currentService);
+            } catch (error) {
+                mainContentEl.innerHTML = `<div class="error">${error.message}</div>`;
+            }
+        }
+
+        function renderServiceDetail(service) {
+            const methodsHtml = service.methods.map(method => `
+                <div class="method-card" data-method="${escapeHtml(method.name)}">
+                    <div class="method-header">
+                        <span class="method-name">${escapeHtml(method.name)}</span>
+                        <span class="method-badge ${method.is_streaming ? 'badge-streaming' : 'badge-unary'}">
+                            ${method.is_streaming ? 'Streaming' : 'Unary'}
+                        </span>
+                    </div>
+                    ${method.doc ? `<div class="method-doc">${escapeHtml(method.doc.trim())}</div>` : ''}
+                    <div class="method-signature">
+                        <div class="sig-label">Arguments</div>
+                        ${method.args.length > 0
+                            ? method.args.map(arg => `<span class="sig-arg-name">${escapeHtml(arg.name)}</span>: <span class="sig-type">${escapeHtml(arg.type_name)}</span>`).join(', ')
+                            : '<span class="sig-type">(none)</span>'}
+                        <span class="sig-arrow">-></span>
+                        <span class="sig-type">${method.is_streaming ? 'Stream&lt;' : ''}${escapeHtml(method.response_type)}${method.is_streaming ? '&gt;' : ''}</span>
+                    </div>
+                    ${renderCallSection(service.name, method)}
+                </div>
+            `).join('');
+
+            mainContentEl.innerHTML = `
+                <div class="service-detail">
+                    <div class="service-header">
+                        <h2 class="service-name">${escapeHtml(service.name)}</h2>
+                        ${service.doc ? `<div class="service-doc">${escapeHtml(service.doc.trim())}</div>` : ''}
+                    </div>
+                    <div class="methods-section">
+                        <h3>Methods (${service.methods.length})</h3>
+                        ${methodsHtml}
+                    </div>
+                </div>
+            `;
+
+            // Attach event handlers
+            attachCallHandlers(service.name);
+        }
+
+        function renderCallSection(serviceName, method) {
+            const methodId = `${serviceName}-${method.name}`.replace(/[^a-zA-Z0-9]/g, '-');
+            const exampleArgs = getExampleArgs(method);
+
+            if (method.is_streaming) {
+                // For streaming methods, use the first arg named 'n' or default to a number input
+                const hasNArg = method.args.some(a => a.name === 'n');
+                const defaultN = 10;
+
+                return `
+                    <div class="call-section">
+                        <button class="call-toggle" data-method="${escapeHtml(method.name)}" data-streaming="true">
+                            <span>Try it</span>
+                        </button>
+                        <div class="call-form" id="form-${methodId}">
+                            <label>Count (n)</label>
+                            <input type="number" id="stream-n-${methodId}" value="${defaultN}" min="1" max="100"
+                                   style="width: 100px; padding: 8px 12px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); font-size: 14px; margin-bottom: 12px;">
+
+                            <div style="margin-top: 12px;">
+                                <button class="stream-button" id="stream-btn-${methodId}" onclick="startStream('${escapeHtml(serviceName)}', '${escapeHtml(method.name)}', '${methodId}')">
+                                    Start Stream
+                                </button>
+                                <button class="stop-stream-button" id="stop-btn-${methodId}" style="display: none;" onclick="stopStream('${methodId}')">
+                                    Stop
+                                </button>
+                            </div>
+                            <div id="stream-status-${methodId}"></div>
+                            <div class="stream-output" id="stream-output-${methodId}" style="display: none;"></div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="call-section">
+                    <button class="call-toggle" data-method="${escapeHtml(method.name)}">
+                        <span>Try it</span>
+                    </button>
+                    <div class="call-form" id="form-${methodId}">
+                        <label>Arguments (JSON)</label>
+                        <textarea id="args-${methodId}" placeholder='${escapeHtml(JSON.stringify(exampleArgs))}'>${JSON.stringify(exampleArgs, null, 2)}</textarea>
+
+                        <label>Binary Attachments (optional)</label>
+                        <div class="binary-attachments" id="attachments-${methodId}">
+                        </div>
+                        <button class="add-attachment" onclick="addAttachment('${methodId}')">+ Add file attachment</button>
+
+                        <div style="margin-top: 12px;">
+                            <button class="call-button" onclick="callMethod('${escapeHtml(serviceName)}', '${escapeHtml(method.name)}', '${methodId}')">
+                                Call ${escapeHtml(method.name)}
+                            </button>
+                        </div>
+                        <div id="result-${methodId}"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function getExampleArgs(method) {
+            // Use actual argument names from the method
+            if (!method.args || method.args.length === 0) {
+                return {};
+            }
+
+            const result = {};
+            for (const arg of method.args) {
+                result[arg.name] = getDefaultForType(arg.type_name);
+            }
+            return result;
+        }
+
+        function getDefaultForType(typeName) {
+            // Generate reasonable defaults based on type
+            switch (typeName.trim()) {
+                case 'i32':
+                case 'i64':
+                case 'i16':
+                case 'i8':
+                case 'isize':
+                    return 0;
+                case 'u32':
+                case 'u64':
+                case 'u16':
+                case 'u8':
+                case 'usize':
+                    return 0;
+                case 'f32':
+                case 'f64':
+                    return 0.0;
+                case 'bool':
+                    return false;
+                case 'String':
+                case '& str':
+                case '&str':
+                    return "";
+                default:
+                    // For complex types, return null as placeholder
+                    return null;
+            }
+        }
+
+        function attachCallHandlers(serviceName) {
+            document.querySelectorAll('.call-toggle').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const methodName = this.dataset.method;
+                    const methodId = `${serviceName}-${methodName}`.replace(/[^a-zA-Z0-9]/g, '-');
+                    const form = document.getElementById(`form-${methodId}`);
+
+                    this.classList.toggle('active');
+                    form.classList.toggle('visible');
+                });
+            });
+        }
+
+        let attachmentCounter = 0;
+        function addAttachment(methodId) {
+            const container = document.getElementById(`attachments-${methodId}`);
+            const id = attachmentCounter++;
+
+            const div = document.createElement('div');
+            div.className = 'binary-attachment';
+            div.id = `attachment-${id}`;
+            div.innerHTML = `
+                <input type="text" placeholder="Field name" id="field-${id}">
+                <input type="file" id="file-${id}">
+                <button class="remove-attachment" onclick="removeAttachment(${id})">x</button>
+            `;
+            container.appendChild(div);
+        }
+
+        function removeAttachment(id) {
+            const el = document.getElementById(`attachment-${id}`);
+            if (el) el.remove();
+        }
+
+        async function callMethod(serviceName, methodName, methodId) {
+            const argsTextarea = document.getElementById(`args-${methodId}`);
+            const resultDiv = document.getElementById(`result-${methodId}`);
+            const callButton = resultDiv.previousElementSibling.querySelector('.call-button');
+
+            let args;
+            try {
+                args = JSON.parse(argsTextarea.value || '{}');
+            } catch (e) {
+                resultDiv.className = 'call-result error';
+                resultDiv.textContent = `Invalid JSON: ${e.message}`;
+                return;
+            }
+
+            // Collect binary attachments
+            const binaryArgs = {};
+            const attachmentsContainer = document.getElementById(`attachments-${methodId}`);
+            const attachments = attachmentsContainer.querySelectorAll('.binary-attachment');
+
+            for (const att of attachments) {
+                const fieldInput = att.querySelector('input[type="text"]');
+                const fileInput = att.querySelector('input[type="file"]');
+
+                if (fieldInput.value && fileInput.files.length > 0) {
+                    const file = fileInput.files[0];
+                    const arrayBuffer = await file.arrayBuffer();
+                    const base64 = arrayBufferToBase64(arrayBuffer);
+                    binaryArgs[fieldInput.value] = base64;
+                }
+            }
+
+            // Make the call
+            callButton.disabled = true;
+            callButton.textContent = 'Calling...';
+            resultDiv.className = 'call-result';
+            resultDiv.textContent = '';
+
+            try {
+                const response = await fetch('/api/call', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        service: serviceName,
+                        method: methodName,
+                        args: args,
+                        binary_args: binaryArgs
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    resultDiv.className = 'call-result error';
+                    resultDiv.textContent = `Error: ${data.error || 'Unknown error'}`;
+                } else if (data.error) {
+                    resultDiv.className = 'call-result error';
+                    resultDiv.textContent = `Error: ${data.error}`;
+                } else {
+                    resultDiv.className = 'call-result success';
+                    resultDiv.textContent = JSON.stringify(data.result, null, 2);
+                }
+            } catch (e) {
+                resultDiv.className = 'call-result error';
+                resultDiv.textContent = `Network error: ${e.message}`;
+            } finally {
+                callButton.disabled = false;
+                callButton.textContent = `Call ${methodName}`;
+            }
+        }
+
+        function arrayBufferToBase64(buffer) {
+            let binary = '';
+            const bytes = new Uint8Array(buffer);
+            for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary);
+        }
+
+        // Track active EventSource connections
+        const activeStreams = {};
+
+        function startStream(serviceName, methodName, methodId) {
+            // Get the n value from the input
+            const nInput = document.getElementById(`stream-n-${methodId}`);
+            const n = parseInt(nInput.value) || 10;
+
+            // Get UI elements
+            const streamBtn = document.getElementById(`stream-btn-${methodId}`);
+            const stopBtn = document.getElementById(`stop-btn-${methodId}`);
+            const statusDiv = document.getElementById(`stream-status-${methodId}`);
+            const outputDiv = document.getElementById(`stream-output-${methodId}`);
+
+            // Reset and show output
+            outputDiv.innerHTML = '';
+            outputDiv.style.display = 'block';
+            outputDiv.classList.add('active');
+
+            // Update button states
+            streamBtn.disabled = true;
+            streamBtn.textContent = 'Streaming...';
+            stopBtn.style.display = 'inline-block';
+
+            // Show streaming status
+            statusDiv.innerHTML = '<div class="stream-status streaming">Streaming...</div>';
+
+            // Build the SSE URL
+            const url = `/api/stream?service=${encodeURIComponent(serviceName)}&method=${encodeURIComponent(methodName)}&n=${n}`;
+
+            // Create EventSource
+            const eventSource = new EventSource(url);
+            activeStreams[methodId] = eventSource;
+
+            let itemCount = 0;
+
+            eventSource.onmessage = (event) => {
+                itemCount++;
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'stream-item';
+                itemDiv.innerHTML = `<span class="item-index">[${itemCount}]</span>${escapeHtml(event.data)}`;
+                outputDiv.appendChild(itemDiv);
+                outputDiv.scrollTop = outputDiv.scrollHeight;
+            };
+
+            eventSource.addEventListener('error', (event) => {
+                // Check if this is a custom error event from our SSE
+                const data = event.data;
+                if (data) {
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = 'stream-item error';
+                    itemDiv.innerHTML = `<span class="item-index">[ERROR]</span>${escapeHtml(data)}`;
+                    outputDiv.appendChild(itemDiv);
+                }
+                finishStream(methodId, 'error', 'Stream error');
+            });
+
+            eventSource.onerror = (error) => {
+                // Connection closed or error
+                if (eventSource.readyState === EventSource.CLOSED) {
+                    finishStream(methodId, 'completed', `Stream completed (${itemCount} items)`);
+                } else {
+                    finishStream(methodId, 'error', 'Connection error');
+                }
+            };
+        }
+
+        function stopStream(methodId) {
+            const eventSource = activeStreams[methodId];
+            if (eventSource) {
+                eventSource.close();
+                delete activeStreams[methodId];
+            }
+            finishStream(methodId, 'completed', 'Stream stopped by user');
+        }
+
+        function finishStream(methodId, status, message) {
+            // Clean up EventSource
+            const eventSource = activeStreams[methodId];
+            if (eventSource) {
+                eventSource.close();
+                delete activeStreams[methodId];
+            }
+
+            // Get UI elements
+            const streamBtn = document.getElementById(`stream-btn-${methodId}`);
+            const stopBtn = document.getElementById(`stop-btn-${methodId}`);
+            const statusDiv = document.getElementById(`stream-status-${methodId}`);
+            const outputDiv = document.getElementById(`stream-output-${methodId}`);
+
+            // Update button states
+            streamBtn.disabled = false;
+            streamBtn.textContent = 'Start Stream';
+            stopBtn.style.display = 'none';
+
+            // Update status
+            statusDiv.innerHTML = `<div class="stream-status ${status}">${escapeHtml(message)}</div>`;
+            outputDiv.classList.remove('active');
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Search handler
+        searchInput.addEventListener('input', (e) => {
+            renderServiceList(e.target.value);
+        });
+
+        // Initialize
+        loadServices();
+    </script>
+</body>
+</html>

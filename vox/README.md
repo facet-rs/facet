@@ -94,7 +94,7 @@ The RPC layer handles serialization, framing, and delivery—differently per tra
 
 - **In-proc**: Direct trait calls, real borrows, no serialization
 - **SHM**: Zero-copy when data is already in shared memory; memcpy otherwise
-- **Network**: Full serialization (postcard by default)
+- **Network**: Full serialization (postcard only, via facet-postcard)
 
 ### Facet at the Center
 
@@ -153,7 +153,9 @@ rapace is being designed as the IPC layer for plugin systems where plugins may p
 
 Each plugin runs in its own process and communicates with the host via rapace.
 
-The existing plugin architecture: [dodeca](https://github.com/bearcove/dodeca)
+Rapace is primarily motivated by [dodeca](https://github.com/bearcove/dodeca), a static site generator
+that implements most of its functionality as plugins. Dodeca is the main "real" application that
+drives rapace's design.
 
 ## Documentation
 
@@ -221,7 +223,7 @@ Trait → Facet → Encoder → Transport → [wire] → Transport → Decoder �
 
 ## Sponsors
 
-CI runs on [Depot](https://depot.dev?utm_source=rapace):
+CI and browser tests run on generously provisioned runners provided by Depot:
 
 <p><a href="https://depot.dev?utm_source=rapace">
 <picture>
@@ -229,6 +231,9 @@ CI runs on [Depot](https://depot.dev?utm_source=rapace):
 <img src="https://github.com/bearcove/rapace/raw/main/static/depot-light.svg" height="40" alt="Depot">
 </picture>
 </a></p>
+
+Their support makes it feasible to run heavy test suites (Miri, fuzzing, browser/WebSocket tests) on
+every change, which directly improves the safety and reliability of this project.
 
 ## License
 

@@ -13,6 +13,9 @@ rapace-core = { workspace = true }
 # Proc macros (re-exported as #[rapace::service])
 rapace-macros = { workspace = true }
 
+# Registry for service/method metadata
+rapace-registry = { workspace = true }
+
 # Transports (behind feature flags)
 rapace-transport-mem = { workspace = true, optional = true }
 rapace-transport-stream = { workspace = true, optional = true }
@@ -24,6 +27,7 @@ rapace-testkit = { workspace = true, optional = true }
 
 # Serialization
 facet = { workspace = true }
+facet-core = { workspace = true }
 facet-postcard = { workspace = true }
 
 # Async runtime

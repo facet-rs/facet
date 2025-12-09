@@ -34,6 +34,11 @@ use rapace_core::{
     RpcError, Transport, NO_DEADLINE,
 };
 
+// Re-export registry types for test use
+pub use rapace_registry::{
+    Encoding, MethodEntry, MethodId, ServiceEntry, ServiceId, ServiceRegistry,
+};
+
 mod session;
 pub use session::{ChannelLifecycle, ChannelState, Session, DEFAULT_INITIAL_CREDITS};
 
@@ -1802,4 +1807,189 @@ async fn run_streaming_cancellation_inner<F: TransportFactory>() -> Result<(), T
         .map_err(|e| TestError::Setup(format!("server error: {}", e)))?;
 
     Ok(())
+}
+
+// ============================================================================
+// Registry tests
+// ============================================================================
+
+/// Test that the macro-generated register function works correctly.
+///
+/// Verifies:
+/// - Services can be registered via the generated function
+/// - Method IDs are assigned correctly
+/// - Schemas are captured for request/response types
+#[cfg(test)]
+mod registry_tests {
+    use super::*;
+
+    #[test]
+    fn test_adder_registration() {
+        let mut registry = ServiceRegistry::new();
+        adder_methods::register(&mut registry);
+
+        // Verify service was registered
+        let service = registry
+            .service("Adder")
+            .expect("Adder service should exist");
+        assert_eq!(service.name, "Adder");
+
+        // Verify method was registered
+        let add_method = service.method("add").expect("add method should exist");
+        assert_eq!(add_method.name, "add");
+        assert_eq!(add_method.full_name, "Adder.add");
+        assert!(!add_method.is_streaming);
+
+        // Verify schemas are present and non-empty
+        assert!(
+            !add_method.request_shape.type_identifier.is_empty(),
+            "request shape should have a type identifier"
+        );
+        assert!(
+            !add_method.response_shape.type_identifier.is_empty(),
+            "response shape should have a type identifier"
+        );
+
+        // Verify method can be looked up by ID
+        let by_id = registry.method_by_id(add_method.id);
+        assert!(by_id.is_some());
+        assert_eq!(by_id.unwrap().name, "add");
+    }
+
+    #[test]
+    fn test_range_service_registration() {
+        let mut registry = ServiceRegistry::new();
+        rangeservice_methods::register(&mut registry);
+
+        // Verify service was registered
+        let service = registry
+            .service("RangeService")
+            .expect("RangeService should exist");
+        assert_eq!(service.name, "RangeService");
+
+        // Verify streaming method was registered
+        let range_method = service.method("range").expect("range method should exist");
+        assert_eq!(range_method.name, "range");
+        assert_eq!(range_method.full_name, "RangeService.range");
+        assert!(
+            range_method.is_streaming,
+            "range should be a streaming method"
+        );
+    }
+
+    #[test]
+    fn test_multiple_services_registration() {
+        let mut registry = ServiceRegistry::new();
+
+        // Register both services
+        adder_methods::register(&mut registry);
+        rangeservice_methods::register(&mut registry);
+
+        // Verify both exist
+        assert_eq!(registry.service_count(), 2);
+        assert_eq!(registry.method_count(), 2);
+
+        // Method IDs should be globally unique
+        let add_id = registry.resolve_method_id("Adder", "add").unwrap();
+        let range_id = registry.resolve_method_id("RangeService", "range").unwrap();
+        assert_ne!(add_id, range_id);
+
+        // Both should start at 1 (0 is reserved for control)
+        assert!(add_id.0 >= 1);
+        assert!(range_id.0 >= 1);
+    }
+
+    #[test]
+    fn test_lookup_by_name() {
+        let mut registry = ServiceRegistry::new();
+        adder_methods::register(&mut registry);
+        rangeservice_methods::register(&mut registry);
+
+        // Valid lookups
+        assert!(registry.lookup_method("Adder", "add").is_some());
+        assert!(registry.lookup_method("RangeService", "range").is_some());
+
+        // Invalid lookups
+        assert!(registry.lookup_method("Adder", "subtract").is_none());
+        assert!(registry.lookup_method("NonExistent", "add").is_none());
+    }
+
+    #[test]
+    fn test_registry_client_method_ids() {
+        // Test that the registry client uses registry-assigned method IDs
+        use rapace_transport_mem::InProcTransport;
+        use std::sync::Arc;
+
+        let mut registry = ServiceRegistry::new();
+
+        // Register services in a specific order
+        adder_methods::register(&mut registry);
+        rangeservice_methods::register(&mut registry);
+
+        // Verify that registry assigns sequential IDs
+        let add_id = registry.resolve_method_id("Adder", "add").unwrap();
+        let range_id = registry.resolve_method_id("RangeService", "range").unwrap();
+
+        assert_eq!(add_id.0, 1, "First method should have ID 1");
+        assert_eq!(range_id.0, 2, "Second method should have ID 2");
+
+        // Create a registry-aware client and verify it uses the correct IDs
+        let (client_transport, _server_transport) = InProcTransport::pair();
+        let client = AdderRegistryClient::new(Arc::new(client_transport), &registry);
+
+        // The client should have the correct method ID stored
+        assert_eq!(client.add_method_id, 1);
+    }
+
+    #[test]
+    fn test_doc_capture() {
+        // Test that doc comments are captured from the trait and methods
+        let mut registry = ServiceRegistry::new();
+        adder_methods::register(&mut registry);
+
+        let service = registry
+            .service("Adder")
+            .expect("Adder service should exist");
+
+        // Service doc should contain the trait doc comment
+        assert!(
+            service.doc.contains("Simple arithmetic service"),
+            "Service doc should contain trait doc comment, got: {:?}",
+            service.doc
+        );
+
+        // Method doc should contain the method doc comment
+        let add_method = service.method("add").expect("add method should exist");
+        assert!(
+            add_method.doc.contains("Add two numbers"),
+            "Method doc should contain method doc comment, got: {:?}",
+            add_method.doc
+        );
+    }
+
+    #[test]
+    fn test_streaming_method_doc_capture() {
+        // Test that doc comments are captured for streaming methods
+        let mut registry = ServiceRegistry::new();
+        rangeservice_methods::register(&mut registry);
+
+        let service = registry
+            .service("RangeService")
+            .expect("RangeService should exist");
+
+        // Service doc should contain the trait doc comments
+        assert!(
+            service.doc.contains("Service with server-streaming RPC"),
+            "Service doc should contain trait doc comment, got: {:?}",
+            service.doc
+        );
+
+        // Method doc should contain the method doc comment
+        let range_method = service.method("range").expect("range method should exist");
+        assert!(
+            range_method.doc.contains("Stream numbers"),
+            "Method doc should contain method doc comment, got: {:?}",
+            range_method.doc
+        );
+    }
 }

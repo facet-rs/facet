@@ -100,7 +100,11 @@ pub use rapace_core::{
 
 // Re-export serialization
 pub use facet;
+pub use facet_core;
 pub use facet_postcard;
+
+// Re-export registry (needed by macro-generated code)
+pub use rapace_registry;
 
 /// Prelude module for convenient imports.
 ///
@@ -112,6 +116,9 @@ pub mod prelude {
 
     // Re-export facet for derive macros in service types
     pub use facet::Facet;
+
+    // Re-export registry types for multi-service scenarios
+    pub use rapace_registry::ServiceRegistry;
 }
 
 /// Transport implementations.

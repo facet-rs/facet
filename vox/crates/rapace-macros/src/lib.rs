@@ -54,7 +54,11 @@ pub fn service(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
     let trait_name = &input.ident;
+    let trait_name_str = trait_name.to_string();
     let vis = &input.vis;
+
+    // Capture trait doc comments
+    let trait_doc = collect_doc(&input.attrs);
 
     let client_name = format_ident!("{}Client", trait_name);
     let server_name = format_ident!("{}Server", trait_name);
@@ -72,11 +76,17 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
         })
         .collect::<syn::Result<Vec<_>>>()?;
 
-    // Generate client methods
-    let client_methods = methods.iter().enumerate().map(|(idx, m)| {
+    // Generate client methods (with hardcoded IDs for backwards compatibility)
+    let client_methods_hardcoded = methods.iter().enumerate().map(|(idx, m)| {
         let method_id = (idx + 1) as u32; // method_id 0 is reserved for control
         generate_client_method(m, method_id)
     });
+
+    // Generate client methods that use stored method IDs from registry
+    let client_methods_registry = methods
+        .iter()
+        .enumerate()
+        .map(|(idx, m)| generate_client_method_registry(m, idx));
 
     // Generate server dispatch arms (for unary and error fallback)
     let dispatch_arms = methods.iter().enumerate().map(|(idx, m)| {
@@ -99,6 +109,31 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
         }
     });
 
+    // Generate registry registration code
+    let register_fn = generate_register_fn(&trait_name_str, &trait_doc, &methods);
+
+    // Generate registry-aware client struct and constructor
+    let registry_client_name = format_ident!("{}RegistryClient", trait_name);
+    let method_id_fields: Vec<_> = methods
+        .iter()
+        .map(|m| {
+            let field_name = format_ident!("{}_method_id", m.name);
+            quote! { #field_name: u32 }
+        })
+        .collect();
+    let method_id_lookups: Vec<_> = methods
+        .iter()
+        .map(|m| {
+            let field_name = format_ident!("{}_method_id", m.name);
+            let method_name = m.name.to_string();
+            quote! {
+                #field_name: registry.resolve_method_id(#trait_name_str, #method_name)
+                    .expect(concat!("method ", #method_name, " not found in registry"))
+                    .0
+            }
+        })
+        .collect();
+
     let mod_name = format_ident!("{}_methods", trait_name.to_string().to_lowercase());
 
     let expanded = quote! {
@@ -108,9 +143,15 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
         /// Method ID constants for this service.
         #vis mod #mod_name {
             #(#method_id_consts)*
+
+            #register_fn
         }
 
         /// Client stub for the #trait_name service.
+        ///
+        /// This client uses hardcoded method IDs (1, 2, ...) and is suitable
+        /// for simple single-service use cases. For multi-service scenarios
+        /// where method IDs must be globally unique, use [`#registry_client_name`] instead.
         #vis struct #client_name<T> {
             transport: ::std::sync::Arc<T>,
             next_msg_id: ::std::sync::atomic::AtomicU64,
@@ -119,6 +160,9 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
 
         impl<T: ::rapace_core::Transport + 'static> #client_name<T> {
             /// Create a new client with the given transport.
+            ///
+            /// Uses hardcoded method IDs (1, 2, ...). For registry-based method IDs,
+            /// use [`#registry_client_name::new`] instead.
             pub fn new(transport: ::std::sync::Arc<T>) -> Self {
                 Self {
                     transport,
@@ -167,7 +211,79 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
                 ::rapace_core::RpcError::Status { code, message }
             }
 
-            #(#client_methods)*
+            #(#client_methods_hardcoded)*
+        }
+
+        /// Registry-aware client stub for the #trait_name service.
+        ///
+        /// This client looks up method IDs from a [`ServiceRegistry`] at construction time,
+        /// ensuring that method IDs are globally unique across all registered services.
+        #vis struct #registry_client_name<T> {
+            transport: ::std::sync::Arc<T>,
+            next_msg_id: ::std::sync::atomic::AtomicU64,
+            next_channel_id: ::std::sync::atomic::AtomicU32,
+            #(#method_id_fields,)*
+        }
+
+        impl<T: ::rapace_core::Transport + 'static> #registry_client_name<T> {
+            /// Create a new registry-aware client.
+            ///
+            /// Looks up method IDs from the registry. The service must be registered
+            /// in the registry before calling this constructor.
+            ///
+            /// # Panics
+            ///
+            /// Panics if the service or any of its methods are not found in the registry.
+            pub fn new(transport: ::std::sync::Arc<T>, registry: &::rapace_registry::ServiceRegistry) -> Self {
+                Self {
+                    transport,
+                    next_msg_id: ::std::sync::atomic::AtomicU64::new(1),
+                    next_channel_id: ::std::sync::atomic::AtomicU32::new(1),
+                    #(#method_id_lookups,)*
+                }
+            }
+
+            fn next_msg_id(&self) -> u64 {
+                self.next_msg_id.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed)
+            }
+
+            fn next_channel_id(&self) -> u32 {
+                self.next_channel_id.fetch_add(1, ::std::sync::atomic::Ordering::Relaxed)
+            }
+
+            /// Parse error payload into RpcError.
+            fn parse_error_payload(payload: &[u8]) -> ::rapace_core::RpcError {
+                if payload.len() < 8 {
+                    return ::rapace_core::RpcError::Status {
+                        code: ::rapace_core::ErrorCode::Internal,
+                        message: "malformed error response".into(),
+                    };
+                }
+
+                let error_code = u32::from_le_bytes([
+                    payload[0], payload[1], payload[2], payload[3]
+                ]);
+                let message_len = u32::from_le_bytes([
+                    payload[4], payload[5], payload[6], payload[7]
+                ]) as usize;
+
+                if payload.len() < 8 + message_len {
+                    return ::rapace_core::RpcError::Status {
+                        code: ::rapace_core::ErrorCode::Internal,
+                        message: "malformed error response".into(),
+                    };
+                }
+
+                let code = ::rapace_core::ErrorCode::from_u32(error_code)
+                    .unwrap_or(::rapace_core::ErrorCode::Internal);
+                let message = ::std::string::String::from_utf8_lossy(
+                    &payload[8..8 + message_len]
+                ).into_owned();
+
+                ::rapace_core::RpcError::Status { code, message }
+            }
+
+            #(#client_methods_registry)*
         }
 
         /// Server dispatcher for the #trait_name service.
@@ -327,11 +443,44 @@ struct MethodInfo {
     args: Vec<(Ident, Type)>, // (name, type) pairs, excluding &self
     return_type: Type,
     kind: MethodKind,
+    doc: String,
+}
+
+/// Extract doc comments from attributes.
+///
+/// Collects all `#[doc = "..."]` attributes (which are what `///` comments
+/// become after parsing) and joins them with newlines.
+fn collect_doc(attrs: &[syn::Attribute]) -> String {
+    attrs
+        .iter()
+        .filter_map(|attr| {
+            // Check if this is a #[doc = "..."] attribute
+            if !attr.path().is_ident("doc") {
+                return None;
+            }
+
+            // Parse the meta to get the string value
+            if let syn::Meta::NameValue(nv) = &attr.meta {
+                if let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(s),
+                    ..
+                }) = &nv.value
+                {
+                    return Some(s.value());
+                }
+            }
+            None
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn parse_method(method: &TraitItemFn) -> syn::Result<MethodInfo> {
     let sig = &method.sig;
     let name = sig.ident.clone();
+
+    // Capture doc comments
+    let doc = collect_doc(&method.attrs);
 
     // Check it's async
     if sig.asyncness.is_none() {
@@ -375,6 +524,7 @@ fn parse_method(method: &TraitItemFn) -> syn::Result<MethodInfo> {
         args,
         return_type,
         kind,
+        doc,
     })
 }
 
@@ -410,6 +560,15 @@ fn generate_client_method(method: &MethodInfo, method_id: u32) -> TokenStream2 {
         MethodKind::Unary => generate_client_method_unary(method, method_id),
         MethodKind::ServerStreaming { item_type } => {
             generate_client_method_server_streaming(method, method_id, item_type)
+        }
+    }
+}
+
+fn generate_client_method_registry(method: &MethodInfo, method_index: usize) -> TokenStream2 {
+    match &method.kind {
+        MethodKind::Unary => generate_client_method_unary_registry(method, method_index),
+        MethodKind::ServerStreaming { item_type } => {
+            generate_client_method_server_streaming_registry(method, method_index, item_type)
         }
     }
 }
@@ -885,6 +1044,262 @@ fn generate_dispatch_arm_unary(method: &MethodInfo, method_id: u32) -> TokenStre
             };
 
             Ok(frame)
+        }
+    }
+}
+
+/// Generate the `register` function for service registration.
+///
+/// This generates a function that registers the service and its methods
+/// with a `ServiceRegistry`, capturing request/response schemas via facet.
+fn generate_register_fn(service_name: &str, service_doc: &str, methods: &[MethodInfo]) -> TokenStream2 {
+    let method_registrations: Vec<TokenStream2> = methods
+        .iter()
+        .map(|m| {
+            let method_name = m.name.to_string();
+            let method_doc = &m.doc;
+            let arg_types: Vec<_> = m.args.iter().map(|(_, ty)| ty).collect();
+
+            // Generate argument info
+            let arg_infos: Vec<TokenStream2> = m.args.iter().map(|(name, ty)| {
+                let name_str = name.to_string();
+                let type_str = quote!(#ty).to_string();
+                quote! {
+                    ::rapace_registry::ArgInfo {
+                        name: #name_str,
+                        type_name: #type_str,
+                    }
+                }
+            }).collect();
+
+            // Request shape: tuple of arg types, or () if no args, or single type if one arg
+            let request_shape_expr = if arg_types.is_empty() {
+                quote! { <() as ::facet_core::Facet>::SHAPE }
+            } else if arg_types.len() == 1 {
+                let ty = &arg_types[0];
+                quote! { <#ty as ::facet_core::Facet>::SHAPE }
+            } else {
+                quote! { <(#(#arg_types),*) as ::facet_core::Facet>::SHAPE }
+            };
+
+            // Response shape: the return type (or inner type for streaming)
+            let response_shape_expr = match &m.kind {
+                MethodKind::Unary => {
+                    let return_type = &m.return_type;
+                    quote! { <#return_type as ::facet_core::Facet>::SHAPE }
+                }
+                MethodKind::ServerStreaming { item_type } => {
+                    quote! { <#item_type as ::facet_core::Facet>::SHAPE }
+                }
+            };
+
+            // Is this a streaming method?
+            let is_streaming = matches!(m.kind, MethodKind::ServerStreaming { .. });
+
+            if is_streaming {
+                quote! {
+                    builder.add_streaming_method(
+                        #method_name,
+                        #method_doc,
+                        vec![#(#arg_infos),*],
+                        #request_shape_expr,
+                        #response_shape_expr,
+                    );
+                }
+            } else {
+                quote! {
+                    builder.add_method(
+                        #method_name,
+                        #method_doc,
+                        vec![#(#arg_infos),*],
+                        #request_shape_expr,
+                        #response_shape_expr,
+                    );
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+        /// Register this service with a registry.
+        ///
+        /// This function registers the service and all its methods,
+        /// capturing request/response schemas and documentation via facet.
+        ///
+        /// # Example
+        ///
+        /// ```ignore
+        /// use rapace_registry::ServiceRegistry;
+        ///
+        /// let mut registry = ServiceRegistry::new();
+        /// adder_methods::register(&mut registry);
+        /// ```
+        pub fn register(registry: &mut ::rapace_registry::ServiceRegistry) {
+            let mut builder = registry.register_service(#service_name, #service_doc);
+            #(#method_registrations)*
+            builder.finish();
+        }
+    }
+}
+
+/// Generate a unary client method that uses a stored method ID from the registry.
+fn generate_client_method_unary_registry(
+    method: &MethodInfo,
+    _method_index: usize,
+) -> TokenStream2 {
+    let name = &method.name;
+    let return_type = &method.return_type;
+    let method_id_field = format_ident!("{}_method_id", name);
+
+    let arg_names: Vec<_> = method.args.iter().map(|(name, _)| name).collect();
+    let arg_types: Vec<_> = method.args.iter().map(|(_, ty)| ty).collect();
+
+    let fn_args = arg_names.iter().zip(arg_types.iter()).map(|(name, ty)| {
+        quote! { #name: #ty }
+    });
+
+    let encode_expr = if arg_names.is_empty() {
+        quote! { ::facet_postcard::to_vec(&()).unwrap() }
+    } else if arg_names.len() == 1 {
+        let arg = &arg_names[0];
+        quote! { ::facet_postcard::to_vec(&#arg).unwrap() }
+    } else {
+        quote! { ::facet_postcard::to_vec(&(#(#arg_names.clone()),*)).unwrap() }
+    };
+
+    quote! {
+        /// Call the #name method on the remote service.
+        pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<#return_type, ::rapace_core::RpcError> {
+            use ::rapace_core::{Frame, FrameFlags, MsgDescHot, Transport};
+
+            let request_bytes: ::std::vec::Vec<u8> = #encode_expr;
+
+            let mut desc = MsgDescHot::new();
+            desc.msg_id = self.next_msg_id();
+            desc.channel_id = self.next_channel_id();
+            desc.method_id = self.#method_id_field;
+            desc.flags = FrameFlags::DATA | FrameFlags::EOS;
+
+            let frame = if request_bytes.len() <= ::rapace_core::INLINE_PAYLOAD_SIZE {
+                Frame::with_inline_payload(desc, &request_bytes)
+                    .expect("inline payload should fit")
+            } else {
+                Frame::with_payload(desc, request_bytes)
+            };
+
+            self.transport.send_frame(&frame).await
+                .map_err(::rapace_core::RpcError::Transport)?;
+
+            let response = self.transport.recv_frame().await
+                .map_err(::rapace_core::RpcError::Transport)?;
+
+            if response.desc.flags.contains(FrameFlags::ERROR) {
+                return Err(Self::parse_error_payload(response.payload));
+            }
+
+            let result: #return_type = ::facet_postcard::from_bytes(response.payload)
+                .map_err(|e| ::rapace_core::RpcError::Status {
+                    code: ::rapace_core::ErrorCode::Internal,
+                    message: ::std::format!("decode error: {:?}", e),
+                })?;
+
+            Ok(result)
+        }
+    }
+}
+
+/// Generate a server-streaming client method that uses a stored method ID from the registry.
+fn generate_client_method_server_streaming_registry(
+    method: &MethodInfo,
+    _method_index: usize,
+    item_type: &Type,
+) -> TokenStream2 {
+    let name = &method.name;
+    let method_id_field = format_ident!("{}_method_id", name);
+
+    let arg_names: Vec<_> = method.args.iter().map(|(name, _)| name).collect();
+    let arg_types: Vec<_> = method.args.iter().map(|(_, ty)| ty).collect();
+
+    let fn_args = arg_names.iter().zip(arg_types.iter()).map(|(name, ty)| {
+        quote! { #name: #ty }
+    });
+
+    let encode_expr = if arg_names.is_empty() {
+        quote! { ::facet_postcard::to_vec(&()).unwrap() }
+    } else if arg_names.len() == 1 {
+        let arg = &arg_names[0];
+        quote! { ::facet_postcard::to_vec(&#arg).unwrap() }
+    } else {
+        quote! { ::facet_postcard::to_vec(&(#(#arg_names.clone()),*)).unwrap() }
+    };
+
+    quote! {
+        /// Call the #name server-streaming method on the remote service.
+        pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<::rapace_core::Streaming<#item_type>, ::rapace_core::RpcError> {
+            use ::rapace_core::{Frame, FrameFlags, MsgDescHot, Transport};
+
+            let request_bytes: ::std::vec::Vec<u8> = #encode_expr;
+
+            let mut desc = MsgDescHot::new();
+            desc.msg_id = self.next_msg_id();
+            desc.channel_id = self.next_channel_id();
+            desc.method_id = self.#method_id_field;
+            desc.flags = FrameFlags::DATA | FrameFlags::EOS;
+
+            let frame = if request_bytes.len() <= ::rapace_core::INLINE_PAYLOAD_SIZE {
+                Frame::with_inline_payload(desc, &request_bytes)
+                    .expect("inline payload should fit")
+            } else {
+                Frame::with_payload(desc, request_bytes)
+            };
+
+            self.transport.send_frame(&frame).await
+                .map_err(::rapace_core::RpcError::Transport)?;
+
+            let (tx, rx) = ::tokio::sync::mpsc::channel::<::std::result::Result<#item_type, ::rapace_core::RpcError>>(16);
+            let transport = ::std::sync::Arc::clone(&self.transport);
+
+            ::tokio::spawn(async move {
+                loop {
+                    let response = match transport.recv_frame().await {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let _ = tx.send(Err(::rapace_core::RpcError::Transport(e))).await;
+                            break;
+                        }
+                    };
+
+                    if response.desc.flags.contains(FrameFlags::ERROR) {
+                        let err = Self::parse_error_payload(response.payload);
+                        let _ = tx.send(Err(err)).await;
+                        break;
+                    }
+
+                    if response.desc.flags.contains(FrameFlags::DATA) {
+                        match ::facet_postcard::from_bytes::<#item_type>(response.payload) {
+                            Ok(item) => {
+                                if tx.send(Ok(item)).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Err(::rapace_core::RpcError::Status {
+                                    code: ::rapace_core::ErrorCode::Internal,
+                                    message: ::std::format!("decode error: {:?}", e),
+                                })).await;
+                                break;
+                            }
+                        }
+                    }
+
+                    if response.desc.flags.contains(FrameFlags::EOS) {
+                        break;
+                    }
+                }
+            });
+
+            let stream = ::tokio_stream::wrappers::ReceiverStream::new(rx);
+            Ok(::std::boxed::Box::pin(stream))
         }
     }
 }

@@ -4,6 +4,7 @@ members = [
     "crates/rapace",
     "crates/rapace-core",
     "crates/rapace-macros",
+    "crates/rapace-registry",
     "crates/rapace-transport-mem",
     "crates/rapace-transport-shm",
     "crates/rapace-transport-stream",
@@ -11,6 +12,7 @@ members = [
     "crates/rapace-wasm-client",
     "crates/rapace-testkit",
     "examples/browser_ws_server",
+    "examples/dashboard",
     "xtask",
 ]
 exclude = ["fuzz"]
@@ -26,6 +28,7 @@ repository = "https://github.com/bearcove/rapace"
 rapace = { path = "crates/rapace" }
 rapace-core = { path = "crates/rapace-core" }
 rapace-macros = { path = "crates/rapace-macros" }
+rapace-registry = { path = "crates/rapace-registry" }
 rapace-transport-mem = { path = "crates/rapace-transport-mem" }
 rapace-transport-shm = { path = "crates/rapace-transport-shm" }
 rapace-transport-stream = { path = "crates/rapace-transport-stream" }
