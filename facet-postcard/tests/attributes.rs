@@ -7,7 +7,7 @@
 
 use eyre::Result;
 use facet::Facet;
-use facet_postcard::{from_bytes, to_vec};
+use facet_postcard::{from_slice, to_vec};
 use postcard::to_allocvec as postcard_to_vec;
 use serde::{Deserialize, Serialize};
 
@@ -37,7 +37,7 @@ mod default_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: WithDefault = from_bytes(&facet_bytes)?;
+        let decoded: WithDefault = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -53,7 +53,7 @@ mod default_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: WithDefault = from_bytes(&facet_bytes)?;
+        let decoded: WithDefault = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -81,7 +81,7 @@ mod default_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: WithCustomDefault = from_bytes(&facet_bytes)?;
+        let decoded: WithCustomDefault = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -111,7 +111,7 @@ mod default_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: MultipleDefaults = from_bytes(&facet_bytes)?;
+        let decoded: MultipleDefaults = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -153,7 +153,7 @@ mod skip_tests {
         assert_eq!(facet_bytes, postcard_bytes);
 
         // Note: After roundtrip, skipped field will have default value
-        let decoded: WithSkip = from_bytes(&facet_bytes)?;
+        let decoded: WithSkip = from_slice(&facet_bytes)?;
         assert_eq!(decoded.included, 42);
         // skipped field uses Default::default() which is 999
         Ok(())
@@ -229,7 +229,7 @@ mod rename_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: WithRename = from_bytes(&facet_bytes)?;
+        let decoded: WithRename = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -253,7 +253,7 @@ mod rename_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: WithRenameAll = from_bytes(&facet_bytes)?;
+        let decoded: WithRenameAll = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -279,7 +279,7 @@ mod transparent_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: TransparentWrapper = from_bytes(&facet_bytes)?;
+        let decoded: TransparentWrapper = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -297,7 +297,7 @@ mod transparent_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: TransparentString = from_bytes(&facet_bytes)?;
+        let decoded: TransparentString = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -344,7 +344,7 @@ mod combined_attributes {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: CombinedStruct = from_bytes(&facet_bytes)?;
+        let decoded: CombinedStruct = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -380,7 +380,7 @@ mod enum_attributes {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: RenamedVariants = from_bytes(&facet_bytes)?;
+        let decoded: RenamedVariants = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }

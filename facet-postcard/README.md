@@ -23,7 +23,7 @@ Postcard serialization and deserialization for Facet types.
 
 ```rust
 use facet::Facet;
-use facet_postcard::{to_vec, from_bytes};
+use facet_postcard::{to_vec, from_slice};
 
 #[derive(Debug, Facet)]
 struct Message {
@@ -36,7 +36,7 @@ let msg = Message { id: 42, payload: vec![1, 2, 3] };
 let bytes = to_vec(&msg).unwrap();
 
 // Deserialize
-let decoded: Message = from_bytes(&bytes).unwrap();
+let decoded: Message = from_slice(&bytes).unwrap();
 ```
 
 For `no_std` environments without an allocator, use `to_slice`:

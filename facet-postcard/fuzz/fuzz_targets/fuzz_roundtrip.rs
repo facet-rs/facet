@@ -2,7 +2,7 @@
 
 use arbitrary::Arbitrary;
 use facet::Facet;
-use facet_postcard::{from_bytes, to_vec};
+use facet_postcard::{from_slice, to_vec};
 use libfuzzer_sys::fuzz_target;
 
 /// A complex struct with various types for thorough fuzzing
@@ -28,7 +28,7 @@ fuzz_target!(|data: FuzzStruct| {
     // Serialize the arbitrary data
     if let Ok(bytes) = to_vec(&data) {
         // Deserialize it back
-        if let Ok(decoded) = from_bytes::<FuzzStruct>(&bytes) {
+        if let Ok(decoded) = from_slice::<FuzzStruct>(&bytes) {
             // Verify roundtrip
             assert_eq!(data, decoded, "Roundtrip mismatch!");
         }

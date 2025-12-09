@@ -11,7 +11,7 @@ use alloc::{borrow::Cow, string::String};
 /// # Example
 /// ```
 /// use facet::Facet;
-/// use facet_postcard::{from_bytes, to_vec};
+/// use facet_postcard::{from_slice, to_vec};
 ///
 /// #[derive(Debug, Facet, PartialEq)]
 /// struct Point {
@@ -21,23 +21,23 @@ use alloc::{borrow::Cow, string::String};
 ///
 /// let original = Point { x: 10, y: 20 };
 /// let bytes = to_vec(&original).unwrap();
-/// let decoded: Point = from_bytes(&bytes).unwrap();
+/// let decoded: Point = from_slice(&bytes).unwrap();
 /// assert_eq!(original, decoded);
 /// ```
-pub fn from_bytes<T: Facet<'static>>(data: &[u8]) -> Result<T, DeserializeError> {
-    trace!("from_bytes: Starting deserialization for type {}", T::SHAPE);
+pub fn from_slice<T: Facet<'static>>(data: &[u8]) -> Result<T, DeserializeError> {
+    trace!("from_slice: Starting deserialization for type {}", T::SHAPE);
     let partial = Partial::alloc::<T>()?;
     trace!(
-        "from_bytes: Allocated Partial, inner shape: {}",
+        "from_slice: Allocated Partial, inner shape: {}",
         partial.shape()
     );
 
     let mut decoder = Decoder::new(data);
     let partial = decoder.deserialize_value(partial)?;
 
-    trace!("from_bytes: Deserialization complete, building value");
+    trace!("from_slice: Deserialization complete, building value");
     let heap_value = partial.build()?;
-    trace!("from_bytes: Value built successfully");
+    trace!("from_slice: Value built successfully");
     let value = heap_value.materialize()?;
     Ok(value)
 }
@@ -45,9 +45,9 @@ pub fn from_bytes<T: Facet<'static>>(data: &[u8]) -> Result<T, DeserializeError>
 /// Deserializes postcard-encoded data into a Facet value, returning the remaining bytes.
 ///
 /// This is useful when you have multiple values concatenated in a buffer.
-pub fn take_from_bytes<T: Facet<'static>>(data: &[u8]) -> Result<(T, &[u8]), DeserializeError> {
+pub fn take_from_slice<T: Facet<'static>>(data: &[u8]) -> Result<(T, &[u8]), DeserializeError> {
     trace!(
-        "take_from_bytes: Starting deserialization for type {}",
+        "take_from_slice: Starting deserialization for type {}",
         T::SHAPE
     );
     let partial = Partial::alloc::<T>()?;
@@ -426,7 +426,7 @@ mod tests {
     use super::*;
     use crate::to_vec;
     use facet::Facet;
-    use postcard::from_bytes as postcard_from_bytes;
+    use postcard::from_bytes as postcard_from_slice;
     use serde::{Deserialize, Serialize};
 
     #[derive(Facet, Serialize, Deserialize, PartialEq, Debug)]
@@ -447,7 +447,7 @@ mod tests {
         };
 
         let bytes = to_vec(&original).unwrap();
-        let decoded: SimpleStruct = from_bytes(&bytes).unwrap();
+        let decoded: SimpleStruct = from_slice(&bytes).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -464,12 +464,12 @@ mod tests {
 
         // Serialize with facet-postcard, deserialize with postcard
         let facet_bytes = to_vec(&original).unwrap();
-        let decoded: SimpleStruct = postcard_from_bytes(&facet_bytes).unwrap();
+        let decoded: SimpleStruct = postcard_from_slice(&facet_bytes).unwrap();
         assert_eq!(original, decoded);
 
         // Serialize with postcard, deserialize with facet-postcard
         let postcard_bytes = postcard::to_allocvec(&original).unwrap();
-        let decoded: SimpleStruct = from_bytes(&postcard_bytes).unwrap();
+        let decoded: SimpleStruct = from_slice(&postcard_bytes).unwrap();
         assert_eq!(original, decoded);
     }
 
@@ -489,7 +489,7 @@ mod tests {
         };
 
         let bytes = to_vec(&original).unwrap();
-        let decoded: OptionStruct = from_bytes(&bytes).unwrap();
+        let decoded: OptionStruct = from_slice(&bytes).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -508,7 +508,7 @@ mod tests {
         };
 
         let bytes = to_vec(&original).unwrap();
-        let decoded: VecStruct = from_bytes(&bytes).unwrap();
+        let decoded: VecStruct = from_slice(&bytes).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -529,19 +529,19 @@ mod tests {
         // Test unit variant
         let original = TestEnum::Unit;
         let bytes = to_vec(&original).unwrap();
-        let decoded: TestEnum = from_bytes(&bytes).unwrap();
+        let decoded: TestEnum = from_slice(&bytes).unwrap();
         assert_eq!(original, decoded);
 
         // Test tuple variant
         let original = TestEnum::Tuple(42, "hello".to_string());
         let bytes = to_vec(&original).unwrap();
-        let decoded: TestEnum = from_bytes(&bytes).unwrap();
+        let decoded: TestEnum = from_slice(&bytes).unwrap();
         assert_eq!(original, decoded);
 
         // Test struct variant
         let original = TestEnum::Struct { x: 10, y: -20 };
         let bytes = to_vec(&original).unwrap();
-        let decoded: TestEnum = from_bytes(&bytes).unwrap();
+        let decoded: TestEnum = from_slice(&bytes).unwrap();
         assert_eq!(original, decoded);
     }
 
@@ -566,7 +566,7 @@ mod tests {
         };
 
         let bytes = to_vec(&original).unwrap();
-        let decoded: Outer = from_bytes(&bytes).unwrap();
+        let decoded: Outer = from_slice(&bytes).unwrap();
 
         assert_eq!(original, decoded);
     }
@@ -587,13 +587,13 @@ mod tests {
         };
 
         let bytes = to_vec(&original).unwrap();
-        let decoded: FloatStruct = from_bytes(&bytes).unwrap();
+        let decoded: FloatStruct = from_slice(&bytes).unwrap();
 
         assert_eq!(original, decoded);
     }
 
     #[test]
-    fn test_take_from_bytes() {
+    fn test_take_from_slice() {
         facet_testhelpers::setup();
 
         #[derive(Facet, Serialize, Deserialize, PartialEq, Debug)]
@@ -608,8 +608,8 @@ mod tests {
         let mut bytes = to_vec(&point1).unwrap();
         bytes.extend(to_vec(&point2).unwrap());
 
-        let (decoded1, remaining): (Point, _) = take_from_bytes(&bytes).unwrap();
-        let (decoded2, remaining): (Point, _) = take_from_bytes(remaining).unwrap();
+        let (decoded1, remaining): (Point, _) = take_from_slice(&bytes).unwrap();
+        let (decoded2, remaining): (Point, _) = take_from_slice(remaining).unwrap();
 
         assert_eq!(point1, decoded1);
         assert_eq!(point2, decoded2);

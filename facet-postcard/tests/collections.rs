@@ -2,7 +2,7 @@
 
 use eyre::Result;
 use facet::Facet;
-use facet_postcard::{from_bytes, to_vec};
+use facet_postcard::{from_slice, to_vec};
 use postcard::to_allocvec as postcard_to_vec;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -27,7 +27,7 @@ mod vec_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: VecU32 = from_bytes(&facet_bytes)?;
+        let decoded: VecU32 = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -40,7 +40,7 @@ mod vec_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: VecU32 = from_bytes(&facet_bytes)?;
+        let decoded: VecU32 = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -55,7 +55,7 @@ mod vec_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: VecU32 = from_bytes(&facet_bytes)?;
+        let decoded: VecU32 = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -70,7 +70,7 @@ mod vec_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: VecU32 = from_bytes(&facet_bytes)?;
+        let decoded: VecU32 = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -90,7 +90,7 @@ mod vec_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: VecString = from_bytes(&facet_bytes)?;
+        let decoded: VecString = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -108,7 +108,7 @@ mod vec_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: VecU8 = from_bytes(&facet_bytes)?;
+        let decoded: VecU8 = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -123,7 +123,7 @@ mod vec_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: VecU8 = from_bytes(&facet_bytes)?;
+        let decoded: VecU8 = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -143,7 +143,7 @@ mod vec_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: NestedVec = from_bytes(&facet_bytes)?;
+        let decoded: NestedVec = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -171,7 +171,7 @@ mod hashmap_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: HashMapWrapper = from_bytes(&facet_bytes)?;
+        let decoded: HashMapWrapper = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -185,7 +185,7 @@ mod hashmap_tests {
 
         // For HashMap, order is not guaranteed, so we just test roundtrip
         let facet_bytes = to_vec(&wrapper)?;
-        let decoded: HashMapWrapper = from_bytes(&facet_bytes)?;
+        let decoded: HashMapWrapper = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -202,7 +202,7 @@ mod hashmap_tests {
         let wrapper = HashMapWrapper { map };
 
         let bytes = to_vec(&wrapper)?;
-        let decoded: HashMapWrapper = from_bytes(&bytes)?;
+        let decoded: HashMapWrapper = from_slice(&bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -221,7 +221,7 @@ mod hashmap_tests {
         let wrapper = IntKeyMap { map };
 
         let bytes = to_vec(&wrapper)?;
-        let decoded: IntKeyMap = from_bytes(&bytes)?;
+        let decoded: IntKeyMap = from_slice(&bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -249,7 +249,7 @@ mod btreemap_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: BTreeMapWrapper = from_bytes(&facet_bytes)?;
+        let decoded: BTreeMapWrapper = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -267,7 +267,7 @@ mod btreemap_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: BTreeMapWrapper = from_bytes(&facet_bytes)?;
+        let decoded: BTreeMapWrapper = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -297,7 +297,7 @@ mod btreemap_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: NestedBTreeMap = from_bytes(&facet_bytes)?;
+        let decoded: NestedBTreeMap = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -325,7 +325,7 @@ mod hashset_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: HashSetWrapper = from_bytes(&facet_bytes)?;
+        let decoded: HashSetWrapper = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -340,7 +340,7 @@ mod hashset_tests {
         let wrapper = HashSetWrapper { set };
 
         let bytes = to_vec(&wrapper)?;
-        let decoded: HashSetWrapper = from_bytes(&bytes)?;
+        let decoded: HashSetWrapper = from_slice(&bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -368,7 +368,7 @@ mod btreeset_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: BTreeSetWrapper = from_bytes(&facet_bytes)?;
+        let decoded: BTreeSetWrapper = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -386,7 +386,7 @@ mod btreeset_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: BTreeSetWrapper = from_bytes(&facet_bytes)?;
+        let decoded: BTreeSetWrapper = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -409,7 +409,7 @@ mod btreeset_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: StringBTreeSet = from_bytes(&facet_bytes)?;
+        let decoded: StringBTreeSet = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -435,7 +435,7 @@ mod option_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: OptionU32 = from_bytes(&facet_bytes)?;
+        let decoded: OptionU32 = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -448,7 +448,7 @@ mod option_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: OptionU32 = from_bytes(&facet_bytes)?;
+        let decoded: OptionU32 = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -466,7 +466,7 @@ mod option_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: OptionString = from_bytes(&facet_bytes)?;
+        let decoded: OptionString = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -481,7 +481,7 @@ mod option_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: OptionString = from_bytes(&facet_bytes)?;
+        let decoded: OptionString = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -499,7 +499,7 @@ mod option_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: NestedOption = from_bytes(&facet_bytes)?;
+        let decoded: NestedOption = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -512,7 +512,7 @@ mod option_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: NestedOption = from_bytes(&facet_bytes)?;
+        let decoded: NestedOption = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -527,7 +527,7 @@ mod option_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: NestedOption = from_bytes(&facet_bytes)?;
+        let decoded: NestedOption = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -551,7 +551,7 @@ mod option_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: MultipleOptions = from_bytes(&facet_bytes)?;
+        let decoded: MultipleOptions = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -568,7 +568,7 @@ mod option_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: MultipleOptions = from_bytes(&facet_bytes)?;
+        let decoded: MultipleOptions = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -585,7 +585,7 @@ mod option_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: MultipleOptions = from_bytes(&facet_bytes)?;
+        let decoded: MultipleOptions = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }

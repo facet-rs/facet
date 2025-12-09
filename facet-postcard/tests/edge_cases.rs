@@ -2,7 +2,7 @@
 
 use eyre::Result;
 use facet::Facet;
-use facet_postcard::{from_bytes, to_vec};
+use facet_postcard::{from_slice, to_vec};
 use postcard::to_allocvec as postcard_to_vec;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -33,7 +33,7 @@ mod empty_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: AllEmpty = from_bytes(&facet_bytes)?;
+        let decoded: AllEmpty = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -53,7 +53,7 @@ mod empty_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: EmptyNested = from_bytes(&facet_bytes)?;
+        let decoded: EmptyNested = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -103,7 +103,7 @@ mod max_value_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: MaxIntegers = from_bytes(&facet_bytes)?;
+        let decoded: MaxIntegers = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -127,7 +127,7 @@ mod max_value_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: Max128 = from_bytes(&facet_bytes)?;
+        let decoded: Max128 = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -181,7 +181,7 @@ mod deeply_nested_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: Level5 = from_bytes(&facet_bytes)?;
+        let decoded: Level5 = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -201,7 +201,7 @@ mod deeply_nested_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: DeeplyNestedOptions = from_bytes(&facet_bytes)?;
+        let decoded: DeeplyNestedOptions = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -216,7 +216,7 @@ mod deeply_nested_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: DeeplyNestedOptions = from_bytes(&facet_bytes)?;
+        let decoded: DeeplyNestedOptions = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -239,7 +239,7 @@ mod deeply_nested_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: DeeplyNestedVecs = from_bytes(&facet_bytes)?;
+        let decoded: DeeplyNestedVecs = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -267,7 +267,7 @@ mod large_data_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: LargeVec = from_bytes(&facet_bytes)?;
+        let decoded: LargeVec = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -282,7 +282,7 @@ mod large_data_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: LargeVec = from_bytes(&facet_bytes)?;
+        let decoded: LargeVec = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -305,7 +305,7 @@ mod large_data_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: LargeMap = from_bytes(&facet_bytes)?;
+        let decoded: LargeMap = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -351,7 +351,7 @@ mod varint_boundary_tests {
                 "Mismatch at boundary value {val}"
             );
 
-            let decoded: VarintBoundary = from_bytes(&facet_bytes)?;
+            let decoded: VarintBoundary = from_slice(&facet_bytes)?;
             assert_eq!(value, decoded, "Roundtrip failed for value {val}");
         }
         Ok(())
@@ -394,7 +394,7 @@ mod varint_boundary_tests {
                 "Mismatch at signed boundary value {val}"
             );
 
-            let decoded: SignedVarintBoundary = from_bytes(&facet_bytes)?;
+            let decoded: SignedVarintBoundary = from_slice(&facet_bytes)?;
             assert_eq!(value, decoded, "Roundtrip failed for signed value {val}");
         }
         Ok(())
@@ -423,7 +423,7 @@ mod special_char_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: SpecialStrings = from_bytes(&facet_bytes)?;
+        let decoded: SpecialStrings = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -438,7 +438,7 @@ mod special_char_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: SpecialStrings = from_bytes(&facet_bytes)?;
+        let decoded: SpecialStrings = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -453,7 +453,7 @@ mod special_char_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: SpecialStrings = from_bytes(&facet_bytes)?;
+        let decoded: SpecialStrings = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -468,7 +468,7 @@ mod special_char_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: SpecialStrings = from_bytes(&facet_bytes)?;
+        let decoded: SpecialStrings = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -492,7 +492,7 @@ mod zst_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: ZeroSized = from_bytes(&facet_bytes)?;
+        let decoded: ZeroSized = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -512,7 +512,7 @@ mod zst_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: VecOfZst = from_bytes(&facet_bytes)?;
+        let decoded: VecOfZst = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -545,7 +545,7 @@ mod zst_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: WithPhantom<String> = from_bytes(&facet_bytes)?;
+        let decoded: WithPhantom<String> = from_slice(&facet_bytes)?;
         assert_eq!(value.value, decoded.value);
         Ok(())
     }
