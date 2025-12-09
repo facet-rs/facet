@@ -5,7 +5,7 @@ use alloc::string::String;
 use url::Url;
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, Shape, ShapeBuilder, Type, UserType,
+    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, Type, UserType,
     VTableIndirect,
 };
 
@@ -19,10 +19,14 @@ unsafe fn display_url(
     }
 }
 
-unsafe fn try_from_url(source: OxPtrConst, target: OxPtrMut) -> Option<Result<(), String>> {
+unsafe fn try_from_url(
+    target: OxPtrMut,
+    src_shape: &'static Shape,
+    src: PtrConst,
+) -> Option<Result<(), String>> {
     unsafe {
-        if source.shape.is_type::<String>() {
-            let source_str = source.ptr().read::<String>();
+        if src_shape.id == <String as Facet>::SHAPE.id {
+            let source_str = src.read::<String>();
             let parsed = Url::parse(&source_str).map_err(|error| {
                 let message = match error {
                     url::ParseError::EmptyHost => "empty host",
@@ -53,7 +57,7 @@ unsafe fn try_from_url(source: OxPtrConst, target: OxPtrMut) -> Option<Result<()
         } else {
             Some(Err(format!(
                 "unsupported source shape for Url, expected String, got {}",
-                source.shape.type_identifier
+                src_shape.type_identifier
             )))
         }
     }

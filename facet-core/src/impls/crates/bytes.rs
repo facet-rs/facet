@@ -103,10 +103,14 @@ static BYTES_LIST_TYPE_OPS: ListTypeOps = ListTypeOps {
 
 /// # Safety
 /// `src` must point to a valid `BytesMut`, `dst` must be valid for writes
-unsafe fn bytes_try_from(src: &BytesMut, dst: *mut Bytes) -> Result<(), alloc::string::String> {
+unsafe fn bytes_try_from(
+    dst: *mut Bytes,
+    _src_shape: &'static crate::Shape,
+    src: crate::PtrConst,
+) -> Result<(), alloc::string::String> {
     unsafe {
         // Read the BytesMut (consuming it) and freeze into Bytes
-        let bytes_mut = core::ptr::read(src as *const BytesMut);
+        let bytes_mut = core::ptr::read(src.as_byte_ptr() as *const BytesMut);
         let bytes = bytes_mut.freeze();
         dst.write(bytes);
     }
@@ -119,15 +123,7 @@ unsafe impl Facet<'_> for Bytes {
             .display(bytes_display)
             .debug(bytes_debug)
             // Convert from BytesMut (inner type) to Bytes
-            // Note: The signature is fn(&T, *mut T) but we're using it for BytesMut -> Bytes
-            // This works because the vtable is type-erased and the actual types come from
-            // the shape's inner field
-            .try_from(unsafe {
-                core::mem::transmute::<
-                    unsafe fn(&BytesMut, *mut Bytes) -> Result<(), alloc::string::String>,
-                    unsafe fn(&Bytes, *mut Bytes) -> Result<(), alloc::string::String>,
-                >(bytes_try_from)
-            })
+            .try_from(bytes_try_from)
             .build();
 
         ShapeBuilder::for_sized::<Bytes>("Bytes")

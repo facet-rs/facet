@@ -7,7 +7,7 @@ use alloc::{
 use jiff::{Timestamp, Zoned, civil::DateTime};
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, Shape, ShapeBuilder, Type, UserType,
+    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, Type, UserType,
     VTableIndirect,
 };
 
@@ -44,10 +44,14 @@ unsafe fn zoned_parse(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError
 }
 
 /// TryFrom for Zoned (from String)
-unsafe fn zoned_try_from(source: OxPtrConst, target: OxPtrMut) -> Option<Result<(), String>> {
-    if source.shape.is_type::<String>() {
+unsafe fn zoned_try_from(
+    target: OxPtrMut,
+    src_shape: &'static Shape,
+    src: PtrConst,
+) -> Option<Result<(), String>> {
+    if src_shape.id == <String as Facet>::SHAPE.id {
         unsafe {
-            let source_str = source.ptr().read::<String>();
+            let source_str = src.read::<String>();
             let parsed = source_str
                 .parse::<Zoned>()
                 .map_err(|_| ZONED_ERROR.to_string());
@@ -63,7 +67,7 @@ unsafe fn zoned_try_from(source: OxPtrConst, target: OxPtrMut) -> Option<Result<
     } else {
         Some(Err(format!(
             "cannot convert from {} to Zoned, expected String",
-            source.shape.type_identifier
+            src_shape.type_identifier
         )))
     }
 }
@@ -118,10 +122,14 @@ unsafe fn timestamp_parse(s: &str, target: OxPtrMut) -> Option<Result<(), ParseE
 }
 
 /// TryFrom for Timestamp (from String)
-unsafe fn timestamp_try_from(source: OxPtrConst, target: OxPtrMut) -> Option<Result<(), String>> {
-    if source.shape.is_type::<String>() {
+unsafe fn timestamp_try_from(
+    target: OxPtrMut,
+    src_shape: &'static Shape,
+    src: PtrConst,
+) -> Option<Result<(), String>> {
+    if src_shape.id == <String as Facet>::SHAPE.id {
         unsafe {
-            let source_str = source.ptr().read::<String>();
+            let source_str = src.read::<String>();
             let parsed = source_str
                 .parse::<Timestamp>()
                 .map_err(|_| TIMESTAMP_ERROR.to_string());
@@ -138,7 +146,7 @@ unsafe fn timestamp_try_from(source: OxPtrConst, target: OxPtrMut) -> Option<Res
     } else {
         Some(Err(format!(
             "cannot convert from {} to Timestamp, expected String",
-            source.shape.type_identifier
+            src_shape.type_identifier
         )))
     }
 }
@@ -193,10 +201,14 @@ unsafe fn datetime_parse(s: &str, target: OxPtrMut) -> Option<Result<(), ParseEr
 }
 
 /// TryFrom for DateTime (from String)
-unsafe fn datetime_try_from(source: OxPtrConst, target: OxPtrMut) -> Option<Result<(), String>> {
-    if source.shape.is_type::<String>() {
+unsafe fn datetime_try_from(
+    target: OxPtrMut,
+    src_shape: &'static Shape,
+    src: PtrConst,
+) -> Option<Result<(), String>> {
+    if src_shape.id == <String as Facet>::SHAPE.id {
         unsafe {
-            let source_str = source.ptr().read::<String>();
+            let source_str = src.read::<String>();
             let parsed = source_str
                 .parse::<DateTime>()
                 .map_err(|_| DATETIME_ERROR.to_string());
@@ -213,7 +225,7 @@ unsafe fn datetime_try_from(source: OxPtrConst, target: OxPtrMut) -> Option<Resu
     } else {
         Some(Err(format!(
             "cannot convert from {} to DateTime, expected String",
-            source.shape.type_identifier
+            src_shape.type_identifier
         )))
     }
 }

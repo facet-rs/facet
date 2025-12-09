@@ -7,7 +7,7 @@ use alloc::{
 use uuid::Uuid;
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, Shape, ShapeBuilder, Type, UserType,
+    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, Type, UserType,
     VTableIndirect,
 };
 
@@ -21,10 +21,14 @@ unsafe fn display_uuid(
     }
 }
 
-unsafe fn try_from_uuid(source: OxPtrConst, target: OxPtrMut) -> Option<Result<(), String>> {
+unsafe fn try_from_uuid(
+    target: OxPtrMut,
+    src_shape: &'static Shape,
+    src: PtrConst,
+) -> Option<Result<(), String>> {
     unsafe {
-        if source.shape.is_type::<String>() {
-            let source_str = source.ptr().read::<String>();
+        if src_shape.id == <String as Facet>::SHAPE.id {
+            let source_str = src.read::<String>();
             let parsed =
                 Uuid::parse_str(&source_str).map_err(|_| "UUID parsing failed".to_string());
             Some(match parsed {
@@ -37,7 +41,7 @@ unsafe fn try_from_uuid(source: OxPtrConst, target: OxPtrMut) -> Option<Result<(
         } else {
             Some(Err(format!(
                 "unsupported source shape for Uuid, expected String, got {}",
-                source.shape.type_identifier
+                src_shape.type_identifier
             )))
         }
     }

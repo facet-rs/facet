@@ -4,7 +4,7 @@ use alloc::string::{String, ToString};
 use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, Shape, ShapeBuilder, Type, UserType,
+    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, Type, UserType,
     VTableIndirect,
 };
 
@@ -23,12 +23,13 @@ unsafe fn display_datetime_utc(
 }
 
 unsafe fn try_from_datetime_utc(
-    source: OxPtrConst,
     target: OxPtrMut,
+    src_shape: &'static Shape,
+    src: PtrConst,
 ) -> Option<Result<(), String>> {
     unsafe {
-        if source.shape.is_type::<String>() {
-            let source_str = source.ptr().read::<String>();
+        if src_shape.id == <String as Facet>::SHAPE.id {
+            let source_str = src.read::<String>();
             let parsed = DateTime::parse_from_rfc3339(&source_str)
                 .map(|dt| dt.with_timezone(&Utc))
                 .map_err(|_| "could not parse date".to_string());
@@ -42,7 +43,7 @@ unsafe fn try_from_datetime_utc(
         } else {
             Some(Err(format!(
                 "unsupported source shape for DateTime<Utc>, expected String, got {}",
-                source.shape.type_identifier
+                src_shape.type_identifier
             )))
         }
     }
@@ -98,12 +99,13 @@ unsafe fn display_datetime_fixed_offset(
 }
 
 unsafe fn try_from_datetime_fixed_offset(
-    source: OxPtrConst,
     target: OxPtrMut,
+    src_shape: &'static Shape,
+    src: PtrConst,
 ) -> Option<Result<(), String>> {
     unsafe {
-        if source.shape.is_type::<String>() {
-            let source_str = source.ptr().read::<String>();
+        if src_shape.id == <String as Facet>::SHAPE.id {
+            let source_str = src.read::<String>();
             let parsed = DateTime::parse_from_rfc3339(&source_str)
                 .map_err(|_| "could not parse date".to_string());
             Some(match parsed {
@@ -116,7 +118,7 @@ unsafe fn try_from_datetime_fixed_offset(
         } else {
             Some(Err(format!(
                 "unsupported source shape for DateTime<FixedOffset>, expected String, got {}",
-                source.shape.type_identifier
+                src_shape.type_identifier
             )))
         }
     }
@@ -171,12 +173,13 @@ unsafe fn display_datetime_local(
 }
 
 unsafe fn try_from_datetime_local(
-    source: OxPtrConst,
     target: OxPtrMut,
+    src_shape: &'static Shape,
+    src: PtrConst,
 ) -> Option<Result<(), String>> {
     unsafe {
-        if source.shape.is_type::<String>() {
-            let source_str = source.ptr().read::<String>();
+        if src_shape.id == <String as Facet>::SHAPE.id {
+            let source_str = src.read::<String>();
             let parsed = DateTime::parse_from_rfc3339(&source_str)
                 .map(|dt| dt.with_timezone(&Local))
                 .map_err(|_| "could not parse date".to_string());
@@ -190,7 +193,7 @@ unsafe fn try_from_datetime_local(
         } else {
             Some(Err(format!(
                 "unsupported source shape for DateTime<Local>, expected String, got {}",
-                source.shape.type_identifier
+                src_shape.type_identifier
             )))
         }
     }
@@ -242,12 +245,13 @@ unsafe fn display_naive_datetime(
 }
 
 unsafe fn try_from_naive_datetime(
-    source: OxPtrConst,
     target: OxPtrMut,
+    src_shape: &'static Shape,
+    src: PtrConst,
 ) -> Option<Result<(), String>> {
     unsafe {
-        if source.shape.is_type::<String>() {
-            let source_str = source.ptr().read::<String>();
+        if src_shape.id == <String as Facet>::SHAPE.id {
+            let source_str = src.read::<String>();
             let parsed = NaiveDateTime::parse_from_str(&source_str, "%Y-%m-%dT%H:%M:%S")
                 .or_else(|_| NaiveDateTime::parse_from_str(&source_str, "%Y-%m-%d %H:%M:%S"))
                 .map_err(|_| "could not parse date".to_string());
@@ -261,7 +265,7 @@ unsafe fn try_from_naive_datetime(
         } else {
             Some(Err(format!(
                 "unsupported source shape for NaiveDateTime, expected String, got {}",
-                source.shape.type_identifier
+                src_shape.type_identifier
             )))
         }
     }
@@ -312,10 +316,14 @@ unsafe fn display_naive_date(
     }
 }
 
-unsafe fn try_from_naive_date(source: OxPtrConst, target: OxPtrMut) -> Option<Result<(), String>> {
+unsafe fn try_from_naive_date(
+    target: OxPtrMut,
+    src_shape: &'static Shape,
+    src: PtrConst,
+) -> Option<Result<(), String>> {
     unsafe {
-        if source.shape.is_type::<String>() {
-            let source_str = source.ptr().read::<String>();
+        if src_shape.id == <String as Facet>::SHAPE.id {
+            let source_str = src.read::<String>();
             let parsed = NaiveDate::parse_from_str(&source_str, "%Y-%m-%d")
                 .map_err(|_| "could not parse date".to_string());
             Some(match parsed {
@@ -328,7 +336,7 @@ unsafe fn try_from_naive_date(source: OxPtrConst, target: OxPtrMut) -> Option<Re
         } else {
             Some(Err(format!(
                 "unsupported source shape for NaiveDate, expected String, got {}",
-                source.shape.type_identifier
+                src_shape.type_identifier
             )))
         }
     }
@@ -378,10 +386,14 @@ unsafe fn display_naive_time(
     }
 }
 
-unsafe fn try_from_naive_time(source: OxPtrConst, target: OxPtrMut) -> Option<Result<(), String>> {
+unsafe fn try_from_naive_time(
+    target: OxPtrMut,
+    src_shape: &'static Shape,
+    src: PtrConst,
+) -> Option<Result<(), String>> {
     unsafe {
-        if source.shape.is_type::<String>() {
-            let source_str = source.ptr().read::<String>();
+        if src_shape.id == <String as Facet>::SHAPE.id {
+            let source_str = src.read::<String>();
             let parsed = NaiveTime::parse_from_str(&source_str, "%H:%M:%S")
                 .or_else(|_| NaiveTime::parse_from_str(&source_str, "%H:%M:%S%.f"))
                 .map_err(|_| "could not parse time".to_string());
@@ -395,7 +407,7 @@ unsafe fn try_from_naive_time(source: OxPtrConst, target: OxPtrMut) -> Option<Re
         } else {
             Some(Err(format!(
                 "unsupported source shape for NaiveTime, expected String, got {}",
-                source.shape.type_identifier
+                src_shape.type_identifier
             )))
         }
     }

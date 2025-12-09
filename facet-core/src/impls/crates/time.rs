@@ -7,7 +7,7 @@ use alloc::{
 use time::{OffsetDateTime, UtcDateTime};
 
 use crate::{
-    Def, Facet, OxPtrConst, OxPtrMut, ParseError, Shape, ShapeBuilder, Type, UserType,
+    Def, Facet, OxPtrConst, OxPtrMut, ParseError, PtrConst, Shape, ShapeBuilder, Type, UserType,
     VTableIndirect,
 };
 
@@ -28,10 +28,14 @@ unsafe fn utc_display(
     }
 }
 
-unsafe fn utc_try_from(source: OxPtrConst, target: OxPtrMut) -> Option<Result<(), String>> {
+unsafe fn utc_try_from(
+    target: OxPtrMut,
+    src_shape: &'static Shape,
+    src: PtrConst,
+) -> Option<Result<(), String>> {
     unsafe {
-        if source.shape.is_type::<String>() {
-            let source_str = source.ptr().read::<String>();
+        if src_shape.id == <String as Facet>::SHAPE.id {
+            let source_str = src.read::<String>();
             let parsed =
                 UtcDateTime::parse(&source_str, &time::format_description::well_known::Rfc3339)
                     .map_err(|_| "could not parse date".to_string());
@@ -45,7 +49,7 @@ unsafe fn utc_try_from(source: OxPtrConst, target: OxPtrMut) -> Option<Result<()
         } else {
             Some(Err(format!(
                 "unsupported source shape for UtcDateTime, expected String, got {}",
-                source.shape.type_identifier
+                src_shape.type_identifier
             )))
         }
     }
@@ -99,10 +103,14 @@ unsafe fn offset_display(
     }
 }
 
-unsafe fn offset_try_from(source: OxPtrConst, target: OxPtrMut) -> Option<Result<(), String>> {
+unsafe fn offset_try_from(
+    target: OxPtrMut,
+    src_shape: &'static Shape,
+    src: PtrConst,
+) -> Option<Result<(), String>> {
     unsafe {
-        if source.shape.is_type::<String>() {
-            let source_str = source.ptr().read::<String>();
+        if src_shape.id == <String as Facet>::SHAPE.id {
+            let source_str = src.read::<String>();
             let parsed =
                 OffsetDateTime::parse(&source_str, &time::format_description::well_known::Rfc3339)
                     .map_err(|_| "could not parse date".to_string());
@@ -116,7 +124,7 @@ unsafe fn offset_try_from(source: OxPtrConst, target: OxPtrMut) -> Option<Result
         } else {
             Some(Err(format!(
                 "unsupported source shape for OffsetDateTime, expected String, got {}",
-                source.shape.type_identifier
+                src_shape.type_identifier
             )))
         }
     }

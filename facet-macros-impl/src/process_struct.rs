@@ -1036,10 +1036,45 @@ pub(crate) fn gen_field_from_pfield(
             }
         }
         Some(DefaultKind::Custom(expr)) => {
+            // Use vtable's try_from to convert the expression to the field type.
+            // This allows `default = "foo"` to work for String fields,
+            // and `default = 42` to work for any integer type.
+            // If the types are the same, we just write directly.
             quote! {
                 ::core::option::Option::Some(𝟋DS::Custom({
                     unsafe fn __default(__ptr: #facet_crate::PtrUninit) -> #facet_crate::PtrMut {
-                        __ptr.put(#expr)
+                        // Helper function to get shape from a value via type inference
+                        #[inline]
+                        fn __shape_of_val<'a, T: #facet_crate::Facet<'a>>(_: &T) -> &'static #facet_crate::Shape {
+                            T::SHAPE
+                        }
+                        // Create the source value
+                        let __src_value = #expr;
+                        // Get shapes for source and destination types
+                        let __src_shape = __shape_of_val(&__src_value);
+                        let __dst_shape = <#field_type as #facet_crate::Facet>::SHAPE;
+
+                        // If types are the same (by shape id), just write directly
+                        if __src_shape.id == __dst_shape.id {
+                            return unsafe { __ptr.put(__src_value) };
+                        }
+
+                        // Create a pointer to the source value
+                        let __src_ptr = #facet_crate::PtrConst::new(
+                            &__src_value as *const _ as *const u8
+                        );
+                        // Get destination pointer
+                        let __dst_ptr = #facet_crate::PtrMut::new(__ptr.as_byte_ptr() as *mut u8);
+                        // Call try_from via vtable
+                        match unsafe { __dst_shape.call_try_from(__src_shape, __src_ptr, __dst_ptr) } {
+                            Some(Ok(())) => {
+                                // Don't run destructor on source value since we consumed it
+                                ::core::mem::forget(__src_value);
+                                unsafe { __ptr.assume_init() }
+                            },
+                            Some(Err(e)) => panic!("default value conversion failed: {}", e),
+                            None => panic!("type {} does not support try_from", __dst_shape.type_identifier),
+                        }
                     }
                     __default
                 }))
