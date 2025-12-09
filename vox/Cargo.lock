@@ -1188,6 +1188,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rapace-template-engine"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-postcard",
+ "rapace-core",
+ "rapace-macros",
+ "rapace-registry",
+ "rapace-testkit",
+ "rapace-transport-mem",
+ "rapace-transport-shm",
+ "rapace-transport-stream",
+ "tokio",
+]
+
+[[package]]
 name = "rapace-testkit"
 version = "0.1.0"
 dependencies = [
@@ -1405,6 +1422,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "signal-hook-registry"
+version = "1.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7664a098b8e616bdfcc2dc0e9ac44eb231eedf41db4e9fe95d8d32ec728dedad"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "simd-adler32"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1504,6 +1530,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

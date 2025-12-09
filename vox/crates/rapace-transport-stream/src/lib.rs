@@ -13,6 +13,7 @@
 //!
 //! - Length-prefixed frames for easy framing
 //! - Everything is owned buffers (no zero-copy on receive)
+//! - Full-duplex: send and receive can happen concurrently
 //! - Same RPC semantics as other transports
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,7 +24,7 @@ use rapace_core::{
     DecodeError, EncodeCtx, EncodeError, Frame, FrameView, MsgDescHot, Transport, TransportError,
     INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT,
 };
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::sync::Mutex as AsyncMutex;
 
 /// Size of MsgDescHot in bytes (must be 64).
@@ -35,13 +36,16 @@ const _: () = assert!(std::mem::size_of::<MsgDescHot>() == DESC_SIZE);
 /// Stream-based transport implementation.
 ///
 /// Works with any `AsyncRead + AsyncWrite` stream (TCP, Unix socket, duplex, etc.).
-pub struct StreamTransport<S> {
-    inner: Arc<StreamInner<S>>,
+/// Uses split read/write halves for full-duplex operation.
+pub struct StreamTransport<R, W> {
+    inner: Arc<StreamInner<R, W>>,
 }
 
-struct StreamInner<S> {
-    /// The underlying stream (async mutex for holding across awaits).
-    stream: AsyncMutex<S>,
+struct StreamInner<R, W> {
+    /// Read half of the stream (async mutex for holding across awaits).
+    reader: AsyncMutex<R>,
+    /// Write half of the stream (async mutex for holding across awaits).
+    writer: AsyncMutex<W>,
     /// Buffer for the last received frame (for FrameView lifetime).
     last_frame: SyncMutex<Option<ReceivedFrame>>,
     /// Whether the transport is closed.
@@ -54,28 +58,28 @@ struct ReceivedFrame {
     payload: Vec<u8>,
 }
 
-impl<S> StreamTransport<S>
+impl<S> StreamTransport<ReadHalf<S>, WriteHalf<S>>
 where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    S: AsyncRead + AsyncWrite + Send + 'static,
 {
-    /// Create a new stream transport wrapping the given stream.
+    /// Create a new stream transport by splitting the given stream.
+    ///
+    /// The stream is split into read and write halves, allowing concurrent
+    /// send and receive operations.
     pub fn new(stream: S) -> Self {
+        let (reader, writer) = tokio::io::split(stream);
         Self {
             inner: Arc::new(StreamInner {
-                stream: AsyncMutex::new(stream),
+                reader: AsyncMutex::new(reader),
+                writer: AsyncMutex::new(writer),
                 last_frame: SyncMutex::new(None),
                 closed: AtomicBool::new(false),
             }),
         }
     }
-
-    /// Check if the transport is closed.
-    pub fn is_closed(&self) -> bool {
-        self.inner.closed.load(Ordering::Acquire)
-    }
 }
 
-impl StreamTransport<tokio::io::DuplexStream> {
+impl StreamTransport<ReadHalf<tokio::io::DuplexStream>, WriteHalf<tokio::io::DuplexStream>> {
     /// Create a connected pair of stream transports for testing.
     ///
     /// Uses `tokio::io::duplex` internally.
@@ -113,9 +117,10 @@ fn bytes_to_desc(bytes: &[u8; DESC_SIZE]) -> MsgDescHot {
     unsafe { std::mem::transmute_copy(bytes) }
 }
 
-impl<S> Transport for StreamTransport<S>
+impl<R, W> Transport for StreamTransport<R, W>
 where
-    S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
+    R: AsyncRead + Unpin + Send + Sync + 'static,
+    W: AsyncWrite + Unpin + Send + Sync + 'static,
 {
     async fn send_frame(&self, frame: &Frame) -> Result<(), TransportError> {
         if self.is_closed() {
@@ -129,30 +134,30 @@ where
         let desc_bytes = desc_to_bytes(&frame.desc);
 
         // Write: length prefix + descriptor + payload
-        let mut stream = self.inner.stream.lock().await;
+        let mut writer = self.inner.writer.lock().await;
 
         // Length prefix (u32 LE)
-        stream
+        writer
             .write_all(&(frame_len as u32).to_le_bytes())
             .await
             .map_err(TransportError::Io)?;
 
         // Descriptor (64 bytes)
-        stream
+        writer
             .write_all(&desc_bytes)
             .await
             .map_err(TransportError::Io)?;
 
         // Payload
         if !payload.is_empty() {
-            stream
+            writer
                 .write_all(payload)
                 .await
                 .map_err(TransportError::Io)?;
         }
 
         // Flush to ensure frame is sent
-        stream.flush().await.map_err(TransportError::Io)?;
+        writer.flush().await.map_err(TransportError::Io)?;
 
         Ok(())
     }
@@ -162,11 +167,11 @@ where
             return Err(TransportError::Closed);
         }
 
-        let mut stream = self.inner.stream.lock().await;
+        let mut reader = self.inner.reader.lock().await;
 
         // Read length prefix
         let mut len_buf = [0u8; 4];
-        stream.read_exact(&mut len_buf).await.map_err(|e| {
+        reader.read_exact(&mut len_buf).await.map_err(|e| {
             if e.kind() == std::io::ErrorKind::UnexpectedEof {
                 TransportError::Closed
             } else {
@@ -185,7 +190,7 @@ where
 
         // Read descriptor
         let mut desc_buf = [0u8; DESC_SIZE];
-        stream
+        reader
             .read_exact(&mut desc_buf)
             .await
             .map_err(TransportError::Io)?;
@@ -196,7 +201,7 @@ where
         let payload_len = frame_len - DESC_SIZE;
         let payload = if payload_len > 0 {
             let mut buf = vec![0u8; payload_len];
-            stream
+            reader
                 .read_exact(&mut buf)
                 .await
                 .map_err(TransportError::Io)?;
@@ -205,8 +210,8 @@ where
             Vec::new()
         };
 
-        // Drop stream lock before storing frame
-        drop(stream);
+        // Drop reader lock before storing frame
+        drop(reader);
 
         // Update desc.payload_len to match actual received payload
         desc.payload_len = payload_len as u32;
@@ -257,6 +262,13 @@ where
     async fn close(&self) -> Result<(), TransportError> {
         self.inner.closed.store(true, Ordering::Release);
         Ok(())
+    }
+}
+
+impl<R, W> StreamTransport<R, W> {
+    /// Check if the transport is closed.
+    pub fn is_closed(&self) -> bool {
+        self.inner.closed.load(Ordering::Acquire)
     }
 }
 
@@ -397,6 +409,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_concurrent_send_recv() {
+        // This test verifies that send and recv can happen concurrently
+        let (a, b) = StreamTransport::pair();
+        let a = Arc::new(a);
+        let b = Arc::new(b);
+
+        // Spawn a task that sends multiple frames
+        let a_sender = a.clone();
+        let send_handle = tokio::spawn(async move {
+            for i in 0..10u64 {
+                let mut desc = MsgDescHot::new();
+                desc.msg_id = i;
+                let frame = Frame::with_inline_payload(desc, b"ping").unwrap();
+                a_sender.send_frame(&frame).await.unwrap();
+            }
+        });
+
+        // Spawn a task that receives and echoes back
+        let b_clone = b.clone();
+        let echo_handle = tokio::spawn(async move {
+            for _ in 0..10 {
+                let view = b_clone.recv_frame().await.unwrap();
+                let mut desc = MsgDescHot::new();
+                desc.msg_id = view.desc.msg_id;
+                let frame = Frame::with_inline_payload(desc, b"pong").unwrap();
+                b_clone.send_frame(&frame).await.unwrap();
+            }
+        });
+
+        // Receive the echoed frames
+        let a_receiver = a.clone();
+        let recv_handle = tokio::spawn(async move {
+            for _ in 0..10 {
+                let view = a_receiver.recv_frame().await.unwrap();
+                assert_eq!(view.payload, b"pong");
+            }
+        });
+
+        // Wait for all tasks
+        send_handle.await.unwrap();
+        echo_handle.await.unwrap();
+        recv_handle.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn test_close() {
         let (a, _b) = StreamTransport::pair();
 
@@ -428,11 +485,12 @@ mod tests {
 mod conformance_tests {
     use super::*;
     use rapace_testkit::{TestError, TransportFactory};
+    use tokio::io::{ReadHalf, WriteHalf};
 
     struct StreamFactory;
 
     impl TransportFactory for StreamFactory {
-        type Transport = StreamTransport<tokio::io::DuplexStream>;
+        type Transport = StreamTransport<ReadHalf<tokio::io::DuplexStream>, WriteHalf<tokio::io::DuplexStream>>;
 
         async fn connect_pair() -> Result<(Self::Transport, Self::Transport), TestError> {
             Ok(StreamTransport::pair())

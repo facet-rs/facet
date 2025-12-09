@@ -42,6 +42,12 @@ pub use rapace_registry::{
 mod session;
 pub use session::{ChannelLifecycle, ChannelState, Session, DEFAULT_INITIAL_CREDITS};
 
+mod rpc_session;
+pub use rpc_session::{parse_error_payload, ReceivedFrame, RpcSession};
+
+pub mod bidirectional;
+pub use bidirectional::{run_bidirectional_scenario, BidirectionalScenario};
+
 /// Error type for test scenarios.
 #[derive(Debug)]
 pub enum TestError {

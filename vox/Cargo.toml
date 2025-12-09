@@ -14,6 +14,7 @@ members = [
     "examples/browser_ws_server",
     "examples/dashboard",
     "examples/shm_image",
+    "examples/template_engine",
     "xtask",
 ]
 exclude = ["fuzz"]

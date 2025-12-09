@@ -258,6 +258,111 @@ impl ShmSession {
     }
 }
 
+impl ShmSession {
+    /// Create a new file-backed SHM session.
+    ///
+    /// This creates a new SHM segment backed by a file at the given path.
+    /// The file is created and truncated if it exists. The caller takes
+    /// the role of Peer A (creator/server).
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the SHM file
+    /// * `config` - Session configuration
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let session = ShmSession::create_file("/tmp/rapace.shm", ShmSessionConfig::default())?;
+    /// // Share the path with the other process...
+    /// ```
+    pub fn create_file(path: impl AsRef<std::path::Path>, config: ShmSessionConfig) -> Result<Arc<Self>, SessionError> {
+        // Validate config.
+        if !config.ring_capacity.is_power_of_two() {
+            return Err(SessionError::InvalidConfig(
+                "ring_capacity must be power of 2",
+            ));
+        }
+        if config.slot_size == 0 {
+            return Err(SessionError::InvalidConfig("slot_size must be > 0"));
+        }
+        if config.slot_count == 0 {
+            return Err(SessionError::InvalidConfig("slot_count must be > 0"));
+        }
+
+        let size =
+            calculate_segment_size(config.ring_capacity, config.slot_size, config.slot_count);
+        let offsets = SegmentOffsets::calculate(config.ring_capacity, config.slot_count);
+
+        // Create and map the file.
+        let base = unsafe { create_file_mmap(path.as_ref(), size, true)? };
+
+        // Initialize the segment.
+        unsafe {
+            initialize_segment(base.as_ptr(), &config, &offsets)?;
+        }
+
+        Ok(Arc::new(Self {
+            role: PeerRole::A,
+            base,
+            size,
+            offsets,
+            config,
+            local_send_head: std::sync::atomic::AtomicU64::new(0),
+        }))
+    }
+
+    /// Open an existing file-backed SHM session.
+    ///
+    /// This opens an existing SHM segment created by another process.
+    /// The caller takes the role of Peer B (connector/client).
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the SHM file
+    /// * `config` - Session configuration (must match the creator's config)
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let session = ShmSession::open_file("/tmp/rapace.shm", ShmSessionConfig::default())?;
+    /// ```
+    pub fn open_file(path: impl AsRef<std::path::Path>, config: ShmSessionConfig) -> Result<Arc<Self>, SessionError> {
+        // Validate config.
+        if !config.ring_capacity.is_power_of_two() {
+            return Err(SessionError::InvalidConfig(
+                "ring_capacity must be power of 2",
+            ));
+        }
+        if config.slot_size == 0 {
+            return Err(SessionError::InvalidConfig("slot_size must be > 0"));
+        }
+        if config.slot_count == 0 {
+            return Err(SessionError::InvalidConfig("slot_count must be > 0"));
+        }
+
+        let size =
+            calculate_segment_size(config.ring_capacity, config.slot_size, config.slot_count);
+        let offsets = SegmentOffsets::calculate(config.ring_capacity, config.slot_count);
+
+        // Open and map the file.
+        let base = unsafe { create_file_mmap(path.as_ref(), size, false)? };
+
+        // Validate the segment header.
+        let header = unsafe { &*(base.as_ptr().add(offsets.header) as *const SegmentHeader) };
+        header.validate()?;
+
+        Ok(Arc::new(Self {
+            role: PeerRole::B,
+            base,
+            size,
+            offsets,
+            config,
+            local_send_head: std::sync::atomic::AtomicU64::new(0),
+        }))
+    }
+}
+
 impl Drop for ShmSession {
     fn drop(&mut self) {
         // Only unmap if we're the last reference.
@@ -332,6 +437,62 @@ unsafe fn create_anonymous_mmap(size: usize) -> Result<NonNull<u8>, SessionError
             0,
         )
     };
+
+    if ptr == MAP_FAILED {
+        return Err(SessionError::System(std::io::Error::last_os_error()));
+    }
+
+    NonNull::new(ptr as *mut u8)
+        .ok_or_else(|| SessionError::System(std::io::Error::other("mmap returned null")))
+}
+
+/// Create or open a file-backed mmap region.
+///
+/// # Safety
+///
+/// Returns a NonNull pointer to a newly mapped region of `size` bytes.
+/// If `create` is true, the file is created/truncated. Otherwise, it must exist.
+unsafe fn create_file_mmap(
+    path: &std::path::Path,
+    size: usize,
+    create: bool,
+) -> Result<NonNull<u8>, SessionError> {
+    use libc::{mmap, MAP_FAILED, MAP_SHARED, PROT_READ, PROT_WRITE};
+    use std::fs::OpenOptions;
+    use std::os::unix::io::AsRawFd;
+
+    // Open/create the file.
+    let file = if create {
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(path)?;
+
+        // Set the file size.
+        file.set_len(size as u64)?;
+        file
+    } else {
+        OpenOptions::new().read(true).write(true).open(path)?
+    };
+
+    let fd = file.as_raw_fd();
+
+    let ptr = unsafe {
+        mmap(
+            std::ptr::null_mut(),
+            size,
+            PROT_READ | PROT_WRITE,
+            MAP_SHARED,
+            fd,
+            0,
+        )
+    };
+
+    // Keep file open for the lifetime of the mapping.
+    // In practice, the kernel keeps it alive, but we let it close.
+    std::mem::drop(file);
 
     if ptr == MAP_FAILED {
         return Err(SessionError::System(std::io::Error::last_os_error()));
