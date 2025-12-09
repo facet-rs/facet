@@ -1,484 +1,147 @@
 //! Rapace Dashboard Server
 //!
-//! Provides an HTTP API and web UI for exploring and calling rapace services.
+//! A dashboard that dogfoods rapace: the frontend connects via WebSocket using
+//! rapace-wasm-client, and all RPC calls go through the ExplorerService.
+//!
+//! ## Architecture
+//!
+//! ```text
+//! Browser (wasm) ──WebSocket──> ExplorerService ──> Calculator/Greeter/Counter
+//! ```
+//!
+//! The ExplorerService acts as a proxy/explorer over all registered services,
+//! providing:
+//! - Service discovery (list_services, get_service)
+//! - Dynamic method invocation (call_unary, call_streaming)
 //!
 //! ## Endpoints
 //!
-//! - `GET /api/services` - List all registered services
-//! - `GET /api/services/{id}` - Get details for a specific service
-//! - `POST /api/call` - Call a method on a service
-//! - `GET /api/stream` - Stream a method's results via SSE
 //! - `GET /` - Serve the dashboard UI
+//! - `ws://localhost:9001` - WebSocket endpoint for rapace RPC
 
-use std::collections::HashMap;
-use std::convert::Infallible;
-use std::pin::Pin;
 use std::sync::Arc;
 
-use axum::{
-    extract::{Path, Query, State},
-    http::StatusCode,
-    response::{
-        sse::{Event, KeepAlive, Sse},
-        Html, IntoResponse,
-    },
-    routing::{get, post},
-    Json, Router,
-};
-use futures::stream::Stream;
+use axum::{response::Html, routing::get, Router};
+use rapace_core::Streaming;
 use rapace_registry::ServiceRegistry;
-use serde::{Deserialize, Serialize};
+use rapace_transport_websocket::WebSocketTransport;
+use tokio::net::TcpListener;
 use tower_http::cors::{Any, CorsLayer};
+use tower_http::services::ServeDir;
 
 // ============================================================================
-// API response types
+// ExplorerService types (using Facet for serialization)
 // ============================================================================
 
 /// Summary of a service for the list view.
-#[derive(Serialize)]
-struct ServiceSummary {
-    id: u32,
-    name: String,
-    doc: String,
-    method_count: usize,
-}
-
-/// Full details of a service including methods.
-#[derive(Serialize)]
-struct ServiceDetail {
-    id: u32,
-    name: String,
-    doc: String,
-    methods: Vec<MethodDetail>,
+#[derive(Clone, Debug, facet::Facet)]
+pub struct ServiceSummary {
+    pub id: u32,
+    pub name: String,
+    pub doc: String,
+    pub method_count: u32,
 }
 
 /// Details of an argument to a method.
-#[derive(Serialize)]
-struct ArgDetail {
-    name: String,
-    type_name: String,
+#[derive(Clone, Debug, facet::Facet)]
+pub struct ArgDetail {
+    pub name: String,
+    pub type_name: String,
 }
 
 /// Details of a method.
-#[derive(Serialize)]
-struct MethodDetail {
-    id: u32,
-    name: String,
-    full_name: String,
-    doc: String,
-    args: Vec<ArgDetail>,
-    is_streaming: bool,
-    encodings: Vec<String>,
-    request_type: String,
-    response_type: String,
+#[derive(Clone, Debug, facet::Facet)]
+pub struct MethodDetail {
+    pub id: u32,
+    pub name: String,
+    pub full_name: String,
+    pub doc: String,
+    pub args: Vec<ArgDetail>,
+    pub is_streaming: bool,
+    pub request_type: String,
+    pub response_type: String,
 }
 
-/// Error response.
-#[derive(Serialize)]
-struct ErrorResponse {
-    error: String,
+/// Full details of a service including methods.
+#[derive(Clone, Debug, facet::Facet)]
+pub struct ServiceDetail {
+    pub id: u32,
+    pub name: String,
+    pub doc: String,
+    pub methods: Vec<MethodDetail>,
 }
 
-/// Request to call a method.
-#[derive(Deserialize)]
-struct CallRequest {
-    service: String,
-    method: String,
-    #[serde(default)]
-    args: serde_json::Value,
-    /// Binary arguments as base64-encoded strings, keyed by field name.
-    #[serde(default)]
-    binary_args: HashMap<String, String>,
+/// Request to call a method dynamically.
+#[derive(Clone, Debug, facet::Facet)]
+pub struct CallRequest {
+    pub service: String,
+    pub method: String,
+    /// JSON-encoded arguments
+    pub args_json: String,
 }
 
 /// Response from calling a method.
-#[derive(Serialize)]
-struct CallResponse {
-    result: serde_json::Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
+#[derive(Clone, Debug, facet::Facet)]
+pub struct CallResponse {
+    /// JSON-encoded result (or null on error)
+    pub result_json: String,
+    /// Error message if call failed
+    pub error: Option<String>,
+}
+
+/// A single item from a streaming response.
+#[derive(Clone, Debug, facet::Facet)]
+pub struct StreamItem {
+    /// JSON-encoded value
+    pub value_json: String,
 }
 
 // ============================================================================
-// Application state
+// ExplorerService trait
 // ============================================================================
 
-struct AppState {
-    registry: ServiceRegistry,
-    calculator: CalculatorImpl,
-    greeter: GreeterImpl,
-    counter: CounterImpl,
-}
+/// The Explorer service provides service discovery and dynamic method invocation.
+///
+/// This is the only service the frontend needs to know about - it acts as a
+/// proxy to all other registered services.
+#[allow(async_fn_in_trait)]
+#[rapace_macros::service]
+pub trait Explorer {
+    /// List all registered services.
+    async fn list_services(&self) -> Vec<crate::ServiceSummary>;
 
-// ============================================================================
-// API handlers
-// ============================================================================
+    /// Get details for a specific service by ID.
+    async fn get_service(&self, service_id: u32) -> Option<crate::ServiceDetail>;
 
-/// GET /api/services - List all services.
-async fn list_services(State(state): State<Arc<AppState>>) -> Json<Vec<ServiceSummary>> {
-    let services: Vec<ServiceSummary> = state
-        .registry
-        .services()
-        .map(|service| ServiceSummary {
-            id: service.id.0,
-            name: service.name.to_string(),
-            doc: service.doc.clone(),
-            method_count: service.methods.len(),
-        })
-        .collect();
+    /// Call a unary method dynamically.
+    ///
+    /// Arguments are passed as a JSON string and the result is returned as JSON.
+    async fn call_unary(&self, request: crate::CallRequest) -> crate::CallResponse;
 
-    Json(services)
-}
-
-/// GET /api/services/{id} - Get service details.
-async fn get_service(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<u32>,
-) -> Result<Json<ServiceDetail>, (StatusCode, Json<ErrorResponse>)> {
-    let service = state
-        .registry
-        .service_by_id(rapace_registry::ServiceId(id))
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: format!("Service with id {} not found", id),
-                }),
-            )
-        })?;
-
-    let methods: Vec<MethodDetail> = service
-        .methods
-        .values()
-        .map(|method| MethodDetail {
-            id: method.id.0,
-            name: method.name.to_string(),
-            full_name: method.full_name.clone(),
-            doc: method.doc.clone(),
-            args: method
-                .args
-                .iter()
-                .map(|arg| ArgDetail {
-                    name: arg.name.to_string(),
-                    type_name: arg.type_name.to_string(),
-                })
-                .collect(),
-            is_streaming: method.is_streaming,
-            encodings: method
-                .supported_encodings
-                .iter()
-                .map(|e| format!("{:?}", e))
-                .collect(),
-            request_type: format!("{}", method.request_shape),
-            response_type: format!("{}", method.response_shape),
-        })
-        .collect();
-
-    Ok(Json(ServiceDetail {
-        id: service.id.0,
-        name: service.name.to_string(),
-        doc: service.doc.clone(),
-        methods,
-    }))
-}
-
-/// POST /api/call - Call a method on a service.
-async fn call_method(
-    State(state): State<Arc<AppState>>,
-    Json(req): Json<CallRequest>,
-) -> Result<Json<CallResponse>, (StatusCode, Json<ErrorResponse>)> {
-    // Check if method is streaming
-    let method = state
-        .registry
-        .lookup_method(&req.service, &req.method)
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: format!("Method {}.{} not found", req.service, req.method),
-                }),
-            )
-        })?;
-
-    if method.is_streaming {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "Streaming methods are not yet supported. Use unary methods only.".into(),
-            }),
-        ));
-    }
-
-    // Dispatch to the appropriate service
-    let result = match req.service.as_str() {
-        "Calculator" => dispatch_calculator(&state.calculator, &req.method, &req.args).await,
-        "Greeter" => dispatch_greeter(&state.greeter, &req.method, &req.args, &req.binary_args).await,
-        _ => Err(format!("Service {} is not callable", req.service)),
-    };
-
-    match result {
-        Ok(value) => Ok(Json(CallResponse {
-            result: value,
-            error: None,
-        })),
-        Err(e) => Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse { error: e }),
-        )),
-    }
-}
-
-/// Dispatch Calculator method calls.
-async fn dispatch_calculator(
-    calc: &CalculatorImpl,
-    method: &str,
-    args: &serde_json::Value,
-) -> Result<serde_json::Value, String> {
-    match method {
-        "add" => {
-            let a = args
-                .get("a")
-                .or_else(|| args.get(0))
-                .and_then(|v| v.as_i64())
-                .ok_or("Missing or invalid argument 'a' (expected i32)")?
-                as i32;
-            let b = args
-                .get("b")
-                .or_else(|| args.get(1))
-                .and_then(|v| v.as_i64())
-                .ok_or("Missing or invalid argument 'b' (expected i32)")?
-                as i32;
-            let result = calc.add(a, b).await;
-            Ok(serde_json::json!(result))
-        }
-        "multiply" => {
-            let a = args
-                .get("a")
-                .or_else(|| args.get(0))
-                .and_then(|v| v.as_i64())
-                .ok_or("Missing or invalid argument 'a' (expected i32)")?
-                as i32;
-            let b = args
-                .get("b")
-                .or_else(|| args.get(1))
-                .and_then(|v| v.as_i64())
-                .ok_or("Missing or invalid argument 'b' (expected i32)")?
-                as i32;
-            let result = calc.multiply(a, b).await;
-            Ok(serde_json::json!(result))
-        }
-        "factorial" => {
-            let n = args
-                .get("n")
-                .or_else(|| args.get(0))
-                .and_then(|v| v.as_u64())
-                .ok_or("Missing or invalid argument 'n' (expected u32)")?
-                as u32;
-            let result = calc.factorial(n).await;
-            Ok(serde_json::json!(result))
-        }
-        _ => Err(format!("Unknown Calculator method: {}", method)),
-    }
-}
-
-/// Dispatch Greeter method calls.
-async fn dispatch_greeter(
-    greeter: &GreeterImpl,
-    method: &str,
-    args: &serde_json::Value,
-    binary_args: &HashMap<String, String>,
-) -> Result<serde_json::Value, String> {
-    // Helper to get string arg, checking binary_args first for base64 data
-    let get_string_arg = |name: &str, index: usize| -> Result<String, String> {
-        // Check binary_args first (for file uploads)
-        if let Some(base64_data) = binary_args.get(name) {
-            let bytes = base64_decode(base64_data)
-                .map_err(|e| format!("Invalid base64 for '{}': {}", name, e))?;
-            return String::from_utf8(bytes)
-                .map_err(|e| format!("Invalid UTF-8 in '{}': {}", name, e));
-        }
-
-        // Fall back to JSON args
-        args.get(name)
-            .or_else(|| args.get(index))
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-            .ok_or_else(|| format!("Missing or invalid argument '{}' (expected string)", name))
-    };
-
-    match method {
-        "greet" => {
-            let name = get_string_arg("name", 0)?;
-            let result = greeter.greet(name).await;
-            Ok(serde_json::json!(result))
-        }
-        "greet_formal" => {
-            let title = get_string_arg("title", 0)?;
-            let name = get_string_arg("name", 1)?;
-            let result = greeter.greet_formal(title, name).await;
-            Ok(serde_json::json!(result))
-        }
-        _ => Err(format!("Unknown Greeter method: {}", method)),
-    }
-}
-
-/// Decode base64 string to bytes.
-fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
-    // Simple base64 decoder
-    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-    fn char_to_val(c: u8) -> Option<u8> {
-        match c {
-            b'A'..=b'Z' => Some(c - b'A'),
-            b'a'..=b'z' => Some(c - b'a' + 26),
-            b'0'..=b'9' => Some(c - b'0' + 52),
-            b'+' => Some(62),
-            b'/' => Some(63),
-            b'=' => None, // padding
-            _ => None,
-        }
-    }
-
-    let input: Vec<u8> = s.bytes().filter(|&b| b != b'\n' && b != b'\r' && b != b' ').collect();
-    if !input.len().is_multiple_of(4) {
-        return Err("Invalid base64 length".into());
-    }
-
-    let mut output = Vec::with_capacity(input.len() * 3 / 4);
-
-    for chunk in input.chunks(4) {
-        let a = char_to_val(chunk[0]).ok_or("Invalid base64 character")?;
-        let b = char_to_val(chunk[1]).ok_or("Invalid base64 character")?;
-        let c_opt = char_to_val(chunk[2]);
-        let d_opt = char_to_val(chunk[3]);
-
-        output.push((a << 2) | (b >> 4));
-        if let Some(c) = c_opt {
-            output.push((b << 4) | (c >> 2));
-            if let Some(d) = d_opt {
-                output.push((c << 6) | d);
-            }
-        }
-    }
-
-    let _ = ALPHABET; // suppress warning
-    Ok(output)
-}
-
-/// Query parameters for streaming endpoint.
-#[derive(Deserialize)]
-struct StreamQuery {
-    service: String,
-    method: String,
-    #[serde(default)]
-    n: Option<u32>,
-}
-
-/// GET /api/stream - Stream a method's results via SSE.
-async fn stream_method(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<StreamQuery>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, Json<ErrorResponse>)> {
-    // Check if method exists and is streaming
-    let method = state
-        .registry
-        .lookup_method(&query.service, &query.method)
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(ErrorResponse {
-                    error: format!("Method {}.{} not found", query.service, query.method),
-                }),
-            )
-        })?;
-
-    if !method.is_streaming {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: "This endpoint is only for streaming methods. Use /api/call for unary methods.".into(),
-            }),
-        ));
-    }
-
-    // Only Counter service has streaming methods
-    if query.service != "Counter" {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            Json(ErrorResponse {
-                error: format!("Service {} does not have streaming support", query.service),
-            }),
-        ));
-    }
-
-    let n = query.n.unwrap_or(10);
-
-    type PinnedEventStream = Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>>;
-
-    let stream: PinnedEventStream = match query.method.as_str() {
-        "count_to" => {
-            let inner_stream = state.counter.count_to(n).await;
-            Box::pin(futures::stream::StreamExt::map(inner_stream, |result| {
-                match result {
-                    Ok(value) => Ok(Event::default().data(value.to_string())),
-                    Err(e) => Ok(Event::default().event("error").data(format!("{:?}", e))),
-                }
-            }))
-        }
-        "fibonacci" => {
-            let inner_stream = state.counter.fibonacci(n).await;
-            Box::pin(futures::stream::StreamExt::map(inner_stream, |result| {
-                match result {
-                    Ok(value) => Ok(Event::default().data(value.to_string())),
-                    Err(e) => Ok(Event::default().event("error").data(format!("{:?}", e))),
-                }
-            }))
-        }
-        _ => {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: format!("Unknown Counter method: {}", query.method),
-                }),
-            ));
-        }
-    };
-
-    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
-}
-
-/// GET / - Serve the dashboard UI.
-async fn dashboard_ui() -> impl IntoResponse {
-    Html(include_str!("../static/index.html"))
+    /// Call a streaming method dynamically.
+    ///
+    /// Arguments are passed as a JSON string and results are streamed as JSON.
+    async fn call_streaming(&self, request: crate::CallRequest) -> Streaming<crate::StreamItem>;
 }
 
 // ============================================================================
-// Example services for demonstration
+// Demo services (Calculator, Greeter, Counter)
 // ============================================================================
 
 /// A calculator service for demonstration.
-///
-/// Provides basic arithmetic operations like addition and multiplication.
 #[allow(async_fn_in_trait)]
 #[rapace_macros::service]
 pub trait Calculator {
     /// Add two numbers together.
-    ///
-    /// Returns the sum of `a` and `b`.
     async fn add(&self, a: i32, b: i32) -> i32;
 
     /// Multiply two numbers.
-    ///
-    /// Returns the product of `a` and `b`.
     async fn multiply(&self, a: i32, b: i32) -> i32;
 
     /// Compute the factorial of a number.
-    ///
-    /// Returns n! (n factorial). For n=0, returns 1.
     async fn factorial(&self, n: u32) -> u64;
 }
 
-/// Calculator implementation.
 struct CalculatorImpl;
 
 impl Calculator for CalculatorImpl {
@@ -496,23 +159,16 @@ impl Calculator for CalculatorImpl {
 }
 
 /// A greeting service for demonstration.
-///
-/// Provides friendly greeting messages in various formats.
 #[allow(async_fn_in_trait)]
 #[rapace_macros::service]
 pub trait Greeter {
     /// Generate a simple greeting.
-    ///
-    /// Returns "Hello, {name}!" for the given name.
     async fn greet(&self, name: String) -> String;
 
     /// Generate a formal greeting.
-    ///
-    /// Returns a more formal greeting with title and name.
     async fn greet_formal(&self, title: String, name: String) -> String;
 }
 
-/// Greeter implementation.
 struct GreeterImpl;
 
 impl Greeter for GreeterImpl {
@@ -525,15 +181,24 @@ impl Greeter for GreeterImpl {
     }
 }
 
-/// Counter implementation.
+/// A counter service that demonstrates streaming.
+#[allow(async_fn_in_trait)]
+#[rapace_macros::service]
+pub trait Counter {
+    /// Count from 0 to n-1.
+    async fn count_to(&self, n: u32) -> Streaming<u32>;
+
+    /// Generate Fibonacci numbers.
+    async fn fibonacci(&self, n: u32) -> Streaming<u64>;
+}
+
 struct CounterImpl;
 
 impl Counter for CounterImpl {
-    async fn count_to(&self, n: u32) -> rapace_core::Streaming<u32> {
+    async fn count_to(&self, n: u32) -> Streaming<u32> {
         let (tx, rx) = tokio::sync::mpsc::channel(16);
         tokio::spawn(async move {
             for i in 0..n {
-                // Add a small delay to make streaming visible
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 if tx.send(Ok(i)).await.is_err() {
                     break;
@@ -543,14 +208,18 @@ impl Counter for CounterImpl {
         Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx))
     }
 
-    async fn fibonacci(&self, n: u32) -> rapace_core::Streaming<u64> {
+    async fn fibonacci(&self, n: u32) -> Streaming<u64> {
         let (tx, rx) = tokio::sync::mpsc::channel(16);
         tokio::spawn(async move {
             let mut a: u64 = 0;
             let mut b: u64 = 1;
-            for _ in 0..n {
+            for i in 0..n {
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 if tx.send(Ok(a)).await.is_err() {
+                    break;
+                }
+                // Stop if we'd overflow
+                if i > 90 {
                     break;
                 }
                 let next = a.saturating_add(b);
@@ -562,21 +231,341 @@ impl Counter for CounterImpl {
     }
 }
 
-/// A counter service that demonstrates streaming.
-///
-/// Provides methods for counting and streaming sequences.
-#[allow(async_fn_in_trait)]
-#[rapace_macros::service]
-pub trait Counter {
-    /// Count from 0 to n-1.
-    ///
-    /// Returns a stream of numbers from 0 up to (but not including) n.
-    async fn count_to(&self, n: u32) -> rapace_core::Streaming<u32>;
+// ============================================================================
+// ExplorerService implementation
+// ============================================================================
 
-    /// Generate Fibonacci numbers.
-    ///
-    /// Returns a stream of the first n Fibonacci numbers.
-    async fn fibonacci(&self, n: u32) -> rapace_core::Streaming<u64>;
+struct ExplorerImpl {
+    registry: Arc<ServiceRegistry>,
+    calculator: CalculatorImpl,
+    greeter: GreeterImpl,
+    counter: CounterImpl,
+}
+
+impl Explorer for ExplorerImpl {
+    async fn list_services(&self) -> Vec<crate::ServiceSummary> {
+        self.registry
+            .services()
+            .filter(|s| s.name != "Explorer") // Don't list ourselves
+            .map(|service| ServiceSummary {
+                id: service.id.0,
+                name: service.name.to_string(),
+                doc: service.doc.clone(),
+                method_count: service.methods.len() as u32,
+            })
+            .collect()
+    }
+
+    async fn get_service(&self, service_id: u32) -> Option<crate::ServiceDetail> {
+        let service = self
+            .registry
+            .service_by_id(rapace_registry::ServiceId(service_id))?;
+
+        // Don't expose Explorer service details
+        if service.name == "Explorer" {
+            return None;
+        }
+
+        let methods = service
+            .methods
+            .values()
+            .map(|method| MethodDetail {
+                id: method.id.0,
+                name: method.name.to_string(),
+                full_name: method.full_name.clone(),
+                doc: method.doc.clone(),
+                args: method
+                    .args
+                    .iter()
+                    .map(|arg| ArgDetail {
+                        name: arg.name.to_string(),
+                        type_name: arg.type_name.to_string(),
+                    })
+                    .collect(),
+                is_streaming: method.is_streaming,
+                request_type: format!("{}", method.request_shape),
+                response_type: format!("{}", method.response_shape),
+            })
+            .collect();
+
+        Some(ServiceDetail {
+            id: service.id.0,
+            name: service.name.to_string(),
+            doc: service.doc.clone(),
+            methods,
+        })
+    }
+
+    async fn call_unary(&self, request: crate::CallRequest) -> crate::CallResponse {
+        // Parse the JSON args
+        let args: serde_json::Value = match serde_json::from_str(&request.args_json) {
+            Ok(v) => v,
+            Err(e) => {
+                return CallResponse {
+                    result_json: "null".to_string(),
+                    error: Some(format!("Invalid JSON args: {}", e)),
+                }
+            }
+        };
+
+        // Dispatch to the appropriate service
+        let result = match request.service.as_str() {
+            "Calculator" => self.dispatch_calculator(&request.method, &args).await,
+            "Greeter" => self.dispatch_greeter(&request.method, &args).await,
+            "Counter" => {
+                return CallResponse {
+                    result_json: "null".to_string(),
+                    error: Some("Counter methods are streaming-only. Use call_streaming.".into()),
+                }
+            }
+            _ => Err(format!("Unknown service: {}", request.service)),
+        };
+
+        match result {
+            Ok(value) => CallResponse {
+                result_json: serde_json::to_string(&value).unwrap_or("null".to_string()),
+                error: None,
+            },
+            Err(e) => CallResponse {
+                result_json: "null".to_string(),
+                error: Some(e),
+            },
+        }
+    }
+
+    async fn call_streaming(&self, request: crate::CallRequest) -> Streaming<crate::StreamItem> {
+        // Parse the JSON args
+        let args: serde_json::Value = match serde_json::from_str(&request.args_json) {
+            Ok(v) => v,
+            Err(e) => {
+                let (tx, rx) = tokio::sync::mpsc::channel(1);
+                let _ = tx
+                    .send(Err(rapace_core::RpcError::Status {
+                        code: rapace_core::ErrorCode::InvalidArgument,
+                        message: format!("Invalid JSON args: {}", e),
+                    }))
+                    .await;
+                return Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx));
+            }
+        };
+
+        // Only Counter has streaming methods
+        if request.service != "Counter" {
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            let _ = tx
+                .send(Err(rapace_core::RpcError::Status {
+                    code: rapace_core::ErrorCode::InvalidArgument,
+                    message: format!("Service {} has no streaming methods", request.service),
+                }))
+                .await;
+            return Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx));
+        }
+
+        let n = args
+            .get("n")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(10) as u32;
+
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+
+        match request.method.as_str() {
+            "count_to" => {
+                let mut stream = self.counter.count_to(n).await;
+                tokio::spawn(async move {
+                    use tokio_stream::StreamExt;
+                    while let Some(result) = stream.next().await {
+                        match result {
+                            Ok(value) => {
+                                let item = StreamItem {
+                                    value_json: serde_json::to_string(&value)
+                                        .unwrap_or("null".to_string()),
+                                };
+                                if tx.send(Ok(item)).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Err(e)).await;
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
+            "fibonacci" => {
+                let mut stream = self.counter.fibonacci(n).await;
+                tokio::spawn(async move {
+                    use tokio_stream::StreamExt;
+                    while let Some(result) = stream.next().await {
+                        match result {
+                            Ok(value) => {
+                                let item = StreamItem {
+                                    value_json: serde_json::to_string(&value)
+                                        .unwrap_or("null".to_string()),
+                                };
+                                if tx.send(Ok(item)).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Err(e)).await;
+                                break;
+                            }
+                        }
+                    }
+                });
+            }
+            _ => {
+                let method = request.method.clone();
+                tokio::spawn(async move {
+                    let _ = tx
+                        .send(Err(rapace_core::RpcError::Status {
+                            code: rapace_core::ErrorCode::Unimplemented,
+                            message: format!("Unknown Counter method: {}", method),
+                        }))
+                        .await;
+                });
+            }
+        }
+
+        Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx))
+    }
+}
+
+impl ExplorerImpl {
+    async fn dispatch_calculator(
+        &self,
+        method: &str,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        match method {
+            "add" => {
+                let a = args
+                    .get("a")
+                    .and_then(|v| v.as_i64())
+                    .ok_or("Missing argument 'a'")?
+                    as i32;
+                let b = args
+                    .get("b")
+                    .and_then(|v| v.as_i64())
+                    .ok_or("Missing argument 'b'")?
+                    as i32;
+                let result = self.calculator.add(a, b).await;
+                Ok(serde_json::json!(result))
+            }
+            "multiply" => {
+                let a = args
+                    .get("a")
+                    .and_then(|v| v.as_i64())
+                    .ok_or("Missing argument 'a'")?
+                    as i32;
+                let b = args
+                    .get("b")
+                    .and_then(|v| v.as_i64())
+                    .ok_or("Missing argument 'b'")?
+                    as i32;
+                let result = self.calculator.multiply(a, b).await;
+                Ok(serde_json::json!(result))
+            }
+            "factorial" => {
+                let n = args
+                    .get("n")
+                    .and_then(|v| v.as_u64())
+                    .ok_or("Missing argument 'n'")?
+                    as u32;
+                let result = self.calculator.factorial(n).await;
+                Ok(serde_json::json!(result))
+            }
+            _ => Err(format!("Unknown Calculator method: {}", method)),
+        }
+    }
+
+    async fn dispatch_greeter(
+        &self,
+        method: &str,
+        args: &serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        match method {
+            "greet" => {
+                let name = args
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or("Missing argument 'name'")?
+                    .to_string();
+                let result = self.greeter.greet(name).await;
+                Ok(serde_json::json!(result))
+            }
+            "greet_formal" => {
+                let title = args
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .ok_or("Missing argument 'title'")?
+                    .to_string();
+                let name = args
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or("Missing argument 'name'")?
+                    .to_string();
+                let result = self.greeter.greet_formal(title, name).await;
+                Ok(serde_json::json!(result))
+            }
+            _ => Err(format!("Unknown Greeter method: {}", method)),
+        }
+    }
+}
+
+// ============================================================================
+// WebSocket server for rapace RPC
+// ============================================================================
+
+async fn run_websocket_server(explorer: Arc<ExplorerImpl>) {
+    let addr = "127.0.0.1:9001";
+    let listener = TcpListener::bind(addr).await.expect("Failed to bind WebSocket server");
+    println!("WebSocket rapace server listening on ws://{}", addr);
+
+    while let Ok((stream, addr)) = listener.accept().await {
+        let explorer = Arc::clone(&explorer);
+        tokio::spawn(async move {
+            println!("New WebSocket connection from {}", addr);
+
+            let ws_stream = match tokio_tungstenite::accept_async(stream).await {
+                Ok(ws) => ws,
+                Err(e) => {
+                    eprintln!("WebSocket handshake failed for {}: {}", addr, e);
+                    return;
+                }
+            };
+
+            let transport = Arc::new(WebSocketTransport::new(ws_stream));
+            let server = ExplorerServer::new(explorer.as_ref().clone());
+
+            if let Err(e) = server.serve(transport).await {
+                eprintln!("Connection from {} ended with error: {:?}", addr, e);
+            } else {
+                println!("Connection from {} closed", addr);
+            }
+        });
+    }
+}
+
+// We need Clone for ExplorerImpl to use with the server
+impl Clone for ExplorerImpl {
+    fn clone(&self) -> Self {
+        Self {
+            registry: Arc::clone(&self.registry),
+            calculator: CalculatorImpl,
+            greeter: GreeterImpl,
+            counter: CounterImpl,
+        }
+    }
+}
+
+// ============================================================================
+// HTTP server for static assets
+// ============================================================================
+
+async fn dashboard_ui() -> Html<&'static str> {
+    Html(include_str!("../static/index.html"))
 }
 
 // ============================================================================
@@ -588,10 +577,13 @@ async fn main() {
     // Create and populate the registry
     let mut registry = ServiceRegistry::new();
 
-    // Register our demo services
+    // Register demo services
     calculator_methods::register(&mut registry);
     greeter_methods::register(&mut registry);
     counter_methods::register(&mut registry);
+
+    // Register the Explorer service itself (for completeness, though we filter it out)
+    explorer_methods::register(&mut registry);
 
     println!("Registered {} services:", registry.service_count());
     for service in registry.services() {
@@ -602,31 +594,37 @@ async fn main() {
         );
     }
 
-    let state = Arc::new(AppState {
-        registry,
+    let registry = Arc::new(registry);
+
+    // Create the explorer service
+    let explorer = Arc::new(ExplorerImpl {
+        registry: Arc::clone(&registry),
         calculator: CalculatorImpl,
         greeter: GreeterImpl,
         counter: CounterImpl,
     });
 
-    // Build the router
+    // Start WebSocket server in background
+    let ws_explorer = Arc::clone(&explorer);
+    tokio::spawn(async move {
+        run_websocket_server(ws_explorer).await;
+    });
+
+    // Build the HTTP router - serves static files and wasm pkg
     let app = Router::new()
         .route("/", get(dashboard_ui))
-        .route("/api/services", get(list_services))
-        .route("/api/services/{id}", get(get_service))
-        .route("/api/stream", get(stream_method))
-        .route("/api/call", post(call_method))
-        .layer(CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any))
-        .with_state(state);
+        .nest_service("/pkg", ServeDir::new("examples/dashboard/static/pkg"))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        );
 
     let addr = "127.0.0.1:3000";
     println!("\nDashboard running at http://{}", addr);
-    println!("API endpoints:");
-    println!("  GET  /api/services");
-    println!("  GET  /api/services/{{id}}");
-    println!("  POST /api/call");
-    println!("  GET  /api/stream (SSE)");
+    println!("WebSocket RPC at ws://127.0.0.1:9001");
 
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    let listener = TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }

@@ -597,26 +597,41 @@
         </main>
     </div>
 
-    <script>
+    <script type="module">
+        import init, { ExplorerClient } from '/pkg/rapace_wasm_client.js';
+
         // State
         let services = [];
         let selectedServiceId = null;
         let currentService = null;
+        let client = null;
 
         // DOM elements
         const serviceListEl = document.getElementById('service-list');
         const mainContentEl = document.getElementById('main-content');
         const searchInput = document.getElementById('search');
 
-        // Fetch and render services
+        // Initialize wasm and connect to WebSocket
+        async function initClient() {
+            try {
+                await init();
+                client = await ExplorerClient.connect('ws://127.0.0.1:9001');
+                console.log('Connected to rapace WebSocket server');
+                return true;
+            } catch (error) {
+                console.error('Failed to connect:', error);
+                serviceListEl.innerHTML = `<div class="error">Failed to connect to WebSocket server: ${error}</div>`;
+                return false;
+            }
+        }
+
+        // Fetch and render services using WebSocket client
         async function loadServices() {
             try {
-                const response = await fetch('/api/services');
-                if (!response.ok) throw new Error('Failed to load services');
-                services = await response.json();
+                services = await client.listServices();
                 renderServiceList();
             } catch (error) {
-                serviceListEl.innerHTML = `<div class="error">${error.message}</div>`;
+                serviceListEl.innerHTML = `<div class="error">${error}</div>`;
             }
         }
 
@@ -651,12 +666,14 @@
             mainContentEl.innerHTML = '<div class="loading">Loading service details</div>';
 
             try {
-                const response = await fetch(`/api/services/${id}`);
-                if (!response.ok) throw new Error('Failed to load service');
-                currentService = await response.json();
-                renderServiceDetail(currentService);
+                currentService = await client.getService(id);
+                if (currentService) {
+                    renderServiceDetail(currentService);
+                } else {
+                    mainContentEl.innerHTML = '<div class="error">Service not found</div>';
+                }
             } catch (error) {
-                mainContentEl.innerHTML = `<div class="error">${error.message}</div>`;
+                mainContentEl.innerHTML = `<div class="error">${error}</div>`;
             }
         }
 
@@ -849,75 +866,37 @@
                 return;
             }
 
-            // Collect binary attachments
-            const binaryArgs = {};
-            const attachmentsContainer = document.getElementById(`attachments-${methodId}`);
-            const attachments = attachmentsContainer.querySelectorAll('.binary-attachment');
-
-            for (const att of attachments) {
-                const fieldInput = att.querySelector('input[type="text"]');
-                const fileInput = att.querySelector('input[type="file"]');
-
-                if (fieldInput.value && fileInput.files.length > 0) {
-                    const file = fileInput.files[0];
-                    const arrayBuffer = await file.arrayBuffer();
-                    const base64 = arrayBufferToBase64(arrayBuffer);
-                    binaryArgs[fieldInput.value] = base64;
-                }
-            }
-
-            // Make the call
+            // Make the call via WebSocket
             callButton.disabled = true;
             callButton.textContent = 'Calling...';
             resultDiv.className = 'call-result';
             resultDiv.textContent = '';
 
             try {
-                const response = await fetch('/api/call', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        service: serviceName,
-                        method: methodName,
-                        args: args,
-                        binary_args: binaryArgs
-                    })
-                });
+                const response = await client.callUnary(serviceName, methodName, args);
 
-                const data = await response.json();
-
-                if (!response.ok) {
+                if (response.error) {
                     resultDiv.className = 'call-result error';
-                    resultDiv.textContent = `Error: ${data.error || 'Unknown error'}`;
-                } else if (data.error) {
-                    resultDiv.className = 'call-result error';
-                    resultDiv.textContent = `Error: ${data.error}`;
+                    resultDiv.textContent = `Error: ${response.error}`;
                 } else {
                     resultDiv.className = 'call-result success';
-                    resultDiv.textContent = JSON.stringify(data.result, null, 2);
+                    // Parse the JSON result string
+                    const result = JSON.parse(response.result_json);
+                    resultDiv.textContent = JSON.stringify(result, null, 2);
                 }
             } catch (e) {
                 resultDiv.className = 'call-result error';
-                resultDiv.textContent = `Network error: ${e.message}`;
+                resultDiv.textContent = `RPC error: ${e}`;
             } finally {
                 callButton.disabled = false;
                 callButton.textContent = `Call ${methodName}`;
             }
         }
 
-        function arrayBufferToBase64(buffer) {
-            let binary = '';
-            const bytes = new Uint8Array(buffer);
-            for (let i = 0; i < bytes.byteLength; i++) {
-                binary += String.fromCharCode(bytes[i]);
-            }
-            return btoa(binary);
-        }
-
-        // Track active EventSource connections
+        // Track active streaming calls
         const activeStreams = {};
 
-        function startStream(serviceName, methodName, methodId) {
+        async function startStream(serviceName, methodName, methodId) {
             // Get the n value from the input
             const nInput = document.getElementById(`stream-n-${methodId}`);
             const n = parseInt(nInput.value) || 10;
@@ -941,62 +920,50 @@
             // Show streaming status
             statusDiv.innerHTML = '<div class="stream-status streaming">Streaming...</div>';
 
-            // Build the SSE URL
-            const url = `/api/stream?service=${encodeURIComponent(serviceName)}&method=${encodeURIComponent(methodName)}&n=${n}`;
-
-            // Create EventSource
-            const eventSource = new EventSource(url);
-            activeStreams[methodId] = eventSource;
-
+            // Start the streaming call via WebSocket
             let itemCount = 0;
+            let stopped = false;
+            activeStreams[methodId] = { stopped: false };
 
-            eventSource.onmessage = (event) => {
-                itemCount++;
-                const itemDiv = document.createElement('div');
-                itemDiv.className = 'stream-item';
-                itemDiv.innerHTML = `<span class="item-index">[${itemCount}]</span>${escapeHtml(event.data)}`;
-                outputDiv.appendChild(itemDiv);
-                outputDiv.scrollTop = outputDiv.scrollHeight;
-            };
+            try {
+                const stream = client.callStreaming(serviceName, methodName, { n });
 
-            eventSource.addEventListener('error', (event) => {
-                // Check if this is a custom error event from our SSE
-                const data = event.data;
-                if (data) {
+                while (!stopped && !activeStreams[methodId]?.stopped) {
+                    const item = await stream.next();
+                    if (item === null) {
+                        // Stream complete
+                        break;
+                    }
+
+                    itemCount++;
+                    const value = JSON.parse(item.value_json);
                     const itemDiv = document.createElement('div');
-                    itemDiv.className = 'stream-item error';
-                    itemDiv.innerHTML = `<span class="item-index">[ERROR]</span>${escapeHtml(data)}`;
+                    itemDiv.className = 'stream-item';
+                    itemDiv.innerHTML = `<span class="item-index">[${itemCount}]</span>${escapeHtml(JSON.stringify(value))}`;
                     outputDiv.appendChild(itemDiv);
+                    outputDiv.scrollTop = outputDiv.scrollHeight;
                 }
-                finishStream(methodId, 'error', 'Stream error');
-            });
 
-            eventSource.onerror = (error) => {
-                // Connection closed or error
-                if (eventSource.readyState === EventSource.CLOSED) {
-                    finishStream(methodId, 'completed', `Stream completed (${itemCount} items)`);
-                } else {
-                    finishStream(methodId, 'error', 'Connection error');
-                }
-            };
+                finishStream(methodId, 'completed', `Stream completed (${itemCount} items)`);
+            } catch (e) {
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'stream-item error';
+                itemDiv.innerHTML = `<span class="item-index">[ERROR]</span>${escapeHtml(String(e))}`;
+                outputDiv.appendChild(itemDiv);
+                finishStream(methodId, 'error', 'Stream error');
+            }
         }
 
         function stopStream(methodId) {
-            const eventSource = activeStreams[methodId];
-            if (eventSource) {
-                eventSource.close();
-                delete activeStreams[methodId];
+            if (activeStreams[methodId]) {
+                activeStreams[methodId].stopped = true;
             }
             finishStream(methodId, 'completed', 'Stream stopped by user');
         }
 
         function finishStream(methodId, status, message) {
-            // Clean up EventSource
-            const eventSource = activeStreams[methodId];
-            if (eventSource) {
-                eventSource.close();
-                delete activeStreams[methodId];
-            }
+            // Clean up
+            delete activeStreams[methodId];
 
             // Get UI elements
             const streamBtn = document.getElementById(`stream-btn-${methodId}`);
@@ -1025,8 +992,17 @@
             renderServiceList(e.target.value);
         });
 
-        // Initialize
-        loadServices();
+        // Make functions available globally for onclick handlers
+        window.callMethod = callMethod;
+        window.startStream = startStream;
+        window.stopStream = stopStream;
+        window.addAttachment = addAttachment;
+        window.removeAttachment = removeAttachment;
+
+        // Initialize client and load services
+        initClient().then(ok => {
+            if (ok) loadServices();
+        });
     </script>
 </body>
 </html>

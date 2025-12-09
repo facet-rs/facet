@@ -34,6 +34,8 @@ enum Commands {
         #[arg(long)]
         headed: bool,
     },
+    /// Run the rapace dashboard (builds wasm client first)
+    Dashboard,
     /// Run clippy on all code
     Clippy,
     /// Check formatting
@@ -134,6 +136,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         Commands::BrowserTest { headed } => {
             run_browser_test(&sh, &workspace_root, headed)?;
+        }
+        Commands::Dashboard => {
+            run_dashboard(&sh, &workspace_root)?;
         }
         Commands::Clippy => {
             println!("=== Running clippy ===");
@@ -273,4 +278,68 @@ fn wait_for_server_ready(
     }
 
     Err("Server process exited before becoming ready".into())
+}
+
+/// Run the rapace dashboard.
+///
+/// This function:
+/// 1. Builds the wasm client with wasm-pack
+/// 2. Copies wasm files to dashboard static directory
+/// 3. Runs the dashboard server
+fn run_dashboard(
+    sh: &Shell,
+    workspace_root: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let wasm_client_dir = workspace_root.join("crates/rapace-wasm-client");
+    let dashboard_dir = workspace_root.join("examples/dashboard");
+
+    // Step 1: Build wasm client with wasm-pack
+    println!("=== Building wasm client with wasm-pack ===");
+    if cmd!(sh, "wasm-pack --version").quiet().run().is_err() {
+        eprintln!("wasm-pack not found. Install with:");
+        eprintln!("  cargo install wasm-pack");
+        return Err("wasm-pack not installed".into());
+    }
+
+    sh.change_dir(&wasm_client_dir);
+    cmd!(sh, "wasm-pack build --target web").run()?;
+
+    // Step 2: Copy wasm files to dashboard static directory
+    println!("\n=== Copying wasm files to dashboard ===");
+    let pkg_dir = wasm_client_dir.join("pkg");
+    let static_dir = dashboard_dir.join("static/pkg");
+
+    // Create static/pkg directory if it doesn't exist
+    std::fs::create_dir_all(&static_dir)?;
+
+    // Copy all files from pkg to static/pkg (skip directories and symlinks)
+    for entry in std::fs::read_dir(&pkg_dir)? {
+        let entry = entry?;
+        let src = entry.path();
+        let file_type = entry.file_type()?;
+
+        // Skip directories and symlinks
+        if file_type.is_dir() || file_type.is_symlink() {
+            continue;
+        }
+
+        let dst = static_dir.join(entry.file_name());
+        std::fs::copy(&src, &dst)?;
+        println!("  Copied: {}", entry.file_name().to_string_lossy());
+    }
+
+    // Step 3: Run the dashboard
+    sh.change_dir(workspace_root);
+
+    println!("\n╔══════════════════════════════════════════════════════════╗");
+    println!("║  Rapace Dashboard                                        ║");
+    println!("║                                                          ║");
+    println!("║  Open: http://127.0.0.1:3000                             ║");
+    println!("║                                                          ║");
+    println!("║  Press Ctrl+C to stop                                    ║");
+    println!("╚══════════════════════════════════════════════════════════╝\n");
+
+    cmd!(sh, "cargo run -p rapace-dashboard").run()?;
+
+    Ok(())
 }

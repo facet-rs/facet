@@ -1,24 +1,33 @@
 //! rapace-wasm-client: WebAssembly client for rapace RPC.
 //!
-//! This crate provides a browser-compatible WebSocket client for rapace RPC.
-//! It uses web_sys::WebSocket directly and exposes a JavaScript-friendly API
-//! via wasm-bindgen.
+//! This crate provides a browser-compatible WebSocket client for the rapace
+//! ExplorerService, which allows dynamic service discovery and method invocation.
 //!
 //! # Usage
 //!
 //! ```javascript
-//! import init, { RapaceClient } from './rapace_wasm_client.js';
+//! import init, { ExplorerClient } from './rapace_wasm_client.js';
 //!
 //! await init();
 //!
-//! const client = await RapaceClient.connect('ws://localhost:9000');
-//! const result = await client.call_adder(2, 3);
-//! console.log('2 + 3 =', result);
+//! const client = await ExplorerClient.connect('ws://localhost:9001');
 //!
-//! // Server streaming
-//! const stream = client.call_range(5);
-//! for await (const value of stream) {
-//!     console.log('Got:', value);
+//! // List all services
+//! const services = await client.listServices();
+//! console.log('Services:', services);
+//!
+//! // Get service details
+//! const service = await client.getService(0);
+//! console.log('Service 0:', service);
+//!
+//! // Call a unary method dynamically
+//! const result = await client.callUnary('Calculator', 'add', { a: 5, b: 3 });
+//! console.log('Result:', JSON.parse(result.result_json));
+//!
+//! // Call a streaming method
+//! const stream = await client.callStreaming('Counter', 'count_to', { n: 5 });
+//! for await (const item of stream) {
+//!     console.log('Got:', JSON.parse(item.value_json));
 //! }
 //!
 //! client.close();
@@ -37,46 +46,269 @@ use wasm_bindgen::prelude::*;
 const DESC_SIZE: usize = 64;
 const _: () = assert!(std::mem::size_of::<MsgDescHot>() == DESC_SIZE);
 
-/// A rapace RPC client for use in WebAssembly.
+// ExplorerService method IDs (hardcoded to match dashboard)
+const METHOD_LIST_SERVICES: u32 = 1;
+const METHOD_GET_SERVICE: u32 = 2;
+const METHOD_CALL_UNARY: u32 = 3;
+const METHOD_CALL_STREAMING: u32 = 4;
+
+// ============================================================================
+// ExplorerService types (must match dashboard types exactly)
+// ============================================================================
+
+#[derive(Clone, Debug, facet::Facet)]
+pub struct ServiceSummary {
+    pub id: u32,
+    pub name: String,
+    pub doc: String,
+    pub method_count: u32,
+}
+
+#[derive(Clone, Debug, facet::Facet)]
+pub struct ArgDetail {
+    pub name: String,
+    pub type_name: String,
+}
+
+#[derive(Clone, Debug, facet::Facet)]
+pub struct MethodDetail {
+    pub id: u32,
+    pub name: String,
+    pub full_name: String,
+    pub doc: String,
+    pub args: Vec<ArgDetail>,
+    pub is_streaming: bool,
+    pub request_type: String,
+    pub response_type: String,
+}
+
+#[derive(Clone, Debug, facet::Facet)]
+pub struct ServiceDetail {
+    pub id: u32,
+    pub name: String,
+    pub doc: String,
+    pub methods: Vec<MethodDetail>,
+}
+
+#[derive(Clone, Debug, facet::Facet)]
+pub struct CallRequest {
+    pub service: String,
+    pub method: String,
+    pub args_json: String,
+}
+
+#[derive(Clone, Debug, facet::Facet)]
+pub struct CallResponse {
+    pub result_json: String,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, facet::Facet)]
+pub struct StreamItem {
+    pub value_json: String,
+}
+
+// ============================================================================
+// ExplorerClient - the main client for the dashboard
+// ============================================================================
+
+/// A rapace Explorer client for use in WebAssembly.
+///
+/// Connects to the ExplorerService and provides methods for:
+/// - Service discovery (list_services, get_service)
+/// - Dynamic unary method invocation (call_unary)
+/// - Dynamic streaming method invocation (call_streaming)
 #[wasm_bindgen]
-pub struct RapaceClient {
+pub struct ExplorerClient {
     ws: Rc<RefCell<WasmWebSocket>>,
     next_msg_id: u64,
     next_channel_id: u32,
 }
 
 #[wasm_bindgen]
-impl RapaceClient {
-    /// Connect to a rapace WebSocket server.
+impl ExplorerClient {
+    /// Connect to a rapace ExplorerService WebSocket server.
     ///
-    /// Returns a Promise that resolves to a RapaceClient.
+    /// Returns a Promise that resolves to an ExplorerClient.
     #[wasm_bindgen]
-    pub async fn connect(url: &str) -> Result<RapaceClient, JsValue> {
+    pub async fn connect(url: &str) -> Result<ExplorerClient, JsValue> {
         let ws = WasmWebSocket::connect(url).await?;
-        Ok(RapaceClient {
+        Ok(ExplorerClient {
             ws: Rc::new(RefCell::new(ws)),
             next_msg_id: 1,
             next_channel_id: 1,
         })
     }
 
-    /// Call the Adder service's add method.
+    /// List all registered services.
     ///
-    /// Returns a `Promise<number>`.
-    #[wasm_bindgen]
-    pub async fn call_adder(&mut self, a: i32, b: i32) -> Result<i32, JsValue> {
-        // Encode request: AdderRequest { a, b }
+    /// Returns a JSON string containing an array of ServiceSummary objects.
+    #[wasm_bindgen(js_name = listServices)]
+    pub async fn list_services(&mut self) -> Result<JsValue, JsValue> {
+        // Request has no parameters for list_services
         #[derive(facet::Facet)]
-        struct AdderRequest {
-            a: i32,
-            b: i32,
-        }
+        struct ListServicesRequest;
 
-        let request = AdderRequest { a, b };
+        let request = ListServicesRequest;
         let payload = facet_postcard::to_vec(&request)
             .map_err(|e| JsValue::from_str(&format!("encode error: {}", e)))?;
 
-        // Build frame
+        let response_frame = self.call_method(METHOD_LIST_SERVICES, &payload).await?;
+
+        // Decode response
+        let services: Vec<ServiceSummary> = facet_postcard::from_bytes(response_frame.payload())
+            .map_err(|e| JsValue::from_str(&format!("decode error: {}", e)))?;
+
+        // Convert to JS array
+        let result = js_sys::Array::new();
+        for service in services {
+            let obj = js_sys::Object::new();
+            js_sys::Reflect::set(&obj, &"id".into(), &JsValue::from(service.id))?;
+            js_sys::Reflect::set(&obj, &"name".into(), &JsValue::from_str(&service.name))?;
+            js_sys::Reflect::set(&obj, &"doc".into(), &JsValue::from_str(&service.doc))?;
+            js_sys::Reflect::set(&obj, &"method_count".into(), &JsValue::from(service.method_count))?;
+            result.push(&obj);
+        }
+        Ok(result.into())
+    }
+
+    /// Get details for a specific service by ID.
+    ///
+    /// Returns a JSON object with service details, or null if not found.
+    #[wasm_bindgen(js_name = getService)]
+    pub async fn get_service(&mut self, service_id: u32) -> Result<JsValue, JsValue> {
+        #[derive(facet::Facet)]
+        struct GetServiceRequest {
+            service_id: u32,
+        }
+
+        let request = GetServiceRequest { service_id };
+        let payload = facet_postcard::to_vec(&request)
+            .map_err(|e| JsValue::from_str(&format!("encode error: {}", e)))?;
+
+        let response_frame = self.call_method(METHOD_GET_SERVICE, &payload).await?;
+
+        // Decode response
+        let service: Option<ServiceDetail> = facet_postcard::from_bytes(response_frame.payload())
+            .map_err(|e| JsValue::from_str(&format!("decode error: {}", e)))?;
+
+        match service {
+            Some(s) => {
+                let obj = js_sys::Object::new();
+                js_sys::Reflect::set(&obj, &"id".into(), &JsValue::from(s.id))?;
+                js_sys::Reflect::set(&obj, &"name".into(), &JsValue::from_str(&s.name))?;
+                js_sys::Reflect::set(&obj, &"doc".into(), &JsValue::from_str(&s.doc))?;
+
+                let methods = js_sys::Array::new();
+                for m in s.methods {
+                    let method_obj = js_sys::Object::new();
+                    js_sys::Reflect::set(&method_obj, &"id".into(), &JsValue::from(m.id))?;
+                    js_sys::Reflect::set(&method_obj, &"name".into(), &JsValue::from_str(&m.name))?;
+                    js_sys::Reflect::set(&method_obj, &"full_name".into(), &JsValue::from_str(&m.full_name))?;
+                    js_sys::Reflect::set(&method_obj, &"doc".into(), &JsValue::from_str(&m.doc))?;
+                    js_sys::Reflect::set(&method_obj, &"is_streaming".into(), &JsValue::from(m.is_streaming))?;
+                    js_sys::Reflect::set(&method_obj, &"request_type".into(), &JsValue::from_str(&m.request_type))?;
+                    js_sys::Reflect::set(&method_obj, &"response_type".into(), &JsValue::from_str(&m.response_type))?;
+
+                    let args = js_sys::Array::new();
+                    for arg in m.args {
+                        let arg_obj = js_sys::Object::new();
+                        js_sys::Reflect::set(&arg_obj, &"name".into(), &JsValue::from_str(&arg.name))?;
+                        js_sys::Reflect::set(&arg_obj, &"type_name".into(), &JsValue::from_str(&arg.type_name))?;
+                        args.push(&arg_obj);
+                    }
+                    js_sys::Reflect::set(&method_obj, &"args".into(), &args)?;
+
+                    methods.push(&method_obj);
+                }
+                js_sys::Reflect::set(&obj, &"methods".into(), &methods)?;
+
+                Ok(obj.into())
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// Call a unary method dynamically.
+    ///
+    /// Arguments:
+    /// - service: The service name (e.g., "Calculator")
+    /// - method: The method name (e.g., "add")
+    /// - args: A JavaScript object with the method arguments
+    ///
+    /// Returns a CallResponse with result_json containing the JSON-encoded result.
+    #[wasm_bindgen(js_name = callUnary)]
+    pub async fn call_unary(&mut self, service: &str, method: &str, args: JsValue) -> Result<JsValue, JsValue> {
+        let args_json = js_sys::JSON::stringify(&args)
+            .map_err(|_| JsValue::from_str("Failed to stringify args"))?
+            .as_string()
+            .unwrap_or_else(|| "{}".to_string());
+
+        let request = CallRequest {
+            service: service.to_string(),
+            method: method.to_string(),
+            args_json,
+        };
+        let payload = facet_postcard::to_vec(&request)
+            .map_err(|e| JsValue::from_str(&format!("encode error: {}", e)))?;
+
+        let response_frame = self.call_method(METHOD_CALL_UNARY, &payload).await?;
+
+        // Decode response
+        let response: CallResponse = facet_postcard::from_bytes(response_frame.payload())
+            .map_err(|e| JsValue::from_str(&format!("decode error: {}", e)))?;
+
+        // Convert to JS object
+        let obj = js_sys::Object::new();
+        js_sys::Reflect::set(&obj, &"result_json".into(), &JsValue::from_str(&response.result_json))?;
+        match response.error {
+            Some(err) => js_sys::Reflect::set(&obj, &"error".into(), &JsValue::from_str(&err))?,
+            None => js_sys::Reflect::set(&obj, &"error".into(), &JsValue::NULL)?,
+        };
+        Ok(obj.into())
+    }
+
+    /// Call a streaming method dynamically.
+    ///
+    /// Arguments:
+    /// - service: The service name (e.g., "Counter")
+    /// - method: The method name (e.g., "count_to")
+    /// - args: A JavaScript object with the method arguments
+    ///
+    /// Returns a StreamingCall that can be used to iterate over results.
+    #[wasm_bindgen(js_name = callStreaming)]
+    pub fn call_streaming(&mut self, service: &str, method: &str, args: JsValue) -> Result<StreamingCall, JsValue> {
+        let args_json = js_sys::JSON::stringify(&args)
+            .map_err(|_| JsValue::from_str("Failed to stringify args"))?
+            .as_string()
+            .unwrap_or_else(|| "{}".to_string());
+
+        let channel_id = self.next_channel_id;
+        self.next_channel_id += 1;
+
+        let msg_id = self.next_msg_id;
+        self.next_msg_id += 1;
+
+        Ok(StreamingCall {
+            ws: Rc::clone(&self.ws),
+            channel_id,
+            msg_id,
+            service: service.to_string(),
+            method: method.to_string(),
+            args_json,
+            started: false,
+            finished: false,
+        })
+    }
+
+    /// Close the connection.
+    #[wasm_bindgen]
+    pub fn close(&self) {
+        self.ws.borrow().close();
+    }
+
+    // Internal helper to call a method and get the response
+    async fn call_method(&mut self, method_id: u32, payload: &[u8]) -> Result<Frame, JsValue> {
         let channel_id = self.next_channel_id;
         self.next_channel_id += 1;
 
@@ -86,14 +318,14 @@ impl RapaceClient {
         let mut desc = MsgDescHot::new();
         desc.msg_id = msg_id;
         desc.channel_id = channel_id;
-        desc.method_id = 1; // AdderService::add method ID
+        desc.method_id = method_id;
         desc.flags = FrameFlags::DATA | FrameFlags::EOS;
 
         let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
-            Frame::with_inline_payload(desc, &payload)
+            Frame::with_inline_payload(desc, payload)
                 .ok_or_else(|| JsValue::from_str("payload too large for inline"))?
         } else {
-            Frame::with_payload(desc, payload.clone())
+            Frame::with_payload(desc, payload.to_vec())
         };
 
         // Send request
@@ -108,43 +340,7 @@ impl RapaceClient {
             return Err(JsValue::from_str(&error_msg));
         }
 
-        // Decode response: AdderResponse { result }
-        #[derive(facet::Facet)]
-        struct AdderResponse {
-            result: i32,
-        }
-
-        let response: AdderResponse = facet_postcard::from_bytes(response_frame.payload())
-            .map_err(|e| JsValue::from_str(&format!("decode error: {}", e)))?;
-
-        Ok(response.result)
-    }
-
-    /// Call the Range service to get a stream of numbers 0..n.
-    ///
-    /// Returns an async iterator that yields numbers.
-    #[wasm_bindgen]
-    pub fn call_range(&mut self, n: u32) -> RangeStream {
-        let channel_id = self.next_channel_id;
-        self.next_channel_id += 1;
-
-        let msg_id = self.next_msg_id;
-        self.next_msg_id += 1;
-
-        RangeStream {
-            ws: Rc::clone(&self.ws),
-            channel_id,
-            msg_id,
-            n,
-            started: false,
-            finished: false,
-        }
-    }
-
-    /// Close the connection.
-    #[wasm_bindgen]
-    pub fn close(&self) {
-        self.ws.borrow().close();
+        Ok(response_frame)
     }
 
     fn send_frame(&self, frame: &Frame) -> Result<(), JsValue> {
@@ -182,22 +378,28 @@ impl RapaceClient {
     }
 }
 
-/// Async iterator for Range streaming results.
+// ============================================================================
+// StreamingCall - for handling streaming method responses
+// ============================================================================
+
+/// Async iterator for streaming RPC results.
 #[wasm_bindgen]
-pub struct RangeStream {
+pub struct StreamingCall {
     ws: Rc<RefCell<WasmWebSocket>>,
     channel_id: u32,
     msg_id: u64,
-    n: u32,
+    service: String,
+    method: String,
+    args_json: String,
     started: bool,
     finished: bool,
 }
 
 #[wasm_bindgen]
-impl RangeStream {
+impl StreamingCall {
     /// Get the next value from the stream.
     ///
-    /// Returns null when the stream is complete.
+    /// Returns a StreamItem with value_json, or null when the stream is complete.
     #[wasm_bindgen]
     pub async fn next(&mut self) -> Result<JsValue, JsValue> {
         if self.finished {
@@ -208,20 +410,18 @@ impl RangeStream {
         if !self.started {
             self.started = true;
 
-            // Encode request: RangeRequest { n }
-            #[derive(facet::Facet)]
-            struct RangeRequest {
-                n: u32,
-            }
-
-            let request = RangeRequest { n: self.n };
+            let request = CallRequest {
+                service: self.service.clone(),
+                method: self.method.clone(),
+                args_json: self.args_json.clone(),
+            };
             let payload = facet_postcard::to_vec(&request)
                 .map_err(|e| JsValue::from_str(&format!("encode error: {}", e)))?;
 
             let mut desc = MsgDescHot::new();
             desc.msg_id = self.msg_id;
             desc.channel_id = self.channel_id;
-            desc.method_id = 2; // RangeService::range method ID
+            desc.method_id = METHOD_CALL_STREAMING;
             desc.flags = FrameFlags::DATA | FrameFlags::EOS;
 
             let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
@@ -252,11 +452,13 @@ impl RangeStream {
             }
         }
 
-        // Decode streaming item (just a u32)
-        let value: u32 = facet_postcard::from_bytes(frame.payload())
+        // Decode streaming item
+        let item: StreamItem = facet_postcard::from_bytes(frame.payload())
             .map_err(|e| JsValue::from_str(&format!("decode error: {}", e)))?;
 
-        Ok(JsValue::from(value))
+        let obj = js_sys::Object::new();
+        js_sys::Reflect::set(&obj, &"value_json".into(), &JsValue::from_str(&item.value_json))?;
+        Ok(obj.into())
     }
 
     fn send_frame(&self, frame: &Frame) -> Result<(), JsValue> {
@@ -293,6 +495,10 @@ impl RangeStream {
         }
     }
 }
+
+// ============================================================================
+// Helpers
+// ============================================================================
 
 /// Convert MsgDescHot to raw bytes.
 fn desc_to_bytes(desc: &MsgDescHot) -> [u8; DESC_SIZE] {
