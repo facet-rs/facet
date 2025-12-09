@@ -18,5 +18,6 @@ expression: "format_diff_comparison(&a, &b)"
 ║{                          ║
 ║  .. 1 unchanged field     ║
 ║  name: "Alice" → "Alice"  ║
+║  (strings are identical)  ║
 ║}                          ║
 ╚═══════════════════════════╝
