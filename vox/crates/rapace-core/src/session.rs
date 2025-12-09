@@ -89,12 +89,17 @@ use crate::{
 /// A chunk received on a tunnel channel.
 ///
 /// This is delivered to tunnel receivers when DATA frames arrive on the channel.
+/// For streaming RPCs, this is also used to deliver typed responses that need
+/// to be deserialized by the client.
 #[derive(Debug, Clone)]
 pub struct TunnelChunk {
     /// The payload data.
     pub payload: Vec<u8>,
     /// True if this is the final chunk (EOS received).
     pub is_eos: bool,
+    /// True if this chunk represents an error (ERROR flag set).
+    /// When true, payload should be parsed as an error using `parse_error_payload`.
+    pub is_error: bool,
 }
 
 /// A frame that was received and routed.
@@ -257,8 +262,13 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
     }
 
     /// Try to route a frame to a tunnel.
-    /// Returns `Some(frame)` if no tunnel exists, `None` if routed to tunnel.
-    fn try_route_to_tunnel(&self, channel_id: u32, payload: Vec<u8>, flags: FrameFlags) -> bool {
+    /// Returns `true` if routed to tunnel, `false` if no tunnel exists.
+    async fn try_route_to_tunnel(
+        &self,
+        channel_id: u32,
+        payload: Vec<u8>,
+        flags: FrameFlags,
+    ) -> bool {
         let sender = {
             let tunnels = self.tunnels.lock();
             tunnels.get(&channel_id).cloned()
@@ -266,20 +276,35 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
 
         if let Some(tx) = sender {
             let is_eos = flags.contains(FrameFlags::EOS);
-            let chunk = TunnelChunk { payload, is_eos };
+            let is_error = flags.contains(FrameFlags::ERROR);
+            tracing::debug!(
+                channel_id,
+                payload_len = payload.len(),
+                is_eos,
+                is_error,
+                "try_route_to_tunnel: routing to tunnel"
+            );
+            let chunk = TunnelChunk {
+                payload,
+                is_eos,
+                is_error,
+            };
 
-            // Try to send; if receiver dropped, remove the tunnel
-            if tx.try_send(chunk).is_err() {
+            // Send with backpressure; if receiver dropped, remove the tunnel
+            if tx.send(chunk).await.is_err() {
+                tracing::debug!(channel_id, "try_route_to_tunnel: receiver dropped, removing tunnel");
                 self.tunnels.lock().remove(&channel_id);
             }
 
             // If EOS, remove the tunnel registration
             if is_eos {
+                tracing::debug!(channel_id, "try_route_to_tunnel: EOS received, removing tunnel");
                 self.tunnels.lock().remove(&channel_id);
             }
 
             true // Frame was handled by tunnel
         } else {
+            tracing::trace!(channel_id, "try_route_to_tunnel: no tunnel for channel");
             false // No tunnel, continue normal processing
         }
     }
@@ -347,6 +372,73 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
     // RPC APIs
     // ========================================================================
 
+    /// Start a streaming RPC call.
+    ///
+    /// This sends the request and returns a receiver for streaming responses.
+    /// Unlike `call()`, this doesn't wait for a single response - instead,
+    /// responses are routed to the returned receiver as `TunnelChunk`s.
+    ///
+    /// The caller should:
+    /// 1. Consume chunks from the receiver
+    /// 2. Check `chunk.is_error` and parse as error if true
+    /// 3. Otherwise deserialize `chunk.payload` as the expected type
+    /// 4. Stop when `chunk.is_eos` is true
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let rx = session.start_streaming_call(method_id, payload).await?;
+    /// while let Some(chunk) = rx.recv().await {
+    ///     if chunk.is_error {
+    ///         let err = parse_error_payload(&chunk.payload);
+    ///         return Err(err);
+    ///     }
+    ///     if chunk.is_eos && chunk.payload.is_empty() {
+    ///         break; // Stream ended normally
+    ///     }
+    ///     let item: T = deserialize(&chunk.payload)?;
+    ///     // process item...
+    /// }
+    /// ```
+    pub async fn start_streaming_call(
+        &self,
+        method_id: u32,
+        payload: Vec<u8>,
+    ) -> Result<mpsc::Receiver<TunnelChunk>, RpcError> {
+        let channel_id = self.next_channel_id();
+
+        // Register tunnel BEFORE sending, so responses are routed correctly
+        let rx = self.register_tunnel(channel_id);
+
+        // Build a normal unary request frame
+        let mut desc = MsgDescHot::new();
+        desc.msg_id = self.next_msg_id();
+        desc.channel_id = channel_id;
+        desc.method_id = method_id;
+        desc.flags = FrameFlags::DATA | FrameFlags::EOS;
+
+        let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+            Frame::with_inline_payload(desc, &payload).expect("inline payload should fit")
+        } else {
+            Frame::with_payload(desc, payload)
+        };
+
+        tracing::debug!(
+            method_id,
+            channel_id,
+            "start_streaming_call: sending request frame"
+        );
+
+        self.transport
+            .send_frame(&frame)
+            .await
+            .map_err(RpcError::Transport)?;
+
+        tracing::debug!(method_id, channel_id, "start_streaming_call: request sent");
+
+        Ok(rx)
+    }
+
     /// Send a request and wait for a response.
     ///
     /// This is the main client entry point. It:
@@ -405,12 +497,19 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
     ///
     /// This method consumes self and runs until the transport closes.
     pub async fn run(self: Arc<Self>) -> Result<(), TransportError> {
+        tracing::debug!("RpcSession::run: starting demux loop");
         loop {
             // Receive next frame
             let frame = match self.transport.recv_frame().await {
                 Ok(f) => f,
-                Err(TransportError::Closed) => return Ok(()),
-                Err(e) => return Err(e),
+                Err(TransportError::Closed) => {
+                    tracing::debug!("RpcSession::run: transport closed");
+                    return Ok(());
+                }
+                Err(e) => {
+                    tracing::error!(?e, "RpcSession::run: transport error");
+                    return Err(e);
+                }
             };
 
             let channel_id = frame.desc.channel_id;
@@ -418,8 +517,16 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
             let flags = frame.desc.flags;
             let payload = frame.payload.to_vec();
 
+            tracing::debug!(
+                channel_id,
+                method_id,
+                ?flags,
+                payload_len = payload.len(),
+                "RpcSession::run: received frame"
+            );
+
             // 1. Try to route to a tunnel first (highest priority)
-            if self.try_route_to_tunnel(channel_id, payload.clone(), flags) {
+            if self.try_route_to_tunnel(channel_id, payload.clone(), flags).await {
                 continue;
             }
 

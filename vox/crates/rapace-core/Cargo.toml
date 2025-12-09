@@ -7,12 +7,14 @@ repository.workspace = true
 description = "Core types and traits for rapace RPC"
 
 [dependencies]
+async-stream.workspace = true
 bitflags.workspace = true
 facet.workspace = true
 facet-core.workspace = true
 futures.workspace = true
 parking_lot.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 proptest = "1"

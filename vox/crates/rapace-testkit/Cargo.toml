@@ -17,6 +17,7 @@ facet.workspace = true
 facet-core.workspace = true
 facet-postcard.workspace = true
 parking_lot.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread"] }

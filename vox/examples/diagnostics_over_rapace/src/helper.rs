@@ -85,6 +85,16 @@ async fn run_plugin<T: Transport + Send + Sync + 'static>(transport: Arc<T>) {
 
 #[tokio::main]
 async fn main() {
+    // Initialize tracing subscriber
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive("rapace_core=debug".parse().unwrap())
+                .add_directive("rapace_diagnostics_over_rapace=debug".parse().unwrap()),
+        )
+        .with_writer(std::io::stderr)
+        .init();
+
     let args = parse_args();
 
     eprintln!(

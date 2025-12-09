@@ -46,6 +46,7 @@ rapace-transport-websocket = { path = "crates/rapace-transport-websocket" }
 rapace-testkit = { path = "crates/rapace-testkit" }
 
 # External dependencies
+async-stream = "0.3"
 libc = "0.2"
 bitflags = "2"
 tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
@@ -62,6 +63,9 @@ facet-postcard = { git = "https://github.com/facet-rs/facet" }
 
 # WebSocket
 tokio-tungstenite = "0.26"
+
+# Tracing
+tracing = "0.1"
 
 # Testing/fuzzing
 bolero = "0.11"

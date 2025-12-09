@@ -112,9 +112,6 @@ mod tests {
     use tokio::net::{TcpListener, TcpStream};
 
     /// Helper to run diagnostics scenario with any transport.
-    ///
-    /// NOTE: Streaming over RpcSession is not yet implemented. This test
-    /// will fail with Unimplemented error until streaming is added.
     async fn run_scenario<T: Transport + Send + Sync + 'static>(
         host_transport: Arc<T>,
         plugin_transport: Arc<T>,

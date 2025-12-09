@@ -35,3 +35,7 @@ facet-postcard = { git = "https://github.com/facet-rs/facet" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "process", "time"] }
 tokio-stream = "0.1"
 futures = "0.3"
+
+# Tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

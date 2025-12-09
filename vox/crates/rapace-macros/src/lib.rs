@@ -245,30 +245,50 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
                 self,
                 transport: ::std::sync::Arc<T>,
             ) -> ::std::result::Result<(), ::rapace_core::RpcError> {
+                ::tracing::debug!("serve: entering loop, waiting for requests");
                 loop {
                     // Receive next request frame
                     let request = match transport.recv_frame().await {
-                        Ok(frame) => frame,
+                        Ok(frame) => {
+                            ::tracing::debug!(
+                                method_id = frame.desc.method_id,
+                                channel_id = frame.desc.channel_id,
+                                flags = ?frame.desc.flags,
+                                payload_len = frame.payload.len(),
+                                "serve: received frame"
+                            );
+                            frame
+                        }
                         Err(::rapace_core::TransportError::Closed) => {
+                            ::tracing::debug!("serve: transport closed");
                             // Connection closed gracefully
                             return Ok(());
                         }
                         Err(e) => {
+                            ::tracing::error!(?e, "serve: transport error");
                             return Err(::rapace_core::RpcError::Transport(e));
                         }
                     };
 
                     // Skip non-data frames (control frames, etc.)
                     if !request.desc.flags.contains(::rapace_core::FrameFlags::DATA) {
+                        ::tracing::debug!("serve: skipping non-DATA frame");
                         continue;
                     }
 
                     // Dispatch the request
+                    ::tracing::debug!(
+                        method_id = request.desc.method_id,
+                        channel_id = request.desc.channel_id,
+                        "serve: dispatching to dispatch_streaming"
+                    );
                     if let Err(e) = self.dispatch_streaming(
                         request.desc.method_id,
+                        request.desc.channel_id,
                         request.payload,
                         transport.as_ref(),
                     ).await {
+                        ::tracing::error!(?e, "serve: dispatch_streaming returned error");
                         // Send error response
                         let mut desc = ::rapace_core::MsgDescHot::new();
                         desc.channel_id = request.desc.channel_id;
@@ -312,6 +332,7 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
                 // Dispatch the request
                 self.dispatch_streaming(
                     request.desc.method_id,
+                    request.desc.channel_id,
                     request.payload,
                     transport,
                 ).await
@@ -341,9 +362,11 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
             pub async fn dispatch_streaming<T: ::rapace_core::Transport + 'static>(
                 &self,
                 method_id: u32,
+                channel_id: u32,
                 request_payload: &[u8],
                 transport: &T,
             ) -> ::std::result::Result<(), ::rapace_core::RpcError> {
+                ::tracing::debug!(method_id, channel_id, "dispatch_streaming: entered");
                 match method_id {
                     #(#streaming_dispatch_arms)*
                     _ => Err(::rapace_core::RpcError::Status {
@@ -559,7 +582,7 @@ fn generate_client_method_unary(method: &MethodInfo, method_id: u32) -> TokenStr
 
 fn generate_client_method_server_streaming(
     method: &MethodInfo,
-    _method_id: u32,
+    method_id: u32,
     item_type: &Type,
 ) -> TokenStream2 {
     let name = &method.name;
@@ -572,19 +595,58 @@ fn generate_client_method_server_streaming(
         quote! { #name: #ty }
     });
 
-    // For now, streaming over RpcSession is not supported
-    // TODO: Add streaming support to RpcSession
+    // For encoding, serialize args as a tuple using facet_postcard
+    let encode_expr = if arg_names.is_empty() {
+        quote! { ::facet_postcard::to_vec(&()).unwrap() }
+    } else if arg_names.len() == 1 {
+        let arg = &arg_names[0];
+        quote! { ::facet_postcard::to_vec(&#arg).unwrap() }
+    } else {
+        quote! { ::facet_postcard::to_vec(&(#(#arg_names.clone()),*)).unwrap() }
+    };
+
     quote! {
         /// Call the #name server-streaming method on the remote service.
         ///
-        /// **Note**: Server-streaming is not yet supported with RpcSession-based clients.
-        /// This method will return an error at runtime.
+        /// Returns a stream that yields items as they arrive from the server.
+        /// The stream ends when the server sends EOS, or yields an error if
+        /// the server sends an ERROR frame.
         pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<::rapace_core::Streaming<#item_type>, ::rapace_core::RpcError> {
-            // TODO: Implement streaming over RpcSession
-            Err(::rapace_core::RpcError::Status {
-                code: ::rapace_core::ErrorCode::Unimplemented,
-                message: "Server-streaming is not yet supported with RpcSession-based clients".into(),
-            })
+            use ::rapace_core::{ErrorCode, RpcError};
+
+            let request_bytes: ::std::vec::Vec<u8> = #encode_expr;
+
+            // Start the streaming call - this registers a tunnel and sends the request
+            let mut rx = self.session
+                .start_streaming_call(#method_id, request_bytes)
+                .await?;
+
+            // Build a Stream<Item = Result<#item_type, RpcError>> with explicit termination on EOS
+            let stream = ::rapace_core::try_stream! {
+                while let Some(chunk) = rx.recv().await {
+                    // Error chunk - parse and return as error
+                    if chunk.is_error {
+                        let err = ::rapace_core::parse_error_payload(&chunk.payload);
+                        Err(err)?;
+                    }
+
+                    // Empty EOS chunk - stream is done
+                    if chunk.is_eos && chunk.payload.is_empty() {
+                        break;
+                    }
+
+                    // DATA chunk (possibly with EOS flag for final item) - deserialize
+                    let item: #item_type = ::facet_postcard::from_bytes(&chunk.payload)
+                        .map_err(|e| RpcError::Status {
+                            code: ErrorCode::Internal,
+                            message: ::std::format!("decode error: {:?}", e),
+                        })?;
+
+                    yield item;
+                }
+            };
+
+            Ok(::std::boxed::Box::pin(stream))
         }
     }
 }
@@ -723,10 +785,13 @@ fn generate_streaming_dispatch_arm_server_streaming(
 
             // Iterate over the stream and send frames
             use ::tokio_stream::StreamExt;
+            ::tracing::debug!(channel_id, "streaming dispatch: starting to iterate stream");
 
             loop {
+                ::tracing::trace!(channel_id, "streaming dispatch: waiting for next item");
                 match stream.next().await {
                     Some(Ok(item)) => {
+                        ::tracing::debug!(channel_id, "streaming dispatch: got item, encoding");
                         // Encode item
                         let item_bytes: ::std::vec::Vec<u8> = ::facet_postcard::to_vec(&item)
                             .map_err(|e| ::rapace_core::RpcError::Status {
@@ -736,6 +801,7 @@ fn generate_streaming_dispatch_arm_server_streaming(
 
                         // Send DATA frame (not EOS yet)
                         let mut desc = ::rapace_core::MsgDescHot::new();
+                        desc.channel_id = channel_id;
                         desc.flags = ::rapace_core::FrameFlags::DATA;
 
                         let frame = if item_bytes.len() <= ::rapace_core::INLINE_PAYLOAD_SIZE {
@@ -745,12 +811,16 @@ fn generate_streaming_dispatch_arm_server_streaming(
                             ::rapace_core::Frame::with_payload(desc, item_bytes)
                         };
 
+                        ::tracing::debug!(channel_id, payload_len = frame.payload().len(), "streaming dispatch: sending DATA frame");
                         transport.send_frame(&frame).await
                             .map_err(::rapace_core::RpcError::Transport)?;
+                        ::tracing::debug!(channel_id, "streaming dispatch: DATA frame sent");
                     }
                     Some(Err(err)) => {
+                        ::tracing::warn!(channel_id, ?err, "streaming dispatch: got error from stream");
                         // Send ERROR frame and break
                         let mut desc = ::rapace_core::MsgDescHot::new();
+                        desc.channel_id = channel_id;
                         desc.flags = ::rapace_core::FrameFlags::ERROR | ::rapace_core::FrameFlags::EOS;
 
                         // Encode error: [code: u32 LE][message_len: u32 LE][message bytes]
@@ -771,12 +841,15 @@ fn generate_streaming_dispatch_arm_server_streaming(
                         return Ok(());
                     }
                     None => {
+                        ::tracing::debug!(channel_id, "streaming dispatch: stream ended, sending EOS");
                         // Stream is complete: send EOS frame
                         let mut desc = ::rapace_core::MsgDescHot::new();
+                        desc.channel_id = channel_id;
                         desc.flags = ::rapace_core::FrameFlags::EOS;
                         let frame = ::rapace_core::Frame::new(desc);
                         transport.send_frame(&frame).await
                             .map_err(::rapace_core::RpcError::Transport)?;
+                        ::tracing::debug!(channel_id, "streaming dispatch: EOS sent, returning");
                         return Ok(());
                     }
                 }
@@ -1000,7 +1073,7 @@ fn generate_client_method_server_streaming_registry(
     item_type: &Type,
 ) -> TokenStream2 {
     let name = &method.name;
-    let _method_id_field = format_ident!("{}_method_id", name);
+    let method_id_field = format_ident!("{}_method_id", name);
 
     let arg_names: Vec<_> = method.args.iter().map(|(name, _)| name).collect();
     let arg_types: Vec<_> = method.args.iter().map(|(_, ty)| ty).collect();
@@ -1009,19 +1082,58 @@ fn generate_client_method_server_streaming_registry(
         quote! { #name: #ty }
     });
 
-    // For now, streaming over RpcSession is not supported
-    // TODO: Add streaming support to RpcSession
+    // For encoding, serialize args as a tuple using facet_postcard
+    let encode_expr = if arg_names.is_empty() {
+        quote! { ::facet_postcard::to_vec(&()).unwrap() }
+    } else if arg_names.len() == 1 {
+        let arg = &arg_names[0];
+        quote! { ::facet_postcard::to_vec(&#arg).unwrap() }
+    } else {
+        quote! { ::facet_postcard::to_vec(&(#(#arg_names.clone()),*)).unwrap() }
+    };
+
     quote! {
         /// Call the #name server-streaming method on the remote service.
         ///
-        /// **Note**: Server-streaming is not yet supported with RpcSession-based clients.
-        /// This method will return an error at runtime.
+        /// Returns a stream that yields items as they arrive from the server.
+        /// The stream ends when the server sends EOS, or yields an error if
+        /// the server sends an ERROR frame.
         pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<::rapace_core::Streaming<#item_type>, ::rapace_core::RpcError> {
-            // TODO: Implement streaming over RpcSession
-            Err(::rapace_core::RpcError::Status {
-                code: ::rapace_core::ErrorCode::Unimplemented,
-                message: "Server-streaming is not yet supported with RpcSession-based clients".into(),
-            })
+            use ::rapace_core::{ErrorCode, RpcError};
+
+            let request_bytes: ::std::vec::Vec<u8> = #encode_expr;
+
+            // Start the streaming call with registry-assigned method ID
+            let mut rx = self.session
+                .start_streaming_call(self.#method_id_field, request_bytes)
+                .await?;
+
+            // Build a Stream<Item = Result<#item_type, RpcError>> with explicit termination on EOS
+            let stream = ::rapace_core::try_stream! {
+                while let Some(chunk) = rx.recv().await {
+                    // Error chunk - parse and return as error
+                    if chunk.is_error {
+                        let err = ::rapace_core::parse_error_payload(&chunk.payload);
+                        Err(err)?;
+                    }
+
+                    // Empty EOS chunk - stream is done
+                    if chunk.is_eos && chunk.payload.is_empty() {
+                        break;
+                    }
+
+                    // DATA chunk (possibly with EOS flag for final item) - deserialize
+                    let item: #item_type = ::facet_postcard::from_bytes(&chunk.payload)
+                        .map_err(|e| RpcError::Status {
+                            code: ErrorCode::Internal,
+                            message: ::std::format!("decode error: {:?}", e),
+                        })?;
+
+                    yield item;
+                }
+            };
+
+            Ok(::std::boxed::Box::pin(stream))
         }
     }
 }

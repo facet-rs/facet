@@ -5,10 +5,11 @@
 //! This proves that streaming diagnostics work across real process boundaries.
 
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use rapace_core::Transport;
+use rapace_core::{RpcSession, Transport};
 use rapace_transport_shm::{ShmSession, ShmSessionConfig, ShmTransport};
 use rapace_transport_stream::StreamTransport;
 use tokio::io::{ReadHalf, WriteHalf};
@@ -16,6 +17,24 @@ use tokio::net::TcpListener;
 use tokio_stream::StreamExt;
 
 use rapace_diagnostics_over_rapace::{Diagnostic, DiagnosticsClient};
+
+static TRACING_INIT: AtomicBool = AtomicBool::new(false);
+
+fn init_tracing() {
+    if TRACING_INIT
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_ok()
+    {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::from_default_env()
+                    .add_directive("rapace_core=debug".parse().unwrap())
+                    .add_directive("rapace_diagnostics_over_rapace=debug".parse().unwrap()),
+            )
+            .with_writer(std::io::stderr)
+            .init();
+    }
+}
 
 /// Find an available port for testing.
 async fn find_available_port() -> u16 {
@@ -38,8 +57,11 @@ async fn run_host_scenario<T: Transport + Send + Sync + 'static>(
     transport: Arc<T>,
     source: &str,
 ) -> Vec<Diagnostic> {
-    // Create client using macro-generated DiagnosticsClient
-    let client = DiagnosticsClient::new(transport.clone());
+    // Create RpcSession and client
+    let session = Arc::new(RpcSession::new(transport.clone()));
+    let session_clone = session.clone();
+    tokio::spawn(async move { session_clone.run().await });
+    let client = DiagnosticsClient::new(session);
 
     let result = tokio::time::timeout(Duration::from_secs(10), async {
         let mut stream = client
@@ -111,6 +133,8 @@ fn verify_diagnostics(diagnostics: &[Diagnostic]) {
 
 #[tokio::test]
 async fn test_cross_process_tcp() {
+    init_tracing();
+
     // First, build the helper binary
     let build_status = Command::new("cargo")
         .args([
@@ -176,8 +200,9 @@ async fn test_cross_process_tcp() {
     // Run host scenario
     let diagnostics = run_host_scenario_stream(transport, TEST_SOURCE).await;
 
-    // Wait for helper to exit
-    let _ = helper.wait();
+    // Kill the helper - it won't exit on its own because transport.close()
+    // doesn't actually close the TCP socket (it only sets an atomic flag)
+    let _ = helper.kill();
 
     // Verify diagnostics
     verify_diagnostics(&diagnostics);
@@ -257,8 +282,8 @@ async fn test_cross_process_unix() {
     // Run host scenario
     let diagnostics = run_host_scenario_stream(transport, TEST_SOURCE).await;
 
-    // Cleanup
-    let _ = helper.wait();
+    // Cleanup - kill helper since transport.close() doesn't actually close the socket
+    let _ = helper.kill();
     let _ = std::fs::remove_file(&socket_path);
 
     // Verify
@@ -324,8 +349,8 @@ async fn test_cross_process_shm() {
     // Run host scenario
     let diagnostics = run_host_scenario(transport, TEST_SOURCE).await;
 
-    // Cleanup
-    let _ = helper.wait();
+    // Cleanup - kill helper since transport.close() doesn't actually close the socket
+    let _ = helper.kill();
     let _ = std::fs::remove_file(&shm_path);
 
     // Verify
@@ -396,7 +421,8 @@ async fn test_cross_process_large_file_tcp() {
 
     let diagnostics = run_host_scenario_stream(transport, &large_source).await;
 
-    let _ = helper.wait();
+    // Kill helper since transport.close() doesn't actually close the socket
+    let _ = helper.kill();
 
     // Should have 50 TODOs
     assert_eq!(diagnostics.len(), 50, "Expected 50 diagnostics for large file");

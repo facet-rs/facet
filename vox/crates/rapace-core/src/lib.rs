@@ -37,3 +37,9 @@ pub use session::*;
 pub use streaming::*;
 pub use transport::*;
 pub use validation::*;
+
+// Re-export StreamExt for use by macro-generated streaming clients
+pub use futures::StreamExt;
+
+// Re-export try_stream for use by macro-generated streaming clients
+pub use async_stream::try_stream;

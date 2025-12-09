@@ -1691,6 +1691,7 @@ async fn run_macro_server_streaming_inner<F: TransportFactory>() -> Result<(), T
             server
                 .dispatch_streaming(
                     request.desc.method_id,
+                    request.desc.channel_id,
                     request.payload,
                     server_transport.as_ref(),
                 )
