@@ -581,6 +581,65 @@ fn run_bench(
     let _ = host_proc.wait();
     let _ = plugin_proc.wait();
 
+    // ========== TUNNEL OVER SHM (LARGE CONFIG) ==========
+    println!("\n=== Tunnel over SHM (large config: 256 slots × 16KB) ===");
+    cleanup();
+
+    // Start host with --shm-large flag
+    let mut host_proc = std::process::Command::new(&host_path)
+        .args(["--transport=shm", &format!("--addr={}", SHM_FILE), "--shm-large"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Start plugin (must also pass --shm-large since config is not stored in file)
+    let mut plugin_proc = std::process::Command::new(&plugin_path)
+        .args(["--transport=shm", &format!("--addr={}", SHM_FILE), "--shm-large"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+
+    if !wait_for_server(HOST_PORT) {
+        let _ = host_proc.kill();
+        let _ = plugin_proc.kill();
+        return Err("tunnel-shm-large server failed to start".into());
+    }
+
+    for (endpoint, desc) in &endpoints {
+        println!("\n  /{} ({})", endpoint, desc);
+        for &c in &concurrency_levels {
+            let url = format!("http://127.0.0.1:{}/{}", HOST_PORT, endpoint);
+            match run_oha(&url, c, duration) {
+                Ok(result) => {
+                    let p50_ms = to_ms(result.latency_percentiles.p50);
+                    let p90_ms = to_ms(result.latency_percentiles.p90);
+                    let p99_ms = to_ms(result.latency_percentiles.p99);
+                    println!(
+                        "    c={:3}: {:8.0} RPS, p50={:6.3}ms, p99={:6.3}ms",
+                        c, result.summary.requests_per_sec, p50_ms, p99_ms
+                    );
+                    all_results.push(BenchResult {
+                        name: "shm-large".into(),
+                        endpoint: endpoint.to_string(),
+                        concurrency: c,
+                        rps: result.summary.requests_per_sec,
+                        p50_ms,
+                        p90_ms,
+                        p99_ms,
+                    });
+                }
+                Err(e) => println!("    c={:3}: ERROR: {}", c, e),
+            }
+        }
+    }
+
+    let _ = host_proc.kill();
+    let _ = plugin_proc.kill();
+    let _ = host_proc.wait();
+    let _ = plugin_proc.wait();
+
     cleanup();
 
     // ========== SUMMARY ==========
@@ -601,7 +660,7 @@ fn run_bench(
                 .find(|r| r.name == "baseline" && r.endpoint == *endpoint && r.concurrency == c);
 
             if let Some(base) = baseline {
-                for transport in &["stream", "shm"] {
+                for transport in &["stream", "shm", "shm-large"] {
                     if let Some(tunnel) = all_results
                         .iter()
                         .find(|r| r.name == *transport && r.endpoint == *endpoint && r.concurrency == c)

@@ -157,17 +157,37 @@ impl Transport for ShmTransport {
             desc.payload_offset = 0;
             desc.payload_len = payload.len() as u32;
             desc.inline_payload[..payload.len()].copy_from_slice(payload);
+
+            if let Some(ref metrics) = self.metrics {
+                metrics.record_inline_send();
+            }
         } else {
             // Need to allocate a slot.
-            let (slot_idx, gen) = data_segment
-                .alloc()
-                .map_err(|e| slot_error_to_transport(e, "alloc"))?;
+            let (slot_idx, gen) = match data_segment.alloc() {
+                Ok(result) => {
+                    if let Some(ref metrics) = self.metrics {
+                        metrics.record_alloc_success();
+                    }
+                    result
+                }
+                Err(e) => {
+                    if let Some(ref metrics) = self.metrics {
+                        metrics.record_alloc_failure();
+                    }
+                    return Err(slot_error_to_transport(e, "alloc"));
+                }
+            };
 
             // Copy payload into slot.
             unsafe {
                 data_segment
                     .copy_to_slot(slot_idx, payload)
                     .map_err(|e| slot_error_to_transport(e, "copy_to_slot"))?;
+            }
+
+            if let Some(ref metrics) = self.metrics {
+                metrics.record_slot_copy(payload.len());
+                metrics.record_slot_send();
             }
 
             // Mark in-flight.
@@ -183,9 +203,19 @@ impl Transport for ShmTransport {
 
         // Enqueue the descriptor.
         let mut local_head = self.session.local_send_head().load(Ordering::Relaxed);
-        send_ring
-            .enqueue(&mut local_head, &desc)
-            .map_err(ring_error_to_transport)?;
+        match send_ring.enqueue(&mut local_head, &desc) {
+            Ok(()) => {
+                if let Some(ref metrics) = self.metrics {
+                    metrics.record_ring_enqueue();
+                }
+            }
+            Err(e) => {
+                if let Some(ref metrics) = self.metrics {
+                    metrics.record_ring_full();
+                }
+                return Err(ring_error_to_transport(e));
+            }
+        }
         self.session
             .local_send_head()
             .store(local_head, Ordering::Release);
@@ -209,7 +239,11 @@ impl Transport for ShmTransport {
             if let Some(prev) = last.take() {
                 if let Some((slot_idx, gen)) = prev.slot_info {
                     // Ignore errors on free (slot may have been freed already).
-                    let _ = data_segment.free(slot_idx, gen);
+                    if data_segment.free(slot_idx, gen).is_ok() {
+                        if let Some(ref metrics) = self.metrics {
+                            metrics.record_slot_free();
+                        }
+                    }
                 }
             }
         }
@@ -218,6 +252,10 @@ impl Transport for ShmTransport {
         // TODO: Use eventfd for proper async notification instead of polling.
         loop {
             if let Some(desc) = recv_ring.dequeue() {
+                if let Some(ref metrics) = self.metrics {
+                    metrics.record_ring_dequeue();
+                }
+
                 // Got a descriptor. Extract payload.
                 let (payload, slot_info) = if desc.is_inline() {
                     // Inline payload - copy from descriptor.
@@ -306,9 +344,10 @@ impl Transport for ShmTransport {
 // Metrics for zero-copy tracking
 // ============================================================================
 
-/// Metrics for tracking zero-copy performance.
+/// Metrics for tracking zero-copy performance and slot allocation.
 ///
-/// This is useful for monitoring and testing the zero-copy path.
+/// This is useful for monitoring and testing the zero-copy path,
+/// as well as diagnosing slot exhaustion issues.
 #[derive(Debug, Default)]
 pub struct ShmMetrics {
     /// Number of times encode_bytes detected data already in SHM (zero-copy).
@@ -319,6 +358,30 @@ pub struct ShmMetrics {
     pub zero_copy_bytes: std::sync::atomic::AtomicU64,
     /// Total bytes that were copied during encoding.
     pub copied_bytes: std::sync::atomic::AtomicU64,
+
+    // Slot allocation metrics
+    /// Number of successful slot allocations.
+    pub alloc_success: std::sync::atomic::AtomicU64,
+    /// Number of failed slot allocations (NoFreeSlots).
+    pub alloc_failures: std::sync::atomic::AtomicU64,
+    /// Number of slot frees.
+    pub slot_frees: std::sync::atomic::AtomicU64,
+    /// Total bytes copied to slots.
+    pub slot_copy_bytes: std::sync::atomic::AtomicU64,
+
+    // Ring metrics
+    /// Number of successful ring enqueues.
+    pub ring_enqueues: std::sync::atomic::AtomicU64,
+    /// Number of ring full errors.
+    pub ring_full_errors: std::sync::atomic::AtomicU64,
+    /// Number of successful ring dequeues.
+    pub ring_dequeues: std::sync::atomic::AtomicU64,
+
+    // Frame metrics
+    /// Number of frames sent with inline payload.
+    pub inline_sends: std::sync::atomic::AtomicU64,
+    /// Number of frames sent with slot payload.
+    pub slot_sends: std::sync::atomic::AtomicU64,
 }
 
 impl ShmMetrics {
@@ -365,6 +428,109 @@ impl ShmMetrics {
         } else {
             zero / total
         }
+    }
+
+    // Slot allocation metrics
+
+    /// Record a successful slot allocation.
+    pub fn record_alloc_success(&self) {
+        self.alloc_success
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Record a failed slot allocation (NoFreeSlots).
+    pub fn record_alloc_failure(&self) {
+        self.alloc_failures
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Record a slot free.
+    pub fn record_slot_free(&self) {
+        self.slot_frees
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Record bytes copied to a slot.
+    pub fn record_slot_copy(&self, bytes: usize) {
+        self.slot_copy_bytes
+            .fetch_add(bytes as u64, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    // Ring metrics
+
+    /// Record a successful ring enqueue.
+    pub fn record_ring_enqueue(&self) {
+        self.ring_enqueues
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Record a ring full error.
+    pub fn record_ring_full(&self) {
+        self.ring_full_errors
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Record a ring dequeue.
+    pub fn record_ring_dequeue(&self) {
+        self.ring_dequeues
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    // Frame metrics
+
+    /// Record an inline send.
+    pub fn record_inline_send(&self) {
+        self.inline_sends
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Record a slot send.
+    pub fn record_slot_send(&self) {
+        self.slot_sends
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Get alloc failure count.
+    pub fn alloc_failure_count(&self) -> u64 {
+        self.alloc_failures
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Get alloc success count.
+    pub fn alloc_success_count(&self) -> u64 {
+        self.alloc_success
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Get ring full error count.
+    pub fn ring_full_count(&self) -> u64 {
+        self.ring_full_errors
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Format a summary of all metrics.
+    pub fn summary(&self) -> String {
+        use std::sync::atomic::Ordering::Relaxed;
+        format!(
+            "ShmMetrics {{ \
+            alloc: {}/{} ok/fail, \
+            slot_frees: {}, \
+            ring: {}/{}/{} enq/deq/full, \
+            frames: {}/{} inline/slot, \
+            zero_copy: {:.1}% ({}/{}) \
+            }}",
+            self.alloc_success.load(Relaxed),
+            self.alloc_failures.load(Relaxed),
+            self.slot_frees.load(Relaxed),
+            self.ring_enqueues.load(Relaxed),
+            self.ring_dequeues.load(Relaxed),
+            self.ring_full_errors.load(Relaxed),
+            self.inline_sends.load(Relaxed),
+            self.slot_sends.load(Relaxed),
+            self.zero_copy_ratio() * 100.0,
+            self.zero_copy_encodes.load(Relaxed),
+            self.copy_encodes.load(Relaxed),
+        )
     }
 }
 

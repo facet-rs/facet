@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use rapace_core::Transport;
 use rapace_testkit::RpcSession;
-use rapace_transport_shm::{ShmSession, ShmSessionConfig, ShmTransport};
+use rapace_transport_shm::{ShmMetrics, ShmSession, ShmSessionConfig, ShmTransport};
 use rapace_transport_stream::StreamTransport;
 use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
 use tokio::net::TcpListener;
@@ -40,10 +40,17 @@ enum TransportType {
     Shm,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ShmSize {
+    Default,  // 64 slots × 4KB = 256KB
+    Large,    // 256 slots × 16KB = 4MB
+}
+
 #[derive(Debug)]
 struct Args {
     transport: TransportType,
     addr: String,
+    shm_size: ShmSize,
 }
 
 fn parse_args() -> Args {
@@ -51,6 +58,7 @@ fn parse_args() -> Args {
 
     let mut transport = None;
     let mut addr = None;
+    let mut shm_size = ShmSize::Default;
 
     let mut i = 1;
     while i < args.len() {
@@ -63,6 +71,8 @@ fn parse_args() -> Args {
             });
         } else if args[i].starts_with("--addr=") {
             addr = Some(args[i].strip_prefix("--addr=").unwrap().to_string());
+        } else if args[i] == "--shm-large" {
+            shm_size = ShmSize::Large;
         }
         i += 1;
     }
@@ -70,6 +80,7 @@ fn parse_args() -> Args {
     Args {
         transport: transport.expect("--transport required"),
         addr: addr.expect("--addr required"),
+        shm_size,
     }
 }
 
@@ -161,13 +172,34 @@ async fn main() {
             eprintln!("[http-tunnel-host] Creating SHM file: {}", args.addr);
             // Remove existing if present
             let _ = std::fs::remove_file(&args.addr);
-            let session = ShmSession::create_file(&args.addr, ShmSessionConfig::default())
+
+            // Choose SHM config based on flag
+            let config = match args.shm_size {
+                ShmSize::Default => {
+                    eprintln!("[http-tunnel-host] SHM config: DEFAULT (64 slots × 4KB = 256KB)");
+                    ShmSessionConfig::default()
+                }
+                ShmSize::Large => {
+                    eprintln!("[http-tunnel-host] SHM config: LARGE (256 slots × 16KB = 4MB)");
+                    ShmSessionConfig {
+                        ring_capacity: 512,
+                        slot_size: 16384,  // 16KB per slot
+                        slot_count: 256,   // 256 slots = 4MB total
+                    }
+                }
+            };
+
+            let session = ShmSession::create_file(&args.addr, config)
                 .expect("failed to create SHM file");
-            let transport = Arc::new(ShmTransport::new(session));
+
+            // Create metrics for SHM transport
+            let shm_metrics = Arc::new(ShmMetrics::new());
+            let transport = Arc::new(ShmTransport::new_with_metrics(session, shm_metrics.clone()));
             eprintln!("[http-tunnel-host] SHM created, waiting for plugin...");
             // Give plugin time to map
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             run_host(transport).await;
+            eprintln!("[http-tunnel-host] SHM metrics: {}", shm_metrics.summary());
         }
     }
 
