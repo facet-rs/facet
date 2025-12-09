@@ -154,7 +154,9 @@ impl Calculator for CalculatorImpl {
     }
 
     async fn factorial(&self, n: u32) -> u64 {
-        (1..=n as u64).product()
+        // Cap at 20 to avoid overflow (20! fits in u64, 21! doesn't)
+        let n = n.min(20) as u64;
+        (1..=n).product()
     }
 }
 
@@ -209,20 +211,18 @@ impl Counter for CounterImpl {
     }
 
     async fn fibonacci(&self, n: u32) -> Streaming<u64> {
+        // Cap at 93 - fib(93) is the largest that fits in u64
+        let n = n.min(93);
         let (tx, rx) = tokio::sync::mpsc::channel(16);
         tokio::spawn(async move {
             let mut a: u64 = 0;
             let mut b: u64 = 1;
-            for i in 0..n {
+            for _ in 0..n {
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                 if tx.send(Ok(a)).await.is_err() {
                     break;
                 }
-                // Stop if we'd overflow
-                if i > 90 {
-                    break;
-                }
-                let next = a.saturating_add(b);
+                let next = a.wrapping_add(b);
                 a = b;
                 b = next;
             }
