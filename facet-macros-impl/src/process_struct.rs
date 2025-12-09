@@ -799,6 +799,7 @@ pub(crate) fn gen_field_from_pfield(
     let mut skip_serializing_if_value: Option<TokenStream> = None;
     let mut invariants_value: Option<TokenStream> = None;
     let mut proxy_value: Option<TokenStream> = None;
+    let mut metadata_value: Option<String> = None;
     let mut attribute_list: Vec<TokenStream> = Vec::new();
 
     for attr in &field.attrs.facet {
@@ -842,6 +843,14 @@ pub(crate) fn gen_field_from_pfield(
                 "recursive_type" => {
                     // recursive_type sets a flag
                     flags.push(quote! { 𝟋FF::RECURSIVE_TYPE });
+                }
+                "metadata" => {
+                    // metadata = kind - marks field as metadata, excluded from structural hashing
+                    // Parse `= ident` to get just the ident as a string
+                    let args = &attr.args;
+                    let args_str = args.to_string();
+                    let kind_str = args_str.trim_start_matches('=').trim();
+                    metadata_value = Some(kind_str.to_string());
                 }
                 // Field attrs - store in dedicated field, don't add to attribute_list
                 "rename" => {
@@ -1103,6 +1112,12 @@ pub(crate) fn gen_field_from_pfield(
         None => quote! { ::core::option::Option::None },
     };
 
+    // Metadata: Option<&'static str>
+    let metadata_expr = match &metadata_value {
+        Some(kind) => quote! { ::core::option::Option::Some(#kind) },
+        None => quote! { ::core::option::Option::None },
+    };
+
     // Direct Field struct literal
     quote! {
         𝟋Fld {
@@ -1118,6 +1133,7 @@ pub(crate) fn gen_field_from_pfield(
             skip_serializing_if: #skip_ser_if_expr,
             invariants: #invariants_expr,
             proxy: #proxy_expr,
+            metadata: #metadata_expr,
         }
     }
 }

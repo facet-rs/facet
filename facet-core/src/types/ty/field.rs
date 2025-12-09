@@ -141,6 +141,21 @@ pub struct Field {
     /// Set by `#[facet(proxy = ProxyType)]`.
     #[cfg(feature = "alloc")]
     pub proxy: Option<&'static super::ProxyDef>,
+
+    /// Metadata kind for this field, if it stores metadata.
+    /// Set by `#[facet(metadata = kind)]` (e.g., `#[facet(metadata = span)]`).
+    ///
+    /// Metadata fields are:
+    /// - Excluded from structural hashing (`Peek::structural_hash`)
+    /// - Excluded from structural equality comparisons
+    /// - Excluded from tree diffing
+    /// - Populated by deserializers that support the metadata kind
+    ///
+    /// Common metadata kinds:
+    /// - `"span"`: Source byte offset and length (for `Spanned<T>`)
+    /// - `"line"`: Source line number
+    /// - `"column"`: Source column number
+    pub metadata: Option<&'static str>,
 }
 
 impl Field {
@@ -181,6 +196,23 @@ impl Field {
     #[inline]
     pub fn is_child(&self) -> bool {
         self.flags.contains(FieldFlags::CHILD)
+    }
+
+    /// Returns true if this field stores metadata.
+    ///
+    /// Metadata fields are excluded from structural hashing and equality.
+    /// Use `metadata_kind()` to get the specific kind of metadata.
+    #[inline]
+    pub fn is_metadata(&self) -> bool {
+        self.metadata.is_some()
+    }
+
+    /// Returns the metadata kind if this field stores metadata.
+    ///
+    /// Common values: `"span"`, `"line"`, `"column"`
+    #[inline]
+    pub fn metadata_kind(&self) -> Option<&'static str> {
+        self.metadata
     }
 
     /// Returns true if this field should be skipped during deserialization.
@@ -412,6 +444,7 @@ pub struct FieldBuilder {
     invariants: Option<InvariantsFn>,
     #[cfg(feature = "alloc")]
     proxy: Option<&'static super::ProxyDef>,
+    metadata: Option<&'static str>,
 }
 
 impl FieldBuilder {
@@ -440,6 +473,7 @@ impl FieldBuilder {
             invariants: None,
             #[cfg(feature = "alloc")]
             proxy: None,
+            metadata: None,
         }
     }
 
@@ -526,6 +560,21 @@ impl FieldBuilder {
         self
     }
 
+    /// Marks this field as storing metadata of the given kind.
+    ///
+    /// Metadata fields are excluded from structural hashing and equality,
+    /// and are populated by deserializers that support the metadata kind.
+    ///
+    /// Common metadata kinds:
+    /// - `"span"`: Source byte offset and length
+    /// - `"line"`: Source line number
+    /// - `"column"`: Source column number
+    #[inline]
+    pub const fn metadata(mut self, kind: &'static str) -> Self {
+        self.metadata = Some(kind);
+        self
+    }
+
     /// Builds the final `Field` instance.
     #[inline]
     pub const fn build(self) -> Field {
@@ -543,6 +592,7 @@ impl FieldBuilder {
             invariants: self.invariants,
             #[cfg(feature = "alloc")]
             proxy: self.proxy,
+            metadata: self.metadata,
         }
     }
 }

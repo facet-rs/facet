@@ -8,7 +8,7 @@
 use std::hash::{DefaultHasher, Hasher};
 
 use facet::Facet;
-use facet_diff::FacetDiff;
+use facet_diff::{EditOp, FacetDiff, tree_diff};
 use facet_reflect::Peek;
 use owo_colors::OwoColorize;
 
@@ -213,9 +213,63 @@ fn print_scenario(name: &str, description: &str, before: &Svg, after: &Svg) {
     println!("{}", "─".repeat(80).dimmed());
     println!();
 
+    // Old diff output
     let diff = before.diff(after);
-    println!("{}", "Diff output:".bold());
+    println!("{}", "Old diff output:".bold());
     println!("{diff}");
+    println!();
+
+    // New tree diff output
+    println!("{}", "New tree diff (GumTree-style):".bold().green());
+    let ops = tree_diff(before, after);
+    if ops.is_empty() {
+        println!("  {}", "(no changes)".dimmed());
+    } else {
+        for op in &ops {
+            match op {
+                EditOp::Update {
+                    path,
+                    old_hash,
+                    new_hash,
+                } => {
+                    println!(
+                        "  {} {} ({:08x} → {:08x})",
+                        "UPDATE".yellow(),
+                        path,
+                        old_hash & 0xFFFFFFFF,
+                        new_hash & 0xFFFFFFFF
+                    );
+                }
+                EditOp::Insert { path, hash } => {
+                    println!(
+                        "  {} {} ({:08x})",
+                        "INSERT".green(),
+                        path,
+                        hash & 0xFFFFFFFF
+                    );
+                }
+                EditOp::Delete { path, hash } => {
+                    println!("  {} {} ({:08x})", "DELETE".red(), path, hash & 0xFFFFFFFF);
+                }
+                EditOp::Move {
+                    old_path,
+                    new_path,
+                    hash,
+                } => {
+                    println!(
+                        "  {} {} → {} ({:08x})",
+                        "MOVE".cyan(),
+                        old_path,
+                        new_path,
+                        hash & 0xFFFFFFFF
+                    );
+                }
+                _ => {
+                    println!("  {} {:?}", "UNKNOWN".magenta(), op);
+                }
+            }
+        }
+    }
     println!();
 }
 

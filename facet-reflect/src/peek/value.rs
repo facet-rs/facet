@@ -312,8 +312,13 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
                 // Hash struct kind
                 (struct_type.kind as u8).hash(hasher);
 
-                // Hash each field
+                // Hash each field, skipping metadata fields
                 for field in struct_type.fields {
+                    // Skip metadata fields - they don't affect structural identity
+                    if field.is_metadata() {
+                        continue;
+                    }
+
                     // Hash field name
                     field.name.hash(hasher);
 
@@ -1268,5 +1273,99 @@ mod tests {
         let peek = Peek::new(&opt);
         let covariant = CovariantPeek::new(peek);
         assert!(covariant.is_some());
+    }
+
+    #[test]
+    fn test_spanned_structural_hash_ignores_span() {
+        use crate::{Span, Spanned};
+        use core::hash::Hasher;
+        use std::hash::DefaultHasher;
+
+        // Two Spanned values with same inner value but different spans
+        let a = Spanned::new(42i32, Span::new(0, 10));
+        let b = Spanned::new(42i32, Span::new(100, 20));
+
+        // They should have the same structural hash
+        let mut hasher_a = DefaultHasher::new();
+        Peek::new(&a).structural_hash(&mut hasher_a);
+        let hash_a = hasher_a.finish();
+
+        let mut hasher_b = DefaultHasher::new();
+        Peek::new(&b).structural_hash(&mut hasher_b);
+        let hash_b = hasher_b.finish();
+
+        assert_eq!(
+            hash_a, hash_b,
+            "Spanned values with same inner value should have same structural hash"
+        );
+    }
+
+    #[test]
+    fn test_spanned_structural_hash_differs_for_different_values() {
+        use crate::{Span, Spanned};
+        use core::hash::Hasher;
+        use std::hash::DefaultHasher;
+
+        // Two Spanned values with different inner values
+        let a = Spanned::new(42i32, Span::new(0, 10));
+        let b = Spanned::new(99i32, Span::new(0, 10));
+
+        // They should have different structural hashes
+        let mut hasher_a = DefaultHasher::new();
+        Peek::new(&a).structural_hash(&mut hasher_a);
+        let hash_a = hasher_a.finish();
+
+        let mut hasher_b = DefaultHasher::new();
+        Peek::new(&b).structural_hash(&mut hasher_b);
+        let hash_b = hasher_b.finish();
+
+        assert_ne!(
+            hash_a, hash_b,
+            "Spanned values with different inner values should have different structural hashes"
+        );
+    }
+
+    #[test]
+    fn test_spanned_field_metadata() {
+        use crate::Spanned;
+        use facet_core::{Type, UserType};
+
+        // Get the shape for Spanned<i32>
+        let shape = <Spanned<i32> as facet_core::Facet>::SHAPE;
+
+        // Extract the struct type
+        let struct_type = match shape.ty {
+            Type::User(UserType::Struct(st)) => st,
+            _ => panic!("Expected struct type"),
+        };
+
+        // Find the span field and verify it has metadata = "span"
+        let span_field = struct_type
+            .fields
+            .iter()
+            .find(|f| f.name == "span")
+            .expect("Should have span field");
+
+        assert!(
+            span_field.is_metadata(),
+            "span field should be marked as metadata"
+        );
+        assert_eq!(
+            span_field.metadata_kind(),
+            Some("span"),
+            "span field should have metadata kind 'span'"
+        );
+
+        // Verify the value field is NOT metadata
+        let value_field = struct_type
+            .fields
+            .iter()
+            .find(|f| f.name == "value")
+            .expect("Should have value field");
+
+        assert!(
+            !value_field.is_metadata(),
+            "value field should not be marked as metadata"
+        );
     }
 }
