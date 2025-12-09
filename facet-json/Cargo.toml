@@ -60,15 +60,15 @@ futures-io = { version = "0.3", optional = true }
 corosensei = { version = "0.3", optional = true }
 
 # JIT compilation dependencies (optional)
-cranelift = { version = "0.125", optional = true }
-cranelift-jit = { version = "0.125", optional = true }
-cranelift-module = { version = "0.125", optional = true }
-cranelift-native = { version = "0.125", optional = true }
+cranelift = { version = "0.126", optional = true }
+cranelift-jit = { version = "0.126", optional = true }
+cranelift-module = { version = "0.126", optional = true }
+cranelift-native = { version = "0.126", optional = true }
 parking_lot = { version = "0.12", optional = true }
 memchr = { version = "2.7", optional = true }
 
 [dev-dependencies]
-bolero = "0.11"
+bolero = "0.13"
 bytes = { version = "1.10.1" }
 camino = { version = "1" }
 facet-value = { path = "../facet-value" }

@@ -20,7 +20,7 @@ default = ["std"]
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
 [dependencies]
-quick-xml = "0.37"
+quick-xml = "0.38"
 facet = { path = "../facet", default-features = false }
 facet-core = { path = "../facet-core", default-features = false }
 facet-reflect = { path = "../facet-reflect", default-features = false, features = ["miette"] }
