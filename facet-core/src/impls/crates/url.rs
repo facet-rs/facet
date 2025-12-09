@@ -19,44 +19,56 @@ unsafe fn display_url(
     }
 }
 
+fn url_parse_error_message(error: url::ParseError) -> &'static str {
+    match error {
+        url::ParseError::EmptyHost => "empty host",
+        url::ParseError::IdnaError => "invalid international domain name",
+        url::ParseError::InvalidPort => "invalid port number",
+        url::ParseError::InvalidIpv4Address => "invalid IPv4 address",
+        url::ParseError::InvalidIpv6Address => "invalid IPv6 address",
+        url::ParseError::InvalidDomainCharacter => "invalid domain character",
+        url::ParseError::RelativeUrlWithoutBase => "relative URL without a base",
+        url::ParseError::RelativeUrlWithCannotBeABaseBase => {
+            "relative URL with a cannot-be-a-base base"
+        }
+        url::ParseError::SetHostOnCannotBeABaseUrl => {
+            "a cannot-be-a-base URL doesn't have a host to set"
+        }
+        url::ParseError::Overflow => "URLs more than 4 GB are not supported",
+        _ => "failed to parse URL",
+    }
+}
+
 unsafe fn try_from_url(
     target: OxPtrMut,
     src_shape: &'static Shape,
     src: PtrConst,
 ) -> Option<Result<(), String>> {
     unsafe {
-        if src_shape.id == <String as Facet>::SHAPE.id {
-            let source_str = src.read::<String>();
-            let parsed = Url::parse(&source_str).map_err(|error| {
-                let message = match error {
-                    url::ParseError::EmptyHost => "empty host",
-                    url::ParseError::IdnaError => "invalid international domain name",
-                    url::ParseError::InvalidPort => "invalid port number",
-                    url::ParseError::InvalidIpv4Address => "invalid IPv4 address",
-                    url::ParseError::InvalidIpv6Address => "invalid IPv6 address",
-                    url::ParseError::InvalidDomainCharacter => "invalid domain character",
-                    url::ParseError::RelativeUrlWithoutBase => "relative URL without a base",
-                    url::ParseError::RelativeUrlWithCannotBeABaseBase => {
-                        "relative URL with a cannot-be-a-base base"
-                    }
-                    url::ParseError::SetHostOnCannotBeABaseUrl => {
-                        "a cannot-be-a-base URL doesn't have a host to set"
-                    }
-                    url::ParseError::Overflow => "URLs more than 4 GB are not supported",
-                    _ => "failed to parse URL",
-                };
-                message.to_string()
-            });
-            Some(match parsed {
+        // Handle &str
+        if src_shape.id == <&str as Facet>::SHAPE.id {
+            let source_str: &str = src.get::<&str>();
+            match Url::parse(source_str) {
                 Ok(val) => {
                     *target.as_mut::<Url>() = val;
-                    Ok(())
+                    Some(Ok(()))
                 }
-                Err(e) => Err(e),
-            })
+                Err(e) => Some(Err(url_parse_error_message(e).to_string())),
+            }
+        }
+        // Handle String
+        else if src_shape.id == <String as Facet>::SHAPE.id {
+            let source_str = src.read::<String>();
+            match Url::parse(&source_str) {
+                Ok(val) => {
+                    *target.as_mut::<Url>() = val;
+                    Some(Ok(()))
+                }
+                Err(e) => Some(Err(url_parse_error_message(e).to_string())),
+            }
         } else {
             Some(Err(format!(
-                "unsupported source shape for Url, expected String, got {}",
+                "unsupported source shape for Url, expected &str or String, got {}",
                 src_shape.type_identifier
             )))
         }
@@ -65,33 +77,13 @@ unsafe fn try_from_url(
 
 unsafe fn parse_url(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>> {
     unsafe {
-        let parsed = Url::parse(s).map_err(|error| {
-            let message = match error {
-                url::ParseError::EmptyHost => "empty host",
-                url::ParseError::IdnaError => "invalid international domain name",
-                url::ParseError::InvalidPort => "invalid port number",
-                url::ParseError::InvalidIpv4Address => "invalid IPv4 address",
-                url::ParseError::InvalidIpv6Address => "invalid IPv6 address",
-                url::ParseError::InvalidDomainCharacter => "invalid domain character",
-                url::ParseError::RelativeUrlWithoutBase => "relative URL without a base",
-                url::ParseError::RelativeUrlWithCannotBeABaseBase => {
-                    "relative URL with a cannot-be-a-base base"
-                }
-                url::ParseError::SetHostOnCannotBeABaseUrl => {
-                    "a cannot-be-a-base URL doesn't have a host to set"
-                }
-                url::ParseError::Overflow => "URLs more than 4 GB are not supported",
-                _ => "failed to parse URL",
-            };
-            ParseError::from_str(message)
-        });
-        Some(match parsed {
+        match Url::parse(s) {
             Ok(val) => {
                 *target.as_mut::<Url>() = val;
-                Ok(())
+                Some(Ok(()))
             }
-            Err(e) => Err(e),
-        })
+            Err(e) => Some(Err(ParseError::from_str(url_parse_error_message(e)))),
+        }
     }
 }
 

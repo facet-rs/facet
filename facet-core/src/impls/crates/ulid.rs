@@ -28,20 +28,30 @@ unsafe fn try_from_ulid(
     src: PtrConst,
 ) -> Option<Result<(), String>> {
     unsafe {
-        if src_shape.id == <String as Facet>::SHAPE.id {
-            let source_str = src.read::<String>();
-            let parsed =
-                Ulid::from_string(&source_str).map_err(|_| "ULID parsing failed".to_string());
-            Some(match parsed {
+        // Handle &str
+        if src_shape.id == <&str as Facet>::SHAPE.id {
+            let source_str: &str = src.get::<&str>();
+            match Ulid::from_string(source_str) {
                 Ok(val) => {
                     *target.as_mut::<Ulid>() = val;
-                    Ok(())
+                    Some(Ok(()))
                 }
-                Err(e) => Err(e),
-            })
+                Err(_) => Some(Err("ULID parsing failed".to_string())),
+            }
+        }
+        // Handle String
+        else if src_shape.id == <String as Facet>::SHAPE.id {
+            let source_str = src.read::<String>();
+            match Ulid::from_string(&source_str) {
+                Ok(val) => {
+                    *target.as_mut::<Ulid>() = val;
+                    Some(Ok(()))
+                }
+                Err(_) => Some(Err("ULID parsing failed".to_string())),
+            }
         } else {
             Some(Err(format!(
-                "unsupported source shape for Ulid, expected String, got {}",
+                "unsupported source shape for Ulid, expected &str or String, got {}",
                 src_shape.type_identifier
             )))
         }

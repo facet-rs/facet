@@ -27,20 +27,30 @@ unsafe fn try_from_uuid(
     src: PtrConst,
 ) -> Option<Result<(), String>> {
     unsafe {
-        if src_shape.id == <String as Facet>::SHAPE.id {
-            let source_str = src.read::<String>();
-            let parsed =
-                Uuid::parse_str(&source_str).map_err(|_| "UUID parsing failed".to_string());
-            Some(match parsed {
+        // Handle &str
+        if src_shape.id == <&str as Facet>::SHAPE.id {
+            let source_str: &str = src.get::<&str>();
+            match Uuid::parse_str(source_str) {
                 Ok(val) => {
                     *target.as_mut::<Uuid>() = val;
-                    Ok(())
+                    Some(Ok(()))
                 }
-                Err(e) => Err(e),
-            })
+                Err(_) => Some(Err("UUID parsing failed".to_string())),
+            }
+        }
+        // Handle String
+        else if src_shape.id == <String as Facet>::SHAPE.id {
+            let source_str = src.read::<String>();
+            match Uuid::parse_str(&source_str) {
+                Ok(val) => {
+                    *target.as_mut::<Uuid>() = val;
+                    Some(Ok(()))
+                }
+                Err(_) => Some(Err("UUID parsing failed".to_string())),
+            }
         } else {
             Some(Err(format!(
-                "unsupported source shape for Uuid, expected String, got {}",
+                "unsupported source shape for Uuid, expected &str or String, got {}",
                 src_shape.type_identifier
             )))
         }
