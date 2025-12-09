@@ -1,5 +1,6 @@
 //! Pretty printer implementation for Facet types
 
+use alloc::borrow::Cow;
 use alloc::collections::BTreeMap;
 use core::{
     fmt::{self, Write},
@@ -17,6 +18,7 @@ use facet_reflect::{Peek, ValueId};
 use owo_colors::{OwoColorize, Rgb};
 
 use crate::color::ColorGenerator;
+use crate::shape::{FieldSpan, Path, PathSegment, Span};
 
 /// Tokyo Night color palette (RGB values from official theme)
 ///
@@ -1121,6 +1123,478 @@ impl PrettyPrinter {
         self.write_redacted(&mut result, text).unwrap();
         result
     }
+
+    /// Format a value with span tracking for each path.
+    ///
+    /// Returns a `FormattedValue` containing the plain text output and a map
+    /// from paths to their byte spans in the output.
+    ///
+    /// This is useful for creating rich diagnostics that can highlight specific
+    /// parts of a pretty-printed value.
+    pub fn format_peek_with_spans(&self, value: Peek<'_, '_>) -> FormattedValue {
+        let mut ctx = ValueSpanContext::new();
+        let printer = Self {
+            use_colors: false, // Always disable colors for span tracking
+            indent_size: self.indent_size,
+            max_depth: self.max_depth,
+            color_generator: self.color_generator.clone(),
+            list_u8_as_bytes: self.list_u8_as_bytes,
+            minimal_option_names: self.minimal_option_names,
+            show_doc_comments: self.show_doc_comments,
+        };
+        printer
+            .format_peek_with_spans_internal(
+                value,
+                &mut ctx,
+                &mut BTreeMap::new(),
+                0,
+                0,
+                false,
+                vec![],
+            )
+            .expect("Formatting failed");
+
+        FormattedValue {
+            text: ctx.output,
+            spans: ctx.spans,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn format_peek_with_spans_internal(
+        &self,
+        value: Peek<'_, '_>,
+        ctx: &mut ValueSpanContext,
+        visited: &mut BTreeMap<ValueId, usize>,
+        format_depth: usize,
+        type_depth: usize,
+        short: bool,
+        current_path: Vec<PathSegment>,
+    ) -> fmt::Result {
+        let mut value = value;
+        while let Ok(ptr) = value.into_pointer()
+            && let Some(pointee) = ptr.borrow_inner()
+        {
+            value = pointee;
+        }
+        let shape = value.shape();
+
+        // Record the start of this value
+        let value_start = ctx.len();
+
+        if let Some(prev_type_depth) = visited.insert(value.id(), type_depth) {
+            write!(ctx.output, "{} {{ ", shape.type_identifier)?;
+            write!(
+                ctx.output,
+                "/* cycle detected at {} (first seen at type_depth {}) */",
+                value.id(),
+                prev_type_depth,
+            )?;
+            visited.remove(&value.id());
+            let value_end = ctx.len();
+            ctx.record_span(current_path, (value_start, value_end));
+            return Ok(());
+        }
+
+        match (shape.def, shape.ty) {
+            (_, Type::Primitive(PrimitiveType::Textual(TextualType::Str))) => {
+                let s = value.get::<str>().unwrap();
+                write!(ctx.output, "\"{}\"", s)?;
+            }
+            (Def::Scalar, _) if value.shape().id == <alloc::string::String as Facet>::SHAPE.id => {
+                let s = value.get::<alloc::string::String>().unwrap();
+                write!(ctx.output, "\"{}\"", s)?;
+            }
+            (Def::Scalar, _) => {
+                self.format_scalar_to_string(value, &mut ctx.output)?;
+            }
+            (Def::Option(_), _) => {
+                let option = value.into_option().unwrap();
+                if let Some(inner) = option.value() {
+                    write!(ctx.output, "Some(")?;
+                    self.format_peek_with_spans_internal(
+                        inner,
+                        ctx,
+                        visited,
+                        format_depth,
+                        type_depth + 1,
+                        short,
+                        current_path.clone(),
+                    )?;
+                    write!(ctx.output, ")")?;
+                } else {
+                    write!(ctx.output, "None")?;
+                }
+            }
+            (
+                _,
+                Type::User(UserType::Struct(
+                    ty @ StructType {
+                        kind: StructKind::Struct | StructKind::Unit,
+                        ..
+                    },
+                )),
+            ) => {
+                write!(ctx.output, "{}", shape.type_identifier)?;
+                if matches!(ty.kind, StructKind::Struct) {
+                    let struct_peek = value.into_struct().unwrap();
+                    write!(ctx.output, " {{")?;
+                    for (i, field) in ty.fields.iter().enumerate() {
+                        if !short {
+                            writeln!(ctx.output)?;
+                            self.indent_to_string(&mut ctx.output, format_depth + 1)?;
+                        }
+                        // Record field name span
+                        let field_name_start = ctx.len();
+                        write!(ctx.output, "{}", field.name)?;
+                        let field_name_end = ctx.len();
+                        write!(ctx.output, ": ")?;
+
+                        // Build path for this field
+                        let mut field_path = current_path.clone();
+                        field_path.push(PathSegment::Field(Cow::Borrowed(field.name)));
+
+                        // Record field value span
+                        let field_value_start = ctx.len();
+                        if let Ok(field_value) = struct_peek.field(i) {
+                            self.format_peek_with_spans_internal(
+                                field_value,
+                                ctx,
+                                visited,
+                                format_depth + 1,
+                                type_depth + 1,
+                                short,
+                                field_path.clone(),
+                            )?;
+                        }
+                        let field_value_end = ctx.len();
+
+                        // Record span for this field
+                        ctx.record_field_span(
+                            field_path,
+                            (field_name_start, field_name_end),
+                            (field_value_start, field_value_end),
+                        );
+
+                        if !short || i + 1 < ty.fields.len() {
+                            write!(ctx.output, ",")?;
+                        }
+                    }
+                    if !short {
+                        writeln!(ctx.output)?;
+                        self.indent_to_string(&mut ctx.output, format_depth)?;
+                    }
+                    write!(ctx.output, "}}")?;
+                }
+            }
+            (
+                _,
+                Type::User(UserType::Struct(
+                    ty @ StructType {
+                        kind: StructKind::Tuple | StructKind::TupleStruct,
+                        ..
+                    },
+                )),
+            ) => {
+                write!(ctx.output, "{}", shape.type_identifier)?;
+                if matches!(ty.kind, StructKind::Tuple) {
+                    write!(ctx.output, " ")?;
+                }
+                let struct_peek = value.into_struct().unwrap();
+                write!(ctx.output, "(")?;
+                for (i, _field) in ty.fields.iter().enumerate() {
+                    if i > 0 {
+                        write!(ctx.output, ", ")?;
+                    }
+                    let mut elem_path = current_path.clone();
+                    elem_path.push(PathSegment::Index(i));
+
+                    let elem_start = ctx.len();
+                    if let Ok(field_value) = struct_peek.field(i) {
+                        self.format_peek_with_spans_internal(
+                            field_value,
+                            ctx,
+                            visited,
+                            format_depth + 1,
+                            type_depth + 1,
+                            short,
+                            elem_path.clone(),
+                        )?;
+                    }
+                    let elem_end = ctx.len();
+                    ctx.record_span(elem_path, (elem_start, elem_end));
+                }
+                write!(ctx.output, ")")?;
+            }
+            (_, Type::User(UserType::Enum(_))) => {
+                let enum_peek = value.into_enum().unwrap();
+                match enum_peek.active_variant() {
+                    Err(_) => {
+                        write!(
+                            ctx.output,
+                            "{} {{ /* cannot determine variant */ }}",
+                            shape.type_identifier
+                        )?;
+                    }
+                    Ok(variant) => {
+                        write!(ctx.output, "{}::{}", shape.type_identifier, variant.name)?;
+
+                        match variant.data.kind {
+                            StructKind::Unit => {}
+                            StructKind::Struct => {
+                                write!(ctx.output, " {{")?;
+                                for (i, field) in variant.data.fields.iter().enumerate() {
+                                    if !short {
+                                        writeln!(ctx.output)?;
+                                        self.indent_to_string(&mut ctx.output, format_depth + 1)?;
+                                    }
+                                    let field_name_start = ctx.len();
+                                    write!(ctx.output, "{}", field.name)?;
+                                    let field_name_end = ctx.len();
+                                    write!(ctx.output, ": ")?;
+
+                                    let mut field_path = current_path.clone();
+                                    field_path
+                                        .push(PathSegment::Variant(Cow::Borrowed(variant.name)));
+                                    field_path.push(PathSegment::Field(Cow::Borrowed(field.name)));
+
+                                    let field_value_start = ctx.len();
+                                    if let Ok(Some(field_value)) = enum_peek.field(i) {
+                                        self.format_peek_with_spans_internal(
+                                            field_value,
+                                            ctx,
+                                            visited,
+                                            format_depth + 1,
+                                            type_depth + 1,
+                                            short,
+                                            field_path.clone(),
+                                        )?;
+                                    }
+                                    let field_value_end = ctx.len();
+
+                                    ctx.record_field_span(
+                                        field_path,
+                                        (field_name_start, field_name_end),
+                                        (field_value_start, field_value_end),
+                                    );
+
+                                    if !short || i + 1 < variant.data.fields.len() {
+                                        write!(ctx.output, ",")?;
+                                    }
+                                }
+                                if !short {
+                                    writeln!(ctx.output)?;
+                                    self.indent_to_string(&mut ctx.output, format_depth)?;
+                                }
+                                write!(ctx.output, "}}")?;
+                            }
+                            _ => {
+                                write!(ctx.output, "(")?;
+                                for (i, _field) in variant.data.fields.iter().enumerate() {
+                                    if i > 0 {
+                                        write!(ctx.output, ", ")?;
+                                    }
+                                    let mut elem_path = current_path.clone();
+                                    elem_path
+                                        .push(PathSegment::Variant(Cow::Borrowed(variant.name)));
+                                    elem_path.push(PathSegment::Index(i));
+
+                                    let elem_start = ctx.len();
+                                    if let Ok(Some(field_value)) = enum_peek.field(i) {
+                                        self.format_peek_with_spans_internal(
+                                            field_value,
+                                            ctx,
+                                            visited,
+                                            format_depth + 1,
+                                            type_depth + 1,
+                                            short,
+                                            elem_path.clone(),
+                                        )?;
+                                    }
+                                    let elem_end = ctx.len();
+                                    ctx.record_span(elem_path, (elem_start, elem_end));
+                                }
+                                write!(ctx.output, ")")?;
+                            }
+                        }
+                    }
+                }
+            }
+            _ if value.into_list_like().is_ok() => {
+                let list = value.into_list_like().unwrap();
+                write!(ctx.output, "[")?;
+                for (i, item) in list.iter().enumerate() {
+                    if !short {
+                        writeln!(ctx.output)?;
+                        self.indent_to_string(&mut ctx.output, format_depth + 1)?;
+                    }
+                    let mut elem_path = current_path.clone();
+                    elem_path.push(PathSegment::Index(i));
+
+                    let elem_start = ctx.len();
+                    self.format_peek_with_spans_internal(
+                        item,
+                        ctx,
+                        visited,
+                        format_depth + 1,
+                        type_depth + 1,
+                        short,
+                        elem_path.clone(),
+                    )?;
+                    let elem_end = ctx.len();
+                    ctx.record_span(elem_path, (elem_start, elem_end));
+
+                    if !short || i + 1 < list.len() {
+                        write!(ctx.output, ",")?;
+                    }
+                }
+                if !short && !list.is_empty() {
+                    writeln!(ctx.output)?;
+                    self.indent_to_string(&mut ctx.output, format_depth)?;
+                }
+                write!(ctx.output, "]")?;
+            }
+            _ if value.into_map().is_ok() => {
+                let map = value.into_map().unwrap();
+                write!(ctx.output, "{{")?;
+                for (i, (key, val)) in map.iter().enumerate() {
+                    if !short {
+                        writeln!(ctx.output)?;
+                        self.indent_to_string(&mut ctx.output, format_depth + 1)?;
+                    }
+                    // Format key
+                    let key_start = ctx.len();
+                    self.format_peek_with_spans_internal(
+                        key,
+                        ctx,
+                        visited,
+                        format_depth + 1,
+                        type_depth + 1,
+                        true, // short for keys
+                        vec![],
+                    )?;
+                    let key_end = ctx.len();
+
+                    write!(ctx.output, ": ")?;
+
+                    // Build path for this entry (use key's string representation)
+                    let key_str = self.format_peek(key);
+                    let mut entry_path = current_path.clone();
+                    entry_path.push(PathSegment::Key(Cow::Owned(key_str)));
+
+                    let val_start = ctx.len();
+                    self.format_peek_with_spans_internal(
+                        val,
+                        ctx,
+                        visited,
+                        format_depth + 1,
+                        type_depth + 1,
+                        short,
+                        entry_path.clone(),
+                    )?;
+                    let val_end = ctx.len();
+
+                    ctx.record_field_span(entry_path, (key_start, key_end), (val_start, val_end));
+
+                    if !short || i + 1 < map.len() {
+                        write!(ctx.output, ",")?;
+                    }
+                }
+                if !short && map.len() > 0 {
+                    writeln!(ctx.output)?;
+                    self.indent_to_string(&mut ctx.output, format_depth)?;
+                }
+                write!(ctx.output, "}}")?;
+            }
+            _ => {
+                // Fallback: just write the type name
+                write!(ctx.output, "{} {{ ... }}", shape.type_identifier)?;
+            }
+        }
+
+        visited.remove(&value.id());
+
+        // Record span for this value
+        let value_end = ctx.len();
+        ctx.record_span(current_path, (value_start, value_end));
+
+        Ok(())
+    }
+
+    fn format_scalar_to_string(&self, value: Peek<'_, '_>, out: &mut String) -> fmt::Result {
+        // Use Display or Debug trait to format scalar values
+        if value.shape().is_display() {
+            write!(out, "{}", value)
+        } else if value.shape().is_debug() {
+            write!(out, "{:?}", value)
+        } else {
+            write!(out, "{}(…)", value.shape())
+        }
+    }
+
+    fn indent_to_string(&self, out: &mut String, depth: usize) -> fmt::Result {
+        for _ in 0..depth {
+            for _ in 0..self.indent_size {
+                out.push(' ');
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Result of formatting a value with span tracking
+#[derive(Debug)]
+pub struct FormattedValue {
+    /// The formatted text (plain text, no ANSI colors)
+    pub text: String,
+    /// Map from paths to their byte spans in `text`
+    pub spans: BTreeMap<Path, FieldSpan>,
+}
+
+/// Context for tracking spans during value formatting
+struct ValueSpanContext {
+    output: String,
+    spans: BTreeMap<Path, FieldSpan>,
+}
+
+impl ValueSpanContext {
+    fn new() -> Self {
+        Self {
+            output: String::new(),
+            spans: BTreeMap::new(),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.output.len()
+    }
+
+    fn record_span(&mut self, path: Path, span: Span) {
+        self.spans.insert(
+            path,
+            FieldSpan {
+                key: span,
+                value: span,
+            },
+        );
+    }
+
+    fn record_field_span(&mut self, path: Path, key_span: Span, value_span: Span) {
+        self.spans.insert(
+            path,
+            FieldSpan {
+                key: key_span,
+                value: value_span,
+            },
+        );
+    }
+}
+
+impl Write for ValueSpanContext {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.output.push_str(s);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1146,5 +1620,40 @@ mod tests {
         assert_eq!(printer.indent_size, 4);
         assert_eq!(printer.max_depth, Some(3));
         assert!(!printer.use_colors);
+    }
+
+    #[test]
+    fn test_format_peek_with_spans() {
+        use crate::PathSegment;
+        use facet_reflect::Peek;
+
+        // Test with a simple tuple - no need for custom struct
+        let value = ("Alice", 30u32);
+
+        let printer = PrettyPrinter::new();
+        let formatted = printer.format_peek_with_spans(Peek::new(&value));
+
+        // Check that we got output
+        assert!(!formatted.text.is_empty());
+        assert!(formatted.text.contains("Alice"));
+        assert!(formatted.text.contains("30"));
+
+        // Check that spans were recorded
+        assert!(!formatted.spans.is_empty());
+
+        // Check that the root span exists (empty path)
+        assert!(formatted.spans.contains_key(&vec![]));
+
+        // Check that index spans exist
+        let idx0_path = vec![PathSegment::Index(0)];
+        let idx1_path = vec![PathSegment::Index(1)];
+        assert!(
+            formatted.spans.contains_key(&idx0_path),
+            "index 0 span not found"
+        );
+        assert!(
+            formatted.spans.contains_key(&idx1_path),
+            "index 1 span not found"
+        );
     }
 }

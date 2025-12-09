@@ -32,6 +32,7 @@ impl RGB {
 }
 
 /// A color generator that produces unique colors based on a hash value
+#[derive(Clone)]
 pub struct ColorGenerator {
     base_hue: f32,
     saturation: f32,
