@@ -2,8 +2,8 @@
 
 use eyre::Result;
 use facet::Facet;
-use facet_postcard::{from_bytes, to_vec};
-use postcard::from_bytes as postcard_from_bytes;
+use facet_postcard::{from_slice, to_vec};
+use postcard::from_bytes as postcard_from_slice;
 use postcard::to_allocvec as postcard_to_vec;
 use serde::{Deserialize, Serialize};
 
@@ -40,7 +40,7 @@ macro_rules! test_primitive {
                 for &value in &$values {
                     let wrapper = Wrapper { value };
                     let bytes = to_vec(&wrapper)?;
-                    let decoded: Wrapper = from_bytes(&bytes)?;
+                    let decoded: Wrapper = from_slice(&bytes)?;
                     assert_eq!(wrapper, decoded, "Roundtrip failed for value {:?}", value);
                 }
                 Ok(())
@@ -54,12 +54,12 @@ macro_rules! test_primitive {
 
                     // facet -> postcard
                     let facet_bytes = to_vec(&wrapper)?;
-                    let decoded: Wrapper = postcard_from_bytes(&facet_bytes)?;
+                    let decoded: Wrapper = postcard_from_slice(&facet_bytes)?;
                     assert_eq!(wrapper, decoded, "facet->postcard failed for {:?}", value);
 
                     // postcard -> facet
                     let postcard_bytes = postcard_to_vec(&wrapper)?;
-                    let decoded: Wrapper = from_bytes(&postcard_bytes)?;
+                    let decoded: Wrapper = from_slice(&postcard_bytes)?;
                     assert_eq!(wrapper, decoded, "postcard->facet failed for {:?}", value);
                 }
                 Ok(())
@@ -266,7 +266,7 @@ mod unit_tests {
         facet_testhelpers::setup();
         let wrapper = UnitWrapper { value: () };
         let bytes = to_vec(&wrapper)?;
-        let decoded: UnitWrapper = from_bytes(&bytes)?;
+        let decoded: UnitWrapper = from_slice(&bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -296,7 +296,7 @@ mod special_floats {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: F32Wrapper = from_bytes(&facet_bytes)?;
+        let decoded: F32Wrapper = from_slice(&facet_bytes)?;
         assert!(decoded.value.is_infinite() && decoded.value.is_sign_positive());
         Ok(())
     }
@@ -311,7 +311,7 @@ mod special_floats {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: F32Wrapper = from_bytes(&facet_bytes)?;
+        let decoded: F32Wrapper = from_slice(&facet_bytes)?;
         assert!(decoded.value.is_infinite() && decoded.value.is_sign_negative());
         Ok(())
     }
@@ -324,7 +324,7 @@ mod special_floats {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: F32Wrapper = from_bytes(&facet_bytes)?;
+        let decoded: F32Wrapper = from_slice(&facet_bytes)?;
         assert!(decoded.value.is_nan());
         Ok(())
     }
@@ -339,7 +339,7 @@ mod special_floats {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: F64Wrapper = from_bytes(&facet_bytes)?;
+        let decoded: F64Wrapper = from_slice(&facet_bytes)?;
         assert!(decoded.value.is_infinite() && decoded.value.is_sign_positive());
         Ok(())
     }
@@ -354,7 +354,7 @@ mod special_floats {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: F64Wrapper = from_bytes(&facet_bytes)?;
+        let decoded: F64Wrapper = from_slice(&facet_bytes)?;
         assert!(decoded.value.is_infinite() && decoded.value.is_sign_negative());
         Ok(())
     }
@@ -367,7 +367,7 @@ mod special_floats {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: F64Wrapper = from_bytes(&facet_bytes)?;
+        let decoded: F64Wrapper = from_slice(&facet_bytes)?;
         assert!(decoded.value.is_nan());
         Ok(())
     }

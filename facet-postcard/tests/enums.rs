@@ -2,7 +2,7 @@
 
 use eyre::Result;
 use facet::Facet;
-use facet_postcard::{from_bytes, to_vec};
+use facet_postcard::{from_slice, to_vec};
 use postcard::to_allocvec as postcard_to_vec;
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +29,7 @@ mod unit_variant_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: UnitEnum = from_bytes(&facet_bytes)?;
+        let decoded: UnitEnum = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -42,7 +42,7 @@ mod unit_variant_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: UnitEnum = from_bytes(&facet_bytes)?;
+        let decoded: UnitEnum = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -55,7 +55,7 @@ mod unit_variant_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: UnitEnum = from_bytes(&facet_bytes)?;
+        let decoded: UnitEnum = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -134,7 +134,7 @@ mod newtype_variant_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: NewtypeEnum = from_bytes(&facet_bytes)?;
+        let decoded: NewtypeEnum = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -147,7 +147,7 @@ mod newtype_variant_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: NewtypeEnum = from_bytes(&facet_bytes)?;
+        let decoded: NewtypeEnum = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -168,7 +168,7 @@ mod newtype_variant_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: NewtypeWithVec = from_bytes(&facet_bytes)?;
+        let decoded: NewtypeWithVec = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -198,7 +198,7 @@ mod tuple_variant_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: TupleEnum = from_bytes(&facet_bytes)?;
+        let decoded: TupleEnum = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -211,7 +211,7 @@ mod tuple_variant_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: TupleEnum = from_bytes(&facet_bytes)?;
+        let decoded: TupleEnum = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -241,7 +241,7 @@ mod struct_variant_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: StructEnum = from_bytes(&facet_bytes)?;
+        let decoded: StructEnum = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -258,7 +258,7 @@ mod struct_variant_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: StructEnum = from_bytes(&facet_bytes)?;
+        let decoded: StructEnum = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -289,7 +289,7 @@ mod mixed_variant_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: MixedEnum = from_bytes(&facet_bytes)?;
+        let decoded: MixedEnum = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -302,7 +302,7 @@ mod mixed_variant_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: MixedEnum = from_bytes(&facet_bytes)?;
+        let decoded: MixedEnum = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -315,7 +315,7 @@ mod mixed_variant_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: MixedEnum = from_bytes(&facet_bytes)?;
+        let decoded: MixedEnum = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -331,7 +331,7 @@ mod mixed_variant_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: MixedEnum = from_bytes(&facet_bytes)?;
+        let decoded: MixedEnum = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -368,7 +368,7 @@ mod nested_enum_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: Outer = from_bytes(&facet_bytes)?;
+        let decoded: Outer = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -381,7 +381,7 @@ mod nested_enum_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: Outer = from_bytes(&facet_bytes)?;
+        let decoded: Outer = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -415,7 +415,7 @@ mod option_enum_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: OptionalEnum = from_bytes(&facet_bytes)?;
+        let decoded: OptionalEnum = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -430,7 +430,7 @@ mod option_enum_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: OptionalEnum = from_bytes(&facet_bytes)?;
+        let decoded: OptionalEnum = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -467,7 +467,7 @@ mod vec_enum_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: Colors = from_bytes(&facet_bytes)?;
+        let decoded: Colors = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -480,7 +480,7 @@ mod vec_enum_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: Colors = from_bytes(&facet_bytes)?;
+        let decoded: Colors = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -509,7 +509,7 @@ mod generic_enum_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: MyResult<u32, String> = from_bytes(&facet_bytes)?;
+        let decoded: MyResult<u32, String> = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -522,7 +522,7 @@ mod generic_enum_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: MyResult<u32, String> = from_bytes(&facet_bytes)?;
+        let decoded: MyResult<u32, String> = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }

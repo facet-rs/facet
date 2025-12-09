@@ -78,7 +78,7 @@ where
             })?
             .to_bytes();
 
-        let value: T = crate::from_bytes(&bytes).map_err(|e| PostcardRejection {
+        let value: T = crate::from_slice(&bytes).map_err(|e| PostcardRejection {
             kind: PostcardRejectionKind::Deserialize(e),
         })?;
 

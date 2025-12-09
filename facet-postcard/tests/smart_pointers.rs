@@ -7,7 +7,7 @@
 
 use eyre::Result;
 use facet::Facet;
-use facet_postcard::{from_bytes, to_vec};
+use facet_postcard::{from_slice, to_vec};
 use postcard::to_allocvec as postcard_to_vec;
 use serde::{Deserialize, Serialize};
 use std::rc::Rc;
@@ -35,7 +35,7 @@ mod box_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: BoxedU32 = from_bytes(&facet_bytes)?;
+        let decoded: BoxedU32 = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -55,7 +55,7 @@ mod box_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: BoxedString = from_bytes(&facet_bytes)?;
+        let decoded: BoxedString = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -75,7 +75,7 @@ mod box_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: BoxedVec = from_bytes(&facet_bytes)?;
+        let decoded: BoxedVec = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -95,7 +95,7 @@ mod box_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: NestedBoxes = from_bytes(&facet_bytes)?;
+        let decoded: NestedBoxes = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -115,7 +115,7 @@ mod box_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: BoxedOption = from_bytes(&facet_bytes)?;
+        let decoded: BoxedOption = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -130,7 +130,7 @@ mod box_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: BoxedOption = from_bytes(&facet_bytes)?;
+        let decoded: BoxedOption = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -150,7 +150,7 @@ mod box_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: OptionBoxed = from_bytes(&facet_bytes)?;
+        let decoded: OptionBoxed = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -163,7 +163,7 @@ mod box_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: OptionBoxed = from_bytes(&facet_bytes)?;
+        let decoded: OptionBoxed = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -215,7 +215,7 @@ mod rc_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: RcU32 = from_bytes(&facet_bytes)?;
+        let decoded: RcU32 = from_slice(&facet_bytes)?;
         assert_eq!(*value.value, *decoded.value);
         Ok(())
     }
@@ -243,7 +243,7 @@ mod arc_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: ArcU32 = from_bytes(&facet_bytes)?;
+        let decoded: ArcU32 = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -263,7 +263,7 @@ mod arc_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: ArcString = from_bytes(&facet_bytes)?;
+        let decoded: ArcString = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -283,7 +283,7 @@ mod arc_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: ArcVec = from_bytes(&facet_bytes)?;
+        let decoded: ArcVec = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -303,7 +303,7 @@ mod arc_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: NestedArcs = from_bytes(&facet_bytes)?;
+        let decoded: NestedArcs = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -335,7 +335,7 @@ mod mixed_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: MixedPointers = from_bytes(&facet_bytes)?;
+        let decoded: MixedPointers = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }

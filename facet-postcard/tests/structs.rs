@@ -2,8 +2,8 @@
 
 use eyre::Result;
 use facet::Facet;
-use facet_postcard::{from_bytes, to_vec};
-use postcard::from_bytes as postcard_from_bytes;
+use facet_postcard::{from_slice, to_vec};
+use postcard::from_bytes as postcard_from_slice;
 use postcard::to_allocvec as postcard_to_vec;
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +25,7 @@ mod unit_struct_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: UnitStruct = from_bytes(&facet_bytes)?;
+        let decoded: UnitStruct = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -47,7 +47,7 @@ mod unit_struct_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: WrapperWithUnit = from_bytes(&facet_bytes)?;
+        let decoded: WrapperWithUnit = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -72,7 +72,7 @@ mod tuple_struct_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: NewtypeU32 = from_bytes(&facet_bytes)?;
+        let decoded: NewtypeU32 = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -88,7 +88,7 @@ mod tuple_struct_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: NewtypeString = from_bytes(&facet_bytes)?;
+        let decoded: NewtypeString = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -104,7 +104,7 @@ mod tuple_struct_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: NewtypeVec = from_bytes(&facet_bytes)?;
+        let decoded: NewtypeVec = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -121,7 +121,7 @@ mod tuple_struct_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: TupleStruct2 = from_bytes(&facet_bytes)?;
+        let decoded: TupleStruct2 = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -137,7 +137,7 @@ mod tuple_struct_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: TupleStruct3 = from_bytes(&facet_bytes)?;
+        let decoded: TupleStruct3 = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -154,7 +154,7 @@ mod tuple_struct_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: NestedNewtype = from_bytes(&facet_bytes)?;
+        let decoded: NestedNewtype = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -180,7 +180,7 @@ mod named_struct_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: SingleField = from_bytes(&facet_bytes)?;
+        let decoded: SingleField = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -206,7 +206,7 @@ mod named_struct_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: MultipleFields = from_bytes(&facet_bytes)?;
+        let decoded: MultipleFields = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -228,7 +228,7 @@ mod named_struct_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: NestedStruct = from_bytes(&facet_bytes)?;
+        let decoded: NestedStruct = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -253,7 +253,7 @@ mod named_struct_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: DeeplyNested = from_bytes(&facet_bytes)?;
+        let decoded: DeeplyNested = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -277,7 +277,7 @@ mod named_struct_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: WithOptions = from_bytes(&facet_bytes)?;
+        let decoded: WithOptions = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -294,7 +294,7 @@ mod named_struct_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: WithOptions = from_bytes(&facet_bytes)?;
+        let decoded: WithOptions = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -343,7 +343,7 @@ mod named_struct_tests {
         let postcard_bytes = postcard_to_vec(&value)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: KitchenSink = from_bytes(&facet_bytes)?;
+        let decoded: KitchenSink = from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -373,7 +373,7 @@ mod cross_compatibility {
         };
 
         let facet_bytes = to_vec(&value)?;
-        let decoded: TestStruct = postcard_from_bytes(&facet_bytes)?;
+        let decoded: TestStruct = postcard_from_slice(&facet_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }
@@ -388,7 +388,7 @@ mod cross_compatibility {
         };
 
         let postcard_bytes = postcard_to_vec(&value)?;
-        let decoded: TestStruct = from_bytes(&postcard_bytes)?;
+        let decoded: TestStruct = from_slice(&postcard_bytes)?;
         assert_eq!(value, decoded);
         Ok(())
     }

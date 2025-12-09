@@ -2,7 +2,7 @@
 
 use eyre::Result;
 use facet::Facet;
-use facet_postcard::{from_bytes, to_vec};
+use facet_postcard::{from_slice, to_vec};
 use postcard::to_allocvec as postcard_to_vec;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -22,7 +22,7 @@ fn test_empty_string() -> Result<()> {
     let postcard_bytes = postcard_to_vec(&wrapper)?;
     assert_eq!(facet_bytes, postcard_bytes);
 
-    let decoded: StringWrapper = from_bytes(&facet_bytes)?;
+    let decoded: StringWrapper = from_slice(&facet_bytes)?;
     assert_eq!(wrapper, decoded);
     Ok(())
 }
@@ -37,7 +37,7 @@ fn test_ascii_string() -> Result<()> {
     let postcard_bytes = postcard_to_vec(&wrapper)?;
     assert_eq!(facet_bytes, postcard_bytes);
 
-    let decoded: StringWrapper = from_bytes(&facet_bytes)?;
+    let decoded: StringWrapper = from_slice(&facet_bytes)?;
     assert_eq!(wrapper, decoded);
     Ok(())
 }
@@ -52,7 +52,7 @@ fn test_unicode_string() -> Result<()> {
     let postcard_bytes = postcard_to_vec(&wrapper)?;
     assert_eq!(facet_bytes, postcard_bytes);
 
-    let decoded: StringWrapper = from_bytes(&facet_bytes)?;
+    let decoded: StringWrapper = from_slice(&facet_bytes)?;
     assert_eq!(wrapper, decoded);
     Ok(())
 }
@@ -67,7 +67,7 @@ fn test_string_with_null() -> Result<()> {
     let postcard_bytes = postcard_to_vec(&wrapper)?;
     assert_eq!(facet_bytes, postcard_bytes);
 
-    let decoded: StringWrapper = from_bytes(&facet_bytes)?;
+    let decoded: StringWrapper = from_slice(&facet_bytes)?;
     assert_eq!(wrapper, decoded);
     Ok(())
 }
@@ -82,7 +82,7 @@ fn test_string_with_escapes() -> Result<()> {
     let postcard_bytes = postcard_to_vec(&wrapper)?;
     assert_eq!(facet_bytes, postcard_bytes);
 
-    let decoded: StringWrapper = from_bytes(&facet_bytes)?;
+    let decoded: StringWrapper = from_slice(&facet_bytes)?;
     assert_eq!(wrapper, decoded);
     Ok(())
 }
@@ -98,7 +98,7 @@ fn test_long_string() -> Result<()> {
     let postcard_bytes = postcard_to_vec(&wrapper)?;
     assert_eq!(facet_bytes, postcard_bytes);
 
-    let decoded: StringWrapper = from_bytes(&facet_bytes)?;
+    let decoded: StringWrapper = from_slice(&facet_bytes)?;
     assert_eq!(wrapper, decoded);
     Ok(())
 }
@@ -114,7 +114,7 @@ fn test_very_long_string() -> Result<()> {
     let postcard_bytes = postcard_to_vec(&wrapper)?;
     assert_eq!(facet_bytes, postcard_bytes);
 
-    let decoded: StringWrapper = from_bytes(&facet_bytes)?;
+    let decoded: StringWrapper = from_slice(&facet_bytes)?;
     assert_eq!(wrapper, decoded);
     Ok(())
 }
@@ -139,7 +139,7 @@ mod cow_str_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: CowWrapper<'static> = from_bytes(&facet_bytes)?;
+        let decoded: CowWrapper<'static> = from_slice(&facet_bytes)?;
         assert_eq!(wrapper.value, decoded.value);
         Ok(())
     }
@@ -181,7 +181,7 @@ mod multi_string_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: MultiString = from_bytes(&facet_bytes)?;
+        let decoded: MultiString = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -198,7 +198,7 @@ mod multi_string_tests {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: MultiString = from_bytes(&facet_bytes)?;
+        let decoded: MultiString = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -218,7 +218,7 @@ mod edge_cases {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: StringWrapper = from_bytes(&facet_bytes)?;
+        let decoded: StringWrapper = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -234,7 +234,7 @@ mod edge_cases {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: StringWrapper = from_bytes(&facet_bytes)?;
+        let decoded: StringWrapper = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -250,7 +250,7 @@ mod edge_cases {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: StringWrapper = from_bytes(&facet_bytes)?;
+        let decoded: StringWrapper = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
@@ -266,7 +266,7 @@ mod edge_cases {
         let postcard_bytes = postcard_to_vec(&wrapper)?;
         assert_eq!(facet_bytes, postcard_bytes);
 
-        let decoded: StringWrapper = from_bytes(&facet_bytes)?;
+        let decoded: StringWrapper = from_slice(&facet_bytes)?;
         assert_eq!(wrapper, decoded);
         Ok(())
     }
