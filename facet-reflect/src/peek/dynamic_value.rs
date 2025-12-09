@@ -153,6 +153,78 @@ impl<'mem, 'facet> PeekDynamicValue<'mem, 'facet> {
             len,
         })
     }
+
+    /// Structurally hash the dynamic value's contents.
+    ///
+    /// This is called by `Peek::structural_hash` for dynamic values.
+    pub fn structural_hash_inner<H: core::hash::Hasher>(&self, hasher: &mut H) {
+        use core::hash::Hash;
+
+        // Hash the kind discriminant
+        let kind = self.kind();
+        core::mem::discriminant(&kind).hash(hasher);
+
+        match kind {
+            DynValueKind::Null => {
+                // Nothing more to hash
+            }
+            DynValueKind::Bool => {
+                if let Some(b) = self.as_bool() {
+                    b.hash(hasher);
+                }
+            }
+            DynValueKind::Number => {
+                // Try to get as various number types and hash
+                if let Some(n) = self.as_i64() {
+                    0u8.hash(hasher); // discriminant for i64
+                    n.hash(hasher);
+                } else if let Some(n) = self.as_u64() {
+                    1u8.hash(hasher); // discriminant for u64
+                    n.hash(hasher);
+                } else if let Some(n) = self.as_f64() {
+                    2u8.hash(hasher); // discriminant for f64
+                    n.to_bits().hash(hasher);
+                }
+            }
+            DynValueKind::String => {
+                if let Some(s) = self.as_str() {
+                    s.hash(hasher);
+                }
+            }
+            DynValueKind::Bytes => {
+                if let Some(b) = self.as_bytes() {
+                    b.hash(hasher);
+                }
+            }
+            DynValueKind::Array => {
+                if let Some(len) = self.array_len() {
+                    len.hash(hasher);
+                    if let Some(iter) = self.array_iter() {
+                        for elem in iter {
+                            elem.structural_hash(hasher);
+                        }
+                    }
+                }
+            }
+            DynValueKind::Object => {
+                if let Some(len) = self.object_len() {
+                    len.hash(hasher);
+                    if let Some(iter) = self.object_iter() {
+                        for (key, value) in iter {
+                            key.hash(hasher);
+                            value.structural_hash(hasher);
+                        }
+                    }
+                }
+            }
+            DynValueKind::DateTime | DynValueKind::QName | DynValueKind::Uuid => {
+                // Hash the string representation
+                if let Some(s) = self.as_str() {
+                    s.hash(hasher);
+                }
+            }
+        }
+    }
 }
 
 /// Iterator over array elements in a dynamic value

@@ -266,7 +266,7 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         })
     }
 
-    /// Hashes this scalar
+    /// Hashes this scalar using the vtable hash function.
     ///
     /// # Returns
     ///
@@ -282,6 +282,193 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
             shape: self.shape(),
             operation: "hash",
         })
+    }
+
+    /// Computes a structural hash of this value.
+    ///
+    /// Unlike [`hash`](Self::hash), this method recursively traverses the structure
+    /// and hashes each component, making it work for types that don't implement `Hash`.
+    ///
+    /// For scalars with a vtable hash function, it uses that. For compound types
+    /// (structs, enums, lists, etc.), it recursively hashes the structure.
+    ///
+    /// This is useful for Merkle-tree style hashing where you want to compare
+    /// subtrees for equality based on their structural content.
+    pub fn structural_hash<H: core::hash::Hasher>(&self, hasher: &mut H) {
+        use core::hash::Hash;
+
+        // First, hash the shape's type identifier for type discrimination
+        self.shape.id.hash(hasher);
+
+        // Try vtable hash first for scalars
+        let mut proxy = facet_core::HashProxy::new(hasher);
+        if unsafe { self.shape.call_hash(self.data, &mut proxy) }.is_some() {
+            return;
+        }
+
+        // Otherwise, traverse the structure recursively
+        match self.shape.ty {
+            Type::User(UserType::Struct(struct_type)) => {
+                // Hash struct kind
+                (struct_type.kind as u8).hash(hasher);
+
+                // Hash each field
+                for field in struct_type.fields {
+                    // Hash field name
+                    field.name.hash(hasher);
+
+                    // Get field value and hash it recursively
+                    let field_offset = field.offset;
+                    let field_shape = field.shape();
+                    let field_ptr = unsafe { self.data.field(field_offset) };
+                    let field_peek = unsafe { Peek::unchecked_new(field_ptr, field_shape) };
+                    field_peek.structural_hash(hasher);
+                }
+            }
+
+            Type::User(UserType::Enum(_enum_type)) => {
+                // Get the discriminant and variant
+                if let Ok(peek_enum) = self.into_enum()
+                    && let Ok(variant) = peek_enum.active_variant()
+                {
+                    // Hash variant name
+                    variant.name.hash(hasher);
+
+                    // Hash variant payload based on kind
+                    match variant.data.kind {
+                        StructKind::Unit => {
+                            // No payload to hash
+                        }
+                        StructKind::TupleStruct | StructKind::Tuple => {
+                            // Hash tuple fields (no names)
+                            use super::HasFields;
+                            for (_field, peek) in peek_enum.fields() {
+                                peek.structural_hash(hasher);
+                            }
+                        }
+                        StructKind::Struct => {
+                            // Hash named fields
+                            use super::HasFields;
+                            for (field, peek) in peek_enum.fields() {
+                                field.name.hash(hasher);
+                                peek.structural_hash(hasher);
+                            }
+                        }
+                    }
+                }
+            }
+
+            _ => {
+                // Handle Def-based types
+                match self.shape.def {
+                    Def::List(_) | Def::Array(_) | Def::Slice(_) => {
+                        if let Ok(list_like) = self.into_list_like() {
+                            // Hash length
+                            list_like.len().hash(hasher);
+
+                            // Hash each element
+                            for elem in list_like.iter() {
+                                elem.structural_hash(hasher);
+                            }
+                        }
+                    }
+
+                    Def::Map(_) => {
+                        if let Ok(map) = self.into_map() {
+                            // Hash length
+                            map.len().hash(hasher);
+
+                            // Hash each key-value pair
+                            for (key, value) in map.iter() {
+                                key.structural_hash(hasher);
+                                value.structural_hash(hasher);
+                            }
+                        }
+                    }
+
+                    Def::Set(_) => {
+                        if let Ok(set) = self.into_set() {
+                            // Hash length
+                            set.len().hash(hasher);
+
+                            // Hash each element
+                            for elem in set.iter() {
+                                elem.structural_hash(hasher);
+                            }
+                        }
+                    }
+
+                    Def::Option(_) => {
+                        if let Ok(opt) = self.into_option() {
+                            if let Some(inner) = opt.value() {
+                                true.hash(hasher);
+                                inner.structural_hash(hasher);
+                            } else {
+                                false.hash(hasher);
+                            }
+                        }
+                    }
+
+                    Def::Result(_) => {
+                        if let Ok(result) = self.into_result() {
+                            if result.is_ok() {
+                                0u8.hash(hasher);
+                                if let Some(ok_val) = result.ok() {
+                                    ok_val.structural_hash(hasher);
+                                }
+                            } else {
+                                1u8.hash(hasher);
+                                if let Some(err_val) = result.err() {
+                                    err_val.structural_hash(hasher);
+                                }
+                            }
+                        }
+                    }
+
+                    Def::Pointer(_) => {
+                        if let Ok(ptr) = self.into_pointer()
+                            && let Some(inner) = ptr.borrow_inner()
+                        {
+                            inner.structural_hash(hasher);
+                        }
+                    }
+
+                    Def::DynamicValue(_) => {
+                        if let Ok(dyn_val) = self.into_dynamic_value() {
+                            // Hash based on dynamic value kind
+                            dyn_val.structural_hash_inner(hasher);
+                        }
+                    }
+
+                    Def::NdArray(_) => {
+                        // For ndarray, hash the dimensions and data
+                        if let Ok(arr) = self.into_ndarray() {
+                            let n_dim = arr.n_dim();
+                            n_dim.hash(hasher);
+                            for i in 0..n_dim {
+                                if let Some(dim) = arr.dim(i) {
+                                    dim.hash(hasher);
+                                }
+                            }
+                            // Hash each element
+                            let count = arr.count();
+                            for i in 0..count {
+                                if let Some(elem) = arr.get(i) {
+                                    elem.structural_hash(hasher);
+                                }
+                            }
+                        }
+                    }
+
+                    Def::Scalar | Def::Undefined | _ => {
+                        panic!(
+                            "structural_hash: type {} has no Hash impl and cannot be structurally hashed",
+                            self.shape
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Returns the type name of this scalar

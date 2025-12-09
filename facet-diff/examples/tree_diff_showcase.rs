@@ -5,8 +5,11 @@
 //!
 //! Run with: cargo run -p facet-diff --example tree_diff_showcase
 
+use std::hash::{DefaultHasher, Hasher};
+
 use facet::Facet;
 use facet_diff::FacetDiff;
+use facet_reflect::Peek;
 use owo_colors::OwoColorize;
 
 // ============================================================================
@@ -98,6 +101,75 @@ fn main() {
     println!(
         "{}",
         "Conclusion: Custom structs/enums don't have Hash - we need structural hashing!".yellow()
+    );
+    println!();
+
+    // Now demonstrate structural hashing!
+    println!("{}", "STRUCTURAL HASHING".bold().yellow());
+    println!(
+        "{}",
+        "But with Peek::structural_hash, we can hash any Facet type:".dimmed()
+    );
+    println!();
+
+    let svg1 = Svg {
+        width: "100".into(),
+        height: "100".into(),
+        children: vec![SvgElement::Rect(SvgRect {
+            x: "10".into(),
+            y: "10".into(),
+            width: "30".into(),
+            height: "30".into(),
+            fill: "red".into(),
+        })],
+    };
+
+    let svg2 = svg1.clone(); // identical
+    let mut svg3 = svg1.clone();
+    if let SvgElement::Rect(ref mut r) = svg3.children[0] {
+        r.fill = "blue".into(); // different fill
+    }
+
+    fn compute_structural_hash<T: Facet<'static>>(value: &T) -> u64 {
+        let peek = Peek::new(value);
+        let mut hasher = DefaultHasher::new();
+        peek.structural_hash(&mut hasher);
+        hasher.finish()
+    }
+
+    let hash1 = compute_structural_hash(&svg1);
+    let hash2 = compute_structural_hash(&svg2);
+    let hash3 = compute_structural_hash(&svg3);
+
+    println!("  svg1 (red rect)  hash: {:016x}", hash1);
+    println!("  svg2 (clone)     hash: {:016x}", hash2);
+    println!("  svg3 (blue rect) hash: {:016x}", hash3);
+    println!();
+    println!(
+        "  svg1 == svg2: {} (hashes {})",
+        if hash1 == hash2 {
+            "YES".green().to_string()
+        } else {
+            "NO".red().to_string()
+        },
+        if hash1 == hash2 {
+            "match!".green().to_string()
+        } else {
+            "differ".red().to_string()
+        }
+    );
+    println!(
+        "  svg1 == svg3: {} (hashes {})",
+        if hash1 == hash3 {
+            "YES".green().to_string()
+        } else {
+            "NO".red().to_string()
+        },
+        if hash1 == hash3 {
+            "match".green().to_string()
+        } else {
+            "differ!".yellow().to_string()
+        }
     );
     println!();
 
