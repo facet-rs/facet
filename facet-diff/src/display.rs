@@ -90,25 +90,13 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                 if let (Some(from_str), Some(to_str)) = (from.as_str(), to.as_str())
                     && from_str.is_confusable_with(to_str)
                 {
-                    // Show the strings with confusable explanation
-                    // Show both the original (with confusables) and the "skeleton" form
-                    let from_replaced = from_str.replace_confusable();
-                    let to_replaced = to_str.replace_confusable();
+                    // Show the strings with character-level diff
                     write!(
                         f,
                         "{} → {}\n{}",
                         deleted(&printer.format_peek(*from)),
                         inserted(&printer.format_peek(*to)),
-                        muted(&format!(
-                            "(strings are confusable: {:?} vs {:?} both normalize to {:?})",
-                            from_str,
-                            to_str,
-                            if from_replaced == to_replaced {
-                                &from_replaced
-                            } else {
-                                &to_replaced
-                            }
-                        ))
+                        muted(&explain_confusable_differences(from_str, to_str))
                     )?;
                     return Ok(());
                 }
@@ -386,4 +374,94 @@ impl<'mem, 'facet> Display for UpdatesGroup<'mem, 'facet> {
 
         Ok(())
     }
+}
+
+/// Format a character for display with its Unicode codepoint and visual representation.
+fn format_char_with_codepoint(c: char) -> String {
+    // For printable ASCII characters (except space), show the character directly
+    if c.is_ascii_graphic() {
+        format!("'{}' (U+{:04X})", c, c as u32)
+    } else {
+        // For everything else, show escaped form with codepoint
+        format!("'\\u{{{:04X}}}' (U+{:04X})", c as u32, c as u32)
+    }
+}
+
+/// Explain the confusable differences between two strings that look identical.
+/// Shows character-level differences with full Unicode codepoints.
+fn explain_confusable_differences(left: &str, right: &str) -> String {
+    use std::fmt::Write;
+
+    // Find character-level differences
+    let left_chars: Vec<char> = left.chars().collect();
+    let right_chars: Vec<char> = right.chars().collect();
+
+    let mut out = String::new();
+
+    // Find all positions where characters differ
+    let mut diffs: Vec<(usize, char, char)> = Vec::new();
+
+    let max_len = left_chars.len().max(right_chars.len());
+    for i in 0..max_len {
+        let lc = left_chars.get(i);
+        let rc = right_chars.get(i);
+
+        match (lc, rc) {
+            (Some(&l), Some(&r)) if l != r => {
+                diffs.push((i, l, r));
+            }
+            (Some(&l), None) => {
+                // Character only in left (will show as deletion)
+                diffs.push((i, l, '\0'));
+            }
+            (None, Some(&r)) => {
+                // Character only in right (will show as insertion)
+                diffs.push((i, '\0', r));
+            }
+            _ => {}
+        }
+    }
+
+    if diffs.is_empty() {
+        return "(strings are identical)".to_string();
+    }
+
+    writeln!(
+        out,
+        "(strings are visually confusable but differ in {} position{}):",
+        diffs.len(),
+        if diffs.len() == 1 { "" } else { "s" }
+    )
+    .unwrap();
+
+    for (pos, lc, rc) in &diffs {
+        if *lc == '\0' {
+            writeln!(
+                out,
+                "  [{}]: (missing) vs {}",
+                pos,
+                format_char_with_codepoint(*rc)
+            )
+            .unwrap();
+        } else if *rc == '\0' {
+            writeln!(
+                out,
+                "  [{}]: {} vs (missing)",
+                pos,
+                format_char_with_codepoint(*lc)
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                out,
+                "  [{}]: {} vs {}",
+                pos,
+                format_char_with_codepoint(*lc),
+                format_char_with_codepoint(*rc)
+            )
+            .unwrap();
+        }
+    }
+
+    out.trim_end().to_string()
 }
