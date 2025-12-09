@@ -14,6 +14,7 @@ ci = [] # CI feature
 default = []
 
 [dependencies]
+confusables = "0.1"
 facet = { path = "../facet" }
 facet-core = { path = "../facet-core" }
 facet-pretty = { path = "../facet-pretty" }
