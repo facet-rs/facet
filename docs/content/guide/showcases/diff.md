@@ -1,392 +1,112 @@
 +++
-title = "Structural Diffing"
-weight = 7
-insert_anchor_links = "heading"
+title = "Structural Diff"
 +++
 
-[`facet-diff`](https://docs.rs/facet-diff) computes structural differences between any two `Facet` values — even values of **different types**. It's the engine behind `facet-assert`'s rich failure output.
-
-## Basic usage
-
-Use the `FacetDiff` trait to compare two values:
-
-```rust
-use facet::Facet;
-use facet_diff::FacetDiff;
-
-#[derive(Facet)]
-struct User {
-    name: String,
-    email: String,
-    age: u32,
-}
-
-let before = User {
-    name: "Alice".into(),
-    email: "alice@example.com".into(),
-    age: 30,
-};
-
-let after = User {
-    name: "Alice".into(),
-    email: "alice@newdomain.com".into(),  // Changed
-    age: 31,                               // Changed
-};
-
-let diff = before.diff(&after);
-println!("{diff}");
-```
-
-Output:
-
-```
-{
-  .. 1 unchanged field
-  email: "alice@example.com" → "alice@newdomain.com"
-  age: 30 → 31
-}
-```
-
-## The diff type
-
-`Diff::new()` returns a `Diff` enum with these variants:
-
-```rust
-pub enum Diff<'mem, 'facet> {
-    /// Values are structurally equal
-    Equal { value: Option<Peek<'mem, 'facet>> },
-
-    /// Values differ but can't be compared structurally
-    Replace { from: Peek, to: Peek },
-
-    /// Both are structs/enums with comparable fields
-    User {
-        from: &'static Shape,
-        to: &'static Shape,
-        variant: Option<&'static str>,
-        value: Value,  // Field-level diffs
-    },
-
-    /// Both are sequences (Vec, arrays, slices)
-    Sequence {
-        from: &'static Shape,
-        to: &'static Shape,
-        updates: Updates,  // Element-level diffs
-    },
-}
-```
-
-## Checking equality
-
-Use `is_equal()` to check if values are structurally identical:
-
-```rust
-let diff = before.diff(&after);
-
-if diff.is_equal() {
-    println!("No changes");
-} else {
-    println!("Changes detected:\n{diff}");
-}
-```
-
-## Cross-Type comparison
-
-One of facet-diff's unique features: compare values of **different types**:
-
-```rust
-#[derive(Facet)]
-struct UserV1 {
-    name: String,
-    email: String,
-}
-
-#[derive(Facet)]
-struct UserV2 {
-    name: String,
-    email: String,
-    phone: Option<String>,  // New field in v2
-}
-
-let v1 = UserV1 {
-    name: "Bob".into(),
-    email: "bob@example.com".into(),
-};
-
-let v2 = UserV2 {
-    name: "Bob".into(),
-    email: "bob@example.com".into(),
-    phone: Some("555-1234".into()),
-};
-
-let diff = v1.diff(&v2);
-println!("{diff}");
-```
-
-Output:
-
-```
-{
-  .. 2 unchanged fields
-  + phone: Some("555-1234")
-}
-```
-
-The diff shows that `phone` was added (it exists in `to` but not `from`).
-
-## Sequence diffing
-
-facet-diff uses an optimal diff algorithm for sequences:
-
-```rust
-let before = vec!["apple", "banana", "cherry"];
-let after = vec!["apple", "blueberry", "cherry", "date"];
-
-let diff = before.diff(&after);
-println!("{diff}");
-```
-
-Output:
-
-```
-[
-  .. 1 unchanged item
-  "banana" → "blueberry"
-  .. 1 unchanged item
-  + "date"
-]
-```
-
-The algorithm:
-- Finds the longest common subsequence
-- Groups consecutive insertions/deletions
-- Shows inline replacements for 1-to-1 changes
-- Collapses unchanged items into `.. N unchanged items`
-
-## Nested structure diffing
-
-Diffs recurse into nested structures:
-
-```rust
-#[derive(Facet)]
-struct Team {
-    name: String,
-    lead: User,
-    members: Vec<User>,
-}
-
-let before = Team {
-    name: "Engineering".into(),
-    lead: User { name: "Alice".into(), email: "alice@example.com".into(), age: 30 },
-    members: vec![
-        User { name: "Bob".into(), email: "bob@example.com".into(), age: 25 },
-    ],
-};
-
-let after = Team {
-    name: "Engineering".into(),
-    lead: User { name: "Alice".into(), email: "alice@example.com".into(), age: 31 },  // Age changed
-    members: vec![
-        User { name: "Bob".into(), email: "bob@example.com".into(), age: 25 },
-        User { name: "Carol".into(), email: "carol@example.com".into(), age: 28 },  // Added
-    ],
-};
-
-let diff = before.diff(&after);
-println!("{diff}");
-```
-
-Output:
-
-```
-{
-  .. 1 unchanged field
-  lead: {
-    .. 2 unchanged fields
-    age: 30 → 31
-  }
-  members: [
-    .. 1 unchanged item
-    + User { name: "Carol", email: "carol@example.com", age: 28 }
-  ]
-}
-```
-
-## Enum diffing
-
-Enum variants are compared structurally:
-
-```rust
-#[derive(Facet)]
-#[repr(u8)]
-enum Status {
-    Pending,
-    Active { since: String },
-    Completed { at: String, result: i32 },
-}
-
-let before = Status::Active { since: "2024-01-01".into() };
-let after = Status::Active { since: "2024-06-01".into() };
-
-let diff = before.diff(&after);
-println!("{diff}");
-```
-
-Output:
-
-```
-Active {
-  since: "2024-01-01" → "2024-06-01"
-}
-```
-
-If variants differ entirely, it's shown as a replacement:
-
-```rust
-let before = Status::Pending;
-let after = Status::Active { since: "2024-01-01".into() };
-
-let diff = before.diff(&after);
-println!("{diff}");
-```
-
-Output:
-
-```
-Status::Pending → Status::Active { since: "2024-01-01" }
-```
-
-## Dynamic value comparison
-
-facet-diff can compare `facet_value::Value` against typed structs:
-
-```rust
-use facet_value::Value;
-
-#[derive(Facet)]
-struct Config {
-    host: String,
-    port: u16,
-}
-
-let typed = Config {
-    host: "localhost".into(),
-    port: 8080,
-};
-
-let dynamic: Value = facet_json::from_str(r#"{"host": "localhost", "port": 9090}"#)?;
-
-let diff = typed.diff(&dynamic);
-println!("{diff}");
-```
-
-Output:
-
-```
-{
-  .. 1 unchanged field
-  port: 8080 → 9090
-}
-```
-
-This is powerful for testing: compare expected typed values against parsed JSON/YAML without manual conversion.
-
-## Option diffing
-
-Options are compared by their inner values:
-
-```rust
-let before: Option<u32> = Some(42);
-let after: Option<u32> = Some(100);
-
-let diff = before.diff(&after);
-println!("{diff}");
-```
-
-Output:
-
-```
-Some 42 → 100
-```
-
-When one is `Some` and the other is `None`:
-
-```rust
-let before: Option<u32> = Some(42);
-let after: Option<u32> = None;
-
-let diff = before.diff(&after);
-println!("{diff}");
-```
-
-Output:
-
-```
-Some(42) → None
-```
-
-## Display formatting
-
-The `Diff` type implements `Display` with colorized output using the Tokyo Night color scheme:
-
-| Element | Color |
-|---------|-------|
-| Deletions (`-`) | Red |
-| Insertions (`+`) | Green |
-| Field names | Teal |
-| Unchanged indicators | Gray/muted |
-| Punctuation | Dimmed |
-
-Colors are automatically applied when printing to a terminal that supports ANSI codes.
-
-## Integration with facet-assert
-
-`facet-assert` uses facet-diff internally. When `assert_same!` fails, you see the diff:
-
-```rust
-use facet_assert::assert_same;
-
-let expected = User { name: "Alice".into(), email: "alice@example.com".into(), age: 30 };
-let actual = User { name: "Alice".into(), email: "alice@other.com".into(), age: 30 };
-
-assert_same!(expected, actual);
-```
-
-Failure output:
-
-```
-assertion `assert_same!(left, right)` failed
-
-{
-  .. 2 unchanged fields
-  email: "alice@example.com" → "alice@other.com"
-}
-```
-
-## Pointer dereferencing
-
-Smart pointers (`Box`, `Rc`, `Arc`) and references are automatically dereferenced:
-
-```rust
-use std::rc::Rc;
-
-let before = Rc::new(User { name: "Alice".into(), email: "a@example.com".into(), age: 30 });
-let after = Rc::new(User { name: "Alice".into(), email: "b@example.com".into(), age: 30 });
-
-let diff = before.diff(&after);
-// Compares the inner User values, not the Rc pointers
-```
-
-## Closeness score
-
-Internally, diffs compute a "closeness" score used to find optimal alignments in sequences. You generally don't need this directly, but it's how facet-diff decides whether two sequence elements are "the same element, modified" vs "one deleted, one inserted":
-
-- Higher closeness = more fields/elements in common
-- Used by the sequence diff algorithm to minimize noise
-- Prefers showing field changes over delete+insert pairs
-
-## Next steps
-
-- See [Assertions](@/guide/showcases/assert.md) for `assert_same!` usage
-- Check [Pretty Printing](@/guide/showcases/pretty.md) for value display
-- Read about [Dynamic Values](@/guide/dynamic-values.md) for cross-type comparison with `Value`
+<div class="showcase">
+
+[`facet-diff`](https://docs.rs/facet-diff) provides structural diffing for any `Facet` type. Get readable, colored diffs showing exactly what changed between two values — perfect for debugging, testing, and understanding data transformations.
+
+
+## Struct Field Changes
+
+<section class="scenario">
+<p class="description">Compare two structs and see exactly which fields changed. Unchanged fields are collapsed into a summary.</p>
+<div class="diff-output">
+<h4>Diff Output</h4>
+<pre><code><span style="color:rgb(86,95,137)">{</span>
+  <span style="color:rgb(86,95,137)">.. 1 unchanged field</span>
+  <span style="color:rgb(115,218,202)">debug</span><span style="color:rgb(86,95,137)">:</span> <span style="color:rgb(247,118,142)">true</span> → <span style="color:rgb(115,218,202)">false</span>
+  <span style="color:rgb(115,218,202)">features</span><span style="color:rgb(86,95,137)">:</span> <span style="color:rgb(86,95,137)">[</span>
+    <span style="color:rgb(86,95,137)">.. 1 unchanged item</span>
+    <span style="color:rgb(247,118,142)">"metrics"</span> → <span style="color:rgb(115,218,202)">"tracing"</span>
+  <span style="color:rgb(86,95,137)">]</span>
+  <span style="color:rgb(115,218,202)">version</span><span style="color:rgb(86,95,137)">:</span> <span style="color:rgb(247,118,142)">1</span> → <span style="color:rgb(115,218,202)">2</span>
+<span style="color:rgb(86,95,137)">}</span></code></pre>
+</div>
+</section>
+
+## Option Field Changes
+
+<section class="scenario">
+<p class="description">Option fields show clean `None` → `Some(...)` transitions without verbose type names.</p>
+<div class="diff-output">
+<h4>Diff Output</h4>
+<pre><code><span style="color:rgb(86,95,137)">{</span>
+  <span style="color:rgb(86,95,137)">.. 1 unchanged field</span>
+  <span style="color:rgb(115,218,202)">age</span><span style="color:rgb(86,95,137)">:</span> <span style="font-weight:bold">Some</span> <span style="color:rgb(247,118,142)">30</span> → <span style="color:rgb(115,218,202)">31</span>
+  
+  <span style="color:rgb(115,218,202)">bio</span><span style="color:rgb(86,95,137)">:</span> <span style="color:rgb(247,118,142)">None</span> → <span style="color:rgb(115,218,202)">Some("Software engineer")</span>
+  <span style="color:rgb(115,218,202)">email</span><span style="color:rgb(86,95,137)">:</span> <span style="color:rgb(247,118,142)">None</span> → <span style="color:rgb(115,218,202)">Some("alice@example.com")</span>
+<span style="color:rgb(86,95,137)">}</span></code></pre>
+</div>
+</section>
+
+## Nested Structure Diffs
+
+<section class="scenario">
+<p class="description">Structs with nested vectors are diffed recursively, showing changes at any depth.</p>
+<div class="diff-output">
+<h4>Diff Output</h4>
+<pre><code><span style="color:rgb(86,95,137)">{</span>
+  <span style="color:rgb(115,218,202)">author</span><span style="color:rgb(86,95,137)">:</span> <span style="color:rgb(247,118,142)">"Alice"</span> → <span style="color:rgb(115,218,202)">"Bob"</span>
+  <span style="color:rgb(115,218,202)">tags</span><span style="color:rgb(86,95,137)">:</span> <span style="color:rgb(86,95,137)">[</span>
+    <span style="color:rgb(86,95,137)">.. 1 unchanged item</span>
+    <span style="color:rgb(247,118,142)">"guide"</span> → <span style="color:rgb(115,218,202)">"reference"</span>
+  <span style="color:rgb(86,95,137)">]</span>
+  <span style="color:rgb(115,218,202)">title</span><span style="color:rgb(86,95,137)">:</span> <span style="color:rgb(247,118,142)">"API Guide"</span> → <span style="color:rgb(115,218,202)">"API Reference"</span>
+<span style="color:rgb(86,95,137)">}</span></code></pre>
+</div>
+</section>
+
+## Vector Diffs
+
+<section class="scenario">
+<p class="description">Vector comparisons identify which elements changed while preserving context around the changes.</p>
+<div class="diff-output">
+<h4>Diff Output</h4>
+<pre><code><span style="color:rgb(86,95,137)">[</span>
+  <span style="color:rgb(86,95,137)">.. 2 unchanged items</span>
+  <span style="color:rgb(247,118,142)">3</span> → <span style="color:rgb(115,218,202)">99</span>
+  <span style="color:rgb(86,95,137)">.. 2 unchanged items</span>
+<span style="color:rgb(86,95,137)">]</span></code></pre>
+</div>
+</section>
+
+## Enum Variant Changes
+
+<section class="scenario">
+<p class="description">When enum variants differ entirely, the diff shows a clean replacement. When only the variant's fields differ, those specific changes are highlighted.</p>
+<div class="diff-output">
+<h4>Diff Output</h4>
+<pre><code><span style="color:rgb(247,118,142)">Status::InProgress {
+  assignee: "Alice",
+}</span> → <span style="color:rgb(115,218,202)">Status::Completed {
+  by: "Alice",
+  notes: Some("Shipped in v2.0"),
+}</span></code></pre>
+</div>
+</section>
+
+## Same Variant, Different Fields
+
+<section class="scenario">
+<p class="description">When comparing the same enum variant with different field values, only the changed fields are shown.</p>
+<div class="diff-output">
+<h4>Diff Output</h4>
+<pre><code><span style="font-weight:bold">Completed</span> <span style="color:rgb(86,95,137)">{</span>
+  <span style="color:rgb(115,218,202)">by</span><span style="color:rgb(86,95,137)">:</span> <span style="color:rgb(247,118,142)">"Alice"</span> → <span style="color:rgb(115,218,202)">"Bob"</span>
+  <span style="color:rgb(115,218,202)">notes</span><span style="color:rgb(86,95,137)">:</span> <span style="color:rgb(247,118,142)">None</span> → <span style="color:rgb(115,218,202)">Some("Peer reviewed")</span>
+<span style="color:rgb(86,95,137)">}</span></code></pre>
+</div>
+</section>
+
+<footer class="showcase-provenance">
+<p>This showcase was auto-generated from source code.</p>
+<dl>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6/facet-diff/examples/diff_showcase.rs"><code>facet-diff/examples/diff_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6"><code>0d55a3ebf</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2025-12-09T19:29:12+01:00">2025-12-09T19:29:12+01:00</time></dd>
+<dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
+</dl>
+</footer>
+</div>

@@ -58,6 +58,13 @@ fn generate_showcases() {
 
     fs::create_dir_all(&output_dir).expect("Failed to create output directory");
 
+    // Gather provenance info once for all showcases
+    let commit_full = get_git_output(&["rev-parse", "HEAD"]);
+    let commit_short = get_git_output(&["rev-parse", "--short", "HEAD"]);
+    let timestamp = get_iso_timestamp();
+    let rustc_version = get_rustc_version();
+    let github_repo = get_github_repo();
+
     // Find all *_showcase.rs examples
     let mut showcases = Vec::new();
     for entry in fs::read_dir(&workspace_root).expect("Failed to read workspace root") {
@@ -84,7 +91,9 @@ fn generate_showcases() {
             {
                 let example_name = name.trim_end_matches(".rs").to_string();
                 let output_name = example_name.trim_end_matches("_showcase").to_string();
-                showcases.push((pkg_name.clone(), example_name, output_name));
+                // Compute relative path to source file
+                let source_file = format!("{pkg_name}/examples/{name}");
+                showcases.push((pkg_name.clone(), example_name, output_name, source_file));
             }
         }
     }
@@ -100,9 +109,14 @@ fn generate_showcases() {
     // Spawn threads for each showcase
     let handles: Vec<_> = showcases
         .into_iter()
-        .map(|(pkg, example, output)| {
+        .map(|(pkg, example, output, source_file)| {
             let tx = tx.clone();
             let output_dir = output_dir.clone();
+            let commit_full = commit_full.clone();
+            let commit_short = commit_short.clone();
+            let timestamp = timestamp.clone();
+            let rustc_version = rustc_version.clone();
+            let github_repo = github_repo.clone();
 
             thread::spawn(move || {
                 let output_path = output_dir.join(format!("{output}.md"));
@@ -110,6 +124,12 @@ fn generate_showcases() {
                 let result = Command::new("cargo")
                     .args(["run", "-p", &pkg, "--example", &example, "--all-features"])
                     .env("FACET_SHOWCASE_OUTPUT", "markdown")
+                    .env("FACET_SHOWCASE_COMMIT", &commit_full)
+                    .env("FACET_SHOWCASE_COMMIT_SHORT", &commit_short)
+                    .env("FACET_SHOWCASE_TIMESTAMP", &timestamp)
+                    .env("FACET_SHOWCASE_RUSTC_VERSION", &rustc_version)
+                    .env("FACET_SHOWCASE_GITHUB_REPO", &github_repo)
+                    .env("FACET_SHOWCASE_SOURCE_FILE", &source_file)
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
                     .output();
@@ -706,6 +726,30 @@ fn get_git_output(args: &[&str]) -> String {
         .output()
         .expect("Failed to run git command");
     String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn get_rustc_version() -> String {
+    let output = Command::new("rustc")
+        .arg("--version")
+        .output()
+        .expect("Failed to get rustc version");
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn get_github_repo() -> String {
+    // Try to extract repo from git remote URL
+    let remote = get_git_output(&["remote", "get-url", "origin"]);
+    // Handle both SSH and HTTPS URLs:
+    // git@github.com:facet-rs/facet.git -> facet-rs/facet
+    // https://github.com/facet-rs/facet.git -> facet-rs/facet
+    if let Some(rest) = remote.strip_prefix("git@github.com:") {
+        rest.trim_end_matches(".git").to_string()
+    } else if let Some(rest) = remote.strip_prefix("https://github.com/") {
+        rest.trim_end_matches(".git").to_string()
+    } else {
+        // Fallback to hardcoded value
+        "facet-rs/facet".to_string()
+    }
 }
 
 /// Parse self-profile summarize output to extract key metrics.

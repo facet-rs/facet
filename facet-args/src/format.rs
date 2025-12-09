@@ -1,11 +1,17 @@
 use crate::{
     arg::ArgType,
     error::{ArgsError, ArgsErrorKind, ArgsErrorWithInput, get_variants_from_shape},
+    help::{HelpConfig, generate_help_for_shape},
     span::Span,
 };
 use facet_core::{Def, EnumType, Facet, Field, Shape, Type, UserType, Variant};
 use facet_reflect::{HeapValue, Partial};
 use heck::{ToKebabCase, ToSnakeCase};
+
+/// Check if the given argument is a help flag
+fn is_help_flag(arg: &str) -> bool {
+    matches!(arg, "-h" | "--help" | "-help" | "/?")
+}
 
 /// Parse command line arguments provided by std::env::args() into a Facet-compatible type
 pub fn from_std_args<T: Facet<'static>>() -> Result<T, ArgsErrorWithInput> {
@@ -18,6 +24,26 @@ pub fn from_std_args<T: Facet<'static>>() -> Result<T, ArgsErrorWithInput> {
 pub fn from_slice<'input, T: Facet<'static>>(
     args: &'input [&'input str],
 ) -> Result<T, ArgsErrorWithInput> {
+    from_slice_with_config(args, &HelpConfig::default())
+}
+
+/// Parse command line arguments with custom help configuration
+pub fn from_slice_with_config<'input, T: Facet<'static>>(
+    args: &'input [&'input str],
+    help_config: &HelpConfig,
+) -> Result<T, ArgsErrorWithInput> {
+    // Check for help flag as the only argument (or first argument for simplicity)
+    if let Some(first_arg) = args.first() {
+        if is_help_flag(first_arg) {
+            let help_text = generate_help_for_shape(T::SHAPE, help_config);
+            let span = Span::new(0, first_arg.len());
+            return Err(ArgsErrorWithInput {
+                inner: ArgsError::new(ArgsErrorKind::HelpRequested { help_text }, span),
+                flattened_args: args.join(" "),
+            });
+        }
+    }
+
     let mut cx = Context::new(args, T::SHAPE);
     let hv = cx.work_add_input()?;
 

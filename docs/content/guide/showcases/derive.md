@@ -40,7 +40,7 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>        <span style="font-weight:bold"></span><span style="color:#e06c75">^</span>  <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^</span>
 
 <span style="font-weight:bold">For more information about this error, try &#96;rustc --explain E0566&#96;.</span>
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
 </div>
 </section>
 
@@ -70,7 +70,7 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>        <span style="font-weight:bold"></span><span style="color:#e06c75">^</span>  <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^^^^^</span>
 
 <span style="font-weight:bold">For more information about this error, try &#96;rustc --explain E0692&#96;.</span>
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
 </div>
 </section>
 
@@ -114,7 +114,7 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 
 <span style="font-weight:bold">Some errors have detailed explanations: E0692, E0731.</span>
 <span style="font-weight:bold">For more information about an error, try &#96;rustc --explain E0692&#96;.</span>
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 2 previous errors</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 2 previous errors</code></pre>
 </div>
 </section>
 
@@ -149,7 +149,7 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
   <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">warning</span>: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
   <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: for more information, see issue #68585 &lt;https://github.com/rust-lang/rust/issues/68585&gt;
-  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: &#96;#[deny(conflicting_repr_hints)]&#96; on by default
+  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: &#96;#[deny(conflicting_repr_hints)]&#96; (part of &#96;#[deny(future_incompatible)]&#96;) on by default
 
 <span style="font-weight:bold"></span><span style="color:#e5c07b">warning</span><span style="font-weight:bold">: enum &#96;Priority&#96; is never used</span>
  <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:5:6
@@ -157,11 +157,11 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 <span style="font-weight:bold"></span><span style="color:#61afef">5</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> enum Priority {
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>      <span style="font-weight:bold"></span><span style="color:#e5c07b">^^^^^^^^</span>
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
-  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: &#96;#[warn(dead_code)]&#96; on by default
+  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: &#96;#[warn(dead_code)]&#96; (part of &#96;#[warn(unused)]&#96;) on by default
 
 <span style="font-weight:bold">For more information about this error, try &#96;rustc --explain E0566&#96;.</span>
-<span style="font-weight:bold"></span><span style="color:#e5c07b">warning</span><span style="font-weight:bold">:</span> &#96;test&#96; (bin "test") generated 1 warning
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 2 previous errors; 1 warning emitted</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e5c07b">warning</span>: &#96;test&#96; (bin "test") generated 1 warning
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 2 previous errors; 1 warning emitted</code></pre>
 </div>
 </section>
 
@@ -193,7 +193,7 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 <span style="font-weight:bold"></span><span style="color:#61afef">4</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[repr(packed)]
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>        <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^</span>
 
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
 </div>
 </section>
 
@@ -230,7 +230,7 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
   <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">warning</span>: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
   <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: for more information, see issue #68585 &lt;https://github.com/rust-lang/rust/issues/68585&gt;
-  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: &#96;#[deny(conflicting_repr_hints)]&#96; on by default
+  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: &#96;#[deny(conflicting_repr_hints)]&#96; (part of &#96;#[deny(future_incompatible)]&#96;) on by default
 
 <span style="font-weight:bold"></span><span style="color:#e5c07b">warning</span><span style="font-weight:bold">: enum &#96;Status&#96; is never used</span>
  <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:6:6
@@ -238,11 +238,11 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 <span style="font-weight:bold"></span><span style="color:#61afef">6</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> enum Status {
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>      <span style="font-weight:bold"></span><span style="color:#e5c07b">^^^^^^</span>
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
-  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: &#96;#[warn(dead_code)]&#96; on by default
+  <span style="font-weight:bold"></span><span style="color:#61afef">= </span><span style="font-weight:bold">note</span>: &#96;#[warn(dead_code)]&#96; (part of &#96;#[warn(unused)]&#96;) on by default
 
 <span style="font-weight:bold">For more information about this error, try &#96;rustc --explain E0566&#96;.</span>
-<span style="font-weight:bold"></span><span style="color:#e5c07b">warning</span><span style="font-weight:bold">:</span> &#96;test&#96; (bin "test") generated 1 warning
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 2 previous errors; 1 warning emitted</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e5c07b">warning</span>: &#96;test&#96; (bin "test") generated 1 warning
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 2 previous errors; 1 warning emitted</code></pre>
 </div>
 </section>
 
@@ -271,13 +271,13 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: unknown #[facet(rename_all = "...")] rule: &#96;SCREAMING_SNAKE&#96;. Valid options: camelCase, snake_case, kebab-case, PascalCase, SCREAMING_SNAKE_CASE</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: unknown #[facet(rename_all = "...")] rule: &#96;SCREAMING_SNAKE&#96;. Valid options: camelCase, snake_case, kebab-case, PascalCase, SCREAMING_SNAKE_CASE, SCREAMING-KEBAB-CASE, lowercase, UPPERCASE</span>
  <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:4:9
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
 <span style="font-weight:bold"></span><span style="color:#61afef">4</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[facet(rename_all = "SCREAMING_SNAKE")]
   <span style="font-weight:bold"></span><span style="color:#61afef">|</span>         <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^^^^^</span>
 
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
+<span style="font-weight:bold"></span><span style="color:#e06c75">error</span>: could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
 </div>
 </section>
 
@@ -303,13 +303,17 @@ The `#[derive(Facet)]` macro provides helpful compile-time error messages when a
 </div>
 <div class="compiler-error">
 <h4>Compiler Error</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">: #[facet(rename = "...")] cannot be used on a struct definition. A struct's serialized name is controlled by the field that contains it, not by the struct itself. Did you mean to use #[facet(rename_all = "...")]?</span>
- <span style="font-weight:bold"></span><span style="color:#61afef">--&gt; </span>src/main.rs:4:9
-  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>
-<span style="font-weight:bold"></span><span style="color:#61afef">4</span> <span style="font-weight:bold"></span><span style="color:#61afef">|</span> #[facet(rename = "MyConfig")]
-  <span style="font-weight:bold"></span><span style="color:#61afef">|</span>         <span style="font-weight:bold"></span><span style="color:#e06c75">^^^^^^</span>
-
-<span style="font-weight:bold"></span><span style="color:#e06c75">error</span><span style="font-weight:bold">:</span> could not compile &#96;test&#96; (bin "test") due to 1 previous error</code></pre>
+<pre><code></code></pre>
 </div>
 </section>
+
+<footer class="showcase-provenance">
+<p>This showcase was auto-generated from source code.</p>
+<dl>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6/facet/examples/derive_showcase.rs"><code>facet/examples/derive_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6"><code>0d55a3ebf</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2025-12-09T19:29:12+01:00">2025-12-09T19:29:12+01:00</time></dd>
+<dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
+</dl>
+</footer>
 </div>

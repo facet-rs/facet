@@ -28,8 +28,8 @@ title = "JSON"
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Person</span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Alice</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">30</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;String&gt;</span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">alice@example.com</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">alice@example.com</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -118,7 +118,7 @@ title = "JSON"
   <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Text</span><span style="opacity:0.7">(</span>"<span style="color:rgb(158,206,106)">Hello, world!</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Image</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">url</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">https://example.com/cat.jpg</span>"<span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">width</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">800</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">width</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">800</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Ping</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
@@ -159,7 +159,7 @@ title = "JSON"
     <span style="color:rgb(115,218,202)">data</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Operation completed</span>"<span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">ApiResponse</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Error</span><span style="opacity:0.7"> {</span>
-    <span style="color:rgb(115,218,202)">code</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,95)">404</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">code</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">404</span><span style="opacity:0.7">,</span>
     <span style="color:rgb(115,218,202)">message</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Not found</span>"<span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
@@ -196,10 +196,10 @@ title = "JSON"
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">[Event; 3]</span><span style="opacity:0.7"> [</span>
   <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Click</span><span style="opacity:0.7"> {</span>
-    <span style="color:rgb(115,218,202)">x</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,95)">100</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">y</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,95)">200</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">x</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">100</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">y</span><span style="opacity:0.7">: </span><span style="color:rgb(224,81,93)">200</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">KeyPress</span><span style="opacity:0.7">(</span><span style="color:rgb(81,122,224)">A</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">KeyPress</span><span style="opacity:0.7">(</span><span style="color:rgb(81,224,91)">A</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
   <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Event</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Resize</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
@@ -240,7 +240,7 @@ title = "JSON"
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">[StringOrNumber; 2]</span><span style="opacity:0.7"> [</span>
   <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Str</span><span style="opacity:0.7">(</span>"<span style="color:rgb(158,206,106)">hello</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Num</span><span style="opacity:0.7">(</span><span style="color:rgb(224,88,81)">42</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">StringOrNumber</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Num</span><span style="opacity:0.7">(</span><span style="color:rgb(222,81,224)">42</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -267,8 +267,8 @@ title = "JSON"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
-  "<span style="color:rgb(158,206,106)">two</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">2</span><span style="opacity:0.7">,</span>
-  "<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">1</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">two</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -294,17 +294,17 @@ title = "JSON"
 </details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;i32, &amp;str&gt;</span><span style="opacity:0.7"> [</span>
-  <span style="color:rgb(224,81,95)">1</span><span style="opacity:0.7"> =&gt; </span>"<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,95)">2</span><span style="opacity:0.7"> =&gt; </span>"<span style="color:rgb(158,206,106)">two</span>"<span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;i32, String&gt;</span><span style="opacity:0.7"> [</span>
+  <span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7"> =&gt; </span>"<span style="color:rgb(158,206,106)">two</span>"<span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7"> =&gt; </span>"<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="serialized-output">
 <h4>JSON Output</h4>
 <pre style="background-color:#1a1b26;">
 <span style="color:#9abdf5;">{
-</span><span style="color:#c0caf5;">  </span><span style="color:#89ddff;">&quot;</span><span style="color:#7aa2f7;">1</span><span style="color:#89ddff;">&quot;: &quot;</span><span style="color:#9ece6a;">one</span><span style="color:#89ddff;">&quot;,
-</span><span style="color:#c0caf5;">  </span><span style="color:#89ddff;">&quot;</span><span style="color:#7aa2f7;">2</span><span style="color:#89ddff;">&quot;: &quot;</span><span style="color:#9ece6a;">two</span><span style="color:#89ddff;">&quot;
+</span><span style="color:#c0caf5;">  </span><span style="color:#89ddff;">&quot;</span><span style="color:#7aa2f7;">2</span><span style="color:#89ddff;">&quot;: &quot;</span><span style="color:#9ece6a;">two</span><span style="color:#89ddff;">&quot;,
+</span><span style="color:#c0caf5;">  </span><span style="color:#89ddff;">&quot;</span><span style="color:#7aa2f7;">1</span><span style="color:#89ddff;">&quot;: &quot;</span><span style="color:#9ece6a;">one</span><span style="color:#89ddff;">&quot;
 </span><span style="color:#9abdf5;">}</span></pre>
 
 </div>
@@ -324,9 +324,9 @@ title = "JSON"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Point</span><span style="opacity:0.7">(</span>
-  <span style="color:rgb(224,81,95)">10</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,95)">20</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,95)">30</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">10</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">20</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">30</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">)</span></code></pre>
 </div>
 <div class="serialized-output">
@@ -361,8 +361,8 @@ title = "JSON"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">true</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">100</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">100</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">endpoints</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
     "<span style="color:rgb(158,206,106)">https://api1.example.com</span>"<span style="opacity:0.7">,</span>
     "<span style="color:rgb(158,206,106)">https://api2.example.com</span>"<span style="opacity:0.7">,</span>
@@ -397,8 +397,8 @@ title = "JSON"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">true</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">100</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">max_connections</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">100</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">endpoints</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
     "<span style="color:rgb(158,206,106)">https://api1.example.com</span>"<span style="opacity:0.7">,</span>
     "<span style="color:rgb(158,206,106)">https://api2.example.com</span>"<span style="opacity:0.7">,</span>
@@ -438,9 +438,9 @@ title = "JSON"
 </details>
 <div class="error">
 <h4>Error</h4>
-<pre><code><span style="color:#e06c75">json::token</span>
+<pre><code><span style="color:#e06c75">json::scan</span>
 
-  <span style="color:#e06c75">×</span> unexpected character: '@' (while parsing i32)
+  <span style="color:#e06c75">×</span> UnexpectedChar('@') (while parsing i32)
    ╭────
  <span style="opacity:0.7">1</span> │ @invalid
    · <span style="color:#c678dd;font-weight:bold">┬</span>
@@ -473,9 +473,9 @@ title = "JSON"
 </details>
 <div class="error">
 <h4>Error</h4>
-<pre><code><span style="color:#e06c75">json::token</span>
+<pre><code><span style="color:#e06c75">json::scan</span>
 
-  <span style="color:#e06c75">×</span> unexpected character: '@' (while parsing i32)
+  <span style="color:#e06c75">×</span> UnexpectedChar('@') (while parsing i32)
    ╭────
  <span style="opacity:0.7">1</span> │ {"name": "test", "value": @bad}
    · <span style="color:#c678dd;font-weight:bold">                          ┬</span>
@@ -514,9 +514,9 @@ title = "JSON"
 </details>
 <div class="error">
 <h4>Error</h4>
-<pre><code><span style="color:#e06c75">json::token</span>
+<pre><code><span style="color:#e06c75">json::scan</span>
 
-  <span style="color:#e06c75">×</span> unexpected character: '?' (while parsing i32)
+  <span style="color:#e06c75">×</span> UnexpectedChar('?') (while parsing i32)
    ╭─[3:12]
  <span style="opacity:0.7">2</span> │   "name": "test",
  <span style="opacity:0.7">3</span> │   "count": ???,
@@ -691,11 +691,11 @@ title = "JSON"
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">json::unexpected_token</span>
 
-  <span style="color:#e06c75">×</span> unexpected token: got "not an array", expected '['
+  <span style="color:#e06c75">×</span> unexpected token: got String("not an array"), expected '['
    ╭────
  <span style="opacity:0.7">1</span> │ {"items": "not an array"}
    · <span style="color:#c678dd;font-weight:bold">          ───────┬──────</span>
-   ·                  <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">expected '[', got '"not an array"'</span>
+   ·                  <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">expected '[', got 'String("not an array")'</span>
    ╰────
 </code></pre>
 </div>
@@ -722,11 +722,11 @@ title = "JSON"
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">json::unexpected_token</span>
 
-  <span style="color:#e06c75">×</span> unexpected token: got ,, expected ']'
+  <span style="color:#e06c75">×</span> unexpected token: got Comma, expected ']'
    ╭────
  <span style="opacity:0.7">1</span> │ [1, 2, 3]
    · <span style="color:#c678dd;font-weight:bold">     ┬</span>
-   ·      <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">expected ']', got ','</span>
+   ·      <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">expected ']', got 'Comma'</span>
    ╰────
 </code></pre>
 </div>
@@ -852,9 +852,9 @@ title = "JSON"
 </details>
 <div class="error">
 <h4>Error</h4>
-<pre><code><span style="color:#e06c75">json::token</span>
+<pre><code><span style="color:#e06c75">json::scan</span>
 
-  <span style="color:#e06c75">×</span> unexpected character: 'e'
+  <span style="color:#e06c75">×</span> UnexpectedChar('e')
 </code></pre>
 </div>
 </section>
@@ -879,7 +879,7 @@ title = "JSON"
 <h4>Error</h4>
 <pre><code><span style="color:#e06c75">json::unexpected_token</span>
 
-  <span style="color:#e06c75">×</span> unexpected token: got EOF, expected scalar value
+  <span style="color:#e06c75">×</span> unexpected token: got Eof, expected scalar value
    ╭────
    ╰────
 </code></pre>
@@ -909,15 +909,25 @@ title = "JSON"
 </details>
 <div class="error">
 <h4>Error</h4>
-<pre><code><span style="color:#e06c75">json::token</span>
+<pre><code><span style="color:#e06c75">json::scan</span>
 
-  <span style="color:#e06c75">×</span> unexpected character: 'n' (while parsing i32)
+  <span style="color:#e06c75">×</span> UnexpectedChar('o') (while parsing i32)
    ╭────
  <span style="opacity:0.7">1</span> │ {"emoji": "🎉🚀", "count": nope}
-   · <span style="color:#c678dd;font-weight:bold">                           ──┬─</span>
-   ·                              <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unexpected 'n', expected i32</span>
+   · <span style="color:#c678dd;font-weight:bold">                            ┬</span>
+   ·                             <span style="color:#c678dd;font-weight:bold">╰── </span><span style="color:#c678dd;font-weight:bold">unexpected 'o', expected i32</span>
    ╰────
 </code></pre>
 </div>
 </section>
+
+<footer class="showcase-provenance">
+<p>This showcase was auto-generated from source code.</p>
+<dl>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6/facet-json/examples/json_showcase.rs"><code>facet-json/examples/json_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6"><code>0d55a3ebf</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2025-12-09T19:29:12+01:00">2025-12-09T19:29:12+01:00</time></dd>
+<dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
+</dl>
+</footer>
 </div>

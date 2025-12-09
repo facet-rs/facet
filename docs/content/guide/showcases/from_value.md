@@ -39,8 +39,8 @@ title = "From Value"
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Person</span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Alice</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">30</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;String&gt;</span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">alice@example.com</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">30</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::Some(</span>"<span style="color:rgb(158,206,106)">alice@example.com</span>"<span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -101,8 +101,8 @@ title = "From Value"
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Employee</span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">person</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Person</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">Bob</span>"<span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(110,81,224)">42</span><span style="opacity:0.7">,</span>
-    <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;String&gt;</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">age</span><span style="opacity:0.7">: </span><span style="color:rgb(207,81,224)">42</span><span style="opacity:0.7">,</span>
+    <span style="color:rgb(115,218,202)">email</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
   <span style="opacity:0.7">}</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">address</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Address</span><span style="opacity:0.7"> {</span>
     <span style="color:rgb(115,218,202)">street</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">123 Main St</span>"<span style="opacity:0.7">,</span>
@@ -210,7 +210,7 @@ title = "From Value"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Message</span><span style="opacity:0.7">::</span><span style="font-weight:bold">Data</span><span style="opacity:0.7"> {</span>
-  <span style="color:rgb(115,218,202)">id</span><span style="opacity:0.7">: </span><span style="color:rgb(81,126,224)">42</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">id</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,179)">42</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">payload</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">secret data</span>"<span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
@@ -239,11 +239,11 @@ title = "From Value"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;i32&gt;</span><span style="opacity:0.7"> [</span>
-  <span style="color:rgb(224,81,95)">1</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,95)">2</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,95)">3</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,95)">4</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,95)">5</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">3</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">4</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(224,81,93)">5</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 </section>
@@ -297,9 +297,9 @@ title = "From Value"
 <div class="success">
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
-  "<span style="color:rgb(158,206,106)">x</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">10</span><span style="opacity:0.7">,</span>
-  "<span style="color:rgb(158,206,106)">y</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">20</span><span style="opacity:0.7">,</span>
-  "<span style="color:rgb(158,206,106)">z</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,95)">30</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">x</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">10</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">z</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">30</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">y</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">20</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 </section>
@@ -326,12 +326,12 @@ title = "From Value"
 </details>
 <div class="success">
 <h4>Success</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;Option&lt;i32&gt;&gt;</span><span style="opacity:0.7"> [</span>
-  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;i32&gt;</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(224,81,95)">1</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;i32&gt;</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;i32&gt;</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(224,81,95)">3</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;i32&gt;</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
-  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;i32&gt;</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(224,81,95)">5</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;Option&gt;</span><span style="opacity:0.7"> [</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(224,81,93)">3</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
+  <span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::Some(</span><span style="color:rgb(224,81,93)">5</span><span style="opacity:0.7">)</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 </section>
@@ -363,8 +363,8 @@ title = "From Value"
 <h4>Success</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Config</span><span style="opacity:0.7"> {</span>
   <span style="color:rgb(115,218,202)">name</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">minimal</span>"<span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">enabled</span><span style="opacity:0.7">: </span><span style="color:rgb(81,164,224)">false</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">max_retries</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option&lt;u32&gt;</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">enabled</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">false</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">max_retries</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Option</span><span style="opacity:0.7">::None</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -389,7 +389,6 @@ Error: 
    ╰────
 </code></pre>
 </div>
-</section>
 
 ### Error: Number Out of Range
 
@@ -408,7 +407,6 @@ Error: 
    ╰────
 </code></pre>
 </div>
-</section>
 
 ### Error: Wrong Array Length
 
@@ -431,7 +429,6 @@ Error: 
    ╰────
 </code></pre>
 </div>
-</section>
 
 ### Error: Invalid Enum Variant
 
@@ -463,7 +460,6 @@ Error: 
    ╰────
 </code></pre>
 </div>
-</section>
 
 ### Error: Expected Object, Got Array
 
@@ -497,5 +493,14 @@ Error: 
    ╰────
 </code></pre>
 </div>
-</section>
+
+<footer class="showcase-provenance">
+<p>This showcase was auto-generated from source code.</p>
+<dl>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6/facet-value/examples/from_value_showcase.rs"><code>facet-value/examples/from_value_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6"><code>0d55a3ebf</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2025-12-09T19:29:12+01:00">2025-12-09T19:29:12+01:00</time></dd>
+<dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
+</dl>
+</footer>
 </div>
