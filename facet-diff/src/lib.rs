@@ -2,6 +2,7 @@
 #![forbid(unsafe_code)]
 #![doc = include_str!("../README.md")]
 
+mod confusables;
 mod diff;
 mod display;
 mod sequences;
