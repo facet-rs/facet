@@ -5,7 +5,7 @@ weight = 1
 
 facet is a reflection library for Rust. You derive `Facet` once, and you get serialization, pretty-printing, diffing, CLI argument parsing, and more — all from the same type information.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct Config {
     name: String,
@@ -80,7 +80,7 @@ If you want to reduce binary size, you might use `#[cfg_attr(...)]` to condition
 
 With facet, you derive once:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct Args {
     #[facet(args::named, args::short = 'v')]
@@ -100,7 +100,7 @@ That type works with `facet-json` for config files, `facet-args` for CLI parsing
 
 Writing a proc-macro is hard. With facet, if you want custom attributes for your format crate, you call `define_attr_grammar!` and you're done:
 
-```rust
+```rust,noexec
 facet::define_attr_grammar! {
     ns "myformat";
     crate_path ::my_format_crate;

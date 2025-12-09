@@ -21,7 +21,7 @@ is to ignore field that are not known.
 <tr>
 <td>
 
-```rust
+```rust,noexec
 #[derive(facet::Facet)]
 #[facet(deny_unknown_fields)]
 struct MyStruct {
@@ -34,7 +34,7 @@ struct MyStruct {
 </td>
 <td>
 
-```rust
+```rust,noexec
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MyStruct {
@@ -62,7 +62,7 @@ variant.
 <tr>
 <td>
 
-```rust
+```rust,noexec
 #[derive(facet::Facet)]
 #[facet(default)]
 struct MyStruct {
@@ -84,7 +84,7 @@ impl Default for MyStruct {
 </td>
 <td>
 
-```rust
+```rust,noexec
 #[derive(serde::Deserialize)]
 #[serde(default)]
 struct MyStruct {
@@ -125,7 +125,7 @@ Rename all fields at once using a casing convention. Supported values are
 <tr>
 <td>
 
-```rust
+```rust,noexec
 #[derive(facet::Facet)]
 #[facet(rename_all = "camelCase")]
 struct MyStruct {
@@ -136,7 +136,7 @@ struct MyStruct {
 </td>
 <td>
 
-```rust
+```rust,noexec
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MyStruct {
@@ -162,7 +162,7 @@ Skip this field during serialization.
 <tr>
 <td>
 
-```rust
+```rust,noexec
 #[derive(facet::Facet)]
 struct MyStruct {
     field1: i32,
@@ -174,7 +174,7 @@ struct MyStruct {
 </td>
 <td>
 
-```rust
+```rust,noexec
 #[derive(serde::Serialize)]
 struct MyStruct {
     field1: i32,
@@ -201,7 +201,7 @@ want to omit the field entirely from serialized output when the value is `None`.
 <tr>
 <td>
 
-```rust
+```rust,noexec
 #[derive(facet::Facet)]
 struct MyStruct {
     #[facet(skip_serializing_if = |n| n % 2 == 0)]
@@ -214,7 +214,7 @@ struct MyStruct {
 </td>
 <td>
 
-```rust
+```rust,noexec
 #[derive(serde::Serialize)]
 struct MyStruct {
     #[serde(skip_serializing_if = is_even)]
@@ -246,7 +246,7 @@ expression producing the default value.
 <tr>
 <td>
 
-```rust
+```rust,noexec
 #[derive(facet::Facet)]
 struct MyStruct {
     field1: i32,
@@ -262,7 +262,7 @@ struct MyStruct {
 </td>
 <td>
 
-```rust
+```rust,noexec
 #[derive(serde::Deserialize)]
 struct MyStruct {
     field1: i32,

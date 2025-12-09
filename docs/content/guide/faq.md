@@ -55,7 +55,7 @@ the vtables that are included
 
 ### How do I deserialize from JSON?
 
-```rust
+```rust,noexec
 use facet::Facet;
 use facet_json::from_str;
 
@@ -70,7 +70,7 @@ let person: Person = from_str(r#"{"name": "Alice", "age": 30}"#)?;
 
 ### How do I serialize to JSON?
 
-```rust
+```rust,noexec
 use facet::Facet;
 use facet_json::to_string;
 
@@ -88,7 +88,7 @@ let json = to_string(&person);
 
 Use `Option<T>` and optionally `skip_serializing_if`:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct User {
     name: String,
@@ -101,7 +101,7 @@ struct User {
 
 Use `rename` for individual fields or `rename_all` for all fields:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[facet(rename_all = "camelCase")]
 struct Config {
@@ -113,7 +113,7 @@ struct Config {
 
 ### How do I use a default value for missing fields?
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct Config {
     name: String,
@@ -124,7 +124,7 @@ struct Config {
 
 ### How do I skip a field?
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct User {
     name: String,
@@ -135,7 +135,7 @@ struct User {
 
 ### How do I flatten nested structs?
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct Inner {
     x: i32,
@@ -155,7 +155,7 @@ struct Outer {
 
 facet supports multiple enum representations:
 
-```rust
+```rust,noexec
 // Externally tagged (default)
 #[derive(Facet)]
 enum Message {
@@ -199,7 +199,7 @@ enum AnyValue {
 
 By default, facet ignores unknown fields. Add `deny_unknown_fields` to make them errors:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[facet(deny_unknown_fields)]
 struct Config {
@@ -211,7 +211,7 @@ struct Config {
 
 facet's format crates produce rich diagnostics with source locations when possible. Errors implement [miette](https://docs.rs/miette)'s `Diagnostic` trait for pretty printing:
 
-```rust
+```rust,noexec
 use miette::Result;
 use facet_json::from_str;
 
@@ -225,7 +225,7 @@ fn main() -> Result<()> {
 
 Use the `invariants` attribute:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[facet(invariants = validate)]
 struct Port(u16);
@@ -241,7 +241,7 @@ fn validate(port: &Port) -> bool {
 
 Not directly. facet has its own derive macro and format crates. However, you can have both derives on a type:
 
-```rust
+```rust,noexec
 #[derive(Facet, serde::Serialize, serde::Deserialize)]
 struct MyType {
     // ...
@@ -275,7 +275,7 @@ Ensure the type either:
 
 Make sure you're using the derive macro:
 
-```rust
+```rust,noexec
 use facet::Facet;
 
 #[derive(Facet)]  // This enables #[facet(...)] attributes
@@ -286,7 +286,7 @@ struct MyType { ... }
 
 Extension attributes require importing the crate with an alias:
 
-```rust
+```rust,noexec
 use facet_kdl as kdl;  // Enables kdl:: prefix
 
 #[derive(Facet)]
@@ -302,7 +302,7 @@ Without the import, `kdl::property` is not recognized.
 Due to the current facet implementation you need to manually tag where we should introduce indirection,
 this is done with the `#[facet(recursive_type)]` attribute like so
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct Node {
     #[facet(recursive_type)] 

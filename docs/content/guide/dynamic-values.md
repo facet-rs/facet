@@ -18,7 +18,7 @@ A common pattern is to deserialize into `Value` first, then convert to a concret
 - You want to inspect the data before choosing a target type
 - You're building configuration layers that merge multiple sources
 
-```rust
+```rust,noexec
 use facet::Facet;
 use facet_value::{Value, from_value};
 
@@ -44,7 +44,7 @@ println!("{:?}", config);
 
 You can also extract just part of a `Value` tree into a typed struct:
 
-```rust
+```rust,noexec
 use facet::Facet;
 use facet_value::{Value, from_value};
 
@@ -77,7 +77,7 @@ if let Some(db_value) = value.as_object().and_then(|o| o.get("database")) {
 
 This is incredibly useful for testing: verify that your JSON matches the expected typed structure without manually constructing the typed value:
 
-```rust
+```rust,noexec
 use facet::Facet;
 use facet_assert::assert_same;
 use facet_value::Value;
@@ -102,7 +102,7 @@ assert_same!(user, expected);
 
 Compare DTOs across API versions without implementing `PartialEq` between them:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct UserV1 { name: String, age: u32 }
 
@@ -139,7 +139,7 @@ assertion `assert_same!(left, right)` failed
 
 ### Basic usage
 
-```rust
+```rust,noexec
 use facet::Facet;
 use facet_json::RawJson;
 
@@ -162,7 +162,7 @@ assert_eq!(response.data.as_str(), r#"{"nested": [1, 2, 3], "complex": true}"#);
 
 When possible, `RawJson` borrows from the input string (zero allocation):
 
-```rust
+```rust,noexec
 use facet_json::RawJson;
 use std::borrow::Cow;
 
@@ -182,7 +182,7 @@ let envelope: Envelope = facet_json::from_str(json)?;
 
 If you need to outlive the input, convert to owned:
 
-```rust
+```rust,noexec
 let owned: RawJson<'static> = envelope.payload.into_owned();
 ```
 
@@ -190,7 +190,7 @@ let owned: RawJson<'static> = envelope.payload.into_owned();
 
 Parse the raw JSON when you're ready:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct ClickEvent {
     r#type: String,
@@ -205,7 +205,7 @@ let event: ClickEvent = facet_json::from_str(response.data.as_str())?;
 
 These features compose naturally:
 
-```rust
+```rust,noexec
 use facet::Facet;
 use facet_assert::assert_same;
 use facet_json::RawJson;

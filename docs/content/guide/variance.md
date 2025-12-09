@@ -13,7 +13,7 @@ Variance determines whether you can substitute a type with a different lifetime:
 - **Contravariant**: A shorter lifetime can be used where a longer one is expected. `fn(&'a str)` can accept `fn(&'static str)`.
 - **Invariant**: No substitution allowed. The lifetime must match exactly.
 
-```rust
+```rust,noexec
 // Covariant: &'a T
 fn takes_ref<'a>(r: &'a str) {}
 let s: &'static str = "hello";
@@ -37,7 +37,7 @@ Facet's `Peek` type lets you read values at runtime. Without careful design, ref
 
 Consider a type that contains a function pointer:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct FnWrapper<'a> {
     f: fn(&'a str),  // Contravariant in 'a
@@ -54,7 +54,7 @@ If reflection allowed lifetime changes, you could:
 
 `Peek` is **invariant** over its `'facet` lifetime parameter. This means you cannot change the lifetime through reflection at all:
 
-```rust
+```rust,noexec
 // This is enforced at compile time
 fn launder<'a>(p: Peek<'_, 'static>) -> Peek<'_, 'a> {
     p  // ERROR: cannot coerce Peek<'_, 'static> to Peek<'_, 'a>
@@ -65,7 +65,7 @@ fn launder<'a>(p: Peek<'_, 'static>) -> Peek<'_, 'a> {
 
 Every `Shape` in facet has a `variance` field that records the type's variance:
 
-```rust
+```rust,noexec
 pub struct Shape {
     // ... other fields ...
 
@@ -95,7 +95,7 @@ When combining types, variance follows these rules:
 
 The `Variance::combine()` method implements these rules:
 
-```rust
+```rust,noexec
 let struct_variance = field1_variance.combine(field2_variance);
 ```
 

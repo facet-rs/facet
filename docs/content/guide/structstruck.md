@@ -8,7 +8,7 @@ insert_anchor_links = "heading"
 
 ## Without structstruck
 
-```rust
+```rust,noexec
 use facet::Facet;
 
 #[derive(Facet)]
@@ -34,7 +34,7 @@ struct Features {
 
 ## With structstruck
 
-```rust
+```rust,noexec
 structstruck::strike! {
     #[structstruck::each[derive(facet::Facet)]]
     struct Config {

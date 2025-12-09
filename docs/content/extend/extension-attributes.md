@@ -10,7 +10,7 @@ For the full guide on creating extension attributes, see this page; for a quick 
 
 ## Using extension attributes
 
-```rust
+```rust,noexec
 use facet::Facet;
 use facet_kdl as kdl;
 
@@ -25,7 +25,7 @@ struct Server {
 
 The namespace (`kdl`) comes from how you import the crate:
 
-```rust
+```rust,noexec
 use facet_kdl as kdl;  // Enables kdl:: prefix
 use facet_args as args;  // Enables args:: prefix
 ```
@@ -34,7 +34,7 @@ use facet_args as args;  // Enables args:: prefix
 
 Use the [`define_attr_grammar!`](https://docs.rs/facet/latest/facet/macro.define_attr_grammar.html) macro to declare your attribute grammar. Here's how [`facet-kdl`](https://docs.rs/facet-kdl) does it:
 
-```rust
+```rust,noexec
 facet::define_attr_grammar! {
     ns "kdl";
     crate_path ::facet_kdl;
@@ -77,7 +77,7 @@ This generates:
 
 Simple flags with no arguments:
 
-```rust
+```rust,noexec
 pub enum Attr {
     /// A marker attribute
     Child,
@@ -90,7 +90,7 @@ Usage: `#[facet(kdl::child)]`
 
 Attributes that take a string:
 
-```rust
+```rust,noexec
 pub enum Attr {
     /// Rename to a different name
     Rename(&'static str),
@@ -103,7 +103,7 @@ Usage: `#[facet(rename = "new_name")]`
 
 For single-character flags (like CLI short options):
 
-```rust
+```rust,noexec
 pub enum Attr {
     /// Short flag, optionally with a character
     Short(Option<char>),
@@ -116,7 +116,7 @@ Usage: `#[facet(args::short)]` or `#[facet(args::short = 'v')]`
 
 The built-in facet attributes use additional payload types not typically needed by extension crates. For reference:
 
-```rust
+```rust,noexec
 // Inside the facet crate itself:
 define_attr_grammar! {
     builtin;
@@ -151,7 +151,7 @@ These special payload types enable powerful features but are primarily for core 
 
 One of the major benefits of `define_attr_grammar!`: **typos are caught at compile time** with helpful suggestions.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct Parent {
     #[facet(kdl::chld)]  // Typo!
@@ -174,7 +174,7 @@ The system uses string similarity to suggest corrections.
 
 When your format crate needs to check for attributes, use the `get_as` method on [`ExtensionAttr`](https://docs.rs/facet-core/latest/facet_core/struct.ExtensionAttr.html):
 
-```rust
+```rust,noexec
 use facet_core::{Field, FieldAttribute, Facet};
 use facet_kdl::Attr as KdlAttr;
 
@@ -200,7 +200,7 @@ fn process_field(field: &Field) {
 
 For built-in attributes:
 
-```rust
+```rust,noexec
 use facet::builtin::Attr as BuiltinAttr;
 
 for attr in field.attributes {
@@ -230,7 +230,7 @@ for attr in field.attributes {
 
 [`facet-args`](https://docs.rs/facet-args) provides CLI argument parsing:
 
-```rust
+```rust,noexec
 facet::define_attr_grammar! {
     ns "args";
     crate_path ::facet_args;
@@ -250,7 +250,7 @@ facet::define_attr_grammar! {
 
 Usage:
 
-```rust
+```rust,noexec
 use facet_args as args;
 
 #[derive(Facet)]
@@ -270,7 +270,7 @@ struct Cli {
 
 [`facet-yaml`](https://docs.rs/facet-yaml) provides serde-compatible names:
 
-```rust
+```rust,noexec
 pub mod serde {
     facet::define_attr_grammar! {
         ns "serde";
@@ -286,7 +286,7 @@ pub mod serde {
 
 Usage:
 
-```rust
+```rust,noexec
 use facet_yaml::serde;
 
 #[derive(Facet)]

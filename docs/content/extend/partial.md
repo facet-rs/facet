@@ -16,7 +16,7 @@ insert_anchor_links = "heading"
 
 ## API sketch
 
-```rust
+```rust,noexec
 use facet_reflect::{Partial, Resolution};
 use facet_solver::ResolutionBuilder; // or other way to obtain Resolution
 

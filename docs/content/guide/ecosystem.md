@@ -32,7 +32,7 @@ facet = { version = "{{ data.versions.facet }}", features = ["uuid", "chrono"] }
 
 ### Example: uUIDs
 
-```rust
+```rust,noexec
 use facet::Facet;
 use uuid::Uuid;
 
@@ -48,7 +48,7 @@ let user: User = facet_json::from_str(json)?;
 
 ### Example: dateTime with chrono
 
-```rust
+```rust,noexec
 use facet::Facet;
 use chrono::{DateTime, Utc};
 
@@ -64,7 +64,7 @@ let event: Event = facet_json::from_str(json)?;
 
 ### Example: UTF-8 paths with camino
 
-```rust
+```rust,noexec
 use facet::Facet;
 use camino::Utf8PathBuf;
 
@@ -151,7 +151,7 @@ Beyond basic argument parsing, `facet-args` provides utilities for help generati
 
 Generate formatted help text from your type's structure and doc comments:
 
-```rust
+```rust,noexec
 use facet::Facet;
 use facet_args::{generate_help, HelpConfig};
 
@@ -182,7 +182,7 @@ fn main() {
 
 Generate completion scripts for bash, zsh, and fish:
 
-```rust
+```rust,noexec
 use facet_args::{generate_completions, Shell};
 
 // Generate bash completions
@@ -205,7 +205,7 @@ Install completions by writing to the appropriate location:
 
 For quick CLI tools:
 
-```rust
+```rust,noexec
 use facet_args::from_std_args;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -225,7 +225,7 @@ If you have a type that doesn't implement `Facet`, you have several options:
 
 If it's your type, just derive it:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct MyType {
     // ...
@@ -236,7 +236,7 @@ struct MyType {
 
 If your type contains fields that don't implement `Facet`, use `opaque` to hide them:
 
-```rust
+```rust,noexec
 use some_crate::ExternalType;  // Doesn't implement Facet
 
 #[derive(Facet)]
@@ -249,7 +249,7 @@ struct MyWrapper {
 
 Opaque fields can't be serialized on their own. If you need serialization, add a `proxy`:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[facet(transparent)]
 struct ExternalTypeProxy(String);
