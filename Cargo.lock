@@ -601,6 +601,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf0a07a401f374238ab8e2f11a104d2851bf9ce711ec69804834de8af45c7af"
 
 [[package]]
+name = "confusables"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31e757874ffcf3b96a4868220ed03f8c2fc82b25b89e3f19592ae3275f056987"
+dependencies = [
+ "phf",
+ "phf_codegen",
+]
+
+[[package]]
 name = "console"
 version = "0.15.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1116,6 +1126,7 @@ dependencies = [
 name = "facet-assert"
 version = "0.31.0"
 dependencies = [
+ "confusables",
  "facet",
  "facet-core",
  "facet-pretty",
@@ -1192,6 +1203,7 @@ name = "facet-diff"
 version = "0.31.0"
 dependencies = [
  "boxen",
+ "confusables",
  "facet",
  "facet-core",
  "facet-pretty",

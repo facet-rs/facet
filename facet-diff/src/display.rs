@@ -1,10 +1,10 @@
 use std::fmt::{Display, Write};
 
+use confusables::Confusable;
 use facet_pretty::{PrettyPrinter, tokyo_night};
 use owo_colors::OwoColorize;
 
 use crate::{
-    confusables::{are_visually_confusable, format_confusable_diff},
     diff::{Diff, Value},
     sequences::{ReplaceGroup, Updates, UpdatesGroup},
 };
@@ -88,15 +88,27 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
 
                 // Check if both values are strings and visually confusable
                 if let (Some(from_str), Some(to_str)) = (from.as_str(), to.as_str())
-                    && are_visually_confusable(from_str, to_str)
+                    && from_str.is_confusable_with(to_str)
                 {
                     // Show the strings with confusable explanation
+                    // Show both the original (with confusables) and the "skeleton" form
+                    let from_replaced = from_str.replace_confusable();
+                    let to_replaced = to_str.replace_confusable();
                     write!(
                         f,
                         "{} → {}\n{}",
                         deleted(&printer.format_peek(*from)),
                         inserted(&printer.format_peek(*to)),
-                        muted(&format_confusable_diff(from_str, to_str).unwrap_or_default())
+                        muted(&format!(
+                            "(strings are confusable: {:?} vs {:?} both normalize to {:?})",
+                            from_str,
+                            to_str,
+                            if from_replaced == to_replaced {
+                                &from_replaced
+                            } else {
+                                &to_replaced
+                            }
+                        ))
                     )?;
                     return Ok(());
                 }

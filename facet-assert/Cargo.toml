@@ -13,6 +13,7 @@ categories = ["development-tools", "development-tools::testing"]
 ci = [] # CI feature
 
 [dependencies]
+confusables = "0.1"
 facet = { path = "../facet" }
 facet-core = { path = "../facet-core" }
 facet-reflect = { path = "../facet-reflect" }

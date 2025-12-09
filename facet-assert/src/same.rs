@@ -1,5 +1,6 @@
 //! Structural sameness checking for Facet types.
 
+use confusables::Confusable;
 use core::fmt;
 use facet_core::{Def, DynValueKind, Facet, Type, UserType};
 use facet_pretty::PrettyPrinter;
@@ -245,6 +246,19 @@ impl Differ {
                     writeln!(out, "\x1b[1m{path}\x1b[0m:").unwrap();
                     writeln!(out, "  \x1b[31m- {left}\x1b[0m").unwrap();
                     writeln!(out, "  \x1b[32m+ {right}\x1b[0m").unwrap();
+
+                    // Check if the strings are confusable (look identical but differ)
+                    // We check if they normalize to the same "skeleton" form
+                    let left_normalized = left.replace_confusable();
+                    let right_normalized = right.replace_confusable();
+                    if left_normalized == right_normalized {
+                        writeln!(
+                            out,
+                            "  \x1b[33m(strings contain confusable characters - both normalize to {:?})\x1b[0m",
+                            left_normalized
+                        )
+                        .unwrap();
+                    }
                 }
                 DiffLine::OnlyLeft { path, value } => {
                     writeln!(out, "\x1b[1m{path}\x1b[0m (only in left):").unwrap();
