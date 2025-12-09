@@ -108,7 +108,7 @@ async fn handle_connection(stream: TcpStream, addr: SocketAddr) {
         match desc.method_id {
             METHOD_ADDER_ADD => {
                 // Handle Adder::add
-                match facet_postcard::from_bytes::<AdderRequest>(payload) {
+                match facet_postcard::from_slice::<AdderRequest>(payload) {
                     Ok(req) => {
                         let result = req.a + req.b;
                         println!("  Adder: {} + {} = {}", req.a, req.b, result);
@@ -158,7 +158,7 @@ async fn handle_connection(stream: TcpStream, addr: SocketAddr) {
             }
             METHOD_RANGE => {
                 // Handle Range::range (streaming)
-                match facet_postcard::from_bytes::<RangeRequest>(payload) {
+                match facet_postcard::from_slice::<RangeRequest>(payload) {
                     Ok(req) => {
                         println!("  Range: streaming 0..{}", req.n);
 

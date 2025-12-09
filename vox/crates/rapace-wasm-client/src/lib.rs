@@ -217,7 +217,7 @@ impl ExplorerClient {
         let response_frame = self.call_method(METHOD_LIST_SERVICES, &payload).await?;
 
         // Decode response
-        let services: Vec<ServiceSummary> = facet_postcard::from_bytes(response_frame.payload())
+        let services: Vec<ServiceSummary> = facet_postcard::from_slice(response_frame.payload())
             .map_err(|e| JsValue::from_str(&format!("decode error: {}", e)))?;
 
         // Convert to JS array
@@ -250,7 +250,7 @@ impl ExplorerClient {
         let response_frame = self.call_method(METHOD_GET_SERVICE, &payload).await?;
 
         // Decode response
-        let service: Option<ServiceDetail> = facet_postcard::from_bytes(response_frame.payload())
+        let service: Option<ServiceDetail> = facet_postcard::from_slice(response_frame.payload())
             .map_err(|e| JsValue::from_str(&format!("decode error: {}", e)))?;
 
         match service {
@@ -317,7 +317,7 @@ impl ExplorerClient {
         let response_frame = self.call_method(METHOD_CALL_UNARY, &payload).await?;
 
         // Decode response
-        let response: CallResponse = facet_postcard::from_bytes(response_frame.payload())
+        let response: CallResponse = facet_postcard::from_slice(response_frame.payload())
             .map_err(|e| JsValue::from_str(&format!("decode error: {}", e)))?;
 
         // Convert to JS object
@@ -515,7 +515,7 @@ impl StreamingCall {
         }
 
         // Decode streaming item
-        let item: StreamItem = facet_postcard::from_bytes(frame.payload())
+        let item: StreamItem = facet_postcard::from_slice(frame.payload())
             .map_err(|e| JsValue::from_str(&format!("decode error: {}", e)))?;
 
         let obj = js_sys::Object::new();

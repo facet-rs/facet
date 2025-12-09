@@ -569,7 +569,7 @@ fn generate_client_method_unary(method: &MethodInfo, method_id: u32) -> TokenStr
             }
 
             // Decode response using facet_postcard
-            let result: #return_type = ::facet_postcard::from_bytes(&response.payload)
+            let result: #return_type = ::facet_postcard::from_slice(&response.payload)
                 .map_err(|e| ::rapace_core::RpcError::Status {
                     code: ::rapace_core::ErrorCode::Internal,
                     message: ::std::format!("decode error: {:?}", e),
@@ -636,7 +636,7 @@ fn generate_client_method_server_streaming(
                     }
 
                     // DATA chunk (possibly with EOS flag for final item) - deserialize
-                    let item: #item_type = ::facet_postcard::from_bytes(&chunk.payload)
+                    let item: #item_type = ::facet_postcard::from_slice(&chunk.payload)
                         .map_err(|e| RpcError::Status {
                             code: ErrorCode::Internal,
                             message: ::std::format!("decode error: {:?}", e),
@@ -686,7 +686,7 @@ fn generate_streaming_dispatch_arm(method: &MethodInfo, method_id: u32) -> Token
                 let arg = &arg_names[0];
                 let ty = &arg_types[0];
                 quote! {
-                    let #arg: #ty = ::facet_postcard::from_bytes(request_payload)
+                    let #arg: #ty = ::facet_postcard::from_slice(request_payload)
                         .map_err(|e| ::rapace_core::RpcError::Status {
                             code: ::rapace_core::ErrorCode::InvalidArgument,
                             message: ::std::format!("decode error: {:?}", e),
@@ -696,7 +696,7 @@ fn generate_streaming_dispatch_arm(method: &MethodInfo, method_id: u32) -> Token
             } else {
                 let tuple_type = quote! { (#(#arg_types),*) };
                 quote! {
-                    let (#(#arg_names),*): #tuple_type = ::facet_postcard::from_bytes(request_payload)
+                    let (#(#arg_names),*): #tuple_type = ::facet_postcard::from_slice(request_payload)
                         .map_err(|e| ::rapace_core::RpcError::Status {
                             code: ::rapace_core::ErrorCode::InvalidArgument,
                             message: ::std::format!("decode error: {:?}", e),
@@ -753,7 +753,7 @@ fn generate_streaming_dispatch_arm_server_streaming(
         let arg = &arg_names[0];
         let ty = &arg_types[0];
         quote! {
-            let #arg: #ty = ::facet_postcard::from_bytes(request_payload)
+            let #arg: #ty = ::facet_postcard::from_slice(request_payload)
                 .map_err(|e| ::rapace_core::RpcError::Status {
                     code: ::rapace_core::ErrorCode::InvalidArgument,
                     message: ::std::format!("decode error: {:?}", e),
@@ -762,7 +762,7 @@ fn generate_streaming_dispatch_arm_server_streaming(
     } else {
         let tuple_type = quote! { (#(#arg_types),*) };
         quote! {
-            let (#(#arg_names),*): #tuple_type = ::facet_postcard::from_bytes(request_payload)
+            let (#(#arg_names),*): #tuple_type = ::facet_postcard::from_slice(request_payload)
                 .map_err(|e| ::rapace_core::RpcError::Status {
                     code: ::rapace_core::ErrorCode::InvalidArgument,
                     message: ::std::format!("decode error: {:?}", e),
@@ -874,7 +874,7 @@ fn generate_dispatch_arm_unary(method: &MethodInfo, method_id: u32) -> TokenStre
         let arg = &arg_names[0];
         let ty = &arg_types[0];
         quote! {
-            let #arg: #ty = ::facet_postcard::from_bytes(request_payload)
+            let #arg: #ty = ::facet_postcard::from_slice(request_payload)
                 .map_err(|e| ::rapace_core::RpcError::Status {
                     code: ::rapace_core::ErrorCode::InvalidArgument,
                     message: ::std::format!("decode error: {:?}", e),
@@ -885,7 +885,7 @@ fn generate_dispatch_arm_unary(method: &MethodInfo, method_id: u32) -> TokenStre
         // Multiple args - decode as tuple
         let tuple_type = quote! { (#(#arg_types),*) };
         quote! {
-            let (#(#arg_names),*): #tuple_type = ::facet_postcard::from_bytes(request_payload)
+            let (#(#arg_names),*): #tuple_type = ::facet_postcard::from_slice(request_payload)
                 .map_err(|e| ::rapace_core::RpcError::Status {
                     code: ::rapace_core::ErrorCode::InvalidArgument,
                     message: ::std::format!("decode error: {:?}", e),
@@ -1055,7 +1055,7 @@ fn generate_client_method_unary_registry(
                 return Err(::rapace_core::parse_error_payload(&response.payload));
             }
 
-            let result: #return_type = ::facet_postcard::from_bytes(&response.payload)
+            let result: #return_type = ::facet_postcard::from_slice(&response.payload)
                 .map_err(|e| ::rapace_core::RpcError::Status {
                     code: ::rapace_core::ErrorCode::Internal,
                     message: ::std::format!("decode error: {:?}", e),
@@ -1123,7 +1123,7 @@ fn generate_client_method_server_streaming_registry(
                     }
 
                     // DATA chunk (possibly with EOS flag for final item) - deserialize
-                    let item: #item_type = ::facet_postcard::from_bytes(&chunk.payload)
+                    let item: #item_type = ::facet_postcard::from_slice(&chunk.payload)
                         .map_err(|e| RpcError::Status {
                             code: ErrorCode::Internal,
                             message: ::std::format!("decode error: {:?}", e),

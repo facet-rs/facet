@@ -27,21 +27,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "alloc-no-stdlib"
-version = "2.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc7bb162ec39d46ab1ca8c77bf72e890535becd1751bb45f64c597edb4c8c6b3"
-
-[[package]]
-name = "alloc-stdlib"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94fb8275041c72129eb51b7d0322c29b8387a0386127718b096429201a5d6ece"
-dependencies = [
- "alloc-no-stdlib",
-]
-
-[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -241,27 +226,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
-]
-
-[[package]]
-name = "brotli"
-version = "7.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc97b8f16f944bba54f0433f07e30be199b6dc2bd25937444bbad560bcea29bd"
-dependencies = [
- "alloc-no-stdlib",
- "alloc-stdlib",
- "brotli-decompressor",
-]
-
-[[package]]
-name = "brotli-decompressor"
-version = "4.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a334ef7c9e23abf0ce748e8cd309037da93e606ad52eb372e4ce327a0dcfbdfd"
-dependencies = [
- "alloc-no-stdlib",
- "alloc-stdlib",
 ]
 
 [[package]]
@@ -499,7 +463,7 @@ dependencies = [
 [[package]]
 name = "facet"
 version = "0.31.8"
-source = "git+https://github.com/facet-rs/facet#048a5662f7eff84fcfda6a845746649650e98a21"
+source = "git+https://github.com/facet-rs/facet#0b3e0b89779d97d24b7360e4c4651e95e248897e"
 dependencies = [
  "facet-core",
  "facet-macros",
@@ -509,20 +473,18 @@ dependencies = [
 [[package]]
 name = "facet-core"
 version = "0.31.8"
-source = "git+https://github.com/facet-rs/facet#048a5662f7eff84fcfda6a845746649650e98a21"
+source = "git+https://github.com/facet-rs/facet#0b3e0b89779d97d24b7360e4c4651e95e248897e"
 dependencies = [
  "autocfg",
  "bitflags",
  "impls",
- "paste",
 ]
 
 [[package]]
 name = "facet-json"
 version = "0.31.0"
-source = "git+https://github.com/facet-rs/facet#048a5662f7eff84fcfda6a845746649650e98a21"
+source = "git+https://github.com/facet-rs/facet#0b3e0b89779d97d24b7360e4c4651e95e248897e"
 dependencies = [
- "brotli",
  "facet",
  "facet-core",
  "facet-reflect",
@@ -539,7 +501,7 @@ dependencies = [
 [[package]]
 name = "facet-macro-parse"
 version = "0.1.0"
-source = "git+https://github.com/facet-rs/facet#048a5662f7eff84fcfda6a845746649650e98a21"
+source = "git+https://github.com/facet-rs/facet#0b3e0b89779d97d24b7360e4c4651e95e248897e"
 dependencies = [
  "facet-macro-types",
  "proc-macro2",
@@ -550,7 +512,7 @@ dependencies = [
 [[package]]
 name = "facet-macro-types"
 version = "0.1.0"
-source = "git+https://github.com/facet-rs/facet#048a5662f7eff84fcfda6a845746649650e98a21"
+source = "git+https://github.com/facet-rs/facet#0b3e0b89779d97d24b7360e4c4651e95e248897e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -560,7 +522,7 @@ dependencies = [
 [[package]]
 name = "facet-macros"
 version = "0.31.8"
-source = "git+https://github.com/facet-rs/facet#048a5662f7eff84fcfda6a845746649650e98a21"
+source = "git+https://github.com/facet-rs/facet#0b3e0b89779d97d24b7360e4c4651e95e248897e"
 dependencies = [
  "facet-core",
  "facet-macros-impl",
@@ -569,7 +531,7 @@ dependencies = [
 [[package]]
 name = "facet-macros-impl"
 version = "0.31.8"
-source = "git+https://github.com/facet-rs/facet#048a5662f7eff84fcfda6a845746649650e98a21"
+source = "git+https://github.com/facet-rs/facet#0b3e0b89779d97d24b7360e4c4651e95e248897e"
 dependencies = [
  "facet-macro-parse",
  "facet-macro-types",
@@ -582,7 +544,7 @@ dependencies = [
 [[package]]
 name = "facet-postcard"
 version = "0.1.0"
-source = "git+https://github.com/facet-rs/facet#048a5662f7eff84fcfda6a845746649650e98a21"
+source = "git+https://github.com/facet-rs/facet#0b3e0b89779d97d24b7360e4c4651e95e248897e"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -592,7 +554,7 @@ dependencies = [
 [[package]]
 name = "facet-reflect"
 version = "0.31.8"
-source = "git+https://github.com/facet-rs/facet#048a5662f7eff84fcfda6a845746649650e98a21"
+source = "git+https://github.com/facet-rs/facet#0b3e0b89779d97d24b7360e4c4651e95e248897e"
 dependencies = [
  "facet-core",
  "facet-macros",
@@ -601,7 +563,7 @@ dependencies = [
 [[package]]
 name = "facet-solver"
 version = "0.31.7"
-source = "git+https://github.com/facet-rs/facet#048a5662f7eff84fcfda6a845746649650e98a21"
+source = "git+https://github.com/facet-rs/facet#0b3e0b89779d97d24b7360e4c4651e95e248897e"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -611,7 +573,7 @@ dependencies = [
 [[package]]
 name = "facet-value"
 version = "0.1.0"
-source = "git+https://github.com/facet-rs/facet#048a5662f7eff84fcfda6a845746649650e98a21"
+source = "git+https://github.com/facet-rs/facet#0b3e0b89779d97d24b7360e4c4651e95e248897e"
 dependencies = [
  "facet-core",
  "facet-reflect",
@@ -1377,12 +1339,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "paste"
-version = "1.0.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
-
-[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1599,6 +1555,7 @@ dependencies = [
  "rapace-transport-websocket",
  "tokio",
  "tokio-stream",
+ "tracing",
 ]
 
 [[package]]
@@ -1638,6 +1595,7 @@ dependencies = [
  "tokio-stream",
  "tokio-tungstenite",
  "tower-http",
+ "tracing",
 ]
 
 [[package]]
@@ -1672,6 +1630,7 @@ dependencies = [
  "rapace-macros",
  "rapace-registry",
  "rapace-testkit",
+ "tracing",
 ]
 
 [[package]]
@@ -1765,6 +1724,7 @@ dependencies = [
  "rapace-transport-shm",
  "tokio",
  "tokio-stream",
+ "tracing",
 ]
 
 [[package]]
@@ -1782,6 +1742,7 @@ dependencies = [
  "rapace-transport-shm",
  "rapace-transport-stream",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

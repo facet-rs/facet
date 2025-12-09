@@ -35,3 +35,4 @@ facet-json = { git = "https://github.com/facet-rs/facet" }
 
 # CLI output
 owo-colors = "4"
+tracing = "0.1"

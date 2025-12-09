@@ -112,7 +112,7 @@ impl<T: Transport + Send + Sync + 'static> TemplateEngineImpl<T> {
         }
 
         // Decode response
-        let result: Option<String> = facet_postcard::from_bytes(&response.payload).map_err(|e| {
+        let result: Option<String> = facet_postcard::from_slice(&response.payload).map_err(|e| {
             RpcError::Status {
                 code: rapace_core::ErrorCode::Internal,
                 message: format!("decode error: {:?}", e),

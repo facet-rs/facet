@@ -7,6 +7,7 @@ repository.workspace = true
 description = "High-performance RPC framework with shared memory transport"
 
 [dependencies]
+tracing = { workspace = true }
 # Core types and traits
 rapace-core = { workspace = true }
 

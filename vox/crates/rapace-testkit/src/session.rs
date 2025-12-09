@@ -301,7 +301,7 @@ impl<T: Transport + Send + Sync> Session<T> {
             control_method::CANCEL_CHANNEL => {
                 // Try to decode CancelChannel payload
                 if let Ok(ControlPayload::CancelChannel { channel_id, .. }) =
-                    facet_postcard::from_bytes::<ControlPayload>(frame.payload)
+                    facet_postcard::from_slice::<ControlPayload>(frame.payload)
                 {
                     self.cancel_channel(channel_id);
                 }
@@ -309,7 +309,7 @@ impl<T: Transport + Send + Sync> Session<T> {
             control_method::GRANT_CREDITS => {
                 // Always decode from payload (contains channel_id and bytes)
                 if let Ok(ControlPayload::GrantCredits { channel_id, bytes }) =
-                    facet_postcard::from_bytes::<ControlPayload>(frame.payload)
+                    facet_postcard::from_slice::<ControlPayload>(frame.payload)
                 {
                     self.grant_credits(channel_id, bytes);
                 }

@@ -110,6 +110,10 @@ pub use facet;
 pub extern crate facet_core;
 pub use facet_postcard;
 
+// Re-export tracing for macro-generated code
+#[doc(hidden)]
+pub extern crate tracing;
+
 // Re-export registry (needed by macro-generated code)
 // The macro generates `::rapace::rapace_registry::` paths
 #[doc(hidden)]

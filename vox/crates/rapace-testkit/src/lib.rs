@@ -716,7 +716,7 @@ async fn run_cancellation_inner<F: TransportFactory>() -> Result<(), TestError> 
             }
 
             // Parse CancelChannel payload
-            let cancel_payload: ControlPayload = facet_postcard::from_bytes(cancel.payload)
+            let cancel_payload: ControlPayload = facet_postcard::from_slice(cancel.payload)
                 .map_err(|e| {
                     TestError::Assertion(format!("failed to decode CancelChannel: {:?}", e))
                 })?;
@@ -857,7 +857,7 @@ async fn run_credit_grant_inner<F: TransportFactory>() -> Result<(), TestError> 
     }
 
     // Parse payload for full verification
-    let grant_payload: ControlPayload = facet_postcard::from_bytes(grant.payload)
+    let grant_payload: ControlPayload = facet_postcard::from_slice(grant.payload)
         .map_err(|e| TestError::Assertion(format!("failed to decode GrantCredits: {:?}", e)))?;
 
     match grant_payload {
@@ -1258,7 +1258,7 @@ async fn run_server_streaming_happy_path_inner<F: TransportFactory>() -> Result<
             }
 
             // Parse request to get count
-            let count: i32 = facet_postcard::from_bytes(request.payload)
+            let count: i32 = facet_postcard::from_slice(request.payload)
                 .map_err(|e| TestError::Assertion(format!("decode request: {:?}", e)))?;
 
             // Send N items (DATA without EOS)
@@ -1328,7 +1328,7 @@ async fn run_server_streaming_happy_path_inner<F: TransportFactory>() -> Result<
         }
 
         // Parse item
-        let item: i32 = facet_postcard::from_bytes(frame.payload)
+        let item: i32 = facet_postcard::from_slice(frame.payload)
             .map_err(|e| TestError::Assertion(format!("decode item: {:?}", e)))?;
         received.push(item);
     }
@@ -1402,7 +1402,7 @@ async fn run_client_streaming_happy_path_inner<F: TransportFactory>() -> Result<
 
                 // Parse item (if not just EOS marker)
                 if !frame.payload.is_empty() {
-                    let item: i32 = facet_postcard::from_bytes(frame.payload)
+                    let item: i32 = facet_postcard::from_slice(frame.payload)
                         .map_err(|e| TestError::Assertion(format!("decode item: {:?}", e)))?;
                     sum += item;
                     count += 1;
@@ -1470,7 +1470,7 @@ async fn run_client_streaming_happy_path_inner<F: TransportFactory>() -> Result<
         return Err(TestError::Assertion("response should have EOS".into()));
     }
 
-    let sum: i32 = facet_postcard::from_bytes(response.payload)
+    let sum: i32 = facet_postcard::from_slice(response.payload)
         .map_err(|e| TestError::Assertion(format!("decode response: {:?}", e)))?;
 
     let expected_sum: i32 = items_to_send.iter().sum();
@@ -1554,7 +1554,7 @@ async fn run_bidirectional_streaming_inner<F: TransportFactory>() -> Result<(), 
                 }
 
                 if !frame.payload.is_empty() {
-                    let item: i32 = facet_postcard::from_bytes(frame.payload)
+                    let item: i32 = facet_postcard::from_slice(frame.payload)
                         .map_err(|e| TestError::Assertion(format!("decode: {:?}", e)))?;
                     received.push(item);
                 }
@@ -1606,7 +1606,7 @@ async fn run_bidirectional_streaming_inner<F: TransportFactory>() -> Result<(), 
         }
 
         if !frame.payload.is_empty() {
-            let item: i32 = facet_postcard::from_bytes(frame.payload)
+            let item: i32 = facet_postcard::from_slice(frame.payload)
                 .map_err(|e| TestError::Assertion(format!("decode: {:?}", e)))?;
             client_received.push(item);
         }
@@ -1813,7 +1813,7 @@ async fn run_streaming_cancellation_inner<F: TransportFactory>() -> Result<(), T
         }
 
         if frame.desc.channel_id == channel_id && !frame.payload.is_empty() {
-            let item: i32 = facet_postcard::from_bytes(frame.payload)
+            let item: i32 = facet_postcard::from_slice(frame.payload)
                 .map_err(|e| TestError::Assertion(format!("decode: {:?}", e)))?;
             received.push(item);
         }

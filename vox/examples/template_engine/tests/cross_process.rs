@@ -68,7 +68,7 @@ async fn run_host_scenario<T: Transport + Send + Sync + 'static>(transport: Arc<
         );
     }
 
-    let rendered: String = facet_postcard::from_bytes(&response.payload).unwrap();
+    let rendered: String = facet_postcard::from_slice(&response.payload).unwrap();
     eprintln!("[test] Got rendered: {}", rendered);
 
     // Clean up

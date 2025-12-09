@@ -94,7 +94,7 @@ async fn main() {
                     rapace_testkit::parse_error_payload(&response.payload)
                 );
             } else {
-                let rendered: String = facet_postcard::from_bytes(&response.payload).unwrap();
+                let rendered: String = facet_postcard::from_slice(&response.payload).unwrap();
                 println!("Rendered: {}", rendered);
             }
         }
@@ -117,7 +117,7 @@ async fn main() {
                     rapace_testkit::parse_error_payload(&response.payload)
                 );
             } else {
-                let rendered: String = facet_postcard::from_bytes(&response.payload).unwrap();
+                let rendered: String = facet_postcard::from_slice(&response.payload).unwrap();
                 println!("Rendered: {}", rendered);
             }
         }
@@ -140,7 +140,7 @@ async fn main() {
                     rapace_testkit::parse_error_payload(&response.payload)
                 );
             } else {
-                let rendered: String = facet_postcard::from_bytes(&response.payload).unwrap();
+                let rendered: String = facet_postcard::from_slice(&response.payload).unwrap();
                 println!("Rendered: {}", rendered);
             }
         }
@@ -195,7 +195,7 @@ mod tests {
             facet_postcard::to_vec(&"Hi {{user.name}} - {{site.title}}".to_string()).unwrap();
         let response = host_session.call(channel_id, 1, payload).await.unwrap();
 
-        let rendered: String = facet_postcard::from_bytes(&response.payload).unwrap();
+        let rendered: String = facet_postcard::from_slice(&response.payload).unwrap();
         assert_eq!(rendered, "Hi Alice - MySite");
 
         // Cleanup
@@ -235,7 +235,7 @@ mod tests {
         let payload = facet_postcard::to_vec(&"Hello, {{user.name}}!".to_string()).unwrap();
         let response = host_session.call(channel_id, 1, payload).await.unwrap();
 
-        let rendered: String = facet_postcard::from_bytes(&response.payload).unwrap();
+        let rendered: String = facet_postcard::from_slice(&response.payload).unwrap();
         assert_eq!(rendered, "Hello, Bob!");
 
         let _ = host_transport.close().await;
@@ -273,7 +273,7 @@ mod tests {
         .unwrap();
         let response = host_session.call(channel_id, 1, payload).await.unwrap();
 
-        let rendered: String = facet_postcard::from_bytes(&response.payload).unwrap();
+        let rendered: String = facet_postcard::from_slice(&response.payload).unwrap();
         assert_eq!(rendered, "Hi Alice from TestSite on test.com");
 
         let _ = host_transport.close().await;
@@ -304,7 +304,7 @@ mod tests {
         let payload = facet_postcard::to_vec(&"Hello, {{user.name}}!".to_string()).unwrap();
         let response = host_session.call(channel_id, 1, payload).await.unwrap();
 
-        let rendered: String = facet_postcard::from_bytes(&response.payload).unwrap();
+        let rendered: String = facet_postcard::from_slice(&response.payload).unwrap();
         assert_eq!(rendered, "Hello, !");
 
         let _ = host_transport.close().await;

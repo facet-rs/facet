@@ -25,3 +25,6 @@ tokio-stream = "0.1"
 facet = { git = "https://github.com/facet-rs/facet" }
 facet-core = { git = "https://github.com/facet-rs/facet" }
 facet-postcard = { git = "https://github.com/facet-rs/facet" }
+
+# Tracing (required by macro-generated code)
+tracing = "0.1"

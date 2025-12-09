@@ -32,3 +32,4 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-ut
 facet = { git = "https://github.com/facet-rs/facet" }
 facet-core = { git = "https://github.com/facet-rs/facet" }
 facet-postcard = { git = "https://github.com/facet-rs/facet" }
+tracing = "0.1"
