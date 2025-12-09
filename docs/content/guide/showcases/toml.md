@@ -8,7 +8,7 @@ insert_anchor_links = "heading"
 
 ## Basic usage
 
-```rust
+```rust,noexec
 use facet::Facet;
 
 #[derive(Facet)]
@@ -34,7 +34,7 @@ let output = facet_toml::to_string(&config)?;
 
 TOML tables map to nested structs:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct Package {
     name: String,
@@ -70,7 +70,7 @@ let config: Config = facet_toml::from_str(toml)?;
 
 TOML arrays work with `Vec<T>`:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct Dependency {
     name: String,
@@ -114,7 +114,7 @@ port = 8080
 
 Use `Option<T>` for optional configuration:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct Database {
     host: String,
@@ -134,7 +134,7 @@ facet = { version = "{{ data.versions.facet }}", features = ["chrono"] }
 # or "time" or "jiff02"
 ```
 
-```rust
+```rust,noexec
 use chrono::{DateTime, Utc};
 
 #[derive(Facet)]
@@ -168,7 +168,7 @@ Error: missing field `port`
 
 ### Cargo.toml-style configs
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct Manifest {
     package: Package,
@@ -198,7 +198,7 @@ enum Dependency {
 
 ### Environment-specific configs
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct Config {
     #[facet(default)]
@@ -220,7 +220,7 @@ struct ServerConfig {
 
 Serialize to TOML:
 
-```rust
+```rust,noexec
 let config = Config {
     package: Package {
         name: "myapp".into(),

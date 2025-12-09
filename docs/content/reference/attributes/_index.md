@@ -11,7 +11,7 @@ For the full guide on creating extension attributes, see [Extend → Extension A
 
 ### Using extension attributes
 
-```rust
+```rust,noexec
 use facet::Facet;
 use facet_kdl as kdl;
 
@@ -27,7 +27,7 @@ struct Config {
 
 The namespace (`kdl`) comes from how you import the crate:
 
-```rust
+```rust,noexec
 use facet_kdl as kdl;  // Enables kdl:: prefix
 use facet_args as args;  // Enables args:: prefix
 ```
@@ -44,7 +44,7 @@ use facet_args as args;  // Enables args:: prefix
 
 Use [`define_attr_grammar!`](https://docs.rs/facet/latest/facet/macro.define_attr_grammar.html) in your crate:
 
-```rust
+```rust,noexec
 facet::define_attr_grammar! {
     ns "myformat";
     crate_path ::my_format_crate;

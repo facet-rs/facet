@@ -10,7 +10,7 @@ The **solver** helps format crates implement `#[facet(flatten)]` and `#[facet(un
 
 Consider a type with a flattened enum:
 
-```rust
+```rust,noexec
 use facet::Facet;
 
 #[derive(Facet)]
@@ -76,7 +76,7 @@ The solver pre-computes all valid "configurations" — unique combinations of fi
 
 ## Basic usage
 
-```rust
+```rust,noexec
 use facet_solver::{KeyResult, Schema, Solver};
 
 // Build schema once (can be cached per-type)
@@ -124,7 +124,7 @@ This is O(1) per key lookup and O(configs/64) for the bitwise AND — extremely 
 
 Sometimes top-level keys don't distinguish variants:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct TextPayload { content: String }
 
@@ -175,7 +175,7 @@ Disambiguation paths:
 
 The `ProbingSolver` handles nested disambiguation:
 
-```rust
+```rust,noexec
 use facet_solver::{ProbingSolver, ProbeResult, Schema};
 
 let schema = Schema::build(Wrapper::SHAPE).unwrap();
@@ -200,7 +200,7 @@ match solver.probe_key(&["inner"], "content") {
 
 Sometimes variants have **identical keys** but different value types:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct SmallPayload { value: u8 }   // max 255
 
@@ -235,7 +235,7 @@ Both have `payload.value`, but with different types. When the deserializer sees 
 └──────────────────────────────────────────────────────┘
 ```
 
-```rust
+```rust,noexec
 use facet_solver::{Solver, KeyResult, Schema};
 
 let schema = Schema::build(Container::SHAPE).unwrap();
@@ -325,7 +325,7 @@ Facet's approach:
 
 Here's how a format crate typically integrates the solver:
 
-```rust
+```rust,noexec
 use facet_solver::{Schema, Solver, KeyResult};
 
 fn deserialize_object<T: Facet>(input: &str) -> Result<T, Error> {
@@ -360,7 +360,7 @@ fn deserialize_object<T: Facet>(input: &str) -> Result<T, Error> {
 
 ### Schema
 
-```rust
+```rust,noexec
 impl Schema {
     /// Build a schema from a Shape (cacheable per-type)
     pub fn build(shape: &'static Shape) -> Result<Schema, SchemaError>;
@@ -372,7 +372,7 @@ impl Schema {
 
 ### Solver
 
-```rust
+```rust,noexec
 impl Solver<'_> {
     /// Create a new solver from a schema
     pub fn new(schema: &Schema) -> Solver;
@@ -396,7 +396,7 @@ impl Solver<'_> {
 
 ### KeyResult
 
-```rust
+```rust,noexec
 pub enum KeyResult<'a> {
     /// Only one configuration remains — solved!
     Solved(Configuration<'a>),

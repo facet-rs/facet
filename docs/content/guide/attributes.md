@@ -14,7 +14,7 @@ These attributes apply to structs and enums.
 
 Produce an error when encountering unknown fields during deserialization. By default, unknown fields are silently ignored.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[facet(deny_unknown_fields)]
 struct Config {
@@ -27,7 +27,7 @@ struct Config {
 
 Use the type's `Default` implementation for missing fields during deserialization.
 
-```rust
+```rust,noexec
 #[derive(Facet, Default)]
 #[facet(default)]
 struct Config {
@@ -40,7 +40,7 @@ struct Config {
 
 Rename all fields/variants using a case convention.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[facet(rename_all = "camelCase")]
 struct Config {
@@ -61,7 +61,7 @@ struct Config {
 
 Forward serialization/deserialization to the inner type. Used for newtype patterns.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[facet(transparent)]
 struct UserId(u64);  // Serialized as just the u64
@@ -75,7 +75,7 @@ Mark a type as opaque — its inner structure is hidden from facet. The type its
 - Types whose internal structure shouldn't be exposed
 - Wrapper types around FFI or unsafe internals
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[facet(opaque)]
 struct InternalState {
@@ -86,7 +86,7 @@ struct InternalState {
 
 **Important:** Opaque types cannot be serialized or deserialized on their own — use them with `#[facet(proxy = ...)]` to provide a serializable representation:
 
-```rust
+```rust,noexec
 // A type that doesn't implement Facet
 struct SecretKey([u8; 32]);
 
@@ -126,7 +126,7 @@ struct Config {
 
 Add a type identifier for self-describing formats.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[facet(type_tag = "com.example.User")]
 struct User {
@@ -138,7 +138,7 @@ struct User {
 
 Specify a custom path to the facet crate. This is primarily useful for crates that re-export facet and want users to derive `Facet` without adding facet as a direct dependency.
 
-```rust
+```rust,noexec
 // In a crate that re-exports facet
 use other_crate::facet;
 
@@ -151,7 +151,7 @@ struct MyStruct {
 
 This attribute can also be used with enums and all struct variants:
 
-```rust
+```rust,noexec
 use other_crate::facet;
 
 #[derive(other_crate::facet::Facet)]
@@ -174,7 +174,7 @@ These attributes control enum serialization format.
 
 Serialize enum variants without a discriminator tag. The deserializer tries each variant in order until one succeeds.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[facet(untagged)]
 enum Value {
@@ -188,7 +188,7 @@ enum Value {
 
 Use internal tagging — the variant name becomes a field inside the object.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[facet(tag = "type")]
 enum Message {
@@ -202,7 +202,7 @@ enum Message {
 
 Use adjacent tagging — separate fields for the tag and content.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[facet(tag = "t", content = "c")]
 enum Message {
@@ -220,7 +220,7 @@ These attributes apply to struct fields.
 
 Rename a field during serialization/deserialization.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct User {
     #[facet(rename = "user_name")]
@@ -232,7 +232,7 @@ struct User {
 
 Use a default value when the field is missing during deserialization.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct Config {
     name: String,
@@ -256,7 +256,7 @@ fn default_timeout() -> Duration {
 
 Skip this field entirely during both serialization and deserialization. The field must have a default value.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct Session {
     id: String,
@@ -269,7 +269,7 @@ struct Session {
 
 Skip this field during serialization only.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct User {
     name: String,
@@ -282,7 +282,7 @@ struct User {
 
 Skip this field during deserialization (uses default value).
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct Record {
     data: String,
@@ -295,7 +295,7 @@ struct Record {
 
 Conditionally skip serialization based on a predicate.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct User {
     name: String,
@@ -315,7 +315,7 @@ struct User {
 
 Mark a field as containing sensitive data. Tools like [`facet-pretty`](https://docs.rs/facet-pretty) will redact this field in debug output.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct Config {
     name: String,
@@ -328,7 +328,7 @@ struct Config {
 
 Flatten a nested struct's fields into the parent.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 struct Pagination {
     page: u32,
@@ -348,7 +348,7 @@ struct Query {
 
 Mark a field as a child node for hierarchical formats like KDL or XML.
 
-```rust
+```rust,noexec
 use facet_kdl as kdl;
 
 #[derive(Facet)]
@@ -363,7 +363,7 @@ struct Document {
 
 Validate type invariants after deserialization. The function takes `&self` and returns `bool` — returning `false` causes deserialization to fail.
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[facet(invariants = validate_port)]
 struct ServerConfig {
@@ -379,7 +379,7 @@ fn validate_port(config: &ServerConfig) -> bool {
 
 **Method syntax:** You can also use a method on the type itself:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[facet(invariants = Point::is_valid)]
 struct Point {
@@ -397,7 +397,7 @@ impl Point {
 
 **Multi-field invariants:** This is where invariants really shine — validating relationships between fields:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[facet(invariants = Range::is_valid)]
 struct Range {
@@ -414,7 +414,7 @@ impl Range {
 
 **With enums:** Enums themselves don't support invariants directly, but you can wrap them in a struct:
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[repr(C)]
 enum RangeKind {
@@ -450,7 +450,7 @@ Use a proxy type for serialization/deserialization. The proxy type handles the f
 - `TryFrom<ProxyType> for FieldType` — for deserialization (proxy → actual)
 - `TryFrom<&FieldType> for ProxyType` — for serialization (actual → proxy)
 
-```rust
+```rust,noexec
 use facet::Facet;
 
 // Your domain type
@@ -506,7 +506,7 @@ assert_eq!(parsed.id.0, 12345);
 
 A common pattern is parsing string fields using a type's `FromStr` implementation. For example, parsing `"#ff00ff"` into a color struct:
 
-```rust
+```rust,noexec
 use facet::Facet;
 use std::str::FromStr;
 
@@ -585,7 +585,7 @@ The key insight: `#[facet(transparent)]` on the proxy makes it serialize as just
 
 **Example: Parse integers from hex strings:**
 
-```rust
+```rust,noexec
 #[derive(Facet)]
 #[facet(transparent)]
 struct HexU64(String);
@@ -623,7 +623,7 @@ assert_eq!(parsed.address, 0x7fff5fbff8c0);
 
 **Example: Nested proxy with opaque type:**
 
-```rust
+```rust,noexec
 // Arc<T> with a custom serialization
 #[derive(Facet)]
 struct ArcU64Proxy { val: u64 }
@@ -664,7 +664,7 @@ Format crates can define their own namespaced attributes. See the [Extend guide]
 
 ### KDL attributes
 
-```rust
+```rust,noexec
 use facet_kdl as kdl;
 
 #[derive(Facet)]
@@ -694,7 +694,7 @@ struct Config {
 
 ### Args attributes
 
-```rust
+```rust,noexec
 use facet_args as args;
 
 #[derive(Facet)]

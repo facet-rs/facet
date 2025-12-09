@@ -10,7 +10,7 @@ Facet supports several binary serialization formats for compact, efficient data 
 
 [MessagePack](https://msgpack.org/) is a compact binary format that's "like JSON but fast and small."
 
-```rust
+```rust,noexec
 use facet::Facet;
 
 #[derive(Facet)]
@@ -51,7 +51,7 @@ let decoded: Message = facet_msgpack::from_slice(&bytes)?;
 
 [Postcard](https://postcard.jamesmunns.com/) is a `no_std`-friendly binary format designed for embedded systems and high-performance applications.
 
-```rust
+```rust,noexec
 use facet::Facet;
 
 #[derive(Facet)]
@@ -92,7 +92,7 @@ let decoded: SensorReading = facet_postcard::from_slice(&bytes)?;
 
 Postcard can serialize to fixed-size arrays:
 
-```rust
+```rust,noexec
 use facet_postcard::to_slice;
 
 let mut buf = [0u8; 64];

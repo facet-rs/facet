@@ -8,7 +8,7 @@ Facet format crates return errors that implement [`miette::Diagnostic`](https://
 
 ## Printing errors nicely
 
-```rust
+```rust,noexec
 use facet::Facet;
 use facet_json::from_str;
 use miette::{IntoDiagnostic, Result};

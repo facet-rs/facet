@@ -30,7 +30,7 @@ So we implement `Facet` for third-party types from the facet side, using optiona
 2. Create `facet-core/src/impls_my_crate.rs`
 
 3. Add to `facet-core/src/lib.rs`:
-   ```rust
+   ```rust,noexec
    #[cfg(feature = "my-crate")]
    mod impls_my_crate;
    ```
@@ -45,7 +45,7 @@ So we implement `Facet` for third-party types from the facet side, using optiona
 
 Most third-party types are scalars (atomic values like UUIDs, timestamps, paths):
 
-```rust
+```rust,noexec
 unsafe impl Facet<'_> for my_crate::MyType {
     const SHAPE: &'static Shape = &Shape {
         id: Shape::id_of::<Self>(),
@@ -75,7 +75,7 @@ Look at existing implementations in `facet-core/src/impls_*` for patterns:
 
 Collections need vtable functions for their operations (push, get, len, etc.):
 
-```rust
+```rust,noexec
 unsafe impl<T: Facet<'static>> Facet<'_> for MyVec<T> {
     const SHAPE: &'static Shape = &Shape {
         id: Shape::id_of::<Self>(),

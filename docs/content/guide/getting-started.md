@@ -38,7 +38,7 @@ If you also need YAML/TOML/KDL/etc., add `facet-yaml`, `facet-toml`, `facet-kdl`
 
 ## Derive `Facet` on your types
 
-```rust
+```rust,noexec
 // src/main.rs
 use facet::Facet;
 use facet_json::{from_str, to_string};

@@ -50,7 +50,7 @@ This lets you clone a value at runtime without a `Clone` bound — you check `sh
 
 `Characteristic` lets you query whether a shape supports certain operations:
 
-```rust
+```rust,noexec
 if shape.is(Characteristic::Clone) {
     // Safe to call clone_into from the vtable
 }
