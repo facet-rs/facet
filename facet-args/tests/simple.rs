@@ -187,3 +187,50 @@ fn test_string_default_value() {
     assert_eq!(args.name, "myapp");
     assert_eq!(args.version, "1.0.0");
 }
+
+/// Test that default values work for IP addresses
+#[test]
+fn test_ip_address_default_value() {
+    use std::net::{IpAddr, Ipv4Addr};
+
+    #[derive(Facet, Debug)]
+    struct ServerConfig {
+        #[facet(args::named)]
+        name: String,
+        // IP address from string literal
+        #[facet(args::named, default = "127.0.0.1")]
+        bind_addr: IpAddr,
+    }
+
+    // Test that when bind_addr is not provided, it uses the default
+    let config: ServerConfig = facet_args::from_slice(&["--name", "myserver"]).unwrap();
+    assert_eq!(config.name, "myserver");
+    assert_eq!(config.bind_addr, IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+
+    // Test that when bind_addr is provided, it overrides the default
+    let config: ServerConfig =
+        facet_args::from_slice(&["--name", "myserver", "--bind-addr", "0.0.0.0"]).unwrap();
+    assert_eq!(config.bind_addr, IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)));
+}
+
+/// Test that default values work for PathBuf
+#[test]
+fn test_pathbuf_default_value() {
+    use std::path::PathBuf;
+
+    #[derive(Facet, Debug)]
+    struct FileConfig {
+        #[facet(args::named)]
+        name: String,
+        // PathBuf from string literal - default value works via try_from
+        // Note: PathBuf doesn't implement FromStr, so we can't parse it from CLI args,
+        // but default values from string literals work via our try_from implementation
+        #[facet(default = "/tmp/default.log")]
+        log_path: PathBuf,
+    }
+
+    // Test that when log_path is not provided, it uses the default
+    let config: FileConfig = facet_args::from_slice(&["--name", "myapp"]).unwrap();
+    assert_eq!(config.name, "myapp");
+    assert_eq!(config.log_path, PathBuf::from("/tmp/default.log"));
+}
