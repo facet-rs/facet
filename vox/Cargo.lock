@@ -1189,6 +1189,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rapace-diagnostics-over-rapace"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-postcard",
+ "futures",
+ "rapace-core",
+ "rapace-macros",
+ "rapace-registry",
+ "rapace-testkit",
+ "rapace-transport-mem",
+ "rapace-transport-shm",
+ "rapace-transport-stream",
+ "tokio",
+ "tokio-stream",
+]
+
+[[package]]
 name = "rapace-http"
 version = "0.1.0"
 dependencies = [

@@ -17,6 +17,7 @@ members = [
     "examples/dashboard",
     "examples/http_over_rapace",
     "examples/shm_image",
+    "examples/diagnostics_over_rapace",
     "examples/template_engine",
     "examples/tracing_over_rapace",
     "xtask",
