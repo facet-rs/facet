@@ -2,7 +2,7 @@
 name = "facet-args"
 version = "0.31.7"
 edition = "2024"
-rust-version = "1.88.0"
+rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/facet-rs/facet-args"
 description = "Command-line argument parsing for the facet ecosystem"

@@ -474,7 +474,7 @@ fn render_table(f: &mut Frame, app: &mut App, area: Rect) {
     let table = Table::new(rows, widths)
         .header(header)
         .block(Block::default().borders(Borders::ALL).title(" Metrics "))
-        .highlight_style(Style::default().bg(Color::Blue).fg(Color::White));
+        .row_highlight_style(Style::default().bg(Color::Blue).fg(Color::White));
 
     f.render_stateful_widget(table, area, &mut app.table_state);
 }
