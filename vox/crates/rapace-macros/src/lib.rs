@@ -175,10 +175,97 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
             service: S,
         }
 
-        impl<S: #trait_name + Send + Sync> #server_name<S> {
+        impl<S: #trait_name + Send + Sync + 'static> #server_name<S> {
             /// Create a new server with the given service implementation.
             pub fn new(service: S) -> Self {
                 Self { service }
+            }
+
+            /// Serve requests from the transport until the connection closes.
+            ///
+            /// This is the main server loop. It reads frames from the transport,
+            /// dispatches them to the appropriate method, and sends responses.
+            ///
+            /// # Example
+            ///
+            /// ```ignore
+            /// let server = CalculatorServer::new(CalculatorImpl);
+            /// server.serve(transport).await?;
+            /// ```
+            pub async fn serve<T: ::rapace_core::Transport + 'static>(
+                self,
+                transport: ::std::sync::Arc<T>,
+            ) -> ::std::result::Result<(), ::rapace_core::RpcError> {
+                loop {
+                    // Receive next request frame
+                    let request = match transport.recv_frame().await {
+                        Ok(frame) => frame,
+                        Err(::rapace_core::TransportError::Closed) => {
+                            // Connection closed gracefully
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            return Err(::rapace_core::RpcError::Transport(e));
+                        }
+                    };
+
+                    // Skip non-data frames (control frames, etc.)
+                    if !request.desc.flags.contains(::rapace_core::FrameFlags::DATA) {
+                        continue;
+                    }
+
+                    // Dispatch the request
+                    if let Err(e) = self.dispatch_streaming(
+                        request.desc.method_id,
+                        request.payload,
+                        transport.as_ref(),
+                    ).await {
+                        // Send error response
+                        let mut desc = ::rapace_core::MsgDescHot::new();
+                        desc.channel_id = request.desc.channel_id;
+                        desc.flags = ::rapace_core::FrameFlags::ERROR | ::rapace_core::FrameFlags::EOS;
+
+                        // Encode error: [code: u32 LE][message_len: u32 LE][message bytes]
+                        let (code, message): (u32, ::std::string::String) = match &e {
+                            ::rapace_core::RpcError::Status { code, message } => (*code as u32, message.clone()),
+                            ::rapace_core::RpcError::Transport(_) => (::rapace_core::ErrorCode::Internal as u32, "transport error".into()),
+                            ::rapace_core::RpcError::Cancelled => (::rapace_core::ErrorCode::Cancelled as u32, "cancelled".into()),
+                            ::rapace_core::RpcError::DeadlineExceeded => (::rapace_core::ErrorCode::DeadlineExceeded as u32, "deadline exceeded".into()),
+                        };
+                        let mut err_bytes = ::std::vec::Vec::with_capacity(8 + message.len());
+                        err_bytes.extend_from_slice(&code.to_le_bytes());
+                        err_bytes.extend_from_slice(&(message.len() as u32).to_le_bytes());
+                        err_bytes.extend_from_slice(message.as_bytes());
+
+                        let frame = ::rapace_core::Frame::with_payload(desc, err_bytes);
+                        let _ = transport.send_frame(&frame).await;
+                    }
+                }
+            }
+
+            /// Serve a single request from the transport.
+            ///
+            /// This is useful for testing or when you want to handle each request
+            /// individually.
+            pub async fn serve_one<T: ::rapace_core::Transport + 'static>(
+                &self,
+                transport: &T,
+            ) -> ::std::result::Result<(), ::rapace_core::RpcError> {
+                // Receive next request frame
+                let request = transport.recv_frame().await
+                    .map_err(::rapace_core::RpcError::Transport)?;
+
+                // Skip non-data frames
+                if !request.desc.flags.contains(::rapace_core::FrameFlags::DATA) {
+                    return Ok(());
+                }
+
+                // Dispatch the request
+                self.dispatch_streaming(
+                    request.desc.method_id,
+                    request.payload,
+                    transport,
+                ).await
             }
 
             /// Dispatch a request frame to the appropriate method.

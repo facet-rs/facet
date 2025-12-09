@@ -156,3 +156,90 @@ pub use transport::StreamTransport;
 
 #[cfg(feature = "websocket")]
 pub use transport::WebSocketTransport;
+
+/// Server helpers for running RPC services.
+///
+/// This module provides convenience functions for setting up servers
+/// with various transports.
+#[cfg(feature = "stream")]
+pub mod server {
+    use std::sync::Arc;
+    use tokio::net::{TcpListener, TcpStream};
+
+    /// Serve a single TCP connection.
+    ///
+    /// This is a low-level helper that wraps a TCP stream in a `StreamTransport`
+    /// and is intended to be used with a generated server's `serve()` method.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use rapace::server::serve_connection;
+    ///
+    /// let listener = TcpListener::bind("127.0.0.1:9000").await?;
+    /// loop {
+    ///     let (socket, _) = listener.accept().await?;
+    ///     let server = CalculatorServer::new(CalculatorImpl);
+    ///     tokio::spawn(async move {
+    ///         let transport = serve_connection(socket);
+    ///         server.serve(transport).await
+    ///     });
+    /// }
+    /// ```
+    pub fn serve_connection(stream: TcpStream) -> Arc<crate::StreamTransport<TcpStream>> {
+        Arc::new(crate::StreamTransport::new(stream))
+    }
+
+    /// Run a TCP server that accepts connections and spawns a handler for each.
+    ///
+    /// This is a convenience function that ties together a TCP listener,
+    /// transport creation, and server spawning.
+    ///
+    /// # Arguments
+    ///
+    /// * `addr` - The address to bind to (e.g., "127.0.0.1:9000")
+    /// * `make_server` - A function that creates a new server instance for each connection
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use rapace::server::run_tcp_server;
+    ///
+    /// run_tcp_server("127.0.0.1:9000", || {
+    ///     CalculatorServer::new(CalculatorImpl)
+    /// }).await?;
+    /// ```
+    pub async fn run_tcp_server<S, F>(addr: &str, make_server: F) -> Result<(), std::io::Error>
+    where
+        F: Fn() -> S + Send + Sync + 'static,
+        S: TcpServable + Send + 'static,
+    {
+        let listener = TcpListener::bind(addr).await?;
+        println!("Listening on {}", addr);
+
+        loop {
+            let (socket, peer_addr) = listener.accept().await?;
+            println!("Accepted connection from {}", peer_addr);
+
+            let server = make_server();
+            tokio::spawn(async move {
+                let transport = serve_connection(socket);
+                if let Err(e) = server.serve_tcp(transport).await {
+                    eprintln!("Connection error from {}: {}", peer_addr, e);
+                }
+            });
+        }
+    }
+
+    /// Trait for servers that can serve over TCP.
+    ///
+    /// This is implemented by all generated servers and allows `run_tcp_server`
+    /// to be generic over any service type.
+    pub trait TcpServable {
+        /// Serve requests from the TCP transport until the connection closes.
+        fn serve_tcp(
+            self,
+            transport: Arc<crate::StreamTransport<TcpStream>>,
+        ) -> impl std::future::Future<Output = Result<(), crate::RpcError>> + Send;
+    }
+}

@@ -3,7 +3,7 @@
 //! This example shows:
 //! - Defining a service with `#[rapace::service]`
 //! - Implementing the service
-//! - Creating a client and server using the in-memory transport
+//! - Using `server.serve()` for the server loop
 //! - Making unary and streaming RPC calls
 //!
 //! Run with: `cargo run --example basic -p rapace`
@@ -15,7 +15,7 @@ use rapace::prelude::*;
 // Define a calculator service with the #[rapace::service] attribute.
 // This generates:
 // - `CalculatorClient<T>` - client stub with async methods
-// - `CalculatorServer<S>` - server dispatcher
+// - `CalculatorServer<S>` - server dispatcher with serve() method
 // - `calculator_methods` module with METHOD_ID_* constants
 #[allow(async_fn_in_trait)]
 #[rapace::service]
@@ -67,38 +67,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client_transport = Arc::new(client_transport);
     let server_transport = Arc::new(server_transport);
 
-    // Create the server
+    // Create the server and spawn it
+    // The serve() method handles the frame loop automatically
     let server = CalculatorServer::new(CalculatorImpl);
-
-    // Spawn the server loop to handle requests
-    let server_handle = tokio::spawn({
-        let server_transport = server_transport.clone();
-        async move {
-            loop {
-                // Receive request frame
-                let request = match server_transport.recv_frame().await {
-                    Ok(frame) => frame,
-                    Err(e) => {
-                        eprintln!("Server recv error: {}", e);
-                        break;
-                    }
-                };
-
-                // Dispatch to the appropriate method
-                // dispatch_streaming handles both unary and streaming methods
-                if let Err(e) = server
-                    .dispatch_streaming(
-                        request.desc.method_id,
-                        request.payload,
-                        server_transport.as_ref(),
-                    )
-                    .await
-                {
-                    eprintln!("Server dispatch error: {}", e);
-                }
-            }
-        }
-    });
+    let server_handle = tokio::spawn(server.serve(server_transport));
 
     // Create the client
     let client = CalculatorClient::new(client_transport.clone());
