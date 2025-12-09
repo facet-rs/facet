@@ -4,6 +4,7 @@
 //! cinereus's tree diffing algorithm.
 
 use core::hash::Hasher;
+use std::borrow::Cow;
 use std::hash::DefaultHasher;
 
 use cinereus::{EditOp as CinereusEditOp, MatchingConfig, NodeData, Tree, diff_trees};
@@ -28,20 +29,20 @@ pub enum NodeKind {
 }
 
 /// A path segment describing how to reach a child.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PathSegment {
     /// A named field in a struct
-    Field(&'static str),
+    Field(Cow<'static, str>),
     /// An index in a list/array
     Index(usize),
     /// A key in a map
-    Key(String),
+    Key(Cow<'static, str>),
     /// An enum variant
-    Variant(&'static str),
+    Variant(Cow<'static, str>),
 }
 
 /// A path from root to a node.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Hash)]
 pub struct Path(pub Vec<PathSegment>);
 
 impl Path {
@@ -214,7 +215,7 @@ impl TreeBuilder {
                         if field.is_metadata() {
                             continue;
                         }
-                        let child_path = path.with(PathSegment::Field(field.name));
+                        let child_path = path.with(PathSegment::Field(Cow::Borrowed(field.name)));
                         let child_id = self.build_node(field_peek, child_path);
                         parent_id.append(child_id, &mut self.arena);
                     }
@@ -224,10 +225,10 @@ impl TreeBuilder {
                 if let Ok(e) = peek.into_enum()
                     && let Ok(variant) = e.active_variant()
                 {
-                    let variant_path = path.with(PathSegment::Variant(variant.name));
+                    let variant_path = path.with(PathSegment::Variant(Cow::Borrowed(variant.name)));
                     for (i, (field, field_peek)) in e.fields().enumerate() {
                         let child_path = if variant.data.kind == StructKind::Struct {
-                            variant_path.with(PathSegment::Field(field.name))
+                            variant_path.with(PathSegment::Field(Cow::Borrowed(field.name)))
                         } else {
                             variant_path.with(PathSegment::Index(i))
                         };
@@ -251,7 +252,7 @@ impl TreeBuilder {
                         if let Ok(map) = peek.into_map() {
                             for (key, value) in map.iter() {
                                 let key_str = format!("{:?}", key);
-                                let child_path = path.with(PathSegment::Key(key_str));
+                                let child_path = path.with(PathSegment::Key(Cow::Owned(key_str)));
                                 let child_id = self.build_node(value, child_path);
                                 parent_id.append(child_id, &mut self.arena);
                             }

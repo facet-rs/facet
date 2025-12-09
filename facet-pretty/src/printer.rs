@@ -550,12 +550,18 @@ impl PrettyPrinter {
                         }
                         self.write_punctuation(f, "]")?;
                     } else {
+                        // Check if elements are simple scalars - render inline if so
+                        let elem_shape = list.def().t();
+                        let is_simple = Self::shape_chunkiness(elem_shape) <= 1;
+
                         self.write_punctuation(f, " [")?;
                         let len = list.len();
                         for (idx, item) in list.iter().enumerate() {
-                            if !short {
+                            if !short && !is_simple {
                                 writeln!(f)?;
                                 self.indent(f, format_depth + 1)?;
+                            } else if idx > 0 {
+                                write!(f, " ")?;
                             }
                             self.format_peek_internal_(
                                 item,
@@ -563,16 +569,16 @@ impl PrettyPrinter {
                                 visited,
                                 format_depth + 1,
                                 type_depth + 1,
-                                short,
+                                short || is_simple,
                             )?;
 
-                            if !short || idx + 1 < len {
+                            if !short && !is_simple {
                                 self.write_punctuation(f, ",")?;
-                            } else {
-                                write!(f, " ")?;
+                            } else if idx + 1 < len {
+                                self.write_punctuation(f, ",")?;
                             }
                         }
-                        if !short {
+                        if !short && !is_simple {
                             writeln!(f)?;
                             self.indent(f, format_depth)?;
                         }
@@ -1132,7 +1138,7 @@ impl PrettyPrinter {
     /// This is useful for creating rich diagnostics that can highlight specific
     /// parts of a pretty-printed value.
     pub fn format_peek_with_spans(&self, value: Peek<'_, '_>) -> FormattedValue {
-        let mut ctx = ValueSpanContext::new();
+        let mut output = SpanTrackingOutput::new();
         let printer = Self {
             use_colors: false, // Always disable colors for span tracking
             indent_size: self.indent_size,
@@ -1143,9 +1149,9 @@ impl PrettyPrinter {
             show_doc_comments: self.show_doc_comments,
         };
         printer
-            .format_peek_with_spans_internal(
+            .format_unified(
                 value,
-                &mut ctx,
+                &mut output,
                 &mut BTreeMap::new(),
                 0,
                 0,
@@ -1154,22 +1160,23 @@ impl PrettyPrinter {
             )
             .expect("Formatting failed");
 
-        FormattedValue {
-            text: ctx.output,
-            spans: ctx.spans,
-        }
+        output.into_formatted_value()
     }
 
+    /// Unified formatting implementation that works with any FormatOutput.
+    ///
+    /// This is the core implementation - both `format_peek` and `format_peek_with_spans`
+    /// use this internally with different output types.
     #[allow(clippy::too_many_arguments)]
-    fn format_peek_with_spans_internal(
+    fn format_unified<O: FormatOutput>(
         &self,
         value: Peek<'_, '_>,
-        ctx: &mut ValueSpanContext,
+        out: &mut O,
         visited: &mut BTreeMap<ValueId, usize>,
         format_depth: usize,
         type_depth: usize,
         short: bool,
-        current_path: Vec<PathSegment>,
+        current_path: Path,
     ) -> fmt::Result {
         let mut value = value;
         while let Ok(ptr) = value.into_pointer()
@@ -1180,50 +1187,50 @@ impl PrettyPrinter {
         let shape = value.shape();
 
         // Record the start of this value
-        let value_start = ctx.len();
+        let value_start = out.position();
 
         if let Some(prev_type_depth) = visited.insert(value.id(), type_depth) {
-            write!(ctx.output, "{} {{ ", shape.type_identifier)?;
+            write!(out, "{} {{ ", shape.type_identifier)?;
             write!(
-                ctx.output,
+                out,
                 "/* cycle detected at {} (first seen at type_depth {}) */",
                 value.id(),
                 prev_type_depth,
             )?;
             visited.remove(&value.id());
-            let value_end = ctx.len();
-            ctx.record_span(current_path, (value_start, value_end));
+            let value_end = out.position();
+            out.record_span(current_path, (value_start, value_end));
             return Ok(());
         }
 
         match (shape.def, shape.ty) {
             (_, Type::Primitive(PrimitiveType::Textual(TextualType::Str))) => {
                 let s = value.get::<str>().unwrap();
-                write!(ctx.output, "\"{}\"", s)?;
+                write!(out, "\"{}\"", s)?;
             }
             (Def::Scalar, _) if value.shape().id == <alloc::string::String as Facet>::SHAPE.id => {
                 let s = value.get::<alloc::string::String>().unwrap();
-                write!(ctx.output, "\"{}\"", s)?;
+                write!(out, "\"{}\"", s)?;
             }
             (Def::Scalar, _) => {
-                self.format_scalar_to_string(value, &mut ctx.output)?;
+                self.format_scalar_to_output(value, out)?;
             }
             (Def::Option(_), _) => {
                 let option = value.into_option().unwrap();
                 if let Some(inner) = option.value() {
-                    write!(ctx.output, "Some(")?;
-                    self.format_peek_with_spans_internal(
+                    write!(out, "Some(")?;
+                    self.format_unified(
                         inner,
-                        ctx,
+                        out,
                         visited,
                         format_depth,
                         type_depth + 1,
                         short,
                         current_path.clone(),
                     )?;
-                    write!(ctx.output, ")")?;
+                    write!(out, ")")?;
                 } else {
-                    write!(ctx.output, "None")?;
+                    write!(out, "None")?;
                 }
             }
             (
@@ -1235,31 +1242,31 @@ impl PrettyPrinter {
                     },
                 )),
             ) => {
-                write!(ctx.output, "{}", shape.type_identifier)?;
+                write!(out, "{}", shape.type_identifier)?;
                 if matches!(ty.kind, StructKind::Struct) {
                     let struct_peek = value.into_struct().unwrap();
-                    write!(ctx.output, " {{")?;
+                    write!(out, " {{")?;
                     for (i, field) in ty.fields.iter().enumerate() {
                         if !short {
-                            writeln!(ctx.output)?;
-                            self.indent_to_string(&mut ctx.output, format_depth + 1)?;
+                            writeln!(out)?;
+                            self.indent_to_output(out, format_depth + 1)?;
                         }
                         // Record field name span
-                        let field_name_start = ctx.len();
-                        write!(ctx.output, "{}", field.name)?;
-                        let field_name_end = ctx.len();
-                        write!(ctx.output, ": ")?;
+                        let field_name_start = out.position();
+                        write!(out, "{}", field.name)?;
+                        let field_name_end = out.position();
+                        write!(out, ": ")?;
 
                         // Build path for this field
                         let mut field_path = current_path.clone();
                         field_path.push(PathSegment::Field(Cow::Borrowed(field.name)));
 
                         // Record field value span
-                        let field_value_start = ctx.len();
+                        let field_value_start = out.position();
                         if let Ok(field_value) = struct_peek.field(i) {
-                            self.format_peek_with_spans_internal(
+                            self.format_unified(
                                 field_value,
-                                ctx,
+                                out,
                                 visited,
                                 format_depth + 1,
                                 type_depth + 1,
@@ -1267,24 +1274,24 @@ impl PrettyPrinter {
                                 field_path.clone(),
                             )?;
                         }
-                        let field_value_end = ctx.len();
+                        let field_value_end = out.position();
 
                         // Record span for this field
-                        ctx.record_field_span(
+                        out.record_field_span(
                             field_path,
                             (field_name_start, field_name_end),
                             (field_value_start, field_value_end),
                         );
 
                         if !short || i + 1 < ty.fields.len() {
-                            write!(ctx.output, ",")?;
+                            write!(out, ",")?;
                         }
                     }
                     if !short {
-                        writeln!(ctx.output)?;
-                        self.indent_to_string(&mut ctx.output, format_depth)?;
+                        writeln!(out)?;
+                        self.indent_to_output(out, format_depth)?;
                     }
-                    write!(ctx.output, "}}")?;
+                    write!(out, "}}")?;
                 }
             }
             (
@@ -1296,24 +1303,24 @@ impl PrettyPrinter {
                     },
                 )),
             ) => {
-                write!(ctx.output, "{}", shape.type_identifier)?;
+                write!(out, "{}", shape.type_identifier)?;
                 if matches!(ty.kind, StructKind::Tuple) {
-                    write!(ctx.output, " ")?;
+                    write!(out, " ")?;
                 }
                 let struct_peek = value.into_struct().unwrap();
-                write!(ctx.output, "(")?;
+                write!(out, "(")?;
                 for (i, _field) in ty.fields.iter().enumerate() {
                     if i > 0 {
-                        write!(ctx.output, ", ")?;
+                        write!(out, ", ")?;
                     }
                     let mut elem_path = current_path.clone();
                     elem_path.push(PathSegment::Index(i));
 
-                    let elem_start = ctx.len();
+                    let elem_start = out.position();
                     if let Ok(field_value) = struct_peek.field(i) {
-                        self.format_peek_with_spans_internal(
+                        self.format_unified(
                             field_value,
-                            ctx,
+                            out,
                             visited,
                             format_depth + 1,
                             type_depth + 1,
@@ -1321,48 +1328,48 @@ impl PrettyPrinter {
                             elem_path.clone(),
                         )?;
                     }
-                    let elem_end = ctx.len();
-                    ctx.record_span(elem_path, (elem_start, elem_end));
+                    let elem_end = out.position();
+                    out.record_span(elem_path, (elem_start, elem_end));
                 }
-                write!(ctx.output, ")")?;
+                write!(out, ")")?;
             }
             (_, Type::User(UserType::Enum(_))) => {
                 let enum_peek = value.into_enum().unwrap();
                 match enum_peek.active_variant() {
                     Err(_) => {
                         write!(
-                            ctx.output,
+                            out,
                             "{} {{ /* cannot determine variant */ }}",
                             shape.type_identifier
                         )?;
                     }
                     Ok(variant) => {
-                        write!(ctx.output, "{}::{}", shape.type_identifier, variant.name)?;
+                        write!(out, "{}::{}", shape.type_identifier, variant.name)?;
 
                         match variant.data.kind {
                             StructKind::Unit => {}
                             StructKind::Struct => {
-                                write!(ctx.output, " {{")?;
+                                write!(out, " {{")?;
                                 for (i, field) in variant.data.fields.iter().enumerate() {
                                     if !short {
-                                        writeln!(ctx.output)?;
-                                        self.indent_to_string(&mut ctx.output, format_depth + 1)?;
+                                        writeln!(out)?;
+                                        self.indent_to_output(out, format_depth + 1)?;
                                     }
-                                    let field_name_start = ctx.len();
-                                    write!(ctx.output, "{}", field.name)?;
-                                    let field_name_end = ctx.len();
-                                    write!(ctx.output, ": ")?;
+                                    let field_name_start = out.position();
+                                    write!(out, "{}", field.name)?;
+                                    let field_name_end = out.position();
+                                    write!(out, ": ")?;
 
                                     let mut field_path = current_path.clone();
                                     field_path
                                         .push(PathSegment::Variant(Cow::Borrowed(variant.name)));
                                     field_path.push(PathSegment::Field(Cow::Borrowed(field.name)));
 
-                                    let field_value_start = ctx.len();
+                                    let field_value_start = out.position();
                                     if let Ok(Some(field_value)) = enum_peek.field(i) {
-                                        self.format_peek_with_spans_internal(
+                                        self.format_unified(
                                             field_value,
-                                            ctx,
+                                            out,
                                             visited,
                                             format_depth + 1,
                                             type_depth + 1,
@@ -1370,40 +1377,40 @@ impl PrettyPrinter {
                                             field_path.clone(),
                                         )?;
                                     }
-                                    let field_value_end = ctx.len();
+                                    let field_value_end = out.position();
 
-                                    ctx.record_field_span(
+                                    out.record_field_span(
                                         field_path,
                                         (field_name_start, field_name_end),
                                         (field_value_start, field_value_end),
                                     );
 
                                     if !short || i + 1 < variant.data.fields.len() {
-                                        write!(ctx.output, ",")?;
+                                        write!(out, ",")?;
                                     }
                                 }
                                 if !short {
-                                    writeln!(ctx.output)?;
-                                    self.indent_to_string(&mut ctx.output, format_depth)?;
+                                    writeln!(out)?;
+                                    self.indent_to_output(out, format_depth)?;
                                 }
-                                write!(ctx.output, "}}")?;
+                                write!(out, "}}")?;
                             }
                             _ => {
-                                write!(ctx.output, "(")?;
+                                write!(out, "(")?;
                                 for (i, _field) in variant.data.fields.iter().enumerate() {
                                     if i > 0 {
-                                        write!(ctx.output, ", ")?;
+                                        write!(out, ", ")?;
                                     }
                                     let mut elem_path = current_path.clone();
                                     elem_path
                                         .push(PathSegment::Variant(Cow::Borrowed(variant.name)));
                                     elem_path.push(PathSegment::Index(i));
 
-                                    let elem_start = ctx.len();
+                                    let elem_start = out.position();
                                     if let Ok(Some(field_value)) = enum_peek.field(i) {
-                                        self.format_peek_with_spans_internal(
+                                        self.format_unified(
                                             field_value,
-                                            ctx,
+                                            out,
                                             visited,
                                             format_depth + 1,
                                             type_depth + 1,
@@ -1411,10 +1418,10 @@ impl PrettyPrinter {
                                             elem_path.clone(),
                                         )?;
                                     }
-                                    let elem_end = ctx.len();
-                                    ctx.record_span(elem_path, (elem_start, elem_end));
+                                    let elem_end = out.position();
+                                    out.record_span(elem_path, (elem_start, elem_end));
                                 }
-                                write!(ctx.output, ")")?;
+                                write!(out, ")")?;
                             }
                         }
                     }
@@ -1422,106 +1429,116 @@ impl PrettyPrinter {
             }
             _ if value.into_list_like().is_ok() => {
                 let list = value.into_list_like().unwrap();
-                write!(ctx.output, "[")?;
+
+                // Check if elements are simple scalars - render inline if so
+                let elem_shape = list.def().t();
+                let is_simple = Self::shape_chunkiness(elem_shape) <= 1;
+
+                write!(out, "[")?;
+                let len = list.len();
                 for (i, item) in list.iter().enumerate() {
-                    if !short {
-                        writeln!(ctx.output)?;
-                        self.indent_to_string(&mut ctx.output, format_depth + 1)?;
+                    if !short && !is_simple {
+                        writeln!(out)?;
+                        self.indent_to_output(out, format_depth + 1)?;
+                    } else if i > 0 {
+                        write!(out, " ")?;
                     }
                     let mut elem_path = current_path.clone();
                     elem_path.push(PathSegment::Index(i));
 
-                    let elem_start = ctx.len();
-                    self.format_peek_with_spans_internal(
+                    let elem_start = out.position();
+                    self.format_unified(
                         item,
-                        ctx,
+                        out,
                         visited,
                         format_depth + 1,
                         type_depth + 1,
-                        short,
+                        short || is_simple,
                         elem_path.clone(),
                     )?;
-                    let elem_end = ctx.len();
-                    ctx.record_span(elem_path, (elem_start, elem_end));
+                    let elem_end = out.position();
+                    out.record_span(elem_path, (elem_start, elem_end));
 
-                    if !short || i + 1 < list.len() {
-                        write!(ctx.output, ",")?;
+                    if !short && !is_simple {
+                        write!(out, ",")?;
+                    } else if i + 1 < len {
+                        write!(out, ",")?;
                     }
                 }
-                if !short && !list.is_empty() {
-                    writeln!(ctx.output)?;
-                    self.indent_to_string(&mut ctx.output, format_depth)?;
+                if !short && !is_simple {
+                    writeln!(out)?;
+                    self.indent_to_output(out, format_depth)?;
                 }
-                write!(ctx.output, "]")?;
+                write!(out, "]")?;
             }
             _ if value.into_map().is_ok() => {
                 let map = value.into_map().unwrap();
-                write!(ctx.output, "{{")?;
+                write!(out, "{{")?;
                 for (i, (key, val)) in map.iter().enumerate() {
                     if !short {
-                        writeln!(ctx.output)?;
-                        self.indent_to_string(&mut ctx.output, format_depth + 1)?;
+                        writeln!(out)?;
+                        self.indent_to_output(out, format_depth + 1)?;
                     }
                     // Format key
-                    let key_start = ctx.len();
-                    self.format_peek_with_spans_internal(
+                    let key_start = out.position();
+                    self.format_unified(
                         key,
-                        ctx,
+                        out,
                         visited,
                         format_depth + 1,
                         type_depth + 1,
                         true, // short for keys
                         vec![],
                     )?;
-                    let key_end = ctx.len();
+                    let key_end = out.position();
 
-                    write!(ctx.output, ": ")?;
+                    write!(out, ": ")?;
 
                     // Build path for this entry (use key's string representation)
                     let key_str = self.format_peek(key);
                     let mut entry_path = current_path.clone();
                     entry_path.push(PathSegment::Key(Cow::Owned(key_str)));
 
-                    let val_start = ctx.len();
-                    self.format_peek_with_spans_internal(
+                    let val_start = out.position();
+                    self.format_unified(
                         val,
-                        ctx,
+                        out,
                         visited,
                         format_depth + 1,
                         type_depth + 1,
                         short,
                         entry_path.clone(),
                     )?;
-                    let val_end = ctx.len();
+                    let val_end = out.position();
 
-                    ctx.record_field_span(entry_path, (key_start, key_end), (val_start, val_end));
+                    out.record_field_span(entry_path, (key_start, key_end), (val_start, val_end));
 
                     if !short || i + 1 < map.len() {
-                        write!(ctx.output, ",")?;
+                        write!(out, ",")?;
                     }
                 }
                 if !short && map.len() > 0 {
-                    writeln!(ctx.output)?;
-                    self.indent_to_string(&mut ctx.output, format_depth)?;
+                    writeln!(out)?;
+                    self.indent_to_output(out, format_depth)?;
                 }
-                write!(ctx.output, "}}")?;
+                write!(out, "}}")?;
             }
             _ => {
                 // Fallback: just write the type name
-                write!(ctx.output, "{} {{ ... }}", shape.type_identifier)?;
+                write!(out, "{} {{ ... }}", shape.type_identifier)?;
             }
         }
 
         visited.remove(&value.id());
 
         // Record span for this value
-        let value_end = ctx.len();
-        ctx.record_span(current_path, (value_start, value_end));
+        let value_end = out.position();
+        out.record_span(current_path, (value_start, value_end));
 
         Ok(())
     }
 
-    fn format_scalar_to_string(&self, value: Peek<'_, '_>, out: &mut String) -> fmt::Result {
+    fn format_scalar_to_output(&self, value: Peek<'_, '_>, out: &mut impl Write) -> fmt::Result {
         // Use Display or Debug trait to format scalar values
         if value.shape().is_display() {
             write!(out, "{}", value)
@@ -1532,10 +1549,10 @@ impl PrettyPrinter {
         }
     }
 
-    fn indent_to_string(&self, out: &mut String, depth: usize) -> fmt::Result {
+    fn indent_to_output(&self, out: &mut impl Write, depth: usize) -> fmt::Result {
         for _ in 0..depth {
             for _ in 0..self.indent_size {
-                out.push(' ');
+                out.write_char(' ')?;
             }
         }
         Ok(())
@@ -1551,13 +1568,55 @@ pub struct FormattedValue {
     pub spans: BTreeMap<Path, FieldSpan>,
 }
 
+/// Trait for output destinations that may optionally track spans.
+///
+/// This allows a single formatting implementation to work with both
+/// simple string output and span-tracking output.
+trait FormatOutput: Write {
+    /// Get the current byte position in the output (for span tracking)
+    fn position(&self) -> usize;
+
+    /// Record a span for a path (value only, key=value)
+    fn record_span(&mut self, _path: Path, _span: Span) {}
+
+    /// Record a span with separate key and value spans
+    fn record_field_span(&mut self, _path: Path, _key_span: Span, _value_span: Span) {}
+}
+
+/// A wrapper around any Write that implements FormatOutput but doesn't track spans.
+/// Position tracking is approximated by counting bytes written.
+struct NonTrackingOutput<W> {
+    inner: W,
+    position: usize,
+}
+
+impl<W> NonTrackingOutput<W> {
+    fn new(inner: W) -> Self {
+        Self { inner, position: 0 }
+    }
+}
+
+impl<W: Write> Write for NonTrackingOutput<W> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.position += s.len();
+        self.inner.write_str(s)
+    }
+}
+
+impl<W: Write> FormatOutput for NonTrackingOutput<W> {
+    fn position(&self) -> usize {
+        self.position
+    }
+    // Uses default no-op implementations for span recording
+}
+
 /// Context for tracking spans during value formatting
-struct ValueSpanContext {
+struct SpanTrackingOutput {
     output: String,
     spans: BTreeMap<Path, FieldSpan>,
 }
 
-impl ValueSpanContext {
+impl SpanTrackingOutput {
     fn new() -> Self {
         Self {
             output: String::new(),
@@ -1565,7 +1624,23 @@ impl ValueSpanContext {
         }
     }
 
-    fn len(&self) -> usize {
+    fn into_formatted_value(self) -> FormattedValue {
+        FormattedValue {
+            text: self.output,
+            spans: self.spans,
+        }
+    }
+}
+
+impl Write for SpanTrackingOutput {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.output.push_str(s);
+        Ok(())
+    }
+}
+
+impl FormatOutput for SpanTrackingOutput {
+    fn position(&self) -> usize {
         self.output.len()
     }
 
@@ -1587,13 +1662,6 @@ impl ValueSpanContext {
                 value: value_span,
             },
         );
-    }
-}
-
-impl Write for ValueSpanContext {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.output.push_str(s);
-        Ok(())
     }
 }
 
