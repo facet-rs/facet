@@ -2,6 +2,10 @@
 //!
 //! Run with: cargo run -p facet-pretty --example spans_showcase
 
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::fmt;
+
 use facet::Facet;
 use facet_pretty::{FieldSpan, PathSegment, format_shape_colored, format_shape_with_spans};
 use facet_showcase::{OutputMode, ShowcaseRunner, ansi_to_html};
@@ -9,8 +13,6 @@ use miette::{
     Diagnostic, GraphicalReportHandler, GraphicalTheme, LabeledSpan, NamedSource, Severity,
 };
 use owo_colors::OwoColorize;
-use std::collections::HashMap;
-use std::fmt;
 
 // ============================================================================
 // Test Types
@@ -153,7 +155,7 @@ fn demo_highlight_key(runner: &mut ShowcaseRunner) {
         "Highlight Field Name",
         "Point to the field name when it's unknown or unexpected.",
         Config::SHAPE,
-        &[PathSegment::Field("max_retries")],
+        &[PathSegment::Field(Cow::Borrowed("max_retries"))],
         HighlightMode::Key,
         "unknown field `max_retries`",
         "not expected here",
@@ -166,7 +168,7 @@ fn demo_highlight_value(runner: &mut ShowcaseRunner) {
         "Highlight Type",
         "Point to the type when the value doesn't match.",
         Config::SHAPE,
-        &[PathSegment::Field("max_retries")],
+        &[PathSegment::Field(Cow::Borrowed("max_retries"))],
         HighlightMode::Value,
         "value 1000 is out of range for u8",
         "expected 0..255",
@@ -179,7 +181,7 @@ fn demo_highlight_both(runner: &mut ShowcaseRunner) {
         "Highlight Entire Field",
         "Point to both name and type for context.",
         Config::SHAPE,
-        &[PathSegment::Field("timeout_ms")],
+        &[PathSegment::Field(Cow::Borrowed("timeout_ms"))],
         HighlightMode::Both,
         "missing required field",
         "this field is required",
@@ -192,7 +194,7 @@ fn demo_nested_struct(runner: &mut ShowcaseRunner) {
         "Nested Struct Field",
         "Highlight a field inside a nested struct.",
         Employee::SHAPE,
-        &[PathSegment::Field("person")],
+        &[PathSegment::Field(Cow::Borrowed("person"))],
         HighlightMode::Value,
         "invalid person data",
         "expected valid Person",
@@ -205,7 +207,7 @@ fn demo_nested_field(runner: &mut ShowcaseRunner) {
         "Deeply Nested Field",
         "Highlight a deeply nested field path.",
         Employee::SHAPE,
-        &[PathSegment::Field("address")],
+        &[PathSegment::Field(Cow::Borrowed("address"))],
         HighlightMode::Both,
         "address validation failed",
         "city is required",
@@ -218,7 +220,7 @@ fn demo_unit_variant(runner: &mut ShowcaseRunner) {
         "Unit Variant",
         "Highlight an enum variant name.",
         Status::SHAPE,
-        &[PathSegment::Variant("Active")],
+        &[PathSegment::Variant(Cow::Borrowed("Active"))],
         HighlightMode::Value,
         "invalid variant",
         "not allowed in this context",
@@ -231,7 +233,7 @@ fn demo_tuple_variant(runner: &mut ShowcaseRunner) {
         "Tuple Variant",
         "Highlight a tuple variant.",
         Message::SHAPE,
-        &[PathSegment::Variant("Text")],
+        &[PathSegment::Variant(Cow::Borrowed("Text"))],
         HighlightMode::Value,
         "type mismatch",
         "expected Number, got Text",
@@ -244,7 +246,10 @@ fn demo_struct_variant(runner: &mut ShowcaseRunner) {
         "Struct Variant Field",
         "Highlight a field inside a struct variant.",
         Status::SHAPE,
-        &[PathSegment::Variant("Error"), PathSegment::Field("code")],
+        &[
+            PathSegment::Variant(Cow::Borrowed("Error")),
+            PathSegment::Field(Cow::Borrowed("code")),
+        ],
         HighlightMode::Value,
         "error code out of range",
         "must be positive",
@@ -257,7 +262,7 @@ fn demo_vec_field(runner: &mut ShowcaseRunner) {
         "Vec Field",
         "Highlight a Vec field type.",
         Employee::SHAPE,
-        &[PathSegment::Field("tags")],
+        &[PathSegment::Field(Cow::Borrowed("tags"))],
         HighlightMode::Value,
         "invalid tags",
         "expected array of strings",
@@ -270,7 +275,7 @@ fn demo_option_field(runner: &mut ShowcaseRunner) {
         "Option Field",
         "Highlight an Option field.",
         Person::SHAPE,
-        &[PathSegment::Field("email")],
+        &[PathSegment::Field(Cow::Borrowed("email"))],
         HighlightMode::Both,
         "invalid email format",
         "must be a valid email address",
@@ -283,7 +288,7 @@ fn demo_hashmap_field(runner: &mut ShowcaseRunner) {
         "HashMap Field",
         "Highlight a HashMap field.",
         Employee::SHAPE,
-        &[PathSegment::Field("metadata")],
+        &[PathSegment::Field(Cow::Borrowed("metadata"))],
         HighlightMode::Value,
         "invalid metadata",
         "keys must be alphanumeric",
