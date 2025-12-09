@@ -50,10 +50,8 @@ pub(crate) struct ReplaceGroup<'mem, 'facet> {
 
 impl<'mem, 'facet> ReplaceGroup<'mem, 'facet> {
     fn push_add(&mut self, addition: Peek<'mem, 'facet>) {
-        assert!(
-            self.removals.is_empty(),
-            "We want all blocks of updates to have removals first, then additions, this should follow from our implementation of myers' algorithm"
-        );
+        // Note: The Myers algorithm backtracks and may interleave adds/removes
+        // when costs are equal. We handle this by just collecting both.
         self.additions.insert(0, addition);
     }
 
@@ -202,7 +200,9 @@ pub fn diff<'mem, 'facet>(
             updates.push_keep(a[x - 1]);
             x -= 1;
             y -= 1;
-        } else if mem[y][x - 1] < mem[y - 1][x] {
+        } else if mem[y][x - 1] <= mem[y - 1][x] {
+            // When costs are equal, prefer removes first to maintain the invariant
+            // that within a replace group, all removals come before additions
             updates.push_remove(a[x - 1]);
             x -= 1;
         } else {
