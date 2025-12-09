@@ -103,13 +103,17 @@ pub use rapace_core::{
     ValidationError,
 };
 
-// Re-export serialization
+// Re-export serialization crates for macro-generated code
+// The macro generates `::rapace::facet_core::` etc paths, so we need extern crate
 pub use facet;
-pub use facet_core;
+#[doc(hidden)]
+pub extern crate facet_core;
 pub use facet_postcard;
 
 // Re-export registry (needed by macro-generated code)
-pub use rapace_registry;
+// The macro generates `::rapace::rapace_registry::` paths
+#[doc(hidden)]
+pub extern crate rapace_registry;
 
 /// Prelude module for convenient imports.
 ///
