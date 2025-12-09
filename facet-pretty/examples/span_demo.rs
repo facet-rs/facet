@@ -2,6 +2,8 @@
 //!
 //! Run with: cargo run -p facet-pretty --example span_demo
 
+use std::borrow::Cow;
+
 use facet::Facet;
 use facet_pretty::{FormattedShape, PathSegment, format_shape_colored, format_shape_with_spans};
 use owo_colors::OwoColorize;
@@ -82,7 +84,7 @@ fn demo_error_highlight() {
     let result = format_shape_with_spans(Config::SHAPE);
 
     // Simulate an error at max_retries field
-    let error_path = vec![PathSegment::Field("max_retries")];
+    let error_path = vec![PathSegment::Field(Cow::Borrowed("max_retries"))];
 
     if let Some(field_span) = result.spans.get(&error_path) {
         let (start, end) = field_span.value;

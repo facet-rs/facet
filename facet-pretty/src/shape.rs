@@ -3,6 +3,7 @@
 //! This module provides functionality to format a `Shape` as Rust source code,
 //! showing the type definition with its attributes.
 
+use alloc::borrow::Cow;
 use alloc::collections::BTreeMap;
 use alloc::collections::BTreeSet;
 use alloc::string::String;
@@ -110,9 +111,9 @@ impl ShapeFormatConfig {
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PathSegment {
     /// A field name in a struct
-    Field(&'static str),
+    Field(Cow<'static, str>),
     /// A variant name in an enum
-    Variant(&'static str),
+    Variant(Cow<'static, str>),
 }
 
 /// A path to a location within a type structure
@@ -826,7 +827,7 @@ fn format_struct_with_spans(
                 write_type_name(field.shape(), &mut ctx.output)?;
                 let value_end = ctx.len();
                 ctx.record_field_span(
-                    vec![PathSegment::Field(field.name)],
+                    vec![PathSegment::Field(Cow::Borrowed(field.name))],
                     (key_start, key_end),
                     (value_start, value_end),
                 );
@@ -852,7 +853,7 @@ fn format_struct_with_spans(
                     continue;
                 };
                 ctx.record_field_span(
-                    vec![PathSegment::Field(field_name)],
+                    vec![PathSegment::Field(Cow::Borrowed(field_name))],
                     (type_start, type_end), // key is the type itself for tuples
                     (type_start, type_end),
                 );
@@ -916,7 +917,7 @@ fn format_enum_with_spans(
                 write!(ctx.output, "{}", variant.name)?;
                 let name_end = ctx.len();
                 ctx.record_field_span(
-                    vec![PathSegment::Variant(variant.name)],
+                    vec![PathSegment::Variant(Cow::Borrowed(variant.name))],
                     (name_start, name_end),
                     (name_start, name_end),
                 );
@@ -940,8 +941,8 @@ fn format_enum_with_spans(
                     if !field.name.is_empty() {
                         ctx.record_field_span(
                             vec![
-                                PathSegment::Variant(variant.name),
-                                PathSegment::Field(field.name),
+                                PathSegment::Variant(Cow::Borrowed(variant.name)),
+                                PathSegment::Field(Cow::Borrowed(field.name)),
                             ],
                             (type_start, type_end),
                             (type_start, type_end),
@@ -952,7 +953,7 @@ fn format_enum_with_spans(
                 let tuple_end = ctx.len();
                 // Record variant span: key is the name, value is the tuple contents
                 ctx.record_field_span(
-                    vec![PathSegment::Variant(variant.name)],
+                    vec![PathSegment::Variant(Cow::Borrowed(variant.name))],
                     (variant_name_start, variant_name_end),
                     (tuple_start, tuple_end),
                 );
@@ -976,8 +977,8 @@ fn format_enum_with_spans(
                     let value_end = ctx.len();
                     ctx.record_field_span(
                         vec![
-                            PathSegment::Variant(variant.name),
-                            PathSegment::Field(field.name),
+                            PathSegment::Variant(Cow::Borrowed(variant.name)),
+                            PathSegment::Field(Cow::Borrowed(field.name)),
                         ],
                         (key_start, key_end),
                         (value_start, value_end),
@@ -988,7 +989,7 @@ fn format_enum_with_spans(
                 let struct_end = ctx.len();
                 // Record variant span: key is the name, value is the struct body
                 ctx.record_field_span(
-                    vec![PathSegment::Variant(variant.name)],
+                    vec![PathSegment::Variant(Cow::Borrowed(variant.name))],
                     (variant_name_start, variant_name_end),
                     (struct_start, struct_end),
                 );
@@ -1219,9 +1220,9 @@ mod tests {
         let result = format_shape_with_spans(Config::SHAPE);
 
         // Check that spans were recorded for each field
-        let name_path = vec![PathSegment::Field("name")];
-        let retries_path = vec![PathSegment::Field("max_retries")];
-        let enabled_path = vec![PathSegment::Field("enabled")];
+        let name_path = vec![PathSegment::Field(Cow::Borrowed("name"))];
+        let retries_path = vec![PathSegment::Field(Cow::Borrowed("max_retries"))];
+        let enabled_path = vec![PathSegment::Field(Cow::Borrowed("enabled"))];
 
         assert!(
             result.spans.contains_key(&name_path),
@@ -1259,9 +1260,12 @@ mod tests {
         let result = format_shape_with_spans(Status::SHAPE);
 
         // Check variant spans
-        let active_path = vec![PathSegment::Variant("Active")];
-        let error_path = vec![PathSegment::Variant("Error")];
-        let error_code_path = vec![PathSegment::Variant("Error"), PathSegment::Field("code")];
+        let active_path = vec![PathSegment::Variant(Cow::Borrowed("Active"))];
+        let error_path = vec![PathSegment::Variant(Cow::Borrowed("Error"))];
+        let error_code_path = vec![
+            PathSegment::Variant(Cow::Borrowed("Error")),
+            PathSegment::Field(Cow::Borrowed("code")),
+        ];
 
         assert!(
             result.spans.contains_key(&active_path),

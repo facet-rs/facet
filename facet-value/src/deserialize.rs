@@ -42,6 +42,8 @@ use facet_reflect::{Partial, ReflectError};
 use crate::{VNumber, Value, ValueType};
 
 #[cfg(feature = "diagnostics")]
+use alloc::borrow::Cow;
+#[cfg(feature = "diagnostics")]
 use facet_pretty::{PathSegment as ShapePathSegment, format_shape_with_spans};
 
 /// A segment in a deserialization path
@@ -282,12 +284,10 @@ impl ValueErrorReport {
                     .iter()
                     .filter_map(|seg| match seg {
                         PathSegment::Field(name) => {
-                            let leaked: &'static str = Box::leak(name.clone().into_boxed_str());
-                            Some(ShapePathSegment::Field(leaked))
+                            Some(ShapePathSegment::Field(Cow::Owned(name.clone())))
                         }
                         PathSegment::Variant(name) => {
-                            let leaked: &'static str = Box::leak(name.clone().into_boxed_str());
-                            Some(ShapePathSegment::Variant(leaked))
+                            Some(ShapePathSegment::Variant(Cow::Owned(name.clone())))
                         }
                         PathSegment::Index(_) => None,
                     })
