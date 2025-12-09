@@ -6,6 +6,7 @@ members = [
     "crates/rapace-http",
     "crates/rapace-macros",
     "crates/rapace-registry",
+    "crates/rapace-tracing",
     "crates/rapace-transport-mem",
     "crates/rapace-transport-shm",
     "crates/rapace-transport-stream",
@@ -17,6 +18,7 @@ members = [
     "examples/http_over_rapace",
     "examples/shm_image",
     "examples/template_engine",
+    "examples/tracing_over_rapace",
     "xtask",
 ]
 exclude = ["fuzz"]
@@ -34,6 +36,7 @@ rapace-core = { path = "crates/rapace-core" }
 rapace-http = { path = "crates/rapace-http" }
 rapace-macros = { path = "crates/rapace-macros" }
 rapace-registry = { path = "crates/rapace-registry" }
+rapace-tracing = { path = "crates/rapace-tracing" }
 rapace-transport-mem = { path = "crates/rapace-transport-mem" }
 rapace-transport-shm = { path = "crates/rapace-transport-shm" }
 rapace-transport-stream = { path = "crates/rapace-transport-stream" }
