@@ -158,7 +158,7 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
             next_channel_id: ::std::sync::atomic::AtomicU32,
         }
 
-        impl<T: ::rapace::rapace_core::Transport + 'static> #client_name<T> {
+        impl<T: ::rapace_core::Transport + 'static> #client_name<T> {
             /// Create a new client with the given transport.
             ///
             /// Uses hardcoded method IDs (1, 2, ...). For registry-based method IDs,
@@ -180,10 +180,10 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
             }
 
             /// Parse error payload into RpcError.
-            fn parse_error_payload(payload: &[u8]) -> ::rapace::rapace_core::RpcError {
+            fn parse_error_payload(payload: &[u8]) -> ::rapace_core::RpcError {
                 if payload.len() < 8 {
-                    return ::rapace::rapace_core::RpcError::Status {
-                        code: ::rapace::rapace_core::ErrorCode::Internal,
+                    return ::rapace_core::RpcError::Status {
+                        code: ::rapace_core::ErrorCode::Internal,
                         message: "malformed error response".into(),
                     };
                 }
@@ -196,19 +196,19 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
                 ]) as usize;
 
                 if payload.len() < 8 + message_len {
-                    return ::rapace::rapace_core::RpcError::Status {
-                        code: ::rapace::rapace_core::ErrorCode::Internal,
+                    return ::rapace_core::RpcError::Status {
+                        code: ::rapace_core::ErrorCode::Internal,
                         message: "malformed error response".into(),
                     };
                 }
 
-                let code = ::rapace::rapace_core::ErrorCode::from_u32(error_code)
-                    .unwrap_or(::rapace::rapace_core::ErrorCode::Internal);
+                let code = ::rapace_core::ErrorCode::from_u32(error_code)
+                    .unwrap_or(::rapace_core::ErrorCode::Internal);
                 let message = ::std::string::String::from_utf8_lossy(
                     &payload[8..8 + message_len]
                 ).into_owned();
 
-                ::rapace::rapace_core::RpcError::Status { code, message }
+                ::rapace_core::RpcError::Status { code, message }
             }
 
             #(#client_methods_hardcoded)*
@@ -225,7 +225,7 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
             #(#method_id_fields,)*
         }
 
-        impl<T: ::rapace::rapace_core::Transport + 'static> #registry_client_name<T> {
+        impl<T: ::rapace_core::Transport + 'static> #registry_client_name<T> {
             /// Create a new registry-aware client.
             ///
             /// Looks up method IDs from the registry. The service must be registered
@@ -252,10 +252,10 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
             }
 
             /// Parse error payload into RpcError.
-            fn parse_error_payload(payload: &[u8]) -> ::rapace::rapace_core::RpcError {
+            fn parse_error_payload(payload: &[u8]) -> ::rapace_core::RpcError {
                 if payload.len() < 8 {
-                    return ::rapace::rapace_core::RpcError::Status {
-                        code: ::rapace::rapace_core::ErrorCode::Internal,
+                    return ::rapace_core::RpcError::Status {
+                        code: ::rapace_core::ErrorCode::Internal,
                         message: "malformed error response".into(),
                     };
                 }
@@ -268,19 +268,19 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
                 ]) as usize;
 
                 if payload.len() < 8 + message_len {
-                    return ::rapace::rapace_core::RpcError::Status {
-                        code: ::rapace::rapace_core::ErrorCode::Internal,
+                    return ::rapace_core::RpcError::Status {
+                        code: ::rapace_core::ErrorCode::Internal,
                         message: "malformed error response".into(),
                     };
                 }
 
-                let code = ::rapace::rapace_core::ErrorCode::from_u32(error_code)
-                    .unwrap_or(::rapace::rapace_core::ErrorCode::Internal);
+                let code = ::rapace_core::ErrorCode::from_u32(error_code)
+                    .unwrap_or(::rapace_core::ErrorCode::Internal);
                 let message = ::std::string::String::from_utf8_lossy(
                     &payload[8..8 + message_len]
                 ).into_owned();
 
-                ::rapace::rapace_core::RpcError::Status { code, message }
+                ::rapace_core::RpcError::Status { code, message }
             }
 
             #(#client_methods_registry)*
@@ -308,25 +308,25 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
             /// let server = CalculatorServer::new(CalculatorImpl);
             /// server.serve(transport).await?;
             /// ```
-            pub async fn serve<T: ::rapace::rapace_core::Transport + 'static>(
+            pub async fn serve<T: ::rapace_core::Transport + 'static>(
                 self,
                 transport: ::std::sync::Arc<T>,
-            ) -> ::std::result::Result<(), ::rapace::rapace_core::RpcError> {
+            ) -> ::std::result::Result<(), ::rapace_core::RpcError> {
                 loop {
                     // Receive next request frame
                     let request = match transport.recv_frame().await {
                         Ok(frame) => frame,
-                        Err(::rapace::rapace_core::TransportError::Closed) => {
+                        Err(::rapace_core::TransportError::Closed) => {
                             // Connection closed gracefully
                             return Ok(());
                         }
                         Err(e) => {
-                            return Err(::rapace::rapace_core::RpcError::Transport(e));
+                            return Err(::rapace_core::RpcError::Transport(e));
                         }
                     };
 
                     // Skip non-data frames (control frames, etc.)
-                    if !request.desc.flags.contains(::rapace::rapace_core::FrameFlags::DATA) {
+                    if !request.desc.flags.contains(::rapace_core::FrameFlags::DATA) {
                         continue;
                     }
 
@@ -337,23 +337,23 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
                         transport.as_ref(),
                     ).await {
                         // Send error response
-                        let mut desc = ::rapace::rapace_core::MsgDescHot::new();
+                        let mut desc = ::rapace_core::MsgDescHot::new();
                         desc.channel_id = request.desc.channel_id;
-                        desc.flags = ::rapace::rapace_core::FrameFlags::ERROR | ::rapace::rapace_core::FrameFlags::EOS;
+                        desc.flags = ::rapace_core::FrameFlags::ERROR | ::rapace_core::FrameFlags::EOS;
 
                         // Encode error: [code: u32 LE][message_len: u32 LE][message bytes]
                         let (code, message): (u32, ::std::string::String) = match &e {
-                            ::rapace::rapace_core::RpcError::Status { code, message } => (*code as u32, message.clone()),
-                            ::rapace::rapace_core::RpcError::Transport(_) => (::rapace::rapace_core::ErrorCode::Internal as u32, "transport error".into()),
-                            ::rapace::rapace_core::RpcError::Cancelled => (::rapace::rapace_core::ErrorCode::Cancelled as u32, "cancelled".into()),
-                            ::rapace::rapace_core::RpcError::DeadlineExceeded => (::rapace::rapace_core::ErrorCode::DeadlineExceeded as u32, "deadline exceeded".into()),
+                            ::rapace_core::RpcError::Status { code, message } => (*code as u32, message.clone()),
+                            ::rapace_core::RpcError::Transport(_) => (::rapace_core::ErrorCode::Internal as u32, "transport error".into()),
+                            ::rapace_core::RpcError::Cancelled => (::rapace_core::ErrorCode::Cancelled as u32, "cancelled".into()),
+                            ::rapace_core::RpcError::DeadlineExceeded => (::rapace_core::ErrorCode::DeadlineExceeded as u32, "deadline exceeded".into()),
                         };
                         let mut err_bytes = ::std::vec::Vec::with_capacity(8 + message.len());
                         err_bytes.extend_from_slice(&code.to_le_bytes());
                         err_bytes.extend_from_slice(&(message.len() as u32).to_le_bytes());
                         err_bytes.extend_from_slice(message.as_bytes());
 
-                        let frame = ::rapace::rapace_core::Frame::with_payload(desc, err_bytes);
+                        let frame = ::rapace_core::Frame::with_payload(desc, err_bytes);
                         let _ = transport.send_frame(&frame).await;
                     }
                 }
@@ -363,16 +363,16 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
             ///
             /// This is useful for testing or when you want to handle each request
             /// individually.
-            pub async fn serve_one<T: ::rapace::rapace_core::Transport + 'static>(
+            pub async fn serve_one<T: ::rapace_core::Transport + 'static>(
                 &self,
                 transport: &T,
-            ) -> ::std::result::Result<(), ::rapace::rapace_core::RpcError> {
+            ) -> ::std::result::Result<(), ::rapace_core::RpcError> {
                 // Receive next request frame
                 let request = transport.recv_frame().await
-                    .map_err(::rapace::rapace_core::RpcError::Transport)?;
+                    .map_err(::rapace_core::RpcError::Transport)?;
 
                 // Skip non-data frames
-                if !request.desc.flags.contains(::rapace::rapace_core::FrameFlags::DATA) {
+                if !request.desc.flags.contains(::rapace_core::FrameFlags::DATA) {
                     return Ok(());
                 }
 
@@ -392,11 +392,11 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
                 &self,
                 method_id: u32,
                 request_payload: &[u8],
-            ) -> ::std::result::Result<::rapace::rapace_core::Frame, ::rapace::rapace_core::RpcError> {
+            ) -> ::std::result::Result<::rapace_core::Frame, ::rapace_core::RpcError> {
                 match method_id {
                     #(#dispatch_arms)*
-                    _ => Err(::rapace::rapace_core::RpcError::Status {
-                        code: ::rapace::rapace_core::ErrorCode::Unimplemented,
+                    _ => Err(::rapace_core::RpcError::Status {
+                        code: ::rapace_core::ErrorCode::Unimplemented,
                         message: ::std::format!("unknown method_id: {}", method_id),
                     }),
                 }
@@ -405,16 +405,16 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
             /// Dispatch a streaming request to the appropriate method.
             ///
             /// The method sends frames via the provided transport.
-            pub async fn dispatch_streaming<T: ::rapace::rapace_core::Transport + 'static>(
+            pub async fn dispatch_streaming<T: ::rapace_core::Transport + 'static>(
                 &self,
                 method_id: u32,
                 request_payload: &[u8],
                 transport: &T,
-            ) -> ::std::result::Result<(), ::rapace::rapace_core::RpcError> {
+            ) -> ::std::result::Result<(), ::rapace_core::RpcError> {
                 match method_id {
                     #(#streaming_dispatch_arms)*
-                    _ => Err(::rapace::rapace_core::RpcError::Status {
-                        code: ::rapace::rapace_core::ErrorCode::Unimplemented,
+                    _ => Err(::rapace_core::RpcError::Status {
+                        code: ::rapace_core::ErrorCode::Unimplemented,
                         message: ::std::format!("unknown method_id: {}", method_id),
                     }),
                 }
@@ -597,8 +597,8 @@ fn generate_client_method_unary(method: &MethodInfo, method_id: u32) -> TokenStr
 
     quote! {
         /// Call the #name method on the remote service.
-        pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<#return_type, ::rapace::rapace_core::RpcError> {
-            use ::rapace::rapace_core::{Frame, FrameFlags, MsgDescHot, Transport};
+        pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<#return_type, ::rapace_core::RpcError> {
+            use ::rapace_core::{Frame, FrameFlags, MsgDescHot, Transport};
 
             // Encode request using facet_postcard
             let request_bytes: ::std::vec::Vec<u8> = #encode_expr;
@@ -611,7 +611,7 @@ fn generate_client_method_unary(method: &MethodInfo, method_id: u32) -> TokenStr
             desc.flags = FrameFlags::DATA | FrameFlags::EOS;
 
             // Create frame
-            let frame = if request_bytes.len() <= ::rapace::rapace_core::INLINE_PAYLOAD_SIZE {
+            let frame = if request_bytes.len() <= ::rapace_core::INLINE_PAYLOAD_SIZE {
                 Frame::with_inline_payload(desc, &request_bytes)
                     .expect("inline payload should fit")
             } else {
@@ -620,18 +620,18 @@ fn generate_client_method_unary(method: &MethodInfo, method_id: u32) -> TokenStr
 
             // Send request
             self.transport.send_frame(&frame).await
-                .map_err(::rapace::rapace_core::RpcError::Transport)?;
+                .map_err(::rapace_core::RpcError::Transport)?;
 
             // Receive response
             let response = self.transport.recv_frame().await
-                .map_err(::rapace::rapace_core::RpcError::Transport)?;
+                .map_err(::rapace_core::RpcError::Transport)?;
 
             // Check for error flag
             if response.desc.flags.contains(FrameFlags::ERROR) {
                 // Parse error payload: [ErrorCode as u32 LE][message_len as u32 LE][message bytes]
                 if response.payload.len() < 8 {
-                    return Err(::rapace::rapace_core::RpcError::Status {
-                        code: ::rapace::rapace_core::ErrorCode::Internal,
+                    return Err(::rapace_core::RpcError::Status {
+                        code: ::rapace_core::ErrorCode::Internal,
                         message: "malformed error response".into(),
                     });
                 }
@@ -650,25 +650,25 @@ fn generate_client_method_unary(method: &MethodInfo, method_id: u32) -> TokenStr
                 ]) as usize;
 
                 if response.payload.len() < 8 + message_len {
-                    return Err(::rapace::rapace_core::RpcError::Status {
-                        code: ::rapace::rapace_core::ErrorCode::Internal,
+                    return Err(::rapace_core::RpcError::Status {
+                        code: ::rapace_core::ErrorCode::Internal,
                         message: "malformed error response".into(),
                     });
                 }
 
-                let code = ::rapace::rapace_core::ErrorCode::from_u32(error_code)
-                    .unwrap_or(::rapace::rapace_core::ErrorCode::Internal);
+                let code = ::rapace_core::ErrorCode::from_u32(error_code)
+                    .unwrap_or(::rapace_core::ErrorCode::Internal);
                 let message = ::std::string::String::from_utf8_lossy(
                     &response.payload[8..8 + message_len]
                 ).into_owned();
 
-                return Err(::rapace::rapace_core::RpcError::Status { code, message });
+                return Err(::rapace_core::RpcError::Status { code, message });
             }
 
             // Decode response using facet_postcard
             let result: #return_type = ::facet_postcard::from_bytes(response.payload)
-                .map_err(|e| ::rapace::rapace_core::RpcError::Status {
-                    code: ::rapace::rapace_core::ErrorCode::Internal,
+                .map_err(|e| ::rapace_core::RpcError::Status {
+                    code: ::rapace_core::ErrorCode::Internal,
                     message: ::std::format!("decode error: {:?}", e),
                 })?;
 
@@ -707,8 +707,8 @@ fn generate_client_method_server_streaming(
         /// Call the #name server-streaming method on the remote service.
         ///
         /// Returns a stream of items. The stream ends when EOS is received.
-        pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<::rapace::rapace_core::Streaming<#item_type>, ::rapace::rapace_core::RpcError> {
-            use ::rapace::rapace_core::{Frame, FrameFlags, MsgDescHot, Transport};
+        pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<::rapace_core::Streaming<#item_type>, ::rapace_core::RpcError> {
+            use ::rapace_core::{Frame, FrameFlags, MsgDescHot, Transport};
 
             // Encode request using facet_postcard
             let request_bytes: ::std::vec::Vec<u8> = #encode_expr;
@@ -721,7 +721,7 @@ fn generate_client_method_server_streaming(
             desc.flags = FrameFlags::DATA | FrameFlags::EOS; // Request is complete
 
             // Create frame
-            let frame = if request_bytes.len() <= ::rapace::rapace_core::INLINE_PAYLOAD_SIZE {
+            let frame = if request_bytes.len() <= ::rapace_core::INLINE_PAYLOAD_SIZE {
                 Frame::with_inline_payload(desc, &request_bytes)
                     .expect("inline payload should fit")
             } else {
@@ -730,10 +730,10 @@ fn generate_client_method_server_streaming(
 
             // Send request
             self.transport.send_frame(&frame).await
-                .map_err(::rapace::rapace_core::RpcError::Transport)?;
+                .map_err(::rapace_core::RpcError::Transport)?;
 
             // Set up receive channel
-            let (tx, rx) = ::tokio::sync::mpsc::channel::<::std::result::Result<#item_type, ::rapace::rapace_core::RpcError>>(16);
+            let (tx, rx) = ::tokio::sync::mpsc::channel::<::std::result::Result<#item_type, ::rapace_core::RpcError>>(16);
 
             // Clone transport for the spawned task
             let transport = ::std::sync::Arc::clone(&self.transport);
@@ -744,7 +744,7 @@ fn generate_client_method_server_streaming(
                     let response = match transport.recv_frame().await {
                         Ok(r) => r,
                         Err(e) => {
-                            let _ = tx.send(Err(::rapace::rapace_core::RpcError::Transport(e))).await;
+                            let _ = tx.send(Err(::rapace_core::RpcError::Transport(e))).await;
                             break;
                         }
                     };
@@ -766,8 +766,8 @@ fn generate_client_method_server_streaming(
                                 }
                             }
                             Err(e) => {
-                                let _ = tx.send(Err(::rapace::rapace_core::RpcError::Status {
-                                    code: ::rapace::rapace_core::ErrorCode::Internal,
+                                let _ = tx.send(Err(::rapace_core::RpcError::Status {
+                                    code: ::rapace_core::ErrorCode::Internal,
                                     message: ::std::format!("decode error: {:?}", e),
                                 })).await;
                                 break;
@@ -797,8 +797,8 @@ fn generate_dispatch_arm(method: &MethodInfo, method_id: u32) -> TokenStream2 {
             // For the dispatch() method, return error for streaming methods
             quote! {
                 #method_id => {
-                    Err(::rapace::rapace_core::RpcError::Status {
-                        code: ::rapace::rapace_core::ErrorCode::Internal,
+                    Err(::rapace_core::RpcError::Status {
+                        code: ::rapace_core::ErrorCode::Internal,
                         message: "streaming method called via unary dispatch".into(),
                     })
                 }
@@ -825,8 +825,8 @@ fn generate_streaming_dispatch_arm(method: &MethodInfo, method_id: u32) -> Token
                 let ty = &arg_types[0];
                 quote! {
                     let #arg: #ty = ::facet_postcard::from_bytes(request_payload)
-                        .map_err(|e| ::rapace::rapace_core::RpcError::Status {
-                            code: ::rapace::rapace_core::ErrorCode::InvalidArgument,
+                        .map_err(|e| ::rapace_core::RpcError::Status {
+                            code: ::rapace_core::ErrorCode::InvalidArgument,
                             message: ::std::format!("decode error: {:?}", e),
                         })?;
                     let result: #return_type = self.service.#name(#arg).await;
@@ -835,8 +835,8 @@ fn generate_streaming_dispatch_arm(method: &MethodInfo, method_id: u32) -> Token
                 let tuple_type = quote! { (#(#arg_types),*) };
                 quote! {
                     let (#(#arg_names),*): #tuple_type = ::facet_postcard::from_bytes(request_payload)
-                        .map_err(|e| ::rapace::rapace_core::RpcError::Status {
-                            code: ::rapace::rapace_core::ErrorCode::InvalidArgument,
+                        .map_err(|e| ::rapace_core::RpcError::Status {
+                            code: ::rapace_core::ErrorCode::InvalidArgument,
                             message: ::std::format!("decode error: {:?}", e),
                         })?;
                     let result: #return_type = self.service.#name(#(#arg_names),*).await;
@@ -849,23 +849,23 @@ fn generate_streaming_dispatch_arm(method: &MethodInfo, method_id: u32) -> Token
 
                     // Encode and send response frame
                     let response_bytes: ::std::vec::Vec<u8> = ::facet_postcard::to_vec(&result)
-                        .map_err(|e| ::rapace::rapace_core::RpcError::Status {
-                            code: ::rapace::rapace_core::ErrorCode::Internal,
+                        .map_err(|e| ::rapace_core::RpcError::Status {
+                            code: ::rapace_core::ErrorCode::Internal,
                             message: ::std::format!("encode error: {:?}", e),
                         })?;
 
-                    let mut desc = ::rapace::rapace_core::MsgDescHot::new();
-                    desc.flags = ::rapace::rapace_core::FrameFlags::DATA | ::rapace::rapace_core::FrameFlags::EOS;
+                    let mut desc = ::rapace_core::MsgDescHot::new();
+                    desc.flags = ::rapace_core::FrameFlags::DATA | ::rapace_core::FrameFlags::EOS;
 
-                    let frame = if response_bytes.len() <= ::rapace::rapace_core::INLINE_PAYLOAD_SIZE {
-                        ::rapace::rapace_core::Frame::with_inline_payload(desc, &response_bytes)
+                    let frame = if response_bytes.len() <= ::rapace_core::INLINE_PAYLOAD_SIZE {
+                        ::rapace_core::Frame::with_inline_payload(desc, &response_bytes)
                             .expect("inline payload should fit")
                     } else {
-                        ::rapace::rapace_core::Frame::with_payload(desc, response_bytes)
+                        ::rapace_core::Frame::with_payload(desc, response_bytes)
                     };
 
                     transport.send_frame(&frame).await
-                        .map_err(::rapace::rapace_core::RpcError::Transport)?;
+                        .map_err(::rapace_core::RpcError::Transport)?;
                     Ok(())
                 }
             }
@@ -892,8 +892,8 @@ fn generate_streaming_dispatch_arm_server_streaming(
         let ty = &arg_types[0];
         quote! {
             let #arg: #ty = ::facet_postcard::from_bytes(request_payload)
-                .map_err(|e| ::rapace::rapace_core::RpcError::Status {
-                    code: ::rapace::rapace_core::ErrorCode::InvalidArgument,
+                .map_err(|e| ::rapace_core::RpcError::Status {
+                    code: ::rapace_core::ErrorCode::InvalidArgument,
                     message: ::std::format!("decode error: {:?}", e),
                 })?;
         }
@@ -901,8 +901,8 @@ fn generate_streaming_dispatch_arm_server_streaming(
         let tuple_type = quote! { (#(#arg_types),*) };
         quote! {
             let (#(#arg_names),*): #tuple_type = ::facet_postcard::from_bytes(request_payload)
-                .map_err(|e| ::rapace::rapace_core::RpcError::Status {
-                    code: ::rapace::rapace_core::ErrorCode::InvalidArgument,
+                .map_err(|e| ::rapace_core::RpcError::Status {
+                    code: ::rapace_core::ErrorCode::InvalidArgument,
                     message: ::std::format!("decode error: {:?}", e),
                 })?;
         }
@@ -929,54 +929,54 @@ fn generate_streaming_dispatch_arm_server_streaming(
                     Some(Ok(item)) => {
                         // Encode item
                         let item_bytes: ::std::vec::Vec<u8> = ::facet_postcard::to_vec(&item)
-                            .map_err(|e| ::rapace::rapace_core::RpcError::Status {
-                                code: ::rapace::rapace_core::ErrorCode::Internal,
+                            .map_err(|e| ::rapace_core::RpcError::Status {
+                                code: ::rapace_core::ErrorCode::Internal,
                                 message: ::std::format!("encode error: {:?}", e),
                             })?;
 
                         // Send DATA frame (not EOS yet)
-                        let mut desc = ::rapace::rapace_core::MsgDescHot::new();
-                        desc.flags = ::rapace::rapace_core::FrameFlags::DATA;
+                        let mut desc = ::rapace_core::MsgDescHot::new();
+                        desc.flags = ::rapace_core::FrameFlags::DATA;
 
-                        let frame = if item_bytes.len() <= ::rapace::rapace_core::INLINE_PAYLOAD_SIZE {
-                            ::rapace::rapace_core::Frame::with_inline_payload(desc, &item_bytes)
+                        let frame = if item_bytes.len() <= ::rapace_core::INLINE_PAYLOAD_SIZE {
+                            ::rapace_core::Frame::with_inline_payload(desc, &item_bytes)
                                 .expect("inline payload should fit")
                         } else {
-                            ::rapace::rapace_core::Frame::with_payload(desc, item_bytes)
+                            ::rapace_core::Frame::with_payload(desc, item_bytes)
                         };
 
                         transport.send_frame(&frame).await
-                            .map_err(::rapace::rapace_core::RpcError::Transport)?;
+                            .map_err(::rapace_core::RpcError::Transport)?;
                     }
                     Some(Err(err)) => {
                         // Send ERROR frame and break
-                        let mut desc = ::rapace::rapace_core::MsgDescHot::new();
-                        desc.flags = ::rapace::rapace_core::FrameFlags::ERROR | ::rapace::rapace_core::FrameFlags::EOS;
+                        let mut desc = ::rapace_core::MsgDescHot::new();
+                        desc.flags = ::rapace_core::FrameFlags::ERROR | ::rapace_core::FrameFlags::EOS;
 
                         // Encode error: [code: u32 LE][message_len: u32 LE][message bytes]
                         let (code, message): (u32, &str) = match &err {
-                            ::rapace::rapace_core::RpcError::Status { code, message } => (*code as u32, message.as_str()),
-                            ::rapace::rapace_core::RpcError::Transport(_) => (::rapace::rapace_core::ErrorCode::Internal as u32, "transport error"),
-                            ::rapace::rapace_core::RpcError::Cancelled => (::rapace::rapace_core::ErrorCode::Cancelled as u32, "cancelled"),
-                            ::rapace::rapace_core::RpcError::DeadlineExceeded => (::rapace::rapace_core::ErrorCode::DeadlineExceeded as u32, "deadline exceeded"),
+                            ::rapace_core::RpcError::Status { code, message } => (*code as u32, message.as_str()),
+                            ::rapace_core::RpcError::Transport(_) => (::rapace_core::ErrorCode::Internal as u32, "transport error"),
+                            ::rapace_core::RpcError::Cancelled => (::rapace_core::ErrorCode::Cancelled as u32, "cancelled"),
+                            ::rapace_core::RpcError::DeadlineExceeded => (::rapace_core::ErrorCode::DeadlineExceeded as u32, "deadline exceeded"),
                         };
                         let mut err_bytes = Vec::with_capacity(8 + message.len());
                         err_bytes.extend_from_slice(&code.to_le_bytes());
                         err_bytes.extend_from_slice(&(message.len() as u32).to_le_bytes());
                         err_bytes.extend_from_slice(message.as_bytes());
 
-                        let frame = ::rapace::rapace_core::Frame::with_payload(desc, err_bytes);
+                        let frame = ::rapace_core::Frame::with_payload(desc, err_bytes);
                         transport.send_frame(&frame).await
-                            .map_err(::rapace::rapace_core::RpcError::Transport)?;
+                            .map_err(::rapace_core::RpcError::Transport)?;
                         return Ok(());
                     }
                     None => {
                         // Stream is complete: send EOS frame
-                        let mut desc = ::rapace::rapace_core::MsgDescHot::new();
-                        desc.flags = ::rapace::rapace_core::FrameFlags::EOS;
-                        let frame = ::rapace::rapace_core::Frame::new(desc);
+                        let mut desc = ::rapace_core::MsgDescHot::new();
+                        desc.flags = ::rapace_core::FrameFlags::EOS;
+                        let frame = ::rapace_core::Frame::new(desc);
                         transport.send_frame(&frame).await
-                            .map_err(::rapace::rapace_core::RpcError::Transport)?;
+                            .map_err(::rapace_core::RpcError::Transport)?;
                         return Ok(());
                     }
                 }
@@ -1002,8 +1002,8 @@ fn generate_dispatch_arm_unary(method: &MethodInfo, method_id: u32) -> TokenStre
         let ty = &arg_types[0];
         quote! {
             let #arg: #ty = ::facet_postcard::from_bytes(request_payload)
-                .map_err(|e| ::rapace::rapace_core::RpcError::Status {
-                    code: ::rapace::rapace_core::ErrorCode::InvalidArgument,
+                .map_err(|e| ::rapace_core::RpcError::Status {
+                    code: ::rapace_core::ErrorCode::InvalidArgument,
                     message: ::std::format!("decode error: {:?}", e),
                 })?;
             let result: #return_type = self.service.#name(#arg).await;
@@ -1013,8 +1013,8 @@ fn generate_dispatch_arm_unary(method: &MethodInfo, method_id: u32) -> TokenStre
         let tuple_type = quote! { (#(#arg_types),*) };
         quote! {
             let (#(#arg_names),*): #tuple_type = ::facet_postcard::from_bytes(request_payload)
-                .map_err(|e| ::rapace::rapace_core::RpcError::Status {
-                    code: ::rapace::rapace_core::ErrorCode::InvalidArgument,
+                .map_err(|e| ::rapace_core::RpcError::Status {
+                    code: ::rapace_core::ErrorCode::InvalidArgument,
                     message: ::std::format!("decode error: {:?}", e),
                 })?;
             let result: #return_type = self.service.#name(#(#arg_names),*).await;
@@ -1027,20 +1027,20 @@ fn generate_dispatch_arm_unary(method: &MethodInfo, method_id: u32) -> TokenStre
 
             // Encode response using facet_postcard
             let response_bytes: ::std::vec::Vec<u8> = ::facet_postcard::to_vec(&result)
-                .map_err(|e| ::rapace::rapace_core::RpcError::Status {
-                    code: ::rapace::rapace_core::ErrorCode::Internal,
+                .map_err(|e| ::rapace_core::RpcError::Status {
+                    code: ::rapace_core::ErrorCode::Internal,
                     message: ::std::format!("encode error: {:?}", e),
                 })?;
 
             // Build response frame
-            let mut desc = ::rapace::rapace_core::MsgDescHot::new();
-            desc.flags = ::rapace::rapace_core::FrameFlags::DATA | ::rapace::rapace_core::FrameFlags::EOS;
+            let mut desc = ::rapace_core::MsgDescHot::new();
+            desc.flags = ::rapace_core::FrameFlags::DATA | ::rapace_core::FrameFlags::EOS;
 
-            let frame = if response_bytes.len() <= ::rapace::rapace_core::INLINE_PAYLOAD_SIZE {
-                ::rapace::rapace_core::Frame::with_inline_payload(desc, &response_bytes)
+            let frame = if response_bytes.len() <= ::rapace_core::INLINE_PAYLOAD_SIZE {
+                ::rapace_core::Frame::with_inline_payload(desc, &response_bytes)
                     .expect("inline payload should fit")
             } else {
-                ::rapace::rapace_core::Frame::with_payload(desc, response_bytes)
+                ::rapace_core::Frame::with_payload(desc, response_bytes)
             };
 
             Ok(frame)
@@ -1169,8 +1169,8 @@ fn generate_client_method_unary_registry(
 
     quote! {
         /// Call the #name method on the remote service.
-        pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<#return_type, ::rapace::rapace_core::RpcError> {
-            use ::rapace::rapace_core::{Frame, FrameFlags, MsgDescHot, Transport};
+        pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<#return_type, ::rapace_core::RpcError> {
+            use ::rapace_core::{Frame, FrameFlags, MsgDescHot, Transport};
 
             let request_bytes: ::std::vec::Vec<u8> = #encode_expr;
 
@@ -1180,7 +1180,7 @@ fn generate_client_method_unary_registry(
             desc.method_id = self.#method_id_field;
             desc.flags = FrameFlags::DATA | FrameFlags::EOS;
 
-            let frame = if request_bytes.len() <= ::rapace::rapace_core::INLINE_PAYLOAD_SIZE {
+            let frame = if request_bytes.len() <= ::rapace_core::INLINE_PAYLOAD_SIZE {
                 Frame::with_inline_payload(desc, &request_bytes)
                     .expect("inline payload should fit")
             } else {
@@ -1188,18 +1188,18 @@ fn generate_client_method_unary_registry(
             };
 
             self.transport.send_frame(&frame).await
-                .map_err(::rapace::rapace_core::RpcError::Transport)?;
+                .map_err(::rapace_core::RpcError::Transport)?;
 
             let response = self.transport.recv_frame().await
-                .map_err(::rapace::rapace_core::RpcError::Transport)?;
+                .map_err(::rapace_core::RpcError::Transport)?;
 
             if response.desc.flags.contains(FrameFlags::ERROR) {
                 return Err(Self::parse_error_payload(response.payload));
             }
 
             let result: #return_type = ::facet_postcard::from_bytes(response.payload)
-                .map_err(|e| ::rapace::rapace_core::RpcError::Status {
-                    code: ::rapace::rapace_core::ErrorCode::Internal,
+                .map_err(|e| ::rapace_core::RpcError::Status {
+                    code: ::rapace_core::ErrorCode::Internal,
                     message: ::std::format!("decode error: {:?}", e),
                 })?;
 
@@ -1235,8 +1235,8 @@ fn generate_client_method_server_streaming_registry(
 
     quote! {
         /// Call the #name server-streaming method on the remote service.
-        pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<::rapace::rapace_core::Streaming<#item_type>, ::rapace::rapace_core::RpcError> {
-            use ::rapace::rapace_core::{Frame, FrameFlags, MsgDescHot, Transport};
+        pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<::rapace_core::Streaming<#item_type>, ::rapace_core::RpcError> {
+            use ::rapace_core::{Frame, FrameFlags, MsgDescHot, Transport};
 
             let request_bytes: ::std::vec::Vec<u8> = #encode_expr;
 
@@ -1246,7 +1246,7 @@ fn generate_client_method_server_streaming_registry(
             desc.method_id = self.#method_id_field;
             desc.flags = FrameFlags::DATA | FrameFlags::EOS;
 
-            let frame = if request_bytes.len() <= ::rapace::rapace_core::INLINE_PAYLOAD_SIZE {
+            let frame = if request_bytes.len() <= ::rapace_core::INLINE_PAYLOAD_SIZE {
                 Frame::with_inline_payload(desc, &request_bytes)
                     .expect("inline payload should fit")
             } else {
@@ -1254,9 +1254,9 @@ fn generate_client_method_server_streaming_registry(
             };
 
             self.transport.send_frame(&frame).await
-                .map_err(::rapace::rapace_core::RpcError::Transport)?;
+                .map_err(::rapace_core::RpcError::Transport)?;
 
-            let (tx, rx) = ::tokio::sync::mpsc::channel::<::std::result::Result<#item_type, ::rapace::rapace_core::RpcError>>(16);
+            let (tx, rx) = ::tokio::sync::mpsc::channel::<::std::result::Result<#item_type, ::rapace_core::RpcError>>(16);
             let transport = ::std::sync::Arc::clone(&self.transport);
 
             ::tokio::spawn(async move {
@@ -1264,7 +1264,7 @@ fn generate_client_method_server_streaming_registry(
                     let response = match transport.recv_frame().await {
                         Ok(r) => r,
                         Err(e) => {
-                            let _ = tx.send(Err(::rapace::rapace_core::RpcError::Transport(e))).await;
+                            let _ = tx.send(Err(::rapace_core::RpcError::Transport(e))).await;
                             break;
                         }
                     };
@@ -1283,8 +1283,8 @@ fn generate_client_method_server_streaming_registry(
                                 }
                             }
                             Err(e) => {
-                                let _ = tx.send(Err(::rapace::rapace_core::RpcError::Status {
-                                    code: ::rapace::rapace_core::ErrorCode::Internal,
+                                let _ = tx.send(Err(::rapace_core::RpcError::Status {
+                                    code: ::rapace_core::ErrorCode::Internal,
                                     message: ::std::format!("decode error: {:?}", e),
                                 })).await;
                                 break;
