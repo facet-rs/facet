@@ -1134,9 +1134,140 @@ transports observe snapshot semantics only. Mutations are **not** reflected back
 
 4. **SHM zero-copy only when frame is active** — check state before dereferencing
 
-## 9. Observability & Telemetry
+## 9. Large Blobs & SHM Allocator (Optional Optimization)
 
-### 9.1 Logical vs Physical Observability
+This section describes an optional performance optimization for SHM transport.
+
+### 9.1 The Problem
+
+When sending large payloads (images, documents, etc.) over SHM, the encoder must decide:
+
+1. **Is the data already in SHM?** → Reference it zero-copy (slot + offset + len)
+2. **Is it on the heap?** → Allocate a slot and copy the data
+
+The zero-copy path (1) is much faster, but by default, user data lives on the heap.
+
+### 9.2 The Solution: `ShmAllocator`
+
+`ShmAllocator` is an `allocator-api2` compatible allocator that allocates directly into
+SHM slots. Types like `Vec<u8, ShmAllocator>` live in shared memory from birth.
+
+```rust
+use rapace_transport_shm::{ShmSession, ShmAllocator, shm_vec};
+
+// Create allocator from session
+let (session, _) = ShmSession::create_pair().unwrap();
+let alloc = ShmAllocator::new(session.clone());
+
+// Allocate directly in SHM
+let shm_png = shm_vec(&alloc, &png_bytes);
+
+// When passed to the encoder, this is zero-copy!
+// The encoder detects the pointer is in SHM and just records (slot, offset, len).
+```
+
+**Enable with:**
+```toml
+[dependencies]
+rapace-transport-shm = { version = "0.1", features = ["allocator"] }
+```
+
+### 9.3 Design Philosophy: Traits Stay Transport-Agnostic
+
+**Critical:** Service traits must never know about `ShmAllocator`. The optimization is
+entirely on the *caller* side.
+
+```rust
+// Service trait - completely transport-agnostic
+#[rapace::service]
+trait ImageProcessor {
+    async fn flip(&self, png: Vec<u8>) -> Vec<u8>;  // Regular Vec
+}
+
+// Caller decides whether to use SHM allocation
+fn process_image(client: &ImageProcessorClient, png_bytes: &[u8]) {
+    // Option 1: Regular heap allocation (works on all transports, but copies on SHM)
+    let result = client.flip(png_bytes.to_vec()).await;
+
+    // Option 2: SHM allocation (zero-copy on SHM, degrades gracefully elsewhere)
+    let shm_data = shm_vec(&alloc, png_bytes);
+    let regular_vec: Vec<u8> = shm_data.iter().copied().collect();
+    let result = client.flip(regular_vec).await;
+}
+```
+
+The service implementation is identical either way. Only the *host code* that sets up
+the call changes.
+
+### 9.4 How It Works
+
+1. `ShmAllocator` allocates from SHM slots with a 16-byte header:
+   ```rust
+   struct ShmAllocHeader {
+       slot: u32,      // Which slot this allocation lives in
+       gen: u32,       // Generation at allocation time
+       len: u32,       // User-requested size
+       _pad: u32,      // Alignment padding
+   }
+   ```
+
+2. When encoding, `encode_bytes()` checks if the pointer is in SHM:
+   ```rust
+   if let Some((slot, offset)) = session.find_slot_location(bytes.as_ptr(), bytes.len()) {
+       // Zero-copy! Just record the reference.
+       desc.payload_slot = slot;
+       desc.payload_offset = offset;
+       desc.payload_len = bytes.len();
+   } else {
+       // Fall back to alloc + copy
+   }
+   ```
+
+3. The frame's payload field is `None` (no external data), and the descriptor references
+   the existing slot directly.
+
+### 9.5 Metrics
+
+Enable metrics to verify zero-copy is happening:
+
+```rust
+use rapace_transport_shm::{ShmMetrics, ShmTransport};
+
+let metrics = Arc::new(ShmMetrics::new());
+let transport = ShmTransport::new_with_metrics(session, metrics.clone());
+
+// ... make RPC calls ...
+
+println!("Zero-copy: {}", metrics.zero_copy_count());
+println!("Copied: {}", metrics.copy_count());
+println!("Ratio: {:.1}%", metrics.zero_copy_ratio() * 100.0);
+```
+
+### 9.6 When to Use
+
+| Scenario | Recommendation |
+|----------|----------------|
+| Small payloads (<1KB) | Don't bother — inline or copy is fine |
+| Large payloads (images, docs) | Use `ShmAllocator` if staying on same machine |
+| Cross-machine transport | `ShmAllocator` is irrelevant (will serialize anyway) |
+| Mixed transports | Safe to use — degrades gracefully |
+
+### 9.7 Example: Image Processing
+
+See `examples/shm_image/` for a complete example demonstrating:
+- Allocating PNG data in SHM
+- Metrics showing zero-copy hits
+- RPC call with the `ImageService`
+
+```bash
+cargo run -p rapace-shm-image
+```
+
+---
+
+## 10. Observability & Telemetry
+
+### 10.1 Logical vs Physical Observability
 
 Every message *logically* has:
 - `trace_id`: 64-bit, propagated from caller
@@ -1148,7 +1279,7 @@ Every message *logically* has:
 - Defaulted to 0 (when disabled)
 - Stored only in process-local memory
 
-### 9.2 Telemetry Ring
+### 10.2 Telemetry Ring
 
 Optional separate ring for telemetry events, readable by observer processes:
 
@@ -1167,7 +1298,7 @@ struct TelemetryEvent {
 
 **Backpressure:** Telemetry overflow drops events, never blocks data path.
 
-### 9.3 Cross-Transport Tracing
+### 10.3 Cross-Transport Tracing
 
 `trace_id` and `span_id` are preserved across transport boundaries:
 
@@ -1178,9 +1309,9 @@ struct TelemetryEvent {
  span_id=1               span_id=2          span_id=3
 ```
 
-## 10. Safety & Validation
+## 11. Safety & Validation
 
-### 10.1 Descriptor Validation
+### 11.1 Descriptor Validation
 
 All descriptors MUST be validated before use:
 
@@ -1213,7 +1344,7 @@ fn validate_descriptor(desc: &MsgDescHot, limits: &DescriptorLimits) -> Result<(
 }
 ```
 
-### 10.2 Recommended Limits
+### 11.2 Recommended Limits
 
 ```rust
 struct DescriptorLimits {
@@ -1224,7 +1355,7 @@ struct DescriptorLimits {
 }
 ```
 
-### 10.3 Error Handling
+### 11.3 Error Handling
 
 On validation failure:
 1. Increment error counter
@@ -1232,9 +1363,9 @@ On validation failure:
 3. Optionally send ERROR frame
 4. Never panic — continue processing
 
-## 11. Plugin System Integration
+## 12. Plugin System Integration
 
-### 11.1 The Vision
+### 12.1 The Vision
 
 Plugins implement traits like:
 
@@ -1255,7 +1386,7 @@ Host and plugins can be:
 - **In sibling processes** — connected via SHM, zero-copy for large data
 - **Remote** — connected via WebSocket, full serialization
 
-### 11.2 Single Trait, Multiple Transports
+### 12.2 Single Trait, Multiple Transports
 
 ```rust
 // Plugin implementation
@@ -1284,7 +1415,7 @@ let differ = HtmlDifferClient::new(StreamTransport::new(conn));
 let diff = differ.diff(old_html, new_html).await?;
 ```
 
-### 11.3 Service Registry & Introspection
+### 12.3 Service Registry & Introspection
 
 The service registry in SHM (or exchanged during handshake for other transports) contains:
 - Service names and versions

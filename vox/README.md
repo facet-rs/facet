@@ -147,11 +147,31 @@ rapace is being designed as the IPC layer for plugin systems where plugins may p
 
 - HTML or AST diffing
 - Template rendering
-- Asset processing
+- Asset processing (image processing, format conversion)
 - Analysis and diagnostics
 - Experimental or untrusted extensions
 
 Each plugin runs in its own process and communicates with the host via rapace.
+
+### Zero-Copy for Large Payloads
+
+For same-machine communication, rapace's SHM transport provides **true zero-copy** for large
+payloads. By allocating data directly in shared memory, you can send images, documents, or
+other large blobs without any memcpy:
+
+```rust
+// Enable with: rapace-transport-shm = { features = ["allocator"] }
+use rapace_transport_shm::{ShmAllocator, shm_vec};
+
+// Allocate directly in SHM
+let alloc = ShmAllocator::new(session.clone());
+let shm_png = shm_vec(&alloc, &png_bytes);
+
+// When encoded, the encoder detects "hey, this is already in SHM!"
+// and just records (slot, offset, len) — no copy!
+```
+
+See `examples/shm_image/` for a complete demonstration with metrics.
 
 Rapace is primarily motivated by [dodeca](https://github.com/bearcove/dodeca), a static site generator
 that implements most of its functionality as plugins. Dodeca is the main "real" application that
@@ -174,7 +194,7 @@ drives rapace's design.
 | In-memory transport | ✅ For testing |
 | Stream transport | ✅ TCP/Unix sockets |
 | WebSocket transport | ✅ For browser clients |
-| SHM transport | 🧪 Basic implementation |
+| SHM transport | ✅ Zero-copy, allocator, metrics |
 | Session layer | ✅ Flow control, cancellation |
 | Browser tests | ✅ Playwright + wasm-pack |
 | Conformance tests | ✅ Shared test scenarios |

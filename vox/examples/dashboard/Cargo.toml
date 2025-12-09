@@ -32,3 +32,6 @@ facet-core = { git = "https://github.com/facet-rs/facet" }
 facet-postcard = { git = "https://github.com/facet-rs/facet" }
 facet-value = { git = "https://github.com/facet-rs/facet" }
 facet-json = { git = "https://github.com/facet-rs/facet" }
+
+# CLI output
+owo-colors = "4"

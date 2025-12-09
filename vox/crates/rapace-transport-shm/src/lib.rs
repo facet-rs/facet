@@ -27,15 +27,98 @@
 //! │  Data Segment (slab allocator)                                       │
 //! └─────────────────────────────────────────────────────────────────────┘
 //! ```
+//!
+//! # Optional: SHM Allocator
+//!
+//! Enable the `allocator` feature to get [`ShmAllocator`], which allows allocating
+//! data directly into SHM slots. When such data is passed through the encoder,
+//! it's detected as already in SHM and referenced zero-copy (no memcpy).
+//!
+//! ```toml
+//! [dependencies]
+//! rapace-transport-shm = { version = "0.1", features = ["allocator"] }
+//! ```
+//!
+//! **Important:** This is an optional optimization. Service traits remain
+//! transport-agnostic—they don't know or care whether data is in SHM.
+//! The allocator is for callers who want to pre-allocate in SHM for performance.
 
+#[cfg(any(feature = "allocator", test))]
+mod alloc;
 pub mod layout;
 mod session;
 mod transport;
 
+#[cfg(any(feature = "allocator", test))]
+pub use alloc::ShmAllocator;
 pub use layout::{
     calculate_segment_size, DataSegment, DataSegmentHeader, DescRing, DescRingHeader, LayoutError,
     RingError, SegmentHeader, SegmentOffsets, SlotError, SlotMeta, SlotState,
     DEFAULT_RING_CAPACITY, DEFAULT_SLOT_COUNT, DEFAULT_SLOT_SIZE,
 };
 pub use session::{ShmSession, ShmSessionConfig};
-pub use transport::ShmTransport;
+pub use transport::{ShmMetrics, ShmTransport};
+
+// Re-export allocator-api2 types for convenience when the feature is enabled.
+#[cfg(feature = "allocator")]
+pub use allocator_api2;
+
+// ============================================================================
+// Helper functions for easy SHM allocation
+// ============================================================================
+
+/// Create a `Vec<u8>` allocated in SHM from a byte slice.
+///
+/// This is a convenience function for the common pattern of allocating
+/// a buffer in SHM and copying data into it. When the resulting Vec is
+/// passed through the encoder, it will be detected as already in SHM
+/// and referenced zero-copy.
+///
+/// # Example
+///
+/// ```ignore
+/// use rapace_transport_shm::{ShmSession, ShmAllocator, shm_vec};
+///
+/// let (session, _) = ShmSession::create_pair().unwrap();
+/// let alloc = ShmAllocator::new(session.clone());
+///
+/// // Allocate PNG data in SHM
+/// let png_bytes = std::fs::read("image.png").unwrap();
+/// let shm_png = shm_vec(&alloc, &png_bytes);
+///
+/// // When passed to the encoder, this is zero-copy!
+/// ```
+#[cfg(any(feature = "allocator", test))]
+pub fn shm_vec(alloc: &ShmAllocator, bytes: &[u8]) -> allocator_api2::vec::Vec<u8, ShmAllocator> {
+    let mut vec = allocator_api2::vec::Vec::new_in(alloc.clone());
+    vec.extend_from_slice(bytes);
+    vec
+}
+
+/// Create an empty `Vec<u8>` allocated in SHM with the given capacity.
+///
+/// Use this when you need to build up data incrementally but want it
+/// to end up in SHM for zero-copy transmission.
+///
+/// # Example
+///
+/// ```ignore
+/// use rapace_transport_shm::{ShmSession, ShmAllocator, shm_vec_with_capacity};
+///
+/// let (session, _) = ShmSession::create_pair().unwrap();
+/// let alloc = ShmAllocator::new(session.clone());
+///
+/// // Pre-allocate buffer in SHM
+/// let mut buf = shm_vec_with_capacity(&alloc, 4096);
+/// buf.extend_from_slice(b"header: ");
+/// buf.extend_from_slice(b"value\n");
+///
+/// // When passed to the encoder, this is zero-copy!
+/// ```
+#[cfg(any(feature = "allocator", test))]
+pub fn shm_vec_with_capacity(
+    alloc: &ShmAllocator,
+    capacity: usize,
+) -> allocator_api2::vec::Vec<u8, ShmAllocator> {
+    allocator_api2::vec::Vec::with_capacity_in(capacity, alloc.clone())
+}

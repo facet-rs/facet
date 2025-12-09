@@ -331,14 +331,7 @@ fn run_dashboard(
     // Step 3: Run the dashboard
     sh.change_dir(workspace_root);
 
-    println!("\n╔══════════════════════════════════════════════════════════╗");
-    println!("║  Rapace Dashboard                                        ║");
-    println!("║                                                          ║");
-    println!("║  Open: http://127.0.0.1:3000                             ║");
-    println!("║                                                          ║");
-    println!("║  Press Ctrl+C to stop                                    ║");
-    println!("╚══════════════════════════════════════════════════════════╝\n");
-
+    // The dashboard prints its own banner
     cmd!(sh, "cargo run -p rapace-dashboard").run()?;
 
     Ok(())

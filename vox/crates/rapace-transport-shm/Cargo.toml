@@ -6,12 +6,23 @@ license.workspace = true
 repository.workspace = true
 description = "Shared memory transport for rapace (performance reference implementation)"
 
+[features]
+default = []
+# Enable the ShmAllocator for zero-copy allocation directly into SHM slots.
+# This is an optional optimization - services remain transport-agnostic.
+allocator = ["allocator-api2"]
+
 [dependencies]
 rapace-core.workspace = true
 tokio.workspace = true
 libc.workspace = true
 parking_lot.workspace = true
 
+# Optional: allocator-api2 for ShmAllocator
+allocator-api2 = { workspace = true, optional = true }
+
 [dev-dependencies]
 rapace-testkit.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread"] }
+# Enable allocator for tests
+allocator-api2.workspace = true

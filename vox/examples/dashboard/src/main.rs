@@ -17,11 +17,13 @@
 //! ## Endpoints
 //!
 //! - `GET /` - Serve the dashboard UI
-//! - `ws://localhost:9001` - WebSocket endpoint for rapace RPC
+//! - `ws://localhost:4269` - WebSocket endpoint for rapace RPC
 
 use std::sync::Arc;
 
 use axum::{response::Html, routing::get, Router};
+use owo_colors::OwoColorize;
+use facet_core::{Def, Shape, Type, UserType, ScalarType};
 use rapace_core::Streaming;
 use rapace_registry::ServiceRegistry;
 use rapace_transport_websocket::WebSocketTransport;
@@ -42,11 +44,179 @@ pub struct ServiceSummary {
     pub method_count: u32,
 }
 
+/// Serializable representation of a facet shape for form generation.
+#[derive(Clone, Debug, facet::Facet)]
+#[repr(u8)]
+pub enum ShapeInfo {
+    /// Scalar types (integers, floats, booleans)
+    Scalar {
+        type_name: String,
+        /// Hint: "integer", "unsigned", "float", "boolean"
+        affinity: String,
+    },
+    /// String type
+    String,
+    /// Optional type wrapping another shape
+    Option {
+        #[facet(recursive_type)]
+        inner: Box<ShapeInfo>,
+    },
+    /// List/Vec type
+    List {
+        #[facet(recursive_type)]
+        item: Box<ShapeInfo>,
+    },
+    /// Struct with named fields
+    Struct {
+        type_name: String,
+        fields: Vec<FieldInfo>,
+    },
+    /// Enum with variants
+    Enum {
+        type_name: String,
+        variants: Vec<VariantInfo>,
+    },
+    /// Map type (HashMap, BTreeMap)
+    Map {
+        #[facet(recursive_type)]
+        key: Box<ShapeInfo>,
+        #[facet(recursive_type)]
+        value: Box<ShapeInfo>,
+    },
+    /// Fallback for types we can't represent
+    Unknown { type_name: String },
+}
+
+/// Field in a struct shape
+#[derive(Clone, Debug, facet::Facet)]
+pub struct FieldInfo {
+    pub name: String,
+    #[facet(recursive_type)]
+    pub shape: ShapeInfo,
+}
+
+/// Variant in an enum shape
+#[derive(Clone, Debug, facet::Facet)]
+pub struct VariantInfo {
+    pub name: String,
+    /// None for unit variants, Some for tuple/struct variants
+    pub fields: Option<Vec<FieldInfo>>,
+}
+
+/// Convert a facet Shape into our serializable ShapeInfo
+fn shape_to_info(shape: &'static Shape) -> ShapeInfo {
+    // Check for scalar types first using ScalarType enum
+    if let Some(scalar) = shape.scalar_type() {
+        return match scalar {
+            ScalarType::String | ScalarType::Str | ScalarType::CowStr => ShapeInfo::String,
+            ScalarType::Bool => ShapeInfo::Scalar {
+                type_name: shape.type_identifier.to_string(),
+                affinity: "boolean".to_string(),
+            },
+            ScalarType::Char => ShapeInfo::Scalar {
+                type_name: shape.type_identifier.to_string(),
+                affinity: "char".to_string(),
+            },
+            ScalarType::F32 | ScalarType::F64 => ShapeInfo::Scalar {
+                type_name: shape.type_identifier.to_string(),
+                affinity: "float".to_string(),
+            },
+            ScalarType::I8 | ScalarType::I16 | ScalarType::I32 | ScalarType::I64 | ScalarType::I128 | ScalarType::ISize => ShapeInfo::Scalar {
+                type_name: shape.type_identifier.to_string(),
+                affinity: "integer".to_string(),
+            },
+            ScalarType::U8 | ScalarType::U16 | ScalarType::U32 | ScalarType::U64 | ScalarType::U128 | ScalarType::USize => ShapeInfo::Scalar {
+                type_name: shape.type_identifier.to_string(),
+                affinity: "unsigned".to_string(),
+            },
+            _ => ShapeInfo::Scalar {
+                type_name: shape.type_identifier.to_string(),
+                affinity: "unknown".to_string(),
+            },
+        };
+    }
+
+    // Check via Def for container types
+    match &shape.def {
+        Def::Option(option_def) => {
+            return ShapeInfo::Option {
+                inner: Box::new(shape_to_info(option_def.t())),
+            };
+        }
+        Def::List(list_def) => {
+            return ShapeInfo::List {
+                item: Box::new(shape_to_info(list_def.t())),
+            };
+        }
+        Def::Map(map_def) => {
+            return ShapeInfo::Map {
+                key: Box::new(shape_to_info(map_def.k())),
+                value: Box::new(shape_to_info(map_def.v())),
+            };
+        }
+        _ => {}
+    }
+
+    // Use `ty` for structs, enums
+    match &shape.ty {
+        Type::User(UserType::Struct(struct_type)) => {
+            let fields = struct_type.fields.iter().map(|field| {
+                FieldInfo {
+                    name: field.name.to_string(),
+                    shape: shape_to_info(field.shape()),
+                }
+            }).collect();
+            ShapeInfo::Struct {
+                type_name: shape.type_identifier.to_string(),
+                fields,
+            }
+        }
+        Type::User(UserType::Enum(enum_type)) => {
+            let variants = enum_type.variants.iter().map(|variant| {
+                let fields = if variant.data.fields.is_empty() {
+                    None
+                } else {
+                    Some(variant.data.fields.iter().map(|field| {
+                        FieldInfo {
+                            name: field.name.to_string(),
+                            shape: shape_to_info(field.shape()),
+                        }
+                    }).collect())
+                };
+                VariantInfo {
+                    name: variant.name.to_string(),
+                    fields,
+                }
+            }).collect();
+            ShapeInfo::Enum {
+                type_name: shape.type_identifier.to_string(),
+                variants,
+            }
+        }
+        _ => {
+            // Fallback for unhandled types
+            match &shape.def {
+                Def::Scalar => {
+                    ShapeInfo::Scalar {
+                        type_name: shape.type_identifier.to_string(),
+                        affinity: "unknown".to_string(),
+                    }
+                }
+                _ => ShapeInfo::Unknown {
+                    type_name: shape.type_identifier.to_string(),
+                },
+            }
+        }
+    }
+}
+
 /// Details of an argument to a method.
 #[derive(Clone, Debug, facet::Facet)]
 pub struct ArgDetail {
     pub name: String,
     pub type_name: String,
+    /// Shape information for generating typed form inputs
+    pub shape: ShapeInfo,
 }
 
 /// Details of a method.
@@ -274,14 +444,41 @@ impl Explorer for ExplorerImpl {
                 name: method.name.to_string(),
                 full_name: method.full_name.clone(),
                 doc: method.doc.clone(),
-                args: method
-                    .args
-                    .iter()
-                    .map(|arg| ArgDetail {
-                        name: arg.name.to_string(),
-                        type_name: arg.type_name.to_string(),
-                    })
-                    .collect(),
+                args: {
+                    // Get field shapes from the request struct shape
+                    // Note: For single-arg primitive methods, the request_shape is the primitive itself,
+                    // not a struct wrapper
+                    let field_shapes: Vec<(&str, &'static Shape)> =
+                        if let Type::User(UserType::Struct(struct_type)) = &method.request_shape.ty {
+                            struct_type.fields.iter()
+                                .map(|f| (f.name, f.shape()))
+                                .collect()
+                        } else {
+                            // Single-arg method with primitive type - use the request shape directly
+                            if method.args.len() == 1 {
+                                vec![(method.args[0].name, method.request_shape)]
+                            } else {
+                                Vec::new()
+                            }
+                        };
+
+                    // Match args with field shapes by position (they should be in the same order)
+                    method.args.iter().enumerate().map(|(i, arg)| {
+                        // Try to find by name first, then by position
+                        let shape = field_shapes.iter()
+                            .find(|(name, _)| *name == arg.name)
+                            .or_else(|| field_shapes.get(i))
+                            .map(|(_, s)| shape_to_info(s))
+                            .unwrap_or_else(|| ShapeInfo::Unknown {
+                                type_name: arg.type_name.to_string()
+                            });
+                        ArgDetail {
+                            name: arg.name.to_string(),
+                            type_name: arg.type_name.to_string(),
+                            shape,
+                        }
+                    }).collect()
+                },
                 is_streaming: method.is_streaming,
                 request_type: format!("{}", method.request_shape),
                 response_type: format!("{}", method.response_shape),
@@ -518,10 +715,12 @@ impl ExplorerImpl {
 // WebSocket server for rapace RPC
 // ============================================================================
 
+const WS_PORT: u16 = 4268;
+const HTTP_PORT: u16 = 4269;
+
 async fn run_websocket_server(explorer: Arc<ExplorerImpl>) {
-    let addr = "127.0.0.1:9001";
-    let listener = TcpListener::bind(addr).await.expect("Failed to bind WebSocket server");
-    println!("WebSocket rapace server listening on ws://{}", addr);
+    let addr = format!("127.0.0.1:{}", WS_PORT);
+    let listener = TcpListener::bind(&addr).await.expect("Failed to bind WebSocket server");
 
     while let Ok((stream, addr)) = listener.accept().await {
         let explorer = Arc::clone(&explorer);
@@ -585,15 +784,6 @@ async fn main() {
     // Register the Explorer service itself (for completeness, though we filter it out)
     explorer_methods::register(&mut registry);
 
-    println!("Registered {} services:", registry.service_count());
-    for service in registry.services() {
-        println!(
-            "  - {} ({} methods)",
-            service.name,
-            service.methods.len()
-        );
-    }
-
     let registry = Arc::new(registry);
 
     // Create the explorer service
@@ -621,10 +811,28 @@ async fn main() {
                 .allow_headers(Any),
         );
 
-    let addr = "127.0.0.1:3000";
-    println!("\nDashboard running at http://{}", addr);
-    println!("WebSocket RPC at ws://127.0.0.1:9001");
+    let http_addr = format!("127.0.0.1:{}", HTTP_PORT);
+    let http_url = format!("http://{}", http_addr);
 
-    let listener = TcpListener::bind(addr).await.unwrap();
+    // Print a nice banner
+    println!();
+    println!(
+        "  {} {} {}",
+        "Rapace".bold().cyan(),
+        "Dashboard".white(),
+        "ready".green()
+    );
+    println!();
+    println!(
+        "  {}  \x1b]8;;{}\x1b\\{}\x1b]8;;\x1b\\",
+        "Open:".dimmed(),
+        http_url,
+        http_url.bold().underline().cyan()
+    );
+    println!();
+    println!("  {}  Ctrl+C", "Stop:".dimmed());
+    println!();
+
+    let listener = TcpListener::bind(&http_addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }

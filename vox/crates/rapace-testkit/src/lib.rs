@@ -1810,6 +1810,228 @@ async fn run_streaming_cancellation_inner<F: TransportFactory>() -> Result<(), T
 }
 
 // ============================================================================
+// Large blob service for testing large payloads
+// ============================================================================
+
+/// Service that processes large byte payloads.
+///
+/// This service is used to test that large payloads (e.g., images, documents)
+/// are correctly transmitted across all transports. For SHM transport, this
+/// also enables testing the zero-copy path.
+#[allow(async_fn_in_trait)]
+#[rapace_macros::service]
+pub trait LargeBlobService {
+    /// Echo the blob back unchanged.
+    /// Used to verify round-trip integrity of large payloads.
+    async fn echo(&self, data: Vec<u8>) -> Vec<u8>;
+
+    /// Transform the blob by XORing each byte with a pattern.
+    /// Used to verify the server actually processes the data.
+    async fn xor_transform(&self, data: Vec<u8>, pattern: u8) -> Vec<u8>;
+
+    /// Compute a simple checksum of the blob.
+    /// Returns (length, sum of all bytes mod 2^32).
+    async fn checksum(&self, data: Vec<u8>) -> (u32, u32);
+}
+
+/// Implementation of LargeBlobService for testing.
+pub struct LargeBlobServiceImpl;
+
+impl LargeBlobService for LargeBlobServiceImpl {
+    async fn echo(&self, data: Vec<u8>) -> Vec<u8> {
+        data
+    }
+
+    async fn xor_transform(&self, data: Vec<u8>, pattern: u8) -> Vec<u8> {
+        data.into_iter().map(|b| b ^ pattern).collect()
+    }
+
+    async fn checksum(&self, data: Vec<u8>) -> (u32, u32) {
+        let len = data.len() as u32;
+        let sum = data.iter().fold(0u32, |acc, &b| acc.wrapping_add(b as u32));
+        (len, sum)
+    }
+}
+
+// ============================================================================
+// Large blob test scenarios
+// ============================================================================
+
+/// Test that large blobs are correctly echoed back.
+///
+/// This verifies that payloads larger than the inline threshold (and larger
+/// than typical small messages) are correctly transmitted and received.
+pub async fn run_large_blob_echo<F: TransportFactory>() {
+    let result = run_large_blob_echo_inner::<F>().await;
+    if let Err(e) = result {
+        panic!("run_large_blob_echo failed: {}", e);
+    }
+}
+
+async fn run_large_blob_echo_inner<F: TransportFactory>() -> Result<(), TestError> {
+    let (client_transport, server_transport) = F::connect_pair().await?;
+    let client_transport = Arc::new(client_transport);
+    let server_transport = Arc::new(server_transport);
+
+    let server = LargeBlobServiceServer::new(LargeBlobServiceImpl);
+
+    // Spawn server task
+    let server_handle = tokio::spawn({
+        let server_transport = server_transport.clone();
+        async move {
+            let request = server_transport.recv_frame().await?;
+            let response = server
+                .dispatch(request.desc.method_id, request.payload)
+                .await
+                .map_err(TestError::Rpc)?;
+            server_transport.send_frame(&response).await?;
+            Ok::<_, TestError>(())
+        }
+    });
+
+    // Create a large blob (1KB)
+    let blob: Vec<u8> = (0..1024).map(|i| (i % 256) as u8).collect();
+
+    let client = LargeBlobServiceClient::new(client_transport);
+    let result = client.echo(blob.clone()).await?;
+
+    if result != blob {
+        return Err(TestError::Assertion(format!(
+            "echo mismatch: expected {} bytes, got {} bytes",
+            blob.len(),
+            result.len()
+        )));
+    }
+
+    server_handle
+        .await
+        .map_err(|e| TestError::Setup(format!("server task panicked: {}", e)))?
+        .map_err(|e| TestError::Setup(format!("server error: {}", e)))?;
+
+    Ok(())
+}
+
+/// Test large blob transformation.
+///
+/// Verifies that the server actually processes the blob (not just echoing).
+pub async fn run_large_blob_transform<F: TransportFactory>() {
+    let result = run_large_blob_transform_inner::<F>().await;
+    if let Err(e) = result {
+        panic!("run_large_blob_transform failed: {}", e);
+    }
+}
+
+async fn run_large_blob_transform_inner<F: TransportFactory>() -> Result<(), TestError> {
+    let (client_transport, server_transport) = F::connect_pair().await?;
+    let client_transport = Arc::new(client_transport);
+    let server_transport = Arc::new(server_transport);
+
+    let server = LargeBlobServiceServer::new(LargeBlobServiceImpl);
+
+    // Spawn server task
+    let server_handle = tokio::spawn({
+        let server_transport = server_transport.clone();
+        async move {
+            let request = server_transport.recv_frame().await?;
+            let response = server
+                .dispatch(request.desc.method_id, request.payload)
+                .await
+                .map_err(TestError::Rpc)?;
+            server_transport.send_frame(&response).await?;
+            Ok::<_, TestError>(())
+        }
+    });
+
+    // Create blob and expected result
+    let blob: Vec<u8> = (0..2048).map(|i| (i % 256) as u8).collect();
+    let pattern: u8 = 0xAA;
+    let expected: Vec<u8> = blob.iter().map(|&b| b ^ pattern).collect();
+
+    let client = LargeBlobServiceClient::new(client_transport);
+    let result = client.xor_transform(blob, pattern).await?;
+
+    if result != expected {
+        return Err(TestError::Assertion(format!(
+            "transform mismatch at byte 0: expected {:02x}, got {:02x}",
+            expected[0], result[0]
+        )));
+    }
+
+    server_handle
+        .await
+        .map_err(|e| TestError::Setup(format!("server task panicked: {}", e)))?
+        .map_err(|e| TestError::Setup(format!("server error: {}", e)))?;
+
+    Ok(())
+}
+
+/// Test large blob checksum (verifies both directions work for different sizes).
+pub async fn run_large_blob_checksum<F: TransportFactory>() {
+    let result = run_large_blob_checksum_inner::<F>().await;
+    if let Err(e) = result {
+        panic!("run_large_blob_checksum failed: {}", e);
+    }
+}
+
+async fn run_large_blob_checksum_inner<F: TransportFactory>() -> Result<(), TestError> {
+    let (client_transport, server_transport) = F::connect_pair().await?;
+    let client_transport = Arc::new(client_transport);
+    let server_transport = Arc::new(server_transport);
+
+    let server = LargeBlobServiceServer::new(LargeBlobServiceImpl);
+
+    // Test multiple sizes
+    let sizes = [100, 1000, 4000]; // Various sizes around and above inline threshold
+
+    for size in sizes {
+        // Spawn server task for this request
+        let server_handle = tokio::spawn({
+            let server_transport = server_transport.clone();
+            let server = LargeBlobServiceServer::new(LargeBlobServiceImpl);
+            async move {
+                let request = server_transport.recv_frame().await?;
+                let response = server
+                    .dispatch(request.desc.method_id, request.payload)
+                    .await
+                    .map_err(TestError::Rpc)?;
+                server_transport.send_frame(&response).await?;
+                Ok::<_, TestError>(())
+            }
+        });
+
+        // Create blob
+        let blob: Vec<u8> = (0..size).map(|i| ((i * 7) % 256) as u8).collect();
+        let expected_len = blob.len() as u32;
+        let expected_sum = blob.iter().fold(0u32, |acc, &b| acc.wrapping_add(b as u32));
+
+        let client = LargeBlobServiceClient::new(client_transport.clone());
+        let (len, sum) = client.checksum(blob).await?;
+
+        if len != expected_len {
+            return Err(TestError::Assertion(format!(
+                "size {}: length mismatch: expected {}, got {}",
+                size, expected_len, len
+            )));
+        }
+        if sum != expected_sum {
+            return Err(TestError::Assertion(format!(
+                "size {}: sum mismatch: expected {}, got {}",
+                size, expected_sum, sum
+            )));
+        }
+
+        server_handle
+            .await
+            .map_err(|e| TestError::Setup(format!("server task panicked: {}", e)))?
+            .map_err(|e| TestError::Setup(format!("server error: {}", e)))?;
+    }
+
+    let _ = server; // suppress unused warning
+
+    Ok(())
+}
+
+// ============================================================================
 // Registry tests
 // ============================================================================
 

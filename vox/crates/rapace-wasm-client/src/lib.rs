@@ -64,10 +64,71 @@ pub struct ServiceSummary {
     pub method_count: u32,
 }
 
+/// Serializable representation of a facet shape for form generation.
+#[derive(Clone, Debug, facet::Facet)]
+#[repr(u8)]
+pub enum ShapeInfo {
+    /// Scalar types (integers, floats, booleans)
+    Scalar {
+        type_name: String,
+        /// Hint: "integer", "unsigned", "float", "boolean"
+        affinity: String,
+    },
+    /// String type
+    String,
+    /// Optional type wrapping another shape
+    Option {
+        #[facet(recursive_type)]
+        inner: Box<ShapeInfo>,
+    },
+    /// List/Vec type
+    List {
+        #[facet(recursive_type)]
+        item: Box<ShapeInfo>,
+    },
+    /// Struct with named fields
+    Struct {
+        type_name: String,
+        fields: Vec<FieldInfo>,
+    },
+    /// Enum with variants
+    Enum {
+        type_name: String,
+        variants: Vec<VariantInfo>,
+    },
+    /// Map type (HashMap, BTreeMap)
+    Map {
+        #[facet(recursive_type)]
+        key: Box<ShapeInfo>,
+        #[facet(recursive_type)]
+        value: Box<ShapeInfo>,
+    },
+    /// Fallback for types we can't represent
+    Unknown { type_name: String },
+}
+
+/// Field in a struct shape
+#[derive(Clone, Debug, facet::Facet)]
+pub struct FieldInfo {
+    pub name: String,
+    #[facet(recursive_type)]
+    pub shape: ShapeInfo,
+}
+
+/// Variant in an enum shape
+#[derive(Clone, Debug, facet::Facet)]
+pub struct VariantInfo {
+    pub name: String,
+    /// None for unit variants, Some for tuple/struct variants
+    pub fields: Option<Vec<FieldInfo>>,
+}
+
 #[derive(Clone, Debug, facet::Facet)]
 pub struct ArgDetail {
     pub name: String,
     pub type_name: String,
+    /// Shape information for generating typed form inputs
+    pub shape: ShapeInfo,
 }
 
 #[derive(Clone, Debug, facet::Facet)]
@@ -215,6 +276,7 @@ impl ExplorerClient {
                         let arg_obj = js_sys::Object::new();
                         js_sys::Reflect::set(&arg_obj, &"name".into(), &JsValue::from_str(&arg.name))?;
                         js_sys::Reflect::set(&arg_obj, &"type_name".into(), &JsValue::from_str(&arg.type_name))?;
+                        js_sys::Reflect::set(&arg_obj, &"shape".into(), &shape_to_js(&arg.shape)?)?;
                         args.push(&arg_obj);
                     }
                     js_sys::Reflect::set(&method_obj, &"args".into(), &args)?;
@@ -499,6 +561,76 @@ impl StreamingCall {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/// Convert ShapeInfo to a JS object.
+fn shape_to_js(shape: &ShapeInfo) -> Result<JsValue, JsValue> {
+    let obj = js_sys::Object::new();
+
+    match shape {
+        ShapeInfo::Scalar { type_name, affinity } => {
+            js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("Scalar"))?;
+            js_sys::Reflect::set(&obj, &"type_name".into(), &JsValue::from_str(type_name))?;
+            js_sys::Reflect::set(&obj, &"affinity".into(), &JsValue::from_str(affinity))?;
+        }
+        ShapeInfo::String => {
+            js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("String"))?;
+        }
+        ShapeInfo::Option { inner } => {
+            js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("Option"))?;
+            js_sys::Reflect::set(&obj, &"inner".into(), &shape_to_js(inner)?)?;
+        }
+        ShapeInfo::List { item } => {
+            js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("List"))?;
+            js_sys::Reflect::set(&obj, &"item".into(), &shape_to_js(item)?)?;
+        }
+        ShapeInfo::Struct { type_name, fields } => {
+            js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("Struct"))?;
+            js_sys::Reflect::set(&obj, &"type_name".into(), &JsValue::from_str(type_name))?;
+            let fields_arr = js_sys::Array::new();
+            for field in fields {
+                let field_obj = js_sys::Object::new();
+                js_sys::Reflect::set(&field_obj, &"name".into(), &JsValue::from_str(&field.name))?;
+                js_sys::Reflect::set(&field_obj, &"shape".into(), &shape_to_js(&field.shape)?)?;
+                fields_arr.push(&field_obj);
+            }
+            js_sys::Reflect::set(&obj, &"fields".into(), &fields_arr)?;
+        }
+        ShapeInfo::Enum { type_name, variants } => {
+            js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("Enum"))?;
+            js_sys::Reflect::set(&obj, &"type_name".into(), &JsValue::from_str(type_name))?;
+            let variants_arr = js_sys::Array::new();
+            for variant in variants {
+                let variant_obj = js_sys::Object::new();
+                js_sys::Reflect::set(&variant_obj, &"name".into(), &JsValue::from_str(&variant.name))?;
+                if let Some(fields) = &variant.fields {
+                    let fields_arr = js_sys::Array::new();
+                    for field in fields {
+                        let field_obj = js_sys::Object::new();
+                        js_sys::Reflect::set(&field_obj, &"name".into(), &JsValue::from_str(&field.name))?;
+                        js_sys::Reflect::set(&field_obj, &"shape".into(), &shape_to_js(&field.shape)?)?;
+                        fields_arr.push(&field_obj);
+                    }
+                    js_sys::Reflect::set(&variant_obj, &"fields".into(), &fields_arr)?;
+                } else {
+                    js_sys::Reflect::set(&variant_obj, &"fields".into(), &JsValue::NULL)?;
+                }
+                variants_arr.push(&variant_obj);
+            }
+            js_sys::Reflect::set(&obj, &"variants".into(), &variants_arr)?;
+        }
+        ShapeInfo::Map { key, value } => {
+            js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("Map"))?;
+            js_sys::Reflect::set(&obj, &"key".into(), &shape_to_js(key)?)?;
+            js_sys::Reflect::set(&obj, &"value".into(), &shape_to_js(value)?)?;
+        }
+        ShapeInfo::Unknown { type_name } => {
+            js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("Unknown"))?;
+            js_sys::Reflect::set(&obj, &"type_name".into(), &JsValue::from_str(type_name))?;
+        }
+    }
+
+    Ok(obj.into())
+}
 
 /// Convert MsgDescHot to raw bytes.
 fn desc_to_bytes(desc: &MsgDescHot) -> [u8; DESC_SIZE] {

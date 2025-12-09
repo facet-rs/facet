@@ -420,4 +420,21 @@ mod conformance_tests {
     async fn macro_server_streaming() {
         rapace_testkit::run_macro_server_streaming::<InProcFactory>().await;
     }
+
+    // Large blob tests
+
+    #[tokio::test]
+    async fn large_blob_echo() {
+        rapace_testkit::run_large_blob_echo::<InProcFactory>().await;
+    }
+
+    #[tokio::test]
+    async fn large_blob_transform() {
+        rapace_testkit::run_large_blob_transform::<InProcFactory>().await;
+    }
+
+    #[tokio::test]
+    async fn large_blob_checksum() {
+        rapace_testkit::run_large_blob_checksum::<InProcFactory>().await;
+    }
 }

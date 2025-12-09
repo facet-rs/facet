@@ -13,6 +13,7 @@ members = [
     "crates/rapace-testkit",
     "examples/browser_ws_server",
     "examples/dashboard",
+    "examples/shm_image",
     "xtask",
 ]
 exclude = ["fuzz"]
@@ -56,6 +57,9 @@ tokio-tungstenite = "0.26"
 # Testing/fuzzing
 bolero = "0.11"
 proptest = "1"
+
+# Allocator API
+allocator-api2 = "0.2"
 
 # Wasm
 wasm-bindgen = "0.2"

@@ -437,6 +437,16 @@ impl DataSegment {
         unsafe { self.slot_data.add(index as usize * slot_size) }
     }
 
+    /// Get slot data pointer (public version for allocator).
+    ///
+    /// # Safety
+    ///
+    /// Index must be < slot_count and the caller must own the slot.
+    #[inline]
+    pub unsafe fn data_ptr_public(&self, index: u32) -> *mut u8 {
+        self.data_ptr(index)
+    }
+
     /// Allocate a slot.
     ///
     /// Returns (slot_index, generation) on success.
@@ -509,6 +519,33 @@ impl DataSegment {
         // Transition InFlight -> Free.
         let result = meta.state.compare_exchange(
             SlotState::InFlight as u32,
+            SlotState::Free as u32,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        );
+
+        result.map(|_| ()).map_err(|_| SlotError::InvalidState)
+    }
+
+    /// Free a slot that's still in Allocated state (never sent).
+    ///
+    /// This is used by the allocator when data is dropped before being sent.
+    pub fn free_allocated(&self, index: u32, expected_gen: u32) -> Result<(), SlotError> {
+        if index >= self.header().slot_count {
+            return Err(SlotError::InvalidIndex);
+        }
+
+        // SAFETY: index < slot_count (checked above).
+        let meta = unsafe { self.meta(index) };
+
+        // Verify generation matches.
+        if meta.get_generation() != expected_gen {
+            return Err(SlotError::StaleGeneration);
+        }
+
+        // Transition Allocated -> Free.
+        let result = meta.state.compare_exchange(
+            SlotState::Allocated as u32,
             SlotState::Free as u32,
             Ordering::AcqRel,
             Ordering::Acquire,

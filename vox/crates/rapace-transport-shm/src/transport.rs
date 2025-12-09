@@ -53,6 +53,8 @@ pub struct ShmTransport {
     last_frame: Mutex<Option<ReceivedFrame>>,
     /// Whether the transport is closed.
     closed: std::sync::atomic::AtomicBool,
+    /// Optional metrics for tracking zero-copy performance.
+    metrics: Option<Arc<ShmMetrics>>,
 }
 
 /// A frame received from SHM, with its slot info for later freeing.
@@ -71,6 +73,17 @@ impl ShmTransport {
             session,
             last_frame: Mutex::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
+            metrics: None,
+        }
+    }
+
+    /// Create a new SHM transport with metrics enabled.
+    pub fn new_with_metrics(session: Arc<ShmSession>, metrics: Arc<ShmMetrics>) -> Self {
+        Self {
+            session,
+            last_frame: Mutex::new(None),
+            closed: std::sync::atomic::AtomicBool::new(false),
+            metrics: Some(metrics),
         }
     }
 
@@ -86,6 +99,25 @@ impl ShmTransport {
         Ok((Self::new(session_a), Self::new(session_b)))
     }
 
+    /// Create a connected pair of SHM transports with shared metrics.
+    ///
+    /// Both transports will report to the same metrics instance.
+    pub fn pair_with_metrics(
+        metrics: Arc<ShmMetrics>,
+    ) -> Result<(Self, Self), TransportError> {
+        let (session_a, session_b) = ShmSession::create_pair().map_err(|e| {
+            TransportError::Encode(EncodeError::EncodeFailed(format!(
+                "failed to create SHM session pair: {}",
+                e
+            )))
+        })?;
+
+        Ok((
+            Self::new_with_metrics(session_a, metrics.clone()),
+            Self::new_with_metrics(session_b, metrics),
+        ))
+    }
+
     /// Check if the transport is closed.
     #[inline]
     pub fn is_closed(&self) -> bool {
@@ -96,6 +128,12 @@ impl ShmTransport {
     #[inline]
     pub fn session(&self) -> &Arc<ShmSession> {
         &self.session
+    }
+
+    /// Get the metrics instance, if enabled.
+    #[inline]
+    pub fn metrics(&self) -> Option<&Arc<ShmMetrics>> {
+        self.metrics.as_ref()
     }
 }
 
@@ -239,7 +277,13 @@ impl Transport for ShmTransport {
     }
 
     fn encoder(&self) -> Box<dyn EncodeCtx + '_> {
-        Box::new(ShmEncoder::new(self.session.clone()))
+        match &self.metrics {
+            Some(metrics) => Box::new(ShmEncoder::new_with_metrics(
+                self.session.clone(),
+                metrics.clone(),
+            )),
+            None => Box::new(ShmEncoder::new(self.session.clone())),
+        }
     }
 
     async fn close(&self) -> Result<(), TransportError> {
@@ -258,6 +302,76 @@ impl Transport for ShmTransport {
     }
 }
 
+// ============================================================================
+// Metrics for zero-copy tracking
+// ============================================================================
+
+/// Metrics for tracking zero-copy performance.
+///
+/// This is useful for monitoring and testing the zero-copy path.
+#[derive(Debug, Default)]
+pub struct ShmMetrics {
+    /// Number of times encode_bytes detected data already in SHM (zero-copy).
+    pub zero_copy_encodes: std::sync::atomic::AtomicU64,
+    /// Number of times encode_bytes had to copy data (not in SHM).
+    pub copy_encodes: std::sync::atomic::AtomicU64,
+    /// Total bytes that were zero-copy encoded.
+    pub zero_copy_bytes: std::sync::atomic::AtomicU64,
+    /// Total bytes that were copied during encoding.
+    pub copied_bytes: std::sync::atomic::AtomicU64,
+}
+
+impl ShmMetrics {
+    /// Create a new metrics instance.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record a zero-copy encode.
+    pub fn record_zero_copy(&self, bytes: usize) {
+        self.zero_copy_encodes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.zero_copy_bytes
+            .fetch_add(bytes as u64, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Record a copy encode.
+    pub fn record_copy(&self, bytes: usize) {
+        self.copy_encodes
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.copied_bytes
+            .fetch_add(bytes as u64, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Get the number of zero-copy encodes.
+    pub fn zero_copy_count(&self) -> u64 {
+        self.zero_copy_encodes
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Get the number of copy encodes.
+    pub fn copy_count(&self) -> u64 {
+        self.copy_encodes
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Get the zero-copy efficiency as a percentage (0.0 to 1.0).
+    pub fn zero_copy_ratio(&self) -> f64 {
+        let zero = self.zero_copy_count() as f64;
+        let copy = self.copy_count() as f64;
+        let total = zero + copy;
+        if total == 0.0 {
+            0.0
+        } else {
+            zero / total
+        }
+    }
+}
+
+// ============================================================================
+// Encoder
+// ============================================================================
+
 /// Encoder for SHM transport.
 ///
 /// Can detect if bytes are already in the SHM segment and reference them
@@ -266,6 +380,7 @@ pub struct ShmEncoder {
     session: Arc<ShmSession>,
     desc: MsgDescHot,
     payload: Vec<u8>,
+    metrics: Option<Arc<ShmMetrics>>,
 }
 
 impl ShmEncoder {
@@ -274,6 +389,16 @@ impl ShmEncoder {
             session,
             desc: MsgDescHot::new(),
             payload: Vec::new(),
+            metrics: None,
+        }
+    }
+
+    fn new_with_metrics(session: Arc<ShmSession>, metrics: Arc<ShmMetrics>) -> Self {
+        Self {
+            session,
+            desc: MsgDescHot::new(),
+            payload: Vec::new(),
+            metrics: Some(metrics),
         }
     }
 }
@@ -290,11 +415,20 @@ impl EncodeCtx for ShmEncoder {
             self.desc.payload_slot = slot_idx;
             self.desc.payload_offset = offset;
             self.desc.payload_len = bytes.len() as u32;
+
+            // Record metrics if available.
+            if let Some(ref metrics) = self.metrics {
+                metrics.record_zero_copy(bytes.len());
+            }
+
             // Don't set payload - it's in SHM already.
             return Ok(());
         }
 
         // Not in SHM - accumulate in payload buffer.
+        if let Some(ref metrics) = self.metrics {
+            metrics.record_copy(bytes.len());
+        }
         self.payload.extend_from_slice(bytes);
         Ok(())
     }
@@ -453,6 +587,87 @@ mod tests {
 
         assert_eq!(frame.payload(), b"test data");
     }
+
+    #[tokio::test]
+    async fn test_metrics_with_copy() {
+        let metrics = Arc::new(ShmMetrics::new());
+        let (a, _b) = ShmTransport::pair_with_metrics(metrics.clone()).unwrap();
+
+        // Encode regular heap data (will copy).
+        let heap_data = vec![0u8; 100];
+        let mut encoder = a.encoder();
+        encoder.encode_bytes(&heap_data).unwrap();
+        let _ = encoder.finish().unwrap();
+
+        // Should have recorded a copy.
+        assert_eq!(metrics.zero_copy_count(), 0);
+        assert_eq!(metrics.copy_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_metrics_with_zero_copy() {
+        use crate::ShmAllocator;
+        use allocator_api2::vec::Vec as AllocVec;
+
+        let metrics = Arc::new(ShmMetrics::new());
+
+        // Create sessions manually so we can get the allocator.
+        let (session_a, session_b) = ShmSession::create_pair().unwrap();
+        let alloc = ShmAllocator::new(session_a.clone());
+
+        let a = ShmTransport::new_with_metrics(session_a, metrics.clone());
+        let _b = ShmTransport::new_with_metrics(session_b, metrics.clone());
+
+        // Allocate data in SHM.
+        let mut shm_data: AllocVec<u8, _> = AllocVec::new_in(alloc);
+        shm_data.extend_from_slice(&[42u8; 100]);
+
+        // Encode the SHM data (should be zero-copy).
+        let mut encoder = a.encoder();
+        encoder.encode_bytes(&shm_data).unwrap();
+        let frame = encoder.finish().unwrap();
+
+        // Should have recorded a zero-copy encode.
+        assert_eq!(metrics.zero_copy_count(), 1, "Expected 1 zero-copy encode");
+        assert_eq!(metrics.copy_count(), 0, "Expected 0 copy encodes");
+
+        // The frame should reference the slot directly (no external payload).
+        assert!(
+            frame.payload.is_none(),
+            "Zero-copy frame should not have external payload"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_metrics_mixed() {
+        use crate::ShmAllocator;
+        use allocator_api2::vec::Vec as AllocVec;
+
+        let metrics = Arc::new(ShmMetrics::new());
+        let (session_a, session_b) = ShmSession::create_pair().unwrap();
+        let alloc = ShmAllocator::new(session_a.clone());
+
+        let a = ShmTransport::new_with_metrics(session_a, metrics.clone());
+        let _b = ShmTransport::new_with_metrics(session_b, metrics.clone());
+
+        // First: encode heap data (copy).
+        let heap_data = vec![1u8; 50];
+        let mut encoder = a.encoder();
+        encoder.encode_bytes(&heap_data).unwrap();
+        let _ = encoder.finish().unwrap();
+
+        // Second: encode SHM data (zero-copy).
+        let mut shm_data: AllocVec<u8, _> = AllocVec::new_in(alloc);
+        shm_data.extend_from_slice(&[2u8; 50]);
+        let mut encoder = a.encoder();
+        encoder.encode_bytes(&shm_data).unwrap();
+        let _ = encoder.finish().unwrap();
+
+        // Check metrics.
+        assert_eq!(metrics.zero_copy_count(), 1);
+        assert_eq!(metrics.copy_count(), 1);
+        assert!((metrics.zero_copy_ratio() - 0.5).abs() < 0.01);
+    }
 }
 
 /// Conformance tests using rapace-testkit.
@@ -565,5 +780,22 @@ mod conformance_tests {
     #[tokio::test]
     async fn macro_server_streaming() {
         rapace_testkit::run_macro_server_streaming::<ShmFactory>().await;
+    }
+
+    // Large blob tests
+
+    #[tokio::test]
+    async fn large_blob_echo() {
+        rapace_testkit::run_large_blob_echo::<ShmFactory>().await;
+    }
+
+    #[tokio::test]
+    async fn large_blob_transform() {
+        rapace_testkit::run_large_blob_transform::<ShmFactory>().await;
+    }
+
+    #[tokio::test]
+    async fn large_blob_checksum() {
+        rapace_testkit::run_large_blob_checksum::<ShmFactory>().await;
     }
 }

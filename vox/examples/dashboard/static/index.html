@@ -293,12 +293,7 @@
         }
 
         .call-form {
-            display: none;
             margin-top: 12px;
-        }
-
-        .call-form.visible {
-            display: block;
         }
 
         .call-form label {
@@ -327,73 +322,6 @@
         .call-form textarea:focus {
             outline: none;
             border-color: var(--accent-blue);
-        }
-
-        .binary-attachments {
-            margin-bottom: 12px;
-        }
-
-        .binary-attachment {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 8px;
-            align-items: center;
-        }
-
-        .binary-attachment input[type="text"] {
-            width: 120px;
-            padding: 6px 10px;
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            color: var(--text-primary);
-            font-size: 13px;
-        }
-
-        .binary-attachment input[type="file"] {
-            flex: 1;
-            padding: 6px;
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            color: var(--text-secondary);
-            font-size: 13px;
-        }
-
-        .binary-attachment input[type="file"]::file-selector-button {
-            background: var(--bg-secondary);
-            border: 1px solid var(--border-color);
-            border-radius: 4px;
-            color: var(--text-primary);
-            padding: 4px 8px;
-            cursor: pointer;
-            margin-right: 8px;
-        }
-
-        .remove-attachment {
-            background: none;
-            border: none;
-            color: var(--accent-red);
-            cursor: pointer;
-            font-size: 16px;
-            padding: 4px;
-        }
-
-        .add-attachment {
-            background: none;
-            border: 1px dashed var(--border-color);
-            color: var(--text-secondary);
-            padding: 6px 12px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 12px;
-            width: 100%;
-            transition: all 0.15s;
-        }
-
-        .add-attachment:hover {
-            border-color: var(--accent-blue);
-            color: var(--accent-blue);
         }
 
         .call-button {
@@ -464,20 +392,13 @@
         }
 
         /* Error state */
-        .error {
+        .error-box {
             background: rgba(248, 81, 73, 0.1);
             border: 1px solid rgba(248, 81, 73, 0.4);
             color: #f85149;
             padding: 16px;
             border-radius: 6px;
             margin: 16px 0;
-        }
-
-        .streaming-note {
-            font-size: 12px;
-            color: var(--text-muted);
-            font-style: italic;
-            margin-top: 8px;
         }
 
         /* Streaming output */
@@ -574,435 +495,985 @@
             opacity: 0.5;
             cursor: not-allowed;
         }
+
+        /* Typed form controls */
+        .typed-form {
+            margin-bottom: 12px;
+        }
+
+        .typed-field {
+            margin-bottom: 12px;
+        }
+
+        .typed-field-label {
+            display: block;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+            font-weight: 500;
+        }
+
+        .typed-field-label .field-type {
+            color: var(--accent-orange);
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+            font-size: 11px;
+            margin-left: 6px;
+        }
+
+        .typed-input {
+            width: 100%;
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 14px;
+        }
+
+        .typed-input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+
+        .typed-input[type="number"] {
+            width: 150px;
+        }
+
+        .typed-input[type="checkbox"] {
+            width: auto;
+            margin-right: 8px;
+        }
+
+        .checkbox-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .mode-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .mode-toggle label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .mode-toggle input[type="checkbox"] {
+            cursor: pointer;
+        }
+
+        /* Struct fieldset */
+        .struct-fieldset {
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 12px;
+        }
+
+        .struct-fieldset legend {
+            color: var(--text-secondary);
+            font-size: 12px;
+            padding: 0 8px;
+        }
+
+        /* Option wrapper */
+        .option-wrapper {
+            border-left: 2px solid var(--border-color);
+            padding-left: 12px;
+            margin-left: 4px;
+        }
+
+        .option-wrapper.has-value {
+            border-left-color: var(--accent-blue);
+        }
+
+        /* List controls */
+        .list-wrapper {
+            border: 1px dashed var(--border-color);
+            border-radius: 6px;
+            padding: 12px;
+        }
+
+        .list-item {
+            display: flex;
+            gap: 8px;
+            align-items: flex-start;
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .list-item:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+
+        .list-item-content {
+            flex: 1;
+        }
+
+        .list-item-index {
+            color: var(--text-muted);
+            font-size: 11px;
+            min-width: 20px;
+            padding-top: 8px;
+        }
+
+        .remove-list-item {
+            background: none;
+            border: none;
+            color: var(--accent-red);
+            cursor: pointer;
+            font-size: 14px;
+            padding: 4px 8px;
+        }
+
+        .add-list-item {
+            background: none;
+            border: 1px dashed var(--border-color);
+            color: var(--text-secondary);
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            width: 100%;
+            transition: all 0.15s;
+            margin-top: 8px;
+        }
+
+        .add-list-item:hover {
+            border-color: var(--accent-blue);
+            color: var(--accent-blue);
+        }
+
+        /* Enum select */
+        .typed-select {
+            width: 100%;
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .typed-select:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+
+        .enum-variant-fields {
+            margin-top: 8px;
+            padding-left: 12px;
+            border-left: 2px solid var(--accent-purple);
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <aside class="sidebar">
-            <div class="sidebar-header">
-                <h1>Rapace Explorer</h1>
-            </div>
-            <div class="search-box">
-                <input type="text" id="search" placeholder="Search services...">
-            </div>
-            <div class="service-list" id="service-list">
-                <div class="loading">Loading services</div>
-            </div>
-        </aside>
-        <main class="main-content" id="main-content">
-            <div class="welcome-screen">
-                <h2>Service Explorer</h2>
-                <p>Select a service from the sidebar to view its methods and documentation.</p>
-            </div>
-        </main>
-    </div>
+    <div id="app"></div>
 
     <script type="module">
+        import { html, render, useState, useEffect, useRef } from 'https://esm.sh/htm/preact/standalone';
         import init, { ExplorerClient } from '/pkg/rapace_wasm_client.js';
 
-        // State
-        let services = [];
-        let selectedServiceId = null;
-        let currentService = null;
-        let client = null;
+        // ============================================================================
+        // Shape Input Components
+        // ============================================================================
 
-        // DOM elements
-        const serviceListEl = document.getElementById('service-list');
-        const mainContentEl = document.getElementById('main-content');
-        const searchInput = document.getElementById('search');
-
-        // Initialize wasm and connect to WebSocket
-        async function initClient() {
-            try {
-                await init();
-                client = await ExplorerClient.connect('ws://127.0.0.1:9001');
-                console.log('Connected to rapace WebSocket server');
-                return true;
-            } catch (error) {
-                console.error('Failed to connect:', error);
-                serviceListEl.innerHTML = `<div class="error">Failed to connect to WebSocket server: ${error}</div>`;
-                return false;
-            }
-        }
-
-        // Fetch and render services using WebSocket client
-        async function loadServices() {
-            try {
-                services = await client.listServices();
-                renderServiceList();
-            } catch (error) {
-                serviceListEl.innerHTML = `<div class="error">${error}</div>`;
-            }
-        }
-
-        function renderServiceList(filter = '') {
-            const filtered = services.filter(s =>
-                s.name.toLowerCase().includes(filter.toLowerCase()) ||
-                s.doc.toLowerCase().includes(filter.toLowerCase())
-            );
-
-            if (filtered.length === 0) {
-                serviceListEl.innerHTML = '<div class="loading" style="animation: none;">No services found</div>';
-                return;
-            }
-
-            serviceListEl.innerHTML = filtered.map(service => `
-                <div class="service-item ${service.id === selectedServiceId ? 'active' : ''}"
-                     data-id="${service.id}">
-                    <div class="service-item-name">${escapeHtml(service.name)}</div>
-                    <div class="service-item-meta">${service.method_count} method${service.method_count !== 1 ? 's' : ''}</div>
-                </div>
-            `).join('');
-
-            // Add click handlers
-            document.querySelectorAll('.service-item').forEach(item => {
-                item.addEventListener('click', () => selectService(parseInt(item.dataset.id)));
-            });
-        }
-
-        async function selectService(id) {
-            selectedServiceId = id;
-            renderServiceList(searchInput.value);
-            mainContentEl.innerHTML = '<div class="loading">Loading service details</div>';
-
-            try {
-                currentService = await client.getService(id);
-                if (currentService) {
-                    renderServiceDetail(currentService);
-                } else {
-                    mainContentEl.innerHTML = '<div class="error">Service not found</div>';
-                }
-            } catch (error) {
-                mainContentEl.innerHTML = `<div class="error">${error}</div>`;
-            }
-        }
-
-        function renderServiceDetail(service) {
-            const methodsHtml = service.methods.map(method => `
-                <div class="method-card" data-method="${escapeHtml(method.name)}">
-                    <div class="method-header">
-                        <span class="method-name">${escapeHtml(method.name)}</span>
-                        <span class="method-badge ${method.is_streaming ? 'badge-streaming' : 'badge-unary'}">
-                            ${method.is_streaming ? 'Streaming' : 'Unary'}
-                        </span>
-                    </div>
-                    ${method.doc ? `<div class="method-doc">${escapeHtml(method.doc.trim())}</div>` : ''}
-                    <div class="method-signature">
-                        <div class="sig-label">Arguments</div>
-                        ${method.args.length > 0
-                            ? method.args.map(arg => `<span class="sig-arg-name">${escapeHtml(arg.name)}</span>: <span class="sig-type">${escapeHtml(arg.type_name)}</span>`).join(', ')
-                            : '<span class="sig-type">(none)</span>'}
-                        <span class="sig-arrow">-></span>
-                        <span class="sig-type">${method.is_streaming ? 'Stream&lt;' : ''}${escapeHtml(method.response_type)}${method.is_streaming ? '&gt;' : ''}</span>
-                    </div>
-                    ${renderCallSection(service.name, method)}
-                </div>
-            `).join('');
-
-            mainContentEl.innerHTML = `
-                <div class="service-detail">
-                    <div class="service-header">
-                        <h2 class="service-name">${escapeHtml(service.name)}</h2>
-                        ${service.doc ? `<div class="service-doc">${escapeHtml(service.doc.trim())}</div>` : ''}
-                    </div>
-                    <div class="methods-section">
-                        <h3>Methods (${service.methods.length})</h3>
-                        ${methodsHtml}
-                    </div>
-                </div>
-            `;
-
-            // Attach event handlers
-            attachCallHandlers(service.name);
-        }
-
-        function renderCallSection(serviceName, method) {
-            const methodId = `${serviceName}-${method.name}`.replace(/[^a-zA-Z0-9]/g, '-');
-            const exampleArgs = getExampleArgs(method);
-
-            if (method.is_streaming) {
-                // For streaming methods, use the first arg named 'n' or default to a number input
-                const hasNArg = method.args.some(a => a.name === 'n');
-                const defaultN = 10;
-
-                return `
-                    <div class="call-section">
-                        <button class="call-toggle" data-method="${escapeHtml(method.name)}" data-streaming="true">
-                            <span>Try it</span>
-                        </button>
-                        <div class="call-form" id="form-${methodId}">
-                            <label>Count (n)</label>
-                            <input type="number" id="stream-n-${methodId}" value="${defaultN}" min="1" max="100"
-                                   style="width: 100px; padding: 8px 12px; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 6px; color: var(--text-primary); font-size: 14px; margin-bottom: 12px;">
-
-                            <div style="margin-top: 12px;">
-                                <button class="stream-button" id="stream-btn-${methodId}" onclick="startStream('${escapeHtml(serviceName)}', '${escapeHtml(method.name)}', '${methodId}')">
-                                    Start Stream
-                                </button>
-                                <button class="stop-stream-button" id="stop-btn-${methodId}" style="display: none;" onclick="stopStream('${methodId}')">
-                                    Stop
-                                </button>
-                            </div>
-                            <div id="stream-status-${methodId}"></div>
-                            <div class="stream-output" id="stream-output-${methodId}" style="display: none;"></div>
-                        </div>
-                    </div>
-                `;
-            }
-
-            return `
-                <div class="call-section">
-                    <button class="call-toggle" data-method="${escapeHtml(method.name)}">
-                        <span>Try it</span>
-                    </button>
-                    <div class="call-form" id="form-${methodId}">
-                        <label>Arguments (JSON)</label>
-                        <textarea id="args-${methodId}" placeholder='${escapeHtml(JSON.stringify(exampleArgs))}'>${JSON.stringify(exampleArgs, null, 2)}</textarea>
-
-                        <label>Binary Attachments (optional)</label>
-                        <div class="binary-attachments" id="attachments-${methodId}">
-                        </div>
-                        <button class="add-attachment" onclick="addAttachment('${methodId}')">+ Add file attachment</button>
-
-                        <div style="margin-top: 12px;">
-                            <button class="call-button" onclick="callMethod('${escapeHtml(serviceName)}', '${escapeHtml(method.name)}', '${methodId}')">
-                                Call ${escapeHtml(method.name)}
-                            </button>
-                        </div>
-                        <div id="result-${methodId}"></div>
-                    </div>
-                </div>
-            `;
-        }
-
-        function getExampleArgs(method) {
-            // Use actual argument names from the method
-            if (!method.args || method.args.length === 0) {
-                return {};
-            }
-
-            const result = {};
-            for (const arg of method.args) {
-                result[arg.name] = getDefaultForType(arg.type_name);
-            }
-            return result;
-        }
-
-        function getDefaultForType(typeName) {
-            // Generate reasonable defaults based on type
-            switch (typeName.trim()) {
-                case 'i32':
-                case 'i64':
-                case 'i16':
-                case 'i8':
-                case 'isize':
+        // Get default value for a shape
+        function getDefaultValue(shape) {
+            if (!shape) return null;
+            switch (shape.kind) {
+                case 'Scalar':
+                    if (shape.affinity === 'boolean') return false;
+                    if (shape.affinity === 'float') return 0.0;
                     return 0;
-                case 'u32':
-                case 'u64':
-                case 'u16':
-                case 'u8':
-                case 'usize':
-                    return 0;
-                case 'f32':
-                case 'f64':
-                    return 0.0;
-                case 'bool':
-                    return false;
                 case 'String':
-                case '& str':
-                case '&str':
-                    return "";
+                    return '';
+                case 'Option':
+                    return null;
+                case 'List':
+                    return [];
+                case 'Struct':
+                    const obj = {};
+                    for (const field of shape.fields || []) {
+                        obj[field.name] = getDefaultValue(field.shape);
+                    }
+                    return obj;
+                case 'Enum':
+                    // Default to first variant
+                    const firstVariant = (shape.variants || [])[0];
+                    if (firstVariant && firstVariant.fields) {
+                        const data = {};
+                        for (const f of firstVariant.fields) {
+                            data[f.name] = getDefaultValue(f.shape);
+                        }
+                        return { [firstVariant.name]: data };
+                    }
+                    return firstVariant ? firstVariant.name : null;
+                case 'Map':
+                    return {};
                 default:
-                    // For complex types, return null as placeholder
                     return null;
             }
         }
 
-        function attachCallHandlers(serviceName) {
-            document.querySelectorAll('.call-toggle').forEach(btn => {
-                btn.addEventListener('click', function() {
-                    const methodName = this.dataset.method;
-                    const methodId = `${serviceName}-${methodName}`.replace(/[^a-zA-Z0-9]/g, '-');
-                    const form = document.getElementById(`form-${methodId}`);
+        // Recursive shape input component
+        function ShapeInput({ shape, value, onChange, label }) {
+            if (!shape) {
+                return html`<div class="error-box">Unknown shape</div>`;
+            }
 
-                    this.classList.toggle('active');
-                    form.classList.toggle('visible');
-                });
-            });
+            switch (shape.kind) {
+                case 'Scalar':
+                    return html`<${ScalarInput} shape=${shape} value=${value} onChange=${onChange} />`;
+                case 'String':
+                    return html`<input
+                        type="text"
+                        class="typed-input"
+                        value=${value ?? ''}
+                        onInput=${e => onChange(e.target.value)}
+                        placeholder="Enter text..."
+                    />`;
+                case 'Option':
+                    return html`<${OptionInput} shape=${shape} value=${value} onChange=${onChange} />`;
+                case 'List':
+                    return html`<${ListInput} shape=${shape} value=${value} onChange=${onChange} />`;
+                case 'Struct':
+                    return html`<${StructInput} shape=${shape} value=${value} onChange=${onChange} />`;
+                case 'Enum':
+                    return html`<${EnumInput} shape=${shape} value=${value} onChange=${onChange} />`;
+                case 'Map':
+                    return html`<${MapInput} shape=${shape} value=${value} onChange=${onChange} />`;
+                default:
+                    return html`<div class="error-box">Unsupported shape: ${shape.kind}</div>`;
+            }
         }
 
-        let attachmentCounter = 0;
-        function addAttachment(methodId) {
-            const container = document.getElementById(`attachments-${methodId}`);
-            const id = attachmentCounter++;
+        function ScalarInput({ shape, value, onChange }) {
+            if (shape.affinity === 'boolean') {
+                return html`
+                    <div class="checkbox-wrapper">
+                        <input
+                            type="checkbox"
+                            class="typed-input"
+                            checked=${!!value}
+                            onChange=${e => onChange(e.target.checked)}
+                        />
+                        <span>${value ? 'true' : 'false'}</span>
+                    </div>
+                `;
+            }
 
-            const div = document.createElement('div');
-            div.className = 'binary-attachment';
-            div.id = `attachment-${id}`;
-            div.innerHTML = `
-                <input type="text" placeholder="Field name" id="field-${id}">
-                <input type="file" id="file-${id}">
-                <button class="remove-attachment" onclick="removeAttachment(${id})">x</button>
+            const isFloat = shape.affinity === 'float';
+            return html`<input
+                type="number"
+                class="typed-input"
+                value=${value ?? ''}
+                step=${isFloat ? 'any' : '1'}
+                onInput=${e => {
+                    const v = e.target.value;
+                    if (v === '') {
+                        onChange(0);
+                    } else if (isFloat) {
+                        onChange(parseFloat(v) || 0);
+                    } else {
+                        onChange(parseInt(v, 10) || 0);
+                    }
+                }}
+            />`;
+        }
+
+        function OptionInput({ shape, value, onChange }) {
+            const hasValue = value !== null && value !== undefined;
+
+            return html`
+                <div class="option-wrapper ${hasValue ? 'has-value' : ''}">
+                    <div class="checkbox-wrapper" style="margin-bottom: 8px;">
+                        <input
+                            type="checkbox"
+                            checked=${hasValue}
+                            onChange=${e => {
+                                if (e.target.checked) {
+                                    onChange(getDefaultValue(shape.inner));
+                                } else {
+                                    onChange(null);
+                                }
+                            }}
+                        />
+                        <span style="font-size: 12px; color: var(--text-secondary)">
+                            ${hasValue ? 'Some' : 'None'}
+                        </span>
+                    </div>
+                    ${hasValue && html`
+                        <${ShapeInput}
+                            shape=${shape.inner}
+                            value=${value}
+                            onChange=${onChange}
+                        />
+                    `}
+                </div>
             `;
-            container.appendChild(div);
         }
 
-        function removeAttachment(id) {
-            const el = document.getElementById(`attachment-${id}`);
-            if (el) el.remove();
+        function ListInput({ shape, value, onChange }) {
+            const items = Array.isArray(value) ? value : [];
+
+            const addItem = () => {
+                onChange([...items, getDefaultValue(shape.item)]);
+            };
+
+            const removeItem = (index) => {
+                const newItems = [...items];
+                newItems.splice(index, 1);
+                onChange(newItems);
+            };
+
+            const updateItem = (index, newValue) => {
+                const newItems = [...items];
+                newItems[index] = newValue;
+                onChange(newItems);
+            };
+
+            return html`
+                <div class="list-wrapper">
+                    ${items.map((item, i) => html`
+                        <div class="list-item" key=${i}>
+                            <span class="list-item-index">[${i}]</span>
+                            <div class="list-item-content">
+                                <${ShapeInput}
+                                    shape=${shape.item}
+                                    value=${item}
+                                    onChange=${v => updateItem(i, v)}
+                                />
+                            </div>
+                            <button
+                                class="remove-list-item"
+                                onClick=${() => removeItem(i)}
+                                title="Remove item"
+                            >x</button>
+                        </div>
+                    `)}
+                    <button class="add-list-item" onClick=${addItem}>
+                        + Add item
+                    </button>
+                </div>
+            `;
         }
 
-        async function callMethod(serviceName, methodName, methodId) {
-            const argsTextarea = document.getElementById(`args-${methodId}`);
-            const resultDiv = document.getElementById(`result-${methodId}`);
-            const callButton = resultDiv.previousElementSibling.querySelector('.call-button');
+        function StructInput({ shape, value, onChange }) {
+            const obj = value && typeof value === 'object' ? value : {};
+            const fields = shape.fields || [];
 
-            let args;
-            try {
-                args = JSON.parse(argsTextarea.value || '{}');
-            } catch (e) {
-                resultDiv.className = 'call-result error';
-                resultDiv.textContent = `Invalid JSON: ${e.message}`;
-                return;
-            }
+            const updateField = (name, newValue) => {
+                onChange({ ...obj, [name]: newValue });
+            };
 
-            // Make the call via WebSocket
-            callButton.disabled = true;
-            callButton.textContent = 'Calling...';
-            resultDiv.className = 'call-result';
-            resultDiv.textContent = '';
+            return html`
+                <div class="struct-fieldset">
+                    ${fields.map(field => html`
+                        <div class="typed-field" key=${field.name}>
+                            <label class="typed-field-label">
+                                ${field.name}
+                                <span class="field-type">${getShapeTypeName(field.shape)}</span>
+                            </label>
+                            <${ShapeInput}
+                                shape=${field.shape}
+                                value=${obj[field.name]}
+                                onChange=${v => updateField(field.name, v)}
+                            />
+                        </div>
+                    `)}
+                </div>
+            `;
+        }
 
-            try {
-                const response = await client.callUnary(serviceName, methodName, args);
+        function EnumInput({ shape, value, onChange }) {
+            const variants = shape.variants || [];
 
-                if (response.error) {
-                    resultDiv.className = 'call-result error';
-                    resultDiv.textContent = `Error: ${response.error}`;
-                } else {
-                    resultDiv.className = 'call-result success';
-                    // Parse the JSON result string
-                    const result = JSON.parse(response.result_json);
-                    resultDiv.textContent = JSON.stringify(result, null, 2);
+            // Figure out current variant
+            let currentVariant = null;
+            let currentData = null;
+
+            if (typeof value === 'string') {
+                // Unit variant
+                currentVariant = value;
+            } else if (value && typeof value === 'object') {
+                // Data variant: { VariantName: { ... } }
+                const keys = Object.keys(value);
+                if (keys.length === 1) {
+                    currentVariant = keys[0];
+                    currentData = value[currentVariant];
                 }
-            } catch (e) {
-                resultDiv.className = 'call-result error';
-                resultDiv.textContent = `RPC error: ${e}`;
-            } finally {
-                callButton.disabled = false;
-                callButton.textContent = `Call ${methodName}`;
+            }
+
+            if (!currentVariant && variants.length > 0) {
+                currentVariant = variants[0].name;
+            }
+
+            const variantDef = variants.find(v => v.name === currentVariant);
+
+            const handleVariantChange = (newVariantName) => {
+                const newVariantDef = variants.find(v => v.name === newVariantName);
+                if (newVariantDef && newVariantDef.fields) {
+                    const data = {};
+                    for (const f of newVariantDef.fields) {
+                        data[f.name] = getDefaultValue(f.shape);
+                    }
+                    onChange({ [newVariantName]: data });
+                } else {
+                    onChange(newVariantName);
+                }
+            };
+
+            const handleDataChange = (newData) => {
+                onChange({ [currentVariant]: newData });
+            };
+
+            return html`
+                <div>
+                    <select
+                        class="typed-select"
+                        value=${currentVariant}
+                        onChange=${e => handleVariantChange(e.target.value)}
+                    >
+                        ${variants.map(v => html`
+                            <option value=${v.name} key=${v.name}>${v.name}</option>
+                        `)}
+                    </select>
+                    ${variantDef && variantDef.fields && html`
+                        <div class="enum-variant-fields">
+                            <${StructInput}
+                                shape=${{ fields: variantDef.fields }}
+                                value=${currentData || {}}
+                                onChange=${handleDataChange}
+                            />
+                        </div>
+                    `}
+                </div>
+            `;
+        }
+
+        function MapInput({ shape, value, onChange }) {
+            // For now, show as raw JSON since maps are complex
+            const [jsonStr, setJsonStr] = useState(JSON.stringify(value || {}, null, 2));
+
+            const handleChange = (str) => {
+                setJsonStr(str);
+                try {
+                    onChange(JSON.parse(str));
+                } catch (e) {
+                    // Invalid JSON, don't update
+                }
+            };
+
+            return html`
+                <textarea
+                    class="typed-input"
+                    style="min-height: 60px; font-family: monospace;"
+                    value=${jsonStr}
+                    onInput=${e => handleChange(e.target.value)}
+                    placeholder="{ }"
+                />
+            `;
+        }
+
+        // Get a friendly type name for a shape
+        function getShapeTypeName(shape) {
+            if (!shape) return '?';
+            switch (shape.kind) {
+                case 'Scalar':
+                    return shape.type_name?.split('::').pop() || shape.affinity;
+                case 'String':
+                    return 'String';
+                case 'Option':
+                    return `Option<${getShapeTypeName(shape.inner)}>`;
+                case 'List':
+                    return `Vec<${getShapeTypeName(shape.item)}>`;
+                case 'Struct':
+                    return shape.type_name?.split('::').pop() || 'struct';
+                case 'Enum':
+                    return shape.type_name?.split('::').pop() || 'enum';
+                case 'Map':
+                    return `Map<${getShapeTypeName(shape.key)}, ${getShapeTypeName(shape.value)}>`;
+                default:
+                    return shape.kind;
             }
         }
 
-        // Track active streaming calls
-        const activeStreams = {};
+        // ============================================================================
+        // Method Form Component
+        // ============================================================================
 
-        async function startStream(serviceName, methodName, methodId) {
-            // Get the n value from the input
-            const nInput = document.getElementById(`stream-n-${methodId}`);
-            const n = parseInt(nInput.value) || 10;
+        function MethodForm({ client, serviceName, method }) {
+            const [expanded, setExpanded] = useState(false);
+            const [useRawJson, setUseRawJson] = useState(false);
+            const [formValue, setFormValue] = useState(() => {
+                // Initialize from method args
+                const initial = {};
+                for (const arg of method.args || []) {
+                    initial[arg.name] = getDefaultValue(arg.shape);
+                }
+                return initial;
+            });
+            const [rawJson, setRawJson] = useState(() => JSON.stringify(formValue, null, 2));
+            const [result, setResult] = useState(null);
+            const [error, setError] = useState(null);
+            const [loading, setLoading] = useState(false);
 
-            // Get UI elements
-            const streamBtn = document.getElementById(`stream-btn-${methodId}`);
-            const stopBtn = document.getElementById(`stop-btn-${methodId}`);
-            const statusDiv = document.getElementById(`stream-status-${methodId}`);
-            const outputDiv = document.getElementById(`stream-output-${methodId}`);
+            // For streaming
+            const [streamItems, setStreamItems] = useState([]);
+            const [streaming, setStreaming] = useState(false);
+            const [streamStatus, setStreamStatus] = useState(null);
+            const stopRef = useRef(false);
 
-            // Reset and show output
-            outputDiv.innerHTML = '';
-            outputDiv.style.display = 'block';
-            outputDiv.classList.add('active');
+            // Sync rawJson when formValue changes (if not in raw mode)
+            useEffect(() => {
+                if (!useRawJson) {
+                    setRawJson(JSON.stringify(formValue, null, 2));
+                }
+            }, [formValue, useRawJson]);
 
-            // Update button states
-            streamBtn.disabled = true;
-            streamBtn.textContent = 'Streaming...';
-            stopBtn.style.display = 'inline-block';
+            const getArgs = () => {
+                if (useRawJson) {
+                    return JSON.parse(rawJson);
+                }
+                return formValue;
+            };
 
-            // Show streaming status
-            statusDiv.innerHTML = '<div class="stream-status streaming">Streaming...</div>';
+            // Handle Enter key to submit
+            const handleKeyDown = (e) => {
+                if (e.key === 'Enter' && !e.shiftKey && !loading && !streaming) {
+                    e.preventDefault();
+                    if (method.is_streaming) {
+                        handleStream();
+                    } else {
+                        handleCall();
+                    }
+                }
+            };
 
-            // Start the streaming call via WebSocket
-            let itemCount = 0;
-            let stopped = false;
-            activeStreams[methodId] = { stopped: false };
+            const handleCall = async () => {
+                setLoading(true);
+                setResult(null);
+                setError(null);
 
-            try {
-                const stream = client.callStreaming(serviceName, methodName, { n });
+                try {
+                    const args = getArgs();
+                    const response = await client.callUnary(serviceName, method.name, args);
 
-                while (!stopped && !activeStreams[methodId]?.stopped) {
-                    const item = await stream.next();
-                    if (item === null) {
-                        // Stream complete
-                        break;
+                    if (response.error) {
+                        setError(response.error);
+                    } else {
+                        setResult(JSON.parse(response.result_json));
+                    }
+                } catch (e) {
+                    setError(String(e));
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const handleStream = async () => {
+                setStreaming(true);
+                setStreamItems([]);
+                setStreamStatus('streaming');
+                setError(null);
+                stopRef.current = false;
+
+                try {
+                    const args = getArgs();
+                    const stream = client.callStreaming(serviceName, method.name, args);
+
+                    let count = 0;
+                    while (!stopRef.current) {
+                        const item = await stream.next();
+                        if (item === null) break;
+
+                        count++;
+                        const value = JSON.parse(item.value_json);
+                        setStreamItems(prev => [...prev, { index: count, value }]);
                     }
 
-                    itemCount++;
-                    const value = JSON.parse(item.value_json);
-                    const itemDiv = document.createElement('div');
-                    itemDiv.className = 'stream-item';
-                    itemDiv.innerHTML = `<span class="item-index">[${itemCount}]</span>${escapeHtml(JSON.stringify(value))}`;
-                    outputDiv.appendChild(itemDiv);
-                    outputDiv.scrollTop = outputDiv.scrollHeight;
+                    setStreamStatus(stopRef.current ? 'stopped' : 'completed');
+                } catch (e) {
+                    setError(String(e));
+                    setStreamStatus('error');
+                } finally {
+                    setStreaming(false);
+                }
+            };
+
+            const handleStopStream = () => {
+                stopRef.current = true;
+            };
+
+            if (!expanded) {
+                return html`
+                    <div class="call-section">
+                        <button class="call-toggle" onClick=${() => setExpanded(true)}>
+                            Try it
+                        </button>
+                    </div>
+                `;
+            }
+
+            return html`
+                <div class="call-section">
+                    <button class="call-toggle active" onClick=${() => setExpanded(false)}>
+                        Try it
+                    </button>
+
+                    <div class="call-form" onKeyDown=${handleKeyDown}>
+                        <div class="mode-toggle">
+                            <label>
+                                <input
+                                    type="checkbox"
+                                    checked=${useRawJson}
+                                    onChange=${e => setUseRawJson(e.target.checked)}
+                                />
+                                Raw JSON mode
+                            </label>
+                        </div>
+
+                        ${useRawJson ? html`
+                            <label>Arguments (JSON)</label>
+                            <textarea
+                                value=${rawJson}
+                                onInput=${e => setRawJson(e.target.value)}
+                                placeholder="{}"
+                            />
+                        ` : html`
+                            <div class="typed-form">
+                                ${(method.args || []).map(arg => html`
+                                    <div class="typed-field" key=${arg.name}>
+                                        <label class="typed-field-label">
+                                            ${arg.name}
+                                            <span class="field-type">${arg.type_name}</span>
+                                        </label>
+                                        <${ShapeInput}
+                                            shape=${arg.shape}
+                                            value=${formValue[arg.name]}
+                                            onChange=${v => setFormValue(prev => ({ ...prev, [arg.name]: v }))}
+                                        />
+                                    </div>
+                                `)}
+                                ${(method.args || []).length === 0 && html`
+                                    <div style="color: var(--text-muted); font-size: 13px;">
+                                        No arguments required
+                                    </div>
+                                `}
+                            </div>
+                        `}
+
+                        <div style="margin-top: 12px;">
+                            ${method.is_streaming ? html`
+                                <button
+                                    class="stream-button"
+                                    onClick=${handleStream}
+                                    disabled=${streaming}
+                                >
+                                    ${streaming ? 'Streaming...' : 'Start Stream'}
+                                </button>
+                                ${streaming && html`
+                                    <button class="stop-stream-button" onClick=${handleStopStream}>
+                                        Stop
+                                    </button>
+                                `}
+                            ` : html`
+                                <button
+                                    class="call-button"
+                                    onClick=${handleCall}
+                                    disabled=${loading}
+                                >
+                                    ${loading ? 'Calling...' : `Call ${method.name}`}
+                                </button>
+                            `}
+                        </div>
+
+                        ${error && html`
+                            <div class="call-result error">${error}</div>
+                        `}
+
+                        ${result !== null && html`
+                            <div class="call-result success">${JSON.stringify(result, null, 2)}</div>
+                        `}
+
+                        ${method.is_streaming && streamStatus && html`
+                            <div class="stream-status ${streamStatus}">
+                                ${streamStatus === 'streaming' ? 'Streaming...' :
+                                  streamStatus === 'completed' ? `Completed (${streamItems.length} items)` :
+                                  streamStatus === 'stopped' ? `Stopped (${streamItems.length} items)` :
+                                  'Error'}
+                            </div>
+                        `}
+
+                        ${method.is_streaming && streamItems.length > 0 && html`
+                            <div class="stream-output ${streaming ? 'active' : ''}">
+                                ${streamItems.map(item => html`
+                                    <div class="stream-item" key=${item.index}>
+                                        <span class="item-index">[${item.index}]</span>
+                                        ${JSON.stringify(item.value)}
+                                    </div>
+                                `)}
+                            </div>
+                        `}
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================================================
+        // Method Card Component
+        // ============================================================================
+
+        function MethodCard({ client, serviceName, method }) {
+            return html`
+                <div class="method-card">
+                    <div class="method-header">
+                        <span class="method-name">${method.name}</span>
+                        <span class="method-badge ${method.is_streaming ? 'badge-streaming' : 'badge-unary'}">
+                            ${method.is_streaming ? 'Streaming' : 'Unary'}
+                        </span>
+                    </div>
+
+                    ${method.doc && html`
+                        <div class="method-doc">${method.doc.trim()}</div>
+                    `}
+
+                    <div class="method-signature">
+                        <div class="sig-label">Arguments</div>
+                        ${(method.args || []).length > 0 ? html`
+                            ${method.args.map((arg, i) => html`
+                                <span key=${arg.name}>
+                                    ${i > 0 ? ', ' : ''}
+                                    <span class="sig-arg-name">${arg.name}</span>: <span class="sig-type">${arg.type_name}</span>
+                                </span>
+                            `)}
+                        ` : html`
+                            <span class="sig-type">(none)</span>
+                        `}
+                        <span class="sig-arrow">-></span>
+                        <span class="sig-type">
+                            ${method.is_streaming ? `Stream<${method.response_type}>` : method.response_type}
+                        </span>
+                    </div>
+
+                    <${MethodForm} client=${client} serviceName=${serviceName} method=${method} />
+                </div>
+            `;
+        }
+
+        // ============================================================================
+        // Service Detail Component
+        // ============================================================================
+
+        function ServiceDetail({ client, service }) {
+            return html`
+                <div class="service-detail">
+                    <div class="service-header">
+                        <h2 class="service-name">${service.name}</h2>
+                        ${service.doc && html`
+                            <div class="service-doc">${service.doc.trim()}</div>
+                        `}
+                    </div>
+
+                    <div class="methods-section">
+                        <h3>Methods (${service.methods?.length || 0})</h3>
+                        ${(service.methods || []).map(method => html`
+                            <${MethodCard}
+                                key=${method.id}
+                                client=${client}
+                                serviceName=${service.name}
+                                method=${method}
+                            />
+                        `)}
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================================================
+        // Sidebar Component
+        // ============================================================================
+
+        function Sidebar({ services, selectedId, onSelect, searchTerm, onSearchChange }) {
+            const filtered = services.filter(s =>
+                s.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (s.doc || '').toLowerCase().includes(searchTerm.toLowerCase())
+            );
+
+            return html`
+                <aside class="sidebar">
+                    <div class="sidebar-header">
+                        <h1>Rapace Explorer</h1>
+                    </div>
+                    <div class="search-box">
+                        <input
+                            type="text"
+                            placeholder="Search services..."
+                            value=${searchTerm}
+                            onInput=${e => onSearchChange(e.target.value)}
+                        />
+                    </div>
+                    <div class="service-list">
+                        ${filtered.length === 0 && html`
+                            <div class="loading" style="animation: none;">No services found</div>
+                        `}
+                        ${filtered.map(service => html`
+                            <div
+                                key=${service.id}
+                                class="service-item ${service.id === selectedId ? 'active' : ''}"
+                                onClick=${() => onSelect(service.id)}
+                            >
+                                <div class="service-item-name">${service.name}</div>
+                                <div class="service-item-meta">
+                                    ${service.method_count} method${service.method_count !== 1 ? 's' : ''}
+                                </div>
+                            </div>
+                        `)}
+                    </div>
+                </aside>
+            `;
+        }
+
+        // ============================================================================
+        // Main App Component
+        // ============================================================================
+
+        function App() {
+            const [client, setClient] = useState(null);
+            const [services, setServices] = useState([]);
+            const [selectedServiceId, setSelectedServiceId] = useState(null);
+            const [selectedService, setSelectedService] = useState(null);
+            const [searchTerm, setSearchTerm] = useState('');
+            const [error, setError] = useState(null);
+            const [loading, setLoading] = useState(true);
+            const [loadingService, setLoadingService] = useState(false);
+
+            // Initialize client and load services
+            useEffect(() => {
+                async function initClient() {
+                    try {
+                        await init();
+                        const c = await ExplorerClient.connect('ws://127.0.0.1:4268');
+                        setClient(c);
+
+                        const serviceList = await c.listServices();
+                        setServices(serviceList);
+                        setLoading(false);
+                    } catch (e) {
+                        setError(`Failed to connect: ${e}`);
+                        setLoading(false);
+                    }
+                }
+                initClient();
+            }, []);
+
+            // Load service details when selected
+            useEffect(() => {
+                if (!client || selectedServiceId === null) {
+                    setSelectedService(null);
+                    return;
                 }
 
-                finishStream(methodId, 'completed', `Stream completed (${itemCount} items)`);
-            } catch (e) {
-                const itemDiv = document.createElement('div');
-                itemDiv.className = 'stream-item error';
-                itemDiv.innerHTML = `<span class="item-index">[ERROR]</span>${escapeHtml(String(e))}`;
-                outputDiv.appendChild(itemDiv);
-                finishStream(methodId, 'error', 'Stream error');
+                async function loadService() {
+                    setLoadingService(true);
+                    try {
+                        const service = await client.getService(selectedServiceId);
+                        setSelectedService(service);
+                    } catch (e) {
+                        setError(`Failed to load service: ${e}`);
+                    } finally {
+                        setLoadingService(false);
+                    }
+                }
+                loadService();
+            }, [client, selectedServiceId]);
+
+            if (loading) {
+                return html`
+                    <div class="container">
+                        <aside class="sidebar">
+                            <div class="sidebar-header">
+                                <h1>Rapace Explorer</h1>
+                            </div>
+                            <div class="service-list">
+                                <div class="loading">Loading services</div>
+                            </div>
+                        </aside>
+                        <main class="main-content">
+                            <div class="welcome-screen">
+                                <h2>Connecting...</h2>
+                                <p>Connecting to WebSocket server</p>
+                            </div>
+                        </main>
+                    </div>
+                `;
             }
-        }
 
-        function stopStream(methodId) {
-            if (activeStreams[methodId]) {
-                activeStreams[methodId].stopped = true;
+            if (error) {
+                return html`
+                    <div class="container">
+                        <aside class="sidebar">
+                            <div class="sidebar-header">
+                                <h1>Rapace Explorer</h1>
+                            </div>
+                            <div class="service-list">
+                                <div class="error-box">${error}</div>
+                            </div>
+                        </aside>
+                        <main class="main-content">
+                            <div class="welcome-screen">
+                                <h2>Connection Error</h2>
+                                <p>Could not connect to the rapace server</p>
+                            </div>
+                        </main>
+                    </div>
+                `;
             }
-            finishStream(methodId, 'completed', 'Stream stopped by user');
+
+            return html`
+                <div class="container">
+                    <${Sidebar}
+                        services=${services}
+                        selectedId=${selectedServiceId}
+                        onSelect=${setSelectedServiceId}
+                        searchTerm=${searchTerm}
+                        onSearchChange=${setSearchTerm}
+                    />
+                    <main class="main-content">
+                        ${loadingService && html`
+                            <div class="loading">Loading service details</div>
+                        `}
+                        ${!loadingService && !selectedService && html`
+                            <div class="welcome-screen">
+                                <h2>Service Explorer</h2>
+                                <p>Select a service from the sidebar to view its methods and documentation.</p>
+                            </div>
+                        `}
+                        ${!loadingService && selectedService && html`
+                            <${ServiceDetail} client=${client} service=${selectedService} />
+                        `}
+                    </main>
+                </div>
+            `;
         }
 
-        function finishStream(methodId, status, message) {
-            // Clean up
-            delete activeStreams[methodId];
-
-            // Get UI elements
-            const streamBtn = document.getElementById(`stream-btn-${methodId}`);
-            const stopBtn = document.getElementById(`stop-btn-${methodId}`);
-            const statusDiv = document.getElementById(`stream-status-${methodId}`);
-            const outputDiv = document.getElementById(`stream-output-${methodId}`);
-
-            // Update button states
-            streamBtn.disabled = false;
-            streamBtn.textContent = 'Start Stream';
-            stopBtn.style.display = 'none';
-
-            // Update status
-            statusDiv.innerHTML = `<div class="stream-status ${status}">${escapeHtml(message)}</div>`;
-            outputDiv.classList.remove('active');
-        }
-
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
-        // Search handler
-        searchInput.addEventListener('input', (e) => {
-            renderServiceList(e.target.value);
-        });
-
-        // Make functions available globally for onclick handlers
-        window.callMethod = callMethod;
-        window.startStream = startStream;
-        window.stopStream = stopStream;
-        window.addAttachment = addAttachment;
-        window.removeAttachment = removeAttachment;
-
-        // Initialize client and load services
-        initClient().then(ok => {
-            if (ok) loadServices();
-        });
+        // Mount the app
+        render(html`<${App} />`, document.getElementById('app'));
     </script>
 </body>
 </html>
