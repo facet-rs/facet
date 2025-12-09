@@ -44,6 +44,15 @@ enum Commands {
         #[arg(long)]
         fix: bool,
     },
+    /// Benchmark HTTP tunnel overhead
+    Bench {
+        /// Duration per test (e.g., "10s", "30s")
+        #[arg(long, default_value = "10s")]
+        duration: String,
+        /// Concurrency levels to test (comma-separated)
+        #[arg(long, default_value = "1,8,64,256")]
+        concurrency: String,
+    },
 }
 
 fn main() -> ExitCode {
@@ -156,6 +165,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 println!("=== Checking formatting ===");
                 cmd!(sh, "cargo fmt --all -- --check").run()?;
             }
+        }
+        Commands::Bench {
+            duration,
+            concurrency,
+        } => {
+            run_bench(&sh, &workspace_root, &duration, &concurrency)?;
         }
     }
 
@@ -278,6 +293,333 @@ fn wait_for_server_ready(
     }
 
     Err("Server process exited before becoming ready".into())
+}
+
+/// oha JSON output format (partial - just what we need)
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OhaResult {
+    summary: OhaSummary,
+    latency_percentiles: OhaLatencyPercentiles,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OhaSummary {
+    requests_per_sec: f64,
+}
+
+#[derive(serde::Deserialize)]
+struct OhaLatencyPercentiles {
+    p50: Option<f64>,
+    p90: Option<f64>,
+    p99: Option<f64>,
+}
+
+/// Benchmark result for a single run
+#[allow(dead_code)]
+struct BenchResult {
+    name: String,
+    endpoint: String,
+    concurrency: u32,
+    rps: f64,
+    p50_ms: f64,
+    p90_ms: f64,
+    p99_ms: f64,
+}
+
+/// Run HTTP tunnel benchmarks using oha.
+fn run_bench(
+    sh: &Shell,
+    workspace_root: &std::path::Path,
+    duration: &str,
+    concurrency_str: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    const HOST_PORT: u16 = 4000;
+    const UNIX_SOCKET: &str = "/tmp/rapace-bench.sock";
+    const SHM_FILE: &str = "/tmp/rapace-bench.shm";
+
+    // Check for oha
+    if cmd!(sh, "oha --version").quiet().run().is_err() {
+        eprintln!("oha not found. Install with: cargo install oha (or brew install oha)");
+        return Err("oha not installed".into());
+    }
+
+    // Parse concurrency levels
+    let concurrency_levels: Vec<u32> = concurrency_str
+        .split(',')
+        .map(|s| s.trim().parse().expect("invalid concurrency"))
+        .collect();
+
+    // Get git info
+    let git_commit = cmd!(sh, "git rev-parse --short HEAD")
+        .quiet()
+        .read()
+        .unwrap_or_else(|_| "unknown".into());
+    let git_branch = cmd!(sh, "git rev-parse --abbrev-ref HEAD")
+        .quiet()
+        .read()
+        .unwrap_or_else(|_| "unknown".into());
+
+    println!("============================================");
+    println!("  HTTP Tunnel Benchmark");
+    println!("============================================");
+    println!();
+    println!("Git commit: {}", git_commit);
+    println!("Git branch: {}", git_branch);
+    println!("Duration: {}", duration);
+    println!("Concurrency: {:?}", concurrency_levels);
+    println!();
+
+    // Build release binaries
+    println!("Building release binaries...");
+    cmd!(sh, "cargo build --release -p rapace-http-tunnel").run()?;
+    println!();
+
+    let mut all_results: Vec<BenchResult> = Vec::new();
+
+    // Helper to run oha and parse results
+    let run_oha = |url: &str, c: u32, duration: &str| -> Result<OhaResult, Box<dyn std::error::Error>> {
+        let c_str = c.to_string();
+        let output = cmd!(sh, "oha {url} -z {duration} -c {c_str} --output-format json")
+            .quiet()
+            .read()?;
+        let result: OhaResult = serde_json::from_str(&output)?;
+        Ok(result)
+    };
+
+    // Cleanup helper
+    let cleanup = || {
+        let _ = cmd!(sh, "pkill -f http_baseline").quiet().run();
+        let _ = cmd!(sh, "pkill -f http-tunnel-host").quiet().run();
+        let _ = cmd!(sh, "pkill -f http-tunnel-plugin").quiet().run();
+        let _ = std::fs::remove_file(UNIX_SOCKET);
+        let _ = std::fs::remove_file(SHM_FILE);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    };
+
+    // Wait for server to be ready
+    let wait_for_server = |port: u16| -> bool {
+        for _ in 0..50 {
+            if std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        false
+    };
+
+    let endpoints = vec![("small", "2 bytes"), ("large", "~256KB")];
+
+    // ========== BASELINE ==========
+    println!("=== Baseline (direct HTTP) ===");
+    cleanup();
+
+    let baseline_path = workspace_root.join("target/release/http_baseline");
+    let mut baseline_proc = std::process::Command::new(&baseline_path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+
+    if !wait_for_server(HOST_PORT) {
+        baseline_proc.kill()?;
+        return Err("baseline server failed to start".into());
+    }
+
+    // Helper to convert seconds to ms and handle Option
+    let to_ms = |secs: Option<f64>| secs.unwrap_or(0.0) * 1000.0;
+
+    for (endpoint, desc) in &endpoints {
+        println!("\n  /{} ({})", endpoint, desc);
+        for &c in &concurrency_levels {
+            let url = format!("http://127.0.0.1:{}/{}", HOST_PORT, endpoint);
+            match run_oha(&url, c, duration) {
+                Ok(result) => {
+                    let p50_ms = to_ms(result.latency_percentiles.p50);
+                    let p90_ms = to_ms(result.latency_percentiles.p90);
+                    let p99_ms = to_ms(result.latency_percentiles.p99);
+                    println!(
+                        "    c={:3}: {:8.0} RPS, p50={:6.3}ms, p99={:6.3}ms",
+                        c, result.summary.requests_per_sec, p50_ms, p99_ms
+                    );
+                    all_results.push(BenchResult {
+                        name: "baseline".into(),
+                        endpoint: endpoint.to_string(),
+                        concurrency: c,
+                        rps: result.summary.requests_per_sec,
+                        p50_ms,
+                        p90_ms,
+                        p99_ms,
+                    });
+                }
+                Err(e) => println!("    c={:3}: ERROR: {}", c, e),
+            }
+        }
+    }
+
+    let _ = baseline_proc.kill();
+    let _ = baseline_proc.wait();
+
+    // ========== TUNNEL OVER STREAM ==========
+    println!("\n=== Tunnel over Stream (Unix Socket) ===");
+    cleanup();
+
+    let host_path = workspace_root.join("target/release/http-tunnel-host");
+    let plugin_path = workspace_root.join("target/release/http-tunnel-plugin");
+
+    // Start host (listens on socket)
+    let mut host_proc = std::process::Command::new(&host_path)
+        .args(["--transport=stream", &format!("--addr={}", UNIX_SOCKET)])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    // Start plugin (connects to socket)
+    let mut plugin_proc = std::process::Command::new(&plugin_path)
+        .args(["--transport=stream", &format!("--addr={}", UNIX_SOCKET)])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+
+    if !wait_for_server(HOST_PORT) {
+        let _ = host_proc.kill();
+        let _ = plugin_proc.kill();
+        return Err("tunnel-stream server failed to start".into());
+    }
+
+    for (endpoint, desc) in &endpoints {
+        println!("\n  /{} ({})", endpoint, desc);
+        for &c in &concurrency_levels {
+            let url = format!("http://127.0.0.1:{}/{}", HOST_PORT, endpoint);
+            match run_oha(&url, c, duration) {
+                Ok(result) => {
+                    let p50_ms = to_ms(result.latency_percentiles.p50);
+                    let p90_ms = to_ms(result.latency_percentiles.p90);
+                    let p99_ms = to_ms(result.latency_percentiles.p99);
+                    println!(
+                        "    c={:3}: {:8.0} RPS, p50={:6.3}ms, p99={:6.3}ms",
+                        c, result.summary.requests_per_sec, p50_ms, p99_ms
+                    );
+                    all_results.push(BenchResult {
+                        name: "stream".into(),
+                        endpoint: endpoint.to_string(),
+                        concurrency: c,
+                        rps: result.summary.requests_per_sec,
+                        p50_ms,
+                        p90_ms,
+                        p99_ms,
+                    });
+                }
+                Err(e) => println!("    c={:3}: ERROR: {}", c, e),
+            }
+        }
+    }
+
+    let _ = host_proc.kill();
+    let _ = plugin_proc.kill();
+    let _ = host_proc.wait();
+    let _ = plugin_proc.wait();
+
+    // ========== TUNNEL OVER SHM ==========
+    println!("\n=== Tunnel over SHM ===");
+    cleanup();
+
+    // Start host (creates SHM file)
+    let mut host_proc = std::process::Command::new(&host_path)
+        .args(["--transport=shm", &format!("--addr={}", SHM_FILE)])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Start plugin (opens SHM file)
+    let mut plugin_proc = std::process::Command::new(&plugin_path)
+        .args(["--transport=shm", &format!("--addr={}", SHM_FILE)])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+
+    if !wait_for_server(HOST_PORT) {
+        let _ = host_proc.kill();
+        let _ = plugin_proc.kill();
+        return Err("tunnel-shm server failed to start".into());
+    }
+
+    for (endpoint, desc) in &endpoints {
+        println!("\n  /{} ({})", endpoint, desc);
+        for &c in &concurrency_levels {
+            let url = format!("http://127.0.0.1:{}/{}", HOST_PORT, endpoint);
+            match run_oha(&url, c, duration) {
+                Ok(result) => {
+                    let p50_ms = to_ms(result.latency_percentiles.p50);
+                    let p90_ms = to_ms(result.latency_percentiles.p90);
+                    let p99_ms = to_ms(result.latency_percentiles.p99);
+                    println!(
+                        "    c={:3}: {:8.0} RPS, p50={:6.3}ms, p99={:6.3}ms",
+                        c, result.summary.requests_per_sec, p50_ms, p99_ms
+                    );
+                    all_results.push(BenchResult {
+                        name: "shm".into(),
+                        endpoint: endpoint.to_string(),
+                        concurrency: c,
+                        rps: result.summary.requests_per_sec,
+                        p50_ms,
+                        p90_ms,
+                        p99_ms,
+                    });
+                }
+                Err(e) => println!("    c={:3}: ERROR: {}", c, e),
+            }
+        }
+    }
+
+    let _ = host_proc.kill();
+    let _ = plugin_proc.kill();
+    let _ = host_proc.wait();
+    let _ = plugin_proc.wait();
+
+    cleanup();
+
+    // ========== SUMMARY ==========
+    println!("\n============================================");
+    println!("  Summary");
+    println!("============================================");
+
+    // Calculate overhead vs baseline
+    println!("\nOverhead vs Baseline (negative = faster than baseline):\n");
+
+    for (endpoint, _) in &endpoints {
+        println!("/{} endpoint:", endpoint);
+        println!("  {:>10} {:>8} {:>12} {:>12}", "Transport", "Conc", "RPS Δ%", "p99 Δ%");
+
+        for &c in &concurrency_levels {
+            let baseline = all_results
+                .iter()
+                .find(|r| r.name == "baseline" && r.endpoint == *endpoint && r.concurrency == c);
+
+            if let Some(base) = baseline {
+                for transport in &["stream", "shm"] {
+                    if let Some(tunnel) = all_results
+                        .iter()
+                        .find(|r| r.name == *transport && r.endpoint == *endpoint && r.concurrency == c)
+                    {
+                        let rps_delta = ((tunnel.rps - base.rps) / base.rps) * 100.0;
+                        let p99_delta = ((tunnel.p99_ms - base.p99_ms) / base.p99_ms) * 100.0;
+                        println!(
+                            "  {:>10} {:>8} {:>+11.1}% {:>+11.1}%",
+                            transport, c, rps_delta, p99_delta
+                        );
+                    }
+                }
+            }
+        }
+        println!();
+    }
+
+    Ok(())
 }
 
 /// Run the rapace dashboard.
