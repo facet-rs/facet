@@ -1587,7 +1587,9 @@ dependencies = [
  "facet",
  "facet-core",
  "futures",
+ "parking_lot",
  "proptest",
+ "tokio",
 ]
 
 [[package]]

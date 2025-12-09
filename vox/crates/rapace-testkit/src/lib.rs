@@ -42,8 +42,8 @@ pub use rapace_registry::{
 mod session;
 pub use session::{ChannelLifecycle, ChannelState, Session, DEFAULT_INITIAL_CREDITS};
 
-mod rpc_session;
-pub use rpc_session::{parse_error_payload, ReceivedFrame, RpcSession, TunnelChunk};
+// Re-export RpcSession and related types from rapace-core
+pub use rapace_core::{parse_error_payload, ReceivedFrame, RpcSession, TunnelChunk};
 
 pub mod bidirectional;
 pub use bidirectional::{run_bidirectional_scenario, BidirectionalScenario};
@@ -189,8 +189,13 @@ async fn run_unary_happy_path_inner<F: TransportFactory>() -> Result<(), TestErr
         }
     });
 
+    // Create client session and spawn its demux loop
+    let client_session = Arc::new(RpcSession::new(client_transport));
+    let client_session_runner = client_session.clone();
+    let _session_handle = tokio::spawn(async move { client_session_runner.run().await });
+
     // Create client and make call
-    let client = AdderClient::new(client_transport);
+    let client = AdderClient::new(client_session);
     let result = client.add(2, 3).await?;
 
     if result != 5 {
@@ -242,7 +247,12 @@ async fn run_unary_multiple_calls_inner<F: TransportFactory>() -> Result<(), Tes
         }
     });
 
-    let client = AdderClient::new(client_transport);
+    // Create client session and spawn its demux loop
+    let client_session = Arc::new(RpcSession::new(client_transport));
+    let client_session_runner = client_session.clone();
+    let _session_handle = tokio::spawn(async move { client_session_runner.run().await });
+
+    let client = AdderClient::new(client_session);
 
     // Multiple calls with different values
     let test_cases = [(1, 2, 3), (10, 20, 30), (-5, 5, 0)];
@@ -313,8 +323,13 @@ async fn run_error_response_inner<F: TransportFactory>() -> Result<(), TestError
         }
     });
 
+    // Create client session and spawn its demux loop
+    let client_session = Arc::new(RpcSession::new(client_transport));
+    let client_session_runner = client_session.clone();
+    let _session_handle = tokio::spawn(async move { client_session_runner.run().await });
+
     // Client makes call and expects error
-    let client = AdderClient::new(client_transport);
+    let client = AdderClient::new(client_session);
     let result = client.add(1, 2).await;
 
     match result {
@@ -514,13 +529,18 @@ async fn run_deadline_success_inner<F: TransportFactory>() -> Result<(), TestErr
         }
     });
 
+    // Create client session and spawn its demux loop
+    let client_session = Arc::new(RpcSession::new(client_transport));
+    let client_session_runner = client_session.clone();
+    let _session_handle = tokio::spawn(async move { client_session_runner.run().await });
+
     // Client sets a generous deadline (10 seconds from now)
     let deadline = now_ns() + 10_000_000_000; // 10 seconds
 
     // We need to set the deadline on the frame. Since the generated client
     // doesn't support deadlines yet, we'll call add() which should succeed
     // because the server won't see an expired deadline.
-    let client = AdderClient::new(client_transport);
+    let client = AdderClient::new(client_session);
     let result = client.add(2, 3).await?;
 
     if result != 5 {
@@ -1681,8 +1701,13 @@ async fn run_macro_server_streaming_inner<F: TransportFactory>() -> Result<(), T
         }
     });
 
+    // Create client session and spawn its demux loop
+    let client_session = Arc::new(RpcSession::new(client_transport));
+    let client_session_runner = client_session.clone();
+    let _session_handle = tokio::spawn(async move { client_session_runner.run().await });
+
     // Create client and make streaming call
-    let client = RangeServiceClient::new(client_transport);
+    let client = RangeServiceClient::new(client_session);
     let mut stream = client.range(5).await?;
 
     // Collect all items from the stream
@@ -1895,10 +1920,15 @@ async fn run_large_blob_echo_inner<F: TransportFactory>() -> Result<(), TestErro
         }
     });
 
+    // Create client session and spawn its demux loop
+    let client_session = Arc::new(RpcSession::new(client_transport));
+    let client_session_runner = client_session.clone();
+    let _session_handle = tokio::spawn(async move { client_session_runner.run().await });
+
     // Create a large blob (1KB)
     let blob: Vec<u8> = (0..1024).map(|i| (i % 256) as u8).collect();
 
-    let client = LargeBlobServiceClient::new(client_transport);
+    let client = LargeBlobServiceClient::new(client_session);
     let result = client.echo(blob.clone()).await?;
 
     if result != blob {
@@ -1948,12 +1978,17 @@ async fn run_large_blob_transform_inner<F: TransportFactory>() -> Result<(), Tes
         }
     });
 
+    // Create client session and spawn its demux loop
+    let client_session = Arc::new(RpcSession::new(client_transport));
+    let client_session_runner = client_session.clone();
+    let _session_handle = tokio::spawn(async move { client_session_runner.run().await });
+
     // Create blob and expected result
     let blob: Vec<u8> = (0..2048).map(|i| (i % 256) as u8).collect();
     let pattern: u8 = 0xAA;
     let expected: Vec<u8> = blob.iter().map(|&b| b ^ pattern).collect();
 
-    let client = LargeBlobServiceClient::new(client_transport);
+    let client = LargeBlobServiceClient::new(client_session);
     let result = client.xor_transform(blob, pattern).await?;
 
     if result != expected {
@@ -1986,6 +2021,11 @@ async fn run_large_blob_checksum_inner<F: TransportFactory>() -> Result<(), Test
 
     let server = LargeBlobServiceServer::new(LargeBlobServiceImpl);
 
+    // Create client session and spawn its demux loop
+    let client_session = Arc::new(RpcSession::new(client_transport));
+    let client_session_runner = client_session.clone();
+    let _session_handle = tokio::spawn(async move { client_session_runner.run().await });
+
     // Test multiple sizes
     let sizes = [100, 1000, 4000]; // Various sizes around and above inline threshold
 
@@ -2010,7 +2050,7 @@ async fn run_large_blob_checksum_inner<F: TransportFactory>() -> Result<(), Test
         let expected_len = blob.len() as u32;
         let expected_sum = blob.iter().fold(0u32, |acc, &b| acc.wrapping_add(b as u32));
 
-        let client = LargeBlobServiceClient::new(client_transport.clone());
+        let client = LargeBlobServiceClient::new(client_session.clone());
         let (len, sum) = client.checksum(blob).await?;
 
         if len != expected_len {

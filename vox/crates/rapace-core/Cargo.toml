@@ -11,6 +11,8 @@ bitflags.workspace = true
 facet.workspace = true
 facet-core.workspace = true
 futures.workspace = true
+parking_lot.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 proptest = "1"

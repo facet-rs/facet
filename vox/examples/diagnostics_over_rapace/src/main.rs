@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use rapace_core::Transport;
+use rapace_core::{RpcSession, Transport};
 use rapace_transport_mem::InProcTransport;
 use tokio_stream::StreamExt;
 
@@ -27,8 +27,11 @@ async fn main() {
     let _plugin_handle = tokio::spawn(server.serve(plugin_transport.clone()));
 
     // ========== HOST SIDE ==========
-    // Create client using macro-generated DiagnosticsClient
-    let client = DiagnosticsClient::new(host_transport.clone());
+    // Create RpcSession and client
+    let session = Arc::new(RpcSession::new(host_transport.clone()));
+    let session_clone = session.clone();
+    tokio::spawn(async move { session_clone.run().await });
+    let client = DiagnosticsClient::new(session);
 
     // ========== ANALYZE A SOURCE FILE ==========
     let source = r#"
@@ -108,7 +111,10 @@ mod tests {
     use tokio::io::{ReadHalf, WriteHalf};
     use tokio::net::{TcpListener, TcpStream};
 
-    /// Helper to run diagnostics scenario with any transport
+    /// Helper to run diagnostics scenario with any transport.
+    ///
+    /// NOTE: Streaming over RpcSession is not yet implemented. This test
+    /// will fail with Unimplemented error until streaming is added.
     async fn run_scenario<T: Transport + Send + Sync + 'static>(
         host_transport: Arc<T>,
         plugin_transport: Arc<T>,
@@ -118,8 +124,12 @@ mod tests {
         let server = DiagnosticsServer::new(DiagnosticsImpl);
         let plugin_handle = tokio::spawn(server.serve(plugin_transport.clone()));
 
-        // Host side - use DiagnosticsClient
-        let client = DiagnosticsClient::new(host_transport.clone());
+        // Host side - create RpcSession and DiagnosticsClient
+        let session = Arc::new(RpcSession::new(host_transport.clone()));
+        let session_clone = session.clone();
+        tokio::spawn(async move { session_clone.run().await });
+        let client = DiagnosticsClient::new(session);
+
         let mut stream = client
             .analyze("test.rs".to_string(), source.as_bytes().to_vec())
             .await
@@ -137,7 +147,6 @@ mod tests {
         // Cleanup
         tokio::time::sleep(Duration::from_millis(50)).await;
         let _ = host_transport.close().await;
-        let _ = plugin_transport.close().await;
         plugin_handle.abort();
 
         diagnostics

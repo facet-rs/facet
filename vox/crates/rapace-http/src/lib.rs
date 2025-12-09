@@ -52,11 +52,6 @@
 //! }
 //! ```
 
-use std::sync::Arc;
-
-use rapace_core::{RpcError, Transport};
-use rapace_testkit::RpcSession;
-
 // Required by the macro
 #[allow(unused)]
 use rapace_registry;
@@ -203,45 +198,4 @@ pub trait HttpService {
     /// The implementation can use any HTTP framework internally
     /// (e.g., axum Router) to process the request.
     async fn handle(&self, req: crate::HttpRequest) -> crate::HttpResponse;
-}
-
-
-/// Helper for calling HttpService from host side via RpcSession.
-///
-/// This wraps the low-level RPC calls with proper encoding/decoding.
-pub struct HttpServiceRpcClient<T: Transport + Send + Sync + 'static> {
-    session: Arc<RpcSession<T>>,
-}
-
-impl<T: Transport + Send + Sync + 'static> HttpServiceRpcClient<T> {
-    /// Create a new client wrapping an RpcSession.
-    pub fn new(session: Arc<RpcSession<T>>) -> Self {
-        Self { session }
-    }
-
-    /// Send an HTTP request and receive the response.
-    pub async fn handle(&self, req: HttpRequest) -> Result<HttpResponse, RpcError> {
-        let channel_id = self.session.next_channel_id();
-        let payload = facet_postcard::to_vec(&req).map_err(|e| RpcError::Status {
-            code: rapace_core::ErrorCode::Internal,
-            message: format!("encode error: {:?}", e),
-        })?;
-
-        // method_id 1 = handle (HttpService's first method)
-        let response = self.session.call(channel_id, 1, payload).await?;
-
-        // Check for error
-        if response.flags.contains(rapace_core::FrameFlags::ERROR) {
-            return Err(rapace_testkit::parse_error_payload(&response.payload));
-        }
-
-        // Decode response
-        let result: HttpResponse =
-            facet_postcard::from_bytes(&response.payload).map_err(|e| RpcError::Status {
-                code: rapace_core::ErrorCode::Internal,
-                message: format!("decode error: {:?}", e),
-            })?;
-
-        Ok(result)
-    }
 }

@@ -4,10 +4,6 @@
 //! After calling `open()`, both sides use the tunnel APIs on `RpcSession` to
 //! send and receive chunks on the returned channel.
 
-use std::sync::Arc;
-
-use rapace_core::{RpcError, Transport};
-use rapace_testkit::RpcSession;
 
 // Required by the macro
 #[allow(unused)]
@@ -42,55 +38,3 @@ pub trait TcpTunnel {
     async fn open(&self) -> crate::protocol::TunnelHandle;
 }
 
-/// RpcSession-based client for TcpTunnel service.
-///
-/// This wraps an RpcSession and provides typed access to TcpTunnel methods.
-/// Use this when you need access to the session for tunnel APIs.
-pub struct TcpTunnelRpcClient<T: Transport + Send + Sync + 'static> {
-    session: Arc<RpcSession<T>>,
-}
-
-impl<T: Transport + Send + Sync + 'static> TcpTunnelRpcClient<T> {
-    /// Create a new client wrapping an RpcSession.
-    pub fn new(session: Arc<RpcSession<T>>) -> Self {
-        Self { session }
-    }
-
-    /// Get a reference to the underlying session.
-    ///
-    /// Use this to access tunnel APIs like `register_tunnel()` and `send_chunk()`.
-    pub fn session(&self) -> &Arc<RpcSession<T>> {
-        &self.session
-    }
-
-    /// Open a new bidirectional tunnel.
-    ///
-    /// Returns a handle containing the channel_id. After this returns,
-    /// use `session().register_tunnel(channel_id)` to start receiving chunks.
-    pub async fn open(&self) -> Result<TunnelHandle, RpcError> {
-        let channel_id = self.session.next_channel_id();
-
-        // Encode empty args (open takes no args)
-        let payload = facet_postcard::to_vec(&()).map_err(|e| RpcError::Status {
-            code: rapace_core::ErrorCode::Internal,
-            message: format!("encode error: {:?}", e),
-        })?;
-
-        // method_id 1 = open (TcpTunnel's first method)
-        let response = self.session.call(channel_id, 1, payload).await?;
-
-        // Check for error
-        if response.flags.contains(rapace_core::FrameFlags::ERROR) {
-            return Err(rapace_testkit::parse_error_payload(&response.payload));
-        }
-
-        // Decode response
-        let result: TunnelHandle =
-            facet_postcard::from_bytes(&response.payload).map_err(|e| RpcError::Status {
-                code: rapace_core::ErrorCode::Internal,
-                message: format!("decode error: {:?}", e),
-            })?;
-
-        Ok(result)
-    }
-}

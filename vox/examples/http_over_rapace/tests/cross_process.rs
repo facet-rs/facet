@@ -16,7 +16,7 @@ use rapace_transport_stream::StreamTransport;
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::TcpListener;
 
-use rapace_http_over_rapace::HttpServiceRpcClient;
+use rapace_http_over_rapace::HttpServiceClient;
 
 /// Find an available port for testing.
 async fn find_available_port() -> u16 {
@@ -52,7 +52,7 @@ async fn run_host_scenario<T: Transport + Send + Sync + 'static>(
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Create HTTP client
-    let client = HttpServiceRpcClient::new(session.clone());
+    let client = HttpServiceClient::new(session.clone());
 
     // Test multiple HTTP endpoints
     let mut results = Vec::new();

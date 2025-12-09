@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use rapace_core::{ErrorCode, Frame, FrameFlags, MsgDescHot, RpcError, Transport};
 
-use crate::rpc_session::RpcSession;
+use crate::RpcSession;
 use crate::{TestError, TransportFactory};
 
 /// Scenarios for bidirectional RPC testing.

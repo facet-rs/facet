@@ -35,7 +35,7 @@ pub mod host;
 pub mod metrics;
 
 // Re-export key types explicitly to avoid ambiguous glob conflicts
-pub use protocol::{TcpTunnel, TcpTunnelClient, TcpTunnelRpcClient, TcpTunnelServer, TunnelHandle};
+pub use protocol::{TcpTunnel, TcpTunnelClient, TcpTunnelServer, TunnelHandle};
 pub use plugin::{
     create_tunnel_dispatcher, create_demo_router, run_http_server,
     TcpTunnelImpl, INTERNAL_HTTP_PORT,

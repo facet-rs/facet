@@ -40,7 +40,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use rapace_core::{Frame, FrameFlags, RpcError, Transport};
+use rapace_core::{Frame, RpcError, Transport};
 use rapace_testkit::RpcSession;
 use tracing::span::{Attributes, Record};
 use tracing::{Event, Id, Subscriber};
@@ -479,126 +479,5 @@ pub fn create_tracing_sink_dispatcher(
     }
 }
 
-// ============================================================================
-// Helper: TracingSinkRpcClient for manual RPC calls
-// ============================================================================
-
-/// Helper for calling TracingSink from plugin side via RpcSession.
-pub struct TracingSinkRpcClient<T: Transport + Send + Sync + 'static> {
-    session: Arc<RpcSession<T>>,
-}
-
-impl<T: Transport + Send + Sync + 'static> TracingSinkRpcClient<T> {
-    /// Create a new client wrapping an RpcSession.
-    pub fn new(session: Arc<RpcSession<T>>) -> Self {
-        Self { session }
-    }
-
-    /// Call new_span and get back the host's span ID.
-    pub async fn new_span(&self, span: SpanMeta) -> Result<u64, RpcError> {
-        let channel_id = self.session.next_channel_id();
-        let payload = facet_postcard::to_vec(&span).map_err(|e| RpcError::Status {
-            code: rapace_core::ErrorCode::Internal,
-            message: format!("encode error: {:?}", e),
-        })?;
-
-        let response = self.session.call(channel_id, 1, payload).await?;
-
-        if response.flags.contains(FrameFlags::ERROR) {
-            return Err(rapace_testkit::parse_error_payload(&response.payload));
-        }
-
-        let result: u64 =
-            facet_postcard::from_bytes(&response.payload).map_err(|e| RpcError::Status {
-                code: rapace_core::ErrorCode::Internal,
-                message: format!("decode error: {:?}", e),
-            })?;
-
-        Ok(result)
-    }
-
-    /// Call record.
-    pub async fn record(&self, span_id: u64, fields: Vec<Field>) -> Result<(), RpcError> {
-        let channel_id = self.session.next_channel_id();
-        let payload = facet_postcard::to_vec(&(span_id, fields)).map_err(|e| RpcError::Status {
-            code: rapace_core::ErrorCode::Internal,
-            message: format!("encode error: {:?}", e),
-        })?;
-
-        let response = self.session.call(channel_id, 2, payload).await?;
-
-        if response.flags.contains(FrameFlags::ERROR) {
-            return Err(rapace_testkit::parse_error_payload(&response.payload));
-        }
-
-        Ok(())
-    }
-
-    /// Call event.
-    pub async fn event(&self, event: EventMeta) -> Result<(), RpcError> {
-        let channel_id = self.session.next_channel_id();
-        let payload = facet_postcard::to_vec(&event).map_err(|e| RpcError::Status {
-            code: rapace_core::ErrorCode::Internal,
-            message: format!("encode error: {:?}", e),
-        })?;
-
-        let response = self.session.call(channel_id, 3, payload).await?;
-
-        if response.flags.contains(FrameFlags::ERROR) {
-            return Err(rapace_testkit::parse_error_payload(&response.payload));
-        }
-
-        Ok(())
-    }
-
-    /// Call enter.
-    pub async fn enter(&self, span_id: u64) -> Result<(), RpcError> {
-        let channel_id = self.session.next_channel_id();
-        let payload = facet_postcard::to_vec(&span_id).map_err(|e| RpcError::Status {
-            code: rapace_core::ErrorCode::Internal,
-            message: format!("encode error: {:?}", e),
-        })?;
-
-        let response = self.session.call(channel_id, 4, payload).await?;
-
-        if response.flags.contains(FrameFlags::ERROR) {
-            return Err(rapace_testkit::parse_error_payload(&response.payload));
-        }
-
-        Ok(())
-    }
-
-    /// Call exit.
-    pub async fn exit(&self, span_id: u64) -> Result<(), RpcError> {
-        let channel_id = self.session.next_channel_id();
-        let payload = facet_postcard::to_vec(&span_id).map_err(|e| RpcError::Status {
-            code: rapace_core::ErrorCode::Internal,
-            message: format!("encode error: {:?}", e),
-        })?;
-
-        let response = self.session.call(channel_id, 5, payload).await?;
-
-        if response.flags.contains(FrameFlags::ERROR) {
-            return Err(rapace_testkit::parse_error_payload(&response.payload));
-        }
-
-        Ok(())
-    }
-
-    /// Call drop_span.
-    pub async fn drop_span(&self, span_id: u64) -> Result<(), RpcError> {
-        let channel_id = self.session.next_channel_id();
-        let payload = facet_postcard::to_vec(&span_id).map_err(|e| RpcError::Status {
-            code: rapace_core::ErrorCode::Internal,
-            message: format!("encode error: {:?}", e),
-        })?;
-
-        let response = self.session.call(channel_id, 6, payload).await?;
-
-        if response.flags.contains(FrameFlags::ERROR) {
-            return Err(rapace_testkit::parse_error_payload(&response.payload));
-        }
-
-        Ok(())
-    }
-}
+// TracingSinkClient is generated by the rapace_macros::service attribute.
+// Use TracingSinkClient::new(session) to create a client.

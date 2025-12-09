@@ -21,7 +21,7 @@ use rapace_transport_mem::InProcTransport;
 use tokio::net::TcpListener;
 
 use rapace_http_over_rapace::{
-    AxumHttpService, HttpServiceRpcClient, convert_hyper_to_rapace, convert_rapace_to_hyper,
+    AxumHttpService, HttpServiceClient, convert_hyper_to_rapace, convert_rapace_to_hyper,
     create_http_service_dispatcher,
 };
 
@@ -57,7 +57,7 @@ async fn main() {
     let _host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
     // Create HTTP client for the plugin
-    let http_client = Arc::new(HttpServiceRpcClient::new(host_session.clone()));
+    let http_client = Arc::new(HttpServiceClient::new(host_session.clone()));
 
     // ========== TEST REQUESTS ==========
     println!("--- Testing via direct RPC calls ---\n");
@@ -225,7 +225,7 @@ mod tests {
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
         // Create client
-        let client = HttpServiceRpcClient::new(host_session.clone());
+        let client = HttpServiceClient::new(host_session.clone());
 
         // Test health endpoint
         let response = client.handle(HttpRequest::get("/health")).await.unwrap();
@@ -382,7 +382,7 @@ mod tests {
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
-        let client = HttpServiceRpcClient::new(host_session.clone());
+        let client = HttpServiceClient::new(host_session.clone());
         let response = client.handle(HttpRequest::get("/health")).await.unwrap();
 
         assert_eq!(response.status, 200);
@@ -410,7 +410,7 @@ mod tests {
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
-        let client = HttpServiceRpcClient::new(host_session.clone());
+        let client = HttpServiceClient::new(host_session.clone());
 
         // Test with different names
         for name in ["Alice", "Bob", "World", "RapaceUser"] {
@@ -447,7 +447,7 @@ mod tests {
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
-        let client = HttpServiceRpcClient::new(host_session.clone());
+        let client = HttpServiceClient::new(host_session.clone());
         let response = client.handle(HttpRequest::get("/json")).await.unwrap();
 
         assert_eq!(response.status, 200);
@@ -488,7 +488,7 @@ mod tests {
         let host_session_clone = host_session.clone();
         let host_handle = tokio::spawn(async move { host_session_clone.run().await });
 
-        let client = HttpServiceRpcClient::new(host_session.clone());
+        let client = HttpServiceClient::new(host_session.clone());
 
         // Test with various body sizes
         let test_bodies = [

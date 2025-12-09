@@ -42,7 +42,7 @@ use rapace_http::{HttpRequest, HttpResponse, HttpService, HttpServiceServer};
 use tower_service::Service;
 
 // Re-export for convenience
-pub use rapace_http::HttpServiceRpcClient;
+pub use rapace_http::HttpServiceClient;
 
 /// Axum-based implementation of HttpService.
 ///

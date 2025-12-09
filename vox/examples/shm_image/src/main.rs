@@ -325,8 +325,13 @@ async fn main() {
             }
         });
 
+        // Create client session and spawn its demux loop
+        let client_session = std::sync::Arc::new(rapace_core::RpcSession::new(transport_a.clone()));
+        let client_session_runner = client_session.clone();
+        tokio::spawn(async move { client_session_runner.run().await });
+
         // Create client
-        let client = ImageServiceClient::new(transport_a.clone());
+        let client = ImageServiceClient::new(client_session);
 
         // Create data in SHM
         let mut shm_request: AllocVec<u8, _> = AllocVec::new_in(alloc.clone());

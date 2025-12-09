@@ -13,7 +13,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::metrics::{GlobalTunnelMetrics, TunnelMetrics};
-use crate::protocol::TcpTunnelRpcClient;
+use crate::protocol::TcpTunnelClient;
 
 /// Default buffer size for reads (4KB chunks).
 pub const CHUNK_SIZE: usize = 4096;
@@ -22,13 +22,13 @@ pub const CHUNK_SIZE: usize = 4096;
 ///
 /// Manages the connection between browser and plugin through rapace tunnels.
 pub struct TunnelHost<T: Transport + Send + Sync + 'static> {
-    client: TcpTunnelRpcClient<T>,
+    client: TcpTunnelClient<T>,
     metrics: Arc<GlobalTunnelMetrics>,
 }
 
 impl<T: Transport + Send + Sync + 'static> TunnelHost<T> {
     pub fn new(session: Arc<RpcSession<T>>) -> Self {
-        let client = TcpTunnelRpcClient::new(session);
+        let client = TcpTunnelClient::new(session);
         Self {
             client,
             metrics: Arc::new(GlobalTunnelMetrics::new()),
@@ -36,7 +36,7 @@ impl<T: Transport + Send + Sync + 'static> TunnelHost<T> {
     }
 
     pub fn with_metrics(session: Arc<RpcSession<T>>, metrics: Arc<GlobalTunnelMetrics>) -> Self {
-        let client = TcpTunnelRpcClient::new(session);
+        let client = TcpTunnelClient::new(session);
         Self {
             client,
             metrics,
