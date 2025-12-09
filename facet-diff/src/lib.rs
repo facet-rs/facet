@@ -9,9 +9,10 @@ mod tree;
 
 pub use diff::Diff;
 pub use diff::FacetDiff;
-pub use tree::{
-    EditOp, Matching, NodeId, NodeKind, Path, PathSegment, Tree, TreeBuilder, tree_diff,
-};
+pub use tree::{EditOp, FacetTree, NodeKind, NodeLabel, Path, PathSegment, build_tree, tree_diff};
+
+// Re-export cinereus types for advanced usage
+pub use cinereus::{Matching, MatchingConfig};
 
 #[cfg(test)]
 mod tests {
