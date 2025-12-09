@@ -38,6 +38,10 @@ merging to avoid CI failures.
 Use `just gen` to regenerate the `README.md` whenever documentation needs to be
 updated — that's normally part of the precommit hook.
 
+Use `just showcases-gen` to regenerate the showcase documentation in
+`docs/content/guide/showcases/`. This runs the examples in the `facet-*` crates
+and captures their output. This is also part of the precommit hook.
+
 ## Precommit/prepush hook
 
 Sometimes the hook just won't pass, and in that case you can just pass

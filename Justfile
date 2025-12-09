@@ -13,7 +13,7 @@ default: list
 list:
     just --list
 
-precommit: gen
+precommit: gen showcases-gen
 
 gen *args:
     cargo install --git https://github.com/facet-rs/facet-dev
@@ -121,6 +121,22 @@ miri-ci *args:
 
 absolve:
     ./facet-dev/absolve.sh
+
+# Regenerate all showcase documentation files.
+showcases-gen:
+    #!/usr/bin/env -S bash -euo pipefail
+    for example_path in $(find . -path './facet-*/examples/*_showcase.rs'); do
+        crate_name=$(basename $(dirname $(dirname "$example_path")) | sed 's/^facet-//')
+        example_name=$(basename "$example_path" | sed 's/\.rs$//')
+        output_file="docs/content/guide/showcases/${example_name}.md"
+        echo "Generating showcase for ${crate_name}/${example_name} -> ${output_file}"
+        mkdir -p "$(dirname "$output_file")"
+        EXAMPLE_FEATURES=""
+        if [[ "${crate_name}" == "value" ]]; then
+            EXAMPLE_FEATURES="--features diagnostics"
+        fi
+        env FACET_SHOWCASE_OUTPUT=markdown cargo run ${EXAMPLE_FEATURES} --example "${example_name}" -p "facet-${crate_name}" > "${output_file}"
+    done
 
 ship:
     #!/usr/bin/env -S bash -euo pipefail
