@@ -140,7 +140,8 @@ jobs:
           # Generate lockfile with minimal versions
           cargo +nightly generate-lockfile -Z minimal-versions
           # Check with stable using minimal versions
-          cargo check --workspace --all-features --locked --keep-going
+          # Exclude xtask (private dev tool with ratatui beta that has minimal-version issues)
+          cargo check --workspace --all-features --locked --keep-going --exclude xtask
 
   docs:
     runs-on: depot-ubuntu-24.04-32

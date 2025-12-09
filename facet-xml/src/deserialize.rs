@@ -648,7 +648,7 @@ impl<'input> EventCollector<'input> {
                     (OwnedEvent::Empty { name, attributes }, len)
                 }
                 Event::Text(e) => {
-                    let content = e.unescape().map_err(|e| {
+                    let content = e.decode().map_err(|e| {
                         XmlError::new(XmlErrorKind::Parse(e.to_string())).with_source(self.input)
                     })?;
                     if content.trim().is_empty() {
@@ -676,8 +676,12 @@ impl<'input> EventCollector<'input> {
                     });
                     break;
                 }
-                Event::Comment(_) | Event::Decl(_) | Event::PI(_) | Event::DocType(_) => {
-                    // Skip comments, declarations, processing instructions, doctypes
+                Event::Comment(_)
+                | Event::Decl(_)
+                | Event::PI(_)
+                | Event::DocType(_)
+                | Event::GeneralRef(_) => {
+                    // Skip comments, declarations, processing instructions, doctypes, general references
                     buf.clear();
                     continue;
                 }
