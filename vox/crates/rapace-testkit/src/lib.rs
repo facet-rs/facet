@@ -43,7 +43,7 @@ mod session;
 pub use session::{ChannelLifecycle, ChannelState, Session, DEFAULT_INITIAL_CREDITS};
 
 mod rpc_session;
-pub use rpc_session::{parse_error_payload, ReceivedFrame, RpcSession};
+pub use rpc_session::{parse_error_payload, ReceivedFrame, RpcSession, TunnelChunk};
 
 pub mod bidirectional;
 pub use bidirectional::{run_bidirectional_scenario, BidirectionalScenario};

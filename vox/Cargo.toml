@@ -20,6 +20,7 @@ members = [
     "examples/diagnostics_over_rapace",
     "examples/template_engine",
     "examples/tracing_over_rapace",
+    "examples/http_tunnel",
     "xtask",
 ]
 exclude = ["fuzz"]
