@@ -87,18 +87,18 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                     .with_minimal_option_names(true);
 
                 // Check if both values are strings and visually confusable
-                if let (Some(from_str), Some(to_str)) = (from.as_str(), to.as_str()) {
-                    if are_visually_confusable(from_str, to_str) {
-                        // Show the strings with confusable explanation
-                        write!(
-                            f,
-                            "{} → {}\n{}",
-                            deleted(&printer.format_peek(*from)),
-                            inserted(&printer.format_peek(*to)),
-                            muted(&format_confusable_diff(from_str, to_str).unwrap_or_default())
-                        )?;
-                        return Ok(());
-                    }
+                if let (Some(from_str), Some(to_str)) = (from.as_str(), to.as_str())
+                    && are_visually_confusable(from_str, to_str)
+                {
+                    // Show the strings with confusable explanation
+                    write!(
+                        f,
+                        "{} → {}\n{}",
+                        deleted(&printer.format_peek(*from)),
+                        inserted(&printer.format_peek(*to)),
+                        muted(&format_confusable_diff(from_str, to_str).unwrap_or_default())
+                    )?;
+                    return Ok(());
                 }
 
                 // Show value change inline: old → new

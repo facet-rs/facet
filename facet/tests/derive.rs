@@ -805,3 +805,91 @@ fn generic_struct_with_custom_crate_path() {
     let shape = GenericCustomPath::<u32>::SHAPE;
     assert_eq!(format!("{shape}"), "GenericCustomPath<u32>");
 }
+
+#[test]
+fn metadata_field_attribute() {
+    // Test struct with metadata field
+    #[derive(Debug, Facet)]
+    struct Timestamped<T: Debug> {
+        value: T,
+        #[facet(metadata = timestamp)]
+        created_at: u64,
+    }
+
+    let shape = Timestamped::<i32>::SHAPE;
+    let Type::User(UserType::Struct(struct_type)) = shape.ty else {
+        panic!("Expected struct type");
+    };
+
+    // Find the created_at field and verify it has metadata = "timestamp"
+    let created_at_field = struct_type
+        .fields
+        .iter()
+        .find(|f| f.name == "created_at")
+        .expect("Should have created_at field");
+
+    assert!(
+        created_at_field.is_metadata(),
+        "created_at field should be marked as metadata"
+    );
+    assert_eq!(
+        created_at_field.metadata_kind(),
+        Some("timestamp"),
+        "created_at field should have metadata kind 'timestamp'"
+    );
+
+    // Verify the value field is NOT metadata
+    let value_field = struct_type
+        .fields
+        .iter()
+        .find(|f| f.name == "value")
+        .expect("Should have value field");
+
+    assert!(
+        !value_field.is_metadata(),
+        "value field should not be marked as metadata"
+    );
+}
+
+#[test]
+fn metadata_field_structural_hash() {
+    use core::hash::Hasher;
+    use facet_reflect::Peek;
+    use std::hash::DefaultHasher;
+
+    #[derive(Debug, Facet)]
+    struct WithTimestamp {
+        data: i32,
+        #[facet(metadata = timestamp)]
+        ts: u64,
+    }
+
+    // Two values with same data but different metadata
+    let a = WithTimestamp { data: 42, ts: 1000 };
+    let b = WithTimestamp { data: 42, ts: 9999 };
+
+    // They should have the same structural hash (metadata is ignored)
+    let mut hasher_a = DefaultHasher::new();
+    Peek::new(&a).structural_hash(&mut hasher_a);
+    let hash_a = hasher_a.finish();
+
+    let mut hasher_b = DefaultHasher::new();
+    Peek::new(&b).structural_hash(&mut hasher_b);
+    let hash_b = hasher_b.finish();
+
+    assert_eq!(
+        hash_a, hash_b,
+        "Values with same data but different metadata should have same structural hash"
+    );
+
+    // But different data should produce different hashes
+    let c = WithTimestamp { data: 99, ts: 1000 };
+    let mut hasher_c = DefaultHasher::new();
+    Peek::new(&c).structural_hash(&mut hasher_c);
+    let hash_c = hasher_c.finish();
+
+    assert_ne!(
+        hash_a, hash_c,
+        "Values with different data should have different structural hash"
+    );
+}

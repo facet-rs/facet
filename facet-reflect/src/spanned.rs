@@ -195,6 +195,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Spanned<T> {
                             facet_core::shape_of::<Span>,
                             mem::offset_of!(Spanned<T>, span),
                         )
+                        // Mark span as metadata - excluded from structural hashing/equality
+                        // Deserializers that support span metadata will populate this field
+                        .metadata("span")
                         .build(),
                     ]
                 },
@@ -220,10 +223,39 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Spanned<T> {
     };
 }
 
-/// Check if a shape represents a `Spanned<T>` type.
+/// Check if a shape represents a type with span metadata (like `Spanned<T>`).
 ///
-/// This function checks the type identifier rather than duck-typing
-/// based on field names, ensuring correct identification.
+/// Returns `true` if the shape is a struct with:
+/// - At least one non-metadata field (the actual value)
+/// - A field with `#[facet(metadata = span)]` for storing source location
+///
+/// This allows any struct to be "spanned" by adding the metadata attribute,
+/// not just the built-in `Spanned<T>` wrapper.
 pub fn is_spanned_shape(shape: &Shape) -> bool {
-    shape.type_identifier == "Spanned"
+    use facet_core::{Type, UserType};
+
+    if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
+        let has_span_metadata = struct_def
+            .fields
+            .iter()
+            .any(|f| f.metadata_kind() == Some("span"));
+        let has_value_field = struct_def.fields.iter().any(|f| !f.is_metadata());
+        return has_span_metadata && has_value_field;
+    }
+    false
+}
+
+/// Find the span metadata field in a struct shape.
+///
+/// Returns the field with `#[facet(metadata = span)]` if present.
+pub fn find_span_metadata_field(shape: &Shape) -> Option<&'static facet_core::Field> {
+    use facet_core::{Type, UserType};
+
+    if let Type::User(UserType::Struct(struct_def)) = &shape.ty {
+        return struct_def
+            .fields
+            .iter()
+            .find(|f| f.metadata_kind() == Some("span"));
+    }
+    None
 }

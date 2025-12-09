@@ -12,7 +12,7 @@ use facet_core::{
     Characteristic, Def, Facet, KnownPointer, NumericType, PrimitiveType, ScalarType, SequenceType,
     Shape, ShapeLayout, StructKind, Type, UserType,
 };
-use facet_reflect::{Partial, ReflectError};
+use facet_reflect::{Partial, ReflectError, is_spanned_shape};
 use facet_solver::{PathSegment, Schema, Solver, VariantsByFormat, specificity_score};
 
 use crate::RawJson;
@@ -370,26 +370,6 @@ impl From<ReflectError> for JsonError {
 pub type Result<T> = core::result::Result<T, JsonError>;
 
 // ============================================================================
-// Helper Functions
-// ============================================================================
-
-/// Check if a shape represents `Spanned<T>`.
-///
-/// Returns `true` if the shape is a struct with exactly two fields:
-/// - `value` (the inner value)
-/// - `span` (for storing source location)
-fn is_spanned_shape(shape: &Shape) -> bool {
-    if let Type::User(UserType::Struct(struct_def)) = &shape.ty
-        && struct_def.fields.len() == 2
-    {
-        let has_value = struct_def.fields.iter().any(|f| f.name == "value");
-        let has_span = struct_def.fields.iter().any(|f| f.name == "span");
-        return has_value && has_span;
-    }
-    false
-}
-
-// ============================================================================
 // Deserializer
 // ============================================================================
 
@@ -725,24 +705,62 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
         }
     }
 
-    /// Deserialize into a `Spanned<T>` wrapper.
+    /// Deserialize into a type with span metadata (like `Spanned<T>`).
+    ///
+    /// This handles structs that have:
+    /// - One or more non-metadata fields (the actual values to deserialize)
+    /// - A field with `#[facet(metadata = span)]` to store source location
     fn deserialize_spanned(
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>> {
         log::trace!("deserialize_spanned");
 
+        let shape = wip.shape();
+
+        // Find the span metadata field and non-metadata fields
+        let Type::User(UserType::Struct(struct_def)) = &shape.ty else {
+            return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                message: format!(
+                    "expected struct with span metadata, found {}",
+                    shape.type_identifier
+                ),
+            }));
+        };
+
+        let span_field = struct_def
+            .fields
+            .iter()
+            .find(|f| f.metadata_kind() == Some("span"))
+            .ok_or_else(|| {
+                JsonError::without_span(JsonErrorKind::InvalidValue {
+                    message: format!(
+                        "expected struct with span metadata field, found {}",
+                        shape.type_identifier
+                    ),
+                })
+            })?;
+
+        let value_fields: Vec<_> = struct_def
+            .fields
+            .iter()
+            .filter(|f| !f.is_metadata())
+            .collect();
+
         // Peek to get the span of the value we're about to parse
         let value_span = self.peek()?.span;
 
-        // Deserialize the inner value into the `value` field
-        wip = wip.begin_field("value")?;
-        wip = self.deserialize_into(wip)?;
-        wip = wip.end()?;
+        // Deserialize all non-metadata fields
+        // For the common case (Spanned<T> with a single "value" field), this is just one field
+        for field in value_fields {
+            wip = wip.begin_field(field.name)?;
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end()?;
+        }
 
-        // Set the span field
-        wip = wip.begin_field("span")?;
-        // Span struct has offset and len fields
+        // Set the span metadata field
+        // The span field should be of type Span with offset and len
+        wip = wip.begin_field(span_field.name)?;
         wip = wip.set_field("offset", value_span.offset)?;
         wip = wip.set_field("len", value_span.len)?;
         wip = wip.end()?;
