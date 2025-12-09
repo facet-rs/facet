@@ -1,12 +1,15 @@
 ---
 source: facet-args/tests/err.rs
+assertion_line: 170
 expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
 ---
-args::reflect_error
+args::unexpected_positional
 
   × Could not parse CLI arguments
    ╭────
  1 │ --maybe value1 value2 
-   ·         ───┬──
-   ·            ╰── `String` cannot be parsed from a string value
+   ·                ───┬──
+   ·                   ╰── unexpected positional argument
    ╰────
+  help: available options:
+              --maybe

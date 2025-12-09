@@ -146,3 +146,21 @@ fn test_bool_str_before() {
     assert!(args.foo);
     assert_eq!(args.hello, "world".to_string());
 }
+
+#[test]
+fn test_option_string_positional() {
+    // Repro case for Option<String> positional argument
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(args::positional, default)]
+        path: Option<String>,
+    }
+
+    // Test with a value
+    let args: Args = facet_args::from_slice(&["."]).unwrap();
+    assert_eq!(args.path, Some(".".to_string()));
+
+    // Test without a value (should default to None)
+    let args: Args = facet_args::from_slice(&[]).unwrap();
+    assert_eq!(args.path, None);
+}

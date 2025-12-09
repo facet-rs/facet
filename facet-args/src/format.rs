@@ -147,6 +147,12 @@ impl<'input> Context<'input> {
                 p = p.parse_from_str(value)?;
                 p.end()?
             }
+            Def::Option(_) => {
+                // if it's an Option<T>, wrap the value in Some
+                let mut p = p.begin_some()?;
+                p = p.parse_from_str(value)?;
+                p.end()?
+            }
             _ => {
                 // TODO: this surely won't be enough eventually
                 p.parse_from_str(value)?
