@@ -33,15 +33,15 @@ pub fn from_slice_with_config<'input, T: Facet<'static>>(
     help_config: &HelpConfig,
 ) -> Result<T, ArgsErrorWithInput> {
     // Check for help flag as the only argument (or first argument for simplicity)
-    if let Some(first_arg) = args.first() {
-        if is_help_flag(first_arg) {
-            let help_text = generate_help_for_shape(T::SHAPE, help_config);
-            let span = Span::new(0, first_arg.len());
-            return Err(ArgsErrorWithInput {
-                inner: ArgsError::new(ArgsErrorKind::HelpRequested { help_text }, span),
-                flattened_args: args.join(" "),
-            });
-        }
+    if let Some(first_arg) = args.first()
+        && is_help_flag(first_arg)
+    {
+        let help_text = generate_help_for_shape(T::SHAPE, help_config);
+        let span = Span::new(0, first_arg.len());
+        return Err(ArgsErrorWithInput {
+            inner: ArgsError::new(ArgsErrorKind::HelpRequested { help_text }, span),
+            flattened_args: args.join(" "),
+        });
     }
 
     let mut cx = Context::new(args, T::SHAPE);
