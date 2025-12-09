@@ -248,16 +248,13 @@ impl Differ {
                     writeln!(out, "  \x1b[32m+ {right}\x1b[0m").unwrap();
 
                     // Check if the strings are confusable (look identical but differ)
-                    // We check if they normalize to the same "skeleton" form
+                    // Use the confusables crate for detection, then show character-level diff
                     let left_normalized = left.replace_confusable();
                     let right_normalized = right.replace_confusable();
                     if left_normalized == right_normalized {
-                        writeln!(
-                            out,
-                            "  \x1b[33m(strings contain confusable characters - both normalize to {:?})\x1b[0m",
-                            left_normalized
-                        )
-                        .unwrap();
+                        if let Some(explanation) = explain_confusable_differences(&left, &right) {
+                            writeln!(out, "  \x1b[33m{}\x1b[0m", explanation).unwrap();
+                        }
                     }
                 }
                 DiffLine::OnlyLeft { path, value } => {
@@ -1100,4 +1097,98 @@ impl Differ {
             CheckResult::Same
         }
     }
+}
+
+/// Format a character for display with its Unicode codepoint and visual representation.
+fn format_char_with_codepoint(c: char) -> String {
+    // For printable ASCII characters (except space), show the character directly
+    if c.is_ascii_graphic() {
+        format!("'{}' (U+{:04X})", c, c as u32)
+    } else {
+        // For everything else, show escaped form with codepoint
+        format!("'\\u{{{:04X}}}' (U+{:04X})", c as u32, c as u32)
+    }
+}
+
+/// Explain the confusable differences between two strings that look identical.
+/// Uses the `confusables` crate for detection, then shows character-level diff.
+fn explain_confusable_differences(left: &str, right: &str) -> Option<String> {
+    // Strings must be different but normalize to the same skeleton
+    if left == right {
+        return None;
+    }
+
+    // Find character-level differences
+    let left_chars: Vec<char> = left.chars().collect();
+    let right_chars: Vec<char> = right.chars().collect();
+
+    use std::fmt::Write;
+    let mut out = String::new();
+
+    // Find all positions where characters differ
+    let mut diffs: Vec<(usize, char, char)> = Vec::new();
+
+    let max_len = left_chars.len().max(right_chars.len());
+    for i in 0..max_len {
+        let lc = left_chars.get(i);
+        let rc = right_chars.get(i);
+
+        match (lc, rc) {
+            (Some(&l), Some(&r)) if l != r => {
+                diffs.push((i, l, r));
+            }
+            (Some(&l), None) => {
+                // Character only in left (will show as deletion)
+                diffs.push((i, l, '\0'));
+            }
+            (None, Some(&r)) => {
+                // Character only in right (will show as insertion)
+                diffs.push((i, '\0', r));
+            }
+            _ => {}
+        }
+    }
+
+    if diffs.is_empty() {
+        return None;
+    }
+
+    writeln!(
+        out,
+        "(strings are visually confusable but differ in {} position{}):",
+        diffs.len(),
+        if diffs.len() == 1 { "" } else { "s" }
+    )
+    .ok()?;
+
+    for (pos, lc, rc) in &diffs {
+        if *lc == '\0' {
+            writeln!(
+                out,
+                "  [{}]: (missing) vs {}",
+                pos,
+                format_char_with_codepoint(*rc)
+            )
+            .ok()?;
+        } else if *rc == '\0' {
+            writeln!(
+                out,
+                "  [{}]: {} vs (missing)",
+                pos,
+                format_char_with_codepoint(*lc)
+            )
+            .ok()?;
+        } else {
+            writeln!(
+                out,
+                "  [{}]: {} vs {}",
+                pos,
+                format_char_with_codepoint(*lc),
+                format_char_with_codepoint(*rc)
+            )
+            .ok()?;
+        }
+    }
+
+    Some(out.trim_end().to_string())
 }
