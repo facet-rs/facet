@@ -79,6 +79,11 @@
 // Re-export the service macro
 pub use rapace_macros::service;
 
+// Re-export rapace_core for macro-generated code
+// The macro generates `::rapace_core::` paths, so users need this
+#[doc(hidden)]
+pub extern crate rapace_core;
+
 // Re-export core types
 pub use rapace_core::{
     // Error types
