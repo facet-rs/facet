@@ -251,10 +251,10 @@ impl Differ {
                     // Use the confusables crate for detection, then show character-level diff
                     let left_normalized = left.replace_confusable();
                     let right_normalized = right.replace_confusable();
-                    if left_normalized == right_normalized {
-                        if let Some(explanation) = explain_confusable_differences(&left, &right) {
-                            writeln!(out, "  \x1b[33m{}\x1b[0m", explanation).unwrap();
-                        }
+                    if left_normalized == right_normalized
+                        && let Some(explanation) = explain_confusable_differences(&left, &right)
+                    {
+                        writeln!(out, "  \x1b[33m{}\x1b[0m", explanation).unwrap();
                     }
                 }
                 DiffLine::OnlyLeft { path, value } => {

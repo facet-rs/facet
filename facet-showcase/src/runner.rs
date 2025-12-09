@@ -234,12 +234,12 @@ impl ShowcaseRunner {
                     println!("<footer class=\"showcase-provenance\">");
                     println!("<p>This showcase was auto-generated from source code.</p>");
                     println!("<dl>");
-                    if let Some(url) = self.provenance.github_source_url() {
-                        if let Some(ref file) = self.provenance.source_file {
-                            println!(
-                                "<dt>Source</dt><dd><a href=\"{url}\"><code>{file}</code></a></dd>"
-                            );
-                        }
+                    if let Some(url) = self.provenance.github_source_url()
+                        && let Some(ref file) = self.provenance.source_file
+                    {
+                        println!(
+                            "<dt>Source</dt><dd><a href=\"{url}\"><code>{file}</code></a></dd>"
+                        );
                     }
                     if let Some(ref commit) = self.provenance.commit_short {
                         if let Some(ref repo) = self.provenance.github_repo {
