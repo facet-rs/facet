@@ -55,6 +55,18 @@ struct SvgGroup {
 // Test scenarios
 // ============================================================================
 
+fn check_hash<T: Facet<'static>>(name: &str) {
+    let shape = T::SHAPE;
+    let has_hash = shape.is_hash();
+    let status = if has_hash { "YES" } else { "NO" };
+    let colored = if has_hash {
+        status.green().to_string()
+    } else {
+        status.red().to_string()
+    };
+    println!("  {:20} Hash: {}", name, colored);
+}
+
 fn main() {
     println!("{}", "═".repeat(80).dimmed());
     println!(
@@ -64,6 +76,31 @@ fn main() {
     );
     println!("{}", "═".repeat(80).dimmed());
     println!();
+
+    // First, show which types have Hash support
+    println!("{}", "HASH SUPPORT CHECK".bold().yellow());
+    println!(
+        "{}",
+        "Checking which SVG types have vtable.hash filled in:".dimmed()
+    );
+    println!();
+    check_hash::<String>("String");
+    check_hash::<i32>("i32");
+    check_hash::<bool>("bool");
+    println!("  {}", "---".dimmed());
+    check_hash::<Svg>("Svg");
+    check_hash::<SvgElement>("SvgElement");
+    check_hash::<SvgRect>("SvgRect");
+    check_hash::<SvgCircle>("SvgCircle");
+    check_hash::<SvgGroup>("SvgGroup");
+    check_hash::<Vec<SvgElement>>("Vec<SvgElement>");
+    println!();
+    println!(
+        "{}",
+        "Conclusion: Custom structs/enums don't have Hash - we need structural hashing!".yellow()
+    );
+    println!();
+
     println!(
         "{}",
         "This showcase demonstrates how facet-diff currently handles tree mutations.".dimmed()
