@@ -630,6 +630,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "h2"
+version = "0.4.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f3c0b69cfcb4e1b9f1bf2f53f95f766e4661169728ec61cd3fe5a0166f2d1386"
+dependencies = [
+ "atomic-waker",
+ "bytes",
+ "fnv",
+ "futures-core",
+ "futures-sink",
+ "http",
+ "indexmap",
+ "slab",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -702,6 +721,7 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-core",
+ "h2",
  "http",
  "http-body",
  "httparse",
@@ -1151,6 +1171,47 @@ dependencies = [
  "tokio-stream",
  "tokio-tungstenite",
  "tower-http",
+]
+
+[[package]]
+name = "rapace-http"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "facet-core",
+ "facet-postcard",
+ "rapace-core",
+ "rapace-macros",
+ "rapace-registry",
+ "rapace-testkit",
+]
+
+[[package]]
+name = "rapace-http-over-rapace"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bytes",
+ "facet",
+ "facet-core",
+ "facet-postcard",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rapace-core",
+ "rapace-http",
+ "rapace-macros",
+ "rapace-registry",
+ "rapace-testkit",
+ "rapace-transport-mem",
+ "rapace-transport-shm",
+ "rapace-transport-stream",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tower-service",
 ]
 
 [[package]]

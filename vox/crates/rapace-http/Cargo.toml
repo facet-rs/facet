@@ -1,0 +1,18 @@
+[package]
+name = "rapace-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "HTTP types and service trait for rapace RPC"
+
+[dependencies]
+rapace-core = { path = "../rapace-core" }
+rapace-macros = { path = "../rapace-macros" }
+rapace-registry = { path = "../rapace-registry" }
+rapace-testkit = { path = "../rapace-testkit" }
+
+# facet for serialization
+facet = { git = "https://github.com/facet-rs/facet" }
+facet-core = { git = "https://github.com/facet-rs/facet" }
+facet-postcard = { git = "https://github.com/facet-rs/facet" }

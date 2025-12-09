@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/rapace",
     "crates/rapace-core",
+    "crates/rapace-http",
     "crates/rapace-macros",
     "crates/rapace-registry",
     "crates/rapace-transport-mem",
@@ -13,6 +14,7 @@ members = [
     "crates/rapace-testkit",
     "examples/browser_ws_server",
     "examples/dashboard",
+    "examples/http_over_rapace",
     "examples/shm_image",
     "examples/template_engine",
     "xtask",
@@ -29,6 +31,7 @@ repository = "https://github.com/bearcove/rapace"
 # Internal crates
 rapace = { path = "crates/rapace" }
 rapace-core = { path = "crates/rapace-core" }
+rapace-http = { path = "crates/rapace-http" }
 rapace-macros = { path = "crates/rapace-macros" }
 rapace-registry = { path = "crates/rapace-registry" }
 rapace-transport-mem = { path = "crates/rapace-transport-mem" }
