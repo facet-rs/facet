@@ -182,6 +182,13 @@ impl<T: Transport + Send + Sync + 'static> Clone for TcpTunnelImpl<T> {
     }
 }
 
+/// Large response body - ~256KB of repeated text (same as baseline)
+fn large_response() -> String {
+    let pattern = "The quick brown fox jumps over the lazy dog. ";
+    let repeat_count = (256 * 1024) / pattern.len();
+    pattern.repeat(repeat_count)
+}
+
 /// Create a demo axum router with test routes.
 pub fn create_demo_router() -> axum::Router {
     use axum::{routing::get, Router};
@@ -190,6 +197,9 @@ pub fn create_demo_router() -> axum::Router {
         .route("/hello", get(hello_handler))
         .route("/health", get(health_handler))
         .route("/echo", axum::routing::post(echo_handler))
+        // Benchmark routes (same as baseline)
+        .route("/small", get(small_handler))
+        .route("/large", get(large_handler))
 }
 
 async fn hello_handler() -> &'static str {
@@ -202,6 +212,14 @@ async fn health_handler() -> &'static str {
 
 async fn echo_handler(body: bytes::Bytes) -> bytes::Bytes {
     body
+}
+
+async fn small_handler() -> &'static str {
+    "ok"
+}
+
+async fn large_handler() -> String {
+    large_response()
 }
 
 /// Run the internal HTTP server on the specified port.
