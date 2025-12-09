@@ -32,6 +32,16 @@ unsafe fn pathbuf_try_from(
     ))
 }
 
+/// Parse a PathBuf from a string
+///
+/// # Safety
+/// `target` must be valid for writes
+unsafe fn pathbuf_parse(s: &str, target: *mut std::path::PathBuf) -> Result<(), crate::ParseError> {
+    // PathBuf::from never fails - any string is a valid path
+    unsafe { target.write(std::path::PathBuf::from(s)) };
+    Ok(())
+}
+
 unsafe impl Facet<'_> for std::path::PathBuf {
     const SHAPE: &'static Shape = &const {
         const VTABLE: VTableDirect = vtable_direct!(std::path::PathBuf =>
@@ -40,6 +50,7 @@ unsafe impl Facet<'_> for std::path::PathBuf {
             PartialEq,
             PartialOrd,
             Ord,
+            [parse = pathbuf_parse],
             [try_from = pathbuf_try_from],
         );
 

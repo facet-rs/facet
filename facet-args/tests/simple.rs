@@ -222,10 +222,7 @@ fn test_pathbuf_default_value() {
     struct FileConfig {
         #[facet(args::named)]
         name: String,
-        // PathBuf from string literal - default value works via try_from
-        // Note: PathBuf doesn't implement FromStr, so we can't parse it from CLI args,
-        // but default values from string literals work via our try_from implementation
-        #[facet(default = "/tmp/default.log")]
+        #[facet(args::named, default = "/tmp/default.log")]
         log_path: PathBuf,
     }
 
@@ -233,4 +230,10 @@ fn test_pathbuf_default_value() {
     let config: FileConfig = facet_args::from_slice(&["--name", "myapp"]).unwrap();
     assert_eq!(config.name, "myapp");
     assert_eq!(config.log_path, PathBuf::from("/tmp/default.log"));
+
+    // Test that when log_path is provided, it overrides the default
+    let config: FileConfig =
+        facet_args::from_slice(&["--name", "myapp", "--log-path", "/var/log/app.log"]).unwrap();
+    assert_eq!(config.name, "myapp");
+    assert_eq!(config.log_path, PathBuf::from("/var/log/app.log"));
 }
