@@ -3,35 +3,25 @@
 //! # Vtable Trait Detection
 //!
 //! The vtable contains function pointers for various trait implementations (Debug, Clone,
-//! PartialEq, etc.). There are three ways these can be populated:
+//! PartialEq, etc.). There are two ways these can be populated:
 //!
-//! ## 1. Derive Detection (Fastest - No Specialization)
+//! ## 1. Explicit Declaration (No Specialization)
 //!
-//! When `#[derive(Debug, Clone, Facet)]` is used, the macro can see the other derives
-//! and knows those traits are implemented. It generates direct function pointers without
-//! any specialization overhead.
+//! Use `#[facet(traits(...))]` to declare which traits are implemented:
 //!
 //! ```ignore
-//! #[derive(Debug, Clone, Facet)]  // Debug and Clone detected from derives
+//! #[derive(Debug, Clone, Facet)]
+//! #[facet(traits(Debug, Clone))]  // Explicit declaration
 //! struct Foo { ... }
-//! ```
-//!
-//! ## 2. Explicit Declaration (No Specialization)
-//!
-//! For traits that are implemented manually (not via derive), use `#[facet(traits(...))]`:
-//!
-//! ```ignore
-//! #[derive(Facet)]
-//! #[facet(traits(Debug, PartialEq))]  // Explicit declaration
-//! struct Foo { ... }
-//!
-//! impl Debug for Foo { ... }  // Manual implementation
-//! impl PartialEq for Foo { ... }
 //! ```
 //!
 //! This generates compile-time assertions to verify the traits are actually implemented.
 //!
-//! ## 3. Auto-Detection (Uses Specialization)
+//! **Note:** Rust strips `#[derive(...)]` attributes before passing to derive macros,
+//! so the Facet macro cannot automatically detect derived traits. You must explicitly
+//! declare them via `#[facet(traits(...))]`.
+//!
+//! ## 2. Auto-Detection (Uses Specialization)
 //!
 //! For backward compatibility or when you don't want to list traits manually, use
 //! `#[facet(auto_traits)]`. This uses the `impls!` macro to detect traits at compile
@@ -39,28 +29,21 @@
 //!
 //! ```ignore
 //! #[derive(Debug, Facet)]
-//! #[facet(auto_traits)]  // Auto-detect all other traits
+//! #[facet(auto_traits)]  // Auto-detect all traits
 //! struct Foo { ... }
 //! ```
 //!
 //! **Note:** Auto-detection is slower to compile because it generates specialization
-//! code for each trait. Use derive detection or explicit declaration when possible.
+//! code for each trait. Use explicit declaration when possible.
 //!
 //! ## Layered Resolution
 //!
 //! For each vtable entry, the macro checks sources in order:
-//! 1. Is the trait in `#[derive(...)]`? → Use direct impl
-//! 2. Is the trait in `#[facet(traits(...))]`? → Use direct impl
-//! 3. Is `#[facet(auto_traits)]` present? → Use `impls!` detection
-//! 4. Otherwise → Set to `None`
+//! 1. Is the trait in `#[facet(traits(...))]`? → Use direct impl
+//! 2. Is `#[facet(auto_traits)]` present? → Use `impls!` detection
+//! 3. Otherwise → Set to `None`
 //!
 //! Note: `#[facet(traits(...))]` and `#[facet(auto_traits)]` are mutually exclusive.
-//! You can combine derives with either one:
-//! ```ignore
-//! #[derive(Debug, Clone, Facet)]  // Debug, Clone detected from derives
-//! #[facet(traits(Display))]       // Display declared explicitly (manual impl)
-//! struct Foo { ... }
-//! ```
 
 use quote::{format_ident, quote, quote_spanned};
 
@@ -81,14 +64,11 @@ pub(crate) struct TransparentInfo<'a> {
 /// Sources of trait information for vtable generation.
 ///
 /// The vtable generation uses a layered approach:
-/// 1. **Derives** - traits detected from `#[derive(...)]` next to `#[derive(Facet)]`
-/// 2. **Declared** - traits explicitly listed in `#[facet(traits(...))]`
-/// 3. **Implied** - traits implied by other attributes (e.g., `#[facet(default)]` implies Default)
-/// 4. **Auto** - if `#[facet(auto_traits)]` is present, use `impls!` for remaining traits
-/// 5. **None** - if none of the above apply, emit `None` for that trait
+/// 1. **Declared** - traits explicitly listed in `#[facet(traits(...))]`
+/// 2. **Implied** - traits implied by other attributes (e.g., `#[facet(default)]` implies Default)
+/// 3. **Auto** - if `#[facet(auto_traits)]` is present, use `impls!` for remaining traits
+/// 4. **None** - if none of the above apply, emit `None` for that trait
 pub(crate) struct TraitSources<'a> {
-    /// Traits detected from #[derive(...)] attributes
-    pub known_derives: &'a KnownDerives,
     /// Traits explicitly declared via #[facet(traits(...))]
     pub declared_traits: Option<&'a DeclaredTraits>,
     /// Whether to auto-detect remaining traits via specialization
@@ -101,16 +81,10 @@ impl<'a> TraitSources<'a> {
     /// Create trait sources from parsed attributes
     pub fn from_attrs(attrs: &'a PAttrs) -> Self {
         Self {
-            known_derives: &attrs.known_derives,
             declared_traits: attrs.declared_traits.as_ref(),
             auto_traits: attrs.auto_traits,
             facet_default: attrs.has_builtin("default"),
         }
-    }
-
-    /// Check if a trait is known from derives
-    fn has_derive(&self, check: impl FnOnce(&KnownDerives) -> bool) -> bool {
-        check(self.known_derives)
     }
 
     /// Check if a trait is explicitly declared
@@ -127,10 +101,9 @@ impl<'a> TraitSources<'a> {
 /// Generates the vtable for a type based on trait sources.
 ///
 /// Uses a layered approach for each trait:
-/// 1. If known from derives → direct impl (no specialization)
-/// 2. If explicitly declared → direct impl (no specialization)
-/// 3. If auto_traits enabled → use `impls!` macro for detection
-/// 4. Otherwise → None
+/// 1. If explicitly declared → direct impl (no specialization)
+/// 2. If auto_traits enabled → use `impls!` macro for detection
+/// 3. Otherwise → None
 ///
 /// When `auto_traits` is NOT enabled, generates `ValueVTableThinInstant` using
 /// helper functions like `debug_for::<Self>()`. This avoids closures that would
@@ -180,45 +153,43 @@ fn gen_vtable_direct(
     struct_type: &TokenStream,
     invariants_fn: Option<&TokenStream>,
 ) -> TokenStream {
-    // Display: no standard derive, only check declared
+    // Display: check declared
     let display_call = if sources.has_declared(|d| d.display) {
         quote! { .display(<Self as ::core::fmt::Display>::fmt) }
     } else {
         quote! {}
     };
 
-    // Debug: check derive, then declared
-    let debug_call = if sources.has_derive(|d| d.debug) || sources.has_declared(|d| d.debug) {
+    // Debug: check declared
+    let debug_call = if sources.has_declared(|d| d.debug) {
         quote! { .debug(<Self as ::core::fmt::Debug>::fmt) }
     } else {
         quote! {}
     };
 
-    // PartialEq: check derive, then declared
-    let partial_eq_call =
-        if sources.has_derive(|d| d.partial_eq) || sources.has_declared(|d| d.partial_eq) {
-            quote! { .partial_eq(<Self as ::core::cmp::PartialEq>::eq) }
-        } else {
-            quote! {}
-        };
+    // PartialEq: check declared
+    let partial_eq_call = if sources.has_declared(|d| d.partial_eq) {
+        quote! { .partial_eq(<Self as ::core::cmp::PartialEq>::eq) }
+    } else {
+        quote! {}
+    };
 
-    // PartialOrd: check derive, then declared
-    let partial_ord_call =
-        if sources.has_derive(|d| d.partial_ord) || sources.has_declared(|d| d.partial_ord) {
-            quote! { .partial_cmp(<Self as ::core::cmp::PartialOrd>::partial_cmp) }
-        } else {
-            quote! {}
-        };
+    // PartialOrd: check declared
+    let partial_ord_call = if sources.has_declared(|d| d.partial_ord) {
+        quote! { .partial_cmp(<Self as ::core::cmp::PartialOrd>::partial_cmp) }
+    } else {
+        quote! {}
+    };
 
-    // Ord: check derive, then declared
-    let ord_call = if sources.has_derive(|d| d.ord) || sources.has_declared(|d| d.ord) {
+    // Ord: check declared
+    let ord_call = if sources.has_declared(|d| d.ord) {
         quote! { .cmp(<Self as ::core::cmp::Ord>::cmp) }
     } else {
         quote! {}
     };
 
-    // Hash: check derive, then declared
-    let hash_call = if sources.has_derive(|d| d.hash) || sources.has_declared(|d| d.hash) {
+    // Hash: check declared
+    let hash_call = if sources.has_declared(|d| d.hash) {
         quote! { .hash(<Self as ::core::hash::Hash>::hash::<#facet_crate::HashProxy>) }
     } else {
         quote! {}
@@ -327,8 +298,8 @@ fn gen_vtable_indirect(
         quote! { display: ::core::option::Option::None, }
     };
 
-    // Debug: check derive, then declared, then auto
-    let debug_field = if sources.has_derive(|d| d.debug) || sources.has_declared(|d| d.debug) {
+    // Debug: check declared, then auto
+    let debug_field = if sources.has_declared(|d| d.debug) {
         quote! {
             debug: ::core::option::Option::Some({
                 unsafe fn __debug(data: #facet_crate::OxPtrConst, f: &mut ::core::fmt::Formatter<'_>) -> ::core::option::Option<::core::fmt::Result> {
@@ -356,10 +327,8 @@ fn gen_vtable_indirect(
         quote! { debug: ::core::option::Option::None, }
     };
 
-    // PartialEq: check derive, then declared, then auto
-    let partial_eq_field = if sources.has_derive(|d| d.partial_eq)
-        || sources.has_declared(|d| d.partial_eq)
-    {
+    // PartialEq: check declared, then auto
+    let partial_eq_field = if sources.has_declared(|d| d.partial_eq) {
         quote! {
             partial_eq: ::core::option::Option::Some({
                 unsafe fn __partial_eq(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<bool> {
@@ -389,10 +358,8 @@ fn gen_vtable_indirect(
         quote! { partial_eq: ::core::option::Option::None, }
     };
 
-    // PartialOrd: check derive, then declared, then auto
-    let partial_cmp_field = if sources.has_derive(|d| d.partial_ord)
-        || sources.has_declared(|d| d.partial_ord)
-    {
+    // PartialOrd: check declared, then auto
+    let partial_cmp_field = if sources.has_declared(|d| d.partial_ord) {
         quote! {
             partial_cmp: ::core::option::Option::Some({
                 unsafe fn __partial_cmp(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<::core::option::Option<::core::cmp::Ordering>> {
@@ -422,8 +389,8 @@ fn gen_vtable_indirect(
         quote! { partial_cmp: ::core::option::Option::None, }
     };
 
-    // Ord: check derive, then declared, then auto
-    let cmp_field = if sources.has_derive(|d| d.ord) || sources.has_declared(|d| d.ord) {
+    // Ord: check declared, then auto
+    let cmp_field = if sources.has_declared(|d| d.ord) {
         quote! {
             cmp: ::core::option::Option::Some({
                 unsafe fn __cmp(left: #facet_crate::OxPtrConst, right: #facet_crate::OxPtrConst) -> ::core::option::Option<::core::cmp::Ordering> {
@@ -453,8 +420,8 @@ fn gen_vtable_indirect(
         quote! { cmp: ::core::option::Option::None, }
     };
 
-    // Hash: check derive, then declared, then auto
-    let hash_field = if sources.has_derive(|d| d.hash) || sources.has_declared(|d| d.hash) {
+    // Hash: check declared, then auto
+    let hash_field = if sources.has_declared(|d| d.hash) {
         quote! {
             hash: ::core::option::Option::Some({
                 unsafe fn __hash(value: #facet_crate::OxPtrConst, hasher: &mut #facet_crate::HashProxy<'_>) -> ::core::option::Option<()> {
@@ -576,13 +543,11 @@ fn gen_type_ops_direct(
     sources: &TraitSources<'_>,
     struct_type: &TokenStream,
 ) -> Option<TokenStream> {
-    // Check if Default is available (from derive or declared traits or #[facet(default)])
-    let has_default = sources.has_derive(|d| d.default)
-        || sources.has_declared(|d| d.default)
-        || sources.facet_default;
+    // Check if Default is available (from declared traits or #[facet(default)])
+    let has_default = sources.has_declared(|d| d.default) || sources.facet_default;
 
-    // Check if Clone is available (from derive or declared traits)
-    let has_clone = sources.has_derive(|d| d.clone) || sources.has_declared(|d| d.clone);
+    // Check if Clone is available (from declared traits)
+    let has_clone = sources.has_declared(|d| d.clone);
 
     // Generate default_in_place field
     // Uses helper function 𝟋default_for::<Self>() which returns fn(*mut Self),
@@ -677,10 +642,7 @@ fn gen_type_ops_indirect(
     // Check if Default is available
     // Note: For auto_traits, we could use specialization but it's complex.
     // For now, only generate default_in_place when Default is explicitly known.
-    let default_field = if sources.has_derive(|d| d.default)
-        || sources.has_declared(|d| d.default)
-        || sources.facet_default
-    {
+    let default_field = if sources.has_declared(|d| d.default) || sources.facet_default {
         quote! {
             default_in_place: ::core::option::Option::Some(#facet_crate::𝟋::𝟋indirect_default_for::<Self>()),
         }
@@ -693,7 +655,7 @@ fn gen_type_ops_indirect(
     // Check if Clone is available
     // Note: For auto_traits, we could use specialization but it's complex.
     // For now, only generate clone_into when Clone is explicitly known.
-    let clone_field = if sources.has_derive(|d| d.clone) || sources.has_declared(|d| d.clone) {
+    let clone_field = if sources.has_declared(|d| d.clone) {
         quote! {
             clone_into: ::core::option::Option::Some(#facet_crate::𝟋::𝟋indirect_clone_for::<Self>()),
         }

@@ -414,30 +414,6 @@ pub struct CompileError {
     pub span: Span,
 }
 
-/// Tracks which standard derives are visible on the type.
-/// This allows us to skip `impls!` checks for traits we know are derived.
-#[derive(Clone, Default)]
-pub struct KnownDerives {
-    /// Type has `#[derive(Debug)]`
-    pub debug: bool,
-    /// Type has `#[derive(Clone)]`
-    pub clone: bool,
-    /// Type has `#[derive(Copy)]`
-    pub copy: bool,
-    /// Type has `#[derive(PartialEq)]`
-    pub partial_eq: bool,
-    /// Type has `#[derive(Eq)]`
-    pub eq: bool,
-    /// Type has `#[derive(PartialOrd)]`
-    pub partial_ord: bool,
-    /// Type has `#[derive(Ord)]`
-    pub ord: bool,
-    /// Type has `#[derive(Hash)]`
-    pub hash: bool,
-    /// Type has `#[derive(Default)]`
-    pub default: bool,
-}
-
 /// Tracks which traits are explicitly declared via `#[facet(traits(...))]`.
 ///
 /// When this is present, we skip all `impls!` checks and only generate
@@ -550,9 +526,6 @@ pub struct PAttrs {
     /// Errors to be emitted as compile_error! during code generation
     pub errors: Vec<CompileError>,
 
-    /// Known derives visible on the type (allows skipping impls! checks)
-    pub known_derives: KnownDerives,
-
     /// Explicitly declared traits via `#[facet(traits(...))]`
     /// When present, we skip all `impls!` checks and only generate vtable
     /// entries for the declared traits.
@@ -573,7 +546,6 @@ impl PAttrs {
         let mut rename_all: Option<RenameRule> = None;
         let mut crate_path: Option<TokenStream> = None;
         let mut errors: Vec<CompileError> = Vec::new();
-        let mut known_derives = KnownDerives::default();
 
         for attr in attrs {
             match &attr.body.content {
@@ -606,10 +578,9 @@ impl PAttrs {
                 crate::AttributeInner::Facet(facet_attr) => {
                     PFacetAttr::parse(facet_attr, &mut facet_attrs);
                 }
-                crate::AttributeInner::Any(tokens) => {
-                    // Check for #[derive(...)] attributes
-                    Self::parse_derive_attr(tokens, &mut known_derives);
-                }
+                // Note: Rust strips #[derive(...)] attributes before passing to derive macros,
+                // so we cannot detect them here. Users must use #[facet(traits(...))] instead.
+                crate::AttributeInner::Any(_) => {}
             }
         }
 
@@ -683,48 +654,8 @@ impl PAttrs {
             rename_all,
             crate_path,
             errors,
-            known_derives,
             declared_traits,
             auto_traits,
-        }
-    }
-
-    /// Parse derive attributes like `#[derive(Debug, Clone, PartialEq)]`
-    /// and update the known_derives flags accordingly.
-    fn parse_derive_attr(tokens: &[proc_macro2::TokenTree], known_derives: &mut KnownDerives) {
-        // Check if this looks like derive(...)
-        let mut iter = tokens.iter();
-
-        // First token should be "derive"
-        let Some(proc_macro2::TokenTree::Ident(ident)) = iter.next() else {
-            return;
-        };
-        if ident != "derive" {
-            return;
-        }
-
-        // Next should be a group containing the derive list
-        let Some(proc_macro2::TokenTree::Group(group)) = iter.next() else {
-            return;
-        };
-
-        // Parse the derive names from the group
-        for token in group.stream() {
-            if let proc_macro2::TokenTree::Ident(derive_name) = token {
-                let name = derive_name.to_string();
-                match name.as_str() {
-                    "Debug" => known_derives.debug = true,
-                    "Clone" => known_derives.clone = true,
-                    "Copy" => known_derives.copy = true,
-                    "PartialEq" => known_derives.partial_eq = true,
-                    "Eq" => known_derives.eq = true,
-                    "PartialOrd" => known_derives.partial_ord = true,
-                    "Ord" => known_derives.ord = true,
-                    "Hash" => known_derives.hash = true,
-                    "Default" => known_derives.default = true,
-                    _ => {}
-                }
-            }
         }
     }
 
