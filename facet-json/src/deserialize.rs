@@ -13,7 +13,7 @@ use facet_core::{
     Shape, ShapeLayout, StructKind, Type, UserType,
 };
 use facet_reflect::{Partial, ReflectError};
-use facet_solver::{PathSegment, Schema, Solver};
+use facet_solver::{PathSegment, Schema, Solver, VariantsByFormat, specificity_score};
 
 use crate::RawJson;
 use crate::adapter::{AdapterError, AdapterErrorKind, SliceAdapter, SpannedAdapterToken, Token};
@@ -2198,15 +2198,315 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
 
                 Ok(wip)
             }
-            _ => {
-                // Non-object untagged variants (tuple/newtype/unit) are not yet supported
-                Err(JsonError::without_span(JsonErrorKind::InvalidValue {
-                    message:
-                        "untagged enum deserialization requires struct variants (JSON objects)"
-                            .into(),
-                }))
+            Token::ArrayStart => {
+                // Tuple variants - match by arity
+                self.deserialize_untagged_tuple_variant(wip, shape)
+            }
+            Token::Null => {
+                // Unit variants - select the first unit variant
+                self.deserialize_untagged_unit_variant(wip, shape)
+            }
+            Token::String(_)
+            | Token::I64(_)
+            | Token::U64(_)
+            | Token::I128(_)
+            | Token::U128(_)
+            | Token::F64(_)
+            | Token::True
+            | Token::False => {
+                // Scalar variants - select based on value type
+                self.deserialize_untagged_scalar_variant(wip, shape)
+            }
+            _ => Err(JsonError::new(
+                JsonErrorKind::InvalidValue {
+                    message: format!("unexpected token {:?} for untagged enum", token.token),
+                },
+                token.span,
+            )),
+        }
+    }
+
+    /// Deserialize an untagged enum from a null value.
+    /// Selects the first unit variant.
+    fn deserialize_untagged_unit_variant(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        shape: &'static Shape,
+    ) -> Result<Partial<'input, BORROW>> {
+        let variants_by_format = VariantsByFormat::from_shape(shape).ok_or_else(|| {
+            JsonError::without_span(JsonErrorKind::InvalidValue {
+                message: "expected enum shape for untagged deserialization".into(),
+            })
+        })?;
+
+        if variants_by_format.unit_variants.is_empty() {
+            return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                message: format!(
+                    "no unit variants in untagged enum {} for null value",
+                    shape.type_identifier
+                ),
+            }));
+        }
+
+        // Consume the null token
+        self.next()?;
+
+        // Select the first unit variant (like serde does)
+        let variant = variants_by_format.unit_variants[0];
+        wip = wip.select_variant_named(variant.name)?;
+
+        Ok(wip)
+    }
+
+    /// Deserialize an untagged enum from a scalar value (string, number, bool).
+    /// Selects the variant based on the value type.
+    fn deserialize_untagged_scalar_variant(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        shape: &'static Shape,
+    ) -> Result<Partial<'input, BORROW>> {
+        let variants_by_format = VariantsByFormat::from_shape(shape).ok_or_else(|| {
+            JsonError::without_span(JsonErrorKind::InvalidValue {
+                message: "expected enum shape for untagged deserialization".into(),
+            })
+        })?;
+
+        if variants_by_format.scalar_variants.is_empty() {
+            return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                message: format!(
+                    "no scalar-accepting variants in untagged enum {}",
+                    shape.type_identifier
+                ),
+            }));
+        }
+
+        // Select the variant based on the token type
+        let token = self.peek()?.clone();
+        let variant_name = self.select_scalar_variant(&variants_by_format, &token)?;
+
+        wip = wip.select_variant_named(variant_name)?;
+        wip = wip.begin_nth_field(0)?;
+        wip = self.deserialize_into(wip)?;
+        wip = wip.end()?;
+
+        Ok(wip)
+    }
+
+    /// Select which scalar variant to use based on the JSON token.
+    fn select_scalar_variant(
+        &self,
+        variants: &VariantsByFormat,
+        token: &SpannedAdapterToken,
+    ) -> Result<&'static str> {
+        // Sort by specificity (most specific first)
+        let mut candidates: Vec<_> = variants.scalar_variants.clone();
+        candidates.sort_by_key(|(_, inner_shape)| specificity_score(inner_shape));
+
+        match &token.token {
+            Token::True | Token::False => {
+                // Find a bool variant
+                for (variant, inner_shape) in &candidates {
+                    if inner_shape.scalar_type() == Some(ScalarType::Bool) {
+                        return Ok(variant.name);
+                    }
+                }
+            }
+            Token::I64(n) => {
+                // Find the smallest integer type that fits
+                let n = *n;
+                for (variant, inner_shape) in &candidates {
+                    let fits = match inner_shape.scalar_type() {
+                        Some(ScalarType::U8) => n >= 0 && n <= u8::MAX as i64,
+                        Some(ScalarType::U16) => n >= 0 && n <= u16::MAX as i64,
+                        Some(ScalarType::U32) => n >= 0 && n <= u32::MAX as i64,
+                        Some(ScalarType::U64) => n >= 0,
+                        Some(ScalarType::I8) => n >= i8::MIN as i64 && n <= i8::MAX as i64,
+                        Some(ScalarType::I16) => n >= i16::MIN as i64 && n <= i16::MAX as i64,
+                        Some(ScalarType::I32) => n >= i32::MIN as i64 && n <= i32::MAX as i64,
+                        Some(ScalarType::I64) => true,
+                        Some(ScalarType::F32) | Some(ScalarType::F64) => true,
+                        _ => false,
+                    };
+                    if fits {
+                        return Ok(variant.name);
+                    }
+                }
+            }
+            Token::U64(n) => {
+                let n = *n;
+                for (variant, inner_shape) in &candidates {
+                    let fits = match inner_shape.scalar_type() {
+                        Some(ScalarType::U8) => n <= u8::MAX as u64,
+                        Some(ScalarType::U16) => n <= u16::MAX as u64,
+                        Some(ScalarType::U32) => n <= u32::MAX as u64,
+                        Some(ScalarType::U64) => true,
+                        Some(ScalarType::I8) => n <= i8::MAX as u64,
+                        Some(ScalarType::I16) => n <= i16::MAX as u64,
+                        Some(ScalarType::I32) => n <= i32::MAX as u64,
+                        Some(ScalarType::I64) => n <= i64::MAX as u64,
+                        Some(ScalarType::F32) | Some(ScalarType::F64) => true,
+                        _ => false,
+                    };
+                    if fits {
+                        return Ok(variant.name);
+                    }
+                }
+            }
+            Token::I128(n) => {
+                let n = *n;
+                for (variant, inner_shape) in &candidates {
+                    let fits = match inner_shape.scalar_type() {
+                        Some(ScalarType::I128) => true,
+                        Some(ScalarType::U128) => n >= 0,
+                        _ => false,
+                    };
+                    if fits {
+                        return Ok(variant.name);
+                    }
+                }
+            }
+            Token::U128(n) => {
+                let n = *n;
+                for (variant, inner_shape) in &candidates {
+                    let fits = match inner_shape.scalar_type() {
+                        Some(ScalarType::U128) => true,
+                        Some(ScalarType::I128) => n <= i128::MAX as u128,
+                        _ => false,
+                    };
+                    if fits {
+                        return Ok(variant.name);
+                    }
+                }
+            }
+            Token::F64(_) => {
+                // Find a float variant
+                for (variant, inner_shape) in &candidates {
+                    if matches!(
+                        inner_shape.scalar_type(),
+                        Some(ScalarType::F32) | Some(ScalarType::F64)
+                    ) {
+                        return Ok(variant.name);
+                    }
+                }
+            }
+            Token::String(_) => {
+                // Find a string-like variant
+                for (variant, inner_shape) in &candidates {
+                    if matches!(
+                        inner_shape.scalar_type(),
+                        Some(ScalarType::String) | Some(ScalarType::Str) | Some(ScalarType::CowStr)
+                    ) || inner_shape.scalar_type().is_none()
+                    {
+                        return Ok(variant.name);
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        // Fall back to the first scalar variant if no specific match
+        if let Some((variant, _)) = candidates.first() {
+            return Ok(variant.name);
+        }
+
+        Err(JsonError::new(
+            JsonErrorKind::InvalidValue {
+                message: format!("no matching scalar variant for token {:?}", token.token),
+            },
+            token.span,
+        ))
+    }
+
+    /// Deserialize an untagged enum from an array (tuple variant).
+    fn deserialize_untagged_tuple_variant(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        shape: &'static Shape,
+    ) -> Result<Partial<'input, BORROW>> {
+        let variants_by_format = VariantsByFormat::from_shape(shape).ok_or_else(|| {
+            JsonError::without_span(JsonErrorKind::InvalidValue {
+                message: "expected enum shape for untagged deserialization".into(),
+            })
+        })?;
+
+        if variants_by_format.tuple_variants.is_empty() {
+            return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                message: format!(
+                    "no tuple variants in untagged enum {} for array value",
+                    shape.type_identifier
+                ),
+            }));
+        }
+
+        // Record start position for rewinding
+        let start_token = self.peek()?;
+        let start_offset = start_token.span.offset;
+
+        // Count the array elements
+        self.next()?; // consume ArrayStart
+        let mut arity = 0;
+        loop {
+            let token = self.peek()?;
+            match &token.token {
+                Token::ArrayEnd => {
+                    self.next()?;
+                    break;
+                }
+                _ => {
+                    arity += 1;
+                    self.skip_value()?;
+                    // Skip comma if present
+                    let next = self.peek()?;
+                    if matches!(next.token, Token::Comma) {
+                        self.next()?;
+                    }
+                }
             }
         }
+
+        // Find variants with matching arity
+        let matching_variants = variants_by_format.tuple_variants_with_arity(arity);
+        if matching_variants.is_empty() {
+            return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                message: format!(
+                    "no tuple variant with arity {} in untagged enum {}",
+                    arity, shape.type_identifier
+                ),
+            }));
+        }
+
+        // Select the first matching variant
+        let variant = matching_variants[0];
+        wip = wip.select_variant_named(variant.name)?;
+
+        // Rewind and deserialize
+        let rewound_adapter = self.adapter.at_offset(start_offset).ok_or_else(|| {
+            JsonError::without_span(JsonErrorKind::InvalidValue {
+                message: "untagged tuple variants not supported in streaming mode".into(),
+            })
+        })?;
+        let mut rewound_deser = Self::from_adapter(rewound_adapter);
+
+        // Consume ArrayStart
+        rewound_deser.next()?;
+
+        // Deserialize each field
+        for i in 0..arity {
+            wip = wip.begin_nth_field(i)?;
+            wip = rewound_deser.deserialize_into(wip)?;
+            wip = wip.end()?;
+
+            // Skip comma if present
+            let next = rewound_deser.peek()?;
+            if matches!(next.token, Token::Comma) {
+                rewound_deser.next()?;
+            }
+        }
+
+        // Consume ArrayEnd
+        rewound_deser.next()?;
+
+        Ok(wip)
     }
 
     /// Deserialize the content of an enum variant in a flattened context.
