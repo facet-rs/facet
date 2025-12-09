@@ -289,10 +289,22 @@ pub fn tree_diff<'a, 'f, A: facet_core::Facet<'f>, B: facet_core::Facet<'f>>(
     let config = MatchingConfig::default();
     let cinereus_ops = diff_trees(&tree_a, &tree_b, &config);
 
-    // Convert cinereus ops to our EditOp format
+    // Convert cinereus ops to our EditOp format, filtering out no-op moves
     cinereus_ops
         .into_iter()
         .map(|op| convert_op(op, &tree_a, &tree_b))
+        .filter(|op| {
+            // Filter out MOVE operations where old and new paths are the same
+            // (these are no-ops from the user's perspective)
+            if let EditOp::Move {
+                old_path, new_path, ..
+            } = op
+            {
+                old_path != new_path
+            } else {
+                true
+            }
+        })
         .collect()
 }
 

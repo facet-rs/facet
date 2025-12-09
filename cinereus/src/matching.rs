@@ -211,6 +211,7 @@ fn match_subtrees<K, L>(
 ///
 /// For unmatched nodes, find candidates with the same kind and compute
 /// similarity using the Dice coefficient on matched descendants.
+/// For leaf nodes (no children), we match by hash since Dice is not meaningful.
 fn bottom_up_phase<K, L>(
     tree_a: &Tree<K, L>,
     tree_b: &Tree<K, L>,
@@ -220,12 +221,23 @@ fn bottom_up_phase<K, L>(
     K: Clone + Eq + Hash,
     L: Clone,
 {
-    // Build kind -> unmatched nodes index for tree B
+    // Build indices for tree B: by kind and by (kind, hash) for leaves
     let mut b_by_kind: HashMap<K, Vec<NodeId>> = HashMap::new();
+    let mut b_by_kind_hash: HashMap<(K, u64), Vec<NodeId>> = HashMap::new();
+
     for b_id in tree_b.iter() {
         if !matching.contains_b(b_id) {
-            let kind = tree_b.get(b_id).kind.clone();
-            b_by_kind.entry(kind).or_default().push(b_id);
+            let b_data = tree_b.get(b_id);
+            let kind = b_data.kind.clone();
+            b_by_kind.entry(kind.clone()).or_default().push(b_id);
+
+            // For leaves, also index by (kind, hash)
+            if tree_b.child_count(b_id) == 0 {
+                b_by_kind_hash
+                    .entry((kind, b_data.hash))
+                    .or_default()
+                    .push(b_id);
+            }
         }
     }
 
@@ -236,25 +248,45 @@ fn bottom_up_phase<K, L>(
         }
 
         let a_data = tree_a.get(a_id);
+        let is_leaf = tree_a.child_count(a_id) == 0;
 
-        // Find candidates with same kind
-        let candidates = b_by_kind.get(&a_data.kind).cloned().unwrap_or_default();
+        if is_leaf {
+            // For leaves, match by exact hash (same kind AND same hash)
+            let key = (a_data.kind.clone(), a_data.hash);
+            if let Some(candidates) = b_by_kind_hash.get(&key) {
+                for &b_id in candidates {
+                    if !matching.contains_b(b_id) {
+                        matching.add(a_id, b_id);
+                        break; // Take the first available match
+                    }
+                }
+            }
+        } else {
+            // For internal nodes, use Dice coefficient
+            let candidates = b_by_kind.get(&a_data.kind).cloned().unwrap_or_default();
 
-        // Score candidates by Dice coefficient
-        let mut best: Option<(NodeId, f64)> = None;
-        for b_id in candidates {
-            if matching.contains_b(b_id) {
-                continue;
+            let mut best: Option<(NodeId, f64)> = None;
+            for b_id in candidates {
+                if matching.contains_b(b_id) {
+                    continue;
+                }
+
+                // Skip leaves when looking for internal node matches
+                if tree_b.child_count(b_id) == 0 {
+                    continue;
+                }
+
+                let score = dice_coefficient(tree_a, tree_b, a_id, b_id, matching);
+                if score >= config.similarity_threshold
+                    && (best.is_none() || score > best.unwrap().1)
+                {
+                    best = Some((b_id, score));
+                }
             }
 
-            let score = dice_coefficient(tree_a, tree_b, a_id, b_id, matching);
-            if score >= config.similarity_threshold && (best.is_none() || score > best.unwrap().1) {
-                best = Some((b_id, score));
+            if let Some((b_id, _)) = best {
+                matching.add(a_id, b_id);
             }
-        }
-
-        if let Some((b_id, _)) = best {
-            matching.add(a_id, b_id);
         }
     }
 }
