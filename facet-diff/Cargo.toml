@@ -21,7 +21,7 @@ facet = { path = "../facet" }
 facet-core = { path = "../facet-core" }
 facet-pretty = { path = "../facet-pretty" }
 facet-reflect = { path = "../facet-reflect" }
-miette = { version = "7", optional = true, default-features = false }
+miette = { version = "7", optional = true, features = ["fancy"] }
 owo-colors = "4"
 
 [dev-dependencies]

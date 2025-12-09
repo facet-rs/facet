@@ -1,10 +1,6 @@
 ---
 source: facet-pretty/tests/pretty_print.rs
-expression: printer.format(&nums).to_string()
+assertion_line: 178
+expression: printer.format(&nums)
 ---
-Vec<u32> [
-  1,
-  2,
-  3,
-  4,
-]
+Vec<u32> [1, 2, 3, 4]
