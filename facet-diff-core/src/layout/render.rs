@@ -132,6 +132,42 @@ fn render_node<W: Write, B: ColorBackend>(
                 .write_styled(w, text, element_change_to_semantic(change))?;
             writeln!(w)
         }
+
+        LayoutNode::ItemGroup {
+            items,
+            change,
+            collapsed_suffix,
+        } => {
+            let items = items.clone();
+            let change = *change;
+            let collapsed_suffix = *collapsed_suffix;
+
+            write_indent(w, depth, opts)?;
+            if let Some(prefix) = change.prefix() {
+                opts.backend
+                    .write_prefix(w, prefix, element_change_to_semantic(change))?;
+                write!(w, " ")?;
+            }
+
+            // Render items space-separated
+            let semantic = element_change_to_semantic(change);
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    write!(w, " ")?;
+                }
+                let text = layout.get_string(item.span);
+                opts.backend.write_styled(w, text, semantic)?;
+            }
+
+            // Render collapsed suffix if present
+            if let Some(count) = collapsed_suffix {
+                let suffix = format!(" ...{} more", count);
+                opts.backend
+                    .write_styled(w, &suffix, SemanticColor::Unchanged)?;
+            }
+
+            writeln!(w)
+        }
     }
 }
 
@@ -368,10 +404,11 @@ fn render_attr_deleted<W: Write, B: ColorBackend>(
     value: &super::FormattedValue,
 ) -> fmt::Result {
     let value_str = layout.get_string(value.span);
-    write!(w, "{}=\"", name)?;
+    // Key stays white, value and quotes are colored
+    write!(w, "{}=", name)?;
+    let with_quotes = format!("\"{}\"", value_str);
     opts.backend
-        .write_styled(w, value_str, SemanticColor::Deleted)?;
-    write!(w, "\"")
+        .write_styled(w, &with_quotes, SemanticColor::Deleted)
 }
 
 fn render_attr_inserted<W: Write, B: ColorBackend>(
@@ -382,10 +419,11 @@ fn render_attr_inserted<W: Write, B: ColorBackend>(
     value: &super::FormattedValue,
 ) -> fmt::Result {
     let value_str = layout.get_string(value.span);
-    write!(w, "{}=\"", name)?;
+    // Key stays white, value and quotes are colored
+    write!(w, "{}=", name)?;
+    let with_quotes = format!("\"{}\"", value_str);
     opts.backend
-        .write_styled(w, value_str, SemanticColor::Inserted)?;
-    write!(w, "\"")
+        .write_styled(w, &with_quotes, SemanticColor::Inserted)
 }
 
 fn write_indent<W: Write, B: ColorBackend>(

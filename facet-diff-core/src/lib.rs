@@ -30,9 +30,10 @@ mod theme;
 mod types;
 
 pub use layout::{
-    AnsiBackend, Attr, AttrStatus, BuildOptions, ChangedGroup, ColorBackend, ElementChange,
-    FormatArena, FormattedValue, Layout, LayoutNode, PlainBackend, RenderOptions, SemanticColor,
-    Span, build_layout, group_changed_attrs, render, render_to_string,
+    AnsiBackend, Attr, AttrStatus, BuildOptions, ChangedGroup, ColorBackend, DiffFlavor,
+    ElementChange, FieldPresentation, FormatArena, FormattedValue, JsonFlavor, Layout, LayoutNode,
+    PlainBackend, RenderOptions, RustFlavor, SemanticColor, Span, XmlFlavor, build_layout,
+    build_layout_without_context, group_changed_attrs, render, render_to_string,
 };
 pub use path::*;
 pub use sequences::*;

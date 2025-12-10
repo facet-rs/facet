@@ -4,12 +4,14 @@
 //!
 //! # Architecture
 //!
-//! The build process has two phases:
-//! 1. **Format phase**: Walk the Diff, format all scalar values into FormatArena
-//! 2. **Layout phase**: Build LayoutNode tree, group changed attrs, calculate alignment
+//! The build process walks the Diff tree while simultaneously navigating the original
+//! `from` and `to` Peek values. This allows us to:
+//! - Look up unchanged field values from the original structs
+//! - Decide whether to show unchanged fields or collapse them
+//!
+//! The Diff itself only stores what changed - the original Peeks provide context.
 
 use std::borrow::Cow;
-use std::collections::HashSet;
 
 use facet_core::{StructKind, Type, UserType};
 use facet_pretty::PrettyPrinter;
@@ -21,14 +23,18 @@ use super::{
 };
 use crate::{Diff, ReplaceGroup, Updates, UpdatesGroup, Value};
 
+/// Maximum number of visible items to show before collapsing with "...N more".
+const MAX_VISIBLE_ITEMS: usize = 5;
+
 /// Options for building a layout from a diff.
 #[derive(Clone, Debug)]
 pub struct BuildOptions {
     /// Maximum line width for attribute grouping.
     pub max_line_width: usize,
-    /// Number of unchanged siblings to keep as context around changes.
-    pub context_lines: usize,
-    /// Minimum run length to collapse unchanged elements.
+    /// Maximum number of unchanged fields to show inline.
+    /// If more than this many unchanged fields exist, collapse to "N unchanged".
+    pub max_unchanged_fields: usize,
+    /// Minimum run length to collapse unchanged sequence elements.
     pub collapse_threshold: usize,
 }
 
@@ -36,7 +42,7 @@ impl Default for BuildOptions {
     fn default() -> Self {
         Self {
             max_line_width: 80,
-            context_lines: 2,
+            max_unchanged_fields: 5,
             collapse_threshold: 3,
         }
     }
@@ -45,9 +51,31 @@ impl Default for BuildOptions {
 /// Build a Layout from a Diff.
 ///
 /// This is the main entry point for converting a diff into a renderable layout.
-pub fn build_layout(diff: &Diff<'_, '_>, opts: &BuildOptions) -> Layout {
+///
+/// # Arguments
+///
+/// * `diff` - The diff to render
+/// * `from` - The original "from" value (for looking up unchanged fields)
+/// * `to` - The original "to" value (for looking up unchanged fields)
+/// * `opts` - Build options
+pub fn build_layout<'mem, 'facet>(
+    diff: &Diff<'mem, 'facet>,
+    from: Peek<'mem, 'facet>,
+    to: Peek<'mem, 'facet>,
+    opts: &BuildOptions,
+) -> Layout {
     let mut builder = LayoutBuilder::new(opts.clone());
-    let root_id = builder.build(diff);
+    let root_id = builder.build(diff, Some(from), Some(to));
+    builder.finish(root_id)
+}
+
+/// Build a Layout from a Diff without original values.
+///
+/// Use this when you don't have the original Peek values available.
+/// Unchanged fields will be collapsed to "N unchanged" instead of showing values.
+pub fn build_layout_without_context(diff: &Diff<'_, '_>, opts: &BuildOptions) -> Layout {
+    let mut builder = LayoutBuilder::new(opts.clone());
+    let root_id = builder.build(diff, None, None);
     builder.finish(root_id)
 }
 
@@ -75,13 +103,24 @@ impl LayoutBuilder {
         }
     }
 
-    /// Build the layout from a diff, returning the root node ID.
-    fn build(&mut self, diff: &Diff<'_, '_>) -> NodeId {
-        self.build_diff(diff, ElementChange::None)
+    /// Build the layout from a diff, with optional context Peeks.
+    fn build<'mem, 'facet>(
+        &mut self,
+        diff: &Diff<'mem, 'facet>,
+        from: Option<Peek<'mem, 'facet>>,
+        to: Option<Peek<'mem, 'facet>>,
+    ) -> NodeId {
+        self.build_diff(diff, from, to, ElementChange::None)
     }
 
     /// Build a node from a diff with a given element change type.
-    fn build_diff(&mut self, diff: &Diff<'_, '_>, change: ElementChange) -> NodeId {
+    fn build_diff<'mem, 'facet>(
+        &mut self,
+        diff: &Diff<'mem, 'facet>,
+        from: Option<Peek<'mem, 'facet>>,
+        to: Option<Peek<'mem, 'facet>>,
+        change: ElementChange,
+    ) -> NodeId {
         match diff {
             Diff::Equal { value } => {
                 // For equal values, render as unchanged text
@@ -110,13 +149,13 @@ impl LayoutBuilder {
                 root
             }
             Diff::User {
-                from,
-                to: _,
+                from: from_shape,
+                to: _to_shape,
                 variant,
                 value,
             } => {
                 // Get type name for the tag
-                let tag = from.type_identifier;
+                let tag = from_shape.type_identifier;
 
                 match value {
                     Value::Struct {
@@ -125,9 +164,11 @@ impl LayoutBuilder {
                         insertions,
                         unchanged,
                     } => self.build_struct(
-                        tag, *variant, updates, deletions, insertions, unchanged, change,
+                        tag, *variant, updates, deletions, insertions, unchanged, from, to, change,
                     ),
-                    Value::Tuple { updates } => self.build_tuple(tag, *variant, updates, change),
+                    Value::Tuple { updates } => {
+                        self.build_tuple(tag, *variant, updates, from, to, change)
+                    }
                 }
             }
             Diff::Sequence {
@@ -195,50 +236,61 @@ impl LayoutBuilder {
 
     /// Build a struct diff as an element with attributes.
     #[allow(clippy::too_many_arguments)]
-    fn build_struct(
+    fn build_struct<'mem, 'facet>(
         &mut self,
         tag: &'static str,
         variant: Option<&'static str>,
-        updates: &std::collections::HashMap<Cow<'static, str>, Diff<'_, '_>>,
-        deletions: &std::collections::HashMap<Cow<'static, str>, Peek<'_, '_>>,
-        insertions: &std::collections::HashMap<Cow<'static, str>, Peek<'_, '_>>,
-        unchanged: &HashSet<Cow<'static, str>>,
+        updates: &std::collections::HashMap<Cow<'static, str>, Diff<'mem, 'facet>>,
+        deletions: &std::collections::HashMap<Cow<'static, str>, Peek<'mem, 'facet>>,
+        insertions: &std::collections::HashMap<Cow<'static, str>, Peek<'mem, 'facet>>,
+        unchanged: &std::collections::HashSet<Cow<'static, str>>,
+        from: Option<Peek<'mem, 'facet>>,
+        to: Option<Peek<'mem, 'facet>>,
         change: ElementChange,
     ) -> NodeId {
-        // The LayoutNode::Element requires &'static str for tag.
-        // The variant is already Option<&'static str> from the Diff type.
-        // We can construct a combined tag, but that requires allocation.
-        //
-        // For now, we use just the type tag. The variant could be shown
-        // as a special attribute or in a future LayoutNode redesign.
         let element_tag = tag;
 
         // If there's a variant, we should indicate it somehow.
-        // Options:
-        // 1. Change LayoutNode::Element to have an optional variant field
-        // 2. Add variant as a special attribute
-        // 3. For now: just use the tag and note variant in a TODO
+        // TODO: LayoutNode::Element should have an optional variant: Option<&'static str>
         if variant.is_some() {
-            // TODO: LayoutNode::Element should have an optional variant: Option<&'static str>
-            // field to properly render enum variants like `Option::Some { ... }`
+            // For now, just use the tag
         }
 
         let mut attrs = Vec::new();
         let mut child_nodes = Vec::new();
 
-        // Unchanged fields: we only have their names, not values.
-        // The Diff type doesn't store unchanged field values - it only tracks what changed.
-        // To render unchanged fields, we'd need to restructure the Diff type or pass
-        // the original values separately.
+        // Handle unchanged fields - try to get values from the original Peek
         if !unchanged.is_empty() {
-            todo!(
-                "Cannot render {} unchanged fields: Diff::User::Value::Struct only stores \
-                 field names for unchanged fields, not their values. Either:\n\
-                 1. Add unchanged field values to Value::Struct, or\n\
-                 2. Pass original from/to Peeks to build_struct, or\n\
-                 3. Add a LayoutNode variant for 'N unchanged fields' placeholder",
-                unchanged.len()
-            );
+            let unchanged_count = unchanged.len();
+
+            if unchanged_count <= self.opts.max_unchanged_fields {
+                // Show unchanged fields with their values (if we have the original Peek)
+                if let Some(from_peek) = from {
+                    if let Ok(struct_peek) = from_peek.into_struct() {
+                        let mut sorted_unchanged: Vec<_> = unchanged.iter().collect();
+                        sorted_unchanged.sort();
+
+                        for field_name in sorted_unchanged {
+                            if let Ok(field_value) = struct_peek.field_by_name(field_name) {
+                                let formatted = self.format_peek(field_value);
+                                let name: &'static str = match field_name {
+                                    Cow::Borrowed(s) => s,
+                                    Cow::Owned(_) => {
+                                        // Skip owned field names for now - they come from dynamic values
+                                        continue;
+                                    }
+                                };
+                                let attr = Attr::unchanged(name, name.len(), formatted);
+                                attrs.push(attr);
+                            }
+                        }
+                    }
+                } else {
+                    // No original Peek available - add a collapsed placeholder
+                    // We'll handle this after building the element
+                }
+            }
+            // If more than max_unchanged_fields, we'll add a collapsed node as a child
         }
 
         // Process updates - these become changed attributes or nested children
@@ -246,22 +298,30 @@ impl LayoutBuilder {
         sorted_updates.sort_by(|(a, _), (b, _)| a.cmp(b));
 
         for (field_name, field_diff) in sorted_updates {
+            // Navigate into the field in from/to Peeks for nested context
+            let field_from = from.and_then(|p| {
+                p.into_struct()
+                    .ok()
+                    .and_then(|s| s.field_by_name(field_name).ok())
+            });
+            let field_to = to.and_then(|p| {
+                p.into_struct()
+                    .ok()
+                    .and_then(|s| s.field_by_name(field_name).ok())
+            });
+
             match field_diff {
                 Diff::Replace { from, to } => {
                     // Scalar replacement - show as changed attribute
                     let old_value = self.format_peek(*from);
                     let new_value = self.format_peek(*to);
 
-                    // field_name is Cow<'static, str> - we need &'static str
-                    // If it's Borrowed, we can use it directly. If Owned, we have a problem.
                     let name: &'static str = match field_name {
                         Cow::Borrowed(s) => s,
                         Cow::Owned(_) => {
-                            todo!(
-                                "Field name '{}' is Cow::Owned - need string interning to get &'static str. \
-                                 Consider adding a string arena to LayoutBuilder or changing Attr to use Cow<'static, str>",
-                                field_name
-                            );
+                            // For owned field names, we need to handle them differently
+                            // For now, skip - this happens with dynamic values
+                            continue;
                         }
                     };
 
@@ -270,7 +330,8 @@ impl LayoutBuilder {
                 }
                 _ => {
                     // Nested diff - build as child element
-                    let child = self.build_diff(field_diff, ElementChange::None);
+                    let child =
+                        self.build_diff(field_diff, field_from, field_to, ElementChange::None);
                     child_nodes.push(child);
                 }
             }
@@ -284,12 +345,7 @@ impl LayoutBuilder {
             let formatted = self.format_peek(*value);
             let name: &'static str = match field_name {
                 Cow::Borrowed(s) => s,
-                Cow::Owned(_) => {
-                    todo!(
-                        "Field name '{}' is Cow::Owned - need string interning",
-                        field_name
-                    );
-                }
+                Cow::Owned(_) => continue,
             };
             let attr = Attr::deleted(name, name.len(), formatted);
             attrs.push(attr);
@@ -303,12 +359,7 @@ impl LayoutBuilder {
             let formatted = self.format_peek(*value);
             let name: &'static str = match field_name {
                 Cow::Borrowed(s) => s,
-                Cow::Owned(_) => {
-                    todo!(
-                        "Field name '{}' is Cow::Owned - need string interning",
-                        field_name
-                    );
-                }
+                Cow::Owned(_) => continue,
             };
             let attr = Attr::inserted(name, name.len(), formatted);
             attrs.push(attr);
@@ -330,15 +381,26 @@ impl LayoutBuilder {
             node.append(child, &mut self.tree);
         }
 
+        // Add collapsed unchanged fields indicator if needed
+        let unchanged_count = unchanged.len();
+        if unchanged_count > self.opts.max_unchanged_fields
+            || (unchanged_count > 0 && from.is_none())
+        {
+            let collapsed = self.tree.new_node(LayoutNode::collapsed(unchanged_count));
+            node.append(collapsed, &mut self.tree);
+        }
+
         node
     }
 
     /// Build a tuple diff.
-    fn build_tuple(
+    fn build_tuple<'mem, 'facet>(
         &mut self,
         tag: &'static str,
         variant: Option<&'static str>,
-        updates: &Updates<'_, '_>,
+        updates: &Updates<'mem, 'facet>,
+        _from: Option<Peek<'mem, 'facet>>,
+        _to: Option<Peek<'mem, 'facet>>,
         change: ElementChange,
     ) -> NodeId {
         // Same variant issue as build_struct
@@ -377,96 +439,146 @@ impl LayoutBuilder {
     }
 
     /// Build children from an Updates structure and append to parent.
+    ///
+    /// This groups consecutive items by their change type (unchanged, deleted, inserted)
+    /// and renders them on single lines with optional collapsing for long runs.
     fn build_updates_children(&mut self, parent: NodeId, updates: &Updates<'_, '_>) {
+        // First, collect all items with their change types into a flat list
+        let mut items: Vec<(Peek<'_, '_>, ElementChange)> = Vec::new();
+
         let interspersed = &updates.0;
 
         // Process first update group if present
         if let Some(update_group) = &interspersed.first {
-            self.build_updates_group_children(parent, update_group);
+            self.collect_updates_group_items(&mut items, update_group);
         }
 
         // Process interleaved (unchanged, update) pairs
         for (unchanged_items, update_group) in &interspersed.values {
-            // Add collapsed or individual unchanged items
-            let count = unchanged_items.len();
-            if count > self.opts.collapse_threshold {
-                // Collapse into a single node
-                let collapsed = self.tree.new_node(LayoutNode::collapsed(count));
-                parent.append(collapsed, &mut self.tree);
-            } else {
-                // Show individual unchanged items
-                for item in unchanged_items {
-                    let child = self.build_peek(*item, ElementChange::None);
-                    parent.append(child, &mut self.tree);
-                }
+            // Add unchanged items
+            for item in unchanged_items {
+                items.push((*item, ElementChange::None));
             }
 
-            self.build_updates_group_children(parent, update_group);
+            self.collect_updates_group_items(&mut items, update_group);
         }
 
         // Process trailing unchanged items
         if let Some(unchanged_items) = &interspersed.last {
-            let count = unchanged_items.len();
-            if count > self.opts.collapse_threshold {
-                let collapsed = self.tree.new_node(LayoutNode::collapsed(count));
-                parent.append(collapsed, &mut self.tree);
-            } else {
-                for item in unchanged_items {
-                    let child = self.build_peek(*item, ElementChange::None);
-                    parent.append(child, &mut self.tree);
-                }
+            for item in unchanged_items {
+                items.push((*item, ElementChange::None));
             }
         }
+
+        // Now group consecutive items by change type and create nodes
+        self.build_grouped_items(parent, &items);
     }
 
-    /// Build children from an UpdatesGroup and append to parent.
-    fn build_updates_group_children(&mut self, parent: NodeId, group: &UpdatesGroup<'_, '_>) {
+    /// Collect items from an UpdatesGroup into the items list.
+    fn collect_updates_group_items<'a, 'mem: 'a, 'facet: 'a>(
+        &self,
+        items: &mut Vec<(Peek<'mem, 'facet>, ElementChange)>,
+        group: &'a UpdatesGroup<'mem, 'facet>,
+    ) {
         let interspersed = &group.0;
 
         // Process first replace group if present
         if let Some(replace) = &interspersed.first {
-            self.build_replace_group_children(parent, replace);
+            self.collect_replace_group_items(items, replace);
         }
 
         // Process interleaved (diffs, replace) pairs
-        for (diffs, replace) in &interspersed.values {
-            // Add nested diffs
-            for diff in diffs {
-                let child = self.build_diff(diff, ElementChange::None);
-                parent.append(child, &mut self.tree);
-            }
-
-            self.build_replace_group_children(parent, replace);
-        }
-
-        // Process trailing diffs
-        if let Some(diffs) = &interspersed.last {
-            for diff in diffs {
-                let child = self.build_diff(diff, ElementChange::None);
-                parent.append(child, &mut self.tree);
-            }
+        // NOTE: Nested diffs (e.g., Vec<Struct> where struct fields changed) are not yet
+        // supported in the item grouping. For simple scalar sequences, diffs should be empty.
+        for (_diffs, replace) in &interspersed.values {
+            self.collect_replace_group_items(items, replace);
         }
     }
 
-    /// Build children from a ReplaceGroup and append to parent.
-    fn build_replace_group_children(&mut self, parent: NodeId, group: &ReplaceGroup<'_, '_>) {
+    /// Collect items from a ReplaceGroup into the items list.
+    fn collect_replace_group_items<'a, 'mem: 'a, 'facet: 'a>(
+        &self,
+        items: &mut Vec<(Peek<'mem, 'facet>, ElementChange)>,
+        group: &'a ReplaceGroup<'mem, 'facet>,
+    ) {
         // Add removals as deleted
         for removal in &group.removals {
-            let child = self.build_peek(*removal, ElementChange::Deleted);
-            parent.append(child, &mut self.tree);
+            items.push((*removal, ElementChange::Deleted));
         }
 
         // Add additions as inserted
         for addition in &group.additions {
-            let child = self.build_peek(*addition, ElementChange::Inserted);
-            parent.append(child, &mut self.tree);
+            items.push((*addition, ElementChange::Inserted));
+        }
+    }
+
+    /// Build grouped items and append to parent.
+    fn build_grouped_items(&mut self, parent: NodeId, items: &[(Peek<'_, '_>, ElementChange)]) {
+        if items.is_empty() {
+            return;
+        }
+
+        // Group consecutive items by change type
+        let mut i = 0;
+        while i < items.len() {
+            let current_change = items[i].1;
+
+            // Find the end of this run of same-change items
+            let mut run_end = i + 1;
+            while run_end < items.len() && items[run_end].1 == current_change {
+                run_end += 1;
+            }
+
+            let run_len = run_end - i;
+
+            // Decide how to render this run
+            let (visible_count, collapsed_count) = if run_len <= MAX_VISIBLE_ITEMS {
+                (run_len, None)
+            } else {
+                // Show first few and last few, collapse middle
+                // For simplicity, show first MAX_VISIBLE_ITEMS and collapse the rest
+                (MAX_VISIBLE_ITEMS, Some(run_len - MAX_VISIBLE_ITEMS))
+            };
+
+            // Format the visible items
+            let visible_items: Vec<FormattedValue> = items[i..i + visible_count]
+                .iter()
+                .map(|(peek, _)| self.format_peek(*peek))
+                .collect();
+
+            // Create the item group node
+            let node = self.tree.new_node(LayoutNode::item_group(
+                visible_items,
+                current_change,
+                collapsed_count,
+            ));
+            parent.append(node, &mut self.tree);
+
+            i = run_end;
         }
     }
 
     /// Format a Peek value into the arena.
+    ///
+    /// Note: PrettyPrinter quotes strings, but we strip those outer quotes
+    /// since our attribute rendering already adds quotes: `attr="value"`.
     fn format_peek(&mut self, peek: Peek<'_, '_>) -> FormattedValue {
         let formatted = self.printer.format_peek(peek);
-        let (span, width) = self.strings.push_str(&formatted);
+
+        // Strip outer quotes from strings to avoid double-quoting in attributes
+        // e.g. PrettyPrinter gives us `"hello"`, we want `hello`
+        let formatted =
+            if formatted.starts_with('"') && formatted.ends_with('"') && formatted.len() >= 2 {
+                &formatted[1..formatted.len() - 1]
+            } else if formatted.starts_with("r#") && formatted.contains('"') {
+                // Handle raw strings like r#"hello"# - strip r#" and "#
+                // This is a simplification; proper handling would parse the hash count
+                formatted.as_str()
+            } else {
+                formatted.as_str()
+            };
+
+        let (span, width) = self.strings.push_str(formatted);
         FormattedValue::new(span, width)
     }
 
@@ -491,7 +603,7 @@ mod tests {
         let peek = Peek::new(&value);
         let diff = Diff::Equal { value: Some(peek) };
 
-        let layout = build_layout(&diff, &BuildOptions::default());
+        let layout = build_layout(&diff, peek, peek, &BuildOptions::default());
 
         // Should produce a single text node
         let root = layout.get(layout.root).unwrap();
@@ -507,7 +619,12 @@ mod tests {
             to: Peek::new(&to),
         };
 
-        let layout = build_layout(&diff, &BuildOptions::default());
+        let layout = build_layout(
+            &diff,
+            Peek::new(&from),
+            Peek::new(&to),
+            &BuildOptions::default(),
+        );
 
         // Should produce an element with two children
         let root = layout.get(layout.root).unwrap();
@@ -532,7 +649,12 @@ mod tests {
             to: Peek::new(&to),
         };
 
-        let layout = build_layout(&diff, &BuildOptions::default());
+        let layout = build_layout(
+            &diff,
+            Peek::new(&from),
+            Peek::new(&to),
+            &BuildOptions::default(),
+        );
         let output = render_to_string(&layout, &RenderOptions::plain());
 
         // Should contain both values with appropriate markers
@@ -549,10 +671,27 @@ mod tests {
     }
 
     #[test]
+    fn test_build_without_context() {
+        let from = 10i32;
+        let to = 20i32;
+        let diff = Diff::Replace {
+            from: Peek::new(&from),
+            to: Peek::new(&to),
+        };
+
+        let layout = build_layout_without_context(&diff, &BuildOptions::default());
+        let output = render_to_string(&layout, &RenderOptions::plain());
+
+        // Should still work without context
+        assert!(output.contains("10"));
+        assert!(output.contains("20"));
+    }
+
+    #[test]
     fn test_build_options_default() {
         let opts = BuildOptions::default();
         assert_eq!(opts.max_line_width, 80);
-        assert_eq!(opts.context_lines, 2);
+        assert_eq!(opts.max_unchanged_fields, 5);
         assert_eq!(opts.collapse_threshold, 3);
     }
 }

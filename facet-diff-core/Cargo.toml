@@ -20,3 +20,5 @@ unicode-width = "0.2"
 
 [dev-dependencies]
 facet = { path = "../facet" }
+facet-diff = { path = "../facet-diff" }
+facet-xml = { path = "../facet-xml" }
