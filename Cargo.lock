@@ -1234,10 +1234,12 @@ dependencies = [
  "facet-diff",
  "facet-pretty",
  "facet-reflect",
+ "facet-testhelpers",
  "facet-value",
  "facet-xml",
  "indextree",
  "owo-colors",
+ "tracing",
  "unicode-width 0.2.2",
 ]
 

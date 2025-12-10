@@ -2,11 +2,13 @@
 
 use facet::Facet;
 use facet_diff::FacetDiff;
+// Import facet_xml as `xml` to bring the xml attribute grammar into scope
 use facet_diff_core::{
     BuildOptions, JsonFlavor, RenderOptions, RustFlavor, XmlFlavor, build_layout, render_to_string,
 };
 use facet_reflect::Peek;
 use facet_value::{VObject, Value};
+use facet_xml as xml;
 
 fn print_all_flavors<'a, T: facet::Facet<'a>>(label: &str, from: &T, to: &T) {
     let opts = RenderOptions::default();
@@ -188,53 +190,68 @@ fn main() {
         print_all_flavors("Mixed changes (add, remove, modify)", &from, &to);
     }
 
-    // Deeper nesting - SVG-like structure with proper element names
+    // Deeper nesting - SVG-like structure with proper element names and XML annotations
     {
         #[derive(Facet, Debug)]
         #[facet(rename = "svg")]
         struct Svg {
+            #[facet(xml::attribute)]
             width: u32,
+            #[facet(xml::attribute)]
             height: u32,
-            #[facet(rename = "viewBox")]
+            #[facet(xml::element, rename = "viewBox")]
             viewbox: ViewBox,
-            #[facet(rename = "g")]
-            elements: Vec<Group>,
+            #[facet(xml::elements)]
+            groups: Vec<Group>,
         }
 
         #[derive(Facet, Debug)]
         #[facet(rename = "viewBox")]
         struct ViewBox {
-            #[facet(rename = "minX")]
+            #[facet(xml::attribute, rename = "minX")]
             min_x: i32,
-            #[facet(rename = "minY")]
+            #[facet(xml::attribute, rename = "minY")]
             min_y: i32,
+            #[facet(xml::attribute)]
             width: u32,
+            #[facet(xml::attribute)]
             height: u32,
         }
 
         #[derive(Facet, Debug)]
         #[facet(rename = "g")]
         struct Group {
+            #[facet(xml::attribute)]
             id: &'static str,
+            #[facet(xml::element)]
             transform: Transform,
+            #[facet(xml::element)]
             style: Style,
         }
 
         #[derive(Facet, Debug)]
         #[facet(rename = "transform", rename_all = "kebab-case")]
         struct Transform {
+            #[facet(xml::attribute)]
             translate_x: f32,
+            #[facet(xml::attribute)]
             translate_y: f32,
+            #[facet(xml::attribute)]
             scale: f32,
+            #[facet(xml::attribute)]
             rotate: f32,
         }
 
         #[derive(Facet, Debug)]
         #[facet(rename = "style", rename_all = "kebab-case")]
         struct Style {
+            #[facet(xml::attribute)]
             fill: &'static str,
+            #[facet(xml::attribute)]
             stroke: &'static str,
+            #[facet(xml::attribute)]
             stroke_width: f32,
+            #[facet(xml::attribute)]
             opacity: f32,
         }
 
@@ -247,7 +264,7 @@ fn main() {
                 width: 800,
                 height: 600,
             },
-            elements: vec![
+            groups: vec![
                 Group {
                     id: "rect-group",
                     transform: Transform {
@@ -290,7 +307,7 @@ fn main() {
                 width: 1024, // changed
                 height: 768, // changed
             },
-            elements: vec![
+            groups: vec![
                 Group {
                     id: "rect-group",
                     transform: Transform {
@@ -325,5 +342,56 @@ fn main() {
         };
 
         print_all_flavors("Deep nesting (SVG-like)", &from, &to);
+    }
+
+    // Many attributes scenario
+    {
+        #[derive(Facet, Debug)]
+        struct ManyAttrs {
+            name: &'static str,
+            id: u32,
+            enabled: bool,
+            visible: bool,
+            priority: i32,
+            weight: f32,
+            category: &'static str,
+            tags: &'static str,
+            version: u32,
+            revision: u32,
+            status: &'static str,
+            owner: &'static str,
+        }
+
+        let from = ManyAttrs {
+            name: "widget",
+            id: 1001,
+            enabled: true,
+            visible: true,
+            priority: 5,
+            weight: 1.0,
+            category: "ui",
+            tags: "interactive,clickable",
+            version: 1,
+            revision: 0,
+            status: "active",
+            owner: "alice",
+        };
+
+        let to = ManyAttrs {
+            name: "super-widget", // changed
+            id: 1001,
+            enabled: false, // changed
+            visible: true,
+            priority: 10, // changed
+            weight: 2.5,  // changed
+            category: "ui",
+            tags: "interactive,draggable,resizable", // changed
+            version: 2,                              // changed
+            revision: 3,                             // changed
+            status: "updated",                       // changed
+            owner: "bob",                            // changed
+        };
+
+        print_all_flavors("Many attributes (12 fields)", &from, &to);
     }
 }
