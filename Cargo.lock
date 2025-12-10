@@ -1090,6 +1090,7 @@ dependencies = [
 name = "facet"
 version = "0.31.8"
 dependencies = [
+ "autocfg",
  "cargo-husky",
  "eyre",
  "facet-core",
