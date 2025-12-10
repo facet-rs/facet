@@ -451,7 +451,7 @@ fn format_value_quoted(peek: Peek<'_, '_>, w: &mut dyn Write) -> std::fmt::Resul
 
 /// Value formatting without quotes (XML style - quotes come from attribute syntax).
 fn format_value_raw(peek: Peek<'_, '_>, w: &mut dyn Write) -> std::fmt::Result {
-    use facet_core::TextualType;
+    use facet_core::{DynValueKind, TextualType};
 
     let shape = peek.shape();
 
@@ -472,6 +472,24 @@ fn format_value_raw(peek: Peek<'_, '_>, w: &mut dyn Write) -> std::fmt::Result {
         // Chars: show as-is
         (Def::Scalar, Type::Primitive(PrimitiveType::Textual(TextualType::Char))) => {
             write!(w, "{}", peek.get::<char>().unwrap())
+        }
+        // Dynamic values: handle based on their kind
+        (Def::DynamicValue(_), _) => {
+            // Write string without quotes for XML
+            if let Ok(dv) = peek.into_dynamic_value()
+                && dv.kind() == DynValueKind::String
+                && let Some(s) = dv.as_str()
+            {
+                return write!(w, "{}", s);
+            }
+            // Fall back to Display for other dynamic values
+            if shape.is_display() {
+                write!(w, "{}", peek)
+            } else if shape.is_debug() {
+                write!(w, "{:?}", peek)
+            } else {
+                write!(w, "<{}>", shape.type_identifier)
+            }
         }
         // Everything else: use Display if available, else Debug
         _ => {

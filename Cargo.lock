@@ -1234,6 +1234,7 @@ dependencies = [
  "facet-diff",
  "facet-pretty",
  "facet-reflect",
+ "facet-value",
  "facet-xml",
  "indextree",
  "owo-colors",

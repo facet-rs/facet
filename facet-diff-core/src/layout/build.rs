@@ -276,14 +276,9 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                         for field_name in sorted_unchanged {
                             if let Ok(field_value) = struct_peek.field_by_name(field_name) {
                                 let formatted = self.format_peek(field_value);
-                                let name: &'static str = match field_name {
-                                    Cow::Borrowed(s) => s,
-                                    Cow::Owned(_) => {
-                                        // Skip owned field names for now - they come from dynamic values
-                                        continue;
-                                    }
-                                };
-                                let attr = Attr::unchanged(name, name.len(), formatted);
+                                let name_width = field_name.len();
+                                let attr =
+                                    Attr::unchanged(field_name.clone(), name_width, formatted);
                                 attrs.push(attr);
                             }
                         }
@@ -318,17 +313,8 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                     // Scalar replacement - show as changed attribute
                     let old_value = self.format_peek(*from);
                     let new_value = self.format_peek(*to);
-
-                    let name: &'static str = match field_name {
-                        Cow::Borrowed(s) => s,
-                        Cow::Owned(_) => {
-                            // For owned field names, we need to handle them differently
-                            // For now, skip - this happens with dynamic values
-                            continue;
-                        }
-                    };
-
-                    let attr = Attr::changed(name, name.len(), old_value, new_value);
+                    let name_width = field_name.len();
+                    let attr = Attr::changed(field_name.clone(), name_width, old_value, new_value);
                     attrs.push(attr);
                 }
                 _ => {
@@ -336,7 +322,8 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                     let child =
                         self.build_diff(field_diff, field_from, field_to, ElementChange::None);
 
-                    // Set the field name on the child element
+                    // Set the field name on the child element (only for borrowed names for now)
+                    // TODO: Support owned field names for nested elements
                     if let Cow::Borrowed(name) = field_name
                         && let Some(node) = self.tree.get_mut(child)
                         && let LayoutNode::Element { field_name, .. } = node.get_mut()
@@ -355,11 +342,8 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
         for (field_name, value) in sorted_deletions {
             let formatted = self.format_peek(*value);
-            let name: &'static str = match field_name {
-                Cow::Borrowed(s) => s,
-                Cow::Owned(_) => continue,
-            };
-            let attr = Attr::deleted(name, name.len(), formatted);
+            let name_width = field_name.len();
+            let attr = Attr::deleted(field_name.clone(), name_width, formatted);
             attrs.push(attr);
         }
 
@@ -369,11 +353,8 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
         for (field_name, value) in sorted_insertions {
             let formatted = self.format_peek(*value);
-            let name: &'static str = match field_name {
-                Cow::Borrowed(s) => s,
-                Cow::Owned(_) => continue,
-            };
-            let attr = Attr::inserted(name, name.len(), formatted);
+            let name_width = field_name.len();
+            let attr = Attr::inserted(field_name.clone(), name_width, formatted);
             attrs.push(attr);
         }
 

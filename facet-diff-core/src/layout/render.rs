@@ -279,7 +279,7 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                 write_indent_minus_prefix(w, depth + 1, opts)?;
                 opts.backend.write_prefix(w, '-', SemanticColor::Deleted)?;
                 write!(w, " ")?;
-                render_attr_deleted(layout, w, opts, flavor, attr.name, value)?;
+                render_attr_deleted(layout, w, opts, flavor, &attr.name, value)?;
                 // Trailing comma (muted)
                 opts.backend.write_styled(
                     w,
@@ -299,7 +299,7 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                 write_indent_minus_prefix(w, depth + 1, opts)?;
                 opts.backend.write_prefix(w, '+', SemanticColor::Inserted)?;
                 write!(w, " ")?;
-                render_attr_inserted(layout, w, opts, flavor, attr.name, value)?;
+                render_attr_inserted(layout, w, opts, flavor, &attr.name, value)?;
                 // Trailing comma (muted)
                 opts.backend.write_styled(
                     w,
@@ -322,7 +322,7 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                     write!(w, "{}", flavor.field_separator())?;
                 }
                 if let AttrStatus::Unchanged { value } = &attr.status {
-                    render_attr_unchanged(layout, w, opts, flavor, attr.name, value)?;
+                    render_attr_unchanged(layout, w, opts, flavor, &attr.name, value)?;
                 }
             }
             // Trailing comma (muted)
@@ -347,7 +347,7 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
         for attr in attrs.iter() {
             write_indent(w, depth + 1, opts)?;
             if let AttrStatus::Unchanged { value } = &attr.status {
-                render_attr_unchanged(layout, w, opts, flavor, attr.name, value)?;
+                render_attr_unchanged(layout, w, opts, flavor, &attr.name, value)?;
             }
             // Trailing comma (muted)
             opts.backend
@@ -370,7 +370,7 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                 write!(w, " ")?;
             }
             if let AttrStatus::Unchanged { value } = &attr.status {
-                render_attr_unchanged(layout, w, opts, flavor, attr.name, value)?;
+                render_attr_unchanged(layout, w, opts, flavor, &attr.name, value)?;
             }
         }
 
@@ -483,7 +483,7 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
         let attr = &attrs[idx];
         if let AttrStatus::Changed { old, .. } = &attr.status {
             let name_padding = group.max_name_width.saturating_sub(attr.name_width);
-            write!(w, "{}", flavor.format_field_prefix(attr.name))?;
+            write!(w, "{}", flavor.format_field_prefix(&attr.name))?;
             let old_str = layout.get_string(old.span);
             opts.backend
                 .write_styled(w, old_str, SemanticColor::Deleted)?;
@@ -511,7 +511,7 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
         let attr = &attrs[idx];
         if let AttrStatus::Changed { new, .. } = &attr.status {
             let name_padding = group.max_name_width.saturating_sub(attr.name_width);
-            write!(w, "{}", flavor.format_field_prefix(attr.name))?;
+            write!(w, "{}", flavor.format_field_prefix(&attr.name))?;
             let new_str = layout.get_string(new.span);
             opts.backend
                 .write_styled(w, new_str, SemanticColor::Inserted)?;
@@ -553,11 +553,10 @@ fn render_attr_deleted<W: Write, B: ColorBackend, F: DiffFlavor>(
     value: &super::FormattedValue,
 ) -> fmt::Result {
     let value_str = layout.get_string(value.span);
-    // Key stays neutral, value is colored
-    write!(w, "{}", flavor.format_field_prefix(name))?;
+    // Entire field is colored red for deleted
+    let formatted = flavor.format_field(name, value_str);
     opts.backend
-        .write_styled(w, value_str, SemanticColor::Deleted)?;
-    write!(w, "{}", flavor.format_field_suffix())
+        .write_styled(w, &formatted, SemanticColor::Deleted)
 }
 
 fn render_attr_inserted<W: Write, B: ColorBackend, F: DiffFlavor>(
@@ -569,11 +568,10 @@ fn render_attr_inserted<W: Write, B: ColorBackend, F: DiffFlavor>(
     value: &super::FormattedValue,
 ) -> fmt::Result {
     let value_str = layout.get_string(value.span);
-    // Key stays neutral, value is colored
-    write!(w, "{}", flavor.format_field_prefix(name))?;
+    // Entire field is colored green for inserted
+    let formatted = flavor.format_field(name, value_str);
     opts.backend
-        .write_styled(w, value_str, SemanticColor::Inserted)?;
-    write!(w, "{}", flavor.format_field_suffix())
+        .write_styled(w, &formatted, SemanticColor::Inserted)
 }
 
 fn write_indent<W: Write, B: ColorBackend>(
