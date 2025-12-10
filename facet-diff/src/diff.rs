@@ -222,6 +222,10 @@ pub fn diff_new_peek<'mem, 'facet>(
             // Use sequences::diff to properly handle nested diffs
             let updates = sequences::diff(vec![from_value], vec![to_value]);
 
+            if updates.is_empty() {
+                return Diff::Equal { value: Some(from) };
+            }
+
             Diff::User {
                 from: from.shape(),
                 to: to.shape(),
@@ -240,6 +244,10 @@ pub fn diff_new_peek<'mem, 'facet>(
                 from_list.iter().collect::<Vec<_>>(),
                 to_list.iter().collect::<Vec<_>>(),
             );
+
+            if updates.is_empty() {
+                return Diff::Equal { value: Some(from) };
+            }
 
             Diff::Sequence {
                 from: from.shape(),
@@ -322,6 +330,10 @@ fn diff_dynamic_values<'mem, 'facet>(
 
             let updates = sequences::diff(from_elems, to_elems);
 
+            if updates.is_empty() {
+                return Diff::Equal { value: Some(from) };
+            }
+
             Diff::Sequence {
                 from: from.shape(),
                 to: to.shape(),
@@ -372,6 +384,11 @@ fn diff_dynamic_values<'mem, 'facet>(
                 if !from_keys.contains_key(key) {
                     insertions.insert(Cow::Owned(key.clone()), *to_value);
                 }
+            }
+
+            let is_empty = updates.is_empty() && deletions.is_empty() && insertions.is_empty();
+            if is_empty {
+                return Diff::Equal { value: Some(from) };
             }
 
             Diff::User {
@@ -482,6 +499,12 @@ fn diff_dynamic_vs_concrete<'mem, 'facet>(
                 };
                 let updates = sequences::diff(from_elems, to_elems);
 
+                if updates.is_empty() {
+                    return Diff::Equal {
+                        value: Some(from_peek),
+                    };
+                }
+
                 return Diff::Sequence {
                     from: from_peek.shape(),
                     to: to_peek.shape(),
@@ -544,6 +567,13 @@ fn diff_dynamic_vs_concrete<'mem, 'facet>(
                             insertions.insert(Cow::Borrowed(field.name), concrete_value);
                         }
                     }
+                }
+
+                let is_empty = updates.is_empty() && deletions.is_empty() && insertions.is_empty();
+                if is_empty {
+                    return Diff::Equal {
+                        value: Some(from_peek),
+                    };
                 }
 
                 return Diff::User {
