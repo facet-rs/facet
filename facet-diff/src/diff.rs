@@ -609,17 +609,6 @@ fn deref_if_pointer<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> Peek<'mem, 'facet
     peek
 }
 
-pub(crate) fn diff_closeness(diff: &Diff<'_, '_>) -> usize {
-    match diff {
-        Diff::Equal { .. } => 1, // This does not actually matter for flattening sequence diffs, because all diffs there are non-equal
-        Diff::Replace { .. } => 0,
-        Diff::Sequence { updates, .. } => updates.closeness(),
-        Diff::User {
-            from, to, value, ..
-        } => value.closeness() + (from == to) as usize,
-    }
-}
-
 /// Collect all leaf-level changes with their paths.
 ///
 /// This walks the diff tree recursively and collects every terminal change
