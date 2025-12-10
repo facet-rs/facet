@@ -314,6 +314,21 @@ mod tests {
 mod conformance_tests {
     use super::*;
     use rapace_testkit::{TestError, TransportFactory};
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+
+    fn init_tracing() {
+        INIT.call_once(|| {
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::from_default_env()
+                        .add_directive(tracing::Level::DEBUG.into()),
+                )
+                .with_test_writer()
+                .init();
+        });
+    }
 
     struct InProcFactory;
 
@@ -327,6 +342,7 @@ mod conformance_tests {
 
     #[tokio::test]
     async fn unary_happy_path() {
+        init_tracing();
         rapace_testkit::run_unary_happy_path::<InProcFactory>().await;
     }
 

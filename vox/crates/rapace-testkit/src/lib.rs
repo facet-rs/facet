@@ -29,24 +29,13 @@
 use std::future::Future;
 use std::sync::Arc;
 
+use rapace::session::Session;
 use rapace_core::{
     control_method, CancelReason, ControlPayload, ErrorCode, Frame, FrameFlags, MsgDescHot,
-    RpcError, Transport, NO_DEADLINE,
+    RpcError, RpcSession, Transport, NO_DEADLINE,
 };
-
-// Re-export registry types for test use
-pub use rapace_registry::{
-    Encoding, MethodEntry, MethodId, ServiceEntry, ServiceId, ServiceRegistry,
-};
-
-mod session;
-pub use session::{ChannelLifecycle, ChannelState, Session, DEFAULT_INITIAL_CREDITS};
-
-// Re-export RpcSession and related types from rapace-core
-pub use rapace_core::{parse_error_payload, ReceivedFrame, RpcSession, TunnelChunk};
 
 pub mod bidirectional;
-pub use bidirectional::{run_bidirectional_scenario, BidirectionalScenario};
 
 /// Error type for test scenarios.
 #[derive(Debug)]
@@ -108,7 +97,7 @@ pub trait TransportFactory: Send + Sync + 'static {
 
 /// Simple arithmetic service used for testing.
 #[allow(async_fn_in_trait)]
-#[rapace_macros::service]
+#[rapace::service]
 pub trait Adder {
     /// Add two numbers.
     async fn add(&self, a: i32, b: i32) -> i32;
@@ -131,7 +120,7 @@ impl Adder for AdderImpl {
 ///
 /// Uses the new `Streaming<T>` return type pattern.
 #[allow(async_fn_in_trait)]
-#[rapace_macros::service]
+#[rapace::service]
 pub trait RangeService {
     /// Stream numbers from 0 to n-1.
     async fn range(&self, n: u32) -> rapace_core::Streaming<u32>;
@@ -180,10 +169,12 @@ async fn run_unary_happy_path_inner<F: TransportFactory>() -> Result<(), TestErr
         let server_transport = server_transport.clone();
         async move {
             let request = server_transport.recv_frame().await?;
-            let response = server
+            let mut response = server
                 .dispatch(request.desc.method_id, request.payload)
                 .await
                 .map_err(TestError::Rpc)?;
+            // Set channel_id on response to match request
+            response.desc.channel_id = request.desc.channel_id;
             server_transport.send_frame(&response).await?;
             Ok::<_, TestError>(())
         }
@@ -237,10 +228,12 @@ async fn run_unary_multiple_calls_inner<F: TransportFactory>() -> Result<(), Tes
         async move {
             for _ in 0..3 {
                 let request = server_transport.recv_frame().await?;
-                let response = server
+                let mut response = server
                     .dispatch(request.desc.method_id, request.payload)
                     .await
                     .map_err(TestError::Rpc)?;
+                // Set channel_id on response to match request
+                response.desc.channel_id = request.desc.channel_id;
                 server_transport.send_frame(&response).await?;
             }
             Ok::<_, TestError>(())
@@ -520,10 +513,12 @@ async fn run_deadline_success_inner<F: TransportFactory>() -> Result<(), TestErr
             }
 
             // Deadline not exceeded - process normally
-            let response = server
+            let mut response = server
                 .dispatch(request.desc.method_id, request.payload)
                 .await
                 .map_err(TestError::Rpc)?;
+            // Set channel_id on response to match request
+            response.desc.channel_id = request.desc.channel_id;
             server_transport.send_frame(&response).await?;
             Ok::<_, TestError>(())
         }
@@ -910,7 +905,7 @@ pub async fn run_session_credit_exhaustion<F: TransportFactory>() {
 }
 
 async fn run_session_credit_exhaustion_inner<F: TransportFactory>() -> Result<(), TestError> {
-    use session::DEFAULT_INITIAL_CREDITS;
+    use rapace::session::DEFAULT_INITIAL_CREDITS;
 
     let (client_transport, _server_transport) = F::connect_pair().await?;
     let client_transport = Arc::new(client_transport);
@@ -1106,7 +1101,7 @@ pub async fn run_session_grant_credits_control_frame<F: TransportFactory>() {
 
 async fn run_session_grant_credits_control_frame_inner<F: TransportFactory>(
 ) -> Result<(), TestError> {
-    use session::DEFAULT_INITIAL_CREDITS;
+    use rapace::session::DEFAULT_INITIAL_CREDITS;
 
     let (client_transport, server_transport) = F::connect_pair().await?;
     let client_transport = Arc::new(client_transport);
@@ -1304,7 +1299,7 @@ async fn run_server_streaming_happy_path_inner<F: TransportFactory>() -> Result<
 
     // After sending EOS, client channel should be HalfClosedLocal
     let state = client_session.get_lifecycle(channel_id);
-    if state != session::ChannelLifecycle::HalfClosedLocal {
+    if state != rapace::session::ChannelLifecycle::HalfClosedLocal {
         return Err(TestError::Assertion(format!(
             "expected HalfClosedLocal after client EOS, got {:?}",
             state
@@ -1344,7 +1339,7 @@ async fn run_server_streaming_happy_path_inner<F: TransportFactory>() -> Result<
 
     // After receiving EOS, channel should be Closed (both sides sent EOS)
     let final_state = client_session.get_lifecycle(channel_id);
-    if final_state != session::ChannelLifecycle::Closed {
+    if final_state != rapace::session::ChannelLifecycle::Closed {
         return Err(TestError::Assertion(format!(
             "expected Closed after both EOS, got {:?}",
             final_state
@@ -1483,7 +1478,7 @@ async fn run_client_streaming_happy_path_inner<F: TransportFactory>() -> Result<
 
     // Channel should be closed
     let final_state = client_session.get_lifecycle(channel_id);
-    if final_state != session::ChannelLifecycle::Closed {
+    if final_state != rapace::session::ChannelLifecycle::Closed {
         return Err(TestError::Assertion(format!(
             "expected Closed, got {:?}",
             final_state
@@ -1627,7 +1622,7 @@ async fn run_bidirectional_streaming_inner<F: TransportFactory>() -> Result<(), 
 
     // Channel should be closed
     let final_state = client_session.get_lifecycle(channel_id);
-    if final_state != session::ChannelLifecycle::Closed {
+    if final_state != rapace::session::ChannelLifecycle::Closed {
         return Err(TestError::Assertion(format!(
             "expected Closed, got {:?}",
             final_state
@@ -1851,7 +1846,7 @@ async fn run_streaming_cancellation_inner<F: TransportFactory>() -> Result<(), T
 /// are correctly transmitted across all transports. For SHM transport, this
 /// also enables testing the zero-copy path.
 #[allow(async_fn_in_trait)]
-#[rapace_macros::service]
+#[rapace::service]
 pub trait LargeBlobService {
     /// Echo the blob back unchanged.
     /// Used to verify round-trip integrity of large payloads.
@@ -1912,10 +1907,12 @@ async fn run_large_blob_echo_inner<F: TransportFactory>() -> Result<(), TestErro
         let server_transport = server_transport.clone();
         async move {
             let request = server_transport.recv_frame().await?;
-            let response = server
+            let mut response = server
                 .dispatch(request.desc.method_id, request.payload)
                 .await
                 .map_err(TestError::Rpc)?;
+            // Set channel_id on response to match request
+            response.desc.channel_id = request.desc.channel_id;
             server_transport.send_frame(&response).await?;
             Ok::<_, TestError>(())
         }
@@ -1970,10 +1967,12 @@ async fn run_large_blob_transform_inner<F: TransportFactory>() -> Result<(), Tes
         let server_transport = server_transport.clone();
         async move {
             let request = server_transport.recv_frame().await?;
-            let response = server
+            let mut response = server
                 .dispatch(request.desc.method_id, request.payload)
                 .await
                 .map_err(TestError::Rpc)?;
+            // Set channel_id on response to match request
+            response.desc.channel_id = request.desc.channel_id;
             server_transport.send_frame(&response).await?;
             Ok::<_, TestError>(())
         }
@@ -2037,10 +2036,12 @@ async fn run_large_blob_checksum_inner<F: TransportFactory>() -> Result<(), Test
             let server = LargeBlobServiceServer::new(LargeBlobServiceImpl);
             async move {
                 let request = server_transport.recv_frame().await?;
-                let response = server
+                let mut response = server
                     .dispatch(request.desc.method_id, request.payload)
                     .await
                     .map_err(TestError::Rpc)?;
+                // Set channel_id on response to match request
+                response.desc.channel_id = request.desc.channel_id;
                 server_transport.send_frame(&response).await?;
                 Ok::<_, TestError>(())
             }
@@ -2090,6 +2091,8 @@ async fn run_large_blob_checksum_inner<F: TransportFactory>() -> Result<(), Test
 /// - Schemas are captured for request/response types
 #[cfg(test)]
 mod registry_tests {
+    use rapace_registry::ServiceRegistry;
+
     use super::*;
 
     #[test]
@@ -2204,7 +2207,8 @@ mod registry_tests {
 
         // Create a registry-aware client and verify it uses the correct IDs
         let (client_transport, _server_transport) = InProcTransport::pair();
-        let client = AdderRegistryClient::new(Arc::new(client_transport), &registry);
+        let client_session = RpcSession::new(Arc::new(client_transport));
+        let client = AdderRegistryClient::new(Arc::new(client_session), &registry);
 
         // The client should have the correct method ID stored
         assert_eq!(client.add_method_id, 1);

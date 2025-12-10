@@ -490,7 +490,8 @@ mod conformance_tests {
     struct StreamFactory;
 
     impl TransportFactory for StreamFactory {
-        type Transport = StreamTransport<ReadHalf<tokio::io::DuplexStream>, WriteHalf<tokio::io::DuplexStream>>;
+        type Transport =
+            StreamTransport<ReadHalf<tokio::io::DuplexStream>, WriteHalf<tokio::io::DuplexStream>>;
 
         async fn connect_pair() -> Result<(Self::Transport, Self::Transport), TestError> {
             Ok(StreamTransport::pair())

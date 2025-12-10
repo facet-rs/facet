@@ -1,3 +1,4 @@
+#![allow(clippy::type_complexity)]
 //! Tracing subscriber that forwards spans/events over rapace RPC.
 //!
 //! This crate enables plugins to use `tracing` normally while having all
@@ -53,17 +54,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
-use rapace_core::{Frame, RpcError, Transport};
-use rapace_testkit::RpcSession;
+use rapace::{Frame, RpcError, RpcSession, Transport};
 use tracing::span::{Attributes, Record};
 use tracing::{Event, Id, Subscriber};
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
-
-// Required by the macro
-#[allow(unused)]
-use rapace_registry;
 
 // ============================================================================
 // Facet Types (transport-agnostic)
@@ -122,7 +118,7 @@ pub struct EventMeta {
 ///
 /// The host implements this, the plugin calls it via RPC.
 #[allow(async_fn_in_trait)]
-#[rapace_macros::service]
+#[rapace::service]
 pub trait TracingSink {
     /// Called when a new span is created.
     /// Returns a span ID that the plugin should use for subsequent calls.
@@ -153,7 +149,7 @@ pub trait TracingSink {
 /// The plugin implements this, the host calls it via RPC to push filter config.
 /// This allows the host to be the single source of truth for log filtering.
 #[allow(async_fn_in_trait)]
-#[rapace_macros::service]
+#[rapace::service]
 pub trait TracingConfig {
     /// Set the tracing filter.
     ///
@@ -180,9 +176,9 @@ impl SharedFilter {
     /// Create a new shared filter with default (allow all) settings.
     pub fn new() -> Self {
         // Default to allowing everything - host will push the real filter
-        let filter = EnvFilter::builder()
-            .parse("")
-            .unwrap_or_else(|_| EnvFilter::new("trace"));
+        // Note: EnvFilter::builder().parse("") returns a filter that blocks everything,
+        // so we explicitly use "trace" to allow all levels.
+        let filter = EnvFilter::new("trace");
         Self {
             inner: Arc::new(parking_lot::RwLock::new(filter)),
         }
@@ -254,7 +250,11 @@ impl TracingConfig for TracingConfigImpl {
 /// Create a dispatcher for TracingConfig service (plugin side).
 pub fn create_tracing_config_dispatcher(
     config: TracingConfigImpl,
-) -> impl Fn(u32, u32, Vec<u8>) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
+) -> impl Fn(
+    u32,
+    u32,
+    Vec<u8>,
+) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
        + Send
        + Sync
        + 'static {
@@ -323,17 +323,13 @@ impl<T: Transport + Send + Sync + 'static> RapaceTracingLayer<T> {
         }
     }
 
-    /// Call TracingSink.new_span via RPC (blocking from sync context).
+    /// Call TracingSink.new_span via RPC (fire-and-forget from sync context).
     fn call_new_span(&self, meta: SpanMeta) -> u64 {
-        let session = self.session.clone();
+        let client = TracingSinkClient::new(self.session.clone());
         let local_id = self.next_span_id.fetch_add(1, Ordering::Relaxed);
 
-        // We need to call the async RPC from a sync context.
-        // Use spawn_blocking + block_on pattern.
         self.rt.spawn(async move {
-            let channel_id = session.next_channel_id();
-            let payload = facet_postcard::to_vec(&meta).unwrap();
-            let _ = session.call(channel_id, tracingsink_methods::METHOD_ID_NEW_SPAN, payload).await;
+            let _ = client.new_span(meta).await;
         });
 
         local_id
@@ -341,51 +337,41 @@ impl<T: Transport + Send + Sync + 'static> RapaceTracingLayer<T> {
 
     /// Call TracingSink.record via RPC.
     fn call_record(&self, span_id: u64, fields: Vec<Field>) {
-        let session = self.session.clone();
+        let client = TracingSinkClient::new(self.session.clone());
         self.rt.spawn(async move {
-            let channel_id = session.next_channel_id();
-            let payload = facet_postcard::to_vec(&(span_id, fields)).unwrap();
-            let _ = session.call(channel_id, tracingsink_methods::METHOD_ID_RECORD, payload).await;
+            let _ = client.record(span_id, fields).await;
         });
     }
 
     /// Call TracingSink.event via RPC.
     fn call_event(&self, event: EventMeta) {
-        let session = self.session.clone();
+        let client = TracingSinkClient::new(self.session.clone());
         self.rt.spawn(async move {
-            let channel_id = session.next_channel_id();
-            let payload = facet_postcard::to_vec(&event).unwrap();
-            let _ = session.call(channel_id, tracingsink_methods::METHOD_ID_EVENT, payload).await;
+            let _ = client.event(event).await;
         });
     }
 
     /// Call TracingSink.enter via RPC.
     fn call_enter(&self, span_id: u64) {
-        let session = self.session.clone();
+        let client = TracingSinkClient::new(self.session.clone());
         self.rt.spawn(async move {
-            let channel_id = session.next_channel_id();
-            let payload = facet_postcard::to_vec(&span_id).unwrap();
-            let _ = session.call(channel_id, tracingsink_methods::METHOD_ID_ENTER, payload).await;
+            let _ = client.enter(span_id).await;
         });
     }
 
     /// Call TracingSink.exit via RPC.
     fn call_exit(&self, span_id: u64) {
-        let session = self.session.clone();
+        let client = TracingSinkClient::new(self.session.clone());
         self.rt.spawn(async move {
-            let channel_id = session.next_channel_id();
-            let payload = facet_postcard::to_vec(&span_id).unwrap();
-            let _ = session.call(channel_id, tracingsink_methods::METHOD_ID_EXIT, payload).await;
+            let _ = client.exit(span_id).await;
         });
     }
 
     /// Call TracingSink.drop_span via RPC.
     fn call_drop_span(&self, span_id: u64) {
-        let session = self.session.clone();
+        let client = TracingSinkClient::new(self.session.clone());
         self.rt.spawn(async move {
-            let channel_id = session.next_channel_id();
-            let payload = facet_postcard::to_vec(&span_id).unwrap();
-            let _ = session.call(channel_id, tracingsink_methods::METHOD_ID_DROP_SPAN, payload).await;
+            let _ = client.drop_span(span_id).await;
         });
     }
 }
@@ -598,15 +584,16 @@ impl Default for HostTracingSink {
 impl TracingSink for HostTracingSink {
     async fn new_span(&self, span: SpanMeta) -> u64 {
         let id = self.next_span_id.fetch_add(1, Ordering::Relaxed);
-        self.records.lock().push(TraceRecord::NewSpan {
-            id,
-            meta: span,
-        });
+        self.records
+            .lock()
+            .push(TraceRecord::NewSpan { id, meta: span });
         id
     }
 
     async fn record(&self, span_id: u64, fields: Vec<Field>) {
-        self.records.lock().push(TraceRecord::Record { span_id, fields });
+        self.records
+            .lock()
+            .push(TraceRecord::Record { span_id, fields });
     }
 
     async fn event(&self, event: EventMeta) {
@@ -633,7 +620,11 @@ impl TracingSink for HostTracingSink {
 /// Create a dispatcher for TracingSink service.
 pub fn create_tracing_sink_dispatcher(
     sink: HostTracingSink,
-) -> impl Fn(u32, u32, Vec<u8>) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
+) -> impl Fn(
+    u32,
+    u32,
+    Vec<u8>,
+) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
        + Send
        + Sync
        + 'static {
@@ -646,5 +637,5 @@ pub fn create_tracing_sink_dispatcher(
     }
 }
 
-// TracingSinkClient is generated by the rapace_macros::service attribute.
+// TracingSinkClient is generated by the rapace::service attribute.
 // Use TracingSinkClient::new(session) to create a client.

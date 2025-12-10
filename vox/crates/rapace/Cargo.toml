@@ -21,10 +21,7 @@ rapace-registry = { workspace = true }
 rapace-transport-mem = { workspace = true, optional = true }
 rapace-transport-stream = { workspace = true, optional = true }
 rapace-transport-websocket = { workspace = true, optional = true }
-rapace-transport-shm = { workspace = true, optional = true }
-
-# Session layer
-rapace-testkit = { workspace = true, optional = true }
+rapace-transport-shm = { workspace = true, optional = true, features = ["allocator"] }
 
 # Serialization
 facet = { workspace = true }
@@ -34,12 +31,13 @@ facet-postcard = { workspace = true }
 # Async runtime
 tokio = { workspace = true, features = ["net", "io-util"] }
 tokio-stream = { workspace = true }
+parking_lot.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [features]
-default = ["mem", "stream"]
+default = ["mem", "stream", "shm"]
 
 # Transport features
 mem = ["dep:rapace-transport-mem"]
@@ -47,8 +45,5 @@ stream = ["dep:rapace-transport-stream"]
 websocket = ["dep:rapace-transport-websocket"]
 shm = ["dep:rapace-transport-shm"]
 
-# Include session layer (for advanced use)
-session = ["dep:rapace-testkit"]
-
 # All transports
-full = ["mem", "stream", "websocket", "shm", "session"]
+full = ["mem", "stream", "websocket", "shm"]

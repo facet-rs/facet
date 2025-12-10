@@ -943,36 +943,32 @@ The macro generates:
 2. **Client stub** with identical signatures:
    ```rust
    struct CalculatorClient<T: Transport> {
-       transport: T,
-       // ...
+       session: Arc<RpcSession<T>>,
    }
 
    impl<T: Transport> CalculatorClient<T> {
-       pub fn add(&self, a: i32, b: i32) -> impl Future<Output = Result<i32, RpcError>> {
-           // Encode (a, b), send frame, await response, decode result
+       pub async fn add(&self, a: i32, b: i32) -> Result<i32, RpcError> {
+           // Encode (a, b), pick the next channel ID from the session,
+           // send the frame, await the pending response, decode result
        }
    }
    ```
 
-3. **Server skeleton** that receives frames and calls the impl:
+3. **Server skeleton** that receives frames and calls the impl. You plug
+   this into an `RpcSession` by calling `session.set_dispatcher(...)`:
    ```rust
-   struct CalculatorServer<S: Calculator> {
-       service: S,
-   }
-
-   impl<S: Calculator> CalculatorServer<S> {
-       fn dispatch(&self, method_id: u32, args: &[u8]) -> Result<Vec<u8>, RpcError> {
-           match method_id {
-               1 => {
-                   let (a, b) = decode(args)?;
-                   let result = self.service.add(a, b);
-                   encode(result)
-               }
-               // ...
-           }
-       }
-   }
+   session.set_dispatcher(move |_channel_id, method_id, payload| {
+       let server = CalculatorServer::new(CalculatorImpl);
+       Box::pin(async move { server.dispatch(method_id, &payload).await })
+   });
    ```
+
+For server-streaming RPCs, call `server.dispatch_streaming(method_id, channel_id, &payload, transport)` instead; most real code wraps this pattern in a helper such as `create_template_engine_dispatcher()` so it can borrow the transport from the shared session before awaiting.
+
+> **Manual session ownership:** Only your code knows when to spawn the demux loop
+> (`tokio::spawn(session.clone().run())`), which side should start at odd vs. even
+> channel IDs, or how many generated clients/servers will share the same transport.
+> The macro keeps those knobs in user code instead of guessing.
 
 ### 7.2 Transport Selection
 
@@ -1254,7 +1250,7 @@ println!("Ratio: {:.1}%", metrics.zero_copy_ratio() * 100.0);
 
 ### 9.7 Example: Image Processing
 
-See `examples/shm_image/` for a complete example demonstrating:
+See `demos/shm-image/` for a complete example demonstrating:
 - Allocating PNG data in SHM
 - Metrics showing zero-copy hits
 - RPC call with the `ImageService`

@@ -161,7 +161,11 @@ impl ServiceRegistry {
     /// Register a new service with the given name and documentation.
     ///
     /// Returns a builder for adding methods to the service.
-    pub fn register_service(&mut self, name: &'static str, doc: impl Into<String>) -> ServiceBuilder<'_> {
+    pub fn register_service(
+        &mut self,
+        name: &'static str,
+        doc: impl Into<String>,
+    ) -> ServiceBuilder<'_> {
         let id = ServiceId(self.next_service_id);
         self.next_service_id += 1;
 
@@ -346,8 +350,14 @@ mod tests {
             "add",
             "Add two numbers together.",
             vec![
-                ArgInfo { name: "a", type_name: "i32" },
-                ArgInfo { name: "b", type_name: "i32" },
+                ArgInfo {
+                    name: "a",
+                    type_name: "i32",
+                },
+                ArgInfo {
+                    name: "b",
+                    type_name: "i32",
+                },
             ],
             <AddRequest as Facet>::SHAPE,
             <AddResponse as Facet>::SHAPE,
@@ -383,8 +393,14 @@ mod tests {
             "add",
             "",
             vec![
-                ArgInfo { name: "a", type_name: "i32" },
-                ArgInfo { name: "b", type_name: "i32" },
+                ArgInfo {
+                    name: "a",
+                    type_name: "i32",
+                },
+                ArgInfo {
+                    name: "b",
+                    type_name: "i32",
+                },
             ],
             <AddRequest as Facet>::SHAPE,
             <AddResponse as Facet>::SHAPE,
@@ -396,7 +412,10 @@ mod tests {
         let range_id = builder.add_streaming_method(
             "range",
             "",
-            vec![ArgInfo { name: "n", type_name: "u32" }],
+            vec![ArgInfo {
+                name: "n",
+                type_name: "u32",
+            }],
             <RangeRequest as Facet>::SHAPE,
             <RangeItem as Facet>::SHAPE,
         );
@@ -428,8 +447,14 @@ mod tests {
             "add",
             "",
             vec![
-                ArgInfo { name: "a", type_name: "i32" },
-                ArgInfo { name: "b", type_name: "i32" },
+                ArgInfo {
+                    name: "a",
+                    type_name: "i32",
+                },
+                ArgInfo {
+                    name: "b",
+                    type_name: "i32",
+                },
             ],
             <AddRequest as Facet>::SHAPE,
             <AddResponse as Facet>::SHAPE,
@@ -472,8 +497,14 @@ mod tests {
             "add",
             "",
             vec![
-                ArgInfo { name: "a", type_name: "i32" },
-                ArgInfo { name: "b", type_name: "i32" },
+                ArgInfo {
+                    name: "a",
+                    type_name: "i32",
+                },
+                ArgInfo {
+                    name: "b",
+                    type_name: "i32",
+                },
             ],
             <AddRequest as Facet>::SHAPE,
             <AddResponse as Facet>::SHAPE,
@@ -496,8 +527,14 @@ mod tests {
             "add",
             "",
             vec![
-                ArgInfo { name: "a", type_name: "i32" },
-                ArgInfo { name: "b", type_name: "i32" },
+                ArgInfo {
+                    name: "a",
+                    type_name: "i32",
+                },
+                ArgInfo {
+                    name: "b",
+                    type_name: "i32",
+                },
             ],
             <AddRequest as Facet>::SHAPE,
             <AddResponse as Facet>::SHAPE,
@@ -523,8 +560,14 @@ mod tests {
             "add",
             method_doc,
             vec![
-                ArgInfo { name: "a", type_name: "i32" },
-                ArgInfo { name: "b", type_name: "i32" },
+                ArgInfo {
+                    name: "a",
+                    type_name: "i32",
+                },
+                ArgInfo {
+                    name: "b",
+                    type_name: "i32",
+                },
             ],
             <AddRequest as Facet>::SHAPE,
             <AddResponse as Facet>::SHAPE,

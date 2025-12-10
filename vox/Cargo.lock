@@ -229,19 +229,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "browser-ws-server"
-version = "0.1.0"
-dependencies = [
- "facet",
- "facet-postcard",
- "futures",
- "rapace-core",
- "rapace-transport-websocket",
- "tokio",
- "tokio-tungstenite",
-]
-
-[[package]]
 name = "bumpalo"
 version = "3.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1388,6 +1375,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "proc-macro-crate"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "219cb19e96be00ab2e37d6e299658a0cfa83e52429179969b0f0121b4ac46983"
+dependencies = [
+ "toml_edit",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1545,10 +1541,10 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-postcard",
+ "parking_lot",
  "rapace-core",
  "rapace-macros",
  "rapace-registry",
- "rapace-testkit",
  "rapace-transport-mem",
  "rapace-transport-shm",
  "rapace-transport-stream",
@@ -1585,10 +1581,7 @@ dependencies = [
  "facet-value",
  "futures",
  "owo-colors",
- "rapace-core",
- "rapace-macros",
- "rapace-registry",
- "rapace-transport-websocket",
+ "rapace",
  "serde",
  "serde_json",
  "tokio",
@@ -1603,16 +1596,8 @@ name = "rapace-diagnostics-over-rapace"
 version = "0.1.0"
 dependencies = [
  "facet",
- "facet-core",
- "facet-postcard",
  "futures",
- "rapace-core",
- "rapace-macros",
- "rapace-registry",
- "rapace-testkit",
- "rapace-transport-mem",
- "rapace-transport-shm",
- "rapace-transport-stream",
+ "rapace",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -1620,15 +1605,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rapace-explorer"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "rapace",
+]
+
+[[package]]
 name = "rapace-http"
 version = "0.1.0"
 dependencies = [
  "facet",
- "facet-core",
- "facet-postcard",
- "rapace-core",
- "rapace-macros",
- "rapace-registry",
+ "rapace",
  "rapace-testkit",
  "tracing",
 ]
@@ -1646,14 +1635,8 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "rapace-core",
+ "rapace",
  "rapace-http",
- "rapace-macros",
- "rapace-registry",
- "rapace-testkit",
- "rapace-transport-mem",
- "rapace-transport-shm",
- "rapace-transport-stream",
  "serde",
  "serde_json",
  "tokio",
@@ -1676,13 +1659,7 @@ dependencies = [
  "futures",
  "http",
  "http-body-util",
- "rapace-core",
- "rapace-macros",
- "rapace-registry",
- "rapace-testkit",
- "rapace-transport-mem",
- "rapace-transport-shm",
- "rapace-transport-stream",
+ "rapace",
  "reqwest",
  "tokio",
  "tokio-stream",
@@ -1696,6 +1673,7 @@ dependencies = [
 name = "rapace-macros"
 version = "0.1.0"
 dependencies = [
+ "proc-macro-crate",
  "proc-macro2",
  "quote",
  "rapace-core",
@@ -1718,10 +1696,7 @@ dependencies = [
  "facet-core",
  "facet-postcard",
  "image",
- "rapace-core",
- "rapace-macros",
- "rapace-registry",
- "rapace-transport-shm",
+ "rapace",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -1734,13 +1709,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-postcard",
- "rapace-core",
- "rapace-macros",
- "rapace-registry",
- "rapace-testkit",
- "rapace-transport-mem",
- "rapace-transport-shm",
- "rapace-transport-stream",
+ "rapace",
  "tokio",
  "tracing",
 ]
@@ -1754,6 +1723,7 @@ dependencies = [
  "facet-postcard",
  "futures",
  "parking_lot",
+ "rapace",
  "rapace-core",
  "rapace-macros",
  "rapace-registry",
@@ -1768,12 +1738,8 @@ name = "rapace-tracing"
 version = "0.1.0"
 dependencies = [
  "facet",
- "facet-core",
- "facet-postcard",
  "parking_lot",
- "rapace-core",
- "rapace-macros",
- "rapace-registry",
+ "rapace",
  "rapace-testkit",
  "tokio",
  "tracing",
@@ -1787,14 +1753,10 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-postcard",
- "rapace-core",
+ "rapace",
  "rapace-macros",
  "rapace-registry",
- "rapace-testkit",
  "rapace-tracing",
- "rapace-transport-mem",
- "rapace-transport-shm",
- "rapace-transport-stream",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1809,6 +1771,8 @@ dependencies = [
  "rapace-core",
  "rapace-testkit",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -2349,6 +2313,36 @@ dependencies = [
  "futures-sink",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2cdb639ebbc97961c51720f858597f7f24c4fc295327923af55b74c3c724533"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.23.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d7cbc3b4b49633d57a0509303158ca50de80ae32c265093b24c414705807832"
+dependencies = [
+ "indexmap",
+ "toml_datetime",
+ "toml_parser",
+ "winnow",
+]
+
+[[package]]
+name = "toml_parser"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0cbe268d35bdb4bb5a56a2de88d0ad0eb70af5384a99d648cd4b3d04039800e"
+dependencies = [
+ "winnow",
 ]
 
 [[package]]
@@ -2925,6 +2919,15 @@ name = "windows_x86_64_msvc"
 version = "0.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
+
+[[package]]
+name = "winnow"
+version = "0.7.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a5364e9d77fcdeeaa6062ced926ee3381faa2ee02d3eb83a5c27a8825540829"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "wit-bindgen"

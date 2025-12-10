@@ -84,7 +84,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             // Try nextest first, fall back to cargo test
             if cmd!(sh, "cargo nextest --version").quiet().run().is_ok() {
                 println!("Using cargo-nextest");
-                cmd!(sh, "cargo nextest run --workspace").run()?;
+                // Use CI profile for longer timeouts when in CI
+                if std::env::var("CI").is_ok() {
+                    cmd!(sh, "cargo nextest run --workspace --profile ci").run()?;
+                } else {
+                    cmd!(sh, "cargo nextest run --workspace").run()?;
+                }
             } else {
                 println!("cargo-nextest not found, using cargo test");
                 cmd!(sh, "cargo test --workspace").run()?;
@@ -138,7 +143,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("\n=== Wasm builds complete ===");
             println!("\nTo test in browser:");
             println!("  1. cargo run --package browser-ws-server");
-            println!("  2. cd examples/browser_ws && wasm-pack build --target web ../../crates/rapace-wasm-client");
+            println!("  2. cd demos/browser-ws && wasm-pack build --target web ../../crates/rapace-wasm-client");
             println!("  3. python3 -m http.server 8080");
             println!("  4. Open http://localhost:8080");
             println!("\nOr run: cargo xtask browser-test");
@@ -190,7 +195,7 @@ fn run_browser_test(
     workspace_root: &std::path::Path,
     headed: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let browser_ws_dir = workspace_root.join("examples/browser_ws");
+    let browser_ws_dir = workspace_root.join("demos/browser-ws");
     let wasm_client_dir = workspace_root.join("crates/rapace-wasm-client");
 
     // Step 1: Build wasm client with wasm-pack
@@ -203,6 +208,23 @@ fn run_browser_test(
 
     sh.change_dir(&wasm_client_dir);
     cmd!(sh, "wasm-pack build --target web").run()?;
+
+    // Copy pkg to browser-ws demo directory
+    let pkg_src = wasm_client_dir.join("pkg");
+    let pkg_dst = browser_ws_dir.join("pkg");
+    if pkg_dst.exists() {
+        std::fs::remove_dir_all(&pkg_dst)?;
+    }
+    std::fs::create_dir_all(&pkg_dst)?;
+    for entry in std::fs::read_dir(&pkg_src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        if src_path.is_file() {
+            let dst_path = pkg_dst.join(entry.file_name());
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    println!("Copied pkg to {}", pkg_dst.display());
 
     // Step 2: Install npm deps if needed
     println!("\n=== Checking npm dependencies ===");
@@ -218,20 +240,20 @@ fn run_browser_test(
         cmd!(sh, "npx playwright install chromium").run()?;
     }
 
-    // Step 3: Build and start the WebSocket server
-    println!("\n=== Starting WebSocket server ===");
+    // Step 3: Build and start the dashboard (which provides ExplorerService)
+    println!("\n=== Starting dashboard server ===");
     sh.change_dir(workspace_root);
-    cmd!(sh, "cargo build --package browser-ws-server --release").run()?;
+    cmd!(sh, "cargo build --package rapace-dashboard --release").run()?;
 
-    let ws_server_path = workspace_root.join("target/release/browser-ws-server");
-    let mut ws_server = std::process::Command::new(&ws_server_path)
+    let dashboard_path = workspace_root.join("target/release/rapace-dashboard");
+    let mut ws_server = std::process::Command::new(&dashboard_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()?;
 
     // Wait for server to start (spawns thread to drain remaining output)
-    wait_for_server_ready(&mut ws_server, "WebSocket server listening")?;
-    println!("WebSocket server started on ws://127.0.0.1:9000");
+    wait_for_server_ready(&mut ws_server, "ready")?;
+    println!("Dashboard server started on ws://127.0.0.1:4268");
 
     // Step 4: Start static file server
     println!("\n=== Starting static file server ===");
@@ -379,14 +401,18 @@ fn run_bench(
     let mut all_results: Vec<BenchResult> = Vec::new();
 
     // Helper to run oha and parse results
-    let run_oha = |url: &str, c: u32, duration: &str| -> Result<OhaResult, Box<dyn std::error::Error>> {
-        let c_str = c.to_string();
-        let output = cmd!(sh, "oha {url} -z {duration} -c {c_str} --output-format json")
+    let run_oha =
+        |url: &str, c: u32, duration: &str| -> Result<OhaResult, Box<dyn std::error::Error>> {
+            let c_str = c.to_string();
+            let output = cmd!(
+                sh,
+                "oha {url} -z {duration} -c {c_str} --output-format json"
+            )
             .quiet()
             .read()?;
-        let result: OhaResult = serde_json::from_str(&output)?;
-        Ok(result)
-    };
+            let result: OhaResult = serde_json::from_str(&output)?;
+            Ok(result)
+        };
 
     // Cleanup helper
     let cleanup = || {
@@ -587,7 +613,11 @@ fn run_bench(
 
     // Start host with --shm-large flag
     let mut host_proc = std::process::Command::new(&host_path)
-        .args(["--transport=shm", &format!("--addr={}", SHM_FILE), "--shm-large"])
+        .args([
+            "--transport=shm",
+            &format!("--addr={}", SHM_FILE),
+            "--shm-large",
+        ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
@@ -596,7 +626,11 @@ fn run_bench(
 
     // Start plugin (must also pass --shm-large since config is not stored in file)
     let mut plugin_proc = std::process::Command::new(&plugin_path)
-        .args(["--transport=shm", &format!("--addr={}", SHM_FILE), "--shm-large"])
+        .args([
+            "--transport=shm",
+            &format!("--addr={}", SHM_FILE),
+            "--shm-large",
+        ])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
@@ -652,7 +686,10 @@ fn run_bench(
 
     for (endpoint, _) in &endpoints {
         println!("/{} endpoint:", endpoint);
-        println!("  {:>10} {:>8} {:>12} {:>12}", "Transport", "Conc", "RPS Δ%", "p99 Δ%");
+        println!(
+            "  {:>10} {:>8} {:>12} {:>12}",
+            "Transport", "Conc", "RPS Δ%", "p99 Δ%"
+        );
 
         for &c in &concurrency_levels {
             let baseline = all_results
@@ -661,10 +698,9 @@ fn run_bench(
 
             if let Some(base) = baseline {
                 for transport in &["stream", "shm", "shm-large"] {
-                    if let Some(tunnel) = all_results
-                        .iter()
-                        .find(|r| r.name == *transport && r.endpoint == *endpoint && r.concurrency == c)
-                    {
+                    if let Some(tunnel) = all_results.iter().find(|r| {
+                        r.name == *transport && r.endpoint == *endpoint && r.concurrency == c
+                    }) {
                         let rps_delta = ((tunnel.rps - base.rps) / base.rps) * 100.0;
                         let p99_delta = ((tunnel.p99_ms - base.p99_ms) / base.p99_ms) * 100.0;
                         println!(
@@ -692,7 +728,7 @@ fn run_dashboard(
     workspace_root: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let wasm_client_dir = workspace_root.join("crates/rapace-wasm-client");
-    let dashboard_dir = workspace_root.join("examples/dashboard");
+    let dashboard_dir = workspace_root.join("demos/dashboard");
 
     // Step 1: Build wasm client with wasm-pack
     println!("=== Building wasm client with wasm-pack ===");

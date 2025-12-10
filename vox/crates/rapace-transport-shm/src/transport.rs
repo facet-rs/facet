@@ -102,9 +102,7 @@ impl ShmTransport {
     /// Create a connected pair of SHM transports with shared metrics.
     ///
     /// Both transports will report to the same metrics instance.
-    pub fn pair_with_metrics(
-        metrics: Arc<ShmMetrics>,
-    ) -> Result<(Self, Self), TransportError> {
+    pub fn pair_with_metrics(metrics: Arc<ShmMetrics>) -> Result<(Self, Self), TransportError> {
         let (session_a, session_b) = ShmSession::create_pair().map_err(|e| {
             TransportError::Encode(EncodeError::EncodeFailed(format!(
                 "failed to create SHM session pair: {}",
@@ -414,8 +412,7 @@ impl ShmMetrics {
 
     /// Get the number of copy encodes.
     pub fn copy_count(&self) -> u64 {
-        self.copy_encodes
-            .load(std::sync::atomic::Ordering::Relaxed)
+        self.copy_encodes.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Get the zero-copy efficiency as a percentage (0.0 to 1.0).

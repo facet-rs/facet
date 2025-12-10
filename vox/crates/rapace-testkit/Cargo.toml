@@ -7,6 +7,8 @@ repository.workspace = true
 description = "Conformance test suite for rapace transports"
 
 [dependencies]
+# rapace is required for the #[rapace::service] macro to work
+rapace.workspace = true
 rapace-core.workspace = true
 rapace-macros.workspace = true
 rapace-registry.workspace = true

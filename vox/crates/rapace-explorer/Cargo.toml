@@ -1,0 +1,11 @@
+[package]
+name = "rapace-explorer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Explorer service for rapace - dynamic service discovery and method invocation"
+
+[dependencies]
+rapace = { path = "../rapace" }
+facet = { workspace = true }

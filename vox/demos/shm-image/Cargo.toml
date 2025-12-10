@@ -1,0 +1,27 @@
+[package]
+name = "rapace-shm-image"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "rapace-shm-image"
+path = "src/main.rs"
+
+[dependencies]
+rapace = { path = "../../crates/rapace" }
+
+# Image processing
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+tokio-stream = "0.1"
+
+# facet for shapes (required by macro-generated code)
+facet = { git = "https://github.com/facet-rs/facet" }
+facet-core = { git = "https://github.com/facet-rs/facet" }
+facet-postcard = { git = "https://github.com/facet-rs/facet" }
+
+# Tracing (required by macro-generated code)
+tracing = "0.1"
