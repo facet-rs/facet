@@ -2,10 +2,15 @@ use facet_reflect::Peek;
 
 use crate::Diff;
 
-pub(crate) struct Interspersed<A, B> {
-    pub(crate) first: Option<A>,
-    pub(crate) values: Vec<(B, A)>,
-    pub(crate) last: Option<B>,
+/// An interspersed sequence of A and B values.
+/// Pattern: [A?, (B, A)*, B?]
+pub struct Interspersed<A, B> {
+    /// The first A value (if any)
+    pub first: Option<A>,
+    /// Pairs of (B, A) values
+    pub values: Vec<(B, A)>,
+    /// The trailing B value (if any)
+    pub last: Option<B>,
 }
 
 impl<A, B> Interspersed<A, B> {
@@ -42,10 +47,13 @@ impl<A, B> Default for Interspersed<A, B> {
     }
 }
 
+/// A group of values being replaced (removals paired with additions).
 #[derive(Default)]
-pub(crate) struct ReplaceGroup<'mem, 'facet> {
-    pub(crate) removals: Vec<Peek<'mem, 'facet>>,
-    pub(crate) additions: Vec<Peek<'mem, 'facet>>,
+pub struct ReplaceGroup<'mem, 'facet> {
+    /// The values being removed
+    pub removals: Vec<Peek<'mem, 'facet>>,
+    /// The values being added
+    pub additions: Vec<Peek<'mem, 'facet>>,
 }
 
 impl<'mem, 'facet> ReplaceGroup<'mem, 'facet> {
@@ -60,9 +68,11 @@ impl<'mem, 'facet> ReplaceGroup<'mem, 'facet> {
     }
 }
 
+/// A group of updates containing replace groups interspersed with nested diffs.
 #[derive(Default)]
-pub(crate) struct UpdatesGroup<'mem, 'facet>(
-    pub(crate) Interspersed<ReplaceGroup<'mem, 'facet>, Vec<Diff<'mem, 'facet>>>,
+pub struct UpdatesGroup<'mem, 'facet>(
+    /// The interspersed structure of replace groups and diffs
+    pub Interspersed<ReplaceGroup<'mem, 'facet>, Vec<Diff<'mem, 'facet>>>,
 );
 
 impl<'mem, 'facet> UpdatesGroup<'mem, 'facet> {
@@ -119,9 +129,11 @@ impl<'mem, 'facet> UpdatesGroup<'mem, 'facet> {
     }
 }
 
+/// Sequence updates: update groups interspersed with unchanged items.
 #[derive(Default)]
 pub struct Updates<'mem, 'facet>(
-    pub(crate) Interspersed<UpdatesGroup<'mem, 'facet>, Vec<Peek<'mem, 'facet>>>,
+    /// The interspersed structure
+    pub Interspersed<UpdatesGroup<'mem, 'facet>, Vec<Peek<'mem, 'facet>>>,
 );
 
 impl<'mem, 'facet> Updates<'mem, 'facet> {

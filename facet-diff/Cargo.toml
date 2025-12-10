@@ -12,7 +12,6 @@ categories = ["development-tools", "data-structures"]
 [features]
 ci = [] # CI feature
 default = []
-miette = ["dep:miette"]
 
 [dependencies]
 cinereus = { path = "../cinereus" }
@@ -21,7 +20,6 @@ facet = { path = "../facet" }
 facet-core = { path = "../facet-core" }
 facet-pretty = { path = "../facet-pretty" }
 facet-reflect = { path = "../facet-reflect" }
-miette = { version = "7", optional = true, features = ["fancy"] }
 owo-colors = "4"
 
 [dev-dependencies]
@@ -30,4 +28,3 @@ insta = "1.43.1"
 owo-colors = "4"
 facet-value = { path = "../facet-value" }
 facet-testhelpers = { path = "../facet-testhelpers" }
-facet-showcase = { path = "../facet-showcase" }

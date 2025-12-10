@@ -1217,11 +1217,9 @@ dependencies = [
  "facet-core",
  "facet-pretty",
  "facet-reflect",
- "facet-showcase",
  "facet-testhelpers",
  "facet-value",
  "insta",
- "miette",
  "owo-colors",
 ]
 
