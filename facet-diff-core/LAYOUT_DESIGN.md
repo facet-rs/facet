@@ -277,12 +277,36 @@ Gray/dimmed comment.
 - `ElementChange` - enum for deleted/inserted/moved
 - `render()`, `render_to_string()` - rendering to writer/String
 - `RenderOptions` - colors, symbols, indent config
+- `ColorBackend` trait - semantic colors → actual styling (ANSI, plain)
+- `AnsiBackend`, `PlainBackend` - concrete backends
+- `build_layout()`, `build_layout_without_context()` - Diff → Layout conversion
+- Peek context passing for unchanged field values
+- Collapse of unchanged struct fields when count > threshold
+- `LayoutNode::ItemGroup` - grouping consecutive sequence items on single lines
+- Collapse of long sequence runs with "...N more" suffix
+- `DiffFlavor` trait - format-agnostic rendering
+- `RustFlavor`, `JsonFlavor`, `XmlFlavor` - three output styles
+- `FieldPresentation` - how fields should be presented (Attribute, Child, TextContent, Children)
+- XML attribute detection (`#[facet(xml::attribute)]`, etc.)
 
 **Not yet implemented:**
-- Build phase (Diff -> Layout conversion)
-- Collapse detection for unchanged runs
+- Integration of `DiffFlavor` into `build_layout()` and `render()`
 - Move detection (←/→ markers)
 - XML-specific escaping in format phase
+
+## Known Limitations
+
+1. **Nested diffs in sequences not supported for grouping**
+   - When you have `Vec<Struct>` where struct fields changed, the nested diffs
+     cannot be grouped into `ItemGroup` nodes
+   - Currently only simple scalar sequences (e.g., `Vec<i32>`) support item grouping
+   - See: `build.rs:collect_updates_group_items()` - ignores `_diffs` parameter
+
+2. **XML namespace detection by string**
+   - XML attributes are detected by namespace string "xml" (e.g., `field.has_attr(Some("xml"), "attribute")`)
+   - This relies on the namespace being defined in `define_attr_grammar!` with `ns "xml"`
+   - Even if someone imports `use facet_xml as html;`, the namespace stored is still "xml"
+   - This should be tested to confirm
 
 ## Test Plan
 

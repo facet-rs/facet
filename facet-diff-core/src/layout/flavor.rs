@@ -4,6 +4,7 @@
 //! according to its format's conventions.
 
 use std::borrow::Cow;
+use std::fmt::Write;
 
 use facet_core::{Def, Field, PrimitiveType, Type};
 use facet_reflect::Peek;
@@ -44,11 +45,11 @@ pub enum FieldPresentation {
 
 /// A diff output flavor that knows how to format values and present fields.
 pub trait DiffFlavor {
-    /// Format a scalar/leaf value as a string.
+    /// Format a scalar/leaf value into a writer.
     ///
-    /// The returned string should NOT include surrounding quotes for strings -
+    /// The output should NOT include surrounding quotes for strings -
     /// the renderer will add appropriate syntax based on context.
-    fn format_value(&self, peek: Peek<'_, '_>) -> String;
+    fn format_value(&self, peek: Peek<'_, '_>, w: &mut dyn Write) -> std::fmt::Result;
 
     /// Determine how a field should be presented.
     fn field_presentation(&self, field: &Field) -> FieldPresentation;
@@ -94,6 +95,41 @@ pub trait DiffFlavor {
     /// - JSON: `// ...5 more`
     /// - XML: `<!-- ...5 more -->`
     fn comment(&self, text: &str) -> String;
+
+    /// Format a field assignment (name and value).
+    /// - Rust: `name: value`
+    /// - JSON: `"name": value`
+    /// - XML: `name="value"`
+    fn format_field(&self, name: &str, value: &str) -> String;
+
+    /// Format just the field name with assignment operator.
+    /// - Rust: `name: `
+    /// - JSON: `"name": `
+    /// - XML: `name="`
+    fn format_field_prefix(&self, name: &str) -> String;
+
+    /// Suffix after the value (if any).
+    /// - Rust: `` (empty)
+    /// - JSON: `` (empty)
+    /// - XML: `"` (closing quote)
+    fn format_field_suffix(&self) -> &'static str;
+
+    /// Close the opening tag when there are children.
+    /// - Rust: `` (empty - no separate closing for opening tag)
+    /// - JSON: `` (empty)
+    /// - XML: `>` (close the opening tag before children)
+    fn struct_open_close(&self) -> &'static str {
+        ""
+    }
+
+    /// Optional type name comment to show after struct_open.
+    /// Rendered in muted color for readability.
+    /// - Rust: None (type name is in struct_open)
+    /// - JSON: Some("/* Point */")
+    /// - XML: None
+    fn type_comment(&self, _name: &str) -> Option<String> {
+        None
+    }
 }
 
 /// Rust-style output flavor.
@@ -103,8 +139,8 @@ pub trait DiffFlavor {
 pub struct RustFlavor;
 
 impl DiffFlavor for RustFlavor {
-    fn format_value(&self, peek: Peek<'_, '_>) -> String {
-        format_value_common(peek)
+    fn format_value(&self, peek: Peek<'_, '_>, w: &mut dyn Write) -> std::fmt::Result {
+        format_value_common(peek, w)
     }
 
     fn field_presentation(&self, field: &Field) -> FieldPresentation {
@@ -141,17 +177,29 @@ impl DiffFlavor for RustFlavor {
     fn comment(&self, text: &str) -> String {
         format!("/* {} */", text)
     }
+
+    fn format_field(&self, name: &str, value: &str) -> String {
+        format!("{}: {}", name, value)
+    }
+
+    fn format_field_prefix(&self, name: &str) -> String {
+        format!("{}: ", name)
+    }
+
+    fn format_field_suffix(&self) -> &'static str {
+        ""
+    }
 }
 
-/// JSON-style output flavor.
+/// JSON-style output flavor (JSONC with comments for type names).
 ///
-/// Produces output like: `{ "x": 10, "y": 20 }`
+/// Produces output like: `{ // Point\n  "x": 10, "y": 20\n}`
 #[derive(Debug, Clone, Default)]
 pub struct JsonFlavor;
 
 impl DiffFlavor for JsonFlavor {
-    fn format_value(&self, peek: Peek<'_, '_>) -> String {
-        format_value_common(peek)
+    fn format_value(&self, peek: Peek<'_, '_>, w: &mut dyn Write) -> std::fmt::Result {
+        format_value_common(peek, w)
     }
 
     fn field_presentation(&self, field: &Field) -> FieldPresentation {
@@ -162,8 +210,11 @@ impl DiffFlavor for JsonFlavor {
     }
 
     fn struct_open(&self, _name: &str) -> Cow<'static, str> {
-        // JSON doesn't show type names
         Cow::Borrowed("{")
+    }
+
+    fn type_comment(&self, name: &str) -> Option<String> {
+        Some(format!("/* {} */", name))
     }
 
     fn struct_close(&self, _name: &str, _self_closing: bool) -> Cow<'static, str> {
@@ -171,7 +222,7 @@ impl DiffFlavor for JsonFlavor {
     }
 
     fn field_separator(&self) -> &'static str {
-        ","
+        ", "
     }
 
     fn seq_open(&self) -> Cow<'static, str> {
@@ -183,12 +234,23 @@ impl DiffFlavor for JsonFlavor {
     }
 
     fn item_separator(&self) -> &'static str {
-        ","
+        ", "
     }
 
     fn comment(&self, text: &str) -> String {
-        // JSON doesn't have comments, but we use // for readability
         format!("// {}", text)
+    }
+
+    fn format_field(&self, name: &str, value: &str) -> String {
+        format!("\"{}\": {}", name, value)
+    }
+
+    fn format_field_prefix(&self, name: &str) -> String {
+        format!("\"{}\": ", name)
+    }
+
+    fn format_field_suffix(&self) -> &'static str {
+        ""
     }
 }
 
@@ -201,8 +263,8 @@ impl DiffFlavor for JsonFlavor {
 pub struct XmlFlavor;
 
 impl DiffFlavor for XmlFlavor {
-    fn format_value(&self, peek: Peek<'_, '_>) -> String {
-        format_value_common(peek)
+    fn format_value(&self, peek: Peek<'_, '_>, w: &mut dyn Write) -> std::fmt::Result {
+        format_value_common(peek, w)
     }
 
     fn field_presentation(&self, field: &Field) -> FieldPresentation {
@@ -262,47 +324,63 @@ impl DiffFlavor for XmlFlavor {
     }
 
     fn item_separator(&self) -> &'static str {
-        ""
+        " "
     }
 
     fn comment(&self, text: &str) -> String {
         format!("<!-- {} -->", text)
     }
+
+    fn format_field(&self, name: &str, value: &str) -> String {
+        format!("{}=\"{}\"", name, value)
+    }
+
+    fn format_field_prefix(&self, name: &str) -> String {
+        format!("{}=\"", name)
+    }
+
+    fn format_field_suffix(&self) -> &'static str {
+        "\""
+    }
+
+    fn struct_open_close(&self) -> &'static str {
+        ">"
+    }
 }
 
-/// Common value formatting - returns raw value without surrounding quotes.
+/// Common value formatting - writes raw value without surrounding quotes.
 /// The renderer adds appropriate syntax based on context.
-fn format_value_common(peek: Peek<'_, '_>) -> String {
+fn format_value_common(peek: Peek<'_, '_>, w: &mut dyn Write) -> std::fmt::Result {
     use facet_core::TextualType;
 
     let shape = peek.shape();
 
     match (shape.def, shape.ty) {
-        // Strings: return raw content (no quotes - renderer adds them in context)
+        // Strings: write raw content (no quotes - renderer adds them in context)
         (_, Type::Primitive(PrimitiveType::Textual(TextualType::Str))) => {
-            peek.get::<str>().unwrap().to_string()
+            write!(w, "{}", peek.get::<str>().unwrap())
         }
         // String type (owned)
         (Def::Scalar, _) if shape.id == <String as facet_core::Facet>::SHAPE.id => {
-            peek.get::<String>().unwrap().to_string()
+            write!(w, "{}", peek.get::<String>().unwrap())
         }
         // Booleans
         (Def::Scalar, Type::Primitive(PrimitiveType::Boolean)) => {
             let b = peek.get::<bool>().unwrap();
-            if *b { "true" } else { "false" }.to_string()
+            write!(w, "{}", if *b { "true" } else { "false" })
         }
         // Chars: show as-is (no quotes)
         (Def::Scalar, Type::Primitive(PrimitiveType::Textual(TextualType::Char))) => {
-            peek.get::<char>().unwrap().to_string()
+            write!(w, "{}", peek.get::<char>().unwrap())
         }
         // Everything else: use Display if available, else Debug
         _ => {
             if shape.is_display() {
-                format!("{}", peek)
+                write!(w, "{}", peek)
             } else if shape.is_debug() {
-                format!("{:?}", peek)
+                write!(w, "{:?}", peek)
             } else {
-                format!("<{}>", shape.type_identifier)
+                write!(w, "<{}>", shape.type_identifier)
             }
         }
     }
@@ -448,14 +526,20 @@ mod tests {
         );
     }
 
+    fn format_to_string<F: DiffFlavor>(flavor: &F, peek: Peek<'_, '_>) -> String {
+        let mut buf = String::new();
+        flavor.format_value(peek, &mut buf).unwrap();
+        buf
+    }
+
     #[test]
     fn test_format_value_integers() {
         let value = 42i32;
         let peek = Peek::new(&value);
 
-        assert_eq!(RustFlavor.format_value(peek), "42");
-        assert_eq!(JsonFlavor.format_value(peek), "42");
-        assert_eq!(XmlFlavor.format_value(peek), "42");
+        assert_eq!(format_to_string(&RustFlavor, peek), "42");
+        assert_eq!(format_to_string(&JsonFlavor, peek), "42");
+        assert_eq!(format_to_string(&XmlFlavor, peek), "42");
     }
 
     #[test]
@@ -464,9 +548,9 @@ mod tests {
         let peek = Peek::new(&value);
 
         // All flavors return raw string content (no quotes)
-        assert_eq!(RustFlavor.format_value(peek), "hello");
-        assert_eq!(JsonFlavor.format_value(peek), "hello");
-        assert_eq!(XmlFlavor.format_value(peek), "hello");
+        assert_eq!(format_to_string(&RustFlavor, peek), "hello");
+        assert_eq!(format_to_string(&JsonFlavor, peek), "hello");
+        assert_eq!(format_to_string(&XmlFlavor, peek), "hello");
     }
 
     #[test]
@@ -474,12 +558,12 @@ mod tests {
         let t = true;
         let f = false;
 
-        assert_eq!(RustFlavor.format_value(Peek::new(&t)), "true");
-        assert_eq!(RustFlavor.format_value(Peek::new(&f)), "false");
-        assert_eq!(JsonFlavor.format_value(Peek::new(&t)), "true");
-        assert_eq!(JsonFlavor.format_value(Peek::new(&f)), "false");
-        assert_eq!(XmlFlavor.format_value(Peek::new(&t)), "true");
-        assert_eq!(XmlFlavor.format_value(Peek::new(&f)), "false");
+        assert_eq!(format_to_string(&RustFlavor, Peek::new(&t)), "true");
+        assert_eq!(format_to_string(&RustFlavor, Peek::new(&f)), "false");
+        assert_eq!(format_to_string(&JsonFlavor, Peek::new(&t)), "true");
+        assert_eq!(format_to_string(&JsonFlavor, Peek::new(&f)), "false");
+        assert_eq!(format_to_string(&XmlFlavor, Peek::new(&t)), "true");
+        assert_eq!(format_to_string(&XmlFlavor, Peek::new(&f)), "false");
     }
 
     #[test]
@@ -493,6 +577,11 @@ mod tests {
         assert_eq!(json.struct_open("Point"), "{");
         assert_eq!(xml.struct_open("Point"), "<Point");
 
+        // type_comment (rendered separately in muted color)
+        assert_eq!(rust.type_comment("Point"), None);
+        assert_eq!(json.type_comment("Point"), Some("/* Point */".to_string()));
+        assert_eq!(xml.type_comment("Point"), None);
+
         // struct_close (non-self-closing)
         assert_eq!(rust.struct_close("Point", false), "}");
         assert_eq!(json.struct_close("Point", false), "}");
@@ -505,7 +594,7 @@ mod tests {
 
         // field_separator
         assert_eq!(rust.field_separator(), ", ");
-        assert_eq!(json.field_separator(), ",");
+        assert_eq!(json.field_separator(), ", ");
         assert_eq!(xml.field_separator(), " ");
 
         // seq_open/close
@@ -520,5 +609,10 @@ mod tests {
         assert_eq!(rust.comment("5 more"), "/* 5 more */");
         assert_eq!(json.comment("5 more"), "// 5 more");
         assert_eq!(xml.comment("5 more"), "<!-- 5 more -->");
+
+        // format_field
+        assert_eq!(rust.format_field("x", "10"), "x: 10");
+        assert_eq!(json.format_field("x", "10"), "\"x\": 10");
+        assert_eq!(xml.format_field("x", "10"), "x=\"10\"");
     }
 }

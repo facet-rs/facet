@@ -3,6 +3,7 @@
 use std::fmt::{self, Write};
 
 use super::backend::{AnsiBackend, ColorBackend, PlainBackend, SemanticColor};
+use super::flavor::DiffFlavor;
 use super::{AttrStatus, ChangedGroup, ElementChange, Layout, LayoutNode};
 use crate::DiffSymbols;
 
@@ -50,18 +51,23 @@ impl<B: ColorBackend> RenderOptions<B> {
 }
 
 /// Render a layout to a writer.
-pub fn render<W: Write, B: ColorBackend>(
+pub fn render<W: Write, B: ColorBackend, F: DiffFlavor>(
     layout: &Layout,
     w: &mut W,
     opts: &RenderOptions<B>,
+    flavor: &F,
 ) -> fmt::Result {
-    render_node(layout, w, layout.root, 0, opts)
+    render_node(layout, w, layout.root, 0, opts, flavor)
 }
 
 /// Render a layout to a String.
-pub fn render_to_string<B: ColorBackend>(layout: &Layout, opts: &RenderOptions<B>) -> String {
+pub fn render_to_string<B: ColorBackend, F: DiffFlavor>(
+    layout: &Layout,
+    opts: &RenderOptions<B>,
+    flavor: &F,
+) -> String {
     let mut out = String::new();
-    render(layout, &mut out, opts).expect("writing to String cannot fail");
+    render(layout, &mut out, opts, flavor).expect("writing to String cannot fail");
     out
 }
 
@@ -74,12 +80,13 @@ fn element_change_to_semantic(change: ElementChange) -> SemanticColor {
     }
 }
 
-fn render_node<W: Write, B: ColorBackend>(
+fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
     layout: &Layout,
     w: &mut W,
     node_id: indextree::NodeId,
     depth: usize,
     opts: &RenderOptions<B>,
+    flavor: &F,
 ) -> fmt::Result {
     let node = layout.get(node_id).expect("node exists");
 
@@ -101,6 +108,7 @@ fn render_node<W: Write, B: ColorBackend>(
                 node_id,
                 depth,
                 opts,
+                flavor,
                 tag,
                 &attrs,
                 &changed_groups,
@@ -108,12 +116,17 @@ fn render_node<W: Write, B: ColorBackend>(
             )
         }
 
+        LayoutNode::Sequence { change } => {
+            let change = *change;
+            render_sequence(layout, w, node_id, depth, opts, flavor, change)
+        }
+
         LayoutNode::Collapsed { count } => {
             let count = *count;
             write_indent(w, depth, opts)?;
-            let comment = format!("<!-- {} unchanged -->", count);
+            let comment = flavor.comment(&format!("{} unchanged", count));
             opts.backend
-                .write_styled(w, &comment, SemanticColor::Unchanged)?;
+                .write_styled(w, &comment, SemanticColor::Comment)?;
             writeln!(w)
         }
 
@@ -149,11 +162,11 @@ fn render_node<W: Write, B: ColorBackend>(
                 write!(w, " ")?;
             }
 
-            // Render items space-separated
+            // Render items with flavor separator
             let semantic = element_change_to_semantic(change);
             for (i, item) in items.iter().enumerate() {
                 if i > 0 {
-                    write!(w, " ")?;
+                    write!(w, "{}", flavor.item_separator())?;
                 }
                 let text = layout.get_string(item.span);
                 opts.backend.write_styled(w, text, semantic)?;
@@ -161,9 +174,10 @@ fn render_node<W: Write, B: ColorBackend>(
 
             // Render collapsed suffix if present
             if let Some(count) = collapsed_suffix {
-                let suffix = format!(" ...{} more", count);
+                let suffix = flavor.comment(&format!("{} more", count));
+                write!(w, " ")?;
                 opts.backend
-                    .write_styled(w, &suffix, SemanticColor::Unchanged)?;
+                    .write_styled(w, &suffix, SemanticColor::Comment)?;
             }
 
             writeln!(w)
@@ -172,12 +186,13 @@ fn render_node<W: Write, B: ColorBackend>(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_element<W: Write, B: ColorBackend>(
+fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
     layout: &Layout,
     w: &mut W,
     node_id: indextree::NodeId,
     depth: usize,
     opts: &RenderOptions<B>,
+    flavor: &F,
     tag: &str,
     attrs: &[super::Attr],
     changed_groups: &[ChangedGroup],
@@ -201,7 +216,7 @@ fn render_element<W: Write, B: ColorBackend>(
         ElementChange::MovedFrom | ElementChange::MovedTo => SemanticColor::Moved,
     };
 
-    // Opening tag line
+    // Opening tag/struct
     write_indent(w, depth, opts)?;
     if let Some(prefix) = change.prefix() {
         opts.backend
@@ -209,8 +224,15 @@ fn render_element<W: Write, B: ColorBackend>(
         write!(w, " ")?;
     }
 
-    opts.backend
-        .write_styled(w, &format!("<{}", tag), tag_color)?;
+    let open = flavor.struct_open(tag);
+    opts.backend.write_styled(w, &open, tag_color)?;
+
+    // Render type comment in muted color if present
+    if let Some(comment) = flavor.type_comment(tag) {
+        write!(w, " ")?;
+        opts.backend
+            .write_styled(w, &comment, SemanticColor::Comment)?;
+    }
 
     if has_attr_changes {
         // Multi-line attribute format
@@ -218,7 +240,7 @@ fn render_element<W: Write, B: ColorBackend>(
 
         // Render changed groups as -/+ line pairs
         for group in changed_groups {
-            render_changed_group(layout, w, depth + 1, opts, attrs, group)?;
+            render_changed_group(layout, w, depth + 1, opts, flavor, attrs, group)?;
         }
 
         // Render deleted attributes
@@ -231,7 +253,7 @@ fn render_element<W: Write, B: ColorBackend>(
                 write_indent(w, depth + 1, opts)?;
                 opts.backend.write_prefix(w, '-', SemanticColor::Deleted)?;
                 write!(w, " ")?;
-                render_attr_deleted(layout, w, opts, attr.name, value)?;
+                render_attr_deleted(layout, w, opts, flavor, attr.name, value)?;
                 writeln!(w)?;
             }
         }
@@ -245,7 +267,7 @@ fn render_element<W: Write, B: ColorBackend>(
                 write_indent(w, depth + 1, opts)?;
                 opts.backend.write_prefix(w, '+', SemanticColor::Inserted)?;
                 write!(w, " ")?;
-                render_attr_inserted(layout, w, opts, attr.name, value)?;
+                render_attr_inserted(layout, w, opts, flavor, attr.name, value)?;
                 writeln!(w)?;
             }
         }
@@ -260,10 +282,10 @@ fn render_element<W: Write, B: ColorBackend>(
             write!(w, "  ")?; // align with -/+ lines
             for (i, attr) in unchanged.iter().enumerate() {
                 if i > 0 {
-                    write!(w, " ")?;
+                    write!(w, "{}", flavor.field_separator())?;
                 }
                 if let AttrStatus::Unchanged { value } = &attr.status {
-                    render_attr_unchanged(layout, w, opts, attr.name, value)?;
+                    render_attr_unchanged(layout, w, opts, flavor, attr.name, value)?;
                 }
             }
             writeln!(w)?;
@@ -272,36 +294,44 @@ fn render_element<W: Write, B: ColorBackend>(
         // Closing bracket
         write_indent(w, depth, opts)?;
         if has_children {
-            opts.backend.write_styled(w, ">", tag_color)?;
-            writeln!(w)?;
+            let open_close = flavor.struct_open_close();
+            opts.backend.write_styled(w, open_close, tag_color)?;
         } else {
-            opts.backend.write_styled(w, "/>", tag_color)?;
-            writeln!(w)?;
+            let close = flavor.struct_close(tag, true);
+            opts.backend.write_styled(w, &close, tag_color)?;
         }
+        writeln!(w)?;
     } else {
         // Inline attributes (no changes)
-        for attr in attrs {
-            write!(w, " ")?;
+        for (i, attr) in attrs.iter().enumerate() {
+            if i > 0 {
+                write!(w, "{}", flavor.field_separator())?;
+            } else {
+                write!(w, " ")?;
+            }
             if let AttrStatus::Unchanged { value } = &attr.status {
-                render_attr_unchanged(layout, w, opts, attr.name, value)?;
+                render_attr_unchanged(layout, w, opts, flavor, attr.name, value)?;
             }
         }
 
         if has_children {
-            opts.backend.write_styled(w, ">", tag_color)?;
-            writeln!(w)?;
+            // Close the opening tag (e.g., ">" for XML)
+            let open_close = flavor.struct_open_close();
+            opts.backend.write_styled(w, open_close, tag_color)?;
         } else {
-            opts.backend.write_styled(w, "/>", tag_color)?;
-            writeln!(w)?;
+            // Self-closing
+            let close = flavor.struct_close(tag, true);
+            opts.backend.write_styled(w, &close, tag_color)?;
         }
+        writeln!(w)?;
     }
 
     // Children
     for child_id in children {
-        render_node(layout, w, child_id, depth + 1, opts)?;
+        render_node(layout, w, child_id, depth + 1, opts, flavor)?;
     }
 
-    // Closing tag
+    // Closing tag (if we have children, we already printed opening part above)
     if has_children {
         write_indent(w, depth, opts)?;
         if let Some(prefix) = change.prefix() {
@@ -309,19 +339,69 @@ fn render_element<W: Write, B: ColorBackend>(
                 .write_prefix(w, prefix, element_change_to_semantic(change))?;
             write!(w, " ")?;
         }
-        opts.backend
-            .write_styled(w, &format!("</{}>", tag), tag_color)?;
+        let close = flavor.struct_close(tag, false);
+        opts.backend.write_styled(w, &close, tag_color)?;
         writeln!(w)?;
     }
 
     Ok(())
 }
 
-fn render_changed_group<W: Write, B: ColorBackend>(
+fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
+    layout: &Layout,
+    w: &mut W,
+    node_id: indextree::NodeId,
+    depth: usize,
+    opts: &RenderOptions<B>,
+    flavor: &F,
+    change: ElementChange,
+) -> fmt::Result {
+    let children: Vec<_> = layout.children(node_id).collect();
+
+    let tag_color = match change {
+        ElementChange::None => SemanticColor::Structure,
+        ElementChange::Deleted => SemanticColor::Deleted,
+        ElementChange::Inserted => SemanticColor::Inserted,
+        ElementChange::MovedFrom | ElementChange::MovedTo => SemanticColor::Moved,
+    };
+
+    // Opening bracket
+    write_indent(w, depth, opts)?;
+    if let Some(prefix) = change.prefix() {
+        opts.backend
+            .write_prefix(w, prefix, element_change_to_semantic(change))?;
+        write!(w, " ")?;
+    }
+
+    let open = flavor.seq_open();
+    opts.backend.write_styled(w, &open, tag_color)?;
+    writeln!(w)?;
+
+    // Children
+    for child_id in children {
+        render_node(layout, w, child_id, depth + 1, opts, flavor)?;
+    }
+
+    // Closing bracket
+    write_indent(w, depth, opts)?;
+    if let Some(prefix) = change.prefix() {
+        opts.backend
+            .write_prefix(w, prefix, element_change_to_semantic(change))?;
+        write!(w, " ")?;
+    }
+    let close = flavor.seq_close();
+    opts.backend.write_styled(w, &close, tag_color)?;
+    writeln!(w)?;
+
+    Ok(())
+}
+
+fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
     layout: &Layout,
     w: &mut W,
     depth: usize,
     opts: &RenderOptions<B>,
+    flavor: &F,
     attrs: &[super::Attr],
     group: &ChangedGroup,
 ) -> fmt::Result {
@@ -335,16 +415,16 @@ fn render_changed_group<W: Write, B: ColorBackend>(
 
     for (i, &idx) in group.attr_indices.iter().enumerate() {
         if i > 0 {
-            write!(w, " ")?;
+            write!(w, "{}", flavor.field_separator())?;
         }
         let attr = &attrs[idx];
         if let AttrStatus::Changed { old, .. } = &attr.status {
             let name_padding = group.max_name_width.saturating_sub(attr.name_width);
-            write!(w, "{}=\"", attr.name)?;
+            write!(w, "{}", flavor.format_field_prefix(attr.name))?;
             let old_str = layout.get_string(old.span);
             opts.backend
                 .write_styled(w, old_str, SemanticColor::Deleted)?;
-            write!(w, "\"")?;
+            write!(w, "{}", flavor.format_field_suffix())?;
             // Pad value for column alignment
             let value_padding = max_value_width.saturating_sub(old.width) + name_padding;
             for _ in 0..value_padding {
@@ -361,16 +441,16 @@ fn render_changed_group<W: Write, B: ColorBackend>(
 
     for (i, &idx) in group.attr_indices.iter().enumerate() {
         if i > 0 {
-            write!(w, " ")?;
+            write!(w, "{}", flavor.field_separator())?;
         }
         let attr = &attrs[idx];
         if let AttrStatus::Changed { new, .. } = &attr.status {
             let name_padding = group.max_name_width.saturating_sub(attr.name_width);
-            write!(w, "{}=\"", attr.name)?;
+            write!(w, "{}", flavor.format_field_prefix(attr.name))?;
             let new_str = layout.get_string(new.span);
             opts.backend
                 .write_styled(w, new_str, SemanticColor::Inserted)?;
-            write!(w, "\"")?;
+            write!(w, "{}", flavor.format_field_suffix())?;
             // Pad for column alignment
             let value_padding = max_value_width.saturating_sub(new.width) + name_padding;
             for _ in 0..value_padding {
@@ -383,47 +463,50 @@ fn render_changed_group<W: Write, B: ColorBackend>(
     Ok(())
 }
 
-fn render_attr_unchanged<W: Write, B: ColorBackend>(
+fn render_attr_unchanged<W: Write, B: ColorBackend, F: DiffFlavor>(
     layout: &Layout,
     w: &mut W,
     opts: &RenderOptions<B>,
+    flavor: &F,
     name: &str,
     value: &super::FormattedValue,
 ) -> fmt::Result {
     let value_str = layout.get_string(value.span);
-    let formatted = format!("{}=\"{}\"", name, value_str);
+    let formatted = flavor.format_field(name, value_str);
     opts.backend
         .write_styled(w, &formatted, SemanticColor::Unchanged)
 }
 
-fn render_attr_deleted<W: Write, B: ColorBackend>(
+fn render_attr_deleted<W: Write, B: ColorBackend, F: DiffFlavor>(
     layout: &Layout,
     w: &mut W,
     opts: &RenderOptions<B>,
+    flavor: &F,
     name: &str,
     value: &super::FormattedValue,
 ) -> fmt::Result {
     let value_str = layout.get_string(value.span);
-    // Key stays white, value and quotes are colored
-    write!(w, "{}=", name)?;
-    let with_quotes = format!("\"{}\"", value_str);
+    // Key stays neutral, value is colored
+    write!(w, "{}", flavor.format_field_prefix(name))?;
     opts.backend
-        .write_styled(w, &with_quotes, SemanticColor::Deleted)
+        .write_styled(w, value_str, SemanticColor::Deleted)?;
+    write!(w, "{}", flavor.format_field_suffix())
 }
 
-fn render_attr_inserted<W: Write, B: ColorBackend>(
+fn render_attr_inserted<W: Write, B: ColorBackend, F: DiffFlavor>(
     layout: &Layout,
     w: &mut W,
     opts: &RenderOptions<B>,
+    flavor: &F,
     name: &str,
     value: &super::FormattedValue,
 ) -> fmt::Result {
     let value_str = layout.get_string(value.span);
-    // Key stays white, value and quotes are colored
-    write!(w, "{}=", name)?;
-    let with_quotes = format!("\"{}\"", value_str);
+    // Key stays neutral, value is colored
+    write!(w, "{}", flavor.format_field_prefix(name))?;
     opts.backend
-        .write_styled(w, &with_quotes, SemanticColor::Inserted)
+        .write_styled(w, value_str, SemanticColor::Inserted)?;
+    write!(w, "{}", flavor.format_field_suffix())
 }
 
 fn write_indent<W: Write, B: ColorBackend>(
@@ -442,7 +525,7 @@ mod tests {
     use indextree::Arena;
 
     use super::*;
-    use crate::layout::{Attr, FormatArena, FormattedValue, Layout, LayoutNode};
+    use crate::layout::{Attr, FormatArena, FormattedValue, Layout, LayoutNode, XmlFlavor};
 
     fn make_test_layout() -> Layout {
         let mut strings = FormatArena::new();
@@ -476,7 +559,7 @@ mod tests {
     fn test_render_simple_change() {
         let layout = make_test_layout();
         let opts = RenderOptions::plain();
-        let output = render_to_string(&layout, &opts);
+        let output = render_to_string(&layout, &opts, &XmlFlavor);
 
         assert!(output.contains("<rect"));
         assert!(output.contains("- fill=\"red\""));
@@ -493,7 +576,7 @@ mod tests {
         let layout = Layout::new(strings, tree, root);
 
         let opts = RenderOptions::plain();
-        let output = render_to_string(&layout, &opts);
+        let output = render_to_string(&layout, &opts, &XmlFlavor);
 
         assert!(output.contains("<!-- 5 unchanged -->"));
     }
@@ -540,7 +623,7 @@ mod tests {
         };
 
         let opts = RenderOptions::plain();
-        let output = render_to_string(&layout, &opts);
+        let output = render_to_string(&layout, &opts, &XmlFlavor);
 
         assert!(output.contains("<svg>"));
         assert!(output.contains("</svg>"));
@@ -551,7 +634,7 @@ mod tests {
     fn test_ansi_backend_produces_escapes() {
         let layout = make_test_layout();
         let opts = RenderOptions::default();
-        let output = render_to_string(&layout, &opts);
+        let output = render_to_string(&layout, &opts, &XmlFlavor);
 
         // Should contain ANSI escape codes
         assert!(

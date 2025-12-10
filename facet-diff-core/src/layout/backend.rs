@@ -19,10 +19,12 @@ pub enum SemanticColor {
     Inserted,
     /// Moved content (typically blue)
     Moved,
-    /// Unchanged content (typically dimmed/gray)
+    /// Unchanged content (normal/white)
     Unchanged,
     /// Structural elements like tags, brackets (typically neutral)
     Structure,
+    /// Comments and type hints (muted/gray)
+    Comment,
 }
 
 /// A backend that decides how to render semantic colors.
@@ -102,6 +104,7 @@ impl ColorBackend for AnsiBackend {
             SemanticColor::Moved => self.theme.moved,
             SemanticColor::Unchanged => self.theme.unchanged,
             SemanticColor::Structure => self.theme.structure,
+            SemanticColor::Comment => self.theme.comment,
         };
         write!(w, "{}", text.color(rgb))
     }

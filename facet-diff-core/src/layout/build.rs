@@ -14,12 +14,12 @@
 use std::borrow::Cow;
 
 use facet_core::{StructKind, Type, UserType};
-use facet_pretty::PrettyPrinter;
 use facet_reflect::Peek;
 use indextree::{Arena, NodeId};
 
 use super::{
-    Attr, ElementChange, FormatArena, FormattedValue, Layout, LayoutNode, group_changed_attrs,
+    Attr, DiffFlavor, ElementChange, FormatArena, FormattedValue, Layout, LayoutNode,
+    group_changed_attrs,
 };
 use crate::{Diff, ReplaceGroup, Updates, UpdatesGroup, Value};
 
@@ -58,48 +58,38 @@ impl Default for BuildOptions {
 /// * `from` - The original "from" value (for looking up unchanged fields)
 /// * `to` - The original "to" value (for looking up unchanged fields)
 /// * `opts` - Build options
-pub fn build_layout<'mem, 'facet>(
+/// * `flavor` - The output flavor (Rust, JSON, XML)
+pub fn build_layout<'mem, 'facet, F: DiffFlavor>(
     diff: &Diff<'mem, 'facet>,
     from: Peek<'mem, 'facet>,
     to: Peek<'mem, 'facet>,
     opts: &BuildOptions,
+    flavor: &F,
 ) -> Layout {
-    let mut builder = LayoutBuilder::new(opts.clone());
+    let mut builder = LayoutBuilder::new(opts.clone(), flavor);
     let root_id = builder.build(diff, Some(from), Some(to));
     builder.finish(root_id)
 }
 
-/// Build a Layout from a Diff without original values.
-///
-/// Use this when you don't have the original Peek values available.
-/// Unchanged fields will be collapsed to "N unchanged" instead of showing values.
-pub fn build_layout_without_context(diff: &Diff<'_, '_>, opts: &BuildOptions) -> Layout {
-    let mut builder = LayoutBuilder::new(opts.clone());
-    let root_id = builder.build(diff, None, None);
-    builder.finish(root_id)
-}
-
 /// Internal builder state.
-struct LayoutBuilder {
+struct LayoutBuilder<'f, F: DiffFlavor> {
     /// Arena for formatted strings.
     strings: FormatArena,
     /// Arena for layout nodes.
     tree: Arena<LayoutNode>,
     /// Build options.
     opts: BuildOptions,
-    /// Pretty printer for formatting values (no colors for arena storage).
-    printer: PrettyPrinter,
+    /// Output flavor for formatting.
+    flavor: &'f F,
 }
 
-impl LayoutBuilder {
-    fn new(opts: BuildOptions) -> Self {
+impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
+    fn new(opts: BuildOptions, flavor: &'f F) -> Self {
         Self {
             strings: FormatArena::new(),
             tree: Arena::new(),
             opts,
-            printer: PrettyPrinter::default()
-                .with_colors(false)
-                .with_minimal_option_names(true),
+            flavor,
         }
     }
 
@@ -424,13 +414,8 @@ impl LayoutBuilder {
 
     /// Build a sequence diff.
     fn build_sequence(&mut self, updates: &Updates<'_, '_>, change: ElementChange) -> NodeId {
-        // Create element for the sequence
-        let node = self.tree.new_node(LayoutNode::Element {
-            tag: "_seq",
-            attrs: Vec::new(),
-            changed_groups: Vec::new(),
-            change,
-        });
+        // Create sequence node
+        let node = self.tree.new_node(LayoutNode::Sequence { change });
 
         // Build children from updates
         self.build_updates_children(node, updates);
@@ -558,27 +543,9 @@ impl LayoutBuilder {
         }
     }
 
-    /// Format a Peek value into the arena.
-    ///
-    /// Note: PrettyPrinter quotes strings, but we strip those outer quotes
-    /// since our attribute rendering already adds quotes: `attr="value"`.
+    /// Format a Peek value into the arena using the flavor.
     fn format_peek(&mut self, peek: Peek<'_, '_>) -> FormattedValue {
-        let formatted = self.printer.format_peek(peek);
-
-        // Strip outer quotes from strings to avoid double-quoting in attributes
-        // e.g. PrettyPrinter gives us `"hello"`, we want `hello`
-        let formatted =
-            if formatted.starts_with('"') && formatted.ends_with('"') && formatted.len() >= 2 {
-                &formatted[1..formatted.len() - 1]
-            } else if formatted.starts_with("r#") && formatted.contains('"') {
-                // Handle raw strings like r#"hello"# - strip r#" and "#
-                // This is a simplification; proper handling would parse the hash count
-                formatted.as_str()
-            } else {
-                formatted.as_str()
-            };
-
-        let (span, width) = self.strings.push_str(formatted);
+        let (span, width) = self.strings.format(|w| self.flavor.format_value(peek, w));
         FormattedValue::new(span, width)
     }
 
@@ -596,6 +563,7 @@ impl LayoutBuilder {
 mod tests {
     use super::*;
     use crate::layout::render::{RenderOptions, render_to_string};
+    use crate::layout::{RustFlavor, XmlFlavor};
 
     #[test]
     fn test_build_equal_diff() {
@@ -603,7 +571,7 @@ mod tests {
         let peek = Peek::new(&value);
         let diff = Diff::Equal { value: Some(peek) };
 
-        let layout = build_layout(&diff, peek, peek, &BuildOptions::default());
+        let layout = build_layout(&diff, peek, peek, &BuildOptions::default(), &RustFlavor);
 
         // Should produce a single text node
         let root = layout.get(layout.root).unwrap();
@@ -624,6 +592,7 @@ mod tests {
             Peek::new(&from),
             Peek::new(&to),
             &BuildOptions::default(),
+            &RustFlavor,
         );
 
         // Should produce an element with two children
@@ -654,8 +623,9 @@ mod tests {
             Peek::new(&from),
             Peek::new(&to),
             &BuildOptions::default(),
+            &RustFlavor,
         );
-        let output = render_to_string(&layout, &RenderOptions::plain());
+        let output = render_to_string(&layout, &RenderOptions::plain(), &XmlFlavor);
 
         // Should contain both values with appropriate markers
         assert!(
@@ -668,23 +638,6 @@ mod tests {
             "output should contain new value: {}",
             output
         );
-    }
-
-    #[test]
-    fn test_build_without_context() {
-        let from = 10i32;
-        let to = 20i32;
-        let diff = Diff::Replace {
-            from: Peek::new(&from),
-            to: Peek::new(&to),
-        };
-
-        let layout = build_layout_without_context(&diff, &BuildOptions::default());
-        let output = render_to_string(&layout, &RenderOptions::plain());
-
-        // Should still work without context
-        assert!(output.contains("10"));
-        assert!(output.contains("20"));
     }
 
     #[test]

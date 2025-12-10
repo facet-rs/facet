@@ -20,7 +20,7 @@ mod render;
 pub use arena::{FormatArena, Span};
 pub use attrs::{Attr, AttrStatus, ChangedGroup, FormattedValue, group_changed_attrs};
 pub use backend::{AnsiBackend, ColorBackend, PlainBackend, SemanticColor};
-pub use build::{BuildOptions, build_layout, build_layout_without_context};
+pub use build::{BuildOptions, build_layout};
 pub use flavor::{DiffFlavor, FieldPresentation, JsonFlavor, RustFlavor, XmlFlavor};
 pub use node::{ElementChange, Layout, LayoutNode};
 pub use render::{RenderOptions, render, render_to_string};
