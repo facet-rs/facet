@@ -116,9 +116,10 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
             )
         }
 
-        LayoutNode::Sequence { change } => {
+        LayoutNode::Sequence { change, item_type } => {
             let change = *change;
-            render_sequence(layout, w, node_id, depth, opts, flavor, change)
+            let item_type = *item_type;
+            render_sequence(layout, w, node_id, depth, opts, flavor, change, item_type)
         }
 
         LayoutNode::Collapsed { count } => {
@@ -150,10 +151,12 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
             items,
             change,
             collapsed_suffix,
+            item_type,
         } => {
             let items = items.clone();
             let change = *change;
             let collapsed_suffix = *collapsed_suffix;
+            let item_type = *item_type;
 
             write_indent(w, depth, opts)?;
             if let Some(prefix) = change.prefix() {
@@ -162,14 +165,15 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
                 write!(w, " ")?;
             }
 
-            // Render items with flavor separator
+            // Render items with flavor separator and optional wrapping
             let semantic = element_change_to_semantic(change);
             for (i, item) in items.iter().enumerate() {
                 if i > 0 {
                     write!(w, "{}", flavor.item_separator())?;
                 }
-                let text = layout.get_string(item.span);
-                opts.backend.write_styled(w, text, semantic)?;
+                let raw_value = layout.get_string(item.span);
+                let formatted = flavor.format_seq_item(item_type, raw_value);
+                opts.backend.write_styled(w, &formatted, semantic)?;
             }
 
             // Render collapsed suffix if present
@@ -366,6 +370,7 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
     layout: &Layout,
     w: &mut W,
@@ -374,6 +379,7 @@ fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
     opts: &RenderOptions<B>,
     flavor: &F,
     change: ElementChange,
+    _item_type: &str, // Item type available for future use (items use it via ItemGroup)
 ) -> fmt::Result {
     let children: Vec<_> = layout.children(node_id).collect();
 

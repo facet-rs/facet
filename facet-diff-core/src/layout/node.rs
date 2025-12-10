@@ -57,6 +57,8 @@ pub enum LayoutNode {
     Sequence {
         /// How this sequence itself changed
         change: ElementChange,
+        /// The type name of items in this sequence (e.g., "i32", "Item")
+        item_type: &'static str,
     },
 
     /// A collapsed run of unchanged siblings.
@@ -83,6 +85,8 @@ pub enum LayoutNode {
         /// Number of additional collapsed items (shown as "...N more").
         /// None means all items are visible.
         collapsed_suffix: Option<usize>,
+        /// The type name of items (e.g., "i32", "Item") for XML wrapping.
+        item_type: &'static str,
     },
 }
 
@@ -108,8 +112,8 @@ impl LayoutNode {
     }
 
     /// Create a sequence node.
-    pub fn sequence(change: ElementChange) -> Self {
-        Self::Sequence { change }
+    pub fn sequence(change: ElementChange, item_type: &'static str) -> Self {
+        Self::Sequence { change, item_type }
     }
 
     /// Create a collapsed node.
@@ -127,11 +131,13 @@ impl LayoutNode {
         items: Vec<FormattedValue>,
         change: ElementChange,
         collapsed_suffix: Option<usize>,
+        item_type: &'static str,
     ) -> Self {
         Self::ItemGroup {
             items,
             change,
             collapsed_suffix,
+            item_type,
         }
     }
 
@@ -139,7 +145,7 @@ impl LayoutNode {
     pub fn change(&self) -> ElementChange {
         match self {
             Self::Element { change, .. } => *change,
-            Self::Sequence { change } => *change,
+            Self::Sequence { change, .. } => *change,
             Self::Collapsed { .. } => ElementChange::None,
             Self::Text { change, .. } => *change,
             Self::ItemGroup { change, .. } => *change,
@@ -166,7 +172,7 @@ impl LayoutNode {
                         )
                     })
             }
-            Self::Sequence { change } => change.has_prefix(),
+            Self::Sequence { change, .. } => change.has_prefix(),
             Self::Collapsed { .. } => false,
             Self::Text { change, .. } => change.has_prefix(),
             Self::ItemGroup { change, .. } => change.has_prefix(),

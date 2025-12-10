@@ -162,10 +162,22 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                 }
             }
             Diff::Sequence {
-                from: _,
-                to: _,
+                from: _seq_shape_from,
+                to: _seq_shape_to,
                 updates,
-            } => self.build_sequence(updates, change),
+            } => {
+                // Get item type from the from/to Peek values passed to build_diff
+                let item_type = from
+                    .and_then(|p| p.into_list_like().ok())
+                    .and_then(|list| list.iter().next())
+                    .or_else(|| {
+                        to.and_then(|p| p.into_list_like().ok())
+                            .and_then(|list| list.iter().next())
+                    })
+                    .map(|item| item.shape().type_identifier)
+                    .unwrap_or("item");
+                self.build_sequence(updates, change, item_type)
+            }
         }
     }
 
@@ -406,19 +418,26 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
             change,
         });
 
-        // Build children from updates
-        self.build_updates_children(node, updates);
+        // Build children from updates (tuple items don't have specific type names)
+        self.build_updates_children(node, updates, "item");
 
         node
     }
 
     /// Build a sequence diff.
-    fn build_sequence(&mut self, updates: &Updates<'_, '_>, change: ElementChange) -> NodeId {
-        // Create sequence node
-        let node = self.tree.new_node(LayoutNode::Sequence { change });
+    fn build_sequence(
+        &mut self,
+        updates: &Updates<'_, '_>,
+        change: ElementChange,
+        item_type: &'static str,
+    ) -> NodeId {
+        // Create sequence node with item type info
+        let node = self
+            .tree
+            .new_node(LayoutNode::Sequence { change, item_type });
 
         // Build children from updates
-        self.build_updates_children(node, updates);
+        self.build_updates_children(node, updates, item_type);
 
         node
     }
@@ -427,7 +446,12 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
     ///
     /// This groups consecutive items by their change type (unchanged, deleted, inserted)
     /// and renders them on single lines with optional collapsing for long runs.
-    fn build_updates_children(&mut self, parent: NodeId, updates: &Updates<'_, '_>) {
+    fn build_updates_children(
+        &mut self,
+        parent: NodeId,
+        updates: &Updates<'_, '_>,
+        item_type: &'static str,
+    ) {
         // First, collect all items with their change types into a flat list
         let mut items: Vec<(Peek<'_, '_>, ElementChange)> = Vec::new();
 
@@ -456,7 +480,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         }
 
         // Now group consecutive items by change type and create nodes
-        self.build_grouped_items(parent, &items);
+        self.build_grouped_items(parent, &items, item_type);
     }
 
     /// Collect items from an UpdatesGroup into the items list.
@@ -498,7 +522,12 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
     }
 
     /// Build grouped items and append to parent.
-    fn build_grouped_items(&mut self, parent: NodeId, items: &[(Peek<'_, '_>, ElementChange)]) {
+    fn build_grouped_items(
+        &mut self,
+        parent: NodeId,
+        items: &[(Peek<'_, '_>, ElementChange)],
+        item_type: &'static str,
+    ) {
         if items.is_empty() {
             return;
         }
@@ -536,6 +565,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                 visible_items,
                 current_change,
                 collapsed_count,
+                item_type,
             ));
             parent.append(node, &mut self.tree);
 
