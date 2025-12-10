@@ -394,4 +394,52 @@ fn main() {
 
         print_all_flavors("Many attributes (12 fields)", &from, &to);
     }
+
+    // Mixed scalar and struct attributes (XML will be interesting here)
+    {
+        #[derive(Facet, Debug)]
+        struct Metadata {
+            created_by: &'static str,
+            version: u32,
+        }
+
+        #[derive(Facet, Debug)]
+        struct Bounds {
+            min: i32,
+            max: i32,
+        }
+
+        #[derive(Facet, Debug)]
+        struct Config {
+            name: &'static str,
+            enabled: bool,
+            metadata: Metadata,
+            bounds: Bounds,
+            tags: &'static str,
+        }
+
+        let from = Config {
+            name: "widget",
+            enabled: true,
+            metadata: Metadata {
+                created_by: "alice",
+                version: 1,
+            },
+            bounds: Bounds { min: 0, max: 100 },
+            tags: "ui,interactive",
+        };
+
+        let to = Config {
+            name: "super-widget",
+            enabled: false,
+            metadata: Metadata {
+                created_by: "bob",
+                version: 2,
+            },
+            bounds: Bounds { min: -10, max: 200 },
+            tags: "ui,draggable",
+        };
+
+        print_all_flavors("Mixed scalar and struct fields", &from, &to);
+    }
 }
