@@ -7,3 +7,9 @@ slow-timeout = { period = "5s", terminate-after = 2 }
 
 # Status level
 status-level = "pass"
+
+[profile.ci]
+# CI profile with longer timeouts for cross-process tests
+fail-fast = true
+slow-timeout = { period = "30s", terminate-after = 2 }
+status-level = "pass"

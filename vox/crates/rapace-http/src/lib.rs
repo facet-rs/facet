@@ -52,10 +52,6 @@
 //! }
 //! ```
 
-// Required by the macro
-#[allow(unused)]
-use rapace_registry;
-
 /// An HTTP request in rapace-native format.
 ///
 /// This type is transport-agnostic and can be serialized via facet.
@@ -190,7 +186,7 @@ impl HttpResponse {
 /// Implementations must ensure the `handle` future is `Send` for use
 /// with the RpcSession dispatcher pattern.
 #[allow(async_fn_in_trait)]
-#[rapace_macros::service]
+#[rapace::service]
 pub trait HttpService {
     /// Handle an HTTP request and return a response.
     ///

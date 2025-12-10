@@ -28,6 +28,29 @@
 //!
 //! The macro generates `CalculatorClient<T>` and `CalculatorServer<S>` types.
 //!
+//! # Sessions
+//!
+//! Each transport half must be wrapped in an [`RpcSession`] that you own:
+//!
+//! ```ignore
+//! let (client_transport, server_transport) = rapace::InProcTransport::pair();
+//! let client_session = Arc::new(rapace::RpcSession::with_channel_start(Arc::new(client_transport), 2));
+//! let server_session = Arc::new(rapace::RpcSession::with_channel_start(Arc::new(server_transport), 1));
+//! tokio::spawn(client_session.clone().run());
+//! tokio::spawn(server_session.clone().run());
+//!
+//! server_session.set_dispatcher(move |_channel_id, method_id, payload| {
+//!     let server = CalculatorServer::new(CalculatorImpl);
+//!     Box::pin(async move { server.dispatch(method_id, &payload).await })
+//! });
+//!
+//! let client = CalculatorClient::new(client_session.clone());
+//! let result = client.add(2, 3).await?;
+//! ```
+//!
+//! Pick distinct starting channel IDs (odd vs. even) when both peers initiate RPCs on the
+//! same transport.
+//!
 //! # Streaming RPCs
 //!
 //! For server-streaming RPCs, return `Streaming<T>`:
@@ -76,6 +99,15 @@
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+// Macro hygiene: Allow `::rapace::` paths to work both externally and internally.
+// When used in demos/tests within this crate, `::rapace::` would normally
+// fail because it would look for a `rapace` module within `rapace`. This
+// self-referential module makes `::rapace::rapace_core` etc. work everywhere.
+#[doc(hidden)]
+pub mod rapace {
+    pub use crate::*;
+}
+
 // Re-export the service macro
 pub use rapace_macros::service;
 
@@ -86,6 +118,8 @@ pub extern crate rapace_core;
 
 // Re-export core types
 pub use rapace_core::{
+    // Error payload parsing
+    parse_error_payload,
     // Error types
     DecodeError,
     EncodeError,
@@ -95,6 +129,7 @@ pub use rapace_core::{
     FrameFlags,
     MsgDescHot,
     RpcError,
+    RpcSession,
     // Streaming
     Streaming,
     // Transport trait (for advanced use)
@@ -114,10 +149,12 @@ pub use facet_postcard;
 #[doc(hidden)]
 pub extern crate tracing;
 
-// Re-export registry (needed by macro-generated code)
-// The macro generates `::rapace::rapace_registry::` paths
+// Re-export tokio_stream for macro-generated code
 #[doc(hidden)]
-pub extern crate rapace_registry;
+pub extern crate tokio_stream;
+
+// Re-export registry
+pub use rapace_registry as registry;
 
 /// Prelude module for convenient imports.
 ///
@@ -160,13 +197,7 @@ pub mod transport {
 }
 
 /// Session layer for flow control and channel management.
-///
-/// Most users don't need this - the generated client/server handle it.
-/// Enable with `features = ["session"]`.
-#[cfg(feature = "session")]
-pub mod session {
-    pub use rapace_testkit::{ChannelLifecycle, ChannelState, Session, DEFAULT_INITIAL_CREDITS};
-}
+pub mod session;
 
 #[cfg(feature = "mem")]
 pub use transport::InProcTransport;
@@ -206,7 +237,10 @@ pub mod server {
     ///     });
     /// }
     /// ```
-    pub fn serve_connection(stream: TcpStream) -> Arc<crate::StreamTransport<tokio::io::ReadHalf<TcpStream>, tokio::io::WriteHalf<TcpStream>>> {
+    pub fn serve_connection(
+        stream: TcpStream,
+    ) -> Arc<crate::StreamTransport<tokio::io::ReadHalf<TcpStream>, tokio::io::WriteHalf<TcpStream>>>
+    {
         Arc::new(crate::StreamTransport::new(stream))
     }
 
@@ -259,7 +293,12 @@ pub mod server {
         /// Serve requests from the TCP transport until the connection closes.
         fn serve_tcp(
             self,
-            transport: Arc<crate::StreamTransport<tokio::io::ReadHalf<TcpStream>, tokio::io::WriteHalf<TcpStream>>>,
+            transport: Arc<
+                crate::StreamTransport<
+                    tokio::io::ReadHalf<TcpStream>,
+                    tokio::io::WriteHalf<TcpStream>,
+                >,
+            >,
         ) -> impl std::future::Future<Output = Result<(), crate::RpcError>> + Send;
     }
 }

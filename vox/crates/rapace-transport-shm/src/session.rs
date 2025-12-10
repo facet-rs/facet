@@ -276,7 +276,10 @@ impl ShmSession {
     /// let session = ShmSession::create_file("/tmp/rapace.shm", ShmSessionConfig::default())?;
     /// // Share the path with the other process...
     /// ```
-    pub fn create_file(path: impl AsRef<std::path::Path>, config: ShmSessionConfig) -> Result<Arc<Self>, SessionError> {
+    pub fn create_file(
+        path: impl AsRef<std::path::Path>,
+        config: ShmSessionConfig,
+    ) -> Result<Arc<Self>, SessionError> {
         // Validate config.
         if !config.ring_capacity.is_power_of_two() {
             return Err(SessionError::InvalidConfig(
@@ -327,7 +330,10 @@ impl ShmSession {
     /// ```ignore
     /// let session = ShmSession::open_file("/tmp/rapace.shm", ShmSessionConfig::default())?;
     /// ```
-    pub fn open_file(path: impl AsRef<std::path::Path>, config: ShmSessionConfig) -> Result<Arc<Self>, SessionError> {
+    pub fn open_file(
+        path: impl AsRef<std::path::Path>,
+        config: ShmSessionConfig,
+    ) -> Result<Arc<Self>, SessionError> {
         // Validate config.
         if !config.ring_capacity.is_power_of_two() {
             return Err(SessionError::InvalidConfig(

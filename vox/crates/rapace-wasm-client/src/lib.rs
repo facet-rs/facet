@@ -46,11 +46,39 @@ use wasm_bindgen::prelude::*;
 const DESC_SIZE: usize = 64;
 const _: () = assert!(std::mem::size_of::<MsgDescHot>() == DESC_SIZE);
 
-// ExplorerService method IDs (hardcoded to match dashboard)
-const METHOD_LIST_SERVICES: u32 = 1;
-const METHOD_GET_SERVICE: u32 = 2;
-const METHOD_CALL_UNARY: u32 = 3;
-const METHOD_CALL_STREAMING: u32 = 4;
+/// Compute a method ID by hashing "ServiceName.method_name" using FNV-1a.
+/// Must match the implementation in rapace-macros.
+const fn compute_method_id(service_name: &str, method_name: &str) -> u32 {
+    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
+    const FNV_PRIME: u64 = 0x100000001b3;
+
+    let mut hash = FNV_OFFSET;
+
+    let service_bytes = service_name.as_bytes();
+    let mut i = 0;
+    while i < service_bytes.len() {
+        hash ^= service_bytes[i] as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+        i += 1;
+    }
+    hash ^= b'.' as u64;
+    hash = hash.wrapping_mul(FNV_PRIME);
+    let method_bytes = method_name.as_bytes();
+    i = 0;
+    while i < method_bytes.len() {
+        hash ^= method_bytes[i] as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+        i += 1;
+    }
+
+    ((hash >> 32) ^ hash) as u32
+}
+
+// ExplorerService method IDs (computed via FNV-1a hash to match rapace-macros)
+const METHOD_LIST_SERVICES: u32 = compute_method_id("Explorer", "list_services");
+const METHOD_GET_SERVICE: u32 = compute_method_id("Explorer", "get_service");
+const METHOD_CALL_UNARY: u32 = compute_method_id("Explorer", "call_unary");
+const METHOD_CALL_STREAMING: u32 = compute_method_id("Explorer", "call_streaming");
 
 // ============================================================================
 // ExplorerService types (must match dashboard types exactly)
@@ -227,7 +255,11 @@ impl ExplorerClient {
             js_sys::Reflect::set(&obj, &"id".into(), &JsValue::from(service.id))?;
             js_sys::Reflect::set(&obj, &"name".into(), &JsValue::from_str(&service.name))?;
             js_sys::Reflect::set(&obj, &"doc".into(), &JsValue::from_str(&service.doc))?;
-            js_sys::Reflect::set(&obj, &"method_count".into(), &JsValue::from(service.method_count))?;
+            js_sys::Reflect::set(
+                &obj,
+                &"method_count".into(),
+                &JsValue::from(service.method_count),
+            )?;
             result.push(&obj);
         }
         Ok(result.into())
@@ -250,8 +282,9 @@ impl ExplorerClient {
         let response_frame = self.call_method(METHOD_GET_SERVICE, &payload).await?;
 
         // Decode response
-        let service: Option<ServiceDetail> = facet_postcard::from_slice(response_frame.payload())
-            .map_err(|e| JsValue::from_str(&format!("decode error: {}", e)))?;
+        let service: Option<ServiceDetail> =
+            facet_postcard::from_slice(response_frame.payload())
+                .map_err(|e| JsValue::from_str(&format!("decode error: {}", e)))?;
 
         match service {
             Some(s) => {
@@ -265,17 +298,41 @@ impl ExplorerClient {
                     let method_obj = js_sys::Object::new();
                     js_sys::Reflect::set(&method_obj, &"id".into(), &JsValue::from(m.id))?;
                     js_sys::Reflect::set(&method_obj, &"name".into(), &JsValue::from_str(&m.name))?;
-                    js_sys::Reflect::set(&method_obj, &"full_name".into(), &JsValue::from_str(&m.full_name))?;
+                    js_sys::Reflect::set(
+                        &method_obj,
+                        &"full_name".into(),
+                        &JsValue::from_str(&m.full_name),
+                    )?;
                     js_sys::Reflect::set(&method_obj, &"doc".into(), &JsValue::from_str(&m.doc))?;
-                    js_sys::Reflect::set(&method_obj, &"is_streaming".into(), &JsValue::from(m.is_streaming))?;
-                    js_sys::Reflect::set(&method_obj, &"request_type".into(), &JsValue::from_str(&m.request_type))?;
-                    js_sys::Reflect::set(&method_obj, &"response_type".into(), &JsValue::from_str(&m.response_type))?;
+                    js_sys::Reflect::set(
+                        &method_obj,
+                        &"is_streaming".into(),
+                        &JsValue::from(m.is_streaming),
+                    )?;
+                    js_sys::Reflect::set(
+                        &method_obj,
+                        &"request_type".into(),
+                        &JsValue::from_str(&m.request_type),
+                    )?;
+                    js_sys::Reflect::set(
+                        &method_obj,
+                        &"response_type".into(),
+                        &JsValue::from_str(&m.response_type),
+                    )?;
 
                     let args = js_sys::Array::new();
                     for arg in m.args {
                         let arg_obj = js_sys::Object::new();
-                        js_sys::Reflect::set(&arg_obj, &"name".into(), &JsValue::from_str(&arg.name))?;
-                        js_sys::Reflect::set(&arg_obj, &"type_name".into(), &JsValue::from_str(&arg.type_name))?;
+                        js_sys::Reflect::set(
+                            &arg_obj,
+                            &"name".into(),
+                            &JsValue::from_str(&arg.name),
+                        )?;
+                        js_sys::Reflect::set(
+                            &arg_obj,
+                            &"type_name".into(),
+                            &JsValue::from_str(&arg.type_name),
+                        )?;
                         js_sys::Reflect::set(&arg_obj, &"shape".into(), &shape_to_js(&arg.shape)?)?;
                         args.push(&arg_obj);
                     }
@@ -300,7 +357,12 @@ impl ExplorerClient {
     ///
     /// Returns a CallResponse with result_json containing the JSON-encoded result.
     #[wasm_bindgen(js_name = callUnary)]
-    pub async fn call_unary(&mut self, service: &str, method: &str, args: JsValue) -> Result<JsValue, JsValue> {
+    pub async fn call_unary(
+        &mut self,
+        service: &str,
+        method: &str,
+        args: JsValue,
+    ) -> Result<JsValue, JsValue> {
         let args_json = js_sys::JSON::stringify(&args)
             .map_err(|_| JsValue::from_str("Failed to stringify args"))?
             .as_string()
@@ -322,7 +384,11 @@ impl ExplorerClient {
 
         // Convert to JS object
         let obj = js_sys::Object::new();
-        js_sys::Reflect::set(&obj, &"result_json".into(), &JsValue::from_str(&response.result_json))?;
+        js_sys::Reflect::set(
+            &obj,
+            &"result_json".into(),
+            &JsValue::from_str(&response.result_json),
+        )?;
         match response.error {
             Some(err) => js_sys::Reflect::set(&obj, &"error".into(), &JsValue::from_str(&err))?,
             None => js_sys::Reflect::set(&obj, &"error".into(), &JsValue::NULL)?,
@@ -339,7 +405,12 @@ impl ExplorerClient {
     ///
     /// Returns a StreamingCall that can be used to iterate over results.
     #[wasm_bindgen(js_name = callStreaming)]
-    pub fn call_streaming(&mut self, service: &str, method: &str, args: JsValue) -> Result<StreamingCall, JsValue> {
+    pub fn call_streaming(
+        &mut self,
+        service: &str,
+        method: &str,
+        args: JsValue,
+    ) -> Result<StreamingCall, JsValue> {
         let args_json = js_sys::JSON::stringify(&args)
             .map_err(|_| JsValue::from_str("Failed to stringify args"))?
             .as_string()
@@ -519,7 +590,11 @@ impl StreamingCall {
             .map_err(|e| JsValue::from_str(&format!("decode error: {}", e)))?;
 
         let obj = js_sys::Object::new();
-        js_sys::Reflect::set(&obj, &"value_json".into(), &JsValue::from_str(&item.value_json))?;
+        js_sys::Reflect::set(
+            &obj,
+            &"value_json".into(),
+            &JsValue::from_str(&item.value_json),
+        )?;
         Ok(obj.into())
     }
 
@@ -567,7 +642,10 @@ fn shape_to_js(shape: &ShapeInfo) -> Result<JsValue, JsValue> {
     let obj = js_sys::Object::new();
 
     match shape {
-        ShapeInfo::Scalar { type_name, affinity } => {
+        ShapeInfo::Scalar {
+            type_name,
+            affinity,
+        } => {
             js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("Scalar"))?;
             js_sys::Reflect::set(&obj, &"type_name".into(), &JsValue::from_str(type_name))?;
             js_sys::Reflect::set(&obj, &"affinity".into(), &JsValue::from_str(affinity))?;
@@ -595,19 +673,34 @@ fn shape_to_js(shape: &ShapeInfo) -> Result<JsValue, JsValue> {
             }
             js_sys::Reflect::set(&obj, &"fields".into(), &fields_arr)?;
         }
-        ShapeInfo::Enum { type_name, variants } => {
+        ShapeInfo::Enum {
+            type_name,
+            variants,
+        } => {
             js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("Enum"))?;
             js_sys::Reflect::set(&obj, &"type_name".into(), &JsValue::from_str(type_name))?;
             let variants_arr = js_sys::Array::new();
             for variant in variants {
                 let variant_obj = js_sys::Object::new();
-                js_sys::Reflect::set(&variant_obj, &"name".into(), &JsValue::from_str(&variant.name))?;
+                js_sys::Reflect::set(
+                    &variant_obj,
+                    &"name".into(),
+                    &JsValue::from_str(&variant.name),
+                )?;
                 if let Some(fields) = &variant.fields {
                     let fields_arr = js_sys::Array::new();
                     for field in fields {
                         let field_obj = js_sys::Object::new();
-                        js_sys::Reflect::set(&field_obj, &"name".into(), &JsValue::from_str(&field.name))?;
-                        js_sys::Reflect::set(&field_obj, &"shape".into(), &shape_to_js(&field.shape)?)?;
+                        js_sys::Reflect::set(
+                            &field_obj,
+                            &"name".into(),
+                            &JsValue::from_str(&field.name),
+                        )?;
+                        js_sys::Reflect::set(
+                            &field_obj,
+                            &"shape".into(),
+                            &shape_to_js(&field.shape)?,
+                        )?;
                         fields_arr.push(&field_obj);
                     }
                     js_sys::Reflect::set(&variant_obj, &"fields".into(), &fields_arr)?;

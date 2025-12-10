@@ -8,12 +8,8 @@ description = "HTTP types and service trait for rapace RPC"
 
 [dependencies]
 tracing = { workspace = true }
-rapace-core = { path = "../rapace-core" }
-rapace-macros = { path = "../rapace-macros" }
-rapace-registry = { path = "../rapace-registry" }
+rapace = { path = "../rapace" }
 rapace-testkit = { path = "../rapace-testkit" }
 
 # facet for serialization
 facet = { git = "https://github.com/facet-rs/facet" }
-facet-core = { git = "https://github.com/facet-rs/facet" }
-facet-postcard = { git = "https://github.com/facet-rs/facet" }

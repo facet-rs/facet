@@ -46,16 +46,28 @@ impl Calculator for CalculatorImpl {
 // Create transport pair (in-memory for this example)
 let (client_transport, server_transport) = rapace::InProcTransport::pair();
 
-// Server side
-let server = CalculatorServer::new(CalculatorImpl);
-// ... run server loop calling server.dispatch_streaming() on incoming frames
+// Wrap each half in an RpcSession and spawn the demux loop once.
+let client_transport = Arc::new(client_transport);
+let server_transport = Arc::new(server_transport);
+let client_session = Arc::new(rapace::RpcSession::with_channel_start(client_transport.clone(), 2));
+let server_session = Arc::new(rapace::RpcSession::with_channel_start(server_transport.clone(), 1));
+tokio::spawn(client_session.clone().run());
+tokio::spawn(server_session.clone().run());
+
+// Server side: plug the generated dispatcher into the session.
+server_session.set_dispatcher(|_channel_id, method_id, payload| {
+    let server = CalculatorServer::new(CalculatorImpl);
+    Box::pin(async move { server.dispatch(method_id, &payload).await })
+});
 
 // Client side
-let client = CalculatorClient::new(Arc::new(client_transport));
+let client = CalculatorClient::new(client_session.clone());
 let result = client.add(2, 3).await?;  // Returns 5
 ```
 
 The same trait works on any transport. The transport chooses how to move the data.
+
+> **Why manually wire `RpcSession`?** Each side must own exactly one session per transport, spawn its `run()` loop, and decide which channel IDs it controls (hosts usually start at 1 for odd IDs, plugins at 2 for even IDs). The `#[rapace::service]` macro intentionally stays pure so you can share a single session across many generated clients/servers and integrate with whichever executor you already use.
 
 ## Getting Started
 
@@ -171,7 +183,7 @@ let shm_png = shm_vec(&alloc, &png_bytes);
 // and just records (slot, offset, len) — no copy!
 ```
 
-See `examples/shm_image/` for a complete demonstration with metrics.
+See `demos/shm-image/` for a complete demonstration with metrics.
 
 Rapace is primarily motivated by [dodeca](https://github.com/bearcove/dodeca), a static site generator
 that implements most of its functionality as plugins. Dodeca is the main "real" application that

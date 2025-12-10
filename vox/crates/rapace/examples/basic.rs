@@ -11,6 +11,7 @@
 use std::sync::Arc;
 
 use rapace::prelude::*;
+use rapace_core::RpcSession;
 
 // Define a calculator service with the #[rapace::service] attribute.
 // This generates:
@@ -72,8 +73,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server = CalculatorServer::new(CalculatorImpl);
     let server_handle = tokio::spawn(server.serve(server_transport));
 
+    // Wrap in an RPC session
+    let session = RpcSession::new(client_transport.clone());
+
     // Create the client
-    let client = CalculatorClient::new(client_transport.clone());
+    let client = CalculatorClient::new(Arc::new(session));
 
     // Make some RPC calls
     println!("Calling add(2, 3)...");

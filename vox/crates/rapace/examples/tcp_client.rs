@@ -10,6 +10,7 @@
 use std::sync::Arc;
 
 use rapace::prelude::*;
+use rapace_core::RpcSession;
 use tokio::net::TcpStream;
 
 // Define the same calculator service (needed for the generated client)
@@ -33,8 +34,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Wrap in transport
     let transport = Arc::new(rapace::StreamTransport::new(stream));
 
+    // Wrap in an RPC session
+    let session = RpcSession::new(transport.clone());
+
     // Create client
-    let client = CalculatorClient::new(transport.clone());
+    let client = CalculatorClient::new(Arc::new(session));
 
     // Make RPC calls
     println!("\nCalling add(10, 20)...");

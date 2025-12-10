@@ -13,14 +13,14 @@ members = [
     "crates/rapace-transport-websocket",
     "crates/rapace-wasm-client",
     "crates/rapace-testkit",
-    "examples/browser_ws_server",
-    "examples/dashboard",
-    "examples/http_over_rapace",
-    "examples/shm_image",
-    "examples/diagnostics_over_rapace",
-    "examples/template_engine",
-    "examples/tracing_over_rapace",
-    "examples/http_tunnel",
+    "crates/rapace-explorer",
+    "demos/dashboard",
+    "demos/http-over-rapace",
+    "demos/shm-image",
+    "demos/diagnostics-over-rapace",
+    "demos/template-engine",
+    "demos/tracing-over-rapace",
+    "demos/http-tunnel",
     "xtask",
 ]
 exclude = ["fuzz"]
@@ -66,6 +66,7 @@ tokio-tungstenite = "0.26"
 
 # Tracing
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Testing/fuzzing
 bolero = "0.11"

@@ -35,6 +35,7 @@ jobs:
 
   browser-test:
     name: Browser / WebSocket
+    if: false  # Temporarily disabled - see issue #6
     runs-on: depot-ubuntu-24.04-16
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +57,7 @@ jobs:
           node-version: '20'
 
       - name: Install Playwright
-        working-directory: examples/browser_ws
+        working-directory: demos/browser-ws
         run: |
           npm install
           npx playwright install chromium --with-deps

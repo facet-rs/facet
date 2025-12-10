@@ -7,15 +7,11 @@ repository.workspace = true
 description = "Tracing subscriber that forwards spans/events over rapace RPC"
 
 [dependencies]
-rapace-core = { path = "../rapace-core" }
-rapace-macros = { path = "../rapace-macros" }
-rapace-registry = { path = "../rapace-registry" }
+rapace = { path = "../rapace" }
 rapace-testkit = { path = "../rapace-testkit" }
 
 # facet for serialization
 facet = { git = "https://github.com/facet-rs/facet" }
-facet-core = { git = "https://github.com/facet-rs/facet" }
-facet-postcard = { git = "https://github.com/facet-rs/facet" }
 
 # tracing ecosystem
 tracing = "0.1"
