@@ -122,4 +122,14 @@ fn main() {
 
         print_all_flavors("Sequence diff (with collapsing)", &from, &to);
     }
+
+    // Longer sequence - shows XML width problem
+    // XML tags make items much wider than Rust/JSON
+    {
+        let from: Vec<i32> = (100..150).collect(); // 50 items, 3-digit numbers
+        let mut to = from.clone();
+        to[25] = 9999; // change item at index 25
+
+        print_all_flavors("Long sequence (XML width test)", &from, &to);
+    }
 }

@@ -149,7 +149,7 @@ pub struct RustFlavor;
 
 impl DiffFlavor for RustFlavor {
     fn format_value(&self, peek: Peek<'_, '_>, w: &mut dyn Write) -> std::fmt::Result {
-        format_value_common(peek, w)
+        format_value_quoted(peek, w)
     }
 
     fn field_presentation(&self, field: &Field) -> FieldPresentation {
@@ -208,7 +208,7 @@ pub struct JsonFlavor;
 
 impl DiffFlavor for JsonFlavor {
     fn format_value(&self, peek: Peek<'_, '_>, w: &mut dyn Write) -> std::fmt::Result {
-        format_value_common(peek, w)
+        format_value_quoted(peek, w)
     }
 
     fn field_presentation(&self, field: &Field) -> FieldPresentation {
@@ -273,7 +273,7 @@ pub struct XmlFlavor;
 
 impl DiffFlavor for XmlFlavor {
     fn format_value(&self, peek: Peek<'_, '_>, w: &mut dyn Write) -> std::fmt::Result {
-        format_value_common(peek, w)
+        format_value_raw(peek, w)
     }
 
     fn field_presentation(&self, field: &Field) -> FieldPresentation {
@@ -361,15 +361,61 @@ impl DiffFlavor for XmlFlavor {
     }
 }
 
-/// Common value formatting - writes raw value without surrounding quotes.
-/// The renderer adds appropriate syntax based on context.
-fn format_value_common(peek: Peek<'_, '_>, w: &mut dyn Write) -> std::fmt::Result {
+/// Value formatting with quotes for strings (Rust/JSON style).
+fn format_value_quoted(peek: Peek<'_, '_>, w: &mut dyn Write) -> std::fmt::Result {
+    use facet_core::{PointerType, TextualType};
+
+    let shape = peek.shape();
+
+    match (shape.def, shape.ty) {
+        // Strings: write with quotes
+        (_, Type::Primitive(PrimitiveType::Textual(TextualType::Str))) => {
+            write!(w, "\"{}\"", peek.get::<str>().unwrap())
+        }
+        // String type (owned)
+        (Def::Scalar, _) if shape.id == <String as facet_core::Facet>::SHAPE.id => {
+            write!(w, "\"{}\"", peek.get::<String>().unwrap())
+        }
+        // Reference to str (&str) - check if target is str
+        (_, Type::Pointer(PointerType::Reference(ptr)))
+            if matches!(
+                ptr.target.ty,
+                Type::Primitive(PrimitiveType::Textual(TextualType::Str))
+            ) =>
+        {
+            // Use Display which will show the string content
+            write!(w, "\"{}\"", peek)
+        }
+        // Booleans
+        (Def::Scalar, Type::Primitive(PrimitiveType::Boolean)) => {
+            let b = peek.get::<bool>().unwrap();
+            write!(w, "{}", if *b { "true" } else { "false" })
+        }
+        // Chars: show with single quotes for Rust
+        (Def::Scalar, Type::Primitive(PrimitiveType::Textual(TextualType::Char))) => {
+            write!(w, "'{}'", peek.get::<char>().unwrap())
+        }
+        // Everything else: use Display if available, else Debug
+        _ => {
+            if shape.is_display() {
+                write!(w, "{}", peek)
+            } else if shape.is_debug() {
+                write!(w, "{:?}", peek)
+            } else {
+                write!(w, "<{}>", shape.type_identifier)
+            }
+        }
+    }
+}
+
+/// Value formatting without quotes (XML style - quotes come from attribute syntax).
+fn format_value_raw(peek: Peek<'_, '_>, w: &mut dyn Write) -> std::fmt::Result {
     use facet_core::TextualType;
 
     let shape = peek.shape();
 
     match (shape.def, shape.ty) {
-        // Strings: write raw content (no quotes - renderer adds them in context)
+        // Strings: write raw content (no quotes)
         (_, Type::Primitive(PrimitiveType::Textual(TextualType::Str))) => {
             write!(w, "{}", peek.get::<str>().unwrap())
         }
@@ -382,7 +428,7 @@ fn format_value_common(peek: Peek<'_, '_>, w: &mut dyn Write) -> std::fmt::Resul
             let b = peek.get::<bool>().unwrap();
             write!(w, "{}", if *b { "true" } else { "false" })
         }
-        // Chars: show as-is (no quotes)
+        // Chars: show as-is
         (Def::Scalar, Type::Primitive(PrimitiveType::Textual(TextualType::Char))) => {
             write!(w, "{}", peek.get::<char>().unwrap())
         }
@@ -560,9 +606,9 @@ mod tests {
         let value = "hello";
         let peek = Peek::new(&value);
 
-        // All flavors return raw string content (no quotes)
-        assert_eq!(format_to_string(&RustFlavor, peek), "hello");
-        assert_eq!(format_to_string(&JsonFlavor, peek), "hello");
+        // Rust/JSON add quotes around strings, XML doesn't (quotes come from attr syntax)
+        assert_eq!(format_to_string(&RustFlavor, peek), "\"hello\"");
+        assert_eq!(format_to_string(&JsonFlavor, peek), "\"hello\"");
         assert_eq!(format_to_string(&XmlFlavor, peek), "hello");
     }
 
