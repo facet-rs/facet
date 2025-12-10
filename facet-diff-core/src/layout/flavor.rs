@@ -315,12 +315,11 @@ impl DiffFlavor for XmlFlavor {
     }
 
     fn seq_open(&self) -> Cow<'static, str> {
-        // XML sequences don't have explicit delimiters
-        Cow::Borrowed("")
+        Cow::Borrowed("<items>")
     }
 
     fn seq_close(&self) -> Cow<'static, str> {
-        Cow::Borrowed("")
+        Cow::Borrowed("</items>")
     }
 
     fn item_separator(&self) -> &'static str {
@@ -602,8 +601,8 @@ mod tests {
         assert_eq!(rust.seq_close(), "]");
         assert_eq!(json.seq_open(), "[");
         assert_eq!(json.seq_close(), "]");
-        assert_eq!(xml.seq_open(), "");
-        assert_eq!(xml.seq_close(), "");
+        assert_eq!(xml.seq_open(), "<items>");
+        assert_eq!(xml.seq_close(), "</items>");
 
         // comment
         assert_eq!(rust.comment("5 more"), "/* 5 more */");
