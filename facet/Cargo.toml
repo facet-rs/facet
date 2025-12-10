@@ -62,11 +62,18 @@ tuples-12 = ["facet-core/tuples-12"]
 # Provide Facet trait implementations for function pointers.
 fn-ptr = ["facet-core/fn-ptr"]
 
+# Provide Facet trait implementations for portable SIMD types (requires nightly).
+# This adds 84 type implementations which increases compile time.
+simd = ["facet-core/simd"]
+
 # Include doc comments in generated Shape/Field/Variant definitions
 doc = ["facet-macros/doc"]
 
 # Enable typo suggestions for unknown attributes/fields (uses strsim)
 helpful-derive = ["facet-macros/helpful-derive"]
+
+[build-dependencies]
+autocfg = "1.3"
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "=0.31.8", default-features = false }
