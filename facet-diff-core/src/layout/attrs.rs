@@ -1,5 +1,7 @@
 //! Attribute types and grouping algorithms.
 
+use std::borrow::Cow;
+
 use super::Span;
 
 /// A pre-formatted value with its measurements.
@@ -37,8 +39,8 @@ pub enum AttrStatus {
 /// A single attribute with its formatting info.
 #[derive(Clone, Debug)]
 pub struct Attr {
-    /// Attribute name
-    pub name: &'static str,
+    /// Attribute name (can be borrowed for static struct fields or owned for dynamic values)
+    pub name: Cow<'static, str>,
     /// Display width of the name
     pub name_width: usize,
     /// Change status with formatted values
@@ -47,9 +49,13 @@ pub struct Attr {
 
 impl Attr {
     /// Create an unchanged attribute.
-    pub fn unchanged(name: &'static str, name_width: usize, value: FormattedValue) -> Self {
+    pub fn unchanged(
+        name: impl Into<Cow<'static, str>>,
+        name_width: usize,
+        value: FormattedValue,
+    ) -> Self {
         Self {
-            name,
+            name: name.into(),
             name_width,
             status: AttrStatus::Unchanged { value },
         }
@@ -57,31 +63,39 @@ impl Attr {
 
     /// Create a changed attribute.
     pub fn changed(
-        name: &'static str,
+        name: impl Into<Cow<'static, str>>,
         name_width: usize,
         old: FormattedValue,
         new: FormattedValue,
     ) -> Self {
         Self {
-            name,
+            name: name.into(),
             name_width,
             status: AttrStatus::Changed { old, new },
         }
     }
 
     /// Create a deleted attribute.
-    pub fn deleted(name: &'static str, name_width: usize, value: FormattedValue) -> Self {
+    pub fn deleted(
+        name: impl Into<Cow<'static, str>>,
+        name_width: usize,
+        value: FormattedValue,
+    ) -> Self {
         Self {
-            name,
+            name: name.into(),
             name_width,
             status: AttrStatus::Deleted { value },
         }
     }
 
     /// Create an inserted attribute.
-    pub fn inserted(name: &'static str, name_width: usize, value: FormattedValue) -> Self {
+    pub fn inserted(
+        name: impl Into<Cow<'static, str>>,
+        name_width: usize,
+        value: FormattedValue,
+    ) -> Self {
         Self {
-            name,
+            name: name.into(),
             name_width,
             status: AttrStatus::Inserted { value },
         }
