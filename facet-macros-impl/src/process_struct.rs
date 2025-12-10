@@ -1672,7 +1672,11 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
     };
 
     // Static declaration for release builds (pre-evaluates SHAPE)
-    let static_decl = crate::derive::generate_static_decl(&struct_name_ident, &facet_crate);
+    let static_decl = crate::derive::generate_static_decl(
+        &struct_name_ident,
+        &facet_crate,
+        has_type_or_const_generics,
+    );
 
     // Final quote block using refactored parts
     let result = quote! {
