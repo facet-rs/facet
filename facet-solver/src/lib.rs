@@ -2338,7 +2338,17 @@ impl SchemaBuilder {
             //
             // Keep the synthetic `"0"` segment so the solver/reflect layer walks through
             // the tuple wrapper that Rust generates for newtype variants.
-            if let Type::User(UserType::Struct(inner_struct)) = inner_shape.ty {
+
+            // For untagged enum variant resolution, we need to look at the "effective"
+            // shape that determines the serialization format. This unwraps:
+            // 1. Transparent wrappers (shape.inner) - e.g., `Curve64(GCurve<f64, f64>)`
+            // 2. Proxy types (shape.proxy) - e.g., `GCurve` uses `GCurveProxy` for ser/de
+            //
+            // This ensures that `{"x":..., "y":...}` correctly matches `Linear(Curve64)`
+            // where Curve64 is transparent around GCurve which has a proxy with x,y fields.
+            let effective_shape = unwrap_to_effective_shape(inner_shape);
+
+            if let Type::User(UserType::Struct(inner_struct)) = effective_shape.ty {
                 let inner_path = variant_path.push_field("0");
                 return self.analyze_struct(inner_struct, inner_path, key_prefix.clone());
             }
@@ -2386,5 +2396,41 @@ fn unwrap_option_type(shape: &'static Shape) -> Option<&'static Shape> {
     match shape.def {
         Def::Option(option_def) => Some(option_def.t),
         _ => None,
+    }
+}
+
+/// Unwrap transparent wrappers and proxies to get the effective shape for field matching.
+///
+/// When determining which untagged enum variant matches a set of fields, we need to
+/// look at the "effective" shape that determines the serialization format:
+///
+/// 1. Transparent wrappers (shape.inner): e.g., `Curve64` wraps `GCurve<f64, f64>`
+///    - The wrapper has no serialization presence; it serializes as its inner type
+///
+/// 2. Proxy types (shape.proxy): e.g., `GCurve` uses `GCurveProxy` for ser/de
+///    - The proxy's fields are what appear in the serialized format
+///
+/// This function recursively unwraps these layers to find the shape whose fields
+/// should be used for variant matching. For example:
+/// - `Curve64` (transparent) → `GCurve<f64, f64>` (has proxy) → `GCurveProxy<f64, f64>`
+fn unwrap_to_effective_shape(shape: &'static Shape) -> &'static Shape {
+    // First, unwrap transparent wrappers
+    let shape = unwrap_transparent(shape);
+
+    // Then, if there's a proxy, use its shape instead
+    if let Some(proxy_def) = shape.proxy {
+        // Recursively unwrap in case the proxy is also transparent or has its own proxy
+        unwrap_to_effective_shape(proxy_def.shape)
+    } else {
+        shape
+    }
+}
+
+/// Recursively unwrap transparent wrappers to get to the innermost type.
+fn unwrap_transparent(shape: &'static Shape) -> &'static Shape {
+    if let Some(inner) = shape.inner {
+        unwrap_transparent(inner)
+    } else {
+        shape
     }
 }
