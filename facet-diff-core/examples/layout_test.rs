@@ -1,95 +1,144 @@
-//! Test layout rendering.
+//! Test layout rendering with build_layout.
 
-use facet_diff_core::ElementChange;
-use facet_diff_core::layout::{
-    Attr, FormatArena, FormattedValue, Layout, LayoutNode, RenderOptions, group_changed_attrs,
-    render_to_string,
-};
-use indextree::Arena;
+use facet::Facet;
+use facet_diff_core::{BuildOptions, Diff, RenderOptions, build_layout, render_to_string};
+use facet_reflect::Peek;
 
 fn main() {
-    println!("=== Simple changed attribute ===\n");
-
-    let mut strings = FormatArena::new();
-    let tree = Arena::new();
-
-    let (red_span, red_width) = strings.push_str("red");
-    let (blue_span, blue_width) = strings.push_str("blue");
-
-    let fill_attr = Attr::changed(
-        "fill",
-        4,
-        FormattedValue::new(red_span, red_width),
-        FormattedValue::new(blue_span, blue_width),
-    );
-
-    let attrs = vec![fill_attr];
-    let changed_groups = group_changed_attrs(&attrs, 80, 0);
-
-    let root = LayoutNode::Element {
-        tag: "rect",
-        attrs,
-        changed_groups,
-        change: ElementChange::None,
-    };
-
-    let layout = Layout::new(strings, tree, root);
-
-    println!("Plain output:");
-    let opts = RenderOptions::plain();
-    let output = render_to_string(&layout, &opts);
-    println!("{}", output);
-
-    println!("Colored output:");
     let opts = RenderOptions::default();
-    let output = render_to_string(&layout, &opts);
-    println!("{}", output);
 
-    println!("\n=== Multiple changed attributes ===\n");
+    println!("=== Diff::Equal ===\n");
+    {
+        let value = 42i32;
+        let diff = Diff::Equal {
+            value: Some(Peek::new(&value)),
+        };
 
-    let mut strings = FormatArena::new();
-    let tree = Arena::new();
+        let layout = build_layout(&diff, &BuildOptions::default());
+        println!("{}", render_to_string(&layout, &opts));
+    }
 
-    let (red_span, red_width) = strings.push_str("red");
-    let (blue_span, blue_width) = strings.push_str("blue");
-    let (ten_span, ten_width) = strings.push_str("10");
-    let (twenty_span, twenty_width) = strings.push_str("20");
+    println!("=== Diff::Replace (scalars) ===\n");
+    {
+        let from = 10i32;
+        let to = 20i32;
+        let diff = Diff::Replace {
+            from: Peek::new(&from),
+            to: Peek::new(&to),
+        };
 
-    let fill_attr = Attr::changed(
-        "fill",
-        4,
-        FormattedValue::new(red_span, red_width),
-        FormattedValue::new(blue_span, blue_width),
-    );
-    let x_attr = Attr::changed(
-        "x",
-        1,
-        FormattedValue::new(ten_span, ten_width),
-        FormattedValue::new(twenty_span, twenty_width),
-    );
+        let layout = build_layout(&diff, &BuildOptions::default());
+        println!("{}", render_to_string(&layout, &opts));
+    }
 
-    let (five_span, five_width) = strings.push_str("5");
-    let y_attr = Attr::unchanged("y", 1, FormattedValue::new(five_span, five_width));
+    println!("=== Diff::Replace (strings) ===\n");
+    {
+        let from = "hello";
+        let to = "world";
+        let diff = Diff::Replace {
+            from: Peek::new(&from),
+            to: Peek::new(&to),
+        };
 
-    let attrs = vec![fill_attr, x_attr, y_attr];
-    let changed_groups = group_changed_attrs(&attrs, 80, 0);
+        let layout = build_layout(&diff, &BuildOptions::default());
+        println!("{}", render_to_string(&layout, &opts));
+    }
 
-    let root = LayoutNode::Element {
-        tag: "rect",
-        attrs,
-        changed_groups,
-        change: ElementChange::None,
-    };
+    println!("=== Diff::Replace (structs) ===\n");
+    {
+        #[derive(Facet)]
+        struct Point {
+            x: i32,
+            y: i32,
+        }
 
-    let layout = Layout::new(strings, tree, root);
+        let from = Point { x: 10, y: 20 };
+        let to = Point { x: 30, y: 40 };
+        let diff = Diff::Replace {
+            from: Peek::new(&from),
+            to: Peek::new(&to),
+        };
 
-    println!("Plain output:");
-    let opts = RenderOptions::plain();
-    let output = render_to_string(&layout, &opts);
-    println!("{}", output);
+        let layout = build_layout(&diff, &BuildOptions::default());
+        println!("{}", render_to_string(&layout, &opts));
+    }
 
-    println!("Colored output:");
-    let opts = RenderOptions::default();
-    let output = render_to_string(&layout, &opts);
-    println!("{}", output);
+    println!("=== Diff::Sequence (with changes) ===\n");
+    {
+        use facet_diff_core::{Interspersed, ReplaceGroup, Updates, UpdatesGroup};
+
+        let items_before = vec![1i32, 2, 3, 4, 5];
+        let items_after = vec![1i32, 2, 99, 4, 5];
+
+        let removal = Peek::new(&items_before[2]); // 3
+        let addition = Peek::new(&items_after[2]); // 99
+
+        let replace_group = ReplaceGroup {
+            removals: vec![removal],
+            additions: vec![addition],
+        };
+
+        let update_group = UpdatesGroup(Interspersed {
+            first: Some(replace_group),
+            values: vec![],
+            last: None,
+        });
+
+        let unchanged_before: Vec<_> = items_before[0..2].iter().map(|x| Peek::new(x)).collect();
+        let unchanged_after: Vec<_> = items_before[3..5].iter().map(|x| Peek::new(x)).collect();
+
+        let updates = Updates(Interspersed {
+            first: None,
+            values: vec![(unchanged_before, update_group)],
+            last: Some(unchanged_after),
+        });
+
+        let diff = Diff::Sequence {
+            from: <Vec<i32> as facet_core::Facet>::SHAPE,
+            to: <Vec<i32> as facet_core::Facet>::SHAPE,
+            updates,
+        };
+
+        let layout = build_layout(&diff, &BuildOptions::default());
+        println!("{}", render_to_string(&layout, &opts));
+    }
+
+    println!("=== Diff::Sequence (with collapsing) ===\n");
+    {
+        use facet_diff_core::{Interspersed, ReplaceGroup, Updates, UpdatesGroup};
+
+        let items: Vec<i32> = (0..10).collect();
+
+        let removal = Peek::new(&100i32);
+        let addition = Peek::new(&999i32);
+
+        let replace_group = ReplaceGroup {
+            removals: vec![removal],
+            additions: vec![addition],
+        };
+
+        let update_group = UpdatesGroup(Interspersed {
+            first: Some(replace_group),
+            values: vec![],
+            last: None,
+        });
+
+        // 5 unchanged items (should collapse with threshold=3)
+        let unchanged: Vec<_> = items[0..5].iter().map(|x| Peek::new(x)).collect();
+
+        let updates = Updates(Interspersed {
+            first: None,
+            values: vec![(unchanged, update_group)],
+            last: None,
+        });
+
+        let diff = Diff::Sequence {
+            from: <Vec<i32> as facet_core::Facet>::SHAPE,
+            to: <Vec<i32> as facet_core::Facet>::SHAPE,
+            updates,
+        };
+
+        let layout = build_layout(&diff, &BuildOptions::default());
+        println!("{}", render_to_string(&layout, &opts));
+    }
 }

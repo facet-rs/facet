@@ -2,63 +2,84 @@
 
 use std::fmt::{self, Write};
 
-use owo_colors::OwoColorize;
-
+use super::backend::{AnsiBackend, ColorBackend, PlainBackend, SemanticColor};
 use super::{AttrStatus, ChangedGroup, ElementChange, Layout, LayoutNode};
-use crate::{DiffSymbols, DiffTheme};
+use crate::DiffSymbols;
 
 /// Options for rendering a layout.
 #[derive(Clone, Debug)]
-pub struct RenderOptions {
+pub struct RenderOptions<B: ColorBackend> {
     /// Symbols to use for diff markers.
     pub symbols: DiffSymbols,
-    /// Color theme for diff rendering.
-    pub theme: DiffTheme,
-    /// Whether to emit ANSI color codes.
-    pub colors: bool,
+    /// Color backend for styling output.
+    pub backend: B,
     /// Indentation string (default: 2 spaces).
     pub indent: &'static str,
 }
 
-impl Default for RenderOptions {
+impl Default for RenderOptions<AnsiBackend> {
     fn default() -> Self {
         Self {
             symbols: DiffSymbols::default(),
-            theme: DiffTheme::default(),
-            colors: true,
+            backend: AnsiBackend::default(),
             indent: "  ",
         }
     }
 }
 
-impl RenderOptions {
-    /// Create options with colors disabled (plain text).
+impl RenderOptions<PlainBackend> {
+    /// Create options with plain backend (no colors).
     pub fn plain() -> Self {
         Self {
-            colors: false,
-            ..Self::default()
+            symbols: DiffSymbols::default(),
+            backend: PlainBackend,
+            indent: "  ",
+        }
+    }
+}
+
+impl<B: ColorBackend> RenderOptions<B> {
+    /// Create options with a custom backend.
+    pub fn with_backend(backend: B) -> Self {
+        Self {
+            symbols: DiffSymbols::default(),
+            backend,
+            indent: "  ",
         }
     }
 }
 
 /// Render a layout to a writer.
-pub fn render<W: Write>(layout: &Layout, w: &mut W, opts: &RenderOptions) -> fmt::Result {
+pub fn render<W: Write, B: ColorBackend>(
+    layout: &Layout,
+    w: &mut W,
+    opts: &RenderOptions<B>,
+) -> fmt::Result {
     render_node(layout, w, layout.root, 0, opts)
 }
 
 /// Render a layout to a String.
-pub fn render_to_string(layout: &Layout, opts: &RenderOptions) -> String {
+pub fn render_to_string<B: ColorBackend>(layout: &Layout, opts: &RenderOptions<B>) -> String {
     let mut out = String::new();
     render(layout, &mut out, opts).expect("writing to String cannot fail");
     out
 }
 
-fn render_node<W: Write>(
+fn element_change_to_semantic(change: ElementChange) -> SemanticColor {
+    match change {
+        ElementChange::None => SemanticColor::Unchanged,
+        ElementChange::Deleted => SemanticColor::Deleted,
+        ElementChange::Inserted => SemanticColor::Inserted,
+        ElementChange::MovedFrom | ElementChange::MovedTo => SemanticColor::Moved,
+    }
+}
+
+fn render_node<W: Write, B: ColorBackend>(
     layout: &Layout,
     w: &mut W,
     node_id: indextree::NodeId,
     depth: usize,
-    opts: &RenderOptions,
+    opts: &RenderOptions<B>,
 ) -> fmt::Result {
     let node = layout.get(node_id).expect("node exists");
 
@@ -91,11 +112,9 @@ fn render_node<W: Write>(
             let count = *count;
             write_indent(w, depth, opts)?;
             let comment = format!("<!-- {} unchanged -->", count);
-            if opts.colors {
-                write!(w, "{}", comment.color(opts.theme.unchanged))
-            } else {
-                write!(w, "{}", comment)
-            }
+            opts.backend
+                .write_styled(w, &comment, SemanticColor::Unchanged)?;
+            writeln!(w)
         }
 
         LayoutNode::Text { value, change } => {
@@ -104,32 +123,25 @@ fn render_node<W: Write>(
 
             write_indent(w, depth, opts)?;
             if let Some(prefix) = change.prefix() {
-                write!(w, "{} ", prefix)?;
+                opts.backend
+                    .write_prefix(w, prefix, element_change_to_semantic(change))?;
+                write!(w, " ")?;
             }
 
-            let color = match change {
-                ElementChange::None => opts.theme.unchanged,
-                ElementChange::Deleted => opts.theme.deleted,
-                ElementChange::Inserted => opts.theme.inserted,
-                ElementChange::MovedFrom | ElementChange::MovedTo => opts.theme.moved,
-            };
-
-            if opts.colors {
-                write!(w, "{}", text.color(color))
-            } else {
-                write!(w, "{}", text)
-            }
+            opts.backend
+                .write_styled(w, text, element_change_to_semantic(change))?;
+            writeln!(w)
         }
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_element<W: Write>(
+fn render_element<W: Write, B: ColorBackend>(
     layout: &Layout,
     w: &mut W,
     node_id: indextree::NodeId,
     depth: usize,
-    opts: &RenderOptions,
+    opts: &RenderOptions<B>,
     tag: &str,
     attrs: &[super::Attr],
     changed_groups: &[ChangedGroup],
@@ -146,25 +158,23 @@ fn render_element<W: Write>(
     let children: Vec<_> = layout.children(node_id).collect();
     let has_children = !children.is_empty();
 
+    let tag_color = match change {
+        ElementChange::None => SemanticColor::Structure,
+        ElementChange::Deleted => SemanticColor::Deleted,
+        ElementChange::Inserted => SemanticColor::Inserted,
+        ElementChange::MovedFrom | ElementChange::MovedTo => SemanticColor::Moved,
+    };
+
     // Opening tag line
     write_indent(w, depth, opts)?;
     if let Some(prefix) = change.prefix() {
-        write_prefix(w, prefix, change, opts)?;
+        opts.backend
+            .write_prefix(w, prefix, element_change_to_semantic(change))?;
         write!(w, " ")?;
     }
 
-    let tag_color = match change {
-        ElementChange::None => opts.theme.structure,
-        ElementChange::Deleted => opts.theme.deleted,
-        ElementChange::Inserted => opts.theme.inserted,
-        ElementChange::MovedFrom | ElementChange::MovedTo => opts.theme.moved,
-    };
-
-    if opts.colors {
-        write!(w, "{}", format!("<{}", tag).color(tag_color))?;
-    } else {
-        write!(w, "<{}", tag)?;
-    }
+    opts.backend
+        .write_styled(w, &format!("<{}", tag), tag_color)?;
 
     if has_attr_changes {
         // Multi-line attribute format
@@ -183,7 +193,7 @@ fn render_element<W: Write>(
                     continue;
                 }
                 write_indent(w, depth + 1, opts)?;
-                write_prefix(w, '-', ElementChange::Deleted, opts)?;
+                opts.backend.write_prefix(w, '-', SemanticColor::Deleted)?;
                 write!(w, " ")?;
                 render_attr_deleted(layout, w, opts, attr.name, value)?;
                 writeln!(w)?;
@@ -197,7 +207,7 @@ fn render_element<W: Write>(
                     continue;
                 }
                 write_indent(w, depth + 1, opts)?;
-                write_prefix(w, '+', ElementChange::Inserted, opts)?;
+                opts.backend.write_prefix(w, '+', SemanticColor::Inserted)?;
                 write!(w, " ")?;
                 render_attr_inserted(layout, w, opts, attr.name, value)?;
                 writeln!(w)?;
@@ -226,17 +236,11 @@ fn render_element<W: Write>(
         // Closing bracket
         write_indent(w, depth, opts)?;
         if has_children {
-            if opts.colors {
-                writeln!(w, "{}", ">".color(tag_color))?;
-            } else {
-                writeln!(w, ">")?;
-            }
+            opts.backend.write_styled(w, ">", tag_color)?;
+            writeln!(w)?;
         } else {
-            if opts.colors {
-                writeln!(w, "{}", "/>".color(tag_color))?;
-            } else {
-                writeln!(w, "/>")?;
-            }
+            opts.backend.write_styled(w, "/>", tag_color)?;
+            writeln!(w)?;
         }
     } else {
         // Inline attributes (no changes)
@@ -248,17 +252,11 @@ fn render_element<W: Write>(
         }
 
         if has_children {
-            if opts.colors {
-                writeln!(w, "{}", ">".color(tag_color))?;
-            } else {
-                writeln!(w, ">")?;
-            }
+            opts.backend.write_styled(w, ">", tag_color)?;
+            writeln!(w)?;
         } else {
-            if opts.colors {
-                writeln!(w, "{}", "/>".color(tag_color))?;
-            } else {
-                writeln!(w, "/>")?;
-            }
+            opts.backend.write_styled(w, "/>", tag_color)?;
+            writeln!(w)?;
         }
     }
 
@@ -271,34 +269,32 @@ fn render_element<W: Write>(
     if has_children {
         write_indent(w, depth, opts)?;
         if let Some(prefix) = change.prefix() {
-            write_prefix(w, prefix, change, opts)?;
+            opts.backend
+                .write_prefix(w, prefix, element_change_to_semantic(change))?;
             write!(w, " ")?;
         }
-        if opts.colors {
-            writeln!(w, "{}", format!("</{}>", tag).color(tag_color))?;
-        } else {
-            writeln!(w, "</{}>", tag)?;
-        }
+        opts.backend
+            .write_styled(w, &format!("</{}>", tag), tag_color)?;
+        writeln!(w)?;
     }
 
     Ok(())
 }
 
-fn render_changed_group<W: Write>(
+fn render_changed_group<W: Write, B: ColorBackend>(
     layout: &Layout,
     w: &mut W,
     depth: usize,
-    opts: &RenderOptions,
+    opts: &RenderOptions<B>,
     attrs: &[super::Attr],
     group: &ChangedGroup,
 ) -> fmt::Result {
     // Minus line
     write_indent(w, depth, opts)?;
-    write_prefix(w, '-', ElementChange::Deleted, opts)?;
+    opts.backend.write_prefix(w, '-', SemanticColor::Deleted)?;
     write!(w, " ")?;
 
     // For alignment, we need to pad both - and + lines to the same width
-    // The max value width for alignment is max(max_old_width, max_new_width)
     let max_value_width = group.max_old_width.max(group.max_new_width);
 
     for (i, &idx) in group.attr_indices.iter().enumerate() {
@@ -307,16 +303,11 @@ fn render_changed_group<W: Write>(
         }
         let attr = &attrs[idx];
         if let AttrStatus::Changed { old, .. } = &attr.status {
-            // Pad name to max_name_width
             let name_padding = group.max_name_width.saturating_sub(attr.name_width);
-            write!(w, "{}", attr.name)?;
-            write!(w, "=\"")?;
+            write!(w, "{}=\"", attr.name)?;
             let old_str = layout.get_string(old.span);
-            if opts.colors {
-                write!(w, "{}", old_str.color(opts.theme.deleted))?;
-            } else {
-                write!(w, "{}", old_str)?;
-            }
+            opts.backend
+                .write_styled(w, old_str, SemanticColor::Deleted)?;
             write!(w, "\"")?;
             // Pad value for column alignment
             let value_padding = max_value_width.saturating_sub(old.width) + name_padding;
@@ -329,7 +320,7 @@ fn render_changed_group<W: Write>(
 
     // Plus line
     write_indent(w, depth, opts)?;
-    write_prefix(w, '+', ElementChange::Inserted, opts)?;
+    opts.backend.write_prefix(w, '+', SemanticColor::Inserted)?;
     write!(w, " ")?;
 
     for (i, &idx) in group.attr_indices.iter().enumerate() {
@@ -339,14 +330,10 @@ fn render_changed_group<W: Write>(
         let attr = &attrs[idx];
         if let AttrStatus::Changed { new, .. } = &attr.status {
             let name_padding = group.max_name_width.saturating_sub(attr.name_width);
-            write!(w, "{}", attr.name)?;
-            write!(w, "=\"")?;
+            write!(w, "{}=\"", attr.name)?;
             let new_str = layout.get_string(new.span);
-            if opts.colors {
-                write!(w, "{}", new_str.color(opts.theme.inserted))?;
-            } else {
-                write!(w, "{}", new_str)?;
-            }
+            opts.backend
+                .write_styled(w, new_str, SemanticColor::Inserted)?;
             write!(w, "\"")?;
             // Pad for column alignment
             let value_padding = max_value_width.saturating_sub(new.width) + name_padding;
@@ -360,83 +347,56 @@ fn render_changed_group<W: Write>(
     Ok(())
 }
 
-fn render_attr_unchanged<W: Write>(
+fn render_attr_unchanged<W: Write, B: ColorBackend>(
     layout: &Layout,
     w: &mut W,
-    opts: &RenderOptions,
+    opts: &RenderOptions<B>,
     name: &str,
     value: &super::FormattedValue,
 ) -> fmt::Result {
     let value_str = layout.get_string(value.span);
-    if opts.colors {
-        write!(
-            w,
-            "{}",
-            format!("{}=\"{}\"", name, value_str).color(opts.theme.unchanged)
-        )
-    } else {
-        write!(w, "{}=\"{}\"", name, value_str)
-    }
+    let formatted = format!("{}=\"{}\"", name, value_str);
+    opts.backend
+        .write_styled(w, &formatted, SemanticColor::Unchanged)
 }
 
-fn render_attr_deleted<W: Write>(
+fn render_attr_deleted<W: Write, B: ColorBackend>(
     layout: &Layout,
     w: &mut W,
-    opts: &RenderOptions,
+    opts: &RenderOptions<B>,
     name: &str,
     value: &super::FormattedValue,
 ) -> fmt::Result {
     let value_str = layout.get_string(value.span);
     write!(w, "{}=\"", name)?;
-    if opts.colors {
-        write!(w, "{}", value_str.color(opts.theme.deleted))?;
-    } else {
-        write!(w, "{}", value_str)?;
-    }
+    opts.backend
+        .write_styled(w, value_str, SemanticColor::Deleted)?;
     write!(w, "\"")
 }
 
-fn render_attr_inserted<W: Write>(
+fn render_attr_inserted<W: Write, B: ColorBackend>(
     layout: &Layout,
     w: &mut W,
-    opts: &RenderOptions,
+    opts: &RenderOptions<B>,
     name: &str,
     value: &super::FormattedValue,
 ) -> fmt::Result {
     let value_str = layout.get_string(value.span);
     write!(w, "{}=\"", name)?;
-    if opts.colors {
-        write!(w, "{}", value_str.color(opts.theme.inserted))?;
-    } else {
-        write!(w, "{}", value_str)?;
-    }
+    opts.backend
+        .write_styled(w, value_str, SemanticColor::Inserted)?;
     write!(w, "\"")
 }
 
-fn write_indent<W: Write>(w: &mut W, depth: usize, opts: &RenderOptions) -> fmt::Result {
+fn write_indent<W: Write, B: ColorBackend>(
+    w: &mut W,
+    depth: usize,
+    opts: &RenderOptions<B>,
+) -> fmt::Result {
     for _ in 0..depth {
         write!(w, "{}", opts.indent)?;
     }
     Ok(())
-}
-
-fn write_prefix<W: Write>(
-    w: &mut W,
-    prefix: char,
-    change: ElementChange,
-    opts: &RenderOptions,
-) -> fmt::Result {
-    if opts.colors {
-        let color = match change {
-            ElementChange::Deleted => opts.theme.deleted,
-            ElementChange::Inserted => opts.theme.inserted,
-            ElementChange::MovedFrom | ElementChange::MovedTo => opts.theme.moved,
-            ElementChange::None => opts.theme.unchanged,
-        };
-        write!(w, "{}", prefix.to_string().color(color))
-    } else {
-        write!(w, "{}", prefix)
-    }
 }
 
 #[cfg(test)]
@@ -547,5 +507,18 @@ mod tests {
         assert!(output.contains("<svg>"));
         assert!(output.contains("</svg>"));
         assert!(output.contains("<rect"));
+    }
+
+    #[test]
+    fn test_ansi_backend_produces_escapes() {
+        let layout = make_test_layout();
+        let opts = RenderOptions::default();
+        let output = render_to_string(&layout, &opts);
+
+        // Should contain ANSI escape codes
+        assert!(
+            output.contains("\x1b["),
+            "output should contain ANSI escapes"
+        );
     }
 }

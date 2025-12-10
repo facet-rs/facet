@@ -1229,6 +1229,7 @@ name = "facet-diff-core"
 version = "0.1.0"
 dependencies = [
  "confusables",
+ "facet",
  "facet-core",
  "facet-pretty",
  "facet-reflect",

@@ -11,10 +11,14 @@
 
 mod arena;
 mod attrs;
+mod backend;
+mod build;
 mod node;
 mod render;
 
 pub use arena::{FormatArena, Span};
 pub use attrs::{Attr, AttrStatus, ChangedGroup, FormattedValue, group_changed_attrs};
+pub use backend::{AnsiBackend, ColorBackend, PlainBackend, SemanticColor};
+pub use build::{BuildOptions, build_layout};
 pub use node::{ElementChange, Layout, LayoutNode};
 pub use render::{RenderOptions, render, render_to_string};
