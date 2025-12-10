@@ -13,12 +13,12 @@
 
 use std::borrow::Cow;
 
-use facet_core::{Shape, StructKind, Type, UserType};
+use facet_core::{Def, NumericType, PrimitiveType, Shape, StructKind, TextualType, Type, UserType};
 use facet_reflect::Peek;
 use indextree::{Arena, NodeId};
 
 use super::{
-    Attr, DiffFlavor, ElementChange, FormatArena, FormattedValue, Layout, LayoutNode,
+    Attr, DiffFlavor, ElementChange, FormatArena, FormattedValue, Layout, LayoutNode, ValueType,
     group_changed_attrs,
 };
 use crate::{Diff, ReplaceGroup, Updates, UpdatesGroup, Value};
@@ -29,6 +29,39 @@ fn get_shape_display_name(shape: &Shape) -> &'static str {
         return renamed;
     }
     shape.type_identifier
+}
+
+/// Determine the type of a value for coloring purposes.
+fn determine_value_type(peek: Peek<'_, '_>) -> ValueType {
+    let shape = peek.shape();
+
+    // Check the Def first for special types like Option
+    if let Def::Option(_) = shape.def {
+        // Check if it's None
+        if let Ok(opt) = peek.into_option() {
+            if opt.is_none() {
+                return ValueType::Null;
+            }
+            // If Some, recurse to get inner type
+            if let Some(inner) = opt.value() {
+                return determine_value_type(inner);
+            }
+        }
+        return ValueType::Other;
+    }
+
+    // Check the Type for primitives
+    match shape.ty {
+        Type::Primitive(p) => match p {
+            PrimitiveType::Boolean => ValueType::Boolean,
+            PrimitiveType::Numeric(NumericType::Integer { .. })
+            | PrimitiveType::Numeric(NumericType::Float) => ValueType::Number,
+            PrimitiveType::Textual(TextualType::Char)
+            | PrimitiveType::Textual(TextualType::Str) => ValueType::String,
+            PrimitiveType::Never => ValueType::Null,
+        },
+        _ => ValueType::Other,
+    }
 }
 
 /// Options for building a layout from a diff.
@@ -719,7 +752,8 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
     /// Format a Peek value into the arena using the flavor.
     fn format_peek(&mut self, peek: Peek<'_, '_>) -> FormattedValue {
         let (span, width) = self.strings.format(|w| self.flavor.format_value(peek, w));
-        FormattedValue::new(span, width)
+        let value_type = determine_value_type(peek);
+        FormattedValue::with_type(span, width, value_type)
     }
 
     /// Finish building and return the Layout.

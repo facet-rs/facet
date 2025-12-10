@@ -4,7 +4,7 @@ use std::fmt::{self, Write};
 
 use super::backend::{AnsiBackend, ColorBackend, PlainBackend, SemanticColor};
 use super::flavor::DiffFlavor;
-use super::{AttrStatus, ChangedGroup, ElementChange, Layout, LayoutNode};
+use super::{AttrStatus, ChangedGroup, ElementChange, Layout, LayoutNode, ValueType};
 use crate::DiffSymbols;
 
 /// Syntax element type for context-aware coloring.
@@ -30,6 +30,59 @@ fn syntax_color(base: SyntaxElement, context: ElementChange) -> SemanticColor {
         (SyntaxElement::Comment, ElementChange::Deleted) => SemanticColor::DeletedComment,
         (SyntaxElement::Comment, ElementChange::Inserted) => SemanticColor::InsertedComment,
         (SyntaxElement::Comment, _) => SemanticColor::Comment,
+    }
+}
+
+/// Get the appropriate semantic color for a value based on its type and context.
+fn value_color(value_type: ValueType, context: ElementChange) -> SemanticColor {
+    match (value_type, context) {
+        (ValueType::String, ElementChange::Deleted) => SemanticColor::DeletedString,
+        (ValueType::String, ElementChange::Inserted) => SemanticColor::InsertedString,
+        (ValueType::String, _) => SemanticColor::String,
+
+        (ValueType::Number, ElementChange::Deleted) => SemanticColor::DeletedNumber,
+        (ValueType::Number, ElementChange::Inserted) => SemanticColor::InsertedNumber,
+        (ValueType::Number, _) => SemanticColor::Number,
+
+        (ValueType::Boolean, ElementChange::Deleted) => SemanticColor::DeletedBoolean,
+        (ValueType::Boolean, ElementChange::Inserted) => SemanticColor::InsertedBoolean,
+        (ValueType::Boolean, _) => SemanticColor::Boolean,
+
+        (ValueType::Null, ElementChange::Deleted) => SemanticColor::DeletedNull,
+        (ValueType::Null, ElementChange::Inserted) => SemanticColor::InsertedNull,
+        (ValueType::Null, _) => SemanticColor::Null,
+
+        // Other/unknown types use accent colors
+        (ValueType::Other, ElementChange::Deleted) => SemanticColor::Deleted,
+        (ValueType::Other, ElementChange::Inserted) => SemanticColor::Inserted,
+        (ValueType::Other, ElementChange::MovedFrom)
+        | (ValueType::Other, ElementChange::MovedTo) => SemanticColor::Moved,
+        (ValueType::Other, ElementChange::None) => SemanticColor::Unchanged,
+    }
+}
+
+/// Get semantic color for highlight background (changed values).
+fn value_color_highlight(value_type: ValueType, context: ElementChange) -> SemanticColor {
+    match (value_type, context) {
+        (ValueType::String, ElementChange::Deleted) => SemanticColor::DeletedString,
+        (ValueType::String, ElementChange::Inserted) => SemanticColor::InsertedString,
+
+        (ValueType::Number, ElementChange::Deleted) => SemanticColor::DeletedNumber,
+        (ValueType::Number, ElementChange::Inserted) => SemanticColor::InsertedNumber,
+
+        (ValueType::Boolean, ElementChange::Deleted) => SemanticColor::DeletedBoolean,
+        (ValueType::Boolean, ElementChange::Inserted) => SemanticColor::InsertedBoolean,
+
+        (ValueType::Null, ElementChange::Deleted) => SemanticColor::DeletedNull,
+        (ValueType::Null, ElementChange::Inserted) => SemanticColor::InsertedNull,
+
+        // Highlight uses generic highlights for Other/unchanged
+        (_, ElementChange::Deleted) => SemanticColor::DeletedHighlight,
+        (_, ElementChange::Inserted) => SemanticColor::InsertedHighlight,
+        (_, ElementChange::MovedFrom) | (_, ElementChange::MovedTo) => {
+            SemanticColor::MovedHighlight
+        }
+        _ => SemanticColor::Unchanged,
     }
 }
 
@@ -259,8 +312,8 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
                 write!(w, " ")?;
             }
 
-            opts.backend
-                .write_styled(w, text, element_change_to_semantic(change))?;
+            let semantic = value_color(value.value_type, change);
+            opts.backend.write_styled(w, text, semantic)?;
             writeln!(w)
         }
 
@@ -287,13 +340,13 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
             }
 
             // Render items with flavor separator and optional wrapping
-            let semantic = element_change_to_semantic(change);
             for (i, item) in items.iter().enumerate() {
                 if i > 0 {
                     write!(w, "{}", flavor.item_separator())?;
                 }
                 let raw_value = layout.get_string(item.span);
                 let formatted = flavor.format_seq_item(item_type, raw_value);
+                let semantic = value_color(item.value_type, change);
                 opts.backend.write_styled(w, &formatted, semantic)?;
             }
 
@@ -595,7 +648,8 @@ fn render_inline_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                     SemanticColor::DeletedKey,
                 )?;
                 let val = layout.get_string(value.span);
-                opts.backend.write_styled(w, val, SemanticColor::Deleted)?;
+                let color = value_color(value.value_type, ElementChange::Deleted);
+                opts.backend.write_styled(w, val, color)?;
                 opts.backend.write_styled(
                     w,
                     flavor.format_field_suffix(),
@@ -613,8 +667,8 @@ fn render_inline_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                     SemanticColor::DeletedKey,
                 )?;
                 let val = layout.get_string(old.span);
-                opts.backend
-                    .write_styled(w, val, SemanticColor::DeletedHighlight)?;
+                let color = value_color_highlight(old.value_type, ElementChange::Deleted);
+                opts.backend.write_styled(w, val, color)?;
                 opts.backend.write_styled(
                     w,
                     flavor.format_field_suffix(),
@@ -632,8 +686,8 @@ fn render_inline_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                     SemanticColor::DeletedHighlight,
                 )?;
                 let val = layout.get_string(value.span);
-                opts.backend
-                    .write_styled(w, val, SemanticColor::DeletedHighlight)?;
+                let color = value_color_highlight(value.value_type, ElementChange::Deleted);
+                opts.backend.write_styled(w, val, color)?;
                 opts.backend.write_styled(
                     w,
                     flavor.format_field_suffix(),
@@ -704,7 +758,8 @@ fn render_inline_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                     SemanticColor::InsertedKey,
                 )?;
                 let val = layout.get_string(value.span);
-                opts.backend.write_styled(w, val, SemanticColor::Inserted)?;
+                let color = value_color(value.value_type, ElementChange::Inserted);
+                opts.backend.write_styled(w, val, color)?;
                 opts.backend.write_styled(
                     w,
                     flavor.format_field_suffix(),
@@ -722,8 +777,8 @@ fn render_inline_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                     SemanticColor::InsertedKey,
                 )?;
                 let val = layout.get_string(new.span);
-                opts.backend
-                    .write_styled(w, val, SemanticColor::InsertedHighlight)?;
+                let color = value_color_highlight(new.value_type, ElementChange::Inserted);
+                opts.backend.write_styled(w, val, color)?;
                 opts.backend.write_styled(
                     w,
                     flavor.format_field_suffix(),
@@ -746,8 +801,8 @@ fn render_inline_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                     SemanticColor::InsertedHighlight,
                 )?;
                 let val = layout.get_string(value.span);
-                opts.backend
-                    .write_styled(w, val, SemanticColor::InsertedHighlight)?;
+                let color = value_color_highlight(value.value_type, ElementChange::Inserted);
+                opts.backend.write_styled(w, val, color)?;
                 opts.backend.write_styled(
                     w,
                     flavor.format_field_suffix(),
@@ -922,8 +977,8 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
             )?;
             // Changed value uses highlight background for contrast
             let old_str = layout.get_string(old.span);
-            opts.backend
-                .write_styled(w, old_str, SemanticColor::DeletedHighlight)?;
+            let color = value_color_highlight(old.value_type, ElementChange::Deleted);
+            opts.backend.write_styled(w, old_str, color)?;
             // Use context-aware structure color for field suffix (line bg)
             opts.backend.write_styled(
                 w,
@@ -962,8 +1017,8 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
             )?;
             // Changed value uses highlight background for contrast
             let new_str = layout.get_string(new.span);
-            opts.backend
-                .write_styled(w, new_str, SemanticColor::InsertedHighlight)?;
+            let color = value_color_highlight(new.value_type, ElementChange::Inserted);
+            opts.backend.write_styled(w, new_str, color)?;
             // Use context-aware structure color for field suffix (line bg)
             opts.backend.write_styled(
                 w,
