@@ -93,12 +93,11 @@ fn test_single_difference_in_deep_tree() {
     let mut b = a.clone();
 
     // Change just one value deep in the tree
-    if let Some(level1) = b.children.get_mut(0) {
-        if let Some(level2) = level1.children.get_mut(0) {
-            if let Some(level3) = level2.children.get_mut(0) {
-                level3.value = 999;
-            }
-        }
+    if let Some(level1) = b.children.get_mut(0)
+        && let Some(level2) = level1.children.get_mut(0)
+        && let Some(level3) = level2.children.get_mut(0)
+    {
+        level3.value = 999;
     }
 
     let _diff = a.diff(&b);

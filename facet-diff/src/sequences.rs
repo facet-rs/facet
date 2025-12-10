@@ -4,7 +4,7 @@ use facet_diff_core::Updates;
 use facet_reflect::Peek;
 use log::trace;
 
-use crate::diff::{diff_closeness, diff_new_peek};
+use crate::diff::diff_new_peek;
 
 /// Maximum size for sequences to use Myers' algorithm.
 /// Larger sequences fall back to simple element-by-element comparison

@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use super::Span;
 
 /// Type of a formatted value for color selection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ValueType {
     /// String type (green-based colors)
     String,
@@ -16,13 +16,8 @@ pub enum ValueType {
     /// Null/None type (cyan-based colors)
     Null,
     /// Other/unknown types (use accent color)
+    #[default]
     Other,
-}
-
-impl Default for ValueType {
-    fn default() -> Self {
-        Self::Other
-    }
 }
 
 /// A pre-formatted value with its measurements.
