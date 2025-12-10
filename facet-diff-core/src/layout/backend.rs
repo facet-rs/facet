@@ -156,73 +156,97 @@ impl ColorBackend for AnsiBackend {
     ) -> std::fmt::Result {
         let (fg, bg) = match color {
             // Accent colors
-            SemanticColor::Deleted => (self.theme.deleted, self.theme.deleted_line_bg),
-            SemanticColor::DeletedHighlight => {
-                (self.theme.deleted, self.theme.deleted_highlight_bg)
+            SemanticColor::Deleted => {
+                (self.theme.deleted, self.theme.desaturated_deleted_line_bg())
             }
-            SemanticColor::Inserted => (self.theme.inserted, self.theme.inserted_line_bg),
-            SemanticColor::InsertedHighlight => {
-                (self.theme.inserted, self.theme.inserted_highlight_bg)
-            }
-            SemanticColor::Moved => (self.theme.moved, self.theme.moved_line_bg),
-            SemanticColor::MovedHighlight => (self.theme.moved, self.theme.moved_highlight_bg),
+            SemanticColor::DeletedHighlight => (
+                self.theme.deleted,
+                self.theme.desaturated_deleted_highlight_bg(),
+            ),
+            SemanticColor::Inserted => (
+                self.theme.inserted,
+                self.theme.desaturated_inserted_line_bg(),
+            ),
+            SemanticColor::InsertedHighlight => (
+                self.theme.inserted,
+                self.theme.desaturated_inserted_highlight_bg(),
+            ),
+            SemanticColor::Moved => (self.theme.moved, self.theme.desaturated_moved_line_bg()),
+            SemanticColor::MovedHighlight => (
+                self.theme.moved,
+                self.theme.desaturated_moved_highlight_bg(),
+            ),
 
             // Context-aware syntax colors
-            SemanticColor::DeletedKey => (self.theme.deleted_key(), self.theme.deleted_line_bg),
-            SemanticColor::InsertedKey => (self.theme.inserted_key(), self.theme.inserted_line_bg),
+            SemanticColor::DeletedKey => (
+                self.theme.deleted_key(),
+                self.theme.desaturated_deleted_line_bg(),
+            ),
+            SemanticColor::InsertedKey => (
+                self.theme.inserted_key(),
+                self.theme.desaturated_inserted_line_bg(),
+            ),
             SemanticColor::Key => (self.theme.key, None),
 
-            SemanticColor::DeletedStructure => {
-                (self.theme.deleted_structure(), self.theme.deleted_line_bg)
-            }
-            SemanticColor::InsertedStructure => {
-                (self.theme.inserted_structure(), self.theme.inserted_line_bg)
-            }
+            SemanticColor::DeletedStructure => (
+                self.theme.deleted_structure(),
+                self.theme.desaturated_deleted_line_bg(),
+            ),
+            SemanticColor::InsertedStructure => (
+                self.theme.inserted_structure(),
+                self.theme.desaturated_inserted_line_bg(),
+            ),
             SemanticColor::Structure => (self.theme.structure, None),
 
-            SemanticColor::DeletedComment => {
-                (self.theme.deleted_comment(), self.theme.deleted_line_bg)
-            }
-            SemanticColor::InsertedComment => {
-                (self.theme.inserted_comment(), self.theme.inserted_line_bg)
-            }
+            SemanticColor::DeletedComment => (
+                self.theme.deleted_comment(),
+                self.theme.desaturated_deleted_line_bg(),
+            ),
+            SemanticColor::InsertedComment => (
+                self.theme.inserted_comment(),
+                self.theme.desaturated_inserted_line_bg(),
+            ),
             SemanticColor::Comment => (self.theme.comment, None),
 
             // Context-aware value type colors
-            SemanticColor::DeletedString => {
-                (self.theme.deleted_string(), self.theme.deleted_highlight_bg)
-            }
+            SemanticColor::DeletedString => (
+                self.theme.deleted_highlight_string(),
+                self.theme.desaturated_deleted_highlight_bg(),
+            ),
             SemanticColor::InsertedString => (
-                self.theme.inserted_string(),
-                self.theme.inserted_highlight_bg,
+                self.theme.inserted_highlight_string(),
+                self.theme.desaturated_inserted_highlight_bg(),
             ),
             SemanticColor::String => (self.theme.string, None),
 
-            SemanticColor::DeletedNumber => {
-                (self.theme.deleted_number(), self.theme.deleted_highlight_bg)
-            }
+            SemanticColor::DeletedNumber => (
+                self.theme.deleted_highlight_number(),
+                self.theme.desaturated_deleted_highlight_bg(),
+            ),
             SemanticColor::InsertedNumber => (
-                self.theme.inserted_number(),
-                self.theme.inserted_highlight_bg,
+                self.theme.inserted_highlight_number(),
+                self.theme.desaturated_inserted_highlight_bg(),
             ),
             SemanticColor::Number => (self.theme.number, None),
 
             SemanticColor::DeletedBoolean => (
-                self.theme.deleted_boolean(),
-                self.theme.deleted_highlight_bg,
+                self.theme.deleted_highlight_boolean(),
+                self.theme.desaturated_deleted_highlight_bg(),
             ),
             SemanticColor::InsertedBoolean => (
-                self.theme.inserted_boolean(),
-                self.theme.inserted_highlight_bg,
+                self.theme.inserted_highlight_boolean(),
+                self.theme.desaturated_inserted_highlight_bg(),
             ),
             SemanticColor::Boolean => (self.theme.boolean, None),
 
-            SemanticColor::DeletedNull => {
-                (self.theme.deleted_null(), self.theme.deleted_highlight_bg)
-            }
-            SemanticColor::InsertedNull => {
-                (self.theme.inserted_null(), self.theme.inserted_highlight_bg)
-            }
+            SemanticColor::DeletedNull => (
+                self.theme.deleted_highlight_null(),
+                self.theme.desaturated_deleted_highlight_bg(),
+            ),
+            SemanticColor::InsertedNull => (
+                self.theme.inserted_highlight_null(),
+                self.theme.desaturated_inserted_highlight_bg(),
+            ),
             SemanticColor::Null => (self.theme.null, None),
 
             // Neutral
