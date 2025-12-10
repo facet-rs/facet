@@ -68,9 +68,18 @@ pub trait DiffFlavor {
 
     /// Separator between fields.
     /// - Rust: `, `
-    /// - JSON: `,`
+    /// - JSON: `, `
     /// - XML: ` ` (space between attributes)
     fn field_separator(&self) -> &'static str;
+
+    /// Trailing comma/separator (no trailing space).
+    /// Used at end of lines when fields are broken across lines.
+    /// - Rust: `,`
+    /// - JSON: `,`
+    /// - XML: `` (empty - no trailing separator)
+    fn trailing_separator(&self) -> &'static str {
+        ","
+    }
 
     /// Opening syntax for a sequence/array.
     /// - Rust: `[`
@@ -385,6 +394,11 @@ impl DiffFlavor for XmlFlavor {
 
     fn format_child_close(&self, _name: &str) -> Cow<'static, str> {
         Cow::Borrowed("")
+    }
+
+    fn trailing_separator(&self) -> &'static str {
+        // XML doesn't use trailing commas/separators
+        ""
     }
 }
 
