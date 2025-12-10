@@ -1,6 +1,5 @@
 ---
 source: facet-diff/tests/diff_snapshots.rs
-assertion_line: 481
 expression: "format_diff_comparison(&a, &b)"
 ---
 ╭Before────────────╮
@@ -11,11 +10,11 @@ expression: "format_diff_comparison(&a, &b)"
 ╰──────────────────╯
 ╔Diff══════════════╗
 ║[                 ║
-║  - 1             ║
-║  - 2             ║
-║  - 3             ║
-║  + 4             ║
-║  + 5             ║
-║  + 6             ║
+║    - 1           ║
+║    - 2           ║
+║    - 3           ║
+║    + 4           ║
+║    + 5           ║
+║    + 6           ║
 ║]                 ║
 ╚══════════════════╝

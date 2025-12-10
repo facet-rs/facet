@@ -13,18 +13,74 @@ use crate::DiffTheme;
 /// Semantic color meaning for diff elements.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SemanticColor {
-    /// Deleted/removed content (typically red)
+    // === Accent colors (full brightness) ===
+    /// Deleted content on line background
     Deleted,
-    /// Inserted/added content (typically green)
+    /// Deleted content on highlight background (the actual changed value)
+    DeletedHighlight,
+    /// Inserted content on line background
     Inserted,
-    /// Moved content (typically blue)
+    /// Inserted content on highlight background (the actual changed value)
+    InsertedHighlight,
+    /// Moved content on line background
     Moved,
-    /// Unchanged content (normal/white)
-    Unchanged,
-    /// Structural elements like tags, brackets (typically neutral)
+    /// Moved content on highlight background
+    MovedHighlight,
+
+    // === Syntax colors (context-aware) ===
+    /// Key/field name in deleted context (blended toward orange)
+    DeletedKey,
+    /// Key/field name in inserted context (blended toward blue)
+    InsertedKey,
+    /// Key/field name in unchanged context
+    Key,
+
+    /// Structural element in deleted context
+    DeletedStructure,
+    /// Structural element in inserted context
+    InsertedStructure,
+    /// Structural element in unchanged context
     Structure,
-    /// Comments and type hints (muted/gray)
+
+    /// Comment/type hint in deleted context
+    DeletedComment,
+    /// Comment/type hint in inserted context
+    InsertedComment,
+    /// Comment in unchanged context
     Comment,
+
+    // === Value type colors (context-aware) ===
+    /// String value in deleted context (blended)
+    DeletedString,
+    /// String value in inserted context (blended)
+    InsertedString,
+    /// String value in unchanged context
+    String,
+
+    /// Number value in deleted context (blended)
+    DeletedNumber,
+    /// Number value in inserted context (blended)
+    InsertedNumber,
+    /// Number value in unchanged context
+    Number,
+
+    /// Boolean value in deleted context (blended)
+    DeletedBoolean,
+    /// Boolean value in inserted context (blended)
+    InsertedBoolean,
+    /// Boolean value in unchanged context
+    Boolean,
+
+    /// Null/None value in deleted context (blended)
+    DeletedNull,
+    /// Null/None value in inserted context (blended)
+    InsertedNull,
+    /// Null/None value in unchanged context
+    Null,
+
+    // === Other ===
+    /// Unchanged content (neutral)
+    Unchanged,
 }
 
 /// A backend that decides how to render semantic colors.
@@ -98,15 +154,85 @@ impl ColorBackend for AnsiBackend {
         text: &str,
         color: SemanticColor,
     ) -> std::fmt::Result {
-        let rgb = match color {
-            SemanticColor::Deleted => self.theme.deleted,
-            SemanticColor::Inserted => self.theme.inserted,
-            SemanticColor::Moved => self.theme.moved,
-            SemanticColor::Unchanged => self.theme.unchanged,
-            SemanticColor::Structure => self.theme.structure,
-            SemanticColor::Comment => self.theme.comment,
+        let (fg, bg) = match color {
+            // Accent colors
+            SemanticColor::Deleted => (self.theme.deleted, self.theme.deleted_line_bg),
+            SemanticColor::DeletedHighlight => {
+                (self.theme.deleted, self.theme.deleted_highlight_bg)
+            }
+            SemanticColor::Inserted => (self.theme.inserted, self.theme.inserted_line_bg),
+            SemanticColor::InsertedHighlight => {
+                (self.theme.inserted, self.theme.inserted_highlight_bg)
+            }
+            SemanticColor::Moved => (self.theme.moved, self.theme.moved_line_bg),
+            SemanticColor::MovedHighlight => (self.theme.moved, self.theme.moved_highlight_bg),
+
+            // Context-aware syntax colors
+            SemanticColor::DeletedKey => (self.theme.deleted_key(), self.theme.deleted_line_bg),
+            SemanticColor::InsertedKey => (self.theme.inserted_key(), self.theme.inserted_line_bg),
+            SemanticColor::Key => (self.theme.key, None),
+
+            SemanticColor::DeletedStructure => {
+                (self.theme.deleted_structure(), self.theme.deleted_line_bg)
+            }
+            SemanticColor::InsertedStructure => {
+                (self.theme.inserted_structure(), self.theme.inserted_line_bg)
+            }
+            SemanticColor::Structure => (self.theme.structure, None),
+
+            SemanticColor::DeletedComment => {
+                (self.theme.deleted_comment(), self.theme.deleted_line_bg)
+            }
+            SemanticColor::InsertedComment => {
+                (self.theme.inserted_comment(), self.theme.inserted_line_bg)
+            }
+            SemanticColor::Comment => (self.theme.comment, None),
+
+            // Context-aware value type colors
+            SemanticColor::DeletedString => {
+                (self.theme.deleted_string(), self.theme.deleted_highlight_bg)
+            }
+            SemanticColor::InsertedString => (
+                self.theme.inserted_string(),
+                self.theme.inserted_highlight_bg,
+            ),
+            SemanticColor::String => (self.theme.string, None),
+
+            SemanticColor::DeletedNumber => {
+                (self.theme.deleted_number(), self.theme.deleted_highlight_bg)
+            }
+            SemanticColor::InsertedNumber => (
+                self.theme.inserted_number(),
+                self.theme.inserted_highlight_bg,
+            ),
+            SemanticColor::Number => (self.theme.number, None),
+
+            SemanticColor::DeletedBoolean => (
+                self.theme.deleted_boolean(),
+                self.theme.deleted_highlight_bg,
+            ),
+            SemanticColor::InsertedBoolean => (
+                self.theme.inserted_boolean(),
+                self.theme.inserted_highlight_bg,
+            ),
+            SemanticColor::Boolean => (self.theme.boolean, None),
+
+            SemanticColor::DeletedNull => {
+                (self.theme.deleted_null(), self.theme.deleted_highlight_bg)
+            }
+            SemanticColor::InsertedNull => {
+                (self.theme.inserted_null(), self.theme.inserted_highlight_bg)
+            }
+            SemanticColor::Null => (self.theme.null, None),
+
+            // Neutral
+            SemanticColor::Unchanged => (self.theme.unchanged, None),
         };
-        write!(w, "{}", text.color(rgb))
+        if let Some(bg) = bg {
+            write!(w, "{}", text.color(fg).on_color(bg))
+        } else {
+            write!(w, "{}", text.color(fg))
+        }
     }
 }
 

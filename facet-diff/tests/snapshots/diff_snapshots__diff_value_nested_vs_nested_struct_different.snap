@@ -1,35 +1,34 @@
 ---
 source: facet-diff/tests/diff_snapshots.rs
-assertion_line: 1439
 expression: "format_diff_comparison(&a, &b)"
 ---
-╭Before─────────────────────────────────────╮
-│{                                          │
-│  name: "Alice",                           │
-│  age: 30,                                 │
-│  address: {                               │
-│    street: "123 Main St",                 │
-│    city: "Wonderland",                    │
-│  },                                       │
-│}                                          │
-╰───────────────────────────────────────────╯
-╭After──────────────────────────────────────╮
-│UserWithAddress {                          │
-│  name: "Alice",                           │
-│  age: 31,                                 │
-│  address: Address {                       │
-│    street: "456 Oak Ave",                 │
-│    city: "Wonderland",                    │
-│  },                                       │
-│}                                          │
-╰───────────────────────────────────────────╯
-╔Diff═══════════════════════════════════════╗
-║{                                          ║
-║  .. 1 unchanged field                     ║
-║  address: {                               ║
-║    .. 1 unchanged field                   ║
-║    street: "123 Main St" → "456 Oak Ave"  ║
-║  }                                        ║
-║  age: 30 → 31                             ║
-║}                                          ║
-╚═══════════════════════════════════════════╝
+╭Before─────────────────────────────────────────╮
+│{                                              │
+│  name: "Alice",                               │
+│  age: 30,                                     │
+│  address: {                                   │
+│    street: "123 Main St",                     │
+│    city: "Wonderland",                        │
+│  },                                           │
+│}                                              │
+╰───────────────────────────────────────────────╯
+╭After──────────────────────────────────────────╮
+│UserWithAddress {                              │
+│  name: "Alice",                               │
+│  age: 31,                                     │
+│  address: Address {                           │
+│    street: "456 Oak Ave",                     │
+│    city: "Wonderland",                        │
+│  },                                           │
+│}                                              │
+╰───────────────────────────────────────────────╯
+╔Diff═══════════════════════════════════════════╗
+║{                                              ║
+║    .. 1 unchanged field                       ║
+║    address: {                                 ║
+║        .. 1 unchanged field                   ║
+║        street: "123 Main St" → "456 Oak Ave"  ║
+║    }                                          ║
+║    age: 30 → 31                               ║
+║}                                              ║
+╚═══════════════════════════════════════════════╝

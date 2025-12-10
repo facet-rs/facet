@@ -1,18 +1,17 @@
 ---
 source: facet-diff/tests/diff_snapshots.rs
-assertion_line: 997
 expression: "format_diff_comparison(&a, &b)"
 ---
-╭Before───────────────╮
-│Vec<Value> [1, 2, 3] │
-╰─────────────────────╯
-╭After────────────────╮
-│Vec<Value> [1, 20, 3]│
-╰─────────────────────╯
-╔Diff═════════════════╗
-║[                    ║
-║  .. 1 unchanged item║
-║  2 → 20             ║
-║  .. 1 unchanged item║
-║]                    ║
-╚═════════════════════╝
+╭Before─────────────────╮
+│Vec<Value> [1, 2, 3]   │
+╰───────────────────────╯
+╭After──────────────────╮
+│Vec<Value> [1, 20, 3]  │
+╰───────────────────────╯
+╔Diff═══════════════════╗
+║[                      ║
+║    .. 1 unchanged item║
+║    2 → 20             ║
+║    .. 1 unchanged item║
+║]                      ║
+╚═══════════════════════╝

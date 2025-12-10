@@ -7,6 +7,111 @@ use super::flavor::DiffFlavor;
 use super::{AttrStatus, ChangedGroup, ElementChange, Layout, LayoutNode};
 use crate::DiffSymbols;
 
+/// Syntax element type for context-aware coloring.
+#[derive(Clone, Copy)]
+#[allow(dead_code)]
+enum SyntaxElement {
+    Key,
+    Structure,
+    Comment,
+}
+
+/// Get the appropriate semantic color for a syntax element in a given context.
+fn syntax_color(base: SyntaxElement, context: ElementChange) -> SemanticColor {
+    match (base, context) {
+        (SyntaxElement::Key, ElementChange::Deleted) => SemanticColor::DeletedKey,
+        (SyntaxElement::Key, ElementChange::Inserted) => SemanticColor::InsertedKey,
+        (SyntaxElement::Key, _) => SemanticColor::Key,
+
+        (SyntaxElement::Structure, ElementChange::Deleted) => SemanticColor::DeletedStructure,
+        (SyntaxElement::Structure, ElementChange::Inserted) => SemanticColor::InsertedStructure,
+        (SyntaxElement::Structure, _) => SemanticColor::Structure,
+
+        (SyntaxElement::Comment, ElementChange::Deleted) => SemanticColor::DeletedComment,
+        (SyntaxElement::Comment, ElementChange::Inserted) => SemanticColor::InsertedComment,
+        (SyntaxElement::Comment, _) => SemanticColor::Comment,
+    }
+}
+
+/// Information for inline element diff rendering.
+/// When all attributes fit on one line, we render the full element on each -/+ line.
+struct InlineElementInfo {
+    /// Width of each attr slot (padded to max of old/new values)
+    slot_widths: Vec<usize>,
+}
+
+impl InlineElementInfo {
+    /// Calculate inline element info if all attrs fit on one line.
+    /// Returns None if the element is not suitable for inline rendering.
+    fn calculate<F: DiffFlavor>(
+        attrs: &[super::Attr],
+        tag: &str,
+        flavor: &F,
+        max_line_width: usize,
+        indent_width: usize,
+    ) -> Option<Self> {
+        if attrs.is_empty() {
+            return None;
+        }
+
+        let mut slot_widths = Vec::with_capacity(attrs.len());
+        let mut total_width = 0usize;
+
+        // struct_open (e.g., "<Point" or "Point {")
+        total_width += flavor.struct_open(tag).len();
+
+        for (i, attr) in attrs.iter().enumerate() {
+            // Space or separator before attr
+            if i > 0 {
+                total_width += flavor.field_separator().len();
+            } else {
+                total_width += 1; // space after opening
+            }
+
+            // Calculate slot width for this attr (max of old/new/both)
+            let slot_width = match &attr.status {
+                AttrStatus::Unchanged { value } => {
+                    // name="value" -> prefix + value + suffix
+                    flavor.format_field_prefix(&attr.name).len()
+                        + value.width
+                        + flavor.format_field_suffix().len()
+                }
+                AttrStatus::Changed { old, new } => {
+                    let max_val = old.width.max(new.width);
+                    flavor.format_field_prefix(&attr.name).len()
+                        + max_val
+                        + flavor.format_field_suffix().len()
+                }
+                AttrStatus::Deleted { value } => {
+                    flavor.format_field_prefix(&attr.name).len()
+                        + value.width
+                        + flavor.format_field_suffix().len()
+                }
+                AttrStatus::Inserted { value } => {
+                    flavor.format_field_prefix(&attr.name).len()
+                        + value.width
+                        + flavor.format_field_suffix().len()
+                }
+            };
+
+            slot_widths.push(slot_width);
+            total_width += slot_width;
+        }
+
+        // struct_close (e.g., "/>" or "}")
+        total_width += 1; // space before close for XML
+        total_width += flavor.struct_close(tag, true).len();
+
+        // Check if it fits (account for "- " prefix and indent)
+        let available = max_line_width.saturating_sub(indent_width + 2);
+        if total_width > available {
+            return None;
+        }
+
+        Some(Self { slot_widths })
+    }
+}
+
 /// Options for rendering a layout.
 #[derive(Clone, Debug)]
 pub struct RenderOptions<B: ColorBackend> {
@@ -23,7 +128,7 @@ impl Default for RenderOptions<AnsiBackend> {
         Self {
             symbols: DiffSymbols::default(),
             backend: AnsiBackend::default(),
-            indent: "  ",
+            indent: "    ",
         }
     }
 }
@@ -34,7 +139,7 @@ impl RenderOptions<PlainBackend> {
         Self {
             symbols: DiffSymbols::default(),
             backend: PlainBackend,
-            indent: "  ",
+            indent: "    ",
         }
     }
 }
@@ -45,7 +150,7 @@ impl<B: ColorBackend> RenderOptions<B> {
         Self {
             symbols: DiffSymbols::default(),
             backend,
-            indent: "  ",
+            indent: "    ",
         }
     }
 }
@@ -192,12 +297,15 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
                 opts.backend.write_styled(w, &formatted, semantic)?;
             }
 
-            // Render collapsed suffix if present
+            // Render collapsed suffix if present (context-aware)
             if let Some(count) = collapsed_suffix {
                 let suffix = flavor.comment(&format!("{} more", count));
                 write!(w, " ")?;
-                opts.backend
-                    .write_styled(w, &suffix, SemanticColor::Comment)?;
+                opts.backend.write_styled(
+                    w,
+                    &suffix,
+                    syntax_color(SyntaxElement::Comment, change),
+                )?;
             }
 
             writeln!(w)
@@ -230,10 +338,24 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
     let children: Vec<_> = layout.children(node_id).collect();
     let has_children = !children.is_empty();
 
+    // Check if we can render as inline element diff (all attrs on one -/+ line pair)
+    // This is only viable when:
+    // 1. There are attribute changes (otherwise no need for -/+ lines)
+    // 2. No children (self-closing element)
+    // 3. All attrs fit on one line
+    if has_attr_changes && !has_children {
+        let indent_width = depth * opts.indent.len();
+        if let Some(info) = InlineElementInfo::calculate(attrs, tag, flavor, 80, indent_width) {
+            return render_inline_element(
+                layout, w, depth, opts, flavor, tag, field_name, attrs, &info,
+            );
+        }
+    }
+
     let tag_color = match change {
         ElementChange::None => SemanticColor::Structure,
-        ElementChange::Deleted => SemanticColor::Deleted,
-        ElementChange::Inserted => SemanticColor::Inserted,
+        ElementChange::Deleted => SemanticColor::DeletedStructure,
+        ElementChange::Inserted => SemanticColor::InsertedStructure,
         ElementChange::MovedFrom | ElementChange::MovedTo => SemanticColor::Moved,
     };
 
@@ -260,11 +382,11 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
     let open = flavor.struct_open(tag);
     opts.backend.write_styled(w, &open, tag_color)?;
 
-    // Render type comment in muted color if present
+    // Render type comment in muted color if present (context-aware)
     if let Some(comment) = flavor.type_comment(tag) {
         write!(w, " ")?;
         opts.backend
-            .write_styled(w, &comment, SemanticColor::Comment)?;
+            .write_styled(w, &comment, syntax_color(SyntaxElement::Comment, change))?;
     }
 
     if has_attr_changes {
@@ -287,11 +409,11 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                 opts.backend.write_prefix(w, '-', SemanticColor::Deleted)?;
                 write!(w, " ")?;
                 render_attr_deleted(layout, w, opts, flavor, &attr.name, value)?;
-                // Trailing comma (muted)
+                // Trailing comma (context-aware muted)
                 opts.backend.write_styled(
                     w,
                     flavor.trailing_separator(),
-                    SemanticColor::Comment,
+                    SemanticColor::DeletedComment,
                 )?;
                 writeln!(w)?;
             }
@@ -307,11 +429,11 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                 opts.backend.write_prefix(w, '+', SemanticColor::Inserted)?;
                 write!(w, " ")?;
                 render_attr_inserted(layout, w, opts, flavor, &attr.name, value)?;
-                // Trailing comma (muted)
+                // Trailing comma (context-aware muted)
                 opts.backend.write_styled(
                     w,
                     flavor.trailing_separator(),
-                    SemanticColor::Comment,
+                    SemanticColor::InsertedComment,
                 )?;
                 writeln!(w)?;
             }
@@ -414,6 +536,247 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
     Ok(())
 }
 
+/// Render an element with all attrs on one line per -/+ row.
+/// This is used when all attrs fit on a single line for a more compact diff.
+#[allow(clippy::too_many_arguments)]
+fn render_inline_element<W: Write, B: ColorBackend, F: DiffFlavor>(
+    layout: &Layout,
+    w: &mut W,
+    depth: usize,
+    opts: &RenderOptions<B>,
+    flavor: &F,
+    tag: &str,
+    field_name: Option<&str>,
+    attrs: &[super::Attr],
+    info: &InlineElementInfo,
+) -> fmt::Result {
+    // Render field name prefix if present (for nested struct fields)
+    let field_prefix = field_name.map(|name| flavor.format_child_open(name));
+    let open = flavor.struct_open(tag);
+    let close = flavor.struct_close(tag, true);
+
+    // --- Before line (old values) ---
+    // Line background applies to structural parts, highlight background to changed values
+    // Use ← for "changed from" (vs - for "deleted entirely")
+    write_indent_minus_prefix(w, depth, opts)?;
+    opts.backend.write_prefix(w, '←', SemanticColor::Deleted)?;
+    opts.backend.write_styled(w, " ", SemanticColor::Deleted)?;
+
+    // Field name prefix (line bg)
+    if let Some(ref prefix) = field_prefix
+        && !prefix.is_empty()
+    {
+        opts.backend
+            .write_styled(w, prefix, SemanticColor::Deleted)?;
+    }
+
+    // Opening tag (line bg, with deleted context blending)
+    opts.backend
+        .write_styled(w, &open, SemanticColor::DeletedStructure)?;
+
+    // Attributes (old values or spaces for inserted)
+    for (i, (attr, &slot_width)) in attrs.iter().zip(info.slot_widths.iter()).enumerate() {
+        if i > 0 {
+            opts.backend.write_styled(
+                w,
+                flavor.field_separator(),
+                SemanticColor::DeletedStructure,
+            )?;
+        } else {
+            opts.backend.write_styled(w, " ", SemanticColor::Deleted)?;
+        }
+
+        let written = match &attr.status {
+            AttrStatus::Unchanged { value } => {
+                // Unchanged: context-aware colors for structural elements
+                opts.backend.write_styled(
+                    w,
+                    &flavor.format_field_prefix(&attr.name),
+                    SemanticColor::DeletedKey,
+                )?;
+                let val = layout.get_string(value.span);
+                opts.backend.write_styled(w, val, SemanticColor::Deleted)?;
+                opts.backend.write_styled(
+                    w,
+                    flavor.format_field_suffix(),
+                    SemanticColor::DeletedStructure,
+                )?;
+                flavor.format_field_prefix(&attr.name).len()
+                    + value.width
+                    + flavor.format_field_suffix().len()
+            }
+            AttrStatus::Changed { old, .. } => {
+                // Changed: context-aware key color, highlight bg for value only
+                opts.backend.write_styled(
+                    w,
+                    &flavor.format_field_prefix(&attr.name),
+                    SemanticColor::DeletedKey,
+                )?;
+                let val = layout.get_string(old.span);
+                opts.backend
+                    .write_styled(w, val, SemanticColor::DeletedHighlight)?;
+                opts.backend.write_styled(
+                    w,
+                    flavor.format_field_suffix(),
+                    SemanticColor::DeletedStructure,
+                )?;
+                flavor.format_field_prefix(&attr.name).len()
+                    + old.width
+                    + flavor.format_field_suffix().len()
+            }
+            AttrStatus::Deleted { value } => {
+                // Deleted entirely: highlight bg for key AND value
+                opts.backend.write_styled(
+                    w,
+                    &flavor.format_field_prefix(&attr.name),
+                    SemanticColor::DeletedHighlight,
+                )?;
+                let val = layout.get_string(value.span);
+                opts.backend
+                    .write_styled(w, val, SemanticColor::DeletedHighlight)?;
+                opts.backend.write_styled(
+                    w,
+                    flavor.format_field_suffix(),
+                    SemanticColor::DeletedHighlight,
+                )?;
+                flavor.format_field_prefix(&attr.name).len()
+                    + value.width
+                    + flavor.format_field_suffix().len()
+            }
+            AttrStatus::Inserted { .. } => {
+                // Empty slot on minus line - show ∅ placeholder
+                opts.backend.write_styled(w, "∅", SemanticColor::Deleted)?;
+                1 // ∅ is 1 char wide
+            }
+        };
+
+        // Pad to slot width (line bg)
+        let padding = slot_width.saturating_sub(written);
+        if padding > 0 {
+            let spaces: String = " ".repeat(padding);
+            opts.backend
+                .write_styled(w, &spaces, SemanticColor::Deleted)?;
+        }
+    }
+
+    // Closing (line bg, with deleted context blending)
+    opts.backend.write_styled(w, " ", SemanticColor::Deleted)?;
+    opts.backend
+        .write_styled(w, &close, SemanticColor::DeletedStructure)?;
+    writeln!(w)?;
+
+    // --- After line (new values) ---
+    // Use → for "changed to" (vs + for "inserted entirely")
+    write_indent_minus_prefix(w, depth, opts)?;
+    opts.backend.write_prefix(w, '→', SemanticColor::Inserted)?;
+    opts.backend.write_styled(w, " ", SemanticColor::Inserted)?;
+
+    // Field name prefix (line bg)
+    if let Some(ref prefix) = field_prefix
+        && !prefix.is_empty()
+    {
+        opts.backend
+            .write_styled(w, prefix, SemanticColor::Inserted)?;
+    }
+
+    // Opening tag (line bg, with inserted context blending)
+    opts.backend
+        .write_styled(w, &open, SemanticColor::InsertedStructure)?;
+
+    // Attributes (new values or spaces for deleted)
+    for (i, (attr, &slot_width)) in attrs.iter().zip(info.slot_widths.iter()).enumerate() {
+        if i > 0 {
+            opts.backend.write_styled(
+                w,
+                flavor.field_separator(),
+                SemanticColor::InsertedStructure,
+            )?;
+        } else {
+            opts.backend.write_styled(w, " ", SemanticColor::Inserted)?;
+        }
+
+        let written = match &attr.status {
+            AttrStatus::Unchanged { value } => {
+                // Unchanged: context-aware colors for structural elements
+                opts.backend.write_styled(
+                    w,
+                    &flavor.format_field_prefix(&attr.name),
+                    SemanticColor::InsertedKey,
+                )?;
+                let val = layout.get_string(value.span);
+                opts.backend.write_styled(w, val, SemanticColor::Inserted)?;
+                opts.backend.write_styled(
+                    w,
+                    flavor.format_field_suffix(),
+                    SemanticColor::InsertedStructure,
+                )?;
+                flavor.format_field_prefix(&attr.name).len()
+                    + value.width
+                    + flavor.format_field_suffix().len()
+            }
+            AttrStatus::Changed { new, .. } => {
+                // Changed: context-aware key color, highlight bg for value only
+                opts.backend.write_styled(
+                    w,
+                    &flavor.format_field_prefix(&attr.name),
+                    SemanticColor::InsertedKey,
+                )?;
+                let val = layout.get_string(new.span);
+                opts.backend
+                    .write_styled(w, val, SemanticColor::InsertedHighlight)?;
+                opts.backend.write_styled(
+                    w,
+                    flavor.format_field_suffix(),
+                    SemanticColor::InsertedStructure,
+                )?;
+                flavor.format_field_prefix(&attr.name).len()
+                    + new.width
+                    + flavor.format_field_suffix().len()
+            }
+            AttrStatus::Deleted { .. } => {
+                // Empty slot on plus line - show ∅ placeholder
+                opts.backend.write_styled(w, "∅", SemanticColor::Inserted)?;
+                1 // ∅ is 1 char wide
+            }
+            AttrStatus::Inserted { value } => {
+                // Inserted entirely: highlight bg for key AND value
+                opts.backend.write_styled(
+                    w,
+                    &flavor.format_field_prefix(&attr.name),
+                    SemanticColor::InsertedHighlight,
+                )?;
+                let val = layout.get_string(value.span);
+                opts.backend
+                    .write_styled(w, val, SemanticColor::InsertedHighlight)?;
+                opts.backend.write_styled(
+                    w,
+                    flavor.format_field_suffix(),
+                    SemanticColor::InsertedHighlight,
+                )?;
+                flavor.format_field_prefix(&attr.name).len()
+                    + value.width
+                    + flavor.format_field_suffix().len()
+            }
+        };
+
+        // Pad to slot width (line bg)
+        let padding = slot_width.saturating_sub(written);
+        if padding > 0 {
+            let spaces: String = " ".repeat(padding);
+            opts.backend
+                .write_styled(w, &spaces, SemanticColor::Inserted)?;
+        }
+    }
+
+    // Closing (line bg, with inserted context blending)
+    opts.backend.write_styled(w, " ", SemanticColor::Inserted)?;
+    opts.backend
+        .write_styled(w, &close, SemanticColor::InsertedStructure)?;
+    writeln!(w)?;
+
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
     layout: &Layout,
@@ -430,8 +793,8 @@ fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
 
     let tag_color = match change {
         ElementChange::None => SemanticColor::Structure,
-        ElementChange::Deleted => SemanticColor::Deleted,
-        ElementChange::Inserted => SemanticColor::Inserted,
+        ElementChange::Deleted => SemanticColor::DeletedStructure,
+        ElementChange::Inserted => SemanticColor::InsertedStructure,
         ElementChange::MovedFrom | ElementChange::MovedTo => SemanticColor::Moved,
     };
 
@@ -463,10 +826,13 @@ fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
             opts.backend.write_styled(w, &close, tag_color)?;
         }
 
-        // Trailing comma for fields
+        // Trailing comma for fields (context-aware)
         if field_name.is_some() {
-            opts.backend
-                .write_styled(w, flavor.trailing_separator(), SemanticColor::Comment)?;
+            opts.backend.write_styled(
+                w,
+                flavor.trailing_separator(),
+                syntax_color(SyntaxElement::Comment, change),
+            )?;
         }
         writeln!(w)?;
         return Ok(());
@@ -512,10 +878,13 @@ fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
         opts.backend.write_styled(w, &close, tag_color)?;
     }
 
-    // Trailing comma for fields
+    // Trailing comma for fields (context-aware)
     if field_name.is_some() {
-        opts.backend
-            .write_styled(w, flavor.trailing_separator(), SemanticColor::Comment)?;
+        opts.backend.write_styled(
+            w,
+            flavor.trailing_separator(),
+            syntax_color(SyntaxElement::Comment, change),
+        )?;
     }
     writeln!(w)?;
 
@@ -531,9 +900,9 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
     attrs: &[super::Attr],
     group: &ChangedGroup,
 ) -> fmt::Result {
-    // Minus line (prefix uses indent gutter)
+    // Before line - use ← for "changed from" (prefix uses indent gutter)
     write_indent_minus_prefix(w, depth, opts)?;
-    opts.backend.write_prefix(w, '-', SemanticColor::Deleted)?;
+    opts.backend.write_prefix(w, '←', SemanticColor::Deleted)?;
     write!(w, " ")?;
 
     let last_idx = group.attr_indices.len().saturating_sub(1);
@@ -545,11 +914,22 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
         if let AttrStatus::Changed { old, new } = &attr.status {
             // Each field padded to max of its own old/new value width
             let field_max_width = old.width.max(new.width);
-            write!(w, "{}", flavor.format_field_prefix(&attr.name))?;
+            // Use context-aware key color for field prefix (line bg)
+            opts.backend.write_styled(
+                w,
+                &flavor.format_field_prefix(&attr.name),
+                SemanticColor::DeletedKey,
+            )?;
+            // Changed value uses highlight background for contrast
             let old_str = layout.get_string(old.span);
             opts.backend
-                .write_styled(w, old_str, SemanticColor::Deleted)?;
-            write!(w, "{}", flavor.format_field_suffix())?;
+                .write_styled(w, old_str, SemanticColor::DeletedHighlight)?;
+            // Use context-aware structure color for field suffix (line bg)
+            opts.backend.write_styled(
+                w,
+                flavor.format_field_suffix(),
+                SemanticColor::DeletedStructure,
+            )?;
             // Pad to align with the + line's value (only between fields, not at end)
             if i < last_idx {
                 let value_padding = field_max_width.saturating_sub(old.width);
@@ -561,9 +941,9 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
     }
     writeln!(w)?;
 
-    // Plus line (prefix uses indent gutter)
+    // After line - use → for "changed to" (prefix uses indent gutter)
     write_indent_minus_prefix(w, depth, opts)?;
-    opts.backend.write_prefix(w, '+', SemanticColor::Inserted)?;
+    opts.backend.write_prefix(w, '→', SemanticColor::Inserted)?;
     write!(w, " ")?;
 
     for (i, &idx) in group.attr_indices.iter().enumerate() {
@@ -574,11 +954,22 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
         if let AttrStatus::Changed { old, new } = &attr.status {
             // Each field padded to max of its own old/new value width
             let field_max_width = old.width.max(new.width);
-            write!(w, "{}", flavor.format_field_prefix(&attr.name))?;
+            // Use context-aware key color for field prefix (line bg)
+            opts.backend.write_styled(
+                w,
+                &flavor.format_field_prefix(&attr.name),
+                SemanticColor::InsertedKey,
+            )?;
+            // Changed value uses highlight background for contrast
             let new_str = layout.get_string(new.span);
             opts.backend
-                .write_styled(w, new_str, SemanticColor::Inserted)?;
-            write!(w, "{}", flavor.format_field_suffix())?;
+                .write_styled(w, new_str, SemanticColor::InsertedHighlight)?;
+            // Use context-aware structure color for field suffix (line bg)
+            opts.backend.write_styled(
+                w,
+                flavor.format_field_suffix(),
+                SemanticColor::InsertedStructure,
+            )?;
             // Pad to align with the - line's value (only between fields, not at end)
             if i < last_idx {
                 let value_padding = field_max_width.saturating_sub(new.width);
@@ -616,10 +1007,10 @@ fn render_attr_deleted<W: Write, B: ColorBackend, F: DiffFlavor>(
     value: &super::FormattedValue,
 ) -> fmt::Result {
     let value_str = layout.get_string(value.span);
-    // Entire field is colored red for deleted
+    // Entire field uses highlight background for deleted (better contrast)
     let formatted = flavor.format_field(name, value_str);
     opts.backend
-        .write_styled(w, &formatted, SemanticColor::Deleted)
+        .write_styled(w, &formatted, SemanticColor::DeletedHighlight)
 }
 
 fn render_attr_inserted<W: Write, B: ColorBackend, F: DiffFlavor>(
@@ -631,10 +1022,10 @@ fn render_attr_inserted<W: Write, B: ColorBackend, F: DiffFlavor>(
     value: &super::FormattedValue,
 ) -> fmt::Result {
     let value_str = layout.get_string(value.span);
-    // Entire field is colored green for inserted
+    // Entire field uses highlight background for inserted (better contrast)
     let formatted = flavor.format_field(name, value_str);
     opts.backend
-        .write_styled(w, &formatted, SemanticColor::Inserted)
+        .write_styled(w, &formatted, SemanticColor::InsertedHighlight)
 }
 
 fn write_indent<W: Write, B: ColorBackend>(
@@ -705,9 +1096,11 @@ mod tests {
         let opts = RenderOptions::plain();
         let output = render_to_string(&layout, &opts, &XmlFlavor);
 
-        assert!(output.contains("<rect"));
-        assert!(output.contains("- fill=\"red\""));
-        assert!(output.contains("+ fill=\"blue\""));
+        // With inline element diff, the format uses ← / → for changed state:
+        // ← <rect fill="red"  />
+        // → <rect fill="blue" />
+        assert!(output.contains("← <rect fill=\"red\""));
+        assert!(output.contains("→ <rect fill=\"blue\""));
         assert!(output.contains("/>"));
     }
 

@@ -45,7 +45,7 @@ impl<'a, 'b> PadAdapter<'a, 'b> {
         Self {
             fmt,
             on_newline: true,
-            indent: "  ",
+            indent: "    ",
         }
     }
 }
