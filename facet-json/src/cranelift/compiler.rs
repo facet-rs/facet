@@ -501,6 +501,13 @@ impl JitCompiler {
             s
         };
 
+        let sig_init_option = {
+            let mut s = self.module.make_signature();
+            s.params.push(AbiParam::new(ptr_type)); // out
+            s.params.push(AbiParam::new(ptr_type)); // option_shape
+            s
+        };
+
         // Declare all helpers we need
         let helpers_to_declare = [
             ("jitson_parse_f64", sig_parse_value.clone()),
@@ -524,6 +531,7 @@ impl JitCompiler {
             ("jitson_parse_nested_struct", sig_nested_struct.clone()),
             ("jitson_parse_vec_struct", sig_vec_struct.clone()),
             ("jitson_parse_option", sig_option.clone()),
+            ("jitson_init_option_none", sig_init_option.clone()),
         ];
 
         for (name, helper_sig) in &helpers_to_declare {
@@ -645,6 +653,9 @@ impl JitCompiler {
         let parse_option = self
             .module
             .declare_func_in_func(self.helper_funcs["jitson_parse_option"], builder.func);
+        let init_option_none = self
+            .module
+            .declare_func_in_func(self.helper_funcs["jitson_init_option_none"], builder.func);
 
         // Skip initial whitespace (inline)
         Self::emit_skip_ws_inline(&mut builder, input_ptr, len_val, pos_var, ptr_type);
@@ -675,6 +686,21 @@ impl JitCompiler {
         let pos = builder.use_var(pos_var);
         let new_pos = builder.ins().iadd_imm(pos, 1);
         builder.def_var(pos_var, new_pos);
+
+        // Initialize all Option fields to None upfront
+        // (This prevents valgrind errors from uninitialized memory reads)
+        // See issue #1242 for planned optimization to only init missing fields
+        for field in &fields {
+            if let FieldParser::Option(option_shape) = field.parser {
+                let field_ptr = builder.ins().iadd_imm(out_ptr, field.offset as i64);
+                let option_shape_val = builder
+                    .ins()
+                    .iconst(ptr_type, option_shape as *const Shape as i64);
+                builder
+                    .ins()
+                    .call(init_option_none, &[field_ptr, option_shape_val]);
+            }
+        }
 
         // Skip whitespace
         Self::emit_skip_ws_inline(&mut builder, input_ptr, len_val, pos_var, ptr_type);
