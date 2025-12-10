@@ -1453,6 +1453,16 @@ impl<'input> YamlDeserializer<'input> {
             })
         })?;
 
+        // Check if the scalar value matches a unit variant name
+        for variant in &variants_by_format.unit_variants {
+            if variant.name == scalar_value {
+                // This is a unit variant - select it without deserializing into a field
+                partial = partial.select_variant_named(variant.name)?;
+                return Ok(partial);
+            }
+        }
+
+        // Not a unit variant - fall back to newtype scalar variant handling
         if variants_by_format.scalar_variants.is_empty() {
             return Err(self.error(YamlErrorKind::InvalidValue {
                 message: format!(
