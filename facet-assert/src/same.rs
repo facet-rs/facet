@@ -191,14 +191,12 @@ impl DiffConverter {
             }
             Diff::Replace { from, to } => {
                 // Check if float tolerance applies
-                if self.options.float_tolerance.is_some() {
-                    if let (Some(from_f64), Some(to_f64)) =
+                if self.options.float_tolerance.is_some()
+                    && let (Some(from_f64), Some(to_f64)) =
                         (self.try_extract_float(*from), self.try_extract_float(*to))
-                    {
-                        if self.floats_equal(from_f64, to_f64) {
-                            return; // Equal within tolerance
-                        }
-                    }
+                    && self.floats_equal(from_f64, to_f64)
+                {
+                    return; // Equal within tolerance
                 }
 
                 let path_str = Self::format_path(current_path);
@@ -332,14 +330,11 @@ impl DiffConverter {
                 let to = replace_group.additions[i];
 
                 // Check if they're floats within tolerance
-                let is_equal_within_tolerance = if self.options.float_tolerance.is_some() {
-                    if let (Some(from_f64), Some(to_f64)) =
+                let is_equal_within_tolerance = if self.options.float_tolerance.is_some()
+                    && let (Some(from_f64), Some(to_f64)) =
                         (self.try_extract_float(from), self.try_extract_float(to))
-                    {
-                        self.floats_equal(from_f64, to_f64)
-                    } else {
-                        false
-                    }
+                {
+                    self.floats_equal(from_f64, to_f64)
                 } else {
                     false
                 };
