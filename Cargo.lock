@@ -1149,12 +1149,9 @@ dependencies = [
 name = "facet-assert"
 version = "0.31.0"
 dependencies = [
- "confusables",
  "facet",
  "facet-core",
  "facet-diff",
- "facet-diff-core",
- "facet-pretty",
  "facet-reflect",
  "facet-showcase",
  "owo-colors",

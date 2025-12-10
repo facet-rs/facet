@@ -7,8 +7,9 @@ mod sequences;
 mod tree;
 
 pub use diff::{
-    DiffFormat, FacetDiff, LeafChange, LeafChangeKind, collect_leaf_changes, diff_new_peek,
-    format_diff, format_diff_compact, format_diff_compact_plain, format_diff_default,
+    DiffFormat, DiffOptions, FacetDiff, LeafChange, LeafChangeKind, collect_leaf_changes,
+    diff_new_peek, diff_new_peek_with_options, format_diff, format_diff_compact,
+    format_diff_compact_plain, format_diff_default,
 };
 pub use tree::{EditOp, FacetTree, NodeKind, NodeLabel, build_tree, tree_diff};
 

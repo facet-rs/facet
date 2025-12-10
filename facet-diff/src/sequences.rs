@@ -4,7 +4,7 @@ use facet_diff_core::Updates;
 use facet_reflect::Peek;
 use log::trace;
 
-use crate::diff::diff_new_peek;
+use crate::diff::{DiffOptions, diff_new_peek, diff_new_peek_with_options};
 
 /// Maximum size for sequences to use Myers' algorithm.
 /// Larger sequences fall back to simple element-by-element comparison
@@ -16,14 +16,22 @@ pub fn diff<'mem, 'facet>(
     a: Vec<Peek<'mem, 'facet>>,
     b: Vec<Peek<'mem, 'facet>>,
 ) -> Updates<'mem, 'facet> {
+    diff_with_options(a, b, &DiffOptions::default())
+}
+
+/// Gets the diff of a sequence by using Myers' algorithm with options
+pub fn diff_with_options<'mem, 'facet>(
+    a: Vec<Peek<'mem, 'facet>>,
+    b: Vec<Peek<'mem, 'facet>>,
+    options: &DiffOptions,
+) -> Updates<'mem, 'facet> {
     // trace!("sequences::diff called with a.len()={}, b.len()={}", a.len(), b.len());
 
     // Quick check: if lengths match and all elements are structurally equal, return empty
     if a.len() == b.len() {
-        let all_equal = a
-            .iter()
-            .zip(&b)
-            .all(|(a_item, b_item)| diff_new_peek(*a_item, *b_item).is_equal());
+        let all_equal = a.iter().zip(&b).all(|(a_item, b_item)| {
+            diff_new_peek_with_options(*a_item, *b_item, options).is_equal()
+        });
         if all_equal {
             return Updates::default();
         }
@@ -33,7 +41,7 @@ pub fn diff<'mem, 'facet>(
     // exponential blowup in flatten_with
     if a.len() > MAX_SEQUENCE_SIZE || b.len() > MAX_SEQUENCE_SIZE {
         trace!("Using simple_diff fallback (size limit exceeded)");
-        return simple_diff(a, b);
+        return simple_diff_with_options(a, b, options);
     }
     // Moving l-t-r represents removing an element from a
     // Moving t-t-b represents adding an element from b
@@ -47,7 +55,7 @@ pub fn diff<'mem, 'facet>(
         let mut next = vec![0];
         for x in 0..a.len() {
             let mut v = mem[y][x + 1].min(next[x]) + 1;
-            if diff_new_peek(a[x], b[y]).is_equal() {
+            if diff_new_peek_with_options(a[x], b[y], options).is_equal() {
                 v = v.min(mem[y][x]);
             }
 
@@ -68,7 +76,7 @@ pub fn diff<'mem, 'facet>(
         } else if x == 0 {
             updates.push_add(b[y - 1]);
             y -= 1;
-        } else if diff_new_peek(a[x - 1], b[y - 1]).is_equal()
+        } else if diff_new_peek_with_options(a[x - 1], b[y - 1], options).is_equal()
             && mem[y - 1][x - 1] <= mem[y][x - 1].min(mem[y - 1][x]) + 1
         {
             updates.push_keep(a[x - 1]);
@@ -98,6 +106,14 @@ pub fn diff<'mem, 'facet>(
 fn simple_diff<'mem, 'facet>(
     a: Vec<Peek<'mem, 'facet>>,
     b: Vec<Peek<'mem, 'facet>>,
+) -> Updates<'mem, 'facet> {
+    simple_diff_with_options(a, b, &DiffOptions::default())
+}
+
+fn simple_diff_with_options<'mem, 'facet>(
+    a: Vec<Peek<'mem, 'facet>>,
+    b: Vec<Peek<'mem, 'facet>>,
+    _options: &DiffOptions,
 ) -> Updates<'mem, 'facet> {
     trace!(
         "simple_diff: creating replace group with {} removals and {} additions",

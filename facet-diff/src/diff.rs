@@ -7,9 +7,31 @@ use std::collections::{HashMap, HashSet};
 use facet::{Def, DynValueKind, StructKind, Type, UserType};
 use facet_core::Facet;
 use facet_diff_core::{Diff, Path, PathSegment, Updates, Value};
-use facet_reflect::{HasFields, Peek};
+use facet_reflect::{HasFields, Peek, ScalarType};
 
 use crate::sequences;
+
+/// Configuration options for diff computation
+#[derive(Debug, Clone, Default)]
+pub struct DiffOptions {
+    /// Tolerance for floating-point comparisons.
+    /// If set, two floats are considered equal if their absolute difference
+    /// is less than or equal to this value.
+    pub float_tolerance: Option<f64>,
+}
+
+impl DiffOptions {
+    /// Create a new `DiffOptions` with default settings.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the tolerance for floating-point comparisons.
+    pub fn with_float_tolerance(mut self, tolerance: f64) -> Self {
+        self.float_tolerance = Some(tolerance);
+        self
+    }
+}
 
 /// Extension trait that provides a [`diff`](FacetDiff::diff) method for `Facet` types
 pub trait FacetDiff<'f>: Facet<'f> {
@@ -31,10 +53,11 @@ pub fn diff_new<'mem, 'facet, T: Facet<'facet>, U: Facet<'facet>>(
     diff_new_peek(Peek::new(from), Peek::new(to))
 }
 
-/// Computes the difference between two `Peek` values
-pub fn diff_new_peek<'mem, 'facet>(
+/// Computes the difference between two `Peek` values with options
+pub fn diff_new_peek_with_options<'mem, 'facet>(
     from: Peek<'mem, 'facet>,
     to: Peek<'mem, 'facet>,
+    options: &DiffOptions,
 ) -> Diff<'mem, 'facet> {
     // Dereference pointers/references to compare the underlying values
     let from = deref_if_pointer(from);
@@ -48,6 +71,12 @@ pub fn diff_new_peek<'mem, 'facet>(
     let to_has_partialeq = to.shape().is_partial_eq();
     let values_equal = from == to;
 
+    // Check float tolerance if configured
+    let float_equal = options
+        .float_tolerance
+        .map(|tol| check_float_tolerance(from, to, tol))
+        .unwrap_or(false);
+
     // log::trace!(
     //     "diff_new_peek: type={} same_type={} from_has_partialeq={} to_has_partialeq={} values_equal={}",
     //     from.shape().type_identifier,
@@ -57,7 +86,7 @@ pub fn diff_new_peek<'mem, 'facet>(
     //     values_equal
     // );
 
-    if same_type && from_has_partialeq && to_has_partialeq && values_equal {
+    if same_type && from_has_partialeq && to_has_partialeq && (values_equal || float_equal) {
         return Diff::Equal { value: Some(from) };
     }
 
@@ -76,7 +105,7 @@ pub fn diff_new_peek<'mem, 'facet>(
                 let from = from_ty.fields().map(|x| x.1).collect();
                 let to = to_ty.fields().map(|x| x.1).collect();
 
-                let updates = sequences::diff(from, to);
+                let updates = sequences::diff_with_options(from, to, options);
 
                 Value::Tuple { updates }
             } else {
@@ -87,7 +116,7 @@ pub fn diff_new_peek<'mem, 'facet>(
 
                 for (field, from) in from_ty.fields() {
                     if let Ok(to) = to_ty.field_by_name(field.name) {
-                        let diff = diff_new_peek(from, to);
+                        let diff = diff_new_peek_with_options(from, to, options);
                         if diff.is_equal() {
                             unchanged.insert(Cow::Borrowed(field.name));
                         } else {
@@ -150,7 +179,7 @@ pub fn diff_new_peek<'mem, 'facet>(
                     let from = from_enum.fields().map(|x| x.1).collect();
                     let to = to_enum.fields().map(|x| x.1).collect();
 
-                    let updates = sequences::diff(from, to);
+                    let updates = sequences::diff_with_options(from, to, options);
 
                     Value::Tuple { updates }
                 } else {
@@ -161,7 +190,7 @@ pub fn diff_new_peek<'mem, 'facet>(
 
                     for (field, from) in from_enum.fields() {
                         if let Ok(Some(to)) = to_enum.field_by_name(field.name) {
-                            let diff = diff_new_peek(from, to);
+                            let diff = diff_new_peek_with_options(from, to, options);
                             if diff.is_equal() {
                                 unchanged.insert(Cow::Borrowed(field.name));
                             } else {
@@ -220,7 +249,7 @@ pub fn diff_new_peek<'mem, 'facet>(
             };
 
             // Use sequences::diff to properly handle nested diffs
-            let updates = sequences::diff(vec![from_value], vec![to_value]);
+            let updates = sequences::diff_with_options(vec![from_value], vec![to_value], options);
 
             if updates.is_empty() {
                 return Diff::Equal { value: Some(from) };
@@ -240,9 +269,10 @@ pub fn diff_new_peek<'mem, 'facet>(
             let from_list = from.into_list_like().unwrap();
             let to_list = to.into_list_like().unwrap();
 
-            let updates = sequences::diff(
+            let updates = sequences::diff_with_options(
                 from_list.iter().collect::<Vec<_>>(),
                 to_list.iter().collect::<Vec<_>>(),
+                options,
             );
 
             if updates.is_empty() {
@@ -255,18 +285,29 @@ pub fn diff_new_peek<'mem, 'facet>(
                 updates,
             }
         }
-        ((Def::DynamicValue(_), _), (Def::DynamicValue(_), _)) => diff_dynamic_values(from, to),
+        ((Def::DynamicValue(_), _), (Def::DynamicValue(_), _)) => {
+            diff_dynamic_values(from, to, options)
+        }
         // DynamicValue vs concrete type
-        ((Def::DynamicValue(_), _), _) => diff_dynamic_vs_concrete(from, to, false),
-        (_, (Def::DynamicValue(_), _)) => diff_dynamic_vs_concrete(to, from, true),
+        ((Def::DynamicValue(_), _), _) => diff_dynamic_vs_concrete(from, to, false, options),
+        (_, (Def::DynamicValue(_), _)) => diff_dynamic_vs_concrete(to, from, true, options),
         _ => Diff::Replace { from, to },
     }
+}
+
+/// Computes the difference between two `Peek` values (backward compatibility wrapper)
+pub fn diff_new_peek<'mem, 'facet>(
+    from: Peek<'mem, 'facet>,
+    to: Peek<'mem, 'facet>,
+) -> Diff<'mem, 'facet> {
+    diff_new_peek_with_options(from, to, &DiffOptions::default())
 }
 
 /// Diff two dynamic values (like `facet_value::Value`)
 fn diff_dynamic_values<'mem, 'facet>(
     from: Peek<'mem, 'facet>,
     to: Peek<'mem, 'facet>,
+    options: &DiffOptions,
 ) -> Diff<'mem, 'facet> {
     let from_dyn = from.into_dynamic_value().unwrap();
     let to_dyn = to.into_dynamic_value().unwrap();
@@ -328,7 +369,7 @@ fn diff_dynamic_values<'mem, 'facet>(
             let from_elems: Vec<_> = from_iter.map(|i| i.collect()).unwrap_or_default();
             let to_elems: Vec<_> = to_iter.map(|i| i.collect()).unwrap_or_default();
 
-            let updates = sequences::diff(from_elems, to_elems);
+            let updates = sequences::diff_with_options(from_elems, to_elems, options);
 
             if updates.is_empty() {
                 return Diff::Equal { value: Some(from) };
@@ -369,7 +410,7 @@ fn diff_dynamic_values<'mem, 'facet>(
             // Compare entries
             for (key, from_value) in &from_keys {
                 if let Some(to_value) = to_keys.get(key) {
-                    let diff = diff_new_peek(*from_value, *to_value);
+                    let diff = diff_new_peek_with_options(*from_value, *to_value, options);
                     if diff.is_equal() {
                         unchanged.insert(Cow::Owned(key.clone()));
                     } else {
@@ -426,6 +467,7 @@ fn diff_dynamic_vs_concrete<'mem, 'facet>(
     dyn_peek: Peek<'mem, 'facet>,
     concrete_peek: Peek<'mem, 'facet>,
     swapped: bool,
+    options: &DiffOptions,
 ) -> Diff<'mem, 'facet> {
     // Determine actual from/to based on swapped flag
     let (from_peek, to_peek) = if swapped {
@@ -497,7 +539,7 @@ fn diff_dynamic_vs_concrete<'mem, 'facet>(
                 } else {
                     (dyn_elems, concrete_elems)
                 };
-                let updates = sequences::diff(from_elems, to_elems);
+                let updates = sequences::diff_with_options(from_elems, to_elems, options);
 
                 if updates.is_empty() {
                     return Diff::Equal {
@@ -535,9 +577,9 @@ fn diff_dynamic_vs_concrete<'mem, 'facet>(
                 for (key, dyn_value) in &dyn_keys {
                     if let Ok(concrete_value) = concrete_struct.field_by_name(key) {
                         let diff = if swapped {
-                            diff_new_peek(concrete_value, *dyn_value)
+                            diff_new_peek_with_options(concrete_value, *dyn_value, options)
                         } else {
-                            diff_new_peek(*dyn_value, concrete_value)
+                            diff_new_peek_with_options(*dyn_value, concrete_value, options)
                         };
                         if diff.is_equal() {
                             unchanged.insert(Cow::Owned(key.clone()));
@@ -596,6 +638,23 @@ fn diff_dynamic_vs_concrete<'mem, 'facet>(
     Diff::Replace {
         from: from_peek,
         to: to_peek,
+    }
+}
+
+/// Extract a float value from a Peek, handling both f32 and f64
+fn try_extract_float(peek: Peek) -> Option<f64> {
+    match peek.scalar_type()? {
+        ScalarType::F64 => Some(*peek.get::<f64>().ok()?),
+        ScalarType::F32 => Some(*peek.get::<f32>().ok()? as f64),
+        _ => None,
+    }
+}
+
+/// Check if two Peek values are equal within the specified float tolerance
+fn check_float_tolerance(from: Peek, to: Peek, tolerance: f64) -> bool {
+    match (try_extract_float(from), try_extract_float(to)) {
+        (Some(f1), Some(f2)) => (f1 - f2).abs() <= tolerance,
+        _ => false,
     }
 }
 
