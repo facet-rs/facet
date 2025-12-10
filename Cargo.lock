@@ -1152,6 +1152,8 @@ dependencies = [
  "confusables",
  "facet",
  "facet-core",
+ "facet-diff",
+ "facet-diff-core",
  "facet-pretty",
  "facet-reflect",
  "facet-showcase",
