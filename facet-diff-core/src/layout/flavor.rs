@@ -139,6 +139,23 @@ pub trait DiffFlavor {
     fn type_comment(&self, _name: &str) -> Option<String> {
         None
     }
+
+    /// Opening wrapper for a child element (nested struct field).
+    /// - Rust: `field_name: ` (field prefix)
+    /// - JSON: `"field_name": ` (field prefix)
+    /// - XML: `` (empty - no wrapper, or could be `<field_name>\n`)
+    fn format_child_open(&self, name: &str) -> Cow<'static, str> {
+        // Default: use field prefix (works for Rust/JSON)
+        Cow::Owned(self.format_field_prefix(name))
+    }
+
+    /// Closing wrapper for a child element (nested struct field).
+    /// - Rust: `` (empty)
+    /// - JSON: `` (empty)
+    /// - XML: `` (empty, or `</field_name>` if wrapping)
+    fn format_child_close(&self, _name: &str) -> Cow<'static, str> {
+        Cow::Borrowed("")
+    }
 }
 
 /// Rust-style output flavor.
@@ -358,6 +375,16 @@ impl DiffFlavor for XmlFlavor {
 
     fn struct_open_close(&self) -> &'static str {
         ">"
+    }
+
+    fn format_child_open(&self, _name: &str) -> Cow<'static, str> {
+        // XML: nested elements don't use attribute-style prefix
+        // The nested element tag is self-describing
+        Cow::Borrowed("")
+    }
+
+    fn format_child_close(&self, _name: &str) -> Cow<'static, str> {
+        Cow::Borrowed("")
     }
 }
 
