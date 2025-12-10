@@ -239,10 +239,15 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
     }
 
     // Render field name prefix if this element is a struct field (e.g., "point: " for Rust)
+    // Uses format_child_open which handles the difference between:
+    // - Rust/JSON: `field_name: `
+    // - XML: `` (empty - nested elements don't use attribute syntax)
     if let Some(name) = field_name {
-        let prefix = flavor.format_field_prefix(name);
-        opts.backend
-            .write_styled(w, &prefix, SemanticColor::Unchanged)?;
+        let prefix = flavor.format_child_open(name);
+        if !prefix.is_empty() {
+            opts.backend
+                .write_styled(w, &prefix, SemanticColor::Unchanged)?;
+        }
     }
 
     let open = flavor.struct_open(tag);
@@ -275,6 +280,9 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                 opts.backend.write_prefix(w, '-', SemanticColor::Deleted)?;
                 write!(w, " ")?;
                 render_attr_deleted(layout, w, opts, flavor, attr.name, value)?;
+                // Trailing comma (muted)
+                opts.backend
+                    .write_styled(w, flavor.field_separator(), SemanticColor::Comment)?;
                 writeln!(w)?;
             }
         }
@@ -289,6 +297,9 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                 opts.backend.write_prefix(w, '+', SemanticColor::Inserted)?;
                 write!(w, " ")?;
                 render_attr_inserted(layout, w, opts, flavor, attr.name, value)?;
+                // Trailing comma (muted)
+                opts.backend
+                    .write_styled(w, flavor.field_separator(), SemanticColor::Comment)?;
                 writeln!(w)?;
             }
         }
@@ -308,6 +319,9 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                     render_attr_unchanged(layout, w, opts, flavor, attr.name, value)?;
                 }
             }
+            // Trailing comma (muted)
+            opts.backend
+                .write_styled(w, flavor.field_separator(), SemanticColor::Comment)?;
             writeln!(w)?;
         }
 
@@ -329,8 +343,9 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
             if let AttrStatus::Unchanged { value } = &attr.status {
                 render_attr_unchanged(layout, w, opts, flavor, attr.name, value)?;
             }
-            // Always add separator (comma) after each attr when there are children
-            write!(w, "{}", flavor.field_separator())?;
+            // Trailing comma (muted)
+            opts.backend
+                .write_styled(w, flavor.field_separator(), SemanticColor::Comment)?;
             writeln!(w)?;
         }
         // Close the opening (e.g., ">" for XML) - only if non-empty
