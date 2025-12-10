@@ -35,64 +35,69 @@ email: "bob@example.com" → "bob@company.com"
 ... and 4 more changes
 ```
 
-## What's Missing / Future Work
+## Next Steps / Experiments
 
-### 1. Better context display
+### 1. Test all scalar types
 
-Currently we show just the changed values. Could show surrounding context:
+We need comprehensive tests for how all scalar types diff:
+- Integers: i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize
+- Floats: f32, f64
+- bool
+- char
+- Strings: &str, String, Cow<str>
+- Bytes: &[u8], Vec<u8>
+- Unit type ()
+
+### 2. Deep tree vs wide tree scenarios
+
+Test and visualize:
+- **Deep tree**: child removal/addition/move several levels down
+- **Wide tree**: many siblings, showing how we skip/collapse unchanged children
+
+### 3. Alternative markup rendering
+
+Instead of Rust-style output, render diffs as:
+- JSON
+- TOML
+- XML
+- YAML
+
+This requires:
+- Knowing how to collapse/skip many unchanged children in a row
+- Format-specific syntax for showing changes inline
+
+### 4. Side-by-side rendering
+
+```
+OLD                              NEW
+─────────────────────────────    ─────────────────────────────
+User {                           User {
+  name: "Alice",                   name: "Alice",
+  email: "a@old.com",      ←→      email: "a@new.com",
+  age: 30,                 ←→      age: 31,
+}                                }
+```
+
+Challenges:
+- Terminal width constraints
+- Aligning corresponding lines
+- Handling insertions/deletions (one side empty)
+- Wrapping long values
+
+### 5. Context-aware display
+
+Show unchanged fields around changes for context:
 ```
 User {
-  name: "Alice",        // unchanged, shown for context
+  name: "Alice",              // unchanged, shown for context
   email: "a@old.com" → "a@new.com",
-  age: 30,              // unchanged, shown for context
+  age: 30,                    // unchanged, shown for context
 }
 ```
 
-### 2. Unified diff-style output
+Configurable context lines (like `diff -C`).
 
-For sequences, could show unified diff format:
-```
-[
-  1,
-  2,
-- 3,
-+ 300,
-  4,
-]
-```
-
-### 3. Side-by-side mode
-
-```
-OLD                          NEW
-User {                       User {
-  email: "a@old.com",          email: "a@new.com",
-  age: 30,                     age: 31,
-}                            }
-```
-
-### 4. Integration with assertion frameworks
-
-For test assertions, want something like:
-```rust
-assert_eq_facet!(actual, expected);
-// On failure, shows nice diff
-```
-
-### 5. Move detection at leaf level
-
-The cinereus tree diff can detect moves, but we're not surfacing that well yet. Example:
-```
-items[2] moved to items[5]
-```
-
-### 6. Configurable path display
-
-- Full paths: `user.settings.theme`
-- Short paths: `theme` (when unambiguous)
-- Bracketed: `user["settings"]["theme"]`
-
-## API Design
+## API Ideas
 
 ```rust
 // Current
@@ -101,16 +106,26 @@ println!("{}", diff.format_default());
 
 // Future possibilities
 let diff = old.diff(&new);
+
+// Different output formats
+println!("{}", diff.format_as_json());
+println!("{}", diff.format_as_toml());
+
+// Side-by-side
+println!("{}", diff.format_side_by_side(80)); // terminal width
+
+// With context
 println!("{}", diff.format(&DiffFormat {
-    style: DiffStyle::Unified,  // or Compact, SideBySide, Tree
+    style: DiffStyle::Unified,
     context_lines: 2,
     max_changes: 10,
     colors: true,
-    path_style: PathStyle::Full,
 }));
 ```
 
-## Miette Integration (Experimental)
+## Decided Against
+
+### Miette integration
 
 We tried using miette for visual diff display with arrows pointing to changes.
 It works but has limitations:
