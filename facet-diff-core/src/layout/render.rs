@@ -158,11 +158,15 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
             let collapsed_suffix = *collapsed_suffix;
             let item_type = *item_type;
 
-            write_indent(w, depth, opts)?;
+            // For changed items, the prefix eats into the indent (goes in the "gutter")
             if let Some(prefix) = change.prefix() {
+                // Write indent minus 2 chars, then prefix + space
+                write_indent_minus_prefix(w, depth, opts)?;
                 opts.backend
                     .write_prefix(w, prefix, element_change_to_semantic(change))?;
                 write!(w, " ")?;
+            } else {
+                write_indent(w, depth, opts)?;
             }
 
             // Render items with flavor separator and optional wrapping
@@ -541,6 +545,21 @@ fn write_indent<W: Write, B: ColorBackend>(
 ) -> fmt::Result {
     for _ in 0..depth {
         write!(w, "{}", opts.indent)?;
+    }
+    Ok(())
+}
+
+/// Write indent minus 2 characters for the prefix gutter.
+/// The "- " or "+ " prefix will occupy those 2 characters.
+fn write_indent_minus_prefix<W: Write, B: ColorBackend>(
+    w: &mut W,
+    depth: usize,
+    opts: &RenderOptions<B>,
+) -> fmt::Result {
+    let total_indent = depth * opts.indent.len();
+    let gutter_indent = total_indent.saturating_sub(2);
+    for _ in 0..gutter_indent {
+        write!(w, " ")?;
     }
     Ok(())
 }
