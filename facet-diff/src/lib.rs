@@ -14,6 +14,9 @@ pub use tree::{EditOp, FacetTree, NodeKind, NodeLabel, Path, PathSegment, build_
 // Re-export cinereus types for advanced usage
 pub use cinereus::{Matching, MatchingConfig};
 
+// Re-export core types for diff rendering
+pub use facet_diff_core::{ChangeKind, DiffSymbols, DiffTheme};
+
 #[cfg(test)]
 mod tests {
     #[test]

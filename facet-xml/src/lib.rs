@@ -144,6 +144,11 @@ mod axum;
 #[cfg(feature = "axum")]
 pub use self::axum::XmlRejection;
 
+#[cfg(feature = "diff")]
+mod diff_serialize;
+#[cfg(feature = "diff")]
+pub use diff_serialize::*;
+
 // XML extension attributes for use with #[facet(xml::attr)] syntax.
 //
 // After importing `use facet_xml as xml;`, users can write:
