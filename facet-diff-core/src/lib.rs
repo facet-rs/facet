@@ -33,7 +33,7 @@ pub use layout::{
     AnsiBackend, Attr, AttrStatus, BuildOptions, ChangedGroup, ColorBackend, DiffFlavor,
     ElementChange, FieldPresentation, FormatArena, FormattedValue, JsonFlavor, Layout, LayoutNode,
     PlainBackend, RenderOptions, RustFlavor, SemanticColor, Span, XmlFlavor, build_layout,
-    build_layout_without_context, group_changed_attrs, render, render_to_string,
+    group_changed_attrs, render, render_to_string,
 };
 pub use path::*;
 pub use sequences::*;

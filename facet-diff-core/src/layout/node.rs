@@ -41,7 +41,7 @@ impl ElementChange {
 /// A node in the layout tree.
 #[derive(Clone, Debug)]
 pub enum LayoutNode {
-    /// An XML element with attributes and children.
+    /// An element/struct with attributes and children.
     Element {
         /// Element tag name
         tag: &'static str,
@@ -50,6 +50,12 @@ pub enum LayoutNode {
         /// Changed attributes grouped for -/+ line alignment
         changed_groups: Vec<ChangedGroup>,
         /// How this element itself changed
+        change: ElementChange,
+    },
+
+    /// A sequence/array with children.
+    Sequence {
+        /// How this sequence itself changed
         change: ElementChange,
     },
 
@@ -101,6 +107,11 @@ impl LayoutNode {
         }
     }
 
+    /// Create a sequence node.
+    pub fn sequence(change: ElementChange) -> Self {
+        Self::Sequence { change }
+    }
+
     /// Create a collapsed node.
     pub fn collapsed(count: usize) -> Self {
         Self::Collapsed { count }
@@ -128,6 +139,7 @@ impl LayoutNode {
     pub fn change(&self) -> ElementChange {
         match self {
             Self::Element { change, .. } => *change,
+            Self::Sequence { change } => *change,
             Self::Collapsed { .. } => ElementChange::None,
             Self::Text { change, .. } => *change,
             Self::ItemGroup { change, .. } => *change,
@@ -154,6 +166,7 @@ impl LayoutNode {
                         )
                     })
             }
+            Self::Sequence { change } => change.has_prefix(),
             Self::Collapsed { .. } => false,
             Self::Text { change, .. } => change.has_prefix(),
             Self::ItemGroup { change, .. } => change.has_prefix(),

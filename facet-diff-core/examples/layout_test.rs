@@ -1,14 +1,58 @@
-//! Test layout rendering with build_layout.
+//! Test layout rendering with build_layout showing all three flavors.
 
 use facet::Facet;
 use facet_diff::FacetDiff;
-use facet_diff_core::{BuildOptions, RenderOptions, build_layout, render_to_string};
+use facet_diff_core::{
+    BuildOptions, JsonFlavor, RenderOptions, RustFlavor, XmlFlavor, build_layout, render_to_string,
+};
 use facet_reflect::Peek;
 
-fn main() {
+fn print_all_flavors<'a, T: facet::Facet<'a>>(label: &str, from: &T, to: &T) {
     let opts = RenderOptions::default();
+    let build_opts = BuildOptions::default();
 
-    println!("=== Struct diff (one field changed) ===\n");
+    println!("=== {} ===\n", label);
+
+    let diff = from.diff(to);
+
+    // Rust flavor
+    println!("--- Rust ---");
+    let layout = build_layout(
+        &diff,
+        Peek::new(from),
+        Peek::new(to),
+        &build_opts,
+        &RustFlavor,
+    );
+    println!("{}", render_to_string(&layout, &opts, &RustFlavor));
+
+    // JSON flavor
+    println!("--- JSON ---");
+    let layout = build_layout(
+        &diff,
+        Peek::new(from),
+        Peek::new(to),
+        &build_opts,
+        &JsonFlavor,
+    );
+    println!("{}", render_to_string(&layout, &opts, &JsonFlavor));
+
+    // XML flavor
+    println!("--- XML ---");
+    let layout = build_layout(
+        &diff,
+        Peek::new(from),
+        Peek::new(to),
+        &build_opts,
+        &XmlFlavor,
+    );
+    println!("{}", render_to_string(&layout, &opts, &XmlFlavor));
+
+    println!();
+}
+
+fn main() {
+    // Simple struct diff
     {
         #[derive(Facet, Debug)]
         struct Point {
@@ -19,17 +63,10 @@ fn main() {
         let from = Point { x: 10, y: 20 };
         let to = Point { x: 30, y: 20 }; // only x changed
 
-        let diff = from.diff(&to);
-        let layout = build_layout(
-            &diff,
-            Peek::new(&from),
-            Peek::new(&to),
-            &BuildOptions::default(),
-        );
-        println!("{}", render_to_string(&layout, &opts));
+        print_all_flavors("Struct diff (one field changed)", &from, &to);
     }
 
-    println!("=== Struct diff (all fields changed, test alignment) ===\n");
+    // All fields changed
     {
         #[derive(Facet, Debug)]
         struct Point {
@@ -38,19 +75,12 @@ fn main() {
         }
 
         let from = Point { x: 10, y: 20 };
-        let to = Point { x: 3235832, y: 2 }; // both changed, different widths
+        let to = Point { x: 3235832, y: 2 };
 
-        let diff = from.diff(&to);
-        let layout = build_layout(
-            &diff,
-            Peek::new(&from),
-            Peek::new(&to),
-            &BuildOptions::default(),
-        );
-        println!("{}", render_to_string(&layout, &opts));
+        print_all_flavors("Struct diff (all fields changed)", &from, &to);
     }
 
-    println!("=== Nested struct diff ===\n");
+    // Nested struct
     {
         #[derive(Facet, Debug)]
         struct Outer {
@@ -69,93 +99,27 @@ fn main() {
             point: Inner { x: 0, y: 0 },
         };
         let to = Outer {
-            name: "origin",               // unchanged
-            point: Inner { x: 10, y: 0 }, // x changed
+            name: "origin",
+            point: Inner { x: 10, y: 0 },
         };
 
-        let diff = from.diff(&to);
-        let layout = build_layout(
-            &diff,
-            Peek::new(&from),
-            Peek::new(&to),
-            &BuildOptions::default(),
-        );
-        println!("{}", render_to_string(&layout, &opts));
+        print_all_flavors("Nested struct diff", &from, &to);
     }
 
-    println!("=== Struct with many unchanged fields ===\n");
-    {
-        #[derive(Facet, Debug)]
-        struct Config {
-            a: i32,
-            b: i32,
-            c: i32,
-            d: i32,
-            e: i32,
-            f: i32,
-            g: i32,
-            changed: i32,
-        }
-
-        let from = Config {
-            a: 1,
-            b: 2,
-            c: 3,
-            d: 4,
-            e: 5,
-            f: 6,
-            g: 7,
-            changed: 100,
-        };
-        let to = Config {
-            a: 1,
-            b: 2,
-            c: 3,
-            d: 4,
-            e: 5,
-            f: 6,
-            g: 7,
-            changed: 200,
-        };
-
-        let diff = from.diff(&to);
-        let layout = build_layout(
-            &diff,
-            Peek::new(&from),
-            Peek::new(&to),
-            &BuildOptions::default(),
-        );
-        println!("{}", render_to_string(&layout, &opts));
-    }
-
-    println!("=== Sequence diff ===\n");
+    // Sequence diff
     {
         let from = vec![1, 2, 3, 4, 5];
-        let to = vec![1, 2, 99, 4, 5]; // 3 -> 99
+        let to = vec![1, 2, 99, 4, 5];
 
-        let diff = from.diff(&to);
-        let layout = build_layout(
-            &diff,
-            Peek::new(&from),
-            Peek::new(&to),
-            &BuildOptions::default(),
-        );
-        println!("{}", render_to_string(&layout, &opts));
+        print_all_flavors("Sequence diff", &from, &to);
     }
 
-    println!("=== Sequence diff (with collapsing) ===\n");
+    // Sequence with collapsing
     {
         let from: Vec<i32> = (0..20).collect();
         let mut to = from.clone();
-        to[10] = 999; // change one element in the middle
+        to[10] = 999;
 
-        let diff = from.diff(&to);
-        let layout = build_layout(
-            &diff,
-            Peek::new(&from),
-            Peek::new(&to),
-            &BuildOptions::default(),
-        );
-        println!("{}", render_to_string(&layout, &opts));
+        print_all_flavors("Sequence diff (with collapsing)", &from, &to);
     }
 }

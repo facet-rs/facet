@@ -17,7 +17,7 @@ pub struct DiffTheme {
     /// Color for moved content (default: blue)
     pub moved: Rgb,
 
-    /// Color for unchanged/dimmed content (default: gray)
+    /// Color for unchanged content (default: white)
     pub unchanged: Rgb,
 
     /// Color for keys/field names (default: white)
@@ -25,6 +25,9 @@ pub struct DiffTheme {
 
     /// Color for structural elements like braces, brackets (default: white)
     pub structure: Rgb,
+
+    /// Color for comments and type hints (default: gray/muted)
+    pub comment: Rgb,
 }
 
 impl Default for DiffTheme {
@@ -39,9 +42,10 @@ impl DiffTheme {
         deleted: Rgb(247, 118, 142),   // red
         inserted: Rgb(158, 206, 106),  // green
         moved: Rgb(122, 162, 247),     // blue
-        unchanged: Rgb(86, 95, 137),   // gray
+        unchanged: Rgb(192, 202, 245), // white (normal text)
         key: Rgb(192, 202, 245),       // white
         structure: Rgb(192, 202, 245), // white
+        comment: Rgb(86, 95, 137),     // gray (muted)
     };
 
     /// Get the color for a change kind.
