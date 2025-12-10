@@ -51,13 +51,15 @@ impl<B: ColorBackend> RenderOptions<B> {
 }
 
 /// Render a layout to a writer.
+///
+/// Starts at depth 1 to provide a gutter for change prefixes (- / +).
 pub fn render<W: Write, B: ColorBackend, F: DiffFlavor>(
     layout: &Layout,
     w: &mut W,
     opts: &RenderOptions<B>,
     flavor: &F,
 ) -> fmt::Result {
-    render_node(layout, w, layout.root, 0, opts, flavor)
+    render_node(layout, w, layout.root, 1, opts, flavor)
 }
 
 /// Render a layout to a String.
@@ -251,14 +253,14 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
             render_changed_group(layout, w, depth + 1, opts, flavor, attrs, group)?;
         }
 
-        // Render deleted attributes
+        // Render deleted attributes (prefix uses indent gutter)
         for (i, attr) in attrs.iter().enumerate() {
             if let AttrStatus::Deleted { value } = &attr.status {
                 // Skip if already in a changed group
                 if changed_groups.iter().any(|g| g.attr_indices.contains(&i)) {
                     continue;
                 }
-                write_indent(w, depth + 1, opts)?;
+                write_indent_minus_prefix(w, depth + 1, opts)?;
                 opts.backend.write_prefix(w, '-', SemanticColor::Deleted)?;
                 write!(w, " ")?;
                 render_attr_deleted(layout, w, opts, flavor, attr.name, value)?;
@@ -266,13 +268,13 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
             }
         }
 
-        // Render inserted attributes
+        // Render inserted attributes (prefix uses indent gutter)
         for (i, attr) in attrs.iter().enumerate() {
             if let AttrStatus::Inserted { value } = &attr.status {
                 if changed_groups.iter().any(|g| g.attr_indices.contains(&i)) {
                     continue;
                 }
-                write_indent(w, depth + 1, opts)?;
+                write_indent_minus_prefix(w, depth + 1, opts)?;
                 opts.backend.write_prefix(w, '+', SemanticColor::Inserted)?;
                 write!(w, " ")?;
                 render_attr_inserted(layout, w, opts, flavor, attr.name, value)?;
@@ -280,14 +282,13 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
             }
         }
 
-        // Render unchanged attributes on one line (dimmed)
+        // Render unchanged attributes on one line
         let unchanged: Vec<_> = attrs
             .iter()
             .filter(|a| matches!(a.status, AttrStatus::Unchanged { .. }))
             .collect();
         if !unchanged.is_empty() {
             write_indent(w, depth + 1, opts)?;
-            write!(w, "  ")?; // align with -/+ lines
             for (i, attr) in unchanged.iter().enumerate() {
                 if i > 0 {
                     write!(w, "{}", flavor.field_separator())?;
@@ -434,8 +435,8 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
     attrs: &[super::Attr],
     group: &ChangedGroup,
 ) -> fmt::Result {
-    // Minus line
-    write_indent(w, depth, opts)?;
+    // Minus line (prefix uses indent gutter)
+    write_indent_minus_prefix(w, depth, opts)?;
     opts.backend.write_prefix(w, '-', SemanticColor::Deleted)?;
     write!(w, " ")?;
 
@@ -463,8 +464,8 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
     }
     writeln!(w)?;
 
-    // Plus line
-    write_indent(w, depth, opts)?;
+    // Plus line (prefix uses indent gutter)
+    write_indent_minus_prefix(w, depth, opts)?;
     opts.backend.write_prefix(w, '+', SemanticColor::Inserted)?;
     write!(w, " ")?;
 
