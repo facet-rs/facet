@@ -48,6 +48,68 @@ enum Status {
     Pending { since: u32 },
 }
 
+// Deep tree types (6 levels of nesting)
+#[derive(Debug, Clone, Facet)]
+struct Level6 {
+    value: i32,
+    tag: String,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct Level5 {
+    inner: Level6,
+    count: u32,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct Level4Deep {
+    inner: Level5,
+    enabled: bool,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct Level3Deep {
+    inner: Level4Deep,
+    name: String,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct Level2Deep {
+    inner: Level3Deep,
+    priority: u8,
+}
+
+#[derive(Debug, Clone, Facet)]
+struct Level1Deep {
+    inner: Level2Deep,
+    label: String,
+}
+
+// Wide tree type (many siblings)
+#[derive(Debug, Clone, Facet)]
+struct WideConfig {
+    field_01: String,
+    field_02: String,
+    field_03: String,
+    field_04: String,
+    field_05: String,
+    field_06: i32,
+    field_07: i32,
+    field_08: i32,
+    field_09: i32,
+    field_10: i32,
+    field_11: bool,
+    field_12: bool,
+    field_13: bool,
+    field_14: bool,
+    field_15: bool,
+    field_16: u64,
+    field_17: u64,
+    field_18: u64,
+    field_19: u64,
+    field_20: u64,
+}
+
 // ============================================================================
 // Showcase infrastructure
 // ============================================================================
@@ -332,6 +394,150 @@ fn showcase_byte_slices() {
     println!("  {}", old.diff(&new).format_default());
 }
 
+fn showcase_deep_tree() {
+    fn make_deep(
+        value: i32,
+        tag: &str,
+        count: u32,
+        enabled: bool,
+        name: &str,
+        priority: u8,
+        label: &str,
+    ) -> Level1Deep {
+        Level1Deep {
+            label: label.into(),
+            inner: Level2Deep {
+                priority,
+                inner: Level3Deep {
+                    name: name.into(),
+                    inner: Level4Deep {
+                        enabled,
+                        inner: Level5 {
+                            count,
+                            inner: Level6 {
+                                value,
+                                tag: tag.into(),
+                            },
+                        },
+                    },
+                },
+            },
+        }
+    }
+
+    println!("a) Change at deepest level (level 6):");
+    let old = make_deep(42, "original", 10, true, "config", 1, "root");
+    let new = make_deep(999, "modified", 10, true, "config", 1, "root");
+    println!("{}", old.diff(&new).format_default());
+
+    println!("\nb) Changes at multiple levels (2, 4, 6):");
+    let old = make_deep(42, "tag", 10, true, "config", 1, "root");
+    let new = make_deep(100, "tag", 10, false, "config", 5, "root");
+    println!("{}", old.diff(&new).format_default());
+
+    println!("\nc) Changes at every level:");
+    let old = make_deep(1, "a", 10, true, "old", 1, "label-old");
+    let new = make_deep(2, "b", 20, false, "new", 2, "label-new");
+    println!("{}", old.diff(&new).format_default());
+
+    println!("\nd) Tree format for deep change:");
+    let old = make_deep(42, "deep", 10, true, "config", 1, "root");
+    let new = make_deep(999, "deep", 10, true, "config", 1, "root");
+    println!("{}", old.diff(&new));
+}
+
+fn showcase_wide_tree() {
+    fn make_wide(
+        s1: &str,
+        s2: &str,
+        s3: &str,
+        s4: &str,
+        s5: &str,
+        i1: i32,
+        i2: i32,
+        i3: i32,
+        i4: i32,
+        i5: i32,
+        b1: bool,
+        b2: bool,
+        b3: bool,
+        b4: bool,
+        b5: bool,
+        u1: u64,
+        u2: u64,
+        u3: u64,
+        u4: u64,
+        u5: u64,
+    ) -> WideConfig {
+        WideConfig {
+            field_01: s1.into(),
+            field_02: s2.into(),
+            field_03: s3.into(),
+            field_04: s4.into(),
+            field_05: s5.into(),
+            field_06: i1,
+            field_07: i2,
+            field_08: i3,
+            field_09: i4,
+            field_10: i5,
+            field_11: b1,
+            field_12: b2,
+            field_13: b3,
+            field_14: b4,
+            field_15: b5,
+            field_16: u1,
+            field_17: u2,
+            field_18: u3,
+            field_19: u4,
+            field_20: u5,
+        }
+    }
+
+    println!("a) Single field change (among 20 fields):");
+    let old = make_wide(
+        "a", "b", "c", "d", "e", 1, 2, 3, 4, 5, true, true, true, true, true, 100, 200, 300, 400,
+        500,
+    );
+    let new = make_wide(
+        "a", "b", "c", "d", "e", 1, 2, 3, 4, 5, true, true, true, true, true, 100, 200, 999, 400,
+        500,
+    );
+    println!("{}", old.diff(&new).format_default());
+
+    println!("\nb) Scattered changes (fields 2, 8, 14, 19):");
+    let old = make_wide(
+        "a", "b", "c", "d", "e", 1, 2, 3, 4, 5, true, true, true, true, true, 100, 200, 300, 400,
+        500,
+    );
+    let new = make_wide(
+        "a", "CHANGED", "c", "d", "e", 1, 2, 999, 4, 5, true, true, true, false, true, 100, 200,
+        300, 888, 500,
+    );
+    println!("{}", old.diff(&new).format_default());
+
+    println!("\nc) Many changes (exceeds truncation limit):");
+    let old = make_wide(
+        "a", "b", "c", "d", "e", 1, 2, 3, 4, 5, true, true, true, true, true, 100, 200, 300, 400,
+        500,
+    );
+    let new = make_wide(
+        "A", "B", "C", "D", "E", 10, 20, 30, 40, 50, false, false, false, false, false, 1000, 2000,
+        3000, 4000, 5000,
+    );
+    println!("{}", old.diff(&new).format_default());
+
+    println!("\nd) Tree format with few changes:");
+    let old = make_wide(
+        "a", "b", "c", "d", "e", 1, 2, 3, 4, 5, true, true, true, true, true, 100, 200, 300, 400,
+        500,
+    );
+    let new = make_wide(
+        "a", "b", "c", "d", "e", 1, 2, 3, 4, 5, true, false, true, true, true, 100, 200, 300, 400,
+        500,
+    );
+    println!("{}", old.diff(&new));
+}
+
 // ============================================================================
 // Registry
 // ============================================================================
@@ -377,6 +583,14 @@ fn all_showcases() -> Vec<Showcase> {
         Showcase {
             name: "10. Byte slices",
             run: showcase_byte_slices,
+        },
+        Showcase {
+            name: "11. Deep tree (6 levels)",
+            run: showcase_deep_tree,
+        },
+        Showcase {
+            name: "12. Wide tree (20 fields)",
+            run: showcase_wide_tree,
         },
     ]
 }
