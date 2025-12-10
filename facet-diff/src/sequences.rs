@@ -18,6 +18,17 @@ pub fn diff<'mem, 'facet>(
 ) -> Updates<'mem, 'facet> {
     // trace!("sequences::diff called with a.len()={}, b.len()={}", a.len(), b.len());
 
+    // Quick check: if lengths match and all elements are structurally equal, return empty
+    if a.len() == b.len() {
+        let all_equal = a
+            .iter()
+            .zip(&b)
+            .all(|(a_item, b_item)| diff_new_peek(*a_item, *b_item).is_equal());
+        if all_equal {
+            return Updates::default();
+        }
+    }
+
     // For very large sequences, fall back to simple comparison to avoid
     // exponential blowup in flatten_with
     if a.len() > MAX_SEQUENCE_SIZE || b.len() > MAX_SEQUENCE_SIZE {

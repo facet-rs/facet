@@ -18,8 +18,10 @@ expression: "format_diff_comparison(&a, &b)"
 ╰───────────────────────╯
 ╔Diff═══════════════════╗
 ║(                      ║
-║    .. 1 unchanged item║
-║    2 → 5              ║
+║    - 1                ║
+║    - 2                ║
+║    + 1                ║
+║    + 5                ║
 ║    .. 1 unchanged item║
 ║)                      ║
 ╚═══════════════════════╝
