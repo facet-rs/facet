@@ -117,6 +117,13 @@ pub enum ArgsErrorKind {
         shape: &'static Shape,
     },
 
+    /// Found an enum field without the args::subcommand attribute.
+    /// Enums can only be used as subcommands when explicitly marked.
+    EnumWithoutSubcommandAttribute {
+        /// The field that has the enum type
+        field: &'static Field,
+    },
+
     /// Passed `--something` (see span), no such long flag
     UnknownLongFlag {
         /// The flag that was passed
@@ -182,6 +189,9 @@ impl ArgsErrorKind {
             ArgsErrorKind::HelpRequested { .. } => "args::help",
             ArgsErrorKind::UnexpectedPositionalArgument { .. } => "args::unexpected_positional",
             ArgsErrorKind::NoFields { .. } => "args::no_fields",
+            ArgsErrorKind::EnumWithoutSubcommandAttribute { .. } => {
+                "args::enum_without_subcommand_attribute"
+            }
             ArgsErrorKind::UnknownLongFlag { .. } => "args::unknown_long_flag",
             ArgsErrorKind::UnknownShortFlag { .. } => "args::unknown_short_flag",
             ArgsErrorKind::MissingArgument { .. } => "args::missing_argument",
@@ -201,6 +211,12 @@ impl ArgsErrorKind {
             }
             ArgsErrorKind::NoFields { shape } => {
                 format!("cannot parse arguments into `{}`", shape.type_identifier)
+            }
+            ArgsErrorKind::EnumWithoutSubcommandAttribute { field } => {
+                format!(
+                    "enum field `{}` must be marked with `#[facet(args::subcommand)]` to be used as subcommands",
+                    field.name
+                )
             }
             ArgsErrorKind::UnknownLongFlag { flag, .. } => {
                 format!("unknown flag `--{flag}`")
@@ -244,6 +260,19 @@ impl ArgsErrorKind {
                         "this command does not accept positional arguments",
                     ));
                 }
+
+                // Check if any of the fields are enums without subcommand attributes
+                if let Some(enum_field) = fields.iter().find(|f| {
+                    matches!(f.shape().ty, Type::User(UserType::Enum(_)))
+                        && !f.has_attr(Some("args"), "subcommand")
+                }) {
+                    return Some(Box::new(format!(
+                        "available options:\n{}\n\nnote: field `{}` is an enum but missing `#[facet(args::subcommand)]` attribute. Enums must be marked as subcommands to accept positional arguments.",
+                        format_available_flags(fields),
+                        enum_field.name
+                    )));
+                }
+
                 let flags = format_available_flags(fields);
                 Some(Box::new(format!("available options:\n{flags}")))
             }
@@ -309,6 +338,7 @@ impl ArgsErrorKind {
             }
             ArgsErrorKind::HelpRequested { .. }
             | ArgsErrorKind::NoFields { .. }
+            | ArgsErrorKind::EnumWithoutSubcommandAttribute { .. }
             | ArgsErrorKind::ReflectError(_) => None,
         }
     }
@@ -484,6 +514,12 @@ fn format_reflect_error(err: &ReflectError) -> String {
             // Improve common operation failure messages
             // Unwrap Option to show the inner type
             let inner_type = unwrap_option_type(shape);
+
+            // Check for subcommand-specific error message
+            if operation.starts_with("Subcommands must be provided") {
+                return operation.to_string();
+            }
+
             match *operation {
                 "Type does not support parsing from string" => {
                     format!("`{inner_type}` cannot be parsed from a string value")

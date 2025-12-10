@@ -3,6 +3,8 @@
 use facet::Facet;
 use facet_args as args;
 
+mod common;
+
 /// Test basic subcommand parsing with an enum where each variant is a subcommand.
 #[test]
 fn test_subcommand_basic() {
@@ -21,22 +23,28 @@ fn test_subcommand_basic() {
         },
     }
 
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
     // Test "init" subcommand
-    let cmd: Command = facet_args::from_slice(&["init", "my-project"]).unwrap();
+    let args: Args = facet_args::from_slice(&["init", "my-project"]).unwrap();
     assert_eq!(
-        cmd,
+        args.command,
         Command::Init {
             name: "my-project".to_string()
         }
     );
 
     // Test "build" subcommand
-    let cmd: Command = facet_args::from_slice(&["build", "--release"]).unwrap();
-    assert_eq!(cmd, Command::Build { release: true });
+    let args: Args = facet_args::from_slice(&["build", "--release"]).unwrap();
+    assert_eq!(args.command, Command::Build { release: true });
 
     // Test "build" subcommand without flag
-    let cmd: Command = facet_args::from_slice(&["build"]).unwrap();
-    assert_eq!(cmd, Command::Build { release: false });
+    let args: Args = facet_args::from_slice(&["build"]).unwrap();
+    assert_eq!(args.command, Command::Build { release: false });
 }
 
 /// Test subcommand with kebab-case variant names
@@ -54,12 +62,18 @@ fn test_subcommand_kebab_case() {
         CleanBuild,
     }
 
-    // Variant names should be converted to kebab-case
-    let cmd: Command = facet_args::from_slice(&["run-tests", "--verbose"]).unwrap();
-    assert_eq!(cmd, Command::RunTests { verbose: true });
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
 
-    let cmd: Command = facet_args::from_slice(&["clean-build"]).unwrap();
-    assert_eq!(cmd, Command::CleanBuild);
+    // Variant names should be converted to kebab-case
+    let args: Args = facet_args::from_slice(&["run-tests", "--verbose"]).unwrap();
+    assert_eq!(args.command, Command::RunTests { verbose: true });
+
+    let args: Args = facet_args::from_slice(&["clean-build"]).unwrap();
+    assert_eq!(args.command, Command::CleanBuild);
 }
 
 /// Test struct with a subcommand field
@@ -174,19 +188,25 @@ fn test_nested_subcommands() {
     }
 
     // Top-level subcommand
-    let cmd: Command = facet_args::from_slice(&["clone", "https://example.com/repo"]).unwrap();
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
+    let args: Args = facet_args::from_slice(&["clone", "https://example.com/repo"]).unwrap();
     assert_eq!(
-        cmd,
+        args.command,
         Command::Clone {
             url: "https://example.com/repo".to_string()
         }
     );
 
     // Nested subcommand
-    let cmd: Command =
+    let args: Args =
         facet_args::from_slice(&["remote", "add", "origin", "https://example.com/repo"]).unwrap();
     assert_eq!(
-        cmd,
+        args.command,
         Command::Remote {
             action: RemoteCommand::Add {
                 name: "origin".to_string(),
@@ -202,12 +222,21 @@ fn test_unknown_subcommand_error() {
     #[derive(Facet, Debug)]
     #[repr(u8)]
     enum Command {
+        /// Start the service
         Start,
+        /// Stop the service
         Stop,
     }
 
-    let result: Result<Command, _> = facet_args::from_slice(&["unknown"]);
-    assert!(result.is_err());
+    #[derive(Facet, Debug)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
+    let result: Result<Args, _> = facet_args::from_slice(&["unknown"]);
+    let err = result.unwrap_err();
+    assert_diag_snapshot!(err);
 }
 
 /// Test error when required subcommand is missing
@@ -216,7 +245,9 @@ fn test_missing_subcommand_error() {
     #[derive(Facet, Debug)]
     #[repr(u8)]
     enum Command {
+        /// Start the service
         Start,
+        /// Stop the service
         Stop,
     }
 
@@ -227,7 +258,116 @@ fn test_missing_subcommand_error() {
     }
 
     let result: Result<Args, _> = facet_args::from_slice(&[]);
-    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_diag_snapshot!(err);
+}
+
+/// Test error when nested subcommand is missing (issue #1195 scenario)
+#[test]
+fn test_missing_nested_subcommand_error() {
+    #[derive(Debug, Facet)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    enum Command {
+        /// CI workflow management
+        Ci {
+            #[facet(args::subcommand)]
+            action: CiAction,
+        },
+    }
+
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    enum CiAction {
+        /// Generate CI workflow files from Rust code
+        Generate {
+            /// Check if files are up to date instead of generating
+            #[facet(args::named, default)]
+            check: bool,
+        },
+    }
+
+    // Test missing nested subcommand - should show helpful error
+    let result: Result<Args, _> = facet_args::from_slice(&["ci"]);
+    let err = result.unwrap_err();
+    assert_diag_snapshot!(err);
+}
+
+/// Test error when wrong argument style is used for nested subcommand (issue #1195 scenario)
+#[test]
+fn test_wrong_argument_style_for_nested_subcommand() {
+    #[derive(Debug, Facet)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    enum Command {
+        /// CI workflow management
+        Ci {
+            #[facet(args::subcommand)]
+            action: CiAction,
+        },
+    }
+
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    enum CiAction {
+        /// Generate CI workflow files from Rust code
+        Generate {
+            /// Check if files are up to date instead of generating
+            #[facet(args::named, default)]
+            check: bool,
+        },
+    }
+
+    // Test wrong argument style - should suggest correct subcommand usage
+    let result: Result<Args, _> = facet_args::from_slice(&["ci", "--action", "gen"]);
+    let err = result.unwrap_err();
+    assert_diag_snapshot!(err);
+}
+
+/// Test error when unknown nested subcommand is provided
+#[test]
+fn test_unknown_nested_subcommand_error() {
+    #[derive(Debug, Facet)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    enum Command {
+        /// CI workflow management
+        Ci {
+            #[facet(args::subcommand)]
+            action: CiAction,
+        },
+    }
+
+    #[derive(Debug, Facet)]
+    #[repr(u8)]
+    enum CiAction {
+        /// Generate CI workflow files from Rust code
+        Generate {
+            /// Check if files are up to date instead of generating
+            #[facet(args::named, default)]
+            check: bool,
+        },
+    }
+
+    // Test unknown nested subcommand
+    let result: Result<Args, _> = facet_args::from_slice(&["ci", "unknown"]);
+    let err = result.unwrap_err();
+    assert_diag_snapshot!(err);
 }
 
 /// Test subcommand with renamed variant
@@ -245,12 +385,18 @@ fn test_subcommand_rename() {
         },
     }
 
-    let cmd: Command = facet_args::from_slice(&["ls"]).unwrap();
-    assert_eq!(cmd, Command::List);
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
 
-    let cmd: Command = facet_args::from_slice(&["rm", "file.txt"]).unwrap();
+    let args: Args = facet_args::from_slice(&["ls"]).unwrap();
+    assert_eq!(args.command, Command::List);
+
+    let args: Args = facet_args::from_slice(&["rm", "file.txt"]).unwrap();
     assert_eq!(
-        cmd,
+        args.command,
         Command::Remove {
             path: "file.txt".to_string()
         }
@@ -268,11 +414,17 @@ fn test_unit_variant_subcommand() {
         Help,
     }
 
-    let cmd: Command = facet_args::from_slice(&["status"]).unwrap();
-    assert_eq!(cmd, Command::Status);
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
 
-    let cmd: Command = facet_args::from_slice(&["version"]).unwrap();
-    assert_eq!(cmd, Command::Version);
+    let args: Args = facet_args::from_slice(&["status"]).unwrap();
+    assert_eq!(args.command, Command::Status);
+
+    let args: Args = facet_args::from_slice(&["version"]).unwrap();
+    assert_eq!(args.command, Command::Version);
 }
 
 /// Regression test for issue #1193: enum variant with String default value
@@ -288,19 +440,25 @@ fn test_enum_variant_string_default() {
         },
     }
 
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
     // Without --version, should use the default
-    let cmd: Command = facet_args::from_slice(&["e2e"]).unwrap();
+    let args: Args = facet_args::from_slice(&["e2e"]).unwrap();
     assert_eq!(
-        cmd,
+        args.command,
         Command::E2e {
             version: "0.0.0-test".to_string()
         }
     );
 
     // With --version, should override the default
-    let cmd: Command = facet_args::from_slice(&["e2e", "--version", "1.2.3"]).unwrap();
+    let args: Args = facet_args::from_slice(&["e2e", "--version", "1.2.3"]).unwrap();
     assert_eq!(
-        cmd,
+        args.command,
         Command::E2e {
             version: "1.2.3".to_string()
         }

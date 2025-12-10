@@ -165,6 +165,19 @@ impl<'input> Context<'input> {
         p: Partial<'static>,
         value: &'input str,
     ) -> Result<Partial<'static>, ArgsErrorKind> {
+        // Check if this is a subcommand field by looking at the current shape
+        // If it's an enum and we're trying to parse it from a string, it's likely a subcommand
+        if let Type::User(UserType::Enum(_)) = p.shape().ty {
+            // This is an enum field being set via a flag value, which is likely a mistake
+            // for subcommand fields. Provide a helpful error.
+            return Err(ArgsErrorKind::ReflectError(
+                facet_reflect::ReflectError::OperationFailed {
+                    shape: p.shape(),
+                    operation: "Subcommands must be provided as positional arguments, not as flag values. Use the subcommand name directly instead of --flag <value>.",
+                },
+            ));
+        }
+
         let p = match p.shape().def {
             Def::List(_) => {
                 // if it's a list, then we'll want to initialize the list first and push to it
@@ -215,43 +228,21 @@ impl<'input> Context<'input> {
     fn work_inner(&mut self) -> Result<HeapValue<'static>, ArgsErrorKind> {
         let p = Partial::alloc_shape(self.shape)?;
 
-        // Check if we're parsing an enum (subcommand) or a struct
+        // Only parse structs at the top level
+        // Enums should only be parsed as subcommands when explicitly marked with args::subcommand attribute
         match self.shape.ty {
-            Type::User(UserType::Enum(enum_type)) => self.parse_enum(p, enum_type),
             Type::User(UserType::Struct(_)) => self.parse_struct(p),
+            Type::User(UserType::Enum(_)) => {
+                // Enum at top level without explicit subcommand attribute is not supported
+                Err(ArgsErrorKind::ReflectError(
+                    facet_reflect::ReflectError::OperationFailed {
+                        shape: self.shape,
+                        operation: "Top-level enums must be wrapped in a struct with #[facet(args::subcommand)] attribute to be used as subcommands.",
+                    },
+                ))
+            }
             _ => Err(ArgsErrorKind::NoFields { shape: self.shape }),
         }
-    }
-
-    /// Parse an enum type as a subcommand
-    fn parse_enum(
-        &mut self,
-        p: Partial<'static>,
-        enum_type: EnumType,
-    ) -> Result<HeapValue<'static>, ArgsErrorKind> {
-        // The first positional argument should be the subcommand name
-        if self.index >= self.args.len() {
-            return Err(ArgsErrorKind::MissingSubcommand {
-                variants: enum_type.variants,
-            });
-        }
-
-        let subcommand_name = self.args[self.index];
-        tracing::trace!("Looking for subcommand: {subcommand_name}");
-
-        // Find matching variant (convert variant names to kebab-case for matching)
-        let variant = find_variant_by_name(enum_type, subcommand_name)?;
-        tracing::trace!("Found variant: {}", variant.name);
-
-        self.index += 1;
-
-        // Select the variant and parse its fields
-        let mut p = p.select_variant_named(variant.name)?;
-
-        // Parse the variant's fields like a struct
-        p = self.parse_variant_fields(p, variant)?;
-
-        Ok(p.build()?)
     }
 
     /// Parse a struct type
@@ -397,6 +388,16 @@ impl<'input> Context<'input> {
                     p = p.begin_nth_field(chosen_field_index)?;
 
                     let value = self.args[self.index];
+
+                    // Check if this is an enum field without the subcommand attribute
+                    if let Type::User(UserType::Enum(_)) = fields[chosen_field_index].shape().ty {
+                        if !fields[chosen_field_index].has_attr(Some("args"), "subcommand") {
+                            return Err(ArgsErrorKind::EnumWithoutSubcommandAttribute {
+                                field: &fields[chosen_field_index],
+                            });
+                        }
+                    }
+
                     p = self.handle_value(p, value)?;
 
                     p = p.end()?;
@@ -541,6 +542,16 @@ impl<'input> Context<'input> {
 
                     p = p.begin_nth_field(chosen_field_index)?;
                     let value = self.args[self.index];
+
+                    // Check if this is an enum field without the subcommand attribute
+                    if let Type::User(UserType::Enum(_)) = fields[chosen_field_index].shape().ty {
+                        if !fields[chosen_field_index].has_attr(Some("args"), "subcommand") {
+                            return Err(ArgsErrorKind::EnumWithoutSubcommandAttribute {
+                                field: &fields[chosen_field_index],
+                            });
+                        }
+                    }
+
                     p = self.handle_value(p, value)?;
                     p = p.end()?;
                     self.index += 1;
@@ -677,6 +688,21 @@ impl<'input> Context<'input> {
         for (field_index, field) in fields.iter().enumerate() {
             if p.is_field_set(field_index)? {
                 continue;
+            }
+
+            // Check if it's a subcommand field
+            if field.has_attr(Some("args"), "subcommand") {
+                let field_shape = field.shape();
+                if let Def::Option(_) = field_shape.def {
+                    // Optional subcommand, set to None using default
+                    p = p.set_nth_field_to_default(field_index)?;
+                    continue;
+                } else {
+                    // Required subcommand missing
+                    return Err(ArgsErrorKind::MissingSubcommand {
+                        variants: get_variants_from_shape(field_shape),
+                    });
+                }
             }
 
             if field.has_default() {

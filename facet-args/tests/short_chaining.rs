@@ -172,8 +172,14 @@ fn test_chain_in_variant() {
     }
 
     // Test `build -rv`
-    let cmd: Command = facet_args::from_slice(&["build", "-rv"]).unwrap();
-    match cmd {
+    #[derive(Facet, Debug, PartialEq)]
+    struct Args {
+        #[facet(args::subcommand)]
+        command: Command,
+    }
+
+    let args: Args = facet_args::from_slice(&["build", "-rv"]).unwrap();
+    match args.command {
         Command::Build { release, verbose } => {
             assert!(release);
             assert!(verbose);
