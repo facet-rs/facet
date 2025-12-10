@@ -121,10 +121,17 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
             )
         }
 
-        LayoutNode::Sequence { change, item_type } => {
+        LayoutNode::Sequence {
+            change,
+            item_type,
+            field_name,
+        } => {
             let change = *change;
             let item_type = *item_type;
-            render_sequence(layout, w, node_id, depth, opts, flavor, change, item_type)
+            let field_name = *field_name;
+            render_sequence(
+                layout, w, node_id, depth, opts, flavor, change, item_type, field_name,
+            )
         }
 
         LayoutNode::Collapsed { count } => {
@@ -417,6 +424,7 @@ fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
     flavor: &F,
     change: ElementChange,
     _item_type: &str, // Item type available for future use (items use it via ItemGroup)
+    field_name: Option<&str>,
 ) -> fmt::Result {
     let children: Vec<_> = layout.children(node_id).collect();
 
@@ -427,12 +435,53 @@ fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
         ElementChange::MovedFrom | ElementChange::MovedTo => SemanticColor::Moved,
     };
 
-    // Opening bracket
+    // Empty sequences: render on single line
+    if children.is_empty() {
+        // Always render empty sequences with field name (e.g., "elements: []")
+        // Only skip if unchanged AND no field name
+        if change == ElementChange::None && field_name.is_none() {
+            return Ok(());
+        }
+
+        write_indent(w, depth, opts)?;
+        if let Some(prefix) = change.prefix() {
+            opts.backend
+                .write_prefix(w, prefix, element_change_to_semantic(change))?;
+            write!(w, " ")?;
+        }
+
+        // Field name prefix (e.g., "elements: ")
+        if let Some(name) = field_name {
+            let field_prefix = flavor.format_field_prefix(name);
+            opts.backend.write_styled(w, &field_prefix, tag_color)?;
+        }
+
+        let open = flavor.seq_open();
+        let close = flavor.seq_close();
+        opts.backend.write_styled(w, &open, tag_color)?;
+        opts.backend.write_styled(w, &close, tag_color)?;
+
+        // Trailing comma for fields
+        if field_name.is_some() {
+            opts.backend
+                .write_styled(w, flavor.trailing_separator(), SemanticColor::Comment)?;
+        }
+        writeln!(w)?;
+        return Ok(());
+    }
+
+    // Opening bracket with optional field name
     write_indent(w, depth, opts)?;
     if let Some(prefix) = change.prefix() {
         opts.backend
             .write_prefix(w, prefix, element_change_to_semantic(change))?;
         write!(w, " ")?;
+    }
+
+    // Field name prefix (e.g., "elements: ")
+    if let Some(name) = field_name {
+        let field_prefix = flavor.format_field_prefix(name);
+        opts.backend.write_styled(w, &field_prefix, tag_color)?;
     }
 
     let open = flavor.seq_open();
@@ -453,6 +502,12 @@ fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
     }
     let close = flavor.seq_close();
     opts.backend.write_styled(w, &close, tag_color)?;
+
+    // Trailing comma for fields
+    if field_name.is_some() {
+        opts.backend
+            .write_styled(w, flavor.trailing_separator(), SemanticColor::Comment)?;
+    }
     writeln!(w)?;
 
     Ok(())

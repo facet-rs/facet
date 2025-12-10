@@ -61,6 +61,8 @@ pub enum LayoutNode {
         change: ElementChange,
         /// The type name of items in this sequence (e.g., "i32", "Item")
         item_type: &'static str,
+        /// Field name if this sequence is a struct field value (e.g., "elements" for `elements: [...]`)
+        field_name: Option<&'static str>,
     },
 
     /// A collapsed run of unchanged siblings.
@@ -117,7 +119,11 @@ impl LayoutNode {
 
     /// Create a sequence node.
     pub fn sequence(change: ElementChange, item_type: &'static str) -> Self {
-        Self::Sequence { change, item_type }
+        Self::Sequence {
+            change,
+            item_type,
+            field_name: None,
+        }
     }
 
     /// Create a collapsed node.

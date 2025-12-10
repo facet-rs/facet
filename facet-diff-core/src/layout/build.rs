@@ -326,17 +326,24 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                     attrs.push(attr);
                 }
                 _ => {
-                    // Nested diff - build as child element
+                    // Nested diff - build as child element or sequence
                     let child =
                         self.build_diff(field_diff, field_from, field_to, ElementChange::None);
 
-                    // Set the field name on the child element (only for borrowed names for now)
+                    // Set the field name on the child (only for borrowed names for now)
                     // TODO: Support owned field names for nested elements
                     if let Cow::Borrowed(name) = field_name
                         && let Some(node) = self.tree.get_mut(child)
-                        && let LayoutNode::Element { field_name, .. } = node.get_mut()
                     {
-                        *field_name = Some(name);
+                        match node.get_mut() {
+                            LayoutNode::Element { field_name, .. } => {
+                                *field_name = Some(name);
+                            }
+                            LayoutNode::Sequence { field_name, .. } => {
+                                *field_name = Some(name);
+                            }
+                            _ => {}
+                        }
                     }
 
                     child_nodes.push(child);
@@ -433,9 +440,11 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         item_type: &'static str,
     ) -> NodeId {
         // Create sequence node with item type info
-        let node = self
-            .tree
-            .new_node(LayoutNode::Sequence { change, item_type });
+        let node = self.tree.new_node(LayoutNode::Sequence {
+            change,
+            item_type,
+            field_name: None,
+        });
 
         // Build children from updates
         self.build_updates_children(node, updates, item_type);
