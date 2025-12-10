@@ -243,7 +243,7 @@ impl DiffTheme {
         let mut lch = Lch::from_color(srgb);
 
         // Reduce chroma (saturation)
-        lch.chroma = lch.chroma * (1.0 - amount);
+        lch.chroma *= 1.0 - amount;
 
         let result: Srgb = Srgb::from_color(lch);
         Rgb(

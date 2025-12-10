@@ -644,7 +644,7 @@ fn collect_leaf_changes_inner<'mem, 'facet>(
 }
 
 /// Special handling for single-element tuples (like Option::Some)
-/// where we want to skip the [0] index in the path.
+/// where we want to skip the `[0]` index in the path.
 fn collect_from_updates_for_single_elem<'mem, 'facet>(
     base_path: &Path,
     updates: &Updates<'mem, 'facet>,
