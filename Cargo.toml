@@ -45,6 +45,7 @@ members = [
 
     # utilities
     "cinereus",
+    "facet-diff-core",
     "facet-diff",
     "facet-assert",
     "facet-value",

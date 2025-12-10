@@ -1215,11 +1215,21 @@ dependencies = [
  "confusables",
  "facet",
  "facet-core",
+ "facet-diff-core",
  "facet-pretty",
  "facet-reflect",
  "facet-testhelpers",
  "facet-value",
  "insta",
+ "owo-colors",
+]
+
+[[package]]
+name = "facet-diff-core"
+version = "0.1.0"
+dependencies = [
+ "facet-core",
+ "facet-reflect",
  "owo-colors",
 ]
 
@@ -1567,6 +1577,7 @@ dependencies = [
  "cargo-husky",
  "facet",
  "facet-core",
+ "facet-diff-core",
  "facet-pretty",
  "facet-reflect",
  "facet-solver",
@@ -1576,6 +1587,7 @@ dependencies = [
  "indoc",
  "log",
  "miette",
+ "owo-colors",
  "quick-xml",
 ]
 
