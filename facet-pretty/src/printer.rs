@@ -572,9 +572,7 @@ impl PrettyPrinter {
                                 short || is_simple,
                             )?;
 
-                            if !short && !is_simple {
-                                self.write_punctuation(f, ",")?;
-                            } else if idx + 1 < len {
+                            if (!short && !is_simple) || idx + 1 < len {
                                 self.write_punctuation(f, ",")?;
                             }
                         }
@@ -1459,9 +1457,7 @@ impl PrettyPrinter {
                     let elem_end = out.position();
                     out.record_span(elem_path, (elem_start, elem_end));
 
-                    if !short && !is_simple {
-                        write!(out, ",")?;
-                    } else if i + 1 < len {
+                    if (!short && !is_simple) || i + 1 < len {
                         write!(out, ",")?;
                     }
                 }
@@ -1517,7 +1513,7 @@ impl PrettyPrinter {
                         write!(out, ",")?;
                     }
                 }
-                if !short && map.len() > 0 {
+                if !short && !map.is_empty() {
                     writeln!(out)?;
                     self.indent_to_output(out, format_depth)?;
                 }

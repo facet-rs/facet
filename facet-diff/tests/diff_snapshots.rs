@@ -1777,15 +1777,15 @@ fn diff_scalar_usize_different() {
 
 #[test]
 fn diff_scalar_f32_equal() {
-    let a: f32 = 3.14159;
-    let b: f32 = 3.14159;
+    let a: f32 = std::f32::consts::PI;
+    let b: f32 = std::f32::consts::PI;
     assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_scalar_f32_different() {
-    let a: f32 = 3.14159;
-    let b: f32 = 2.71828;
+    let a: f32 = std::f32::consts::PI;
+    let b: f32 = std::f32::consts::E;
     assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
@@ -1812,15 +1812,15 @@ fn diff_scalar_f32_nan() {
 
 #[test]
 fn diff_scalar_f64_equal() {
-    let a: f64 = 3.141592653589793;
-    let b: f64 = 3.141592653589793;
+    let a: f64 = std::f64::consts::PI;
+    let b: f64 = std::f64::consts::PI;
     assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
 #[test]
 fn diff_scalar_f64_different() {
-    let a: f64 = 3.141592653589793;
-    let b: f64 = 2.718281828459045;
+    let a: f64 = std::f64::consts::PI;
+    let b: f64 = std::f64::consts::E;
     assert_snapshot!(format_diff_comparison(&a, &b));
 }
 
