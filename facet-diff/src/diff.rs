@@ -730,21 +730,22 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
         // Just use base_path directly instead of adding [0]
         if let Some(update_group) = &updates.0.first {
             // Process the first replace group if present
-            if let Some(replace) = &update_group.0.first {
-                if replace.removals.len() == 1 && replace.additions.len() == 1 {
-                    let from = replace.removals[0];
-                    let to = replace.additions[0];
-                    let nested = Diff::new_peek(from, to);
-                    if matches!(nested, Diff::Replace { .. }) {
-                        changes.push(LeafChange {
-                            path: base_path.clone(),
-                            kind: LeafChangeKind::Replace { from, to },
-                        });
-                    } else {
-                        nested.collect_leaf_changes_inner(base_path.clone(), changes);
-                    }
-                    return;
+            if let Some(replace) = &update_group.0.first
+                && replace.removals.len() == 1
+                && replace.additions.len() == 1
+            {
+                let from = replace.removals[0];
+                let to = replace.additions[0];
+                let nested = Diff::new_peek(from, to);
+                if matches!(nested, Diff::Replace { .. }) {
+                    changes.push(LeafChange {
+                        path: base_path.clone(),
+                        kind: LeafChangeKind::Replace { from, to },
+                    });
+                } else {
+                    nested.collect_leaf_changes_inner(base_path.clone(), changes);
                 }
+                return;
             }
             // Handle nested diffs
             if let Some(diffs) = &update_group.0.last {
@@ -1111,7 +1112,6 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
             colors: false,
             prefer_compact: true,
             max_inline_changes: usize::MAX,
-            ..Default::default()
         })
     }
 }

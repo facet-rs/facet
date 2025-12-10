@@ -236,8 +236,8 @@ fn showcase_scalar_types() {
     println!("  u64 0→max: {}", old.diff(&new).format_default());
 
     println!("\nb) Floats:");
-    let old: f64 = 3.141592653589793;
-    let new: f64 = 2.718281828459045;
+    let old: f64 = std::f64::consts::PI;
+    let new: f64 = std::f64::consts::E;
     println!("  f64: {}", old.diff(&new).format_default());
 
     let old: f64 = f64::INFINITY;
