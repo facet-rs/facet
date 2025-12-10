@@ -67,6 +67,30 @@ comparison. We know which fields changed:
 
 Instead of a wall of red/green like traditional diff tools.
 
+### Render diffs in your format
+
+Want the diff in JSON or XML so another tool can consume it? Call
+`check_same_report` to get a `SameReport`. When values differ you receive a
+`DiffReport` that can render the change set in Rust, JSON, or XML layouts with
+or without ANSI colors.
+
+```ignore
+use facet_assert::{SameReport, check_same_report};
+
+let report = match check_same_report(&c_output, &rust_output) {
+    SameReport::Different(report) => report,
+    SameReport::Same => return,
+    SameReport::Opaque { type_name } => panic!("opaque type {type_name}"),
+};
+
+let rust_view = report.legacy_string();
+let json_view = report.render_plain_json();
+let xml_view = report.render_plain_xml();
+```
+
+For full control, use `render_with_options` and pass your own `BuildOptions`,
+`RenderOptions`, or even a custom `DiffFlavor` implementation.
+
 ### Opaque types fail clearly
 
 If a type cannot be inspected (opaque), the assertion fails with a clear message
