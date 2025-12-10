@@ -469,6 +469,7 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
     // For alignment, we need to pad both - and + lines to the same width
     let max_value_width = group.max_old_width.max(group.max_new_width);
 
+    let last_idx = group.attr_indices.len().saturating_sub(1);
     for (i, &idx) in group.attr_indices.iter().enumerate() {
         if i > 0 {
             write!(w, "{}", flavor.field_separator())?;
@@ -481,10 +482,12 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
             opts.backend
                 .write_styled(w, old_str, SemanticColor::Deleted)?;
             write!(w, "{}", flavor.format_field_suffix())?;
-            // Pad value for column alignment
-            let value_padding = max_value_width.saturating_sub(old.width) + name_padding;
-            for _ in 0..value_padding {
-                write!(w, " ")?;
+            // Pad value for column alignment (only between fields, not at end)
+            if i < last_idx {
+                let value_padding = max_value_width.saturating_sub(old.width) + name_padding;
+                for _ in 0..value_padding {
+                    write!(w, " ")?;
+                }
             }
         }
     }
@@ -507,10 +510,12 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
             opts.backend
                 .write_styled(w, new_str, SemanticColor::Inserted)?;
             write!(w, "{}", flavor.format_field_suffix())?;
-            // Pad for column alignment
-            let value_padding = max_value_width.saturating_sub(new.width) + name_padding;
-            for _ in 0..value_padding {
-                write!(w, " ")?;
+            // Pad for column alignment (only between fields, not at end)
+            if i < last_idx {
+                let value_padding = max_value_width.saturating_sub(new.width) + name_padding;
+                for _ in 0..value_padding {
+                    write!(w, " ")?;
+                }
             }
         }
     }
