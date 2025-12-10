@@ -5,7 +5,17 @@ use crate::{LifetimeName, RenameRule, process_enum, process_struct};
 
 /// Generate a static declaration that pre-evaluates `<T as Facet>::SHAPE`.
 /// Only emitted in release builds to avoid slowing down debug compile times.
-pub(crate) fn generate_static_decl(type_name: &Ident, facet_crate: &TokenStream) -> TokenStream {
+/// Skipped for generic types since we can't create a static for an unmonomorphized type.
+pub(crate) fn generate_static_decl(
+    type_name: &Ident,
+    facet_crate: &TokenStream,
+    has_type_or_const_generics: bool,
+) -> TokenStream {
+    // Can't generate a static for generic types - the type parameters aren't concrete
+    if has_type_or_const_generics {
+        return quote! {};
+    }
+
     let type_name_str = type_name.to_string();
     let screaming_snake_name = RenameRule::ScreamingSnakeCase.apply(&type_name_str);
 
