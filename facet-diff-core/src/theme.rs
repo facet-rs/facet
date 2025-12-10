@@ -255,32 +255,32 @@ impl DiffTheme {
 
     /// Get the key color blended for a deleted context.
     pub fn deleted_key(&self) -> Rgb {
-        Self::blend(self.key, self.deleted, 0.3)
+        Self::blend(self.key, self.deleted, 0.5)
     }
 
     /// Get the key color blended for an inserted context.
     pub fn inserted_key(&self) -> Rgb {
-        Self::blend(self.key, self.inserted, 0.3)
+        Self::blend(self.key, self.inserted, 0.5)
     }
 
     /// Get the structure color blended for a deleted context.
     pub fn deleted_structure(&self) -> Rgb {
-        Self::blend(self.structure, self.deleted, 0.25)
+        Self::blend(self.structure, self.deleted, 0.4)
     }
 
     /// Get the structure color blended for an inserted context.
     pub fn inserted_structure(&self) -> Rgb {
-        Self::blend(self.structure, self.inserted, 0.25)
+        Self::blend(self.structure, self.inserted, 0.4)
     }
 
     /// Get the comment color blended for a deleted context.
     pub fn deleted_comment(&self) -> Rgb {
-        Self::blend(self.comment, self.deleted, 0.2)
+        Self::blend(self.comment, self.deleted, 0.35)
     }
 
     /// Get the comment color blended for an inserted context.
     pub fn inserted_comment(&self) -> Rgb {
-        Self::blend(self.comment, self.inserted, 0.2)
+        Self::blend(self.comment, self.inserted, 0.35)
     }
 
     // === Value type blending methods ===
@@ -367,37 +367,76 @@ impl DiffTheme {
         Self::brighten_saturate(self.inserted, 0.15, 0.2)
     }
 
+    // === Syntax highlight colors (keys, structure, comments with brightened accents) ===
+
+    /// Get the key color for a deleted highlight (brightened and saturated accent color).
+    pub fn deleted_highlight_key(&self) -> Rgb {
+        Self::brighten_saturate(self.deleted, 0.15, 0.2)
+    }
+
+    /// Get the key color for an inserted highlight (brightened and saturated accent color).
+    pub fn inserted_highlight_key(&self) -> Rgb {
+        Self::brighten_saturate(self.inserted, 0.15, 0.2)
+    }
+
+    /// Get the structure color for a deleted highlight (brightened and saturated accent color).
+    pub fn deleted_highlight_structure(&self) -> Rgb {
+        Self::brighten_saturate(self.deleted, 0.15, 0.2)
+    }
+
+    /// Get the structure color for an inserted highlight (brightened and saturated accent color).
+    pub fn inserted_highlight_structure(&self) -> Rgb {
+        Self::brighten_saturate(self.inserted, 0.15, 0.2)
+    }
+
+    /// Get the comment color for a deleted highlight (brightened and saturated accent color).
+    pub fn deleted_highlight_comment(&self) -> Rgb {
+        Self::brighten_saturate(self.deleted, 0.15, 0.2)
+    }
+
+    /// Get the comment color for an inserted highlight (brightened and saturated accent color).
+    pub fn inserted_highlight_comment(&self) -> Rgb {
+        Self::brighten_saturate(self.inserted, 0.15, 0.2)
+    }
+
     // === Desaturated background getters ===
 
-    /// Get desaturated deleted line background.
+    /// Get desaturated deleted line background (more saturated ambient, darker context).
     pub fn desaturated_deleted_line_bg(&self) -> Option<Rgb> {
-        self.deleted_line_bg.map(|bg| Self::desaturate(bg, 0.6))
+        self.deleted_line_bg.map(|bg| Self::desaturate(bg, 0.2))
     }
 
-    /// Get desaturated inserted line background.
+    /// Get desaturated inserted line background (more saturated ambient, darker context).
     pub fn desaturated_inserted_line_bg(&self) -> Option<Rgb> {
-        self.inserted_line_bg.map(|bg| Self::desaturate(bg, 0.6))
+        self.inserted_line_bg.map(|bg| Self::desaturate(bg, 0.2))
     }
 
-    /// Get desaturated moved line background.
+    /// Get desaturated moved line background (more saturated ambient, darker context).
     pub fn desaturated_moved_line_bg(&self) -> Option<Rgb> {
-        self.moved_line_bg.map(|bg| Self::desaturate(bg, 0.6))
+        self.moved_line_bg.map(|bg| Self::desaturate(bg, 0.2))
     }
 
-    /// Get desaturated deleted highlight background.
+    /// Get desaturated deleted highlight background (very desaturated, minimal brightness boost).
     pub fn desaturated_deleted_highlight_bg(&self) -> Option<Rgb> {
-        self.deleted_highlight_bg
-            .map(|bg| Self::desaturate(bg, 0.6))
+        self.deleted_highlight_bg.map(|bg| {
+            let brightened = Self::brighten_saturate(bg, 0.02, -5.0);
+            Self::desaturate(brightened, 0.75)
+        })
     }
 
-    /// Get desaturated inserted highlight background.
+    /// Get desaturated inserted highlight background (very desaturated, minimal brightness boost).
     pub fn desaturated_inserted_highlight_bg(&self) -> Option<Rgb> {
-        self.inserted_highlight_bg
-            .map(|bg| Self::desaturate(bg, 0.6))
+        self.inserted_highlight_bg.map(|bg| {
+            let brightened = Self::brighten_saturate(bg, 0.02, -5.0);
+            Self::desaturate(brightened, 0.75)
+        })
     }
 
-    /// Get desaturated moved highlight background.
+    /// Get desaturated moved highlight background (very desaturated, minimal brightness boost).
     pub fn desaturated_moved_highlight_bg(&self) -> Option<Rgb> {
-        self.moved_highlight_bg.map(|bg| Self::desaturate(bg, 0.6))
+        self.moved_highlight_bg.map(|bg| {
+            let brightened = Self::brighten_saturate(bg, 0.02, -5.0);
+            Self::desaturate(brightened, 0.75)
+        })
     }
 }
