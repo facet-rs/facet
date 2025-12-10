@@ -5,7 +5,7 @@ use owo_colors::Rgb;
 /// Color theme for diff rendering.
 ///
 /// Defines colors for different kinds of changes. The default uses
-/// Tokyo Night colors.
+/// One Dark Pro colors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiffTheme {
     /// Color for deleted content (default: red)
@@ -32,12 +32,23 @@ pub struct DiffTheme {
 
 impl Default for DiffTheme {
     fn default() -> Self {
-        Self::TOKYO_NIGHT
+        Self::ONE_DARK_PRO
     }
 }
 
 impl DiffTheme {
-    /// Tokyo Night color theme (default).
+    /// One Dark Pro color theme (default).
+    pub const ONE_DARK_PRO: Self = Self {
+        deleted: Rgb(224, 108, 117),   // #e06c75 red
+        inserted: Rgb(152, 195, 121),  // #98c379 green
+        moved: Rgb(97, 175, 239),      // #61afef blue
+        unchanged: Rgb(171, 178, 191), // #abb2bf white (normal text)
+        key: Rgb(171, 178, 191),       // #abb2bf white
+        structure: Rgb(171, 178, 191), // #abb2bf white
+        comment: Rgb(92, 99, 112),     // #5c6370 gray (muted)
+    };
+
+    /// Tokyo Night color theme.
     pub const TOKYO_NIGHT: Self = Self {
         deleted: Rgb(247, 118, 142),   // red
         inserted: Rgb(158, 206, 106),  // green

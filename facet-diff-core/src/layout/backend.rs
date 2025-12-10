@@ -79,7 +79,7 @@ impl AnsiBackend {
         Self { theme }
     }
 
-    /// Create a new ANSI backend with the default (Tokyo Night) theme.
+    /// Create a new ANSI backend with the default (One Dark Pro) theme.
     pub fn with_default_theme() -> Self {
         Self::new(DiffTheme::default())
     }
