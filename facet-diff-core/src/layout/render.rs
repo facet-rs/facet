@@ -281,8 +281,11 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                 write!(w, " ")?;
                 render_attr_deleted(layout, w, opts, flavor, attr.name, value)?;
                 // Trailing comma (muted)
-                opts.backend
-                    .write_styled(w, flavor.field_separator(), SemanticColor::Comment)?;
+                opts.backend.write_styled(
+                    w,
+                    flavor.trailing_separator(),
+                    SemanticColor::Comment,
+                )?;
                 writeln!(w)?;
             }
         }
@@ -298,8 +301,11 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                 write!(w, " ")?;
                 render_attr_inserted(layout, w, opts, flavor, attr.name, value)?;
                 // Trailing comma (muted)
-                opts.backend
-                    .write_styled(w, flavor.field_separator(), SemanticColor::Comment)?;
+                opts.backend.write_styled(
+                    w,
+                    flavor.trailing_separator(),
+                    SemanticColor::Comment,
+                )?;
                 writeln!(w)?;
             }
         }
@@ -321,7 +327,7 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
             }
             // Trailing comma (muted)
             opts.backend
-                .write_styled(w, flavor.field_separator(), SemanticColor::Comment)?;
+                .write_styled(w, flavor.trailing_separator(), SemanticColor::Comment)?;
             writeln!(w)?;
         }
 
@@ -345,7 +351,7 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
             }
             // Trailing comma (muted)
             opts.backend
-                .write_styled(w, flavor.field_separator(), SemanticColor::Comment)?;
+                .write_styled(w, flavor.trailing_separator(), SemanticColor::Comment)?;
             writeln!(w)?;
         }
         // Close the opening (e.g., ">" for XML) - only if non-empty
