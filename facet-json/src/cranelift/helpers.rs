@@ -1288,6 +1288,24 @@ pub unsafe extern "C" fn jitson_parse_nested_struct(
 /// - option_shape: pointer to the Shape of `Option<T>` (used to get vtable and inner type)
 /// - inner_deser_fn: optional function pointer to deserialize inner value (can be null for fallback)
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn jitson_init_option_none(
+    out: *mut u8,
+    option_shape: *const facet_core::Shape,
+) {
+    unsafe {
+        use facet_core::{Def, PtrUninit};
+
+        let shape = &*option_shape;
+        let Def::Option(option_def) = shape.def else {
+            return;
+        };
+
+        let vtable = option_def.vtable;
+        let out_uninit = PtrUninit::new(out);
+        (vtable.init_none)(out_uninit);
+    }
+}
+
 pub unsafe extern "C" fn jitson_parse_option(
     input: *const u8,
     len: usize,
@@ -1690,5 +1708,9 @@ pub fn register_helpers(builder: &mut cranelift_jit::JITBuilder) {
         jitson_parse_nested_struct as *const u8,
     );
     builder.symbol("jitson_parse_option", jitson_parse_option as *const u8);
+    builder.symbol(
+        "jitson_init_option_none",
+        jitson_init_option_none as *const u8,
+    );
     builder.symbol("jitson_skip_value", jitson_skip_value as *const u8);
 }
