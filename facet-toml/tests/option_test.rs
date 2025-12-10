@@ -53,3 +53,20 @@ opt3 = "world"
     assert_eq!(value.opt2, None);
     assert_eq!(value.opt3, Some("world".to_string()));
 }
+
+#[test]
+fn test_missing_optional_when_required_present() {
+    #[derive(Debug, PartialEq, Clone, Facet)]
+    struct Mixed {
+        required: String,
+        optional: Option<u32>,
+    }
+
+    let toml_str = r#"
+required = "hello"
+"#;
+
+    let result: Mixed = facet_toml::from_str(toml_str).unwrap();
+    assert_eq!(result.required, "hello");
+    assert_eq!(result.optional, None);
+}

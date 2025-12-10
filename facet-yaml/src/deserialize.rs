@@ -1114,9 +1114,14 @@ impl<'input> YamlDeserializer<'input> {
 
             let field_has_default = field.has_default();
             let field_type_has_default = field.shape().is(Characteristic::Default);
+            let field_is_option = matches!(field.shape().def, Def::Option(_));
 
             if field_has_default || (struct_has_default && field_type_has_default) {
                 partial = partial.set_nth_field_to_default(idx)?;
+            } else if field_is_option {
+                partial = partial.begin_field(field.name)?;
+                partial = partial.set_default()?;
+                partial = partial.end()?;
             }
         }
 

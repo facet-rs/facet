@@ -61,4 +61,18 @@ facet_json::test_modes! {
             Some(42)
         );
     }
+
+    #[test]
+    fn test_missing_option_defaults_to_none() {
+        #[derive(Facet, Debug, PartialEq)]
+        struct Options {
+            present: i32,
+            missing_name: Option<String>,
+        }
+
+        let json = r#"{"present": 7}"#;
+        let test_struct: Options = deserialize(json).unwrap();
+        assert_eq!(test_struct.present, 7);
+        assert_eq!(test_struct.missing_name, None);
+    }
 }
