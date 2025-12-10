@@ -390,12 +390,12 @@ impl<'input> Context<'input> {
                     let value = self.args[self.index];
 
                     // Check if this is an enum field without the subcommand attribute
-                    if let Type::User(UserType::Enum(_)) = fields[chosen_field_index].shape().ty {
-                        if !fields[chosen_field_index].has_attr(Some("args"), "subcommand") {
-                            return Err(ArgsErrorKind::EnumWithoutSubcommandAttribute {
-                                field: &fields[chosen_field_index],
-                            });
-                        }
+                    if let Type::User(UserType::Enum(_)) = fields[chosen_field_index].shape().ty
+                        && !fields[chosen_field_index].has_attr(Some("args"), "subcommand")
+                    {
+                        return Err(ArgsErrorKind::EnumWithoutSubcommandAttribute {
+                            field: &fields[chosen_field_index],
+                        });
                     }
 
                     p = self.handle_value(p, value)?;
@@ -544,12 +544,12 @@ impl<'input> Context<'input> {
                     let value = self.args[self.index];
 
                     // Check if this is an enum field without the subcommand attribute
-                    if let Type::User(UserType::Enum(_)) = fields[chosen_field_index].shape().ty {
-                        if !fields[chosen_field_index].has_attr(Some("args"), "subcommand") {
-                            return Err(ArgsErrorKind::EnumWithoutSubcommandAttribute {
-                                field: &fields[chosen_field_index],
-                            });
-                        }
+                    if let Type::User(UserType::Enum(_)) = fields[chosen_field_index].shape().ty
+                        && !fields[chosen_field_index].has_attr(Some("args"), "subcommand")
+                    {
+                        return Err(ArgsErrorKind::EnumWithoutSubcommandAttribute {
+                            field: &fields[chosen_field_index],
+                        });
                     }
 
                     p = self.handle_value(p, value)?;
