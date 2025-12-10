@@ -2,36 +2,36 @@
 source: facet-diff/tests/diff_snapshots.rs
 expression: "format_diff_comparison(&a, &b)"
 ---
-╭Before──────────────────╮
-│Vec<User> [             │
-│  User {                │
-│    name: "Alice",      │
-│    age: 30,            │
-│  },                    │
-│  User {                │
-│    name: "Bob",        │
-│    age: 25,            │
-│  },                    │
-│]                       │
-╰────────────────────────╯
-╭After───────────────────╮
-│Vec<User> [             │
-│  User {                │
-│    name: "Alice",      │
-│    age: 31,            │
-│  },                    │
-│  User {                │
-│    name: "Bob",        │
-│    age: 25,            │
-│  },                    │
-│]                       │
-╰────────────────────────╯
-╔Diff════════════════════╗
-║[                       ║
-║  {                     ║
-║    .. 1 unchanged field║
-║    age: 30 → 31        ║
-║  }                     ║
-║  (structurally equal)  ║
-║]                       ║
-╚════════════════════════╝
+╭Before──────────────────────╮
+│Vec<User> [                 │
+│  User {                    │
+│    name: "Alice",          │
+│    age: 30,                │
+│  },                        │
+│  User {                    │
+│    name: "Bob",            │
+│    age: 25,                │
+│  },                        │
+│]                           │
+╰────────────────────────────╯
+╭After───────────────────────╮
+│Vec<User> [                 │
+│  User {                    │
+│    name: "Alice",          │
+│    age: 31,                │
+│  },                        │
+│  User {                    │
+│    name: "Bob",            │
+│    age: 25,                │
+│  },                        │
+│]                           │
+╰────────────────────────────╯
+╔Diff════════════════════════╗
+║[                           ║
+║    {                       ║
+║        .. 1 unchanged field║
+║        age: 30 → 31        ║
+║    }                       ║
+║    (structurally equal)    ║
+║]                           ║
+╚════════════════════════════╝

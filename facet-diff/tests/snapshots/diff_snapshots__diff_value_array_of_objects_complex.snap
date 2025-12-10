@@ -2,58 +2,58 @@
 source: facet-diff/tests/diff_snapshots.rs
 expression: "format_diff_comparison(&a, &b)"
 ---
-╭Before─────────────────────────╮
-│[                              │
-│  {                            │
-│    id: 1,                     │
-│    name: "Alice",             │
-│    active: true,              │
-│  },                           │
-│  {                            │
-│    id: 2,                     │
-│    name: "Bob",               │
-│    active: true,              │
-│  },                           │
-│  {                            │
-│    id: 3,                     │
-│    name: "Charlie",           │
-│    active: false,             │
-│  },                           │
-│]                              │
-╰───────────────────────────────╯
-╭After──────────────────────────╮
-│[                              │
-│  {                            │
-│    id: 1,                     │
-│    name: "Alicia",            │
-│    active: true,              │
-│  },                           │
-│  {                            │
-│    id: 2,                     │
-│    name: "Bob",               │
-│    active: false,             │
-│  },                           │
-│  {                            │
-│    id: 4,                     │
-│    name: "Diana",             │
-│    active: true,              │
-│  },                           │
-│]                              │
-╰───────────────────────────────╯
-╔Diff═══════════════════════════╗
-║[                              ║
-║  {                            ║
-║    .. 2 unchanged fields      ║
-║    name: "Alice" → "Alicia"   ║
-║  }                            ║
-║  {                            ║
-║    .. 2 unchanged fields      ║
-║    active: true → false       ║
-║  }                            ║
-║  {                            ║
-║    active: false → true       ║
-║    id: 3 → 4                  ║
-║    name: "Charlie" → "Diana"  ║
-║  }                            ║
-║]                              ║
-╚═══════════════════════════════╝
+╭Before─────────────────────────────╮
+│[                                  │
+│  {                                │
+│    id: 1,                         │
+│    name: "Alice",                 │
+│    active: true,                  │
+│  },                               │
+│  {                                │
+│    id: 2,                         │
+│    name: "Bob",                   │
+│    active: true,                  │
+│  },                               │
+│  {                                │
+│    id: 3,                         │
+│    name: "Charlie",               │
+│    active: false,                 │
+│  },                               │
+│]                                  │
+╰───────────────────────────────────╯
+╭After──────────────────────────────╮
+│[                                  │
+│  {                                │
+│    id: 1,                         │
+│    name: "Alicia",                │
+│    active: true,                  │
+│  },                               │
+│  {                                │
+│    id: 2,                         │
+│    name: "Bob",                   │
+│    active: false,                 │
+│  },                               │
+│  {                                │
+│    id: 4,                         │
+│    name: "Diana",                 │
+│    active: true,                  │
+│  },                               │
+│]                                  │
+╰───────────────────────────────────╯
+╔Diff═══════════════════════════════╗
+║[                                  ║
+║    {                              ║
+║        .. 2 unchanged fields      ║
+║        name: "Alice" → "Alicia"   ║
+║    }                              ║
+║    {                              ║
+║        .. 2 unchanged fields      ║
+║        active: true → false       ║
+║    }                              ║
+║    {                              ║
+║        active: false → true       ║
+║        id: 3 → 4                  ║
+║        name: "Charlie" → "Diana"  ║
+║    }                              ║
+║]                                  ║
+╚═══════════════════════════════════╝

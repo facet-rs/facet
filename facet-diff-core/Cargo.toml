@@ -16,6 +16,7 @@ facet-pretty = { path = "../facet-pretty" }
 facet-reflect = { path = "../facet-reflect" }
 indextree = "4"
 owo-colors = "4"
+palette = { version = "0.7", default-features = false, features = ["std"] }
 tracing = "0.1"
 unicode-width = "0.2"
 
