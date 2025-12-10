@@ -80,6 +80,7 @@ fn test_xml_attributes_roundtrip() {
 
 #[test]
 fn test_args_attributes_roundtrip() {
+    facet_testhelpers::setup();
     let shape = ArgsAttributes::SHAPE;
     let shape_like: ShapeLike = shape.into();
     let json = facet_json::to_string(&shape_like);

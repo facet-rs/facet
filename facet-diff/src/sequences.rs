@@ -2,6 +2,7 @@
 
 use facet_diff_core::Updates;
 use facet_reflect::Peek;
+use log::trace;
 
 use crate::diff::{diff_closeness, diff_new_peek};
 
@@ -15,9 +16,12 @@ pub fn diff<'mem, 'facet>(
     a: Vec<Peek<'mem, 'facet>>,
     b: Vec<Peek<'mem, 'facet>>,
 ) -> Updates<'mem, 'facet> {
+    // trace!("sequences::diff called with a.len()={}, b.len()={}", a.len(), b.len());
+
     // For very large sequences, fall back to simple comparison to avoid
     // exponential blowup in flatten_with
     if a.len() > MAX_SEQUENCE_SIZE || b.len() > MAX_SEQUENCE_SIZE {
+        trace!("Using simple_diff fallback (size limit exceeded)");
         return simple_diff(a, b);
     }
     // Moving l-t-r represents removing an element from a
@@ -84,6 +88,11 @@ fn simple_diff<'mem, 'facet>(
     a: Vec<Peek<'mem, 'facet>>,
     b: Vec<Peek<'mem, 'facet>>,
 ) -> Updates<'mem, 'facet> {
+    trace!(
+        "simple_diff: creating replace group with {} removals and {} additions",
+        a.len(),
+        b.len()
+    );
     let mut updates = Updates::default();
 
     // Remove all from a

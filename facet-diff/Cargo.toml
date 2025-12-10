@@ -22,6 +22,7 @@ facet-diff-core = { path = "../facet-diff-core" }
 facet-pretty = { path = "../facet-pretty" }
 facet-reflect = { path = "../facet-reflect" }
 owo-colors = "4"
+log = "0.4"
 
 [dev-dependencies]
 boxen = "0.1"

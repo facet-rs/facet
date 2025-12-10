@@ -23,3 +23,4 @@ facet-kdl = { path = "../facet-kdl", version = "0.31.0" }
 facet-assert = { path = "../facet-assert", version = "0.31.0" }
 facet-xml = { path = "../facet-xml", version = "0.31.0" }
 facet-args = { path = "../facet-args", version = "0.31.0" }
+facet-testhelpers = { path = "../facet-testhelpers" }

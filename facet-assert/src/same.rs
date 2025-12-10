@@ -2,7 +2,7 @@
 
 use confusables::Confusable;
 use facet_core::Facet;
-use facet_diff::FacetDiff;
+use facet_diff::{FacetDiff, diff_new_peek};
 use facet_diff_core::{Diff, Path, PathSegment as DiffPathSegment};
 use facet_pretty::PrettyPrinter;
 use facet_reflect::{Peek, ScalarType};
@@ -328,6 +328,13 @@ impl DiffConverter {
             for i in 0..replace_group.removals.len() {
                 let from = replace_group.removals[i];
                 let to = replace_group.additions[i];
+
+                // First check if values are actually equal
+                let diff = diff_new_peek(from, to);
+                if diff.is_equal() {
+                    *index += 1;
+                    continue;
+                }
 
                 // Check if they're floats within tolerance
                 let is_equal_within_tolerance = if self.options.float_tolerance.is_some()
