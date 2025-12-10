@@ -9,7 +9,14 @@
 
 mod same;
 
-pub use same::{SameOptions, Sameness, check_same, check_same_with};
+pub use facet_diff_core::layout::{
+    AnsiBackend, BuildOptions, ColorBackend, DiffFlavor, JsonFlavor, PlainBackend, RenderOptions,
+    RustFlavor, XmlFlavor,
+};
+pub use same::{
+    DiffReport, SameOptions, SameReport, Sameness, check_same, check_same_report, check_same_with,
+    check_same_with_report,
+};
 
 /// Asserts that two values are structurally the same.
 ///
@@ -228,6 +235,32 @@ mod tests {
                 matches!(other, Sameness::Same)
             ),
         }
+    }
+
+    #[test]
+    fn diff_report_renders_multiple_flavors() {
+        let a = Person {
+            name: "Alice".into(),
+            age: 30,
+        };
+        let b = Person {
+            name: "Bob".into(),
+            age: 45,
+        };
+
+        let report = match check_same_report(&a, &b) {
+            SameReport::Different(report) => report,
+            _ => panic!("expected Different"),
+        };
+
+        let rust = report.render_plain_rust();
+        assert!(rust.contains("Person"));
+
+        let json = report.render_plain_json();
+        assert!(json.contains("\"name\""));
+
+        let xml = report.render_plain_xml();
+        assert!(xml.contains("<Person"));
     }
 
     #[test]

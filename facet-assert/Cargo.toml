@@ -15,6 +15,7 @@ ci = [] # CI feature
 [dependencies]
 facet-core = { path = "../facet-core" }
 facet-diff = { path = "../facet-diff" }
+facet-diff-core = { path = "../facet-diff-core" }
 facet-reflect = { path = "../facet-reflect" }
 
 [dev-dependencies]

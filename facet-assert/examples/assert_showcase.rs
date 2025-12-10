@@ -5,7 +5,7 @@
 //! Run with: cargo run -p facet-assert --example assert_showcase
 
 use facet::Facet;
-use facet_assert::{Sameness, assert_same, check_same};
+use facet_assert::{SameReport, assert_same, check_same_report};
 use facet_showcase::{Language, OutputMode, ShowcaseRunner, ansi_to_html};
 use owo_colors::OwoColorize;
 
@@ -161,18 +161,28 @@ fn scenario_diff_output(runner: &mut ShowcaseRunner, mode: OutputMode) {
         tags: vec!["prod".into()],
     };
 
-    let diff = match check_same(&config_a, &config_b) {
-        Sameness::Different(d) => d,
+    let report = match check_same_report(&config_a, &config_b) {
+        SameReport::Different(report) => report,
         _ => unreachable!(),
     };
+
+    let rust_diff = report.legacy_string();
+    let json_diff = report.render_ansi_json();
+    let xml_diff = report.render_ansi_xml();
+
+    let outputs = [
+        ("Rust Diff Output", rust_diff.as_str()),
+        ("JSON Diff Output", json_diff.as_str()),
+        ("XML Diff Output", xml_diff.as_str()),
+    ];
 
     print_diff_scenario(
         runner,
         mode,
         "Structural Diff",
         "When values differ, you get a precise structural diff showing exactly which fields changed \
-         and at what path — not just a wall of red/green text.",
-        &diff,
+         and at what path — then render it as Rust, JSON, or XML for whichever toolchain you need.",
+        &outputs,
     );
 }
 
@@ -180,10 +190,13 @@ fn scenario_vector_diff(runner: &mut ShowcaseRunner, mode: OutputMode) {
     let a = vec![1, 2, 3, 4, 5];
     let b = vec![1, 2, 99, 4];
 
-    let diff = match check_same(&a, &b) {
-        Sameness::Different(d) => d,
+    let report = match check_same_report(&a, &b) {
+        SameReport::Different(report) => report,
         _ => unreachable!(),
     };
+
+    let diff = report.legacy_string();
+    let outputs = [("Diff Output", diff.as_str())];
 
     print_diff_scenario(
         runner,
@@ -191,7 +204,7 @@ fn scenario_vector_diff(runner: &mut ShowcaseRunner, mode: OutputMode) {
         "Vector Differences",
         "Vector comparisons show exactly which indices differ, which elements were added, \
          and which were removed.",
-        &diff,
+        &outputs,
     );
 }
 
@@ -200,7 +213,7 @@ fn print_diff_scenario(
     mode: OutputMode,
     name: &str,
     description: &str,
-    diff: &str,
+    outputs: &[(&str, &str)],
 ) {
     match mode {
         OutputMode::Terminal => {
@@ -210,11 +223,13 @@ fn print_diff_scenario(
             println!("{}", "─".repeat(78).dimmed());
             println!("{}", description.dimmed());
             println!("{}", "═".repeat(78).dimmed());
-            println!();
-            println!("{}", "Diff Output:".bold().yellow());
-            println!("{}", "─".repeat(60).dimmed());
-            print!("{diff}");
-            println!("{}", "─".repeat(60).dimmed());
+            for (label, diff) in outputs {
+                println!();
+                println!("{}", format!("{label}:").bold().yellow());
+                println!("{}", "─".repeat(60).dimmed());
+                print!("{diff}");
+                println!("{}", "─".repeat(60).dimmed());
+            }
         }
         OutputMode::Markdown => {
             println!();
@@ -222,10 +237,12 @@ fn print_diff_scenario(
             println!();
             println!("<section class=\"scenario\">");
             println!("<p class=\"description\">{description}</p>");
-            println!("<div class=\"diff-output\">");
-            println!("<h4>Diff Output</h4>");
-            println!("<pre><code>{}</code></pre>", ansi_to_html(diff));
-            println!("</div>");
+            for (label, diff) in outputs {
+                println!("<div class=\"diff-output\">");
+                println!("<h4>{label}</h4>");
+                println!("<pre><code>{}</code></pre>", ansi_to_html(diff));
+                println!("</div>");
+            }
             println!("</section>");
         }
     }

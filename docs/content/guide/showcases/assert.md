@@ -32,10 +32,7 @@ title = "Assertions"
   <span style="color:rgb(115,218,202)">host</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">localhost</span>"<span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">port</span><span style="opacity:0.7">: </span><span style="color:rgb(224,186,81)">8080</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">tags</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
-    "<span style="color:rgb(158,206,106)">prod</span>"<span style="opacity:0.7">,</span>
-    "<span style="color:rgb(158,206,106)">api</span>"<span style="opacity:0.7">,</span>
-  <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">tags</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>"<span style="color:rgb(158,206,106)">prod</span>"<span style="opacity:0.7">,</span> "<span style="color:rgb(158,206,106)">api</span>"<span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -65,9 +62,7 @@ title = "Assertions"
   <span style="color:rgb(115,218,202)">host</span><span style="opacity:0.7">: </span>"<span style="color:rgb(158,206,106)">localhost</span>"<span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">port</span><span style="opacity:0.7">: </span><span style="color:rgb(224,186,81)">8080</span><span style="opacity:0.7">,</span>
   <span style="color:rgb(115,218,202)">debug</span><span style="opacity:0.7">: </span><span style="color:rgb(81,224,114)">true</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(115,218,202)">tags</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>
-    "<span style="color:rgb(158,206,106)">prod</span>"<span style="opacity:0.7">,</span>
-  <span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
+  <span style="color:rgb(115,218,202)">tags</span><span style="opacity:0.7">: </span><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;String&gt;</span><span style="opacity:0.7"> [</span>"<span style="color:rgb(158,206,106)">prod</span>"<span style="opacity:0.7">]</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">}</span></code></pre>
 </div>
 </section>
@@ -112,20 +107,37 @@ title = "Assertions"
 ## Structural Diff
 
 <section class="scenario">
-<p class="description">When values differ, you get a precise structural diff showing exactly which fields changed and at what path — not just a wall of red/green text.</p>
+<p class="description">When values differ, you get a precise structural diff showing exactly which fields changed and at what path — then render it as Rust, JSON, or XML for whichever toolchain you need.</p>
 <div class="diff-output">
-<h4>Diff Output</h4>
-<pre><code><span style="font-weight:bold">.host</span>:
-  <span style="color:#e06c75">- "localhost"</span>
-  <span style="color:#98c379">+ "prod.example.com"</span>
-<span style="font-weight:bold">.port</span>:
-  <span style="color:#e06c75">- 8080</span>
-  <span style="color:#98c379">+ 443</span>
-<span style="font-weight:bold">.debug</span>:
-  <span style="color:#e06c75">- true</span>
-  <span style="color:#98c379">+ false</span>
-<span style="font-weight:bold">.tags[1]</span> (only in left):
-  <span style="color:#e06c75">- "api"</span>
+<h4>Rust Diff Output</h4>
+<pre><code><span style="color:rgb(86,95,137)">{</span>
+    <span style="color:rgb(115,218,202)">debug</span><span style="color:rgb(86,95,137)">:</span> <span style="color:rgb(247,118,142)">true</span> → <span style="color:rgb(115,218,202)">false</span>
+    <span style="color:rgb(115,218,202)">host</span><span style="color:rgb(86,95,137)">:</span> <span style="color:rgb(247,118,142)">"localhost"</span> → <span style="color:rgb(115,218,202)">"prod.example.com"</span>
+    <span style="color:rgb(115,218,202)">port</span><span style="color:rgb(86,95,137)">:</span> <span style="color:rgb(247,118,142)">8080</span> → <span style="color:rgb(115,218,202)">443</span>
+    <span style="color:rgb(115,218,202)">tags</span><span style="color:rgb(86,95,137)">:</span> <span style="color:rgb(86,95,137)">[</span>
+        <span style="color:rgb(86,95,137)">.. 1 unchanged item</span>
+        <span style="color:rgb(247,118,142)">- "api"</span>
+    <span style="color:rgb(86,95,137)">]</span>
+<span style="color:rgb(86,95,137)">}</span></code></pre>
+</div>
+<div class="diff-output">
+<h4>JSON Diff Output</h4>
+<pre><code>    <span style="color:rgb(220,220,220)">{</span> <span style="color:rgb(100,100,100)">/* Config */</span>
+      <span style="color:rgb(229,192,123);opacity:0.7">←</span> <span style="color:rgb(255,234,162);opacity:0.7">"debug": </span><span style="color:rgb(255,234,162);opacity:0.7">true</span><span style="color:rgb(224,209,189);opacity:0.7"></span> , <span style="color:rgb(255,234,162);opacity:0.7">"host": </span><span style="color:rgb(229,192,123);opacity:0.7">"localhost"</span><span style="color:rgb(224,209,189);opacity:0.7"></span>       , <span style="color:rgb(255,234,162);opacity:0.7">"port": </span><span style="color:rgb(255,234,162);opacity:0.7">8080</span><span style="color:rgb(224,209,189);opacity:0.7"></span>
+      <span style="color:rgb(97,175,239);opacity:0.7">→</span> <span style="color:rgb(142,216,255);opacity:0.7">"debug": </span><span style="color:rgb(142,216,255);opacity:0.7">false</span><span style="color:rgb(184,204,228);opacity:0.7"></span>, <span style="color:rgb(142,216,255);opacity:0.7">"host": </span><span style="color:rgb(97,175,239);opacity:0.7">"prod.example.com"</span><span style="color:rgb(184,204,228);opacity:0.7"></span>, <span style="color:rgb(142,216,255);opacity:0.7">"port": </span><span style="color:rgb(142,216,255);opacity:0.7">443</span><span style="color:rgb(184,204,228);opacity:0.7"></span>
+    <span style="color:rgb(220,220,220)"></span>
+        <span style="color:rgb(220,220,220)">"tags": [</span><span style="color:rgb(220,220,220)">]</span><span style="color:rgb(100,100,100)">,</span>
+    <span style="color:rgb(220,220,220)">}</span>
+</code></pre>
+</div>
+<div class="diff-output">
+<h4>XML Diff Output</h4>
+<pre><code>    <span style="color:rgb(220,220,220)">&lt;Config</span>
+      <span style="color:rgb(229,192,123);opacity:0.7">←</span> <span style="color:rgb(255,234,162);opacity:0.7">debug="</span><span style="color:rgb(255,234,162);opacity:0.7">true</span><span style="color:rgb(224,209,189);opacity:0.7">"</span>  <span style="color:rgb(255,234,162);opacity:0.7">host="</span><span style="color:rgb(229,192,123);opacity:0.7">localhost</span><span style="color:rgb(224,209,189);opacity:0.7">"</span>        <span style="color:rgb(255,234,162);opacity:0.7">port="</span><span style="color:rgb(255,234,162);opacity:0.7">8080</span><span style="color:rgb(224,209,189);opacity:0.7">"</span>
+      <span style="color:rgb(97,175,239);opacity:0.7">→</span> <span style="color:rgb(142,216,255);opacity:0.7">debug="</span><span style="color:rgb(142,216,255);opacity:0.7">false</span><span style="color:rgb(184,204,228);opacity:0.7">"</span> <span style="color:rgb(142,216,255);opacity:0.7">host="</span><span style="color:rgb(97,175,239);opacity:0.7">prod.example.com</span><span style="color:rgb(184,204,228);opacity:0.7">"</span> <span style="color:rgb(142,216,255);opacity:0.7">port="</span><span style="color:rgb(142,216,255);opacity:0.7">443</span><span style="color:rgb(184,204,228);opacity:0.7">"</span>
+    <span style="color:rgb(220,220,220)">&gt;</span>
+        <span style="color:rgb(220,220,220)">&lt;tags&gt;</span><span style="color:rgb(220,220,220)">&lt;/tags&gt;</span><span style="color:rgb(100,100,100)"></span>
+    <span style="color:rgb(220,220,220)">&lt;/Config&gt;</span>
 </code></pre>
 </div>
 </section>
@@ -136,12 +148,12 @@ title = "Assertions"
 <p class="description">Vector comparisons show exactly which indices differ, which elements were added, and which were removed.</p>
 <div class="diff-output">
 <h4>Diff Output</h4>
-<pre><code><span style="font-weight:bold">[2]</span>:
-  <span style="color:#e06c75">- 3</span>
-  <span style="color:#98c379">+ 99</span>
-<span style="font-weight:bold">[4]</span> (only in left):
-  <span style="color:#e06c75">- 5</span>
-</code></pre>
+<pre><code><span style="color:rgb(86,95,137)">[</span>
+    <span style="color:rgb(86,95,137)">.. 2 unchanged items</span>
+    <span style="color:rgb(247,118,142)">3</span> → <span style="color:rgb(115,218,202)">99</span>
+    <span style="color:rgb(86,95,137)">.. 1 unchanged item</span>
+    <span style="color:rgb(247,118,142)">- 5</span>
+<span style="color:rgb(86,95,137)">]</span></code></pre>
 </div>
 </section>
 

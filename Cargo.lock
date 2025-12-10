@@ -1152,6 +1152,7 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-diff",
+ "facet-diff-core",
  "facet-reflect",
  "facet-showcase",
  "owo-colors",
