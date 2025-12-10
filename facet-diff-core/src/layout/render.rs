@@ -301,8 +301,27 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
             opts.backend.write_styled(w, &close, tag_color)?;
         }
         writeln!(w)?;
+    } else if has_children && !attrs.is_empty() {
+        // Unchanged attributes with children: put attrs on their own lines
+        writeln!(w)?;
+        for attr in attrs.iter() {
+            write_indent(w, depth + 1, opts)?;
+            if let AttrStatus::Unchanged { value } = &attr.status {
+                render_attr_unchanged(layout, w, opts, flavor, attr.name, value)?;
+            }
+            // Always add separator (comma) after each attr when there are children
+            write!(w, "{}", flavor.field_separator())?;
+            writeln!(w)?;
+        }
+        // Close the opening (e.g., ">" for XML) - only if non-empty
+        let open_close = flavor.struct_open_close();
+        if !open_close.is_empty() {
+            write_indent(w, depth, opts)?;
+            opts.backend.write_styled(w, open_close, tag_color)?;
+            writeln!(w)?;
+        }
     } else {
-        // Inline attributes (no changes)
+        // Inline attributes (no changes, no children) or no attrs
         for (i, attr) in attrs.iter().enumerate() {
             if i > 0 {
                 write!(w, "{}", flavor.field_separator())?;
