@@ -1802,11 +1802,15 @@ name = "rapace-transport-websocket"
 version = "0.1.0"
 dependencies = [
  "futures",
+ "gloo-timers",
+ "js-sys",
  "parking_lot",
  "rapace-core",
  "rapace-testkit",
  "tokio",
  "tokio-tungstenite",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -1815,9 +1819,9 @@ version = "0.1.0"
 dependencies = [
  "facet",
  "facet-postcard",
- "gloo-timers",
  "js-sys",
  "rapace-core",
+ "rapace-transport-websocket",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

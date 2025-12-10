@@ -8,10 +8,18 @@ description = "WebSocket transport for rapace"
 
 [dependencies]
 rapace-core.workspace = true
-tokio.workspace = true
 futures.workspace = true
-tokio-tungstenite.workspace = true
 parking_lot.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen.workspace = true
+js-sys.workspace = true
+web-sys.workspace = true
+gloo-timers.workspace = true
 
 [dev-dependencies]
 rapace-testkit.workspace = true
