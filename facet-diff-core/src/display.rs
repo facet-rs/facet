@@ -1,13 +1,13 @@
+//! Display implementations for diff types.
+
 use std::fmt::{Display, Write};
 
 use confusables::Confusable;
 use facet_pretty::{PrettyPrinter, tokyo_night};
+use facet_reflect::Peek;
 use owo_colors::OwoColorize;
 
-use crate::{
-    diff::{Diff, Value},
-    sequences::{ReplaceGroup, Updates, UpdatesGroup},
-};
+use crate::{Diff, ReplaceGroup, Updates, UpdatesGroup, Value};
 
 /// Format text for deletions
 fn deleted(s: &str) -> String {
@@ -73,6 +73,12 @@ impl<'a, 'b> Write for PadAdapter<'a, 'b> {
         self.on_newline = c == '\n';
         self.fmt.write_char(c)
     }
+}
+
+/// Simple equality check for display purposes.
+/// This is used when rendering ReplaceGroup to check if values are equal.
+fn peek_eq<'mem, 'facet>(a: Peek<'mem, 'facet>, b: Peek<'mem, 'facet>) -> bool {
+    a.shape().id == b.shape().id && a.shape().is_partial_eq() && a == b
 }
 
 impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
@@ -236,12 +242,12 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
 
 impl<'mem, 'facet> Updates<'mem, 'facet> {
     /// Check if this is a single replace operation (useful for Option::Some)
-    fn is_single_replace(&self) -> bool {
+    pub fn is_single_replace(&self) -> bool {
         self.0.first.is_some() && self.0.values.is_empty() && self.0.last.is_none()
     }
 
     /// Check if there are no changes (everything is unchanged)
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.0.first.is_none() && self.0.values.is_empty()
     }
 }
@@ -281,26 +287,23 @@ impl<'mem, 'facet> Display for ReplaceGroup<'mem, 'facet> {
             .with_colors(false)
             .with_minimal_option_names(true);
 
-        // If it's a 1-to-1 replacement, check for nested diff or equality
+        // If it's a 1-to-1 replacement, check for equality
         if self.removals.len() == 1 && self.additions.len() == 1 {
             let from = self.removals[0];
             let to = self.additions[0];
-            let diff = Diff::new_peek(from, to);
 
-            match &diff {
-                Diff::Equal { .. } => {
-                    // Values are equal, show muted
-                    return writeln!(f, "{}", muted(&printer.format_peek(from)));
-                }
-                Diff::Replace { .. } => {
-                    // Simple value change, show inline: old → new
-                    return writeln!(f, "{diff}");
-                }
-                _ => {
-                    // Has nested structure, show the diff
-                    return writeln!(f, "{diff}");
-                }
+            if peek_eq(from, to) {
+                // Values are equal, show muted
+                return writeln!(f, "{}", muted(&printer.format_peek(from)));
             }
+
+            // Show value change inline: old → new
+            return writeln!(
+                f,
+                "{} → {}",
+                deleted(&printer.format_peek(from)),
+                inserted(&printer.format_peek(to))
+            );
         }
 
         // Otherwise show as - / + lines with consistent indentation

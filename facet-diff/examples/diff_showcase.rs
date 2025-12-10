@@ -8,7 +8,7 @@
 #![allow(dead_code)]
 
 use facet::Facet;
-use facet_diff::FacetDiff;
+use facet_diff::{FacetDiff, format_diff_default};
 
 // ============================================================================
 // Example types
@@ -161,7 +161,7 @@ fn showcase_struct_fields() {
     let diff = old.diff(&new);
 
     println!("Compact format:");
-    println!("{}\n", diff.format_default());
+    println!("{}\n", format_diff_default(&diff));
 
     println!("Tree format:");
     println!("{diff}");
@@ -197,14 +197,14 @@ fn showcase_nested_structures() {
     };
 
     let diff = old.diff(&new);
-    println!("{}", diff.format_default());
+    println!("{}", format_diff_default(&diff));
 }
 
 fn showcase_sequences() {
     println!("a) Single element change:");
     let old: Vec<i32> = vec![1, 2, 3, 4, 5];
     let new: Vec<i32> = vec![1, 2, 99, 4, 5];
-    println!("{}\n", old.diff(&new).format_default());
+    println!("{}\n", format_diff_default(&old.diff(&new)));
 
     println!("b) Insertions and deletions:");
     let old: Vec<i32> = vec![1, 2, 3];
@@ -225,12 +225,12 @@ fn showcase_enums() {
     let new = Status::Inactive {
         reason: "sick leave".into(),
     };
-    println!("{}\n", old.diff(&new).format_default());
+    println!("{}\n", format_diff_default(&old.diff(&new)));
 
     println!("b) Different variants:");
     let old = Status::Active;
     let new = Status::Pending { since: 42 };
-    println!("{}", old.diff(&new).format_default());
+    println!("{}", format_diff_default(&old.diff(&new)));
 }
 
 fn showcase_options() {
@@ -253,12 +253,12 @@ fn showcase_options() {
             notifications: true,
         },
     });
-    println!("{}\n", old.diff(&new).format_default());
+    println!("{}\n", format_diff_default(&old.diff(&new)));
 
     println!("b) None to Some:");
     let old: Option<i32> = None;
     let new: Option<i32> = Some(42);
-    println!("{}", old.diff(&new).format_default());
+    println!("{}", format_diff_default(&old.diff(&new)));
 }
 
 fn showcase_many_changes() {
@@ -267,7 +267,7 @@ fn showcase_many_changes() {
     for i in (0..30).step_by(2) {
         new[i] *= 100;
     }
-    println!("{}", old.diff(&new).format_default());
+    println!("{}", format_diff_default(&old.diff(&new)));
 }
 
 fn showcase_no_changes() {
@@ -280,58 +280,58 @@ fn showcase_no_changes() {
             notifications: true,
         },
     };
-    println!("{}", val.diff(&val.clone()).format_default());
+    println!("{}", format_diff_default(&val.diff(&val.clone())));
 }
 
 fn showcase_scalar_types() {
     println!("a) Integers:");
     let old: i32 = 42;
     let new: i32 = -42;
-    println!("  i32: {}", old.diff(&new).format_default());
+    println!("  i32: {}", format_diff_default(&old.diff(&new)));
 
     let old: i128 = i128::MIN;
     let new: i128 = i128::MAX;
-    println!("  i128 min→max: {}", old.diff(&new).format_default());
+    println!("  i128 min→max: {}", format_diff_default(&old.diff(&new)));
 
     let old: u64 = 0;
     let new: u64 = u64::MAX;
-    println!("  u64 0→max: {}", old.diff(&new).format_default());
+    println!("  u64 0→max: {}", format_diff_default(&old.diff(&new)));
 
     println!("\nb) Floats:");
     let old: f64 = std::f64::consts::PI;
     let new: f64 = std::f64::consts::E;
-    println!("  f64: {}", old.diff(&new).format_default());
+    println!("  f64: {}", format_diff_default(&old.diff(&new)));
 
     let old: f64 = f64::INFINITY;
     let new: f64 = f64::NEG_INFINITY;
-    println!("  f64 inf→-inf: {}", old.diff(&new).format_default());
+    println!("  f64 inf→-inf: {}", format_diff_default(&old.diff(&new)));
 
     let old: f64 = f64::NAN;
     let new: f64 = f64::NAN;
-    println!("  f64 NaN→NaN: {}", old.diff(&new).format_default());
+    println!("  f64 NaN→NaN: {}", format_diff_default(&old.diff(&new)));
 
     println!("\nc) Booleans:");
     let old: bool = true;
     let new: bool = false;
-    println!("  bool: {}", old.diff(&new).format_default());
+    println!("  bool: {}", format_diff_default(&old.diff(&new)));
 
     println!("\nd) Characters:");
     let old: char = 'A';
     let new: char = 'Z';
-    println!("  char: {}", old.diff(&new).format_default());
+    println!("  char: {}", format_diff_default(&old.diff(&new)));
 
     let old: char = '🦀';
     let new: char = '🐍';
-    println!("  emoji: {}", old.diff(&new).format_default());
+    println!("  emoji: {}", format_diff_default(&old.diff(&new)));
 
     println!("\ne) Strings:");
     let old: &str = "hello";
     let new: &str = "world";
-    println!("  &str: {}", old.diff(&new).format_default());
+    println!("  &str: {}", format_diff_default(&old.diff(&new)));
 
     let old: String = "Hello 世界".into();
     let new: String = "Hello 🌍".into();
-    println!("  String unicode: {}", old.diff(&new).format_default());
+    println!("  String unicode: {}", format_diff_default(&old.diff(&new)));
 }
 
 fn showcase_confusables() {
@@ -391,7 +391,7 @@ fn showcase_byte_slices() {
     println!("\nc) Vec<u8>:");
     let old: Vec<u8> = vec![1, 2, 3, 4, 5];
     let new: Vec<u8> = vec![1, 2, 99, 4, 5];
-    println!("  {}", old.diff(&new).format_default());
+    println!("  {}", format_diff_default(&old.diff(&new)));
 }
 
 fn showcase_deep_tree() {
@@ -428,17 +428,17 @@ fn showcase_deep_tree() {
     println!("a) Change at deepest level (level 6):");
     let old = make_deep(42, "original", 10, true, "config", 1, "root");
     let new = make_deep(999, "modified", 10, true, "config", 1, "root");
-    println!("{}", old.diff(&new).format_default());
+    println!("{}", format_diff_default(&old.diff(&new)));
 
     println!("\nb) Changes at multiple levels (2, 4, 6):");
     let old = make_deep(42, "tag", 10, true, "config", 1, "root");
     let new = make_deep(100, "tag", 10, false, "config", 5, "root");
-    println!("{}", old.diff(&new).format_default());
+    println!("{}", format_diff_default(&old.diff(&new)));
 
     println!("\nc) Changes at every level:");
     let old = make_deep(1, "a", 10, true, "old", 1, "label-old");
     let new = make_deep(2, "b", 20, false, "new", 2, "label-new");
-    println!("{}", old.diff(&new).format_default());
+    println!("{}", format_diff_default(&old.diff(&new)));
 
     println!("\nd) Tree format for deep change:");
     let old = make_deep(42, "deep", 10, true, "config", 1, "root");
@@ -503,7 +503,7 @@ fn showcase_wide_tree() {
         "a", "b", "c", "d", "e", 1, 2, 3, 4, 5, true, true, true, true, true, 100, 200, 999, 400,
         500,
     );
-    println!("{}", old.diff(&new).format_default());
+    println!("{}", format_diff_default(&old.diff(&new)));
 
     println!("\nb) Scattered changes (fields 2, 8, 14, 19):");
     let old = make_wide(
@@ -514,7 +514,7 @@ fn showcase_wide_tree() {
         "a", "CHANGED", "c", "d", "e", 1, 2, 999, 4, 5, true, true, true, false, true, 100, 200,
         300, 888, 500,
     );
-    println!("{}", old.diff(&new).format_default());
+    println!("{}", format_diff_default(&old.diff(&new)));
 
     println!("\nc) Many changes (exceeds truncation limit):");
     let old = make_wide(
@@ -525,7 +525,7 @@ fn showcase_wide_tree() {
         "A", "B", "C", "D", "E", 10, 20, 30, 40, 50, false, false, false, false, false, 1000, 2000,
         3000, 4000, 5000,
     );
-    println!("{}", old.diff(&new).format_default());
+    println!("{}", format_diff_default(&old.diff(&new)));
 
     println!("\nd) Tree format with few changes:");
     let old = make_wide(

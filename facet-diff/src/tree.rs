@@ -9,6 +9,7 @@ use std::hash::DefaultHasher;
 
 use cinereus::{EditOp as CinereusEditOp, MatchingConfig, NodeData, Tree, diff_trees};
 use facet_core::{Def, StructKind, Type, UserType};
+use facet_diff_core::{Path, PathSegment};
 use facet_reflect::{HasFields, Peek};
 
 /// The kind of a node in the tree (for type-based matching).
@@ -26,59 +27,6 @@ pub enum NodeKind {
     Option(&'static str),
     /// A scalar value
     Scalar(&'static str),
-}
-
-/// A path segment describing how to reach a child.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum PathSegment {
-    /// A named field in a struct
-    Field(Cow<'static, str>),
-    /// An index in a list/array
-    Index(usize),
-    /// A key in a map
-    Key(Cow<'static, str>),
-    /// An enum variant
-    Variant(Cow<'static, str>),
-}
-
-/// A path from root to a node.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Hash)]
-pub struct Path(pub Vec<PathSegment>);
-
-impl Path {
-    /// Create a new empty path.
-    pub fn new() -> Self {
-        Self(Vec::new())
-    }
-
-    /// Append a segment to this path.
-    pub fn push(&mut self, segment: PathSegment) {
-        self.0.push(segment);
-    }
-
-    /// Create a new path with an additional segment.
-    pub fn with(&self, segment: PathSegment) -> Self {
-        let mut new = self.clone();
-        new.push(segment);
-        new
-    }
-}
-
-impl core::fmt::Display for Path {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        for (i, segment) in self.0.iter().enumerate() {
-            if i > 0 {
-                write!(f, ".")?;
-            }
-            match segment {
-                PathSegment::Field(name) => write!(f, "{}", name)?,
-                PathSegment::Index(idx) => write!(f, "[{}]", idx)?,
-                PathSegment::Key(key) => write!(f, "[{:?}]", key)?,
-                PathSegment::Variant(name) => write!(f, "::{}", name)?,
-            }
-        }
-        Ok(())
-    }
 }
 
 /// Label for a node (the actual value for leaves).

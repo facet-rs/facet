@@ -93,6 +93,59 @@ impl<'mem, 'facet> UpdatesGroup<'mem, 'facet> {
     pub fn push_remove(&mut self, removal: Peek<'mem, 'facet>) {
         self.0.front_a().push_remove(removal);
     }
+
+    /// Flatten replace groups using closeness and diff-creating functions.
+    ///
+    /// - `closeness_fn`: takes two Peeks and returns a score (higher = more similar)
+    /// - `diff_fn`: takes two Peeks and returns a Diff
+    pub fn flatten_with<C, D>(&mut self, closeness_fn: C, diff_fn: D)
+    where
+        C: Fn(Peek<'mem, 'facet>, Peek<'mem, 'facet>) -> usize,
+        D: Fn(Peek<'mem, 'facet>, Peek<'mem, 'facet>) -> Diff<'mem, 'facet>,
+    {
+        let Some(updates) = self.0.first.take() else {
+            return;
+        };
+
+        let mut mem = vec![vec![0; updates.removals.len() + 1]];
+
+        for x in 0..updates.removals.len() {
+            let mut row = vec![0];
+
+            for (y, addition) in updates.additions.iter().enumerate() {
+                row.push(
+                    row.last()
+                        .copied()
+                        .unwrap()
+                        .max(mem[x][y] + closeness_fn(updates.removals[x], *addition)),
+                );
+            }
+
+            mem.push(row);
+        }
+
+        let mut x = updates.removals.len();
+        let mut y = updates.additions.len();
+
+        while x > 0 || y > 0 {
+            if x == 0 {
+                self.push_add(updates.additions[y - 1]);
+                y -= 1;
+            } else if y == 0 {
+                self.push_remove(updates.removals[x - 1]);
+                x -= 1;
+            } else if mem[x][y - 1] == mem[x][y] {
+                self.push_add(updates.additions[y - 1]);
+                y -= 1;
+            } else {
+                let diff = diff_fn(updates.removals[x - 1], updates.additions[y - 1]);
+                self.0.front_b().insert(0, diff);
+
+                x -= 1;
+                y -= 1;
+            }
+        }
+    }
 }
 
 /// Sequence updates: update groups interspersed with unchanged items.
@@ -131,5 +184,20 @@ impl<'mem, 'facet> Updates<'mem, 'facet> {
     /// finds updates back to front.
     pub fn push_keep(&mut self, value: Peek<'mem, 'facet>) {
         self.0.front_b().insert(0, value);
+    }
+
+    /// Flatten all update groups using the provided closeness and diff functions.
+    pub fn flatten_with<C, D>(&mut self, closeness_fn: C, diff_fn: D)
+    where
+        C: Fn(Peek<'mem, 'facet>, Peek<'mem, 'facet>) -> usize + Copy,
+        D: Fn(Peek<'mem, 'facet>, Peek<'mem, 'facet>) -> Diff<'mem, 'facet> + Copy,
+    {
+        if let Some(update) = &mut self.0.first {
+            update.flatten_with(closeness_fn, diff_fn);
+        }
+
+        for (_, update) in &mut self.0.values {
+            update.flatten_with(closeness_fn, diff_fn);
+        }
     }
 }
