@@ -1585,11 +1585,13 @@ trait FormatOutput: Write {
 
 /// A wrapper around any Write that implements FormatOutput but doesn't track spans.
 /// Position tracking is approximated by counting bytes written.
+#[allow(dead_code)]
 struct NonTrackingOutput<W> {
     inner: W,
     position: usize,
 }
 
+#[allow(dead_code)]
 impl<W> NonTrackingOutput<W> {
     fn new(inner: W) -> Self {
         Self { inner, position: 0 }

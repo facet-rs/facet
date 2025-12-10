@@ -1,20 +1,13 @@
 ---
 source: facet-diff/tests/diff_snapshots.rs
+assertion_line: 511
 expression: "format_diff_comparison(&a_slice, &b_slice)"
 ---
 ╭Before────────────────╮
-│[i32] [               │
-│  1,                  │
-│  2,                  │
-│  3,                  │
-│]                     │
+│[i32] [1, 2, 3]       │
 ╰──────────────────────╯
 ╭After─────────────────╮
-│[i32] [               │
-│  1,                  │
-│  2,                  │
-│  4,                  │
-│]                     │
+│[i32] [1, 2, 4]       │
 ╰──────────────────────╯
 ╔Diff══════════════════╗
 ║[                     ║

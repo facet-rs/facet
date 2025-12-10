@@ -7,8 +7,8 @@ mod display;
 mod sequences;
 mod tree;
 
-pub use diff::Diff;
-pub use diff::FacetDiff;
+pub use diff::{Diff, DiffFormat, FacetDiff, LeafChange, LeafChangeKind};
+pub use sequences::{Interspersed, ReplaceGroup, Updates, UpdatesGroup};
 pub use tree::{EditOp, FacetTree, NodeKind, NodeLabel, Path, PathSegment, build_tree, tree_diff};
 
 // Re-export cinereus types for advanced usage

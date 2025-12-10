@@ -9,6 +9,7 @@ use facet_core::Facet;
 use facet_reflect::{HasFields, Peek};
 
 use crate::sequences::{self, Updates};
+use crate::tree::{Path, PathSegment};
 
 /// The difference between two values.
 ///
@@ -622,5 +623,495 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                 from, to, value, ..
             } => value.closeness() + (from == to) as usize,
         }
+    }
+
+    /// Collect all leaf-level changes with their paths.
+    ///
+    /// This walks the diff tree recursively and collects every terminal change
+    /// (scalar replacements) along with the path to reach them. This is useful
+    /// for compact display: if there's only one leaf change deep in a tree,
+    /// you can show `path.to.field: old → new` instead of nested structure.
+    pub fn collect_leaf_changes(&self) -> Vec<LeafChange<'mem, 'facet>> {
+        let mut changes = Vec::new();
+        self.collect_leaf_changes_inner(Path::new(), &mut changes);
+        changes
+    }
+
+    fn collect_leaf_changes_inner(&self, path: Path, changes: &mut Vec<LeafChange<'mem, 'facet>>) {
+        match self {
+            Diff::Equal { .. } => {
+                // No change
+            }
+            Diff::Replace { from, to } => {
+                // This is a leaf change
+                changes.push(LeafChange {
+                    path,
+                    kind: LeafChangeKind::Replace {
+                        from: *from,
+                        to: *to,
+                    },
+                });
+            }
+            Diff::User {
+                value,
+                variant,
+                from,
+                ..
+            } => {
+                // For Option::Some, skip the variant in the path since it's implied
+                // (the value exists, so it's Some)
+                let is_option = matches!(from.def, Def::Option(_));
+
+                let base_path = if let Some(v) = variant {
+                    if is_option && *v == "Some" {
+                        path // Skip "::Some" for options
+                    } else {
+                        path.with(PathSegment::Variant(Cow::Borrowed(*v)))
+                    }
+                } else {
+                    path
+                };
+
+                match value {
+                    Value::Struct {
+                        updates,
+                        deletions,
+                        insertions,
+                        ..
+                    } => {
+                        // Recurse into field updates
+                        for (field, diff) in updates {
+                            let field_path = base_path.with(PathSegment::Field(field.clone()));
+                            diff.collect_leaf_changes_inner(field_path, changes);
+                        }
+                        // Deletions are leaf changes
+                        for (field, peek) in deletions {
+                            let field_path = base_path.with(PathSegment::Field(field.clone()));
+                            changes.push(LeafChange {
+                                path: field_path,
+                                kind: LeafChangeKind::Delete { value: *peek },
+                            });
+                        }
+                        // Insertions are leaf changes
+                        for (field, peek) in insertions {
+                            let field_path = base_path.with(PathSegment::Field(field.clone()));
+                            changes.push(LeafChange {
+                                path: field_path,
+                                kind: LeafChangeKind::Insert { value: *peek },
+                            });
+                        }
+                    }
+                    Value::Tuple { updates } => {
+                        // For single-element tuples (like Option::Some), skip the index
+                        if is_option {
+                            // Recurse directly without adding [0]
+                            self.collect_from_updates_for_single_elem(&base_path, updates, changes);
+                        } else {
+                            self.collect_from_updates(&base_path, updates, changes);
+                        }
+                    }
+                }
+            }
+            Diff::Sequence { updates, .. } => {
+                self.collect_from_updates(&path, updates, changes);
+            }
+        }
+    }
+
+    /// Special handling for single-element tuples (like Option::Some)
+    /// where we want to skip the [0] index in the path.
+    fn collect_from_updates_for_single_elem(
+        &self,
+        base_path: &Path,
+        updates: &Updates<'mem, 'facet>,
+        changes: &mut Vec<LeafChange<'mem, 'facet>>,
+    ) {
+        // For single-element tuples, we expect exactly one change
+        // Just use base_path directly instead of adding [0]
+        if let Some(update_group) = &updates.0.first {
+            // Process the first replace group if present
+            if let Some(replace) = &update_group.0.first {
+                if replace.removals.len() == 1 && replace.additions.len() == 1 {
+                    let from = replace.removals[0];
+                    let to = replace.additions[0];
+                    let nested = Diff::new_peek(from, to);
+                    if matches!(nested, Diff::Replace { .. }) {
+                        changes.push(LeafChange {
+                            path: base_path.clone(),
+                            kind: LeafChangeKind::Replace { from, to },
+                        });
+                    } else {
+                        nested.collect_leaf_changes_inner(base_path.clone(), changes);
+                    }
+                    return;
+                }
+            }
+            // Handle nested diffs
+            if let Some(diffs) = &update_group.0.last {
+                for diff in diffs {
+                    diff.collect_leaf_changes_inner(base_path.clone(), changes);
+                }
+                return;
+            }
+        }
+        // Fallback: use regular handling
+        self.collect_from_updates(base_path, updates, changes);
+    }
+
+    fn collect_from_updates(
+        &self,
+        base_path: &Path,
+        updates: &Updates<'mem, 'facet>,
+        changes: &mut Vec<LeafChange<'mem, 'facet>>,
+    ) {
+        // Walk through the interspersed structure to collect changes with correct indices
+        let mut index = 0;
+
+        // Process first update group if present
+        if let Some(update_group) = &updates.0.first {
+            self.collect_from_update_group(base_path, update_group, &mut index, changes);
+        }
+
+        // Process interleaved (unchanged, update) pairs
+        for (unchanged, update_group) in &updates.0.values {
+            index += unchanged.len();
+            self.collect_from_update_group(base_path, update_group, &mut index, changes);
+        }
+
+        // Trailing unchanged items don't add changes
+    }
+
+    fn collect_from_update_group(
+        &self,
+        base_path: &Path,
+        group: &crate::sequences::UpdatesGroup<'mem, 'facet>,
+        index: &mut usize,
+        changes: &mut Vec<LeafChange<'mem, 'facet>>,
+    ) {
+        // Process first replace group if present
+        if let Some(replace) = &group.0.first {
+            self.collect_from_replace_group(base_path, replace, index, changes);
+        }
+
+        // Process interleaved (diffs, replace) pairs
+        for (diffs, replace) in &group.0.values {
+            for diff in diffs {
+                let elem_path = base_path.with(PathSegment::Index(*index));
+                diff.collect_leaf_changes_inner(elem_path, changes);
+                *index += 1;
+            }
+            self.collect_from_replace_group(base_path, replace, index, changes);
+        }
+
+        // Process trailing diffs
+        if let Some(diffs) = &group.0.last {
+            for diff in diffs {
+                let elem_path = base_path.with(PathSegment::Index(*index));
+                diff.collect_leaf_changes_inner(elem_path, changes);
+                *index += 1;
+            }
+        }
+    }
+
+    fn collect_from_replace_group(
+        &self,
+        base_path: &Path,
+        group: &crate::sequences::ReplaceGroup<'mem, 'facet>,
+        index: &mut usize,
+        changes: &mut Vec<LeafChange<'mem, 'facet>>,
+    ) {
+        // For replace groups, we have removals and additions
+        // If counts match, treat as 1:1 replacements at the same index
+        // Otherwise, show as deletions followed by insertions
+
+        if group.removals.len() == group.additions.len() {
+            // 1:1 replacements
+            for (from, to) in group.removals.iter().zip(group.additions.iter()) {
+                let elem_path = base_path.with(PathSegment::Index(*index));
+                // Check if this is actually a nested diff
+                let nested = Diff::new_peek(*from, *to);
+                if matches!(nested, Diff::Replace { .. }) {
+                    changes.push(LeafChange {
+                        path: elem_path,
+                        kind: LeafChangeKind::Replace {
+                            from: *from,
+                            to: *to,
+                        },
+                    });
+                } else {
+                    nested.collect_leaf_changes_inner(elem_path, changes);
+                }
+                *index += 1;
+            }
+        } else {
+            // Mixed deletions and insertions
+            for from in &group.removals {
+                let elem_path = base_path.with(PathSegment::Index(*index));
+                changes.push(LeafChange {
+                    path: elem_path.clone(),
+                    kind: LeafChangeKind::Delete { value: *from },
+                });
+                *index += 1;
+            }
+            // Insertions happen at current index
+            for to in &group.additions {
+                let elem_path = base_path.with(PathSegment::Index(*index));
+                changes.push(LeafChange {
+                    path: elem_path,
+                    kind: LeafChangeKind::Insert { value: *to },
+                });
+                *index += 1;
+            }
+        }
+    }
+}
+
+/// A single leaf-level change in a diff, with path information.
+#[derive(Debug, Clone)]
+pub struct LeafChange<'mem, 'facet> {
+    /// The path from root to this change
+    pub path: Path,
+    /// The kind of change
+    pub kind: LeafChangeKind<'mem, 'facet>,
+}
+
+/// The kind of leaf change.
+#[derive(Debug, Clone)]
+pub enum LeafChangeKind<'mem, 'facet> {
+    /// A value was replaced
+    Replace {
+        /// The old value
+        from: Peek<'mem, 'facet>,
+        /// The new value
+        to: Peek<'mem, 'facet>,
+    },
+    /// A value was deleted
+    Delete {
+        /// The deleted value
+        value: Peek<'mem, 'facet>,
+    },
+    /// A value was inserted
+    Insert {
+        /// The inserted value
+        value: Peek<'mem, 'facet>,
+    },
+}
+
+impl<'mem, 'facet> LeafChange<'mem, 'facet> {
+    /// Format this change without colors.
+    pub fn format_plain(&self) -> String {
+        use facet_pretty::PrettyPrinter;
+
+        let printer = PrettyPrinter::default()
+            .with_colors(false)
+            .with_minimal_option_names(true);
+
+        let mut out = String::new();
+
+        // Show path if non-empty
+        if !self.path.0.is_empty() {
+            out.push_str(&format!("{}: ", self.path));
+        }
+
+        match &self.kind {
+            LeafChangeKind::Replace { from, to } => {
+                out.push_str(&format!(
+                    "{} → {}",
+                    printer.format_peek(*from),
+                    printer.format_peek(*to)
+                ));
+            }
+            LeafChangeKind::Delete { value } => {
+                out.push_str(&format!("- {}", printer.format_peek(*value)));
+            }
+            LeafChangeKind::Insert { value } => {
+                out.push_str(&format!("+ {}", printer.format_peek(*value)));
+            }
+        }
+
+        out
+    }
+
+    /// Format this change with colors.
+    pub fn format_colored(&self) -> String {
+        use facet_pretty::{PrettyPrinter, tokyo_night};
+        use owo_colors::OwoColorize;
+
+        let printer = PrettyPrinter::default()
+            .with_colors(false)
+            .with_minimal_option_names(true);
+
+        let mut out = String::new();
+
+        // Show path if non-empty (in field name color)
+        if !self.path.0.is_empty() {
+            out.push_str(&format!(
+                "{}: ",
+                format!("{}", self.path).color(tokyo_night::FIELD_NAME)
+            ));
+        }
+
+        match &self.kind {
+            LeafChangeKind::Replace { from, to } => {
+                out.push_str(&format!(
+                    "{} {} {}",
+                    printer.format_peek(*from).color(tokyo_night::DELETION),
+                    "→".color(tokyo_night::COMMENT),
+                    printer.format_peek(*to).color(tokyo_night::INSERTION)
+                ));
+            }
+            LeafChangeKind::Delete { value } => {
+                out.push_str(&format!(
+                    "{} {}",
+                    "-".color(tokyo_night::DELETION),
+                    printer.format_peek(*value).color(tokyo_night::DELETION)
+                ));
+            }
+            LeafChangeKind::Insert { value } => {
+                out.push_str(&format!(
+                    "{} {}",
+                    "+".color(tokyo_night::INSERTION),
+                    printer.format_peek(*value).color(tokyo_night::INSERTION)
+                ));
+            }
+        }
+
+        out
+    }
+}
+
+impl<'mem, 'facet> std::fmt::Display for LeafChange<'mem, 'facet> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.format_plain())
+    }
+}
+
+/// Configuration for diff formatting.
+#[derive(Debug, Clone)]
+pub struct DiffFormat {
+    /// Use colors in output
+    pub colors: bool,
+    /// Maximum number of changes before switching to summary mode
+    pub max_inline_changes: usize,
+    /// Whether to use compact (path-based) format for few changes
+    pub prefer_compact: bool,
+}
+
+impl Default for DiffFormat {
+    fn default() -> Self {
+        Self {
+            colors: true,
+            max_inline_changes: 10,
+            prefer_compact: true,
+        }
+    }
+}
+
+impl<'mem, 'facet> Diff<'mem, 'facet> {
+    /// Format the diff with the given configuration.
+    ///
+    /// This chooses between compact (path-based) and tree (nested) format
+    /// based on the number of changes and the configuration.
+    pub fn format(&self, config: &DiffFormat) -> String {
+        if matches!(self, Diff::Equal { .. }) {
+            return if config.colors {
+                use facet_pretty::tokyo_night;
+                use owo_colors::OwoColorize;
+                "(no changes)".color(tokyo_night::MUTED).to_string()
+            } else {
+                "(no changes)".to_string()
+            };
+        }
+
+        let changes = self.collect_leaf_changes();
+
+        if changes.is_empty() {
+            return if config.colors {
+                use facet_pretty::tokyo_night;
+                use owo_colors::OwoColorize;
+                "(no changes)".color(tokyo_night::MUTED).to_string()
+            } else {
+                "(no changes)".to_string()
+            };
+        }
+
+        // Use compact format if preferred and we have few changes
+        if config.prefer_compact && changes.len() <= config.max_inline_changes {
+            let mut out = String::new();
+            for (i, change) in changes.iter().enumerate() {
+                if i > 0 {
+                    out.push('\n');
+                }
+                if config.colors {
+                    out.push_str(&change.format_colored());
+                } else {
+                    out.push_str(&change.format_plain());
+                }
+            }
+            return out;
+        }
+
+        // Fall back to tree format for many changes
+        if changes.len() > config.max_inline_changes {
+            let mut out = String::new();
+
+            // Show first few changes
+            for (i, change) in changes.iter().take(config.max_inline_changes).enumerate() {
+                if i > 0 {
+                    out.push('\n');
+                }
+                if config.colors {
+                    out.push_str(&change.format_colored());
+                } else {
+                    out.push_str(&change.format_plain());
+                }
+            }
+
+            // Show summary of remaining
+            let remaining = changes.len() - config.max_inline_changes;
+            if remaining > 0 {
+                out.push('\n');
+                let summary = format!(
+                    "... and {} more change{}",
+                    remaining,
+                    if remaining == 1 { "" } else { "s" }
+                );
+                if config.colors {
+                    use facet_pretty::tokyo_night;
+                    use owo_colors::OwoColorize;
+                    out.push_str(&summary.color(tokyo_night::MUTED).to_string());
+                } else {
+                    out.push_str(&summary);
+                }
+            }
+            return out;
+        }
+
+        // Default: use Display impl (tree format)
+        format!("{self}")
+    }
+
+    /// Format the diff with default configuration.
+    pub fn format_default(&self) -> String {
+        self.format(&DiffFormat::default())
+    }
+
+    /// Format the diff in compact mode (path-based, no tree structure).
+    pub fn format_compact(&self) -> String {
+        self.format(&DiffFormat {
+            prefer_compact: true,
+            max_inline_changes: usize::MAX,
+            ..Default::default()
+        })
+    }
+
+    /// Format the diff in compact mode without colors.
+    pub fn format_compact_plain(&self) -> String {
+        self.format(&DiffFormat {
+            colors: false,
+            prefer_compact: true,
+            max_inline_changes: usize::MAX,
+            ..Default::default()
+        })
     }
 }
