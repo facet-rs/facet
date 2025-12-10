@@ -231,4 +231,124 @@ fn main() {
         };
         println!("{}", val.diff(&val.clone()).format_default());
     }
+
+    // -------------------------------------------------------------------------
+    section("8. Scalar types");
+    // -------------------------------------------------------------------------
+    {
+        println!("a) Integers:");
+        let old: i32 = 42;
+        let new: i32 = -42;
+        println!("  i32: {}", old.diff(&new).format_default());
+
+        let old: i128 = i128::MIN;
+        let new: i128 = i128::MAX;
+        println!("  i128 min→max: {}", old.diff(&new).format_default());
+
+        let old: u64 = 0;
+        let new: u64 = u64::MAX;
+        println!("  u64 0→max: {}", old.diff(&new).format_default());
+
+        println!("\nb) Floats:");
+        let old: f64 = 3.141592653589793;
+        let new: f64 = 2.718281828459045;
+        println!("  f64: {}", old.diff(&new).format_default());
+
+        let old: f64 = f64::INFINITY;
+        let new: f64 = f64::NEG_INFINITY;
+        println!("  f64 inf→-inf: {}", old.diff(&new).format_default());
+
+        let old: f64 = f64::NAN;
+        let new: f64 = f64::NAN;
+        println!("  f64 NaN→NaN: {}", old.diff(&new).format_default());
+
+        println!("\nc) Booleans:");
+        let old: bool = true;
+        let new: bool = false;
+        println!("  bool: {}", old.diff(&new).format_default());
+
+        println!("\nd) Characters:");
+        let old: char = 'A';
+        let new: char = 'Z';
+        println!("  char: {}", old.diff(&new).format_default());
+
+        let old: char = '🦀';
+        let new: char = '🐍';
+        println!("  emoji: {}", old.diff(&new).format_default());
+
+        println!("\ne) Strings:");
+        let old: &str = "hello";
+        let new: &str = "world";
+        println!("  &str: {}", old.diff(&new).format_default());
+
+        let old: String = "Hello 世界".into();
+        let new: String = "Hello 🌍".into();
+        println!("  String unicode: {}", old.diff(&new).format_default());
+    }
+
+    // -------------------------------------------------------------------------
+    section("9. Confusable strings (visually similar but different)");
+    // -------------------------------------------------------------------------
+    {
+        // The tree format (Display) shows confusable detection with Unicode codepoints
+        // Detection uses the Unicode TR39 confusables database via the `confusables` crate
+
+        // Latin 'a' vs Cyrillic 'а' (U+0430) - DETECTED as confusable
+        println!("a) Latin 'a' vs Cyrillic 'а' (detected):");
+        let old: &str = "abc";
+        let new: &str = "аbc"; // first char is Cyrillic
+        println!("{}", old.diff(&new));
+
+        // Latin 'o' vs Greek 'ο' (U+03BF) - DETECTED as confusable
+        println!("\nb) Latin 'o' vs Greek 'ο' (detected):");
+        let old: &str = "foo";
+        let new: &str = "fοo"; // middle char is Greek omicron
+        println!("{}", old.diff(&new));
+
+        // Latin 'e' vs Cyrillic 'е' (U+0435) - DETECTED as confusable
+        println!("\nc) Latin 'e' vs Cyrillic 'е' (detected):");
+        let old: &str = "hello";
+        let new: &str = "hеllo"; // 'e' is Cyrillic
+        println!("{}", old.diff(&new));
+
+        // The following are NOT in the Unicode confusables database:
+
+        // Zero-width characters - NOT detected (invisible char not in TR39)
+        println!("\nd) With zero-width joiner (not in TR39):");
+        let old: &str = "test";
+        let new: &str = "te\u{200D}st"; // zero-width joiner in middle
+        println!("{}", old.diff(&new));
+
+        // Different quotes - NOT detected (curly quotes not in TR39)
+        println!("\ne) Different quote styles (not in TR39):");
+        let old: &str = "\"quoted\"";
+        let new: &str = "\u{201C}quoted\u{201D}"; // curly quotes
+        println!("{}", old.diff(&new));
+
+        // Greek Iota vs Latin I - NOT detected (not in TR39)
+        println!("\nf) Greek Iota vs Latin I (not in TR39):");
+        let old: &str = "userId";
+        let new: &str = "userΙd"; // Greek capital Iota (U+0399) vs Latin I (U+0049)
+        println!("{}", old.diff(&new));
+    }
+
+    // -------------------------------------------------------------------------
+    section("10. Byte slices");
+    // -------------------------------------------------------------------------
+    {
+        println!("a) ASCII bytes:");
+        let old: &[u8] = b"hello";
+        let new: &[u8] = b"world";
+        println!("  {}", old.diff(&new));
+
+        println!("\nb) Binary data:");
+        let old: &[u8] = &[0x00, 0xFF, 0x42, 0x13];
+        let new: &[u8] = &[0x00, 0xFE, 0x42, 0x37];
+        println!("  {}", old.diff(&new));
+
+        println!("\nc) Vec<u8>:");
+        let old: Vec<u8> = vec![1, 2, 3, 4, 5];
+        let new: Vec<u8> = vec![1, 2, 99, 4, 5];
+        println!("  {}", old.diff(&new).format_default());
+    }
 }

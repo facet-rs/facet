@@ -1525,3 +1525,574 @@ fn diff_value_vs_some_different() {
     let b: Option<i64> = Some(100);
     assert_snapshot!(format_diff_comparison(&a, &b));
 }
+
+// ============================================================================
+// COMPREHENSIVE SCALAR TYPE TESTS
+// ============================================================================
+// Tests for all primitive/scalar types to ensure consistent diff behavior
+
+// --- Signed integers ---
+
+#[test]
+fn diff_scalar_i8_equal() {
+    let a: i8 = 42;
+    let b: i8 = 42;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_i8_different() {
+    let a: i8 = 42;
+    let b: i8 = -42;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_i8_min_max() {
+    let a: i8 = i8::MIN;
+    let b: i8 = i8::MAX;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_i16_equal() {
+    let a: i16 = 1000;
+    let b: i16 = 1000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_i16_different() {
+    let a: i16 = 1000;
+    let b: i16 = -1000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_i16_min_max() {
+    let a: i16 = i16::MIN;
+    let b: i16 = i16::MAX;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_i32_equal() {
+    let a: i32 = 100000;
+    let b: i32 = 100000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_i32_different() {
+    let a: i32 = 100000;
+    let b: i32 = -100000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_i32_min_max() {
+    let a: i32 = i32::MIN;
+    let b: i32 = i32::MAX;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_i64_equal() {
+    let a: i64 = 10000000000;
+    let b: i64 = 10000000000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_i64_different() {
+    let a: i64 = 10000000000;
+    let b: i64 = -10000000000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_i64_min_max() {
+    let a: i64 = i64::MIN;
+    let b: i64 = i64::MAX;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_i128_equal() {
+    let a: i128 = 100000000000000000000;
+    let b: i128 = 100000000000000000000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_i128_different() {
+    let a: i128 = 100000000000000000000;
+    let b: i128 = -100000000000000000000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_i128_min_max() {
+    let a: i128 = i128::MIN;
+    let b: i128 = i128::MAX;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_isize_equal() {
+    let a: isize = 1000;
+    let b: isize = 1000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_isize_different() {
+    let a: isize = 1000;
+    let b: isize = -1000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+// --- Unsigned integers ---
+
+#[test]
+fn diff_scalar_u8_equal() {
+    let a: u8 = 200;
+    let b: u8 = 200;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_u8_different() {
+    let a: u8 = 0;
+    let b: u8 = 255;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_u8_min_max() {
+    let a: u8 = u8::MIN;
+    let b: u8 = u8::MAX;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_u16_equal() {
+    let a: u16 = 50000;
+    let b: u16 = 50000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_u16_different() {
+    let a: u16 = 0;
+    let b: u16 = 65535;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_u16_min_max() {
+    let a: u16 = u16::MIN;
+    let b: u16 = u16::MAX;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_u32_equal() {
+    let a: u32 = 3000000000;
+    let b: u32 = 3000000000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_u32_different() {
+    let a: u32 = 0;
+    let b: u32 = 4000000000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_u32_min_max() {
+    let a: u32 = u32::MIN;
+    let b: u32 = u32::MAX;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_u64_equal() {
+    let a: u64 = 10000000000000000000;
+    let b: u64 = 10000000000000000000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_u64_different() {
+    let a: u64 = 0;
+    let b: u64 = 18000000000000000000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_u64_min_max() {
+    let a: u64 = u64::MIN;
+    let b: u64 = u64::MAX;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_u128_equal() {
+    let a: u128 = 200000000000000000000000000000000000000;
+    let b: u128 = 200000000000000000000000000000000000000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_u128_different() {
+    let a: u128 = 0;
+    let b: u128 = 340000000000000000000000000000000000000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_u128_min_max() {
+    let a: u128 = u128::MIN;
+    let b: u128 = u128::MAX;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_usize_equal() {
+    let a: usize = 1000;
+    let b: usize = 1000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_usize_different() {
+    let a: usize = 0;
+    let b: usize = 1000000;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+// --- Floating point ---
+
+#[test]
+fn diff_scalar_f32_equal() {
+    let a: f32 = 3.14159;
+    let b: f32 = 3.14159;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_f32_different() {
+    let a: f32 = 3.14159;
+    let b: f32 = 2.71828;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_f32_zero_vs_negative_zero() {
+    let a: f32 = 0.0;
+    let b: f32 = -0.0;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_f32_infinity() {
+    let a: f32 = f32::INFINITY;
+    let b: f32 = f32::NEG_INFINITY;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_f32_nan() {
+    let a: f32 = f32::NAN;
+    let b: f32 = f32::NAN;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_f64_equal() {
+    let a: f64 = 3.141592653589793;
+    let b: f64 = 3.141592653589793;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_f64_different() {
+    let a: f64 = 3.141592653589793;
+    let b: f64 = 2.718281828459045;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_f64_zero_vs_negative_zero() {
+    let a: f64 = 0.0;
+    let b: f64 = -0.0;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_f64_infinity() {
+    let a: f64 = f64::INFINITY;
+    let b: f64 = f64::NEG_INFINITY;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_f64_nan() {
+    let a: f64 = f64::NAN;
+    let b: f64 = f64::NAN;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_f64_very_small() {
+    let a: f64 = 1e-300;
+    let b: f64 = 1e-308;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_f64_very_large() {
+    let a: f64 = 1e300;
+    let b: f64 = 1e308;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+// --- Boolean ---
+
+#[test]
+fn diff_scalar_bool_equal_true() {
+    let a: bool = true;
+    let b: bool = true;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_bool_equal_false() {
+    let a: bool = false;
+    let b: bool = false;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_bool_true_to_false() {
+    let a: bool = true;
+    let b: bool = false;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_bool_false_to_true() {
+    let a: bool = false;
+    let b: bool = true;
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+// --- Character ---
+
+#[test]
+fn diff_scalar_char_equal() {
+    let a: char = 'A';
+    let b: char = 'A';
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_char_different() {
+    let a: char = 'A';
+    let b: char = 'Z';
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_char_unicode() {
+    let a: char = '🦀';
+    let b: char = '🐍';
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_char_ascii_to_unicode() {
+    let a: char = 'R';
+    let b: char = '日';
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_char_newline() {
+    let a: char = '\n';
+    let b: char = '\t';
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_char_null() {
+    let a: char = '\0';
+    let b: char = 'X';
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+// --- Unit type ---
+
+#[test]
+fn diff_scalar_unit_equal() {
+    let a: () = ();
+    let b: () = ();
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+// --- Strings ---
+
+#[test]
+fn diff_scalar_str_equal() {
+    let a: &str = "hello";
+    let b: &str = "hello";
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_str_different() {
+    let a: &str = "hello";
+    let b: &str = "world";
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_str_empty_vs_nonempty() {
+    let a: &str = "";
+    let b: &str = "hello";
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_str_unicode() {
+    let a: &str = "Hello 世界";
+    let b: &str = "Hello 🌍";
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_str_multiline() {
+    let a: &str = "line1\nline2";
+    let b: &str = "line1\nline3";
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_str_whitespace() {
+    let a: &str = "hello world";
+    let b: &str = "hello  world";
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_string_equal() {
+    let a: String = "hello".to_string();
+    let b: String = "hello".to_string();
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_string_different() {
+    let a: String = "hello".to_string();
+    let b: String = "world".to_string();
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_str_vs_string_equal() {
+    let a: &str = "hello";
+    let b: String = "hello".to_string();
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_str_vs_string_different() {
+    let a: &str = "hello";
+    let b: String = "world".to_string();
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_cow_str_borrowed_equal() {
+    use std::borrow::Cow;
+    let a: Cow<str> = Cow::Borrowed("hello");
+    let b: Cow<str> = Cow::Borrowed("hello");
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_cow_str_owned_equal() {
+    use std::borrow::Cow;
+    let a: Cow<str> = Cow::Owned("hello".to_string());
+    let b: Cow<str> = Cow::Owned("hello".to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_cow_str_borrowed_vs_owned() {
+    use std::borrow::Cow;
+    let a: Cow<str> = Cow::Borrowed("hello");
+    let b: Cow<str> = Cow::Owned("hello".to_string());
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_cow_str_different() {
+    use std::borrow::Cow;
+    let a: Cow<str> = Cow::Borrowed("hello");
+    let b: Cow<str> = Cow::Borrowed("world");
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+// --- Byte slices ---
+
+#[test]
+fn diff_scalar_byte_slice_equal() {
+    let a: &[u8] = b"hello";
+    let b: &[u8] = b"hello";
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_byte_slice_different() {
+    let a: &[u8] = b"hello";
+    let b: &[u8] = b"world";
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_byte_slice_empty_vs_nonempty() {
+    let a: &[u8] = b"";
+    let b: &[u8] = b"data";
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_byte_slice_binary() {
+    let a: &[u8] = &[0x00, 0xFF, 0x42];
+    let b: &[u8] = &[0x00, 0xFE, 0x42];
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_vec_u8_equal() {
+    let a: Vec<u8> = vec![1, 2, 3, 4, 5];
+    let b: Vec<u8> = vec![1, 2, 3, 4, 5];
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_vec_u8_different() {
+    let a: Vec<u8> = vec![1, 2, 3, 4, 5];
+    let b: Vec<u8> = vec![1, 2, 99, 4, 5];
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}
+
+#[test]
+fn diff_scalar_byte_slice_vs_vec_u8() {
+    let a: &[u8] = &[1, 2, 3];
+    let b: Vec<u8> = vec![1, 2, 3];
+    assert_snapshot!(format_diff_comparison(&a, &b));
+}

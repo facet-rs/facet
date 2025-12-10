@@ -87,16 +87,18 @@ impl<'mem, 'facet> Display for Diff<'mem, 'facet> {
                     .with_minimal_option_names(true);
 
                 // Check if both values are strings and visually confusable
+                // Note: is_confusable_with is directional - check both directions
                 if let (Some(from_str), Some(to_str)) = (from.as_str(), to.as_str())
-                    && from_str.is_confusable_with(to_str)
+                    && (from_str.is_confusable_with(to_str) || to_str.is_confusable_with(from_str))
                 {
                     // Show the strings with character-level diff
+                    // Don't wrap in muted() since the explanation has its own colors
                     write!(
                         f,
                         "{} → {}\n{}",
                         deleted(&printer.format_peek(*from)),
                         inserted(&printer.format_peek(*to)),
-                        muted(&explain_confusable_differences(from_str, to_str))
+                        explain_confusable_differences(from_str, to_str)
                     )?;
                     return Ok(());
                 }
@@ -376,14 +378,14 @@ impl<'mem, 'facet> Display for UpdatesGroup<'mem, 'facet> {
     }
 }
 
-/// Format a character for display with its Unicode codepoint and visual representation.
+/// Format a character for display with its Unicode codepoint.
 fn format_char_with_codepoint(c: char) -> String {
     // For printable ASCII characters (except space), show the character directly
     if c.is_ascii_graphic() {
         format!("'{}' (U+{:04X})", c, c as u32)
     } else {
-        // For everything else, show escaped form with codepoint
-        format!("'\\u{{{:04X}}}' (U+{:04X})", c as u32, c as u32)
+        // For non-printable chars, show the escaped form (codepoint is visible in the escape)
+        format!("'\\u{{{:04X}}}'", c as u32)
     }
 }
 
@@ -423,14 +425,17 @@ fn explain_confusable_differences(left: &str, right: &str) -> String {
     }
 
     if diffs.is_empty() {
-        return "(strings are identical)".to_string();
+        return muted("(strings are identical)");
     }
 
     writeln!(
         out,
-        "(strings are visually confusable but differ in {} position{}):",
-        diffs.len(),
-        if diffs.len() == 1 { "" } else { "s" }
+        "{}",
+        muted(&format!(
+            "(strings are visually confusable but differ in {} position{}):",
+            diffs.len(),
+            if diffs.len() == 1 { "" } else { "s" }
+        ))
     )
     .unwrap();
 
@@ -440,7 +445,7 @@ fn explain_confusable_differences(left: &str, right: &str) -> String {
                 out,
                 "  [{}]: (missing) vs {}",
                 pos,
-                format_char_with_codepoint(*rc)
+                inserted(&format_char_with_codepoint(*rc))
             )
             .unwrap();
         } else if *rc == '\0' {
@@ -448,7 +453,7 @@ fn explain_confusable_differences(left: &str, right: &str) -> String {
                 out,
                 "  [{}]: {} vs (missing)",
                 pos,
-                format_char_with_codepoint(*lc)
+                deleted(&format_char_with_codepoint(*lc))
             )
             .unwrap();
         } else {
@@ -456,8 +461,8 @@ fn explain_confusable_differences(left: &str, right: &str) -> String {
                 out,
                 "  [{}]: {} vs {}",
                 pos,
-                format_char_with_codepoint(*lc),
-                format_char_with_codepoint(*rc)
+                deleted(&format_char_with_codepoint(*lc)),
+                inserted(&format_char_with_codepoint(*rc))
             )
             .unwrap();
         }
