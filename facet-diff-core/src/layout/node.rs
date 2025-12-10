@@ -66,6 +66,18 @@ pub enum LayoutNode {
         /// How this text changed
         change: ElementChange,
     },
+
+    /// A group of items rendered on a single line (for sequences).
+    /// Used to group consecutive unchanged/deleted/inserted items.
+    ItemGroup {
+        /// Formatted values for each visible item in the group.
+        items: Vec<FormattedValue>,
+        /// How these items changed (all have the same change type).
+        change: ElementChange,
+        /// Number of additional collapsed items (shown as "...N more").
+        /// None means all items are visible.
+        collapsed_suffix: Option<usize>,
+    },
 }
 
 impl LayoutNode {
@@ -99,12 +111,26 @@ impl LayoutNode {
         Self::Text { value, change }
     }
 
+    /// Create an item group node.
+    pub fn item_group(
+        items: Vec<FormattedValue>,
+        change: ElementChange,
+        collapsed_suffix: Option<usize>,
+    ) -> Self {
+        Self::ItemGroup {
+            items,
+            change,
+            collapsed_suffix,
+        }
+    }
+
     /// Get the element change type (if applicable).
     pub fn change(&self) -> ElementChange {
         match self {
             Self::Element { change, .. } => *change,
             Self::Collapsed { .. } => ElementChange::None,
             Self::Text { change, .. } => *change,
+            Self::ItemGroup { change, .. } => *change,
         }
     }
 
@@ -130,6 +156,7 @@ impl LayoutNode {
             }
             Self::Collapsed { .. } => false,
             Self::Text { change, .. } => change.has_prefix(),
+            Self::ItemGroup { change, .. } => change.has_prefix(),
         }
     }
 }
