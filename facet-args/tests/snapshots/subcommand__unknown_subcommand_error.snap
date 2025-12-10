@@ -1,0 +1,15 @@
+---
+source: facet-args/tests/subcommand.rs
+expression: "$crate :: common :: DiagnosticDisplayWrapper(& err).to_string()"
+---
+args::unknown_subcommand
+
+  × Could not parse CLI arguments
+   ╭────
+ 1 │ unknown 
+   · ───┬───
+   ·    ╰── unknown subcommand `unknown`
+   ╰────
+  help: available subcommands:
+          start  Start the service
+          stop   Stop the service
