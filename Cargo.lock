@@ -1228,9 +1228,13 @@ dependencies = [
 name = "facet-diff-core"
 version = "0.1.0"
 dependencies = [
+ "confusables",
  "facet-core",
+ "facet-pretty",
  "facet-reflect",
+ "indextree",
  "owo-colors",
+ "unicode-width 0.2.2",
 ]
 
 [[package]]

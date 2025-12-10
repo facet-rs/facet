@@ -10,6 +10,10 @@ keywords = ["diff", "serialization", "reflection", "facet"]
 categories = ["encoding", "data-structures"]
 
 [dependencies]
+confusables = "0.1"
 facet-core = { path = "../facet-core" }
+facet-pretty = { path = "../facet-pretty" }
 facet-reflect = { path = "../facet-reflect" }
+indextree = "4"
 owo-colors = "4"
+unicode-width = "0.2"

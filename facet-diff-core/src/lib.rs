@@ -21,12 +21,18 @@
 //! + fill="blue"   ← "blue" is green, "fill=" is white
 //! ```
 
+mod display;
+pub mod layout;
 mod path;
 mod sequences;
 mod symbols;
 mod theme;
 mod types;
 
+pub use layout::{
+    Attr, AttrStatus, ChangedGroup, ElementChange, FormatArena, FormattedValue, Layout, LayoutNode,
+    RenderOptions, Span, group_changed_attrs, render, render_to_string,
+};
 pub use path::*;
 pub use sequences::*;
 pub use symbols::*;

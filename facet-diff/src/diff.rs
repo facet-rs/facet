@@ -4,92 +4,12 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use facet::{Def, DynValueKind, Shape, StructKind, Type, UserType};
+use facet::{Def, DynValueKind, StructKind, Type, UserType};
 use facet_core::Facet;
+use facet_diff_core::{Diff, Path, PathSegment, Updates, Value};
 use facet_reflect::{HasFields, Peek};
 
-use crate::sequences::{self, Updates};
-use crate::tree::{Path, PathSegment};
-
-/// The difference between two values.
-///
-/// The `from` value does not necessarily have to have the same type as the `to` value.
-pub enum Diff<'mem, 'facet> {
-    /// The two values are equal
-    Equal {
-        /// The value (stored for display purposes)
-        value: Option<Peek<'mem, 'facet>>,
-    },
-
-    /// Fallback case.
-    ///
-    /// We do not know much about the values, apart from that they are unequal to each other.
-    Replace {
-        /// The `from` value.
-        from: Peek<'mem, 'facet>,
-
-        /// The `to` value.
-        to: Peek<'mem, 'facet>,
-    },
-
-    /// The two values are both structures or both enums with similar variants.
-    User {
-        /// The shape of the `from` struct.
-        from: &'static Shape,
-
-        /// The shape of the `to` struct.
-        to: &'static Shape,
-
-        /// The name of the variant, this is [`None`] if the values are structs
-        variant: Option<&'static str>,
-
-        /// The value of the struct/enum variant (tuple or struct fields)
-        value: Value<'mem, 'facet>,
-    },
-
-    /// A diff between two sequences
-    Sequence {
-        /// The shape of the `from` sequence.
-        from: &'static Shape,
-
-        /// The shape of the `to` sequence.
-        to: &'static Shape,
-
-        /// The updates on the sequence
-        updates: Updates<'mem, 'facet>,
-    },
-}
-
-/// A set of updates, additions, deletions, insertions etc. for a tuple or a struct
-pub enum Value<'mem, 'facet> {
-    Tuple {
-        /// The updates on the sequence
-        updates: Updates<'mem, 'facet>,
-    },
-
-    Struct {
-        /// The fields that are updated between the structs
-        updates: HashMap<Cow<'static, str>, Diff<'mem, 'facet>>,
-
-        /// The fields that are in `from` but not in `to`.
-        deletions: HashMap<Cow<'static, str>, Peek<'mem, 'facet>>,
-
-        /// The fields that are in `to` but not in `from`.
-        insertions: HashMap<Cow<'static, str>, Peek<'mem, 'facet>>,
-
-        /// The fields that are unchanged
-        unchanged: HashSet<Cow<'static, str>>,
-    },
-}
-
-impl<'mem, 'facet> Value<'mem, 'facet> {
-    fn closeness(&self) -> usize {
-        match self {
-            Self::Tuple { updates } => updates.closeness(),
-            Self::Struct { unchanged, .. } => unchanged.len(),
-        }
-    }
-}
+use crate::sequences;
 
 /// Extension trait that provides a [`diff`](FacetDiff::diff) method for `Facet` types
 pub trait FacetDiff<'f>: Facet<'f> {
@@ -99,104 +19,102 @@ pub trait FacetDiff<'f>: Facet<'f> {
 
 impl<'f, T: Facet<'f>> FacetDiff<'f> for T {
     fn diff<'a, U: Facet<'f>>(&'a self, other: &'a U) -> Diff<'a, 'f> {
-        Diff::new(self, other)
+        diff_new(self, other)
     }
 }
 
-impl<'mem, 'facet> Diff<'mem, 'facet> {
-    /// Returns true if the two values were equal
-    pub fn is_equal(&self) -> bool {
-        matches!(self, Self::Equal { .. })
+/// Computes the difference between two values that implement `Facet`
+pub fn diff_new<'mem, 'facet, T: Facet<'facet>, U: Facet<'facet>>(
+    from: &'mem T,
+    to: &'mem U,
+) -> Diff<'mem, 'facet> {
+    diff_new_peek(Peek::new(from), Peek::new(to))
+}
+
+pub(crate) fn diff_new_peek<'mem, 'facet>(
+    from: Peek<'mem, 'facet>,
+    to: Peek<'mem, 'facet>,
+) -> Diff<'mem, 'facet> {
+    // Dereference pointers/references to compare the underlying values
+    let from = deref_if_pointer(from);
+    let to = deref_if_pointer(to);
+
+    if from.shape().id == to.shape().id && from.shape().is_partial_eq() && from == to {
+        return Diff::Equal { value: Some(from) };
     }
 
-    /// Computes the difference between two values that implement `Facet`
-    pub fn new<T: Facet<'facet>, U: Facet<'facet>>(from: &'mem T, to: &'mem U) -> Self {
-        Self::new_peek(Peek::new(from), Peek::new(to))
-    }
+    match (
+        (from.shape().def, from.shape().ty),
+        (to.shape().def, to.shape().ty),
+    ) {
+        ((_, Type::User(UserType::Struct(from_ty))), (_, Type::User(UserType::Struct(to_ty))))
+            if from_ty.kind == to_ty.kind =>
+        {
+            let from_ty = from.into_struct().unwrap();
+            let to_ty = to.into_struct().unwrap();
 
-    pub(crate) fn new_peek(from: Peek<'mem, 'facet>, to: Peek<'mem, 'facet>) -> Self {
-        // Dereference pointers/references to compare the underlying values
-        let from = Self::deref_if_pointer(from);
-        let to = Self::deref_if_pointer(to);
+            let value = if [StructKind::Tuple, StructKind::TupleStruct].contains(&from_ty.ty().kind)
+            {
+                let from = from_ty.fields().map(|x| x.1).collect();
+                let to = to_ty.fields().map(|x| x.1).collect();
 
-        if from.shape().id == to.shape().id && from.shape().is_partial_eq() && from == to {
-            return Diff::Equal { value: Some(from) };
-        }
+                let updates = sequences::diff(from, to);
 
-        match (
-            (from.shape().def, from.shape().ty),
-            (to.shape().def, to.shape().ty),
-        ) {
-            (
-                (_, Type::User(UserType::Struct(from_ty))),
-                (_, Type::User(UserType::Struct(to_ty))),
-            ) if from_ty.kind == to_ty.kind => {
-                let from_ty = from.into_struct().unwrap();
-                let to_ty = to.into_struct().unwrap();
+                Value::Tuple { updates }
+            } else {
+                let mut updates = HashMap::new();
+                let mut deletions = HashMap::new();
+                let mut insertions = HashMap::new();
+                let mut unchanged = HashSet::new();
 
-                let value =
-                    if [StructKind::Tuple, StructKind::TupleStruct].contains(&from_ty.ty().kind) {
-                        let from = from_ty.fields().map(|x| x.1).collect();
-                        let to = to_ty.fields().map(|x| x.1).collect();
-
-                        let updates = sequences::diff(from, to);
-
-                        Value::Tuple { updates }
+                for (field, from) in from_ty.fields() {
+                    if let Ok(to) = to_ty.field_by_name(field.name) {
+                        let diff = diff_new_peek(from, to);
+                        if diff.is_equal() {
+                            unchanged.insert(Cow::Borrowed(field.name));
+                        } else {
+                            updates.insert(Cow::Borrowed(field.name), diff);
+                        }
                     } else {
-                        let mut updates = HashMap::new();
-                        let mut deletions = HashMap::new();
-                        let mut insertions = HashMap::new();
-                        let mut unchanged = HashSet::new();
-
-                        for (field, from) in from_ty.fields() {
-                            if let Ok(to) = to_ty.field_by_name(field.name) {
-                                let diff = Diff::new_peek(from, to);
-                                if diff.is_equal() {
-                                    unchanged.insert(Cow::Borrowed(field.name));
-                                } else {
-                                    updates.insert(Cow::Borrowed(field.name), diff);
-                                }
-                            } else {
-                                deletions.insert(Cow::Borrowed(field.name), from);
-                            }
-                        }
-
-                        for (field, to) in to_ty.fields() {
-                            if from_ty.field_by_name(field.name).is_err() {
-                                insertions.insert(Cow::Borrowed(field.name), to);
-                            }
-                        }
-                        Value::Struct {
-                            updates,
-                            deletions,
-                            insertions,
-                            unchanged,
-                        }
-                    };
-
-                Diff::User {
-                    from: from.shape(),
-                    to: to.shape(),
-                    variant: None,
-                    value,
+                        deletions.insert(Cow::Borrowed(field.name), from);
+                    }
                 }
+
+                for (field, to) in to_ty.fields() {
+                    if from_ty.field_by_name(field.name).is_err() {
+                        insertions.insert(Cow::Borrowed(field.name), to);
+                    }
+                }
+                Value::Struct {
+                    updates,
+                    deletions,
+                    insertions,
+                    unchanged,
+                }
+            };
+
+            Diff::User {
+                from: from.shape(),
+                to: to.shape(),
+                variant: None,
+                value,
             }
-            ((_, Type::User(UserType::Enum(_))), (_, Type::User(UserType::Enum(_)))) => {
-                let from_enum = from.into_enum().unwrap();
-                let to_enum = to.into_enum().unwrap();
+        }
+        ((_, Type::User(UserType::Enum(_))), (_, Type::User(UserType::Enum(_)))) => {
+            let from_enum = from.into_enum().unwrap();
+            let to_enum = to.into_enum().unwrap();
 
-                let from_variant = from_enum.active_variant().unwrap();
-                let to_variant = to_enum.active_variant().unwrap();
+            let from_variant = from_enum.active_variant().unwrap();
+            let to_variant = to_enum.active_variant().unwrap();
 
-                if from_variant.name != to_variant.name
-                    || from_variant.data.kind != to_variant.data.kind
-                {
-                    return Diff::Replace { from, to };
-                }
+            if from_variant.name != to_variant.name
+                || from_variant.data.kind != to_variant.data.kind
+            {
+                return Diff::Replace { from, to };
+            }
 
-                let value = if [StructKind::Tuple, StructKind::TupleStruct]
-                    .contains(&from_variant.data.kind)
-                {
+            let value =
+                if [StructKind::Tuple, StructKind::TupleStruct].contains(&from_variant.data.kind) {
                     let from = from_enum.fields().map(|x| x.1).collect();
                     let to = to_enum.fields().map(|x| x.1).collect();
 
@@ -211,7 +129,7 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
 
                     for (field, from) in from_enum.fields() {
                         if let Ok(Some(to)) = to_enum.field_by_name(field.name) {
-                            let diff = Diff::new_peek(from, to);
+                            let diff = diff_new_peek(from, to);
                             if diff.is_equal() {
                                 unchanged.insert(Cow::Borrowed(field.name));
                             } else {
@@ -239,179 +157,352 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                     }
                 };
 
-                Diff::User {
-                    from: from_enum.shape(),
-                    to: to_enum.shape(),
-                    variant: Some(from_variant.name),
-                    value,
-                }
+            Diff::User {
+                from: from_enum.shape(),
+                to: to_enum.shape(),
+                variant: Some(from_variant.name),
+                value,
             }
-            ((Def::Option(_), _), (Def::Option(_), _)) => {
-                let from_option = from.into_option().unwrap();
-                let to_option = to.into_option().unwrap();
-
-                let (Some(from_value), Some(to_value)) = (from_option.value(), to_option.value())
-                else {
-                    return Diff::Replace { from, to };
-                };
-
-                // Use sequences::diff to properly handle nested diffs
-                let updates = sequences::diff(vec![from_value], vec![to_value]);
-
-                Diff::User {
-                    from: from.shape(),
-                    to: to.shape(),
-                    variant: Some("Some"),
-                    value: Value::Tuple { updates },
-                }
-            }
-            (
-                (Def::List(_) | Def::Slice(_), _) | (_, Type::Sequence(_)),
-                (Def::List(_) | Def::Slice(_), _) | (_, Type::Sequence(_)),
-            ) => {
-                let from_list = from.into_list_like().unwrap();
-                let to_list = to.into_list_like().unwrap();
-
-                let updates = sequences::diff(
-                    from_list.iter().collect::<Vec<_>>(),
-                    to_list.iter().collect::<Vec<_>>(),
-                );
-
-                Diff::Sequence {
-                    from: from.shape(),
-                    to: to.shape(),
-                    updates,
-                }
-            }
-            ((Def::DynamicValue(_), _), (Def::DynamicValue(_), _)) => {
-                Self::diff_dynamic_values(from, to)
-            }
-            // DynamicValue vs concrete type
-            ((Def::DynamicValue(_), _), _) => Self::diff_dynamic_vs_concrete(from, to, false),
-            (_, (Def::DynamicValue(_), _)) => Self::diff_dynamic_vs_concrete(to, from, true),
-            _ => Diff::Replace { from, to },
         }
+        ((Def::Option(_), _), (Def::Option(_), _)) => {
+            let from_option = from.into_option().unwrap();
+            let to_option = to.into_option().unwrap();
+
+            let (Some(from_value), Some(to_value)) = (from_option.value(), to_option.value())
+            else {
+                return Diff::Replace { from, to };
+            };
+
+            // Use sequences::diff to properly handle nested diffs
+            let updates = sequences::diff(vec![from_value], vec![to_value]);
+
+            Diff::User {
+                from: from.shape(),
+                to: to.shape(),
+                variant: Some("Some"),
+                value: Value::Tuple { updates },
+            }
+        }
+        (
+            (Def::List(_) | Def::Slice(_), _) | (_, Type::Sequence(_)),
+            (Def::List(_) | Def::Slice(_), _) | (_, Type::Sequence(_)),
+        ) => {
+            let from_list = from.into_list_like().unwrap();
+            let to_list = to.into_list_like().unwrap();
+
+            let updates = sequences::diff(
+                from_list.iter().collect::<Vec<_>>(),
+                to_list.iter().collect::<Vec<_>>(),
+            );
+
+            Diff::Sequence {
+                from: from.shape(),
+                to: to.shape(),
+                updates,
+            }
+        }
+        ((Def::DynamicValue(_), _), (Def::DynamicValue(_), _)) => diff_dynamic_values(from, to),
+        // DynamicValue vs concrete type
+        ((Def::DynamicValue(_), _), _) => diff_dynamic_vs_concrete(from, to, false),
+        (_, (Def::DynamicValue(_), _)) => diff_dynamic_vs_concrete(to, from, true),
+        _ => Diff::Replace { from, to },
+    }
+}
+
+/// Diff two dynamic values (like `facet_value::Value`)
+fn diff_dynamic_values<'mem, 'facet>(
+    from: Peek<'mem, 'facet>,
+    to: Peek<'mem, 'facet>,
+) -> Diff<'mem, 'facet> {
+    let from_dyn = from.into_dynamic_value().unwrap();
+    let to_dyn = to.into_dynamic_value().unwrap();
+
+    let from_kind = from_dyn.kind();
+    let to_kind = to_dyn.kind();
+
+    // If kinds differ, just return Replace
+    if from_kind != to_kind {
+        return Diff::Replace { from, to };
     }
 
-    /// Diff two dynamic values (like `facet_value::Value`)
-    fn diff_dynamic_values(from: Peek<'mem, 'facet>, to: Peek<'mem, 'facet>) -> Self {
-        let from_dyn = from.into_dynamic_value().unwrap();
-        let to_dyn = to.into_dynamic_value().unwrap();
-
-        let from_kind = from_dyn.kind();
-        let to_kind = to_dyn.kind();
-
-        // If kinds differ, just return Replace
-        if from_kind != to_kind {
-            return Diff::Replace { from, to };
+    match from_kind {
+        DynValueKind::Null => Diff::Equal { value: Some(from) },
+        DynValueKind::Bool => {
+            if from_dyn.as_bool() == to_dyn.as_bool() {
+                Diff::Equal { value: Some(from) }
+            } else {
+                Diff::Replace { from, to }
+            }
         }
-
-        match from_kind {
-            DynValueKind::Null => Diff::Equal { value: Some(from) },
-            DynValueKind::Bool => {
-                if from_dyn.as_bool() == to_dyn.as_bool() {
-                    Diff::Equal { value: Some(from) }
-                } else {
-                    Diff::Replace { from, to }
-                }
-            }
-            DynValueKind::Number => {
-                // Compare numbers - try exact integer comparison first, then float
-                let same = match (from_dyn.as_i64(), to_dyn.as_i64()) {
+        DynValueKind::Number => {
+            // Compare numbers - try exact integer comparison first, then float
+            let same = match (from_dyn.as_i64(), to_dyn.as_i64()) {
+                (Some(l), Some(r)) => l == r,
+                _ => match (from_dyn.as_u64(), to_dyn.as_u64()) {
                     (Some(l), Some(r)) => l == r,
-                    _ => match (from_dyn.as_u64(), to_dyn.as_u64()) {
+                    _ => match (from_dyn.as_f64(), to_dyn.as_f64()) {
                         (Some(l), Some(r)) => l == r,
-                        _ => match (from_dyn.as_f64(), to_dyn.as_f64()) {
-                            (Some(l), Some(r)) => l == r,
-                            _ => false,
-                        },
+                        _ => false,
                     },
+                },
+            };
+            if same {
+                Diff::Equal { value: Some(from) }
+            } else {
+                Diff::Replace { from, to }
+            }
+        }
+        DynValueKind::String => {
+            if from_dyn.as_str() == to_dyn.as_str() {
+                Diff::Equal { value: Some(from) }
+            } else {
+                Diff::Replace { from, to }
+            }
+        }
+        DynValueKind::Bytes => {
+            if from_dyn.as_bytes() == to_dyn.as_bytes() {
+                Diff::Equal { value: Some(from) }
+            } else {
+                Diff::Replace { from, to }
+            }
+        }
+        DynValueKind::Array => {
+            // Use the sequence diff algorithm for arrays
+            let from_iter = from_dyn.array_iter();
+            let to_iter = to_dyn.array_iter();
+
+            let from_elems: Vec<_> = from_iter.map(|i| i.collect()).unwrap_or_default();
+            let to_elems: Vec<_> = to_iter.map(|i| i.collect()).unwrap_or_default();
+
+            let updates = sequences::diff(from_elems, to_elems);
+
+            Diff::Sequence {
+                from: from.shape(),
+                to: to.shape(),
+                updates,
+            }
+        }
+        DynValueKind::Object => {
+            // Treat objects like struct diffs
+            let from_len = from_dyn.object_len().unwrap_or(0);
+            let to_len = to_dyn.object_len().unwrap_or(0);
+
+            let mut updates = HashMap::new();
+            let mut deletions = HashMap::new();
+            let mut insertions = HashMap::new();
+            let mut unchanged = HashSet::new();
+
+            // Collect keys from `from`
+            let mut from_keys: HashMap<String, Peek<'mem, 'facet>> = HashMap::new();
+            for i in 0..from_len {
+                if let Some((key, value)) = from_dyn.object_get_entry(i) {
+                    from_keys.insert(key.to_owned(), value);
+                }
+            }
+
+            // Collect keys from `to`
+            let mut to_keys: HashMap<String, Peek<'mem, 'facet>> = HashMap::new();
+            for i in 0..to_len {
+                if let Some((key, value)) = to_dyn.object_get_entry(i) {
+                    to_keys.insert(key.to_owned(), value);
+                }
+            }
+
+            // Compare entries
+            for (key, from_value) in &from_keys {
+                if let Some(to_value) = to_keys.get(key) {
+                    let diff = diff_new_peek(*from_value, *to_value);
+                    if diff.is_equal() {
+                        unchanged.insert(Cow::Owned(key.clone()));
+                    } else {
+                        updates.insert(Cow::Owned(key.clone()), diff);
+                    }
+                } else {
+                    deletions.insert(Cow::Owned(key.clone()), *from_value);
+                }
+            }
+
+            for (key, to_value) in &to_keys {
+                if !from_keys.contains_key(key) {
+                    insertions.insert(Cow::Owned(key.clone()), *to_value);
+                }
+            }
+
+            Diff::User {
+                from: from.shape(),
+                to: to.shape(),
+                variant: None,
+                value: Value::Struct {
+                    updates,
+                    deletions,
+                    insertions,
+                    unchanged,
+                },
+            }
+        }
+        DynValueKind::DateTime => {
+            // Compare datetime by their components
+            if from_dyn.as_datetime() == to_dyn.as_datetime() {
+                Diff::Equal { value: Some(from) }
+            } else {
+                Diff::Replace { from, to }
+            }
+        }
+        DynValueKind::QName | DynValueKind::Uuid => {
+            // For QName and Uuid, compare by their raw representation
+            // Since they have the same kind, we can only compare by Replace semantics
+            Diff::Replace { from, to }
+        }
+    }
+}
+
+/// Diff a DynamicValue against a concrete type
+/// `dyn_peek` is the DynamicValue, `concrete_peek` is the concrete type
+/// `swapped` indicates if the original from/to were swapped (true means dyn_peek is actually "to")
+fn diff_dynamic_vs_concrete<'mem, 'facet>(
+    dyn_peek: Peek<'mem, 'facet>,
+    concrete_peek: Peek<'mem, 'facet>,
+    swapped: bool,
+) -> Diff<'mem, 'facet> {
+    // Determine actual from/to based on swapped flag
+    let (from_peek, to_peek) = if swapped {
+        (concrete_peek, dyn_peek)
+    } else {
+        (dyn_peek, concrete_peek)
+    };
+    let dyn_val = dyn_peek.into_dynamic_value().unwrap();
+    let dyn_kind = dyn_val.kind();
+
+    // Try to match based on the DynamicValue's kind
+    match dyn_kind {
+        DynValueKind::Bool => {
+            if concrete_peek
+                .get::<bool>()
+                .ok()
+                .is_some_and(|&v| dyn_val.as_bool() == Some(v))
+            {
+                return Diff::Equal {
+                    value: Some(from_peek),
                 };
-                if same {
-                    Diff::Equal { value: Some(from) }
-                } else {
-                    Diff::Replace { from, to }
-                }
             }
-            DynValueKind::String => {
-                if from_dyn.as_str() == to_dyn.as_str() {
-                    Diff::Equal { value: Some(from) }
-                } else {
-                    Diff::Replace { from, to }
-                }
+        }
+        DynValueKind::Number => {
+            let is_equal =
+                // Try signed integers
+                concrete_peek.get::<i8>().ok().is_some_and(|&v| dyn_val.as_i64() == Some(v as i64))
+                || concrete_peek.get::<i16>().ok().is_some_and(|&v| dyn_val.as_i64() == Some(v as i64))
+                || concrete_peek.get::<i32>().ok().is_some_and(|&v| dyn_val.as_i64() == Some(v as i64))
+                || concrete_peek.get::<i64>().ok().is_some_and(|&v| dyn_val.as_i64() == Some(v))
+                || concrete_peek.get::<isize>().ok().is_some_and(|&v| dyn_val.as_i64() == Some(v as i64))
+                // Try unsigned integers
+                || concrete_peek.get::<u8>().ok().is_some_and(|&v| dyn_val.as_u64() == Some(v as u64))
+                || concrete_peek.get::<u16>().ok().is_some_and(|&v| dyn_val.as_u64() == Some(v as u64))
+                || concrete_peek.get::<u32>().ok().is_some_and(|&v| dyn_val.as_u64() == Some(v as u64))
+                || concrete_peek.get::<u64>().ok().is_some_and(|&v| dyn_val.as_u64() == Some(v))
+                || concrete_peek.get::<usize>().ok().is_some_and(|&v| dyn_val.as_u64() == Some(v as u64))
+                // Try floats
+                || concrete_peek.get::<f32>().ok().is_some_and(|&v| dyn_val.as_f64() == Some(v as f64))
+                || concrete_peek.get::<f64>().ok().is_some_and(|&v| dyn_val.as_f64() == Some(v));
+            if is_equal {
+                return Diff::Equal {
+                    value: Some(from_peek),
+                };
             }
-            DynValueKind::Bytes => {
-                if from_dyn.as_bytes() == to_dyn.as_bytes() {
-                    Diff::Equal { value: Some(from) }
-                } else {
-                    Diff::Replace { from, to }
-                }
+        }
+        DynValueKind::String => {
+            if concrete_peek
+                .as_str()
+                .is_some_and(|s| dyn_val.as_str() == Some(s))
+            {
+                return Diff::Equal {
+                    value: Some(from_peek),
+                };
             }
-            DynValueKind::Array => {
-                // Use the sequence diff algorithm for arrays
-                let from_iter = from_dyn.array_iter();
-                let to_iter = to_dyn.array_iter();
+        }
+        DynValueKind::Array => {
+            // Try to diff as sequences if the concrete type is list-like
+            if let Ok(concrete_list) = concrete_peek.into_list_like() {
+                let dyn_elems: Vec<_> = dyn_val
+                    .array_iter()
+                    .map(|i| i.collect())
+                    .unwrap_or_default();
+                let concrete_elems: Vec<_> = concrete_list.iter().collect();
 
-                let from_elems: Vec<_> = from_iter.map(|i| i.collect()).unwrap_or_default();
-                let to_elems: Vec<_> = to_iter.map(|i| i.collect()).unwrap_or_default();
-
+                // Use correct order based on swapped flag
+                let (from_elems, to_elems) = if swapped {
+                    (concrete_elems, dyn_elems)
+                } else {
+                    (dyn_elems, concrete_elems)
+                };
                 let updates = sequences::diff(from_elems, to_elems);
 
-                Diff::Sequence {
-                    from: from.shape(),
-                    to: to.shape(),
+                return Diff::Sequence {
+                    from: from_peek.shape(),
+                    to: to_peek.shape(),
                     updates,
-                }
+                };
             }
-            DynValueKind::Object => {
-                // Treat objects like struct diffs
-                let from_len = from_dyn.object_len().unwrap_or(0);
-                let to_len = to_dyn.object_len().unwrap_or(0);
+        }
+        DynValueKind::Object => {
+            // Try to diff as struct if the concrete type is a struct
+            if let Ok(concrete_struct) = concrete_peek.into_struct() {
+                let dyn_len = dyn_val.object_len().unwrap_or(0);
 
                 let mut updates = HashMap::new();
                 let mut deletions = HashMap::new();
                 let mut insertions = HashMap::new();
                 let mut unchanged = HashSet::new();
 
-                // Collect keys from `from`
-                let mut from_keys: HashMap<String, Peek<'mem, 'facet>> = HashMap::new();
-                for i in 0..from_len {
-                    if let Some((key, value)) = from_dyn.object_get_entry(i) {
-                        from_keys.insert(key.to_owned(), value);
+                // Collect keys from dynamic object
+                let mut dyn_keys: HashMap<String, Peek<'mem, 'facet>> = HashMap::new();
+                for i in 0..dyn_len {
+                    if let Some((key, value)) = dyn_val.object_get_entry(i) {
+                        dyn_keys.insert(key.to_owned(), value);
                     }
                 }
 
-                // Collect keys from `to`
-                let mut to_keys: HashMap<String, Peek<'mem, 'facet>> = HashMap::new();
-                for i in 0..to_len {
-                    if let Some((key, value)) = to_dyn.object_get_entry(i) {
-                        to_keys.insert(key.to_owned(), value);
-                    }
-                }
-
-                // Compare entries
-                for (key, from_value) in &from_keys {
-                    if let Some(to_value) = to_keys.get(key) {
-                        let diff = Self::new_peek(*from_value, *to_value);
+                // Compare with concrete struct fields
+                // When swapped, dyn is "to" and concrete is "from", so we need to swap the diff direction
+                for (key, dyn_value) in &dyn_keys {
+                    if let Ok(concrete_value) = concrete_struct.field_by_name(key) {
+                        let diff = if swapped {
+                            diff_new_peek(concrete_value, *dyn_value)
+                        } else {
+                            diff_new_peek(*dyn_value, concrete_value)
+                        };
                         if diff.is_equal() {
                             unchanged.insert(Cow::Owned(key.clone()));
                         } else {
                             updates.insert(Cow::Owned(key.clone()), diff);
                         }
                     } else {
-                        deletions.insert(Cow::Owned(key.clone()), *from_value);
+                        // Field in dyn but not in concrete
+                        // If swapped: dyn is "to", so this is an insertion
+                        // If not swapped: dyn is "from", so this is a deletion
+                        if swapped {
+                            insertions.insert(Cow::Owned(key.clone()), *dyn_value);
+                        } else {
+                            deletions.insert(Cow::Owned(key.clone()), *dyn_value);
+                        }
                     }
                 }
 
-                for (key, to_value) in &to_keys {
-                    if !from_keys.contains_key(key) {
-                        insertions.insert(Cow::Owned(key.clone()), *to_value);
+                for (field, concrete_value) in concrete_struct.fields() {
+                    if !dyn_keys.contains_key(field.name) {
+                        // Field in concrete but not in dyn
+                        // If swapped: concrete is "from", so this is a deletion
+                        // If not swapped: concrete is "to", so this is an insertion
+                        if swapped {
+                            deletions.insert(Cow::Borrowed(field.name), concrete_value);
+                        } else {
+                            insertions.insert(Cow::Borrowed(field.name), concrete_value);
+                        }
                     }
                 }
 
-                Diff::User {
-                    from: from.shape(),
-                    to: to.shape(),
+                return Diff::User {
+                    from: from_peek.shape(),
+                    to: to_peek.shape(),
                     variant: None,
                     value: Value::Struct {
                         updates,
@@ -419,450 +510,279 @@ impl<'mem, 'facet> Diff<'mem, 'facet> {
                         insertions,
                         unchanged,
                     },
-                }
+                };
             }
-            DynValueKind::DateTime => {
-                // Compare datetime by their components
-                if from_dyn.as_datetime() == to_dyn.as_datetime() {
-                    Diff::Equal { value: Some(from) }
+        }
+        // For other kinds (Null, Bytes, DateTime), fall through to Replace
+        _ => {}
+    }
+
+    Diff::Replace {
+        from: from_peek,
+        to: to_peek,
+    }
+}
+
+/// Dereference a pointer/reference to get the underlying value
+fn deref_if_pointer<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> Peek<'mem, 'facet> {
+    if let Ok(ptr) = peek.into_pointer()
+        && let Some(target) = ptr.borrow_inner()
+    {
+        return deref_if_pointer(target);
+    }
+    peek
+}
+
+pub(crate) fn diff_closeness(diff: &Diff<'_, '_>) -> usize {
+    match diff {
+        Diff::Equal { .. } => 1, // This does not actually matter for flattening sequence diffs, because all diffs there are non-equal
+        Diff::Replace { .. } => 0,
+        Diff::Sequence { updates, .. } => updates.closeness(),
+        Diff::User {
+            from, to, value, ..
+        } => value.closeness() + (from == to) as usize,
+    }
+}
+
+/// Collect all leaf-level changes with their paths.
+///
+/// This walks the diff tree recursively and collects every terminal change
+/// (scalar replacements) along with the path to reach them. This is useful
+/// for compact display: if there's only one leaf change deep in a tree,
+/// you can show `path.to.field: old → new` instead of nested structure.
+pub fn collect_leaf_changes<'mem, 'facet>(
+    diff: &Diff<'mem, 'facet>,
+) -> Vec<LeafChange<'mem, 'facet>> {
+    let mut changes = Vec::new();
+    collect_leaf_changes_inner(diff, Path::new(), &mut changes);
+    changes
+}
+
+fn collect_leaf_changes_inner<'mem, 'facet>(
+    diff: &Diff<'mem, 'facet>,
+    path: Path,
+    changes: &mut Vec<LeafChange<'mem, 'facet>>,
+) {
+    match diff {
+        Diff::Equal { .. } => {
+            // No change
+        }
+        Diff::Replace { from, to } => {
+            // This is a leaf change
+            changes.push(LeafChange {
+                path,
+                kind: LeafChangeKind::Replace {
+                    from: *from,
+                    to: *to,
+                },
+            });
+        }
+        Diff::User {
+            value,
+            variant,
+            from,
+            ..
+        } => {
+            // For Option::Some, skip the variant in the path since it's implied
+            // (the value exists, so it's Some)
+            let is_option = matches!(from.def, Def::Option(_));
+
+            let base_path = if let Some(v) = variant {
+                if is_option && *v == "Some" {
+                    path // Skip "::Some" for options
                 } else {
-                    Diff::Replace { from, to }
+                    path.with(PathSegment::Variant(Cow::Borrowed(*v)))
                 }
-            }
-            DynValueKind::QName | DynValueKind::Uuid => {
-                // For QName and Uuid, compare by their raw representation
-                // Since they have the same kind, we can only compare by Replace semantics
-                Diff::Replace { from, to }
-            }
-        }
-    }
+            } else {
+                path
+            };
 
-    /// Diff a DynamicValue against a concrete type
-    /// `dyn_peek` is the DynamicValue, `concrete_peek` is the concrete type
-    /// `swapped` indicates if the original from/to were swapped (true means dyn_peek is actually "to")
-    fn diff_dynamic_vs_concrete(
-        dyn_peek: Peek<'mem, 'facet>,
-        concrete_peek: Peek<'mem, 'facet>,
-        swapped: bool,
-    ) -> Self {
-        // Determine actual from/to based on swapped flag
-        let (from_peek, to_peek) = if swapped {
-            (concrete_peek, dyn_peek)
-        } else {
-            (dyn_peek, concrete_peek)
-        };
-        let dyn_val = dyn_peek.into_dynamic_value().unwrap();
-        let dyn_kind = dyn_val.kind();
-
-        // Try to match based on the DynamicValue's kind
-        match dyn_kind {
-            DynValueKind::Bool => {
-                if concrete_peek
-                    .get::<bool>()
-                    .ok()
-                    .is_some_and(|&v| dyn_val.as_bool() == Some(v))
-                {
-                    return Diff::Equal {
-                        value: Some(from_peek),
-                    };
+            match value {
+                Value::Struct {
+                    updates,
+                    deletions,
+                    insertions,
+                    ..
+                } => {
+                    // Recurse into field updates
+                    for (field, diff) in updates {
+                        let field_path = base_path.with(PathSegment::Field(field.clone()));
+                        collect_leaf_changes_inner(diff, field_path, changes);
+                    }
+                    // Deletions are leaf changes
+                    for (field, peek) in deletions {
+                        let field_path = base_path.with(PathSegment::Field(field.clone()));
+                        changes.push(LeafChange {
+                            path: field_path,
+                            kind: LeafChangeKind::Delete { value: *peek },
+                        });
+                    }
+                    // Insertions are leaf changes
+                    for (field, peek) in insertions {
+                        let field_path = base_path.with(PathSegment::Field(field.clone()));
+                        changes.push(LeafChange {
+                            path: field_path,
+                            kind: LeafChangeKind::Insert { value: *peek },
+                        });
+                    }
                 }
-            }
-            DynValueKind::Number => {
-                let is_equal =
-                    // Try signed integers
-                    concrete_peek.get::<i8>().ok().is_some_and(|&v| dyn_val.as_i64() == Some(v as i64))
-                    || concrete_peek.get::<i16>().ok().is_some_and(|&v| dyn_val.as_i64() == Some(v as i64))
-                    || concrete_peek.get::<i32>().ok().is_some_and(|&v| dyn_val.as_i64() == Some(v as i64))
-                    || concrete_peek.get::<i64>().ok().is_some_and(|&v| dyn_val.as_i64() == Some(v))
-                    || concrete_peek.get::<isize>().ok().is_some_and(|&v| dyn_val.as_i64() == Some(v as i64))
-                    // Try unsigned integers
-                    || concrete_peek.get::<u8>().ok().is_some_and(|&v| dyn_val.as_u64() == Some(v as u64))
-                    || concrete_peek.get::<u16>().ok().is_some_and(|&v| dyn_val.as_u64() == Some(v as u64))
-                    || concrete_peek.get::<u32>().ok().is_some_and(|&v| dyn_val.as_u64() == Some(v as u64))
-                    || concrete_peek.get::<u64>().ok().is_some_and(|&v| dyn_val.as_u64() == Some(v))
-                    || concrete_peek.get::<usize>().ok().is_some_and(|&v| dyn_val.as_u64() == Some(v as u64))
-                    // Try floats
-                    || concrete_peek.get::<f32>().ok().is_some_and(|&v| dyn_val.as_f64() == Some(v as f64))
-                    || concrete_peek.get::<f64>().ok().is_some_and(|&v| dyn_val.as_f64() == Some(v));
-                if is_equal {
-                    return Diff::Equal {
-                        value: Some(from_peek),
-                    };
-                }
-            }
-            DynValueKind::String => {
-                if concrete_peek
-                    .as_str()
-                    .is_some_and(|s| dyn_val.as_str() == Some(s))
-                {
-                    return Diff::Equal {
-                        value: Some(from_peek),
-                    };
-                }
-            }
-            DynValueKind::Array => {
-                // Try to diff as sequences if the concrete type is list-like
-                if let Ok(concrete_list) = concrete_peek.into_list_like() {
-                    let dyn_elems: Vec<_> = dyn_val
-                        .array_iter()
-                        .map(|i| i.collect())
-                        .unwrap_or_default();
-                    let concrete_elems: Vec<_> = concrete_list.iter().collect();
-
-                    // Use correct order based on swapped flag
-                    let (from_elems, to_elems) = if swapped {
-                        (concrete_elems, dyn_elems)
+                Value::Tuple { updates } => {
+                    // For single-element tuples (like Option::Some), skip the index
+                    if is_option {
+                        // Recurse directly without adding [0]
+                        collect_from_updates_for_single_elem(&base_path, updates, changes);
                     } else {
-                        (dyn_elems, concrete_elems)
-                    };
-                    let updates = sequences::diff(from_elems, to_elems);
-
-                    return Diff::Sequence {
-                        from: from_peek.shape(),
-                        to: to_peek.shape(),
-                        updates,
-                    };
+                        collect_from_updates(&base_path, updates, changes);
+                    }
                 }
             }
-            DynValueKind::Object => {
-                // Try to diff as struct if the concrete type is a struct
-                if let Ok(concrete_struct) = concrete_peek.into_struct() {
-                    let dyn_len = dyn_val.object_len().unwrap_or(0);
-
-                    let mut updates = HashMap::new();
-                    let mut deletions = HashMap::new();
-                    let mut insertions = HashMap::new();
-                    let mut unchanged = HashSet::new();
-
-                    // Collect keys from dynamic object
-                    let mut dyn_keys: HashMap<String, Peek<'mem, 'facet>> = HashMap::new();
-                    for i in 0..dyn_len {
-                        if let Some((key, value)) = dyn_val.object_get_entry(i) {
-                            dyn_keys.insert(key.to_owned(), value);
-                        }
-                    }
-
-                    // Compare with concrete struct fields
-                    // When swapped, dyn is "to" and concrete is "from", so we need to swap the diff direction
-                    for (key, dyn_value) in &dyn_keys {
-                        if let Ok(concrete_value) = concrete_struct.field_by_name(key) {
-                            let diff = if swapped {
-                                Self::new_peek(concrete_value, *dyn_value)
-                            } else {
-                                Self::new_peek(*dyn_value, concrete_value)
-                            };
-                            if diff.is_equal() {
-                                unchanged.insert(Cow::Owned(key.clone()));
-                            } else {
-                                updates.insert(Cow::Owned(key.clone()), diff);
-                            }
-                        } else {
-                            // Field in dyn but not in concrete
-                            // If swapped: dyn is "to", so this is an insertion
-                            // If not swapped: dyn is "from", so this is a deletion
-                            if swapped {
-                                insertions.insert(Cow::Owned(key.clone()), *dyn_value);
-                            } else {
-                                deletions.insert(Cow::Owned(key.clone()), *dyn_value);
-                            }
-                        }
-                    }
-
-                    for (field, concrete_value) in concrete_struct.fields() {
-                        if !dyn_keys.contains_key(field.name) {
-                            // Field in concrete but not in dyn
-                            // If swapped: concrete is "from", so this is a deletion
-                            // If not swapped: concrete is "to", so this is an insertion
-                            if swapped {
-                                deletions.insert(Cow::Borrowed(field.name), concrete_value);
-                            } else {
-                                insertions.insert(Cow::Borrowed(field.name), concrete_value);
-                            }
-                        }
-                    }
-
-                    return Diff::User {
-                        from: from_peek.shape(),
-                        to: to_peek.shape(),
-                        variant: None,
-                        value: Value::Struct {
-                            updates,
-                            deletions,
-                            insertions,
-                            unchanged,
-                        },
-                    };
-                }
-            }
-            // For other kinds (Null, Bytes, DateTime), fall through to Replace
-            _ => {}
         }
-
-        Diff::Replace {
-            from: from_peek,
-            to: to_peek,
+        Diff::Sequence { updates, .. } => {
+            collect_from_updates(&path, updates, changes);
         }
     }
+}
 
-    /// Dereference a pointer/reference to get the underlying value
-    fn deref_if_pointer(peek: Peek<'mem, 'facet>) -> Peek<'mem, 'facet> {
-        if let Ok(ptr) = peek.into_pointer()
-            && let Some(target) = ptr.borrow_inner()
+/// Special handling for single-element tuples (like Option::Some)
+/// where we want to skip the [0] index in the path.
+fn collect_from_updates_for_single_elem<'mem, 'facet>(
+    base_path: &Path,
+    updates: &Updates<'mem, 'facet>,
+    changes: &mut Vec<LeafChange<'mem, 'facet>>,
+) {
+    // For single-element tuples, we expect exactly one change
+    // Just use base_path directly instead of adding [0]
+    if let Some(update_group) = &updates.0.first {
+        // Process the first replace group if present
+        if let Some(replace) = &update_group.0.first
+            && replace.removals.len() == 1
+            && replace.additions.len() == 1
         {
-            return Self::deref_if_pointer(target);
-        }
-        peek
-    }
-
-    pub(crate) fn closeness(&self) -> usize {
-        match self {
-            Self::Equal { .. } => 1, // This does not actually matter for flattening sequence diffs, because all diffs there are non-equal
-            Self::Replace { .. } => 0,
-            Self::Sequence { updates, .. } => updates.closeness(),
-            Self::User {
-                from, to, value, ..
-            } => value.closeness() + (from == to) as usize,
-        }
-    }
-
-    /// Collect all leaf-level changes with their paths.
-    ///
-    /// This walks the diff tree recursively and collects every terminal change
-    /// (scalar replacements) along with the path to reach them. This is useful
-    /// for compact display: if there's only one leaf change deep in a tree,
-    /// you can show `path.to.field: old → new` instead of nested structure.
-    pub fn collect_leaf_changes(&self) -> Vec<LeafChange<'mem, 'facet>> {
-        let mut changes = Vec::new();
-        self.collect_leaf_changes_inner(Path::new(), &mut changes);
-        changes
-    }
-
-    fn collect_leaf_changes_inner(&self, path: Path, changes: &mut Vec<LeafChange<'mem, 'facet>>) {
-        match self {
-            Diff::Equal { .. } => {
-                // No change
-            }
-            Diff::Replace { from, to } => {
-                // This is a leaf change
+            let from = replace.removals[0];
+            let to = replace.additions[0];
+            let nested = diff_new_peek(from, to);
+            if matches!(nested, Diff::Replace { .. }) {
                 changes.push(LeafChange {
-                    path,
+                    path: base_path.clone(),
+                    kind: LeafChangeKind::Replace { from, to },
+                });
+            } else {
+                collect_leaf_changes_inner(&nested, base_path.clone(), changes);
+            }
+            return;
+        }
+        // Handle nested diffs
+        if let Some(diffs) = &update_group.0.last {
+            for diff in diffs {
+                collect_leaf_changes_inner(diff, base_path.clone(), changes);
+            }
+            return;
+        }
+    }
+    // Fallback: use regular handling
+    collect_from_updates(base_path, updates, changes);
+}
+
+fn collect_from_updates<'mem, 'facet>(
+    base_path: &Path,
+    updates: &Updates<'mem, 'facet>,
+    changes: &mut Vec<LeafChange<'mem, 'facet>>,
+) {
+    // Walk through the interspersed structure to collect changes with correct indices
+    let mut index = 0;
+
+    // Process first update group if present
+    if let Some(update_group) = &updates.0.first {
+        collect_from_update_group(base_path, update_group, &mut index, changes);
+    }
+
+    // Process interleaved (unchanged, update) pairs
+    for (unchanged, update_group) in &updates.0.values {
+        index += unchanged.len();
+        collect_from_update_group(base_path, update_group, &mut index, changes);
+    }
+
+    // Trailing unchanged items don't add changes
+}
+
+fn collect_from_update_group<'mem, 'facet>(
+    base_path: &Path,
+    group: &crate::UpdatesGroup<'mem, 'facet>,
+    index: &mut usize,
+    changes: &mut Vec<LeafChange<'mem, 'facet>>,
+) {
+    // Process first replace group if present
+    if let Some(replace) = &group.0.first {
+        collect_from_replace_group(base_path, replace, index, changes);
+    }
+
+    // Process interleaved (diffs, replace) pairs
+    for (diffs, replace) in &group.0.values {
+        for diff in diffs {
+            let elem_path = base_path.with(PathSegment::Index(*index));
+            collect_leaf_changes_inner(diff, elem_path, changes);
+            *index += 1;
+        }
+        collect_from_replace_group(base_path, replace, index, changes);
+    }
+
+    // Process trailing diffs
+    if let Some(diffs) = &group.0.last {
+        for diff in diffs {
+            let elem_path = base_path.with(PathSegment::Index(*index));
+            collect_leaf_changes_inner(diff, elem_path, changes);
+            *index += 1;
+        }
+    }
+}
+
+fn collect_from_replace_group<'mem, 'facet>(
+    base_path: &Path,
+    group: &crate::ReplaceGroup<'mem, 'facet>,
+    index: &mut usize,
+    changes: &mut Vec<LeafChange<'mem, 'facet>>,
+) {
+    // For replace groups, we have removals and additions
+    // If counts match, treat as 1:1 replacements at the same index
+    // Otherwise, show as deletions followed by insertions
+
+    if group.removals.len() == group.additions.len() {
+        // 1:1 replacements
+        for (from, to) in group.removals.iter().zip(group.additions.iter()) {
+            let elem_path = base_path.with(PathSegment::Index(*index));
+            // Check if this is actually a nested diff
+            let nested = diff_new_peek(*from, *to);
+            if matches!(nested, Diff::Replace { .. }) {
+                changes.push(LeafChange {
+                    path: elem_path,
                     kind: LeafChangeKind::Replace {
                         from: *from,
                         to: *to,
                     },
                 });
+            } else {
+                collect_leaf_changes_inner(&nested, elem_path, changes);
             }
-            Diff::User {
-                value,
-                variant,
-                from,
-                ..
-            } => {
-                // For Option::Some, skip the variant in the path since it's implied
-                // (the value exists, so it's Some)
-                let is_option = matches!(from.def, Def::Option(_));
-
-                let base_path = if let Some(v) = variant {
-                    if is_option && *v == "Some" {
-                        path // Skip "::Some" for options
-                    } else {
-                        path.with(PathSegment::Variant(Cow::Borrowed(*v)))
-                    }
-                } else {
-                    path
-                };
-
-                match value {
-                    Value::Struct {
-                        updates,
-                        deletions,
-                        insertions,
-                        ..
-                    } => {
-                        // Recurse into field updates
-                        for (field, diff) in updates {
-                            let field_path = base_path.with(PathSegment::Field(field.clone()));
-                            diff.collect_leaf_changes_inner(field_path, changes);
-                        }
-                        // Deletions are leaf changes
-                        for (field, peek) in deletions {
-                            let field_path = base_path.with(PathSegment::Field(field.clone()));
-                            changes.push(LeafChange {
-                                path: field_path,
-                                kind: LeafChangeKind::Delete { value: *peek },
-                            });
-                        }
-                        // Insertions are leaf changes
-                        for (field, peek) in insertions {
-                            let field_path = base_path.with(PathSegment::Field(field.clone()));
-                            changes.push(LeafChange {
-                                path: field_path,
-                                kind: LeafChangeKind::Insert { value: *peek },
-                            });
-                        }
-                    }
-                    Value::Tuple { updates } => {
-                        // For single-element tuples (like Option::Some), skip the index
-                        if is_option {
-                            // Recurse directly without adding [0]
-                            self.collect_from_updates_for_single_elem(&base_path, updates, changes);
-                        } else {
-                            self.collect_from_updates(&base_path, updates, changes);
-                        }
-                    }
-                }
-            }
-            Diff::Sequence { updates, .. } => {
-                self.collect_from_updates(&path, updates, changes);
-            }
+            *index += 1;
         }
-    }
-
-    /// Special handling for single-element tuples (like Option::Some)
-    /// where we want to skip the [0] index in the path.
-    fn collect_from_updates_for_single_elem(
-        &self,
-        base_path: &Path,
-        updates: &Updates<'mem, 'facet>,
-        changes: &mut Vec<LeafChange<'mem, 'facet>>,
-    ) {
-        // For single-element tuples, we expect exactly one change
-        // Just use base_path directly instead of adding [0]
-        if let Some(update_group) = &updates.0.first {
-            // Process the first replace group if present
-            if let Some(replace) = &update_group.0.first
-                && replace.removals.len() == 1
-                && replace.additions.len() == 1
-            {
-                let from = replace.removals[0];
-                let to = replace.additions[0];
-                let nested = Diff::new_peek(from, to);
-                if matches!(nested, Diff::Replace { .. }) {
-                    changes.push(LeafChange {
-                        path: base_path.clone(),
-                        kind: LeafChangeKind::Replace { from, to },
-                    });
-                } else {
-                    nested.collect_leaf_changes_inner(base_path.clone(), changes);
-                }
-                return;
-            }
-            // Handle nested diffs
-            if let Some(diffs) = &update_group.0.last {
-                for diff in diffs {
-                    diff.collect_leaf_changes_inner(base_path.clone(), changes);
-                }
-                return;
-            }
+    } else {
+        // Mixed deletions and insertions
+        for from in &group.removals {
+            let elem_path = base_path.with(PathSegment::Index(*index));
+            changes.push(LeafChange {
+                path: elem_path.clone(),
+                kind: LeafChangeKind::Delete { value: *from },
+            });
+            *index += 1;
         }
-        // Fallback: use regular handling
-        self.collect_from_updates(base_path, updates, changes);
-    }
-
-    fn collect_from_updates(
-        &self,
-        base_path: &Path,
-        updates: &Updates<'mem, 'facet>,
-        changes: &mut Vec<LeafChange<'mem, 'facet>>,
-    ) {
-        // Walk through the interspersed structure to collect changes with correct indices
-        let mut index = 0;
-
-        // Process first update group if present
-        if let Some(update_group) = &updates.0.first {
-            self.collect_from_update_group(base_path, update_group, &mut index, changes);
-        }
-
-        // Process interleaved (unchanged, update) pairs
-        for (unchanged, update_group) in &updates.0.values {
-            index += unchanged.len();
-            self.collect_from_update_group(base_path, update_group, &mut index, changes);
-        }
-
-        // Trailing unchanged items don't add changes
-    }
-
-    fn collect_from_update_group(
-        &self,
-        base_path: &Path,
-        group: &crate::sequences::UpdatesGroup<'mem, 'facet>,
-        index: &mut usize,
-        changes: &mut Vec<LeafChange<'mem, 'facet>>,
-    ) {
-        // Process first replace group if present
-        if let Some(replace) = &group.0.first {
-            self.collect_from_replace_group(base_path, replace, index, changes);
-        }
-
-        // Process interleaved (diffs, replace) pairs
-        for (diffs, replace) in &group.0.values {
-            for diff in diffs {
-                let elem_path = base_path.with(PathSegment::Index(*index));
-                diff.collect_leaf_changes_inner(elem_path, changes);
-                *index += 1;
-            }
-            self.collect_from_replace_group(base_path, replace, index, changes);
-        }
-
-        // Process trailing diffs
-        if let Some(diffs) = &group.0.last {
-            for diff in diffs {
-                let elem_path = base_path.with(PathSegment::Index(*index));
-                diff.collect_leaf_changes_inner(elem_path, changes);
-                *index += 1;
-            }
-        }
-    }
-
-    fn collect_from_replace_group(
-        &self,
-        base_path: &Path,
-        group: &crate::sequences::ReplaceGroup<'mem, 'facet>,
-        index: &mut usize,
-        changes: &mut Vec<LeafChange<'mem, 'facet>>,
-    ) {
-        // For replace groups, we have removals and additions
-        // If counts match, treat as 1:1 replacements at the same index
-        // Otherwise, show as deletions followed by insertions
-
-        if group.removals.len() == group.additions.len() {
-            // 1:1 replacements
-            for (from, to) in group.removals.iter().zip(group.additions.iter()) {
-                let elem_path = base_path.with(PathSegment::Index(*index));
-                // Check if this is actually a nested diff
-                let nested = Diff::new_peek(*from, *to);
-                if matches!(nested, Diff::Replace { .. }) {
-                    changes.push(LeafChange {
-                        path: elem_path,
-                        kind: LeafChangeKind::Replace {
-                            from: *from,
-                            to: *to,
-                        },
-                    });
-                } else {
-                    nested.collect_leaf_changes_inner(elem_path, changes);
-                }
-                *index += 1;
-            }
-        } else {
-            // Mixed deletions and insertions
-            for from in &group.removals {
-                let elem_path = base_path.with(PathSegment::Index(*index));
-                changes.push(LeafChange {
-                    path: elem_path.clone(),
-                    kind: LeafChangeKind::Delete { value: *from },
-                });
-                *index += 1;
-            }
-            // Insertions happen at current index
-            for to in &group.additions {
-                let elem_path = base_path.with(PathSegment::Index(*index));
-                changes.push(LeafChange {
-                    path: elem_path,
-                    kind: LeafChangeKind::Insert { value: *to },
-                });
-                *index += 1;
-            }
+        // Insertions happen at current index
+        for to in &group.additions {
+            let elem_path = base_path.with(PathSegment::Index(*index));
+            changes.push(LeafChange {
+                path: elem_path,
+                kind: LeafChangeKind::Insert { value: *to },
+            });
+            *index += 1;
         }
     }
 }
@@ -1008,110 +928,114 @@ impl Default for DiffFormat {
     }
 }
 
-impl<'mem, 'facet> Diff<'mem, 'facet> {
-    /// Format the diff with the given configuration.
-    ///
-    /// This chooses between compact (path-based) and tree (nested) format
-    /// based on the number of changes and the configuration.
-    pub fn format(&self, config: &DiffFormat) -> String {
-        if matches!(self, Diff::Equal { .. }) {
-            return if config.colors {
-                use facet_pretty::tokyo_night;
-                use owo_colors::OwoColorize;
-                "(no changes)".color(tokyo_night::MUTED).to_string()
-            } else {
-                "(no changes)".to_string()
-            };
-        }
+/// Format the diff with the given configuration.
+///
+/// This chooses between compact (path-based) and tree (nested) format
+/// based on the number of changes and the configuration.
+pub fn format_diff(diff: &Diff<'_, '_>, config: &DiffFormat) -> String {
+    if matches!(diff, Diff::Equal { .. }) {
+        return if config.colors {
+            use facet_pretty::tokyo_night;
+            use owo_colors::OwoColorize;
+            "(no changes)".color(tokyo_night::MUTED).to_string()
+        } else {
+            "(no changes)".to_string()
+        };
+    }
 
-        let changes = self.collect_leaf_changes();
+    let changes = collect_leaf_changes(diff);
 
-        if changes.is_empty() {
-            return if config.colors {
-                use facet_pretty::tokyo_night;
-                use owo_colors::OwoColorize;
-                "(no changes)".color(tokyo_night::MUTED).to_string()
-            } else {
-                "(no changes)".to_string()
-            };
-        }
+    if changes.is_empty() {
+        return if config.colors {
+            use facet_pretty::tokyo_night;
+            use owo_colors::OwoColorize;
+            "(no changes)".color(tokyo_night::MUTED).to_string()
+        } else {
+            "(no changes)".to_string()
+        };
+    }
 
-        // Use compact format if preferred and we have few changes
-        if config.prefer_compact && changes.len() <= config.max_inline_changes {
-            let mut out = String::new();
-            for (i, change) in changes.iter().enumerate() {
-                if i > 0 {
-                    out.push('\n');
-                }
-                if config.colors {
-                    out.push_str(&change.format_colored());
-                } else {
-                    out.push_str(&change.format_plain());
-                }
-            }
-            return out;
-        }
-
-        // Fall back to tree format for many changes
-        if changes.len() > config.max_inline_changes {
-            let mut out = String::new();
-
-            // Show first few changes
-            for (i, change) in changes.iter().take(config.max_inline_changes).enumerate() {
-                if i > 0 {
-                    out.push('\n');
-                }
-                if config.colors {
-                    out.push_str(&change.format_colored());
-                } else {
-                    out.push_str(&change.format_plain());
-                }
-            }
-
-            // Show summary of remaining
-            let remaining = changes.len() - config.max_inline_changes;
-            if remaining > 0 {
+    // Use compact format if preferred and we have few changes
+    if config.prefer_compact && changes.len() <= config.max_inline_changes {
+        let mut out = String::new();
+        for (i, change) in changes.iter().enumerate() {
+            if i > 0 {
                 out.push('\n');
-                let summary = format!(
-                    "... and {} more change{}",
-                    remaining,
-                    if remaining == 1 { "" } else { "s" }
-                );
-                if config.colors {
-                    use facet_pretty::tokyo_night;
-                    use owo_colors::OwoColorize;
-                    out.push_str(&summary.color(tokyo_night::MUTED).to_string());
-                } else {
-                    out.push_str(&summary);
-                }
             }
-            return out;
+            if config.colors {
+                out.push_str(&change.format_colored());
+            } else {
+                out.push_str(&change.format_plain());
+            }
+        }
+        return out;
+    }
+
+    // Fall back to tree format for many changes
+    if changes.len() > config.max_inline_changes {
+        let mut out = String::new();
+
+        // Show first few changes
+        for (i, change) in changes.iter().take(config.max_inline_changes).enumerate() {
+            if i > 0 {
+                out.push('\n');
+            }
+            if config.colors {
+                out.push_str(&change.format_colored());
+            } else {
+                out.push_str(&change.format_plain());
+            }
         }
 
-        // Default: use Display impl (tree format)
-        format!("{self}")
+        // Show summary of remaining
+        let remaining = changes.len() - config.max_inline_changes;
+        if remaining > 0 {
+            out.push('\n');
+            let summary = format!(
+                "... and {} more change{}",
+                remaining,
+                if remaining == 1 { "" } else { "s" }
+            );
+            if config.colors {
+                use facet_pretty::tokyo_night;
+                use owo_colors::OwoColorize;
+                out.push_str(&summary.color(tokyo_night::MUTED).to_string());
+            } else {
+                out.push_str(&summary);
+            }
+        }
+        return out;
     }
 
-    /// Format the diff with default configuration.
-    pub fn format_default(&self) -> String {
-        self.format(&DiffFormat::default())
-    }
+    // Default: use Display impl (tree format)
+    format!("{diff}")
+}
 
-    /// Format the diff in compact mode (path-based, no tree structure).
-    pub fn format_compact(&self) -> String {
-        self.format(&DiffFormat {
+/// Format the diff with default configuration.
+pub fn format_diff_default(diff: &Diff<'_, '_>) -> String {
+    format_diff(diff, &DiffFormat::default())
+}
+
+/// Format the diff in compact mode (path-based, no tree structure).
+pub fn format_diff_compact(diff: &Diff<'_, '_>) -> String {
+    format_diff(
+        diff,
+        &DiffFormat {
             prefer_compact: true,
             max_inline_changes: usize::MAX,
             ..Default::default()
-        })
-    }
+        },
+    )
+}
 
-    /// Format the diff in compact mode without colors.
-    pub fn format_compact_plain(&self) -> String {
-        self.format(&DiffFormat {
+/// Format the diff in compact mode without colors.
+pub fn format_diff_compact_plain(diff: &Diff<'_, '_>) -> String {
+    format_diff(
+        diff,
+        &DiffFormat {
             colors: false,
             prefer_compact: true,
             max_inline_changes: usize::MAX,
-        })
-    }
+        },
+    )
 }

@@ -3,19 +3,23 @@
 #![doc = include_str!("../README.md")]
 
 mod diff;
-mod display;
 mod sequences;
 mod tree;
 
-pub use diff::{Diff, DiffFormat, FacetDiff, LeafChange, LeafChangeKind};
-pub use sequences::{Interspersed, ReplaceGroup, Updates, UpdatesGroup};
-pub use tree::{EditOp, FacetTree, NodeKind, NodeLabel, Path, PathSegment, build_tree, tree_diff};
+pub use diff::{
+    DiffFormat, FacetDiff, LeafChange, LeafChangeKind, collect_leaf_changes, format_diff,
+    format_diff_compact, format_diff_compact_plain, format_diff_default,
+};
+pub use tree::{EditOp, FacetTree, NodeKind, NodeLabel, build_tree, tree_diff};
 
 // Re-export cinereus types for advanced usage
 pub use cinereus::{Matching, MatchingConfig};
 
-// Re-export core types for diff rendering
-pub use facet_diff_core::{ChangeKind, DiffSymbols, DiffTheme};
+// Re-export core types from facet-diff-core
+pub use facet_diff_core::{
+    ChangeKind, Diff, DiffSymbols, DiffTheme, Interspersed, Path, PathSegment, ReplaceGroup,
+    Updates, UpdatesGroup, Value,
+};
 
 #[cfg(test)]
 mod tests {
