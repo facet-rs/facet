@@ -536,25 +536,23 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
     opts.backend.write_prefix(w, '-', SemanticColor::Deleted)?;
     write!(w, " ")?;
 
-    // For alignment, we need to pad both - and + lines to the same width
-    let max_value_width = group.max_old_width.max(group.max_new_width);
-
     let last_idx = group.attr_indices.len().saturating_sub(1);
     for (i, &idx) in group.attr_indices.iter().enumerate() {
         if i > 0 {
             write!(w, "{}", flavor.field_separator())?;
         }
         let attr = &attrs[idx];
-        if let AttrStatus::Changed { old, .. } = &attr.status {
-            let name_padding = group.max_name_width.saturating_sub(attr.name_width);
+        if let AttrStatus::Changed { old, new } = &attr.status {
+            // Each field padded to max of its own old/new value width
+            let field_max_width = old.width.max(new.width);
             write!(w, "{}", flavor.format_field_prefix(&attr.name))?;
             let old_str = layout.get_string(old.span);
             opts.backend
                 .write_styled(w, old_str, SemanticColor::Deleted)?;
             write!(w, "{}", flavor.format_field_suffix())?;
-            // Pad value for column alignment (only between fields, not at end)
+            // Pad to align with the + line's value (only between fields, not at end)
             if i < last_idx {
-                let value_padding = max_value_width.saturating_sub(old.width) + name_padding;
+                let value_padding = field_max_width.saturating_sub(old.width);
                 for _ in 0..value_padding {
                     write!(w, " ")?;
                 }
@@ -573,16 +571,17 @@ fn render_changed_group<W: Write, B: ColorBackend, F: DiffFlavor>(
             write!(w, "{}", flavor.field_separator())?;
         }
         let attr = &attrs[idx];
-        if let AttrStatus::Changed { new, .. } = &attr.status {
-            let name_padding = group.max_name_width.saturating_sub(attr.name_width);
+        if let AttrStatus::Changed { old, new } = &attr.status {
+            // Each field padded to max of its own old/new value width
+            let field_max_width = old.width.max(new.width);
             write!(w, "{}", flavor.format_field_prefix(&attr.name))?;
             let new_str = layout.get_string(new.span);
             opts.backend
                 .write_styled(w, new_str, SemanticColor::Inserted)?;
             write!(w, "{}", flavor.format_field_suffix())?;
-            // Pad for column alignment (only between fields, not at end)
+            // Pad to align with the - line's value (only between fields, not at end)
             if i < last_idx {
-                let value_padding = max_value_width.saturating_sub(new.width) + name_padding;
+                let value_padding = field_max_width.saturating_sub(new.width);
                 for _ in 0..value_padding {
                     write!(w, " ")?;
                 }
