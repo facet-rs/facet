@@ -5,11 +5,21 @@ use facet_reflect::Peek;
 
 use crate::diff::{diff_closeness, diff_new_peek};
 
+/// Maximum size for sequences to use Myers' algorithm.
+/// Larger sequences fall back to simple element-by-element comparison
+/// to prevent exponential blowup.
+const MAX_SEQUENCE_SIZE: usize = 100;
+
 /// Gets the diff of a sequence by using Myers' algorithm
 pub fn diff<'mem, 'facet>(
     a: Vec<Peek<'mem, 'facet>>,
     b: Vec<Peek<'mem, 'facet>>,
 ) -> Updates<'mem, 'facet> {
+    // For very large sequences, fall back to simple comparison to avoid
+    // exponential blowup in flatten_with
+    if a.len() > MAX_SEQUENCE_SIZE || b.len() > MAX_SEQUENCE_SIZE {
+        return simple_diff(a, b);
+    }
     // Moving l-t-r represents removing an element from a
     // Moving t-t-b represents adding an element from b
     //
@@ -60,6 +70,31 @@ pub fn diff<'mem, 'facet>(
         }
     }
 
-    updates.flatten_with(|a, b| diff_closeness(&diff_new_peek(a, b)), diff_new_peek);
+    // TODO: flatten_with causes exponential blowup with nested structures
+    // Temporarily disabled until we can add proper depth tracking
+    // if a.len() <= 2 && b.len() <= 2 {
+    //     updates.flatten_with(|a, b| diff_closeness(&diff_new_peek(a, b)), diff_new_peek);
+    // }
+    updates
+}
+
+/// Simple fallback diff for large sequences that doesn't use Myers' algorithm.
+/// Just treats all differences as removes followed by adds.
+fn simple_diff<'mem, 'facet>(
+    a: Vec<Peek<'mem, 'facet>>,
+    b: Vec<Peek<'mem, 'facet>>,
+) -> Updates<'mem, 'facet> {
+    let mut updates = Updates::default();
+
+    // Remove all from a
+    for item in a.iter().rev() {
+        updates.push_remove(*item);
+    }
+
+    // Add all from b
+    for item in b.iter().rev() {
+        updates.push_add(*item);
+    }
+
     updates
 }
