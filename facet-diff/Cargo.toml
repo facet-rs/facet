@@ -28,3 +28,4 @@ insta = "1.43.1"
 owo-colors = "4"
 facet-value = { path = "../facet-value" }
 facet-testhelpers = { path = "../facet-testhelpers" }
+confusables = "0.1"
