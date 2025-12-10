@@ -31,7 +31,8 @@ pub fn diff_new<'mem, 'facet, T: Facet<'facet>, U: Facet<'facet>>(
     diff_new_peek(Peek::new(from), Peek::new(to))
 }
 
-pub(crate) fn diff_new_peek<'mem, 'facet>(
+/// Computes the difference between two `Peek` values
+pub fn diff_new_peek<'mem, 'facet>(
     from: Peek<'mem, 'facet>,
     to: Peek<'mem, 'facet>,
 ) -> Diff<'mem, 'facet> {
@@ -39,7 +40,24 @@ pub(crate) fn diff_new_peek<'mem, 'facet>(
     let from = deref_if_pointer(from);
     let to = deref_if_pointer(to);
 
-    if from.shape().id == to.shape().id && from.shape().is_partial_eq() && from == to {
+    // Check for equality if both shapes have the same type_identifier and implement PartialEq
+    // This handles cases where shapes are structurally equivalent but have different IDs
+    // (e.g., after deserialization)
+    let same_type = from.shape().type_identifier == to.shape().type_identifier;
+    let from_has_partialeq = from.shape().is_partial_eq();
+    let to_has_partialeq = to.shape().is_partial_eq();
+    let values_equal = from == to;
+
+    // log::trace!(
+    //     "diff_new_peek: type={} same_type={} from_has_partialeq={} to_has_partialeq={} values_equal={}",
+    //     from.shape().type_identifier,
+    //     same_type,
+    //     from_has_partialeq,
+    //     to_has_partialeq,
+    //     values_equal
+    // );
+
+    if same_type && from_has_partialeq && to_has_partialeq && values_equal {
         return Diff::Equal { value: Some(from) };
     }
 
@@ -92,6 +110,20 @@ pub(crate) fn diff_new_peek<'mem, 'facet>(
                     unchanged,
                 }
             };
+
+            // If there are no changes, return Equal instead of User
+            let is_empty = match &value {
+                Value::Tuple { updates } => updates.is_empty(),
+                Value::Struct {
+                    updates,
+                    deletions,
+                    insertions,
+                    ..
+                } => updates.is_empty() && deletions.is_empty() && insertions.is_empty(),
+            };
+            if is_empty {
+                return Diff::Equal { value: Some(from) };
+            }
 
             Diff::User {
                 from: from.shape(),
@@ -156,6 +188,20 @@ pub(crate) fn diff_new_peek<'mem, 'facet>(
                         unchanged,
                     }
                 };
+
+            // If there are no changes, return Equal instead of User
+            let is_empty = match &value {
+                Value::Tuple { updates } => updates.is_empty(),
+                Value::Struct {
+                    updates,
+                    deletions,
+                    insertions,
+                    ..
+                } => updates.is_empty() && deletions.is_empty() && insertions.is_empty(),
+            };
+            if is_empty {
+                return Diff::Equal { value: Some(from) };
+            }
 
             Diff::User {
                 from: from_enum.shape(),

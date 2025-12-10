@@ -1238,6 +1238,7 @@ dependencies = [
  "facet-testhelpers",
  "facet-value",
  "insta",
+ "log",
  "owo-colors",
 ]
 
@@ -1465,6 +1466,7 @@ dependencies = [
  "facet-macros",
  "facet-postcard",
  "facet-reflect",
+ "facet-testhelpers",
  "facet-xml",
 ]
 
