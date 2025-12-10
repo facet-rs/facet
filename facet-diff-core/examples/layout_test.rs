@@ -442,4 +442,56 @@ fn main() {
 
         print_all_flavors("Mixed scalar and struct fields", &from, &to);
     }
+
+    // Enum variant change (struct variants with fields)
+    {
+        #[derive(Facet, Debug)]
+        struct Circle {
+            radius: f32,
+            center_x: f32,
+            center_y: f32,
+        }
+
+        #[derive(Facet, Debug)]
+        struct Rectangle {
+            width: f32,
+            height: f32,
+            x: f32,
+            y: f32,
+        }
+
+        #[derive(Facet, Debug)]
+        #[repr(u8)]
+        enum Shape {
+            Circle(Circle),
+            Rectangle(Rectangle),
+        }
+
+        #[derive(Facet, Debug)]
+        struct Drawing {
+            name: &'static str,
+            shape: Shape,
+        }
+
+        let from = Drawing {
+            name: "my-shape",
+            shape: Shape::Circle(Circle {
+                radius: 50.0,
+                center_x: 100.0,
+                center_y: 100.0,
+            }),
+        };
+
+        let to = Drawing {
+            name: "my-shape",
+            shape: Shape::Rectangle(Rectangle {
+                width: 80.0,
+                height: 60.0,
+                x: 50.0,
+                y: 70.0,
+            }),
+        };
+
+        print_all_flavors("Enum variant change", &from, &to);
+    }
 }
