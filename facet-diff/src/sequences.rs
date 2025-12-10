@@ -4,7 +4,7 @@ use facet_diff_core::Updates;
 use facet_reflect::Peek;
 use log::trace;
 
-use crate::diff::{DiffOptions, diff_new_peek, diff_new_peek_with_options};
+use crate::diff::{DiffOptions, diff_new_peek_with_options};
 
 /// Maximum size for sequences to use Myers' algorithm.
 /// Larger sequences fall back to simple element-by-element comparison
@@ -12,6 +12,7 @@ use crate::diff::{DiffOptions, diff_new_peek, diff_new_peek_with_options};
 const MAX_SEQUENCE_SIZE: usize = 100;
 
 /// Gets the diff of a sequence by using Myers' algorithm
+#[allow(dead_code)]
 pub fn diff<'mem, 'facet>(
     a: Vec<Peek<'mem, 'facet>>,
     b: Vec<Peek<'mem, 'facet>>,
@@ -103,6 +104,7 @@ pub fn diff_with_options<'mem, 'facet>(
 
 /// Simple fallback diff for large sequences that doesn't use Myers' algorithm.
 /// Just treats all differences as removes followed by adds.
+#[allow(dead_code)]
 fn simple_diff<'mem, 'facet>(
     a: Vec<Peek<'mem, 'facet>>,
     b: Vec<Peek<'mem, 'facet>>,
