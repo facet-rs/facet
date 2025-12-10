@@ -4,6 +4,27 @@ use std::borrow::Cow;
 
 use super::Span;
 
+/// Type of a formatted value for color selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueType {
+    /// String type (green-based colors)
+    String,
+    /// Numeric type (orange-based colors)
+    Number,
+    /// Boolean type (orange-based colors)
+    Boolean,
+    /// Null/None type (cyan-based colors)
+    Null,
+    /// Other/unknown types (use accent color)
+    Other,
+}
+
+impl Default for ValueType {
+    fn default() -> Self {
+        Self::Other
+    }
+}
+
 /// A pre-formatted value with its measurements.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct FormattedValue {
@@ -11,12 +32,27 @@ pub struct FormattedValue {
     pub span: Span,
     /// Display width of the value (unicode-aware)
     pub width: usize,
+    /// Type of the value for color selection
+    pub value_type: ValueType,
 }
 
 impl FormattedValue {
-    /// Create a new formatted value.
+    /// Create a new formatted value with unknown type.
     pub fn new(span: Span, width: usize) -> Self {
-        Self { span, width }
+        Self {
+            span,
+            width,
+            value_type: ValueType::Other,
+        }
+    }
+
+    /// Create a new formatted value with a specific type.
+    pub fn with_type(span: Span, width: usize, value_type: ValueType) -> Self {
+        Self {
+            span,
+            width,
+            value_type,
+        }
     }
 }
 
