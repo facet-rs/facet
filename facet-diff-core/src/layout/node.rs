@@ -45,6 +45,8 @@ pub enum LayoutNode {
     Element {
         /// Element tag name
         tag: &'static str,
+        /// Field name if this element is a struct field (e.g., "point" for `point: Inner`)
+        field_name: Option<&'static str>,
         /// All attributes (unchanged, changed, deleted, inserted)
         attrs: Vec<Attr>,
         /// Changed attributes grouped for -/+ line alignment
@@ -95,6 +97,7 @@ impl LayoutNode {
     pub fn element(tag: &'static str) -> Self {
         Self::Element {
             tag,
+            field_name: None,
             attrs: Vec::new(),
             changed_groups: Vec::new(),
             change: ElementChange::None,
@@ -105,6 +108,7 @@ impl LayoutNode {
     pub fn element_with_change(tag: &'static str, change: ElementChange) -> Self {
         Self::Element {
             tag,
+            field_name: None,
             attrs: Vec::new(),
             changed_groups: Vec::new(),
             change,
