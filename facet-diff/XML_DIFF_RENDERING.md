@@ -15,6 +15,49 @@ Diff-aware serialization must ALSO consider:
 - What context to show around changes
 - What to collapse/hide
 
+## Key Design Decisions
+
+### No Indices
+
+Indices are an implementation detail that shift when elements are added/removed/moved.
+The diff output should NOT use indices. Instead:
+- Collapse unchanged runs: `<!-- 5 unchanged -->`
+- Show enough context that humans can orient themselves
+- Let element content/ids identify what's what
+
+### Moves Are Implicit
+
+A moved element appears twice:
+- `-` where it was (in the old position)
+- `+` where it is now (in the new position)
+
+Humans recognize it's the same element by its content. No need for arrows or explicit "moved from X to Y" annotations that break down with multiple moves.
+
+### The Canonical Format
+
+```xml
+<svg>
+  <!-- 2 unchanged -->
+- <circle id="a"/>
+  <rect id="3"/>
+- <path id="b"/>
+  <!-- 2 unchanged -->
+  <rect id="7"
+-   fill="red"
++   fill="blue"
+  />
++ <ellipse id="new"/>
++ <circle id="a"/>
+  <!-- 8 unchanged -->
+</svg>
+```
+
+This shows:
+- `circle#a` moved (appears as `-` then `+`)
+- `path#b` deleted
+- `rect#7` had attribute change
+- `ellipse#new` inserted
+
 ---
 
 ## Scenario 1: Single Attribute Change
@@ -404,32 +447,80 @@ Hmm, same in this case. But if there were siblings:
 
 ## Serializer Query API
 
-The serializer needs to ask these questions at each point:
+The serializer needs to query the diff context. Key insight: **batch queries are better than one-at-a-time**.
+
+Instead of checking each attribute individually, the serializer should get lists of changed vs unchanged children upfront. This enables grouping multiple changes on single lines.
 
 ```rust
-trait DiffContext {
-    /// Is this path in the "changed set"? (changed, or ancestor of change)
-    fn is_relevant(&self, path: &Path) -> bool;
+trait DiffContext<'mem, 'facet> {
+    /// Get all changed children at this path (attrs or elements)
+    fn changed_children(&self, path: &Path) -> Vec<ChangedChild<'mem, 'facet>>;
 
-    /// Did this specific leaf value change?
-    fn is_changed(&self, path: &Path) -> bool;
+    /// Get all unchanged children at this path
+    fn unchanged_children(&self, path: &Path) -> Vec<UnchangedChild<'mem, 'facet>>;
 
-    /// Get the old value (for showing `-` line)
-    fn old_value(&self, path: &Path) -> Option<Peek>;
+    /// Get all deleted children (exist in old, not in new)
+    fn deleted_children(&self, path: &Path) -> Vec<DeletedChild<'mem, 'facet>>;
 
-    /// Was this node moved? If so, from where?
-    fn moved_from(&self, path: &Path) -> Option<Path>;
+    /// Get all inserted children (exist in new, not in old)
+    fn inserted_children(&self, path: &Path) -> Vec<InsertedChild<'mem, 'facet>>;
 
-    /// Was this node moved? If so, to where? (for old tree traversal)
-    fn moved_to(&self, path: &Path) -> Option<Path>;
-
-    /// Should this node be collapsed? (unchanged, not near any changes)
+    /// Should this entire subtree be collapsed?
     fn should_collapse(&self, path: &Path) -> bool;
 
-    /// How many unchanged siblings are being collapsed here?
+    /// How many siblings are being collapsed at this point?
     fn collapsed_count(&self, path: &Path) -> Option<usize>;
 }
+
+struct ChangedChild<'mem, 'facet> {
+    name: Cow<'static, str>,
+    old_value: Peek<'mem, 'facet>,
+    new_value: Peek<'mem, 'facet>,
+}
+
+struct UnchangedChild<'mem, 'facet> {
+    name: Cow<'static, str>,
+    value: Peek<'mem, 'facet>,
+}
+
+struct DeletedChild<'mem, 'facet> {
+    name: Cow<'static, str>,
+    value: Peek<'mem, 'facet>,
+}
+
+struct InsertedChild<'mem, 'facet> {
+    name: Cow<'static, str>,
+    value: Peek<'mem, 'facet>,
+}
 ```
+
+## Grouping Multiple Changes
+
+When multiple attributes change, group them on single lines:
+
+**Instead of:**
+```xml
+<rect
+- fill="red"
++ fill="blue"
+- x="10"
++ x="20"
+  y="10" width="50" height="50"
+/>
+```
+
+**Prefer:**
+```xml
+<rect
+- fill="red" x="10"
++ fill="blue" x="20"
+  y="10" width="50" height="50"
+/>
+```
+
+One `-` line with all old values, one `+` line with all new values, then unchanged inline.
+
+This requires the serializer to **collect before emitting** rather than streaming one-at-a-time.
 
 ## Serializer Decision Flow
 
@@ -440,26 +531,66 @@ for each element:
         skip children
         continue
 
+    // Collect children by status
+    changed = ctx.changed_children(path)
+    unchanged = ctx.unchanged_children(path)
+    deleted = ctx.deleted_children(path)
+    inserted = ctx.inserted_children(path)
+
     emit "<tagname"
 
-    // Group attributes by change status
-    changed_attrs = attrs.filter(|a| is_changed(a.path))
-    unchanged_attrs = attrs.filter(|a| !is_changed(a.path))
-
-    if changed_attrs.is_empty():
-        // All on one line
-        emit unchanged_attrs inline
+    if changed.is_empty() && deleted.is_empty() && inserted.is_empty():
+        // All unchanged - single line
+        emit attrs inline
+        emit "/>" or ">"
     else:
         emit newline
-        for attr in changed_attrs:
-            emit "- " + attr.name + "=" + old_value(attr.path)
-            emit "+ " + attr.name + "=" + attr.value
-        if unchanged_attrs.not_empty():
-            emit "  " + unchanged_attrs inline
 
-    emit ">"
+        // Group changed attrs on two lines
+        if !changed.is_empty():
+            emit "- " + changed.map(|c| format!("{}={}", c.name, c.old_value)).join(" ")
+            emit "+ " + changed.map(|c| format!("{}={}", c.name, c.new_value)).join(" ")
 
-    // Similar logic for children...
+        // Deleted attrs
+        for d in deleted:
+            emit "- " + d.name + "=" + d.value
+
+        // Inserted attrs
+        for i in inserted:
+            emit "+ " + i.name + "=" + i.value
+
+        // Unchanged attrs inline (dimmed)
+        if !unchanged.is_empty():
+            emit "  " + unchanged inline (dimmed)
+
+        emit ">"
+
+    // Recurse for child elements with same logic...
+```
+
+## Implications for Serializer Architecture
+
+This design means serializers can't just "walk and emit." They need to:
+
+1. **Query the diff context** for batches of children
+2. **Partition by change status** before emitting anything
+3. **Buffer and group** changed items
+4. **Control layout** based on what changed
+
+This is a different pattern from normal serialization which is typically:
+```rust
+for field in fields {
+    emit(field);
+}
+```
+
+Diff-aware serialization is:
+```rust
+let (changed, unchanged, deleted, inserted) = partition_by_status(fields, ctx);
+emit_changed_group(changed);
+emit_deleted(deleted);
+emit_inserted(inserted);
+emit_unchanged_inline(unchanged);
 ```
 
 ---

@@ -447,6 +447,7 @@ fn showcase_deep_tree() {
 }
 
 fn showcase_wide_tree() {
+    #[allow(clippy::too_many_arguments)]
     fn make_wide(
         s1: &str,
         s2: &str,

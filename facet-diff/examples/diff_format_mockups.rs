@@ -1,13 +1,14 @@
 //! Diff Format Mockups
 //!
 //! This example shows MOCKUPS of what diff output SHOULD look like when diffing
-//! SVG/XML documents parsed via facet-xml.
+//! structured documents (SVG/XML, JSON, Rust-like).
 //!
-//! The core use case:
-//! 1. Parse old.svg → Svg struct (via facet-xml)
-//! 2. Parse new.svg → Svg struct
-//! 3. old.diff(&new) → get structural diff
-//! 4. Render that diff beautifully WITHOUT rendering the entire tree
+//! Key design decisions:
+//! - NO INDICES in output (they shift when things move, confusing)
+//! - Moves are implicit: same element appears as `-` then `+`
+//! - Collapse unchanged runs: `<!-- 5 unchanged -->`
+//! - Changed fields get their own lines with `-`/`+`
+//! - Unchanged fields shown inline or collapsed
 //!
 //! Run with: cargo run -p facet-diff --example diff_format_mockups
 
@@ -45,399 +46,502 @@ fn print_subsection(title: &str) {
 }
 
 // ============================================================================
-// MOCKUP: SVG Diff - Compact Path Format
+// XML Format
 // ============================================================================
 
-fn mockup_svg_compact() {
-    print_subsection("Single attribute change in nested element");
+fn mockup_xml_simple() {
+    print_subsection("Single attribute change");
 
-    // Scenario: rect's fill changed from "red" to "blue"
-    println!(
-        "  {}: {} {} {}",
-        "children[0].Rect.fill".color(colors::CYAN),
-        "\"red\"".color(colors::RED),
-        "→".color(colors::GRAY),
-        "\"blue\"".color(colors::GREEN)
-    );
-
-    print_subsection("Multiple scattered changes");
-
-    // Several changes across the SVG
-    println!(
-        "  {}: {} {} {}",
-        "view_box".color(colors::CYAN),
-        "\"0 0 100 100\"".color(colors::RED),
-        "→".color(colors::GRAY),
-        "\"0 0 200 200\"".color(colors::GREEN)
-    );
-    println!(
-        "  {}: {} {} {}",
-        "children[0].Rect.x".color(colors::CYAN),
-        "\"10\"".color(colors::RED),
-        "→".color(colors::GRAY),
-        "\"20\"".color(colors::GREEN)
-    );
-    println!(
-        "  {}: {} {} {}",
-        "children[1].Circle.r".color(colors::CYAN),
-        "\"25\"".color(colors::RED),
-        "→".color(colors::GRAY),
-        "\"30\"".color(colors::GREEN)
-    );
-    println!(
-        "  {}: {} {} {}",
-        "children[2].Group.children[0].Path.stroke".color(colors::CYAN),
-        "\"black\"".color(colors::RED),
-        "→".color(colors::GRAY),
-        "\"#333\"".color(colors::GREEN)
-    );
-
-    print_subsection("Element added/removed in sequence");
-
-    println!(
-        "  {}: {}",
-        "children[3]".color(colors::CYAN),
-        "deleted Rect { x: \"50\", y: \"50\", ... }".color(colors::RED)
-    );
-    println!(
-        "  {}: {}",
-        "children[3]".color(colors::CYAN),
-        "inserted Circle { cx: \"75\", cy: \"75\", r: \"20\" }".color(colors::GREEN)
-    );
-}
-
-// ============================================================================
-// MOCKUP: SVG Diff - Tree Format (like current facet-diff Display)
-// ============================================================================
-
-fn mockup_svg_tree() {
-    print_subsection("Tree format showing structure with collapsed unchanged");
-
-    // This shows the hierarchical structure but collapses unchanged parts
-    println!("{}", "Svg {".color(colors::GRAY));
+    // The changed attr gets its own -/+ lines
+    // Unchanged attrs stay together
+    println!("{}", "<rect".color(colors::WHITE));
     println!(
         "  {} {}",
-        ".. 3 unchanged attributes".color(colors::GRAY).italic(),
-        "(width, height, xmlns)".color(colors::GRAY).dimmed()
-    );
-    println!(
-        "  {}{} {} {} {}",
-        "view_box".color(colors::CYAN),
-        ":".color(colors::GRAY),
-        "\"0 0 100 100\"".color(colors::RED),
-        "→".color(colors::GRAY),
-        "\"0 0 200 200\"".color(colors::GREEN)
-    );
-    println!(
-        "  {}{} {} {{",
-        "children".color(colors::CYAN),
-        ":".color(colors::GRAY),
-        "[".color(colors::GRAY)
-    );
-    println!(
-        "    {}{} {{",
-        "[0]".color(colors::BLUE),
-        " Rect".color(colors::WHITE)
-    );
-    println!(
-        "      {}{} {} {} {}",
-        "fill".color(colors::CYAN),
-        ":".color(colors::GRAY),
-        "\"red\"".color(colors::RED),
-        "→".color(colors::GRAY),
-        "\"blue\"".color(colors::GREEN)
-    );
-    println!(
-        "      {} {}",
-        ".. 4 unchanged".color(colors::GRAY).italic(),
-        "(x, y, width, height)".color(colors::GRAY).dimmed()
-    );
-    println!("    {}", "}".color(colors::GRAY));
-    println!(
-        "    {} {}",
-        ".. 2 unchanged elements".color(colors::GRAY).italic(),
-        "([1] Circle, [2] Path)".color(colors::GRAY).dimmed()
-    );
-    println!("  {} {}", "]".color(colors::GRAY), "}".color(colors::GRAY));
-    println!("{}", "}".color(colors::GRAY));
-}
-
-// ============================================================================
-// MOCKUP: SVG Diff - XML-style output (renders back as XML)
-// ============================================================================
-
-fn mockup_svg_xml() {
-    print_subsection("XML-style diff output (could be valid XML)");
-
-    println!("{}", "<!-- SVG Diff: 3 changes -->".color(colors::GRAY));
-    println!("{}", "<svg".color(colors::WHITE));
-    println!(
-        "  {} {}{}{}",
         "-".color(colors::RED),
-        "viewBox=\"".color(colors::RED),
-        "0 0 100 100".color(colors::RED),
-        "\"".color(colors::RED)
+        "fill=\"red\"".color(colors::RED)
     );
     println!(
-        "  {} {}{}{}",
+        "  {} {}",
         "+".color(colors::GREEN),
-        "viewBox=\"".color(colors::GREEN),
-        "0 0 200 200".color(colors::GREEN),
-        "\"".color(colors::GREEN)
+        "fill=\"blue\"".color(colors::GREEN)
     );
     println!(
         "    {}",
-        "xmlns=\"http://www.w3.org/2000/svg\">"
+        "x=\"10\" y=\"10\" width=\"50\" height=\"50\""
             .color(colors::GRAY)
             .dimmed()
     );
-    println!();
+    println!("{}", "/>".color(colors::WHITE));
+}
+
+fn mockup_xml_multiple_attrs() {
+    print_subsection("Multiple attribute changes (grouped)");
+
+    // Changed attrs grouped on single -/+ lines
+    println!("{}", "<rect".color(colors::WHITE));
     println!(
-        "  {}",
-        "<!-- ... 1 unchanged element (circle) ... -->".color(colors::GRAY)
-    );
-    println!();
-    println!("  {}", "<rect".color(colors::WHITE));
-    println!(
-        "    {} {}{}{}",
+        "  {} {}",
         "-".color(colors::RED),
-        "fill=\"".color(colors::RED),
-        "red".color(colors::RED),
-        "\"".color(colors::RED)
+        "fill=\"red\" x=\"10\"".color(colors::RED)
     );
     println!(
-        "    {} {}{}{}",
+        "  {} {}",
         "+".color(colors::GREEN),
-        "fill=\"".color(colors::GREEN),
-        "blue".color(colors::GREEN),
-        "\"".color(colors::GREEN)
+        "fill=\"blue\" x=\"20\"".color(colors::GREEN)
+    );
+    println!(
+        "    {}",
+        "y=\"10\" width=\"50\" height=\"50\""
+            .color(colors::GRAY)
+            .dimmed()
+    );
+    println!("{}", "/>".color(colors::WHITE));
+}
+
+fn mockup_xml_child_added() {
+    print_subsection("Child element added");
+
+    println!("{}", "<svg>".color(colors::WHITE));
+    println!(
+        "    {}",
+        "<rect fill=\"red\"/>".color(colors::GRAY).dimmed()
+    );
+    println!(
+        "  {} {}",
+        "+".color(colors::GREEN),
+        "<circle cx=\"50\" cy=\"50\" r=\"25\"/>".color(colors::GREEN)
+    );
+    println!("{}", "</svg>".color(colors::WHITE));
+}
+
+fn mockup_xml_child_removed() {
+    print_subsection("Child element removed");
+
+    println!("{}", "<svg>".color(colors::WHITE));
+    println!(
+        "    {}",
+        "<rect fill=\"red\"/>".color(colors::GRAY).dimmed()
+    );
+    println!(
+        "  {} {}",
+        "-".color(colors::RED),
+        "<circle cx=\"50\" cy=\"50\" r=\"25\"/>".color(colors::RED)
+    );
+    println!("{}", "</svg>".color(colors::WHITE));
+}
+
+fn mockup_xml_complex() {
+    print_subsection("Complex: move + delete + modify + insert");
+
+    // Scenario:
+    // - circle#a moved from position 2 to later
+    // - path#b deleted
+    // - rect#7 fill changed
+    // - ellipse#new inserted
+
+    println!("{}", "<svg>".color(colors::WHITE));
+    println!("    {}", "<!-- 2 unchanged -->".color(colors::GRAY));
+    println!(
+        "  {} {}",
+        "-".color(colors::RED),
+        "<circle id=\"a\"/>".color(colors::RED)
+    );
+    println!("    {}", "<rect id=\"3\"/>".color(colors::GRAY).dimmed());
+    println!(
+        "  {} {}",
+        "-".color(colors::RED),
+        "<path id=\"b\"/>".color(colors::RED)
+    );
+    println!("    {}", "<!-- 2 unchanged -->".color(colors::GRAY));
+    println!("    {}", "<rect id=\"7\"".color(colors::WHITE));
+    println!(
+        "      {} {}",
+        "-".color(colors::RED),
+        "fill=\"red\"".color(colors::RED)
     );
     println!(
         "      {} {}",
-        "x=\"10\" y=\"10\" width=\"50\" height=\"50\""
-            .color(colors::GRAY)
-            .dimmed(),
-        "<!-- unchanged -->".color(colors::GRAY)
+        "+".color(colors::GREEN),
+        "fill=\"blue\"".color(colors::GREEN)
     );
-    println!("  {}", "/>".color(colors::WHITE));
-    println!();
+    println!("    {}", "/>".color(colors::WHITE));
     println!(
-        "  {}",
-        "<!-- ... 1 unchanged element (path) ... -->".color(colors::GRAY)
+        "  {} {}",
+        "+".color(colors::GREEN),
+        "<ellipse id=\"new\"/>".color(colors::GREEN)
     );
-    println!();
+    println!(
+        "  {} {}",
+        "+".color(colors::GREEN),
+        "<circle id=\"a\"/>".color(colors::GREEN)
+    );
+    println!("    {}", "<!-- 8 unchanged -->".color(colors::GRAY));
+    println!("{}", "</svg>".color(colors::WHITE));
+}
+
+fn mockup_xml_moved_and_modified() {
+    print_subsection("Element moved AND modified");
+
+    // circle moved and its radius changed
+    println!("{}", "<svg>".color(colors::WHITE));
+    println!("    {}", "<!-- 2 unchanged -->".color(colors::GRAY));
+    println!(
+        "  {} {}",
+        "-".color(colors::RED),
+        "<circle id=\"a\" cx=\"50\" cy=\"50\"".color(colors::RED)
+    );
+    println!(
+        "      {} {}",
+        "-".color(colors::RED),
+        "r=\"25\"".color(colors::RED)
+    );
+    println!("    {}", "/>".color(colors::RED));
+    println!("    {}", "<!-- 3 unchanged -->".color(colors::GRAY));
+    println!(
+        "  {} {}",
+        "+".color(colors::GREEN),
+        "<circle id=\"a\" cx=\"50\" cy=\"50\"".color(colors::GREEN)
+    );
+    println!(
+        "      {} {}",
+        "+".color(colors::GREEN),
+        "r=\"30\"".color(colors::GREEN)
+    );
+    println!("    {}", "/>".color(colors::GREEN));
+    println!("    {}", "<!-- 5 unchanged -->".color(colors::GRAY));
+    println!("{}", "</svg>".color(colors::WHITE));
+}
+
+fn mockup_xml_deep_nesting() {
+    print_subsection("Deep nesting (change buried in tree)");
+
+    println!("{}", "<svg>".color(colors::WHITE));
+    println!("    {}", "<g id=\"layer1\">".color(colors::GRAY).dimmed());
+    println!("        {}", "<!-- 50 unchanged -->".color(colors::GRAY));
+    println!("        {}", "<g id=\"shapes\">".color(colors::WHITE));
+    println!("            {}", "<rect".color(colors::WHITE));
+    println!(
+        "              {} {}",
+        "-".color(colors::RED),
+        "fill=\"red\"".color(colors::RED)
+    );
+    println!(
+        "              {} {}",
+        "+".color(colors::GREEN),
+        "fill=\"blue\"".color(colors::GREEN)
+    );
+    println!("            {}", "/>".color(colors::WHITE));
+    println!("        {}", "</g>".color(colors::WHITE));
+    println!("        {}", "<!-- 50 unchanged -->".color(colors::GRAY));
+    println!("    {}", "</g>".color(colors::GRAY).dimmed());
     println!("{}", "</svg>".color(colors::WHITE));
 }
 
 // ============================================================================
-// MOCKUP: SVG Diff - Side-by-side
+// JSON Format
 // ============================================================================
 
-fn mockup_svg_side_by_side() {
-    print_subsection("Side-by-side comparison (terminal)");
+fn mockup_json_simple() {
+    print_subsection("Single field change");
 
+    println!("{}", "{".color(colors::WHITE));
     println!(
-        "{}{}{}",
-        "┌─ OLD ".color(colors::RED),
-        "─".repeat(28).color(colors::GRAY),
-        "┬─ NEW ─────────────────────────┐".color(colors::GREEN)
-    );
-
-    // Unchanged line
-    println!(
-        "{} {:<33}{} {:<33}{}",
-        "│".color(colors::GRAY),
-        "<svg".color(colors::GRAY).dimmed(),
-        "│".color(colors::GRAY),
-        "<svg".color(colors::GRAY).dimmed(),
-        "│".color(colors::GRAY)
-    );
-
-    // Changed line - viewBox
-    println!(
-        "{} {:<33}{} {:<33}{}",
-        "│".color(colors::RED),
-        "  viewBox=\"0 0 100 100\"".color(colors::RED),
-        "│".color(colors::YELLOW),
-        "  viewBox=\"0 0 200 200\"".color(colors::GREEN),
-        "│".color(colors::GREEN)
-    );
-
-    // Unchanged
-    println!(
-        "{} {:<33}{} {:<33}{}",
-        "│".color(colors::GRAY),
-        "  xmlns=\"...\">".color(colors::GRAY).dimmed(),
-        "│".color(colors::GRAY),
-        "  xmlns=\"...\">".color(colors::GRAY).dimmed(),
-        "│".color(colors::GRAY)
-    );
-
-    // Unchanged
-    println!(
-        "{} {:<33}{} {:<33}{}",
-        "│".color(colors::GRAY),
-        "  <rect".color(colors::GRAY).dimmed(),
-        "│".color(colors::GRAY),
-        "  <rect".color(colors::GRAY).dimmed(),
-        "│".color(colors::GRAY)
-    );
-
-    // Changed line - fill
-    println!(
-        "{} {:<33}{} {:<33}{}",
-        "│".color(colors::RED),
-        "    fill=\"red\"".color(colors::RED),
-        "│".color(colors::YELLOW),
-        "    fill=\"blue\"".color(colors::GREEN),
-        "│".color(colors::GREEN)
-    );
-
-    // Unchanged
-    println!(
-        "{} {:<33}{} {:<33}{}",
-        "│".color(colors::GRAY),
-        "    x=\"10\" y=\"10\" .../>".color(colors::GRAY).dimmed(),
-        "│".color(colors::GRAY),
-        "    x=\"10\" y=\"10\" .../>".color(colors::GRAY).dimmed(),
-        "│".color(colors::GRAY)
-    );
-
-    // Collapsed
-    println!(
-        "{} {:<33}{} {:<33}{}",
-        "│".color(colors::GRAY),
-        "  <!-- 2 more elements -->".color(colors::GRAY).dimmed(),
-        "│".color(colors::GRAY),
-        "  <!-- 2 more elements -->".color(colors::GRAY).dimmed(),
-        "│".color(colors::GRAY)
-    );
-
-    // Unchanged
-    println!(
-        "{} {:<33}{} {:<33}{}",
-        "│".color(colors::GRAY),
-        "</svg>".color(colors::GRAY).dimmed(),
-        "│".color(colors::GRAY),
-        "</svg>".color(colors::GRAY).dimmed(),
-        "│".color(colors::GRAY)
-    );
-
-    println!(
-        "└{}┴{}┘",
-        "─".repeat(34).color(colors::GRAY),
-        "─".repeat(34).color(colors::GRAY)
-    );
-}
-
-// ============================================================================
-// MOCKUP: Deep nesting (the hard case)
-// ============================================================================
-
-fn mockup_deep_nesting() {
-    print_subsection("Deep nesting - breadcrumb + focused view");
-
-    // Show the path to the change
-    println!(
-        "{} {}",
-        "Path:".color(colors::BLUE),
-        "svg › children[2] › Group › children[0] › Group › children[3] › Path".color(colors::CYAN)
-    );
-    println!();
-
-    // Show just the changed element with minimal context
-    println!("{}", "Path {".color(colors::WHITE));
-    println!(
-        "  {}: {} {} {}",
-        "d".color(colors::CYAN),
-        "\"M10 10 L90 90\"".color(colors::RED),
-        "→".color(colors::GRAY),
-        "\"M10 10 Q50 50 90 90\"".color(colors::GREEN)
-    );
-    println!(
-        "  {}: {} {} {}",
-        "stroke".color(colors::CYAN),
-        "\"black\"".color(colors::RED),
-        "→".color(colors::GRAY),
-        "\"#333\"".color(colors::GREEN)
+        "  {} {}",
+        "-".color(colors::RED),
+        "\"fill\": \"red\",".color(colors::RED)
     );
     println!(
         "  {} {}",
-        ".. 2 unchanged".color(colors::GRAY).italic(),
-        "(stroke_width, fill)".color(colors::GRAY).dimmed()
+        "+".color(colors::GREEN),
+        "\"fill\": \"blue\",".color(colors::GREEN)
+    );
+    println!(
+        "    {}",
+        "\"x\": 10, \"y\": 10, \"width\": 50, \"height\": 50"
+            .color(colors::GRAY)
+            .dimmed()
     );
     println!("{}", "}".color(colors::WHITE));
+}
 
-    println!();
-    println!("{}", "Collapsed ancestors:".color(colors::GRAY));
+fn mockup_json_array() {
+    print_subsection("Array changes");
+
+    println!("{}", "{".color(colors::WHITE));
+    println!("    {}", "\"items\": [".color(colors::WHITE));
+    println!("        {}", "1, 2,".color(colors::GRAY).dimmed());
     println!(
-        "  {} {{ {} }}",
-        "Svg".color(colors::GRAY).dimmed(),
-        "...".color(colors::GRAY).dimmed()
+        "      {} {}",
+        "-".color(colors::RED),
+        "3,".color(colors::RED)
     );
     println!(
-        "    {} {{ {} }}",
-        "└─ Group[2]".color(colors::GRAY).dimmed(),
-        "id: \"layer1\", ...".color(colors::GRAY).dimmed()
+        "      {} {}",
+        "-".color(colors::RED),
+        "4,".color(colors::RED)
     );
     println!(
-        "      {} {{ {} }}",
-        "└─ Group[0]".color(colors::GRAY).dimmed(),
-        "id: \"shapes\", ...".color(colors::GRAY).dimmed()
+        "      {} {}",
+        "+".color(colors::GREEN),
+        "100,".color(colors::GREEN)
     );
     println!(
-        "        {} {{ {} }}",
-        "└─ Path[3]".color(colors::YELLOW),
-        "← CHANGED".color(colors::YELLOW)
+        "      {} {}",
+        "+".color(colors::GREEN),
+        "101,".color(colors::GREEN)
     );
+    println!("        {}", "5, 6,".color(colors::GRAY).dimmed());
+    println!(
+        "      {} {}",
+        "-".color(colors::RED),
+        "7,".color(colors::RED)
+    );
+    println!("        {}", "8, 9, 10,".color(colors::GRAY).dimmed());
+    println!(
+        "      {} {}",
+        "+".color(colors::GREEN),
+        "11,".color(colors::GREEN)
+    );
+    println!(
+        "      {} {}",
+        "+".color(colors::GREEN),
+        "12".color(colors::GREEN)
+    );
+    println!("    {}", "]".color(colors::WHITE));
+    println!("{}", "}".color(colors::WHITE));
+}
+
+fn mockup_json_nested() {
+    print_subsection("Nested object change");
+
+    println!("{}", "{".color(colors::WHITE));
+    println!("    {}", "\"user\": {".color(colors::WHITE));
+    println!(
+        "        {}",
+        "\"name\": \"Alice\",".color(colors::GRAY).dimmed()
+    );
+    println!("        {}", "\"settings\": {".color(colors::WHITE));
+    println!(
+        "          {} {}",
+        "-".color(colors::RED),
+        "\"theme\": \"dark\",".color(colors::RED)
+    );
+    println!(
+        "          {} {}",
+        "+".color(colors::GREEN),
+        "\"theme\": \"light\",".color(colors::GREEN)
+    );
+    println!(
+        "            {}",
+        "\"notifications\": true".color(colors::GRAY).dimmed()
+    );
+    println!("        {}", "}".color(colors::WHITE));
+    println!("    {}", "}".color(colors::WHITE));
+    println!("{}", "}".color(colors::WHITE));
+}
+
+fn mockup_json_complex() {
+    print_subsection("Complex: multiple changes at different depths");
+
+    println!("{}", "{".color(colors::WHITE));
+    println!(
+        "  {} {}",
+        "-".color(colors::RED),
+        "\"version\": \"1.0\",".color(colors::RED)
+    );
+    println!(
+        "  {} {}",
+        "+".color(colors::GREEN),
+        "\"version\": \"2.0\",".color(colors::GREEN)
+    );
+    println!("    {}", "\"data\": {".color(colors::WHITE));
+    println!(
+        "        {}",
+        "/* 10 unchanged fields */".color(colors::GRAY)
+    );
+    println!("        {}", "\"items\": [".color(colors::WHITE));
+    println!("            {}", "/* 5 unchanged */".color(colors::GRAY));
+    println!(
+        "          {} {}",
+        "-".color(colors::RED),
+        "{ \"id\": 6, \"value\": \"old\" },".color(colors::RED)
+    );
+    println!(
+        "          {} {}",
+        "+".color(colors::GREEN),
+        "{ \"id\": 6, \"value\": \"new\" },".color(colors::GREEN)
+    );
+    println!("            {}", "/* 3 unchanged */".color(colors::GRAY));
+    println!("        {}", "]".color(colors::WHITE));
+    println!("    {}", "}".color(colors::WHITE));
+    println!("{}", "}".color(colors::WHITE));
 }
 
 // ============================================================================
-// MOCKUP: Sequence changes (elements added/removed/moved)
+// Rust-like Format (facet-pretty style)
 // ============================================================================
 
-fn mockup_sequence_changes() {
-    print_subsection("Sequence changes - elements added/removed");
+fn mockup_rust_simple() {
+    print_subsection("Single field change");
 
-    println!("{}", "children: [".color(colors::WHITE));
+    println!("{}", "Rect {".color(colors::WHITE));
     println!(
-        "    {} {}",
-        "[0] Rect { ... }".color(colors::GRAY).dimmed(),
-        "unchanged".color(colors::GRAY).italic()
-    );
-    println!(
-        "    {} {}",
-        "[1] Circle { ... }".color(colors::GRAY).dimmed(),
-        "unchanged".color(colors::GRAY).italic()
-    );
-    println!(
-        "  {} {} {}",
+        "  {} {}",
         "-".color(colors::RED),
-        "[2] Path { d: \"M...\" }".color(colors::RED),
-        "DELETED".color(colors::RED)
+        "fill: \"red\",".color(colors::RED)
     );
     println!(
-        "  {} {} {}",
+        "  {} {}",
         "+".color(colors::GREEN),
-        "[2] Group { id: \"new-group\", children: [...] }".color(colors::GREEN),
-        "INSERTED".color(colors::GREEN)
+        "fill: \"blue\",".color(colors::GREEN)
     );
     println!(
-        "    {} {}",
-        "[3] Text { ... }".color(colors::GRAY).dimmed(),
-        "unchanged".color(colors::GRAY).italic()
+        "    {}",
+        "x: 10, y: 10, width: 50, height: 50,"
+            .color(colors::GRAY)
+            .dimmed()
+    );
+    println!("{}", "}".color(colors::WHITE));
+}
+
+fn mockup_rust_enum_variant() {
+    print_subsection("Enum variant change");
+
+    println!("{}", "Status::".color(colors::WHITE));
+    println!(
+        "  {} {}",
+        "-".color(colors::RED),
+        "Active".color(colors::RED)
+    );
+    println!(
+        "  {} {}",
+        "+".color(colors::GREEN),
+        "Inactive { reason: \"maintenance\" }".color(colors::GREEN)
+    );
+}
+
+fn mockup_rust_vec() {
+    print_subsection("Vec changes");
+
+    println!("{}", "items: [".color(colors::WHITE));
+    println!(
+        "    {}",
+        "Rect { /* unchanged */ },".color(colors::GRAY).dimmed()
+    );
+    println!(
+        "    {}",
+        "Circle { /* unchanged */ },".color(colors::GRAY).dimmed()
+    );
+    println!(
+        "  {} {}",
+        "-".color(colors::RED),
+        "Path { d: \"M...\" },".color(colors::RED)
+    );
+    println!(
+        "  {} {}",
+        "+".color(colors::GREEN),
+        "Group { id: \"new\", children: [...] },".color(colors::GREEN)
+    );
+    println!(
+        "    {}",
+        "Text { /* unchanged */ },".color(colors::GRAY).dimmed()
     );
     println!("{}", "]".color(colors::WHITE));
+}
 
-    print_subsection("Move detection (tree diff enriches this)");
+fn mockup_rust_nested() {
+    print_subsection("Nested struct change");
 
-    // Tree diff can detect that an element moved rather than was deleted+inserted
+    println!("{}", "Svg {".color(colors::WHITE));
     println!(
-        "  {} {} {}",
-        "Circle { cx: \"50\", cy: \"50\", ... }".color(colors::BLUE),
-        "moved".color(colors::YELLOW),
-        "[1] → [3]".color(colors::YELLOW)
+        "  {} {}",
+        "-".color(colors::RED),
+        "view_box: \"0 0 100 100\",".color(colors::RED)
     );
+    println!(
+        "  {} {}",
+        "+".color(colors::GREEN),
+        "view_box: \"0 0 200 200\",".color(colors::GREEN)
+    );
+    println!(
+        "    {}",
+        "/* width, height, xmlns unchanged */".color(colors::GRAY)
+    );
+    println!("    {}", "children: [".color(colors::WHITE));
+    println!("        {}", "Rect {".color(colors::WHITE));
+    println!(
+        "          {} {}",
+        "-".color(colors::RED),
+        "fill: \"red\",".color(colors::RED)
+    );
+    println!(
+        "          {} {}",
+        "+".color(colors::GREEN),
+        "fill: \"blue\",".color(colors::GREEN)
+    );
+    println!(
+        "            {}",
+        "/* x, y, width, height unchanged */".color(colors::GRAY)
+    );
+    println!("        {}", "},".color(colors::WHITE));
+    println!(
+        "        {}",
+        "/* 2 unchanged elements */".color(colors::GRAY)
+    );
+    println!("    {}", "],".color(colors::WHITE));
+    println!("{}", "}".color(colors::WHITE));
+}
+
+fn mockup_rust_complex() {
+    print_subsection("Complex: move + modify");
+
+    println!("{}", "Svg {".color(colors::WHITE));
+    println!("    {}", "/* 2 unchanged fields */".color(colors::GRAY));
+    println!("    {}", "children: [".color(colors::WHITE));
+    println!("        {}", "/* 2 unchanged */".color(colors::GRAY));
+    println!(
+        "      {} {}",
+        "-".color(colors::RED),
+        "Circle { id: \"a\", cx: 50, cy: 50, r: 25 },".color(colors::RED)
+    );
+    println!(
+        "        {}",
+        "Rect { id: \"3\", /* ... */ },"
+            .color(colors::GRAY)
+            .dimmed()
+    );
+    println!(
+        "      {} {}",
+        "-".color(colors::RED),
+        "Path { id: \"b\", /* ... */ },".color(colors::RED)
+    );
+    println!("        {}", "/* 2 unchanged */".color(colors::GRAY));
+    println!("        {}", "Rect {".color(colors::WHITE));
+    println!("            {}", "id: \"7\",".color(colors::GRAY).dimmed());
+    println!(
+        "          {} {}",
+        "-".color(colors::RED),
+        "fill: \"red\",".color(colors::RED)
+    );
+    println!(
+        "          {} {}",
+        "+".color(colors::GREEN),
+        "fill: \"blue\",".color(colors::GREEN)
+    );
+    println!("        {}", "},".color(colors::WHITE));
+    println!(
+        "      {} {}",
+        "+".color(colors::GREEN),
+        "Ellipse { id: \"new\", /* ... */ },".color(colors::GREEN)
+    );
+    println!(
+        "      {} {}",
+        "+".color(colors::GREEN),
+        "Circle { id: \"a\", cx: 50, cy: 50, r: 30 },".color(colors::GREEN)
+    );
+    println!("        {}", "/* 8 unchanged */".color(colors::GRAY));
+    println!("    {}", "],".color(colors::WHITE));
+    println!("{}", "}".color(colors::WHITE));
 }
 
 // ============================================================================
@@ -453,47 +557,42 @@ fn main() {
     );
     println!(
         "{}",
-        "║                     SVG DIFF FORMAT MOCKUPS                          ║"
+        "║                     DIFF FORMAT MOCKUPS                              ║"
             .color(colors::YELLOW)
     );
     println!(
         "{}",
-        "║                                                                      ║"
+        "╠══════════════════════════════════════════════════════════════════════╣"
             .color(colors::YELLOW)
     );
     println!(
         "{}",
-        "║  These show what diff output SHOULD look like when comparing two    ║"
+        "║  Key design decisions:                                               ║"
             .color(colors::GRAY)
     );
     println!(
         "{}",
-        "║  SVG documents parsed via facet-xml. The key challenge:             ║"
+        "║  • NO INDICES - they shift, they're confusing                        ║"
             .color(colors::GRAY)
     );
     println!(
         "{}",
-        "║                                                                      ║"
-            .color(colors::YELLOW)
-    );
-    println!(
-        "{}",
-        "║  • Don't render the entire tree (could be huge)                     ║"
+        "║  • Moves are implicit: element appears as - then + elsewhere         ║"
             .color(colors::GRAY)
     );
     println!(
         "{}",
-        "║  • Collapse/skip unchanged subtrees                                 ║"
+        "║  • Unchanged runs collapsed: /* N unchanged */                       ║"
             .color(colors::GRAY)
     );
     println!(
         "{}",
-        "║  • Highlight what actually changed                                  ║"
+        "║  • Changed fields get own lines with -/+                             ║"
             .color(colors::GRAY)
     );
     println!(
         "{}",
-        "║  • Show enough context to understand WHERE the change is            ║"
+        "║  • Unchanged fields shown inline (dimmed) or collapsed               ║"
             .color(colors::GRAY)
     );
     println!(
@@ -502,67 +601,97 @@ fn main() {
             .color(colors::YELLOW)
     );
 
-    print_section("Compact Path Format (current facet-diff style)");
-    mockup_svg_compact();
+    // XML
+    print_section("XML Format");
+    mockup_xml_simple();
+    mockup_xml_multiple_attrs();
+    mockup_xml_child_added();
+    mockup_xml_child_removed();
+    mockup_xml_complex();
+    mockup_xml_moved_and_modified();
+    mockup_xml_deep_nesting();
 
-    print_section("Tree Format (hierarchical with collapsed unchanged)");
-    mockup_svg_tree();
+    // JSON
+    print_section("JSON Format");
+    mockup_json_simple();
+    mockup_json_array();
+    mockup_json_nested();
+    mockup_json_complex();
 
-    print_section("XML-Style Output (renders back as markup)");
-    mockup_svg_xml();
+    // Rust-like
+    print_section("Rust-like Format (facet-pretty style)");
+    mockup_rust_simple();
+    mockup_rust_enum_variant();
+    mockup_rust_vec();
+    mockup_rust_nested();
+    mockup_rust_complex();
 
-    print_section("Side-by-Side (terminal vimdiff style)");
-    mockup_svg_side_by_side();
-
-    print_section("Deep Nesting (breadcrumb + focused view)");
-    mockup_deep_nesting();
-
-    print_section("Sequence Changes (add/remove/move elements)");
-    mockup_sequence_changes();
-
+    // Design notes
     println!();
     println!("{}", "═".repeat(70).color(colors::YELLOW));
-    println!("  {}", "Design Notes".color(colors::YELLOW).bold());
+    println!("  {}", "Implementation Notes".color(colors::YELLOW).bold());
     println!("{}", "═".repeat(70).color(colors::YELLOW));
     println!();
     println!(
         "{}",
-        "The key insight: we need to marry facet-diff's Diff tree with".color(colors::WHITE)
-    );
-    println!(
-        "{}",
-        "format-specific serializers (facet-xml, facet-json, etc).".color(colors::WHITE)
-    );
-    println!();
-    println!("{}", "Options:".color(colors::BLUE));
-    println!(
-        "  {} Walk the Diff tree, emit format-specific syntax",
-        "1.".color(colors::CYAN)
-    );
-    println!(
-        "  {} Wrap Peek to return \"...\" for unchanged subtrees",
-        "2.".color(colors::CYAN)
-    );
-    println!(
-        "  {} Two-pass: collect changed paths, then serialize with filter",
-        "3.".color(colors::CYAN)
+        "The serializer needs a DiffContext to query at each node:".color(colors::WHITE)
     );
     println!();
     println!(
+        "  {} {}",
+        "is_changed(path)".color(colors::CYAN),
+        "→ does this leaf need -/+ treatment?".color(colors::GRAY)
+    );
+    println!(
+        "  {} {}",
+        "old_value(path)".color(colors::CYAN),
+        "→ what to show on the - line".color(colors::GRAY)
+    );
+    println!(
+        "  {} {}",
+        "should_collapse(path)".color(colors::CYAN),
+        "→ can we skip this subtree?".color(colors::GRAY)
+    );
+    println!(
+        "  {} {}",
+        "is_deleted(path)".color(colors::CYAN),
+        "→ exists in old, not in new".color(colors::GRAY)
+    );
+    println!(
+        "  {} {}",
+        "is_inserted(path)".color(colors::CYAN),
+        "→ exists in new, not in old".color(colors::GRAY)
+    );
+    println!();
+    println!(
         "{}",
-        "For SVG specifically, we could even render an ANNOTATED SVG:".color(colors::WHITE)
+        "Layout decisions depend on diff status:".color(colors::WHITE)
+    );
+    println!();
+    println!(
+        "  {} {}",
+        "•".color(colors::GREEN),
+        "Changed attrs → own lines with -/+".color(colors::GRAY)
     );
     println!(
-        "  {} Changed elements highlighted with colored outlines",
-        "•".color(colors::GREEN)
+        "  {} {}",
+        "•".color(colors::GREEN),
+        "Unchanged attrs → inline, dimmed".color(colors::GRAY)
     );
     println!(
-        "  {} Deleted elements shown with red strikethrough overlay",
-        "•".color(colors::RED)
+        "  {} {}",
+        "•".color(colors::GREEN),
+        "Many unchanged siblings → collapse".color(colors::GRAY)
     );
     println!(
-        "  {} Inserted elements shown with green glow",
-        "•".color(colors::GREEN)
+        "  {} {}",
+        "•".color(colors::GREEN),
+        "Deleted element → - prefix, full element".color(colors::GRAY)
+    );
+    println!(
+        "  {} {}",
+        "•".color(colors::GREEN),
+        "Inserted element → + prefix, full element".color(colors::GRAY)
     );
     println!();
 }

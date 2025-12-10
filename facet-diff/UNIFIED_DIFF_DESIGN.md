@@ -272,6 +272,39 @@ Rendered as XML diff:
 - [ ] Collapse unchanged sections
 - [ ] Breadcrumb paths for deep changes
 
+## Key Design Decisions (Resolved)
+
+### No Indices in Output
+
+Indices shift when elements are added/removed/moved - they're confusing for humans.
+Instead:
+- Collapse unchanged runs: `/* 5 unchanged */`
+- Show enough context that humans can orient themselves
+- Let element content/ids identify what's what
+
+### Moves Are Implicit
+
+A moved element appears twice:
+- `-` where it was (in the old position)
+- `+` where it is now (in the new position)
+
+Humans recognize it's the same element by its content. Explicit arrows or "moved from X to Y" annotations break down with multiple moves.
+
+### Batch Queries for Serializers
+
+Serializers need to collect children by status before emitting, not check one-at-a-time.
+This enables grouping multiple changes on single lines:
+
+```xml
+<rect
+- fill="red" x="10"
++ fill="blue" x="20"
+  y="10" width="50" height="50"
+/>
+```
+
+See `XML_DIFF_RENDERING.md` for the full `DiffContext` trait design.
+
 ## Open Questions
 
 1. **Should `UnifiedDiff` be a flat list or a tree?**
