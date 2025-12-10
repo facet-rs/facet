@@ -13,7 +13,7 @@ struct Test1 {
 struct Test2 {
     #[facet(xml::attribute)]
     required: String,
-    #[facet(default, xml::attribute)]
+    #[facet(xml::attribute)]
     optional: Option<String>,
 }
 
@@ -38,6 +38,22 @@ fn test_optional_absent() {
     let result: Test2 = xml::from_str(xml).unwrap();
     assert_eq!(result.required, "hello");
     assert_eq!(result.optional, None);
+}
+
+#[derive(Facet, Debug, PartialEq)]
+struct Test3 {
+    #[facet(xml::element)]
+    required: String,
+    #[facet(xml::element)]
+    maybe: Option<u32>,
+}
+
+#[test]
+fn test_optional_element_absent() {
+    let xml = r#"<Test3><required>hi</required></Test3>"#;
+    let parsed: Test3 = xml::from_str(xml).unwrap();
+    assert_eq!(parsed.required, "hi");
+    assert_eq!(parsed.maybe, None);
 }
 
 // ============================================================================

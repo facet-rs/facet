@@ -172,3 +172,20 @@ fn test_default_with_complex_expression() {
     assert_eq!(config2.timeout_seconds, 60);
     assert_eq!(config2.default_roles, vec!["guest".to_string()]);
 }
+
+#[test]
+fn test_missing_optional_field_defaults_to_none() {
+    #[derive(Facet, Debug, PartialEq)]
+    struct MixedOptions {
+        present: i32,
+        absent: Option<String>,
+    }
+
+    let yaml = r#"
+present: 5
+"#;
+
+    let value: MixedOptions = facet_yaml::from_str(yaml).unwrap();
+    assert_eq!(value.present, 5);
+    assert_eq!(value.absent, None);
+}

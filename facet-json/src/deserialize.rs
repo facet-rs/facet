@@ -1626,6 +1626,7 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
             // 2. Struct has #[facet(default)] and field type implements Default
             let field_has_default = field.has_default();
             let field_type_has_default = field.shape().is(Characteristic::Default);
+            let field_is_option = matches!(field.shape().def, Def::Option(_));
 
             if field_has_default {
                 // Use set_nth_field_to_default which handles both default_fn and Default impl
@@ -1633,6 +1634,11 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
             } else if struct_has_default && field_type_has_default {
                 // Struct-level #[facet(default)] - use the field type's Default
                 wip = wip.set_nth_field_to_default(idx)?;
+            } else if field_is_option {
+                // Option<T> fields should default to None even without struct-level defaults
+                wip = wip.begin_field(field.name)?;
+                wip = wip.set_default()?;
+                wip = wip.end()?;
             } else {
                 // Required field is missing - raise our own error with spans
                 return Err(JsonError {

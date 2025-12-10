@@ -3118,6 +3118,7 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                     .type_ops
                     .map(|ops| ops.has_default_in_place())
                     .unwrap_or(false);
+                let field_is_option = matches!(field.shape().def, Def::Option(_));
 
                 if has_default_fn || has_default_flag || shape_has_default {
                     // Apply default for this field
@@ -3130,6 +3131,19 @@ impl<'input, 'events, 'res> StreamingDeserializer<'input, 'events, 'res> {
                             path,
                         )
                     })?;
+                } else if field_is_option {
+                    // Missing Option<T> should become None even without explicit defaults
+                    partial = self.begin_field(partial, field.name)?;
+                    let path = partial.path().to_owned();
+                    partial = partial.set_default().map_err(|e| {
+                        TomlDeError::new(
+                            self.source,
+                            TomlDeErrorKind::GenericReflect(e),
+                            self.current_span(),
+                            path,
+                        )
+                    })?;
+                    partial = self.end_frame(partial)?;
                 }
                 // Note: if no default is available and field is required, the build
                 // will fail later with "field not initialized" error
