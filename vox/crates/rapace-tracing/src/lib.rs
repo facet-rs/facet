@@ -10,7 +10,10 @@
 //! │                             PLUGIN PROCESS                              │
 //! │                                                                         │
 //! │   tracing::info!("hello") ──► RapaceTracingLayer ──► TracingSinkClient ─┤
-//! │                                                                         │
+//! │                                      ▲                                  │
+//! │                                      │                                  │
+//! │                          TracingConfigServer ◄──────────────────────────┤
+//! │                          (applies host's filter)                        │
 //! └────────────────────────────────────────────────────────────────────────┬┘
 //!                                                                          │
 //!                              rapace transport (TCP/Unix/SHM)             │
@@ -20,8 +23,18 @@
 //! │                                                                         │
 //! │   TracingSinkServer ──► HostTracingSink ──► tracing_subscriber / logs  │
 //! │                                                                         │
+//! │   TracingConfigClient ──► pushes filter changes to plugin              │
+//! │                                                                         │
 //! └─────────────────────────────────────────────────────────────────────────┘
 //! ```
+//!
+//! # Filter Flow
+//!
+//! The host is the single source of truth for log filtering:
+//! 1. Host decides what log levels/targets are enabled
+//! 2. Host pushes filter config to plugin via `TracingConfig::set_filter`
+//! 3. Plugin applies the filter locally (no spam over RPC)
+//! 4. When host changes filters dynamically, it pushes the update
 //!
 //! # Example
 //!
@@ -102,7 +115,7 @@ pub struct EventMeta {
 }
 
 // ============================================================================
-// TracingSink Service
+// TracingSink Service (plugin calls host)
 // ============================================================================
 
 /// Service for receiving tracing data from plugins.
@@ -132,6 +145,129 @@ pub trait TracingSink {
 }
 
 // ============================================================================
+// TracingConfig Service (host calls plugin)
+// ============================================================================
+
+/// Service for configuring tracing in plugins.
+///
+/// The plugin implements this, the host calls it via RPC to push filter config.
+/// This allows the host to be the single source of truth for log filtering.
+#[allow(async_fn_in_trait)]
+#[rapace_macros::service]
+pub trait TracingConfig {
+    /// Set the tracing filter.
+    ///
+    /// The filter string uses the same format as RUST_LOG (e.g., "info,mymodule=debug").
+    /// The plugin should apply this filter to all subsequent tracing calls.
+    async fn set_filter(&self, filter: String);
+}
+
+// ============================================================================
+// Plugin Side: Shared Filter State
+// ============================================================================
+
+use tracing_subscriber::EnvFilter;
+
+/// Shared filter state that can be updated by the host.
+///
+/// This is wrapped in Arc and shared between `RapaceTracingLayer` and `TracingConfigImpl`.
+#[derive(Clone)]
+pub struct SharedFilter {
+    inner: Arc<parking_lot::RwLock<EnvFilter>>,
+}
+
+impl SharedFilter {
+    /// Create a new shared filter with default (allow all) settings.
+    pub fn new() -> Self {
+        // Default to allowing everything - host will push the real filter
+        let filter = EnvFilter::builder()
+            .parse("")
+            .unwrap_or_else(|_| EnvFilter::new("trace"));
+        Self {
+            inner: Arc::new(parking_lot::RwLock::new(filter)),
+        }
+    }
+
+    /// Update the filter from a filter string (RUST_LOG format).
+    pub fn set_filter(&self, filter_str: &str) {
+        match EnvFilter::builder().parse(filter_str) {
+            Ok(filter) => {
+                *self.inner.write() = filter;
+            }
+            Err(e) => {
+                // Log the error but don't crash - keep existing filter
+                eprintln!("rapace-tracing: invalid filter '{}': {}", filter_str, e);
+            }
+        }
+    }
+
+    /// Check if a given level is enabled (max level check).
+    ///
+    /// This is a quick check based on the filter's max level hint.
+    /// Target-specific filtering happens through the Layer's `enabled` method.
+    pub fn max_level_enabled(&self, level: tracing::level_filters::LevelFilter) -> bool {
+        let filter = self.inner.read();
+        if let Some(max) = filter.max_level_hint() {
+            level <= max
+        } else {
+            true
+        }
+    }
+
+    /// Get the current max level hint.
+    pub fn max_level_hint(&self) -> Option<tracing::level_filters::LevelFilter> {
+        self.inner.read().max_level_hint()
+    }
+}
+
+impl Default for SharedFilter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
+// Plugin Side: TracingConfig Implementation
+// ============================================================================
+
+/// Plugin-side implementation of TracingConfig.
+///
+/// Host calls this to push filter updates to the plugin.
+#[derive(Clone)]
+pub struct TracingConfigImpl {
+    filter: SharedFilter,
+}
+
+impl TracingConfigImpl {
+    /// Create a new TracingConfig implementation with the given shared filter.
+    pub fn new(filter: SharedFilter) -> Self {
+        Self { filter }
+    }
+}
+
+impl TracingConfig for TracingConfigImpl {
+    async fn set_filter(&self, filter: String) {
+        self.filter.set_filter(&filter);
+    }
+}
+
+/// Create a dispatcher for TracingConfig service (plugin side).
+pub fn create_tracing_config_dispatcher(
+    config: TracingConfigImpl,
+) -> impl Fn(u32, u32, Vec<u8>) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
+       + Send
+       + Sync
+       + 'static {
+    move |_channel_id, method_id, payload| {
+        let config = config.clone();
+        Box::pin(async move {
+            let server = TracingConfigServer::new(config);
+            server.dispatch(method_id, &payload).await
+        })
+    }
+}
+
+// ============================================================================
 // Plugin Side: RapaceTracingLayer
 // ============================================================================
 
@@ -139,6 +275,9 @@ pub trait TracingSink {
 ///
 /// Install this layer in the plugin's tracing_subscriber registry to have
 /// all tracing data forwarded to the host process.
+///
+/// The layer uses a `SharedFilter` to apply host-controlled filtering locally,
+/// avoiding unnecessary RPC calls for filtered events.
 pub struct RapaceTracingLayer<T: Transport + Send + Sync + 'static> {
     session: Arc<RpcSession<T>>,
     /// Maps local tracing span IDs to our u64 IDs used in RPC
@@ -147,18 +286,40 @@ pub struct RapaceTracingLayer<T: Transport + Send + Sync + 'static> {
     next_span_id: AtomicU64,
     /// Runtime handle for spawning async tasks
     rt: tokio::runtime::Handle,
+    /// Shared filter state (updated by host via TracingConfig)
+    filter: SharedFilter,
 }
 
 impl<T: Transport + Send + Sync + 'static> RapaceTracingLayer<T> {
     /// Create a new layer that forwards to the given RPC session.
     ///
     /// The session should be connected to a host that implements TracingSink.
-    pub fn new(session: Arc<RpcSession<T>>, rt: tokio::runtime::Handle) -> Self {
+    /// Use the returned `SharedFilter` to create a `TracingConfigImpl` for the
+    /// host to push filter updates.
+    pub fn new(session: Arc<RpcSession<T>>, rt: tokio::runtime::Handle) -> (Self, SharedFilter) {
+        let filter = SharedFilter::new();
+        let layer = Self {
+            session,
+            span_ids: Mutex::new(HashMap::new()),
+            next_span_id: AtomicU64::new(1),
+            rt,
+            filter: filter.clone(),
+        };
+        (layer, filter)
+    }
+
+    /// Create a new layer with an existing shared filter.
+    pub fn with_filter(
+        session: Arc<RpcSession<T>>,
+        rt: tokio::runtime::Handle,
+        filter: SharedFilter,
+    ) -> Self {
         Self {
             session,
             span_ids: Mutex::new(HashMap::new()),
             next_span_id: AtomicU64::new(1),
             rt,
+            filter,
         }
     }
 
@@ -172,8 +333,7 @@ impl<T: Transport + Send + Sync + 'static> RapaceTracingLayer<T> {
         self.rt.spawn(async move {
             let channel_id = session.next_channel_id();
             let payload = facet_postcard::to_vec(&meta).unwrap();
-            // method_id 1 = new_span
-            let _ = session.call(channel_id, 1, payload).await;
+            let _ = session.call(channel_id, tracingsink_methods::METHOD_ID_NEW_SPAN, payload).await;
         });
 
         local_id
@@ -185,8 +345,7 @@ impl<T: Transport + Send + Sync + 'static> RapaceTracingLayer<T> {
         self.rt.spawn(async move {
             let channel_id = session.next_channel_id();
             let payload = facet_postcard::to_vec(&(span_id, fields)).unwrap();
-            // method_id 2 = record
-            let _ = session.call(channel_id, 2, payload).await;
+            let _ = session.call(channel_id, tracingsink_methods::METHOD_ID_RECORD, payload).await;
         });
     }
 
@@ -196,8 +355,7 @@ impl<T: Transport + Send + Sync + 'static> RapaceTracingLayer<T> {
         self.rt.spawn(async move {
             let channel_id = session.next_channel_id();
             let payload = facet_postcard::to_vec(&event).unwrap();
-            // method_id 3 = event
-            let _ = session.call(channel_id, 3, payload).await;
+            let _ = session.call(channel_id, tracingsink_methods::METHOD_ID_EVENT, payload).await;
         });
     }
 
@@ -207,8 +365,7 @@ impl<T: Transport + Send + Sync + 'static> RapaceTracingLayer<T> {
         self.rt.spawn(async move {
             let channel_id = session.next_channel_id();
             let payload = facet_postcard::to_vec(&span_id).unwrap();
-            // method_id 4 = enter
-            let _ = session.call(channel_id, 4, payload).await;
+            let _ = session.call(channel_id, tracingsink_methods::METHOD_ID_ENTER, payload).await;
         });
     }
 
@@ -218,8 +375,7 @@ impl<T: Transport + Send + Sync + 'static> RapaceTracingLayer<T> {
         self.rt.spawn(async move {
             let channel_id = session.next_channel_id();
             let payload = facet_postcard::to_vec(&span_id).unwrap();
-            // method_id 5 = exit
-            let _ = session.call(channel_id, 5, payload).await;
+            let _ = session.call(channel_id, tracingsink_methods::METHOD_ID_EXIT, payload).await;
         });
     }
 
@@ -229,8 +385,7 @@ impl<T: Transport + Send + Sync + 'static> RapaceTracingLayer<T> {
         self.rt.spawn(async move {
             let channel_id = session.next_channel_id();
             let payload = facet_postcard::to_vec(&span_id).unwrap();
-            // method_id 6 = drop_span
-            let _ = session.call(channel_id, 6, payload).await;
+            let _ = session.call(channel_id, tracingsink_methods::METHOD_ID_DROP_SPAN, payload).await;
         });
     }
 }
@@ -240,6 +395,18 @@ where
     S: Subscriber + for<'a> LookupSpan<'a>,
     T: Transport + Send + Sync + 'static,
 {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>, _ctx: Context<'_, S>) -> bool {
+        // Check against the host-controlled filter
+        let level = match *metadata.level() {
+            tracing::Level::ERROR => tracing::level_filters::LevelFilter::ERROR,
+            tracing::Level::WARN => tracing::level_filters::LevelFilter::WARN,
+            tracing::Level::INFO => tracing::level_filters::LevelFilter::INFO,
+            tracing::Level::DEBUG => tracing::level_filters::LevelFilter::DEBUG,
+            tracing::Level::TRACE => tracing::level_filters::LevelFilter::TRACE,
+        };
+        self.filter.max_level_enabled(level)
+    }
+
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, _ctx: Context<'_, S>) {
         let meta = attrs.metadata();
 

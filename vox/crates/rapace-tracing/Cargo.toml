@@ -19,7 +19,7 @@ facet-postcard = { git = "https://github.com/facet-rs/facet" }
 
 # tracing ecosystem
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["registry"] }
+tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
 
 # async
 tokio = { version = "1", features = ["sync", "rt"] }
