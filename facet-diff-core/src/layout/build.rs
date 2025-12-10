@@ -219,6 +219,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
                     return self.tree.new_node(LayoutNode::Element {
                         tag,
+                        field_name: None,
                         attrs,
                         changed_groups,
                         change,
@@ -334,6 +335,15 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                     // Nested diff - build as child element
                     let child =
                         self.build_diff(field_diff, field_from, field_to, ElementChange::None);
+
+                    // Set the field name on the child element
+                    if let Cow::Borrowed(name) = field_name
+                        && let Some(node) = self.tree.get_mut(child)
+                        && let LayoutNode::Element { field_name, .. } = node.get_mut()
+                    {
+                        *field_name = Some(name);
+                    }
+
                     child_nodes.push(child);
                 }
             }
@@ -373,6 +383,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         // Create the element node
         let node = self.tree.new_node(LayoutNode::Element {
             tag: element_tag,
+            field_name: None, // Will be set by parent if this is a struct field
             attrs,
             changed_groups,
             change,
@@ -413,6 +424,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
         // Create element for the tuple
         let node = self.tree.new_node(LayoutNode::Element {
             tag,
+            field_name: None,
             attrs: Vec::new(),
             changed_groups: Vec::new(),
             change,

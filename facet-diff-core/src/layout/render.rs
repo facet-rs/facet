@@ -95,11 +95,13 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
     match node {
         LayoutNode::Element {
             tag,
+            field_name,
             attrs,
             changed_groups,
             change,
         } => {
             let tag = *tag;
+            let field_name = *field_name;
             let change = *change;
             let attrs = attrs.clone();
             let changed_groups = changed_groups.clone();
@@ -112,6 +114,7 @@ fn render_node<W: Write, B: ColorBackend, F: DiffFlavor>(
                 opts,
                 flavor,
                 tag,
+                field_name,
                 &attrs,
                 &changed_groups,
                 change,
@@ -204,6 +207,7 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
     opts: &RenderOptions<B>,
     flavor: &F,
     tag: &str,
+    field_name: Option<&str>,
     attrs: &[super::Attr],
     changed_groups: &[ChangedGroup],
     change: ElementChange,
@@ -232,6 +236,13 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
         opts.backend
             .write_prefix(w, prefix, element_change_to_semantic(change))?;
         write!(w, " ")?;
+    }
+
+    // Render field name prefix if this element is a struct field (e.g., "point: " for Rust)
+    if let Some(name) = field_name {
+        let prefix = flavor.format_field_prefix(name);
+        opts.backend
+            .write_styled(w, &prefix, SemanticColor::Unchanged)?;
     }
 
     let open = flavor.struct_open(tag);
@@ -592,6 +603,7 @@ mod tests {
 
         let root = LayoutNode::Element {
             tag: "rect",
+            field_name: None,
             attrs,
             changed_groups,
             change: ElementChange::None,
@@ -634,6 +646,7 @@ mod tests {
         // Parent element
         let parent = tree.new_node(LayoutNode::Element {
             tag: "svg",
+            field_name: None,
             attrs: vec![],
             changed_groups: vec![],
             change: ElementChange::None,
@@ -654,6 +667,7 @@ mod tests {
 
         let child = tree.new_node(LayoutNode::Element {
             tag: "rect",
+            field_name: None,
             attrs,
             changed_groups,
             change: ElementChange::None,
