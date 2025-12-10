@@ -52,41 +52,46 @@ fn test_issue_1190_untagged_fails_with_string() {
         pub sort: Sort,
     }
 
-    // This is what the user tried - it fails because untagged unit variants
-    // serialize to null in serde, not strings
+    // Facet diverges from serde here: untagged unit variants serialize/deserialize
+    // as variant name strings (not null) to allow distinguishing between variants
     let json = r#"{"scale": 1.0, "sort": "AB"}"#;
-    let result: Result<BreakDown, _> = facet_json::from_str(json);
-    assert!(result.is_err()); // Expected to fail
+    let result: BreakDown = facet_json::from_str(json).unwrap();
+    assert_eq!(result.sort, Sort::AB);
 
-    // With null it now works (like serde)
-    let json_null = r#"{"scale": 1.0, "sort": null}"#;
-    let result_null: BreakDown = facet_json::from_str(json_null).unwrap();
-    assert_eq!(result_null.sort, Sort::AA); // First unit variant gets selected
+    // Roundtrip test
+    let breakdown = BreakDown {
+        scale: 1.0,
+        sort: Sort::AB,
+    };
+    let serialized = facet_json::to_string(&breakdown);
+    assert_eq!(serialized, r#"{"scale":1.0,"sort":"AB"}"#);
+    let deserialized: BreakDown = facet_json::from_str(&serialized).unwrap();
+    assert_eq!(deserialized.sort, Sort::AB);
 }
 
 #[test]
 fn test_untagged_unit_variant_deserialize_null() {
-    // Test that we can deserialize null into untagged unit variant (like serde)
+    // Facet diverges from serde: untagged unit variants deserialize from variant name strings
     #[derive(Debug, Facet, PartialEq)]
     #[repr(u8)]
     #[facet(untagged)]
-    enum MaybeNull {
-        Null,
+    enum MaybeValue {
+        Empty,
         Value(i32),
     }
 
-    // Deserialize from null should give the first unit variant
-    let result: MaybeNull = facet_json::from_str("null").unwrap();
-    assert_eq!(result, MaybeNull::Null);
+    // Deserialize from variant name string
+    let result: MaybeValue = facet_json::from_str(r#""Empty""#).unwrap();
+    assert_eq!(result, MaybeValue::Empty);
 
     // Deserialize from number should give Value variant
-    let result_val: MaybeNull = facet_json::from_str("42").unwrap();
-    assert_eq!(result_val, MaybeNull::Value(42));
+    let result_val: MaybeValue = facet_json::from_str("42").unwrap();
+    assert_eq!(result_val, MaybeValue::Value(42));
 
     // Roundtrip
-    let null_val = MaybeNull::Null;
-    let json = facet_json::to_string(&null_val);
-    assert_eq!(json, "null");
-    let roundtrip: MaybeNull = facet_json::from_str(&json).unwrap();
-    assert_eq!(roundtrip, MaybeNull::Null);
+    let empty_val = MaybeValue::Empty;
+    let json = facet_json::to_string(&empty_val);
+    assert_eq!(json, r#""Empty""#);
+    let roundtrip: MaybeValue = facet_json::from_str(&json).unwrap();
+    assert_eq!(roundtrip, MaybeValue::Empty);
 }

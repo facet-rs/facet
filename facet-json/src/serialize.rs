@@ -1174,8 +1174,9 @@ fn serialize_enum_content<'mem, 'facet, W: crate::JsonWrite>(
     depth: usize,
 ) -> Result<(), SerializeError> {
     if variant.data.fields.is_empty() {
-        // Unit variant - serialize as null for untagged
-        writer.write(b"null");
+        // Unit variant - serialize as variant name string for untagged
+        // This allows distinguishing between different unit variants
+        crate::write_json_string(writer, variant.name);
     } else if variant_is_newtype_like(variant) {
         // Newtype variant - serialize the inner value directly
         let fields: Vec<_> = peek_enum.fields_for_serialize().collect();

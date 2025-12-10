@@ -2289,6 +2289,21 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
             })
         })?;
 
+        // Check if we have a string token that matches a unit variant name
+        let token = self.peek()?.clone();
+        if let Token::String(ref s) = token.token {
+            // Try to find a unit variant with this name
+            for variant in &variants_by_format.unit_variants {
+                if variant.name == s.as_ref() {
+                    // This is a unit variant - consume the string and select it
+                    self.next()?;
+                    wip = wip.select_variant_named(variant.name)?;
+                    return Ok(wip);
+                }
+            }
+        }
+
+        // Not a unit variant - fall back to newtype scalar variant handling
         if variants_by_format.scalar_variants.is_empty() {
             return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
                 message: format!(
@@ -2299,7 +2314,6 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
         }
 
         // Select the variant based on the token type
-        let token = self.peek()?.clone();
         let variant_name = self.select_scalar_variant(&variants_by_format, &token)?;
 
         wip = wip.select_variant_named(variant_name)?;

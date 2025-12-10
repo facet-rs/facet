@@ -576,10 +576,10 @@ fn test_untagged_unit_variant() {
         Value(i32),
     }
 
-    // Untagged unit variant serializes as null
+    // Untagged unit variant serializes as variant name string
     let null_val = MaybeNull::Null;
     let json = facet_json::to_string(&null_val);
-    assert_eq!(json, "null");
+    assert_eq!(json, r#""Null""#);
 
     let val = MaybeNull::Value(42);
     let json_val = facet_json::to_string(&val);
