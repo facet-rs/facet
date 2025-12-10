@@ -17,3 +17,6 @@ facet-reflect = { path = "../facet-reflect" }
 indextree = "4"
 owo-colors = "4"
 unicode-width = "0.2"
+
+[dev-dependencies]
+facet = { path = "../facet" }
