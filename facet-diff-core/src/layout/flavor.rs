@@ -90,6 +90,15 @@ pub trait DiffFlavor {
     /// - XML: (newlines/whitespace)
     fn item_separator(&self) -> &'static str;
 
+    /// Format a sequence item value, optionally wrapping in element tags.
+    /// - Rust: `0` (no wrapping)
+    /// - JSON: `0` (no wrapping)
+    /// - XML: `<i32>0</i32>` (wrapped in element)
+    fn format_seq_item<'a>(&self, _item_type: &str, value: &'a str) -> Cow<'a, str> {
+        // Default: no wrapping, just return the value
+        Cow::Borrowed(value)
+    }
+
     /// Format a comment (for collapsed items).
     /// - Rust: `/* ...5 more */`
     /// - JSON: `// ...5 more`
@@ -324,6 +333,11 @@ impl DiffFlavor for XmlFlavor {
 
     fn item_separator(&self) -> &'static str {
         " "
+    }
+
+    fn format_seq_item<'a>(&self, item_type: &str, value: &'a str) -> Cow<'a, str> {
+        // Wrap each item in an element tag: <i32>0</i32>
+        Cow::Owned(format!("<{}>{}</{}>", item_type, value, item_type))
     }
 
     fn comment(&self, text: &str) -> String {
