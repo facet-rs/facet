@@ -33,18 +33,12 @@
 //! client.close();
 //! ```
 
-mod transport;
+use std::sync::Arc;
 
-use std::cell::RefCell;
-use std::rc::Rc;
-
-use rapace_core::{Frame, FrameFlags, MsgDescHot, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT};
-use transport::{recv_from, WasmWebSocket};
+use rapace_core::{Frame, FrameFlags, MsgDescHot, Transport, TransportError, INLINE_PAYLOAD_SIZE};
+use rapace_transport_websocket::WebSocketTransport;
 use wasm_bindgen::prelude::*;
-
-/// Size of MsgDescHot in bytes (must be 64).
-const DESC_SIZE: usize = 64;
-const _: () = assert!(std::mem::size_of::<MsgDescHot>() == DESC_SIZE);
+use wasm_bindgen_futures::spawn_local;
 
 /// Compute a method ID by hashing "ServiceName.method_name" using FNV-1a.
 /// Must match the implementation in rapace-macros.
@@ -209,7 +203,7 @@ pub struct StreamItem {
 /// - Dynamic streaming method invocation (call_streaming)
 #[wasm_bindgen]
 pub struct ExplorerClient {
-    ws: Rc<RefCell<WasmWebSocket>>,
+    transport: Arc<WebSocketTransport>,
     next_msg_id: u64,
     next_channel_id: u32,
 }
@@ -221,9 +215,11 @@ impl ExplorerClient {
     /// Returns a Promise that resolves to an ExplorerClient.
     #[wasm_bindgen]
     pub async fn connect(url: &str) -> Result<ExplorerClient, JsValue> {
-        let ws = WasmWebSocket::connect(url).await?;
+        let transport = WebSocketTransport::connect(url)
+            .await
+            .map_err(transport_error)?;
         Ok(ExplorerClient {
-            ws: Rc::new(RefCell::new(ws)),
+            transport: Arc::new(transport),
             next_msg_id: 1,
             next_channel_id: 1,
         })
@@ -423,7 +419,7 @@ impl ExplorerClient {
         self.next_msg_id += 1;
 
         Ok(StreamingCall {
-            ws: Rc::clone(&self.ws),
+            transport: Arc::clone(&self.transport),
             channel_id,
             msg_id,
             service: service.to_string(),
@@ -437,7 +433,10 @@ impl ExplorerClient {
     /// Close the connection.
     #[wasm_bindgen]
     pub fn close(&self) {
-        self.ws.borrow().close();
+        let transport = Arc::clone(&self.transport);
+        spawn_local(async move {
+            let _ = transport.close().await;
+        });
     }
 
     // Internal helper to call a method and get the response
@@ -462,7 +461,7 @@ impl ExplorerClient {
         };
 
         // Send request
-        self.send_frame(&frame)?;
+        self.send_frame(&frame).await?;
 
         // Wait for response
         let response_frame = self.recv_frame().await?;
@@ -476,38 +475,16 @@ impl ExplorerClient {
         Ok(response_frame)
     }
 
-    fn send_frame(&self, frame: &Frame) -> Result<(), JsValue> {
-        let mut data = Vec::with_capacity(DESC_SIZE + frame.payload().len());
-        data.extend_from_slice(&desc_to_bytes(&frame.desc));
-        data.extend_from_slice(frame.payload());
-
-        self.ws.borrow().send(&data)
+    async fn send_frame(&self, frame: &Frame) -> Result<(), JsValue> {
+        self.transport
+            .send_frame(frame)
+            .await
+            .map_err(transport_error)
     }
 
     async fn recv_frame(&self) -> Result<Frame, JsValue> {
-        let data = recv_from(&self.ws).await?;
-
-        if data.len() < DESC_SIZE {
-            return Err(JsValue::from_str(&format!(
-                "frame too small: {} < {}",
-                data.len(),
-                DESC_SIZE
-            )));
-        }
-
-        let desc_bytes: [u8; DESC_SIZE] = data[..DESC_SIZE].try_into().unwrap();
-        let mut desc = bytes_to_desc(&desc_bytes);
-
-        let payload = data[DESC_SIZE..].to_vec();
-        desc.payload_len = payload.len() as u32;
-
-        if payload.len() <= INLINE_PAYLOAD_SIZE {
-            desc.payload_slot = INLINE_PAYLOAD_SLOT;
-            desc.inline_payload[..payload.len()].copy_from_slice(&payload);
-            Ok(Frame::new(desc))
-        } else {
-            Ok(Frame::with_payload(desc, payload))
-        }
+        let view = self.transport.recv_frame().await.map_err(transport_error)?;
+        Ok(view.to_owned())
     }
 }
 
@@ -518,7 +495,7 @@ impl ExplorerClient {
 /// Async iterator for streaming RPC results.
 #[wasm_bindgen]
 pub struct StreamingCall {
-    ws: Rc<RefCell<WasmWebSocket>>,
+    transport: Arc<WebSocketTransport>,
     channel_id: u32,
     msg_id: u64,
     service: String,
@@ -564,7 +541,7 @@ impl StreamingCall {
                 Frame::with_payload(desc, payload.clone())
             };
 
-            self.send_frame(&frame)?;
+            self.send_frame(&frame).await?;
         }
 
         // Receive next frame
@@ -598,38 +575,16 @@ impl StreamingCall {
         Ok(obj.into())
     }
 
-    fn send_frame(&self, frame: &Frame) -> Result<(), JsValue> {
-        let mut data = Vec::with_capacity(DESC_SIZE + frame.payload().len());
-        data.extend_from_slice(&desc_to_bytes(&frame.desc));
-        data.extend_from_slice(frame.payload());
-
-        self.ws.borrow().send(&data)
+    async fn send_frame(&self, frame: &Frame) -> Result<(), JsValue> {
+        self.transport
+            .send_frame(frame)
+            .await
+            .map_err(transport_error)
     }
 
     async fn recv_frame(&self) -> Result<Frame, JsValue> {
-        let data = recv_from(&self.ws).await?;
-
-        if data.len() < DESC_SIZE {
-            return Err(JsValue::from_str(&format!(
-                "frame too small: {} < {}",
-                data.len(),
-                DESC_SIZE
-            )));
-        }
-
-        let desc_bytes: [u8; DESC_SIZE] = data[..DESC_SIZE].try_into().unwrap();
-        let mut desc = bytes_to_desc(&desc_bytes);
-
-        let payload = data[DESC_SIZE..].to_vec();
-        desc.payload_len = payload.len() as u32;
-
-        if payload.len() <= INLINE_PAYLOAD_SIZE {
-            desc.payload_slot = INLINE_PAYLOAD_SLOT;
-            desc.inline_payload[..payload.len()].copy_from_slice(&payload);
-            Ok(Frame::new(desc))
-        } else {
-            Ok(Frame::with_payload(desc, payload))
-        }
+        let view = self.transport.recv_frame().await.map_err(transport_error)?;
+        Ok(view.to_owned())
     }
 }
 
@@ -725,14 +680,6 @@ fn shape_to_js(shape: &ShapeInfo) -> Result<JsValue, JsValue> {
     Ok(obj.into())
 }
 
-/// Convert MsgDescHot to raw bytes.
-fn desc_to_bytes(desc: &MsgDescHot) -> [u8; DESC_SIZE] {
-    // SAFETY: MsgDescHot is repr(C), Copy, and exactly 64 bytes.
-    unsafe { std::mem::transmute_copy(desc) }
-}
-
-/// Convert raw bytes to MsgDescHot.
-fn bytes_to_desc(bytes: &[u8; DESC_SIZE]) -> MsgDescHot {
-    // SAFETY: Same as desc_to_bytes.
-    unsafe { std::mem::transmute_copy(bytes) }
+fn transport_error(err: TransportError) -> JsValue {
+    JsValue::from_str(&format!("transport error: {err}"))
 }
