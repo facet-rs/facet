@@ -13,7 +13,7 @@
 
 use std::borrow::Cow;
 
-use facet_core::{StructKind, Type, UserType};
+use facet_core::{Shape, StructKind, Type, UserType};
 use facet_reflect::Peek;
 use indextree::{Arena, NodeId};
 
@@ -25,6 +25,14 @@ use crate::{Diff, ReplaceGroup, Updates, UpdatesGroup, Value};
 
 /// Maximum number of visible items to show before collapsing with "...N more".
 const MAX_VISIBLE_ITEMS: usize = 5;
+
+/// Get the display name for a shape, respecting the `rename` attribute.
+fn get_shape_display_name(shape: &Shape) -> &'static str {
+    if let Some(renamed) = shape.get_builtin_attr_value::<&str>("rename") {
+        return renamed;
+    }
+    shape.type_identifier
+}
 
 /// Options for building a layout from a diff.
 #[derive(Clone, Debug)]
@@ -144,8 +152,8 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                 variant,
                 value,
             } => {
-                // Get type name for the tag
-                let tag = from_shape.type_identifier;
+                // Get type name for the tag, respecting `rename` attribute
+                let tag = get_shape_display_name(from_shape);
 
                 match value {
                     Value::Struct {
@@ -174,7 +182,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                         to.and_then(|p| p.into_list_like().ok())
                             .and_then(|list| list.iter().next())
                     })
-                    .map(|item| item.shape().type_identifier)
+                    .map(|item| get_shape_display_name(item.shape()))
                     .unwrap_or("item");
                 self.build_sequence(updates, change, item_type)
             }
@@ -190,7 +198,7 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
             (_, Type::User(UserType::Struct(ty))) if ty.kind == StructKind::Struct => {
                 // Build as element with fields as attributes
                 if let Ok(struct_peek) = peek.into_struct() {
-                    let tag = shape.type_identifier;
+                    let tag = get_shape_display_name(shape);
                     let mut attrs = Vec::new();
 
                     for (i, field) in ty.fields.iter().enumerate() {

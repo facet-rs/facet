@@ -188,32 +188,40 @@ fn main() {
         print_all_flavors("Mixed changes (add, remove, modify)", &from, &to);
     }
 
-    // Deeper nesting - SVG-like structure
+    // Deeper nesting - SVG-like structure with proper element names
     {
         #[derive(Facet, Debug)]
+        #[facet(rename = "svg")]
         struct Svg {
             width: u32,
             height: u32,
+            #[facet(rename = "viewBox")]
             viewbox: ViewBox,
-            elements: Vec<Element>,
+            #[facet(rename = "g")]
+            elements: Vec<Group>,
         }
 
         #[derive(Facet, Debug)]
+        #[facet(rename = "viewBox")]
         struct ViewBox {
+            #[facet(rename = "minX")]
             min_x: i32,
+            #[facet(rename = "minY")]
             min_y: i32,
             width: u32,
             height: u32,
         }
 
         #[derive(Facet, Debug)]
-        struct Element {
-            kind: &'static str,
+        #[facet(rename = "g")]
+        struct Group {
+            id: &'static str,
             transform: Transform,
             style: Style,
         }
 
         #[derive(Facet, Debug)]
+        #[facet(rename = "transform", rename_all = "kebab-case")]
         struct Transform {
             translate_x: f32,
             translate_y: f32,
@@ -222,6 +230,7 @@ fn main() {
         }
 
         #[derive(Facet, Debug)]
+        #[facet(rename = "style", rename_all = "kebab-case")]
         struct Style {
             fill: &'static str,
             stroke: &'static str,
@@ -239,8 +248,8 @@ fn main() {
                 height: 600,
             },
             elements: vec![
-                Element {
-                    kind: "rect",
+                Group {
+                    id: "rect-group",
                     transform: Transform {
                         translate_x: 100.0,
                         translate_y: 100.0,
@@ -254,8 +263,8 @@ fn main() {
                         opacity: 1.0,
                     },
                 },
-                Element {
-                    kind: "circle",
+                Group {
+                    id: "circle-group",
                     transform: Transform {
                         translate_x: 400.0,
                         translate_y: 300.0,
@@ -282,8 +291,8 @@ fn main() {
                 height: 768, // changed
             },
             elements: vec![
-                Element {
-                    kind: "rect",
+                Group {
+                    id: "rect-group",
                     transform: Transform {
                         translate_x: 150.0, // changed
                         translate_y: 120.0, // changed
@@ -297,8 +306,8 @@ fn main() {
                         opacity: 0.9,      // changed
                     },
                 },
-                Element {
-                    kind: "circle",
+                Group {
+                    id: "circle-group",
                     transform: Transform {
                         translate_x: 500.0, // changed
                         translate_y: 400.0, // changed
