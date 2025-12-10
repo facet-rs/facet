@@ -231,6 +231,137 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
                     });
                 }
             }
+            (_, Type::User(UserType::Enum(_))) => {
+                // Build enum as element with variant name as tag
+                if let Ok(enum_peek) = peek.into_enum() {
+                    if let Ok(variant) = enum_peek.active_variant() {
+                        let tag = variant.name;
+                        let fields = &variant.data.fields;
+
+                        // If variant has fields, build as element with those fields
+                        if !fields.is_empty() {
+                            // Check for newtype pattern: single field with same-named inner type
+                            // e.g., `Circle(Circle)` where we want to show Circle's fields directly
+                            if fields.len() == 1 {
+                                if let Ok(Some(inner_value)) = enum_peek.field(0) {
+                                    let inner_shape = inner_value.shape();
+                                    // If it's a struct, recurse into it but use the variant name
+                                    if let Type::User(UserType::Struct(s)) = inner_shape.ty {
+                                        if s.kind == StructKind::Struct {
+                                            if let Ok(struct_peek) = inner_value.into_struct() {
+                                                let mut attrs = Vec::new();
+
+                                                for (i, field) in s.fields.iter().enumerate() {
+                                                    if let Ok(field_value) = struct_peek.field(i) {
+                                                        let formatted_value =
+                                                            self.format_peek(field_value);
+                                                        let attr = match change {
+                                                            ElementChange::None => Attr::unchanged(
+                                                                field.name,
+                                                                field.name.len(),
+                                                                formatted_value,
+                                                            ),
+                                                            ElementChange::Deleted => {
+                                                                Attr::deleted(
+                                                                    field.name,
+                                                                    field.name.len(),
+                                                                    formatted_value,
+                                                                )
+                                                            }
+                                                            ElementChange::Inserted => {
+                                                                Attr::inserted(
+                                                                    field.name,
+                                                                    field.name.len(),
+                                                                    formatted_value,
+                                                                )
+                                                            }
+                                                            ElementChange::MovedFrom
+                                                            | ElementChange::MovedTo => {
+                                                                Attr::unchanged(
+                                                                    field.name,
+                                                                    field.name.len(),
+                                                                    formatted_value,
+                                                                )
+                                                            }
+                                                        };
+                                                        attrs.push(attr);
+                                                    }
+                                                }
+
+                                                let changed_groups = group_changed_attrs(
+                                                    &attrs,
+                                                    self.opts.max_line_width,
+                                                    0,
+                                                );
+
+                                                return self.tree.new_node(LayoutNode::Element {
+                                                    tag,
+                                                    field_name: None,
+                                                    attrs,
+                                                    changed_groups,
+                                                    change,
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // General case: show variant fields directly
+                            let mut attrs = Vec::new();
+
+                            for (i, field) in fields.iter().enumerate() {
+                                if let Ok(Some(field_value)) = enum_peek.field(i) {
+                                    let formatted_value = self.format_peek(field_value);
+                                    let attr = match change {
+                                        ElementChange::None => Attr::unchanged(
+                                            field.name,
+                                            field.name.len(),
+                                            formatted_value,
+                                        ),
+                                        ElementChange::Deleted => Attr::deleted(
+                                            field.name,
+                                            field.name.len(),
+                                            formatted_value,
+                                        ),
+                                        ElementChange::Inserted => Attr::inserted(
+                                            field.name,
+                                            field.name.len(),
+                                            formatted_value,
+                                        ),
+                                        ElementChange::MovedFrom | ElementChange::MovedTo => {
+                                            Attr::unchanged(
+                                                field.name,
+                                                field.name.len(),
+                                                formatted_value,
+                                            )
+                                        }
+                                    };
+                                    attrs.push(attr);
+                                }
+                            }
+
+                            let changed_groups =
+                                group_changed_attrs(&attrs, self.opts.max_line_width, 0);
+
+                            return self.tree.new_node(LayoutNode::Element {
+                                tag,
+                                field_name: None,
+                                attrs,
+                                changed_groups,
+                                change,
+                            });
+                        } else {
+                            // Unit variant - just show the variant name as text
+                            let (span, width) = self.strings.push_str(tag);
+                            return self.tree.new_node(LayoutNode::Text {
+                                value: FormattedValue::new(span, width),
+                                change,
+                            });
+                        }
+                    }
+                }
+            }
             _ => {}
         }
 
@@ -315,12 +446,44 @@ impl<'f, F: DiffFlavor> LayoutBuilder<'f, F> {
 
             match field_diff {
                 Diff::Replace { from, to } => {
-                    // Scalar replacement - show as changed attribute
-                    let old_value = self.format_peek(*from);
-                    let new_value = self.format_peek(*to);
-                    let name_width = field_name.len();
-                    let attr = Attr::changed(field_name.clone(), name_width, old_value, new_value);
-                    attrs.push(attr);
+                    // Check if this is a complex type that should be built as children
+                    let from_shape = from.shape();
+                    let is_complex = match from_shape.ty {
+                        Type::User(UserType::Enum(_)) => true,
+                        Type::User(UserType::Struct(s)) if s.kind == StructKind::Struct => true,
+                        _ => false,
+                    };
+
+                    if is_complex {
+                        // Build from/to as separate child elements
+                        let from_node = self.build_peek(*from, ElementChange::Deleted);
+                        let to_node = self.build_peek(*to, ElementChange::Inserted);
+
+                        // Set field name on both nodes
+                        if let Cow::Borrowed(name) = field_name {
+                            if let Some(node) = self.tree.get_mut(from_node) {
+                                if let LayoutNode::Element { field_name, .. } = node.get_mut() {
+                                    *field_name = Some(name);
+                                }
+                            }
+                            if let Some(node) = self.tree.get_mut(to_node) {
+                                if let LayoutNode::Element { field_name, .. } = node.get_mut() {
+                                    *field_name = Some(name);
+                                }
+                            }
+                        }
+
+                        child_nodes.push(from_node);
+                        child_nodes.push(to_node);
+                    } else {
+                        // Scalar replacement - show as changed attribute
+                        let old_value = self.format_peek(*from);
+                        let new_value = self.format_peek(*to);
+                        let name_width = field_name.len();
+                        let attr =
+                            Attr::changed(field_name.clone(), name_width, old_value, new_value);
+                        attrs.push(attr);
+                    }
                 }
                 _ => {
                     // Nested diff - build as child element or sequence
