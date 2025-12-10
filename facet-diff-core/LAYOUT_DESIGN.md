@@ -126,12 +126,23 @@ Nodes in the layout tree, stored in `indextree::Arena`.
 pub enum LayoutNode {
     Element {
         tag: &'static str,
+        field_name: Option<&'static str>,  // For nested struct fields
         attrs: Vec<Attr>,
         changed_groups: Vec<ChangedGroup>,
         change: ElementChange,
     },
+    Sequence {
+        change: ElementChange,
+        item_type: &'static str,  // Type name for XML wrapping
+    },
     Collapsed { count: usize },
     Text { value: FormattedValue, change: ElementChange },
+    ItemGroup {
+        items: Vec<FormattedValue>,
+        change: ElementChange,
+        collapsed_suffix: Option<usize>,  // "...N more"
+        item_type: &'static str,
+    },
 }
 
 pub enum ElementChange {
@@ -282,15 +293,18 @@ Gray/dimmed comment.
 - `build_layout()`, `build_layout_without_context()` - Diff → Layout conversion
 - Peek context passing for unchanged field values
 - Collapse of unchanged struct fields when count > threshold
-- `LayoutNode::ItemGroup` - grouping consecutive sequence items on single lines
+- `LayoutNode::Sequence` and `LayoutNode::ItemGroup` - sequence handling with type info
 - Collapse of long sequence runs with "...N more" suffix
-- `DiffFlavor` trait - format-agnostic rendering
+- XML sequence item wrapping (`<i32>value</i32>` via `item_type`)
+- `DiffFlavor` trait - format-agnostic rendering (integrated into render phase)
 - `RustFlavor`, `JsonFlavor`, `XmlFlavor` - three output styles
 - `FieldPresentation` - how fields should be presented (Attribute, Child, TextContent, Children)
 - XML attribute detection (`#[facet(xml::attribute)]`, etc.)
+- Nested struct field names (`field_name` in Element nodes)
+- XML nested elements rendered as child elements (not broken attribute syntax)
+- Trailing commas with muted color for clean line endings
 
 **Not yet implemented:**
-- Integration of `DiffFlavor` into `build_layout()` and `render()`
 - Move detection (←/→ markers)
 - XML-specific escaping in format phase
 
