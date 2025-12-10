@@ -463,7 +463,9 @@ fn main() {
         #[derive(Facet, Debug)]
         #[repr(u8)]
         enum Shape {
+            #[allow(dead_code)]
             Circle(Circle),
+            #[allow(dead_code)]
             Rectangle(Rectangle),
         }
 

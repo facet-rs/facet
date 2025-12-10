@@ -1,7 +1,7 @@
 //! Color themes for diff rendering.
 
 use owo_colors::Rgb;
-use palette::{LinSrgb, Mix, Srgb};
+use palette::{FromColor, Lch, LinSrgb, Mix, Srgb};
 
 /// Color theme for diff rendering.
 ///
@@ -103,11 +103,11 @@ impl DiffTheme {
         number: Rgb(209, 154, 102),    // #d19a66 orange
         boolean: Rgb(209, 154, 102),   // #d19a66 orange
         null: Rgb(86, 182, 194),       // #56b6c2 cyan
-        // Subtle line backgrounds (brighter for visibility)
+        // Subtle line backgrounds
         deleted_line_bg: Some(Rgb(55, 48, 35)), // medium-dark warm yellow
         inserted_line_bg: Some(Rgb(35, 48, 60)), // medium-dark cool blue
         moved_line_bg: Some(Rgb(50, 40, 60)),   // medium-dark purple
-        // Stronger highlight backgrounds for changed values (even brighter)
+        // Stronger highlight backgrounds for changed values
         deleted_highlight_bg: Some(Rgb(90, 75, 50)), // medium yellow/brown
         inserted_highlight_bg: Some(Rgb(45, 70, 95)), // medium blue
         moved_highlight_bg: Some(Rgb(80, 55, 95)),   // medium purple
@@ -208,6 +208,51 @@ impl DiffTheme {
         )
     }
 
+    /// Brighten and saturate a color for use in highlights.
+    /// Increases both lightness and saturation in LCH space.
+    pub fn brighten_saturate(rgb: Rgb, lightness_boost: f32, chroma_boost: f32) -> Rgb {
+        let srgb = Srgb::new(
+            rgb.0 as f32 / 255.0,
+            rgb.1 as f32 / 255.0,
+            rgb.2 as f32 / 255.0,
+        );
+        let mut lch = Lch::from_color(srgb);
+
+        // Increase lightness
+        lch.l = (lch.l + lightness_boost * 100.0).min(100.0);
+
+        // Increase chroma (saturation-like)
+        lch.chroma = (lch.chroma + chroma_boost).min(150.0);
+
+        let result: Srgb = Srgb::from_color(lch);
+        Rgb(
+            (result.red * 255.0).round() as u8,
+            (result.green * 255.0).round() as u8,
+            (result.blue * 255.0).round() as u8,
+        )
+    }
+
+    /// Desaturate a color for use in backgrounds.
+    /// Reduces saturation (chroma) in LCH space.
+    pub fn desaturate(rgb: Rgb, amount: f32) -> Rgb {
+        let srgb = Srgb::new(
+            rgb.0 as f32 / 255.0,
+            rgb.1 as f32 / 255.0,
+            rgb.2 as f32 / 255.0,
+        );
+        let mut lch = Lch::from_color(srgb);
+
+        // Reduce chroma (saturation)
+        lch.chroma = lch.chroma * (1.0 - amount);
+
+        let result: Srgb = Srgb::from_color(lch);
+        Rgb(
+            (result.red * 255.0).round() as u8,
+            (result.green * 255.0).round() as u8,
+            (result.blue * 255.0).round() as u8,
+        )
+    }
+
     /// Get the key color blended for a deleted context.
     pub fn deleted_key(&self) -> Rgb {
         Self::blend(self.key, self.deleted, 0.3)
@@ -242,41 +287,117 @@ impl DiffTheme {
 
     /// Get the string color blended for a deleted context.
     pub fn deleted_string(&self) -> Rgb {
-        Self::blend(self.string, self.deleted, 0.4)
+        Self::blend(self.string, self.deleted, 0.7)
     }
 
     /// Get the string color blended for an inserted context.
     pub fn inserted_string(&self) -> Rgb {
-        Self::blend(self.string, self.inserted, 0.4)
+        Self::blend(self.string, self.inserted, 0.7)
     }
 
     /// Get the number color blended for a deleted context.
     pub fn deleted_number(&self) -> Rgb {
-        Self::blend(self.number, self.deleted, 0.4)
+        Self::blend(self.number, self.deleted, 0.7)
     }
 
     /// Get the number color blended for an inserted context.
     pub fn inserted_number(&self) -> Rgb {
-        Self::blend(self.number, self.inserted, 0.4)
+        Self::blend(self.number, self.inserted, 0.7)
     }
 
     /// Get the boolean color blended for a deleted context.
     pub fn deleted_boolean(&self) -> Rgb {
-        Self::blend(self.boolean, self.deleted, 0.4)
+        Self::blend(self.boolean, self.deleted, 0.7)
     }
 
     /// Get the boolean color blended for an inserted context.
     pub fn inserted_boolean(&self) -> Rgb {
-        Self::blend(self.boolean, self.inserted, 0.4)
+        Self::blend(self.boolean, self.inserted, 0.7)
     }
 
     /// Get the null color blended for a deleted context.
     pub fn deleted_null(&self) -> Rgb {
-        Self::blend(self.null, self.deleted, 0.4)
+        Self::blend(self.null, self.deleted, 0.7)
     }
 
     /// Get the null color blended for an inserted context.
     pub fn inserted_null(&self) -> Rgb {
-        Self::blend(self.null, self.inserted, 0.4)
+        Self::blend(self.null, self.inserted, 0.7)
+    }
+
+    // === Bright highlight colors for values with highlight backgrounds ===
+
+    /// Get the string color for a deleted highlight (brightened and saturated accent color).
+    pub fn deleted_highlight_string(&self) -> Rgb {
+        Self::brighten_saturate(self.deleted, 0.15, 0.2)
+    }
+
+    /// Get the string color for an inserted highlight (brightened and saturated accent color).
+    pub fn inserted_highlight_string(&self) -> Rgb {
+        Self::brighten_saturate(self.inserted, 0.15, 0.2)
+    }
+
+    /// Get the number color for a deleted highlight (brightened and saturated accent color).
+    pub fn deleted_highlight_number(&self) -> Rgb {
+        Self::brighten_saturate(self.deleted, 0.15, 0.2)
+    }
+
+    /// Get the number color for an inserted highlight (brightened and saturated accent color).
+    pub fn inserted_highlight_number(&self) -> Rgb {
+        Self::brighten_saturate(self.inserted, 0.15, 0.2)
+    }
+
+    /// Get the boolean color for a deleted highlight (brightened and saturated accent color).
+    pub fn deleted_highlight_boolean(&self) -> Rgb {
+        Self::brighten_saturate(self.deleted, 0.15, 0.2)
+    }
+
+    /// Get the boolean color for an inserted highlight (brightened and saturated accent color).
+    pub fn inserted_highlight_boolean(&self) -> Rgb {
+        Self::brighten_saturate(self.inserted, 0.15, 0.2)
+    }
+
+    /// Get the null color for a deleted highlight (brightened and saturated accent color).
+    pub fn deleted_highlight_null(&self) -> Rgb {
+        Self::brighten_saturate(self.deleted, 0.15, 0.2)
+    }
+
+    /// Get the null color for an inserted highlight (brightened and saturated accent color).
+    pub fn inserted_highlight_null(&self) -> Rgb {
+        Self::brighten_saturate(self.inserted, 0.15, 0.2)
+    }
+
+    // === Desaturated background getters ===
+
+    /// Get desaturated deleted line background.
+    pub fn desaturated_deleted_line_bg(&self) -> Option<Rgb> {
+        self.deleted_line_bg.map(|bg| Self::desaturate(bg, 0.6))
+    }
+
+    /// Get desaturated inserted line background.
+    pub fn desaturated_inserted_line_bg(&self) -> Option<Rgb> {
+        self.inserted_line_bg.map(|bg| Self::desaturate(bg, 0.6))
+    }
+
+    /// Get desaturated moved line background.
+    pub fn desaturated_moved_line_bg(&self) -> Option<Rgb> {
+        self.moved_line_bg.map(|bg| Self::desaturate(bg, 0.6))
+    }
+
+    /// Get desaturated deleted highlight background.
+    pub fn desaturated_deleted_highlight_bg(&self) -> Option<Rgb> {
+        self.deleted_highlight_bg
+            .map(|bg| Self::desaturate(bg, 0.6))
+    }
+
+    /// Get desaturated inserted highlight background.
+    pub fn desaturated_inserted_highlight_bg(&self) -> Option<Rgb> {
+        self.inserted_highlight_bg
+            .map(|bg| Self::desaturate(bg, 0.6))
+    }
+
+    /// Get desaturated moved highlight background.
+    pub fn desaturated_moved_highlight_bg(&self) -> Option<Rgb> {
+        self.moved_highlight_bg.map(|bg| Self::desaturate(bg, 0.6))
     }
 }
