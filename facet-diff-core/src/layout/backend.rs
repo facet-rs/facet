@@ -78,6 +78,10 @@ pub enum SemanticColor {
     /// Null/None value in unchanged context
     Null,
 
+    // === Whitespace and separators ===
+    /// Whitespace, commas, and other separator characters (no highlight background)
+    Whitespace,
+
     // === Other ===
     /// Unchanged content (neutral)
     Unchanged,
@@ -179,12 +183,12 @@ impl ColorBackend for AnsiBackend {
 
             // Context-aware syntax colors
             SemanticColor::DeletedKey => (
-                self.theme.deleted_key(),
-                self.theme.desaturated_deleted_line_bg(),
+                self.theme.deleted_highlight_key(),
+                self.theme.desaturated_deleted_highlight_bg(),
             ),
             SemanticColor::InsertedKey => (
-                self.theme.inserted_key(),
-                self.theme.desaturated_inserted_line_bg(),
+                self.theme.inserted_highlight_key(),
+                self.theme.desaturated_inserted_highlight_bg(),
             ),
             SemanticColor::Key => (self.theme.key, None),
 
@@ -199,12 +203,12 @@ impl ColorBackend for AnsiBackend {
             SemanticColor::Structure => (self.theme.structure, None),
 
             SemanticColor::DeletedComment => (
-                self.theme.deleted_comment(),
-                self.theme.desaturated_deleted_line_bg(),
+                self.theme.deleted_highlight_comment(),
+                self.theme.desaturated_deleted_highlight_bg(),
             ),
             SemanticColor::InsertedComment => (
-                self.theme.inserted_comment(),
-                self.theme.desaturated_inserted_line_bg(),
+                self.theme.inserted_highlight_comment(),
+                self.theme.desaturated_inserted_highlight_bg(),
             ),
             SemanticColor::Comment => (self.theme.comment, None),
 
@@ -248,6 +252,9 @@ impl ColorBackend for AnsiBackend {
                 self.theme.desaturated_inserted_highlight_bg(),
             ),
             SemanticColor::Null => (self.theme.null, None),
+
+            // Whitespace and separators (no background, use comment color which is muted)
+            SemanticColor::Whitespace => (self.theme.comment, None),
 
             // Neutral
             SemanticColor::Unchanged => (self.theme.unchanged, None),

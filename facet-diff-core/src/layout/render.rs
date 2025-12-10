@@ -462,11 +462,11 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                 opts.backend.write_prefix(w, '-', SemanticColor::Deleted)?;
                 write!(w, " ")?;
                 render_attr_deleted(layout, w, opts, flavor, &attr.name, value)?;
-                // Trailing comma (context-aware muted)
+                // Trailing comma (no highlight background)
                 opts.backend.write_styled(
                     w,
                     flavor.trailing_separator(),
-                    SemanticColor::DeletedComment,
+                    SemanticColor::Whitespace,
                 )?;
                 writeln!(w)?;
             }
@@ -482,11 +482,11 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                 opts.backend.write_prefix(w, '+', SemanticColor::Inserted)?;
                 write!(w, " ")?;
                 render_attr_inserted(layout, w, opts, flavor, &attr.name, value)?;
-                // Trailing comma (context-aware muted)
+                // Trailing comma (no highlight background)
                 opts.backend.write_styled(
                     w,
                     flavor.trailing_separator(),
-                    SemanticColor::InsertedComment,
+                    SemanticColor::Whitespace,
                 )?;
                 writeln!(w)?;
             }
@@ -507,9 +507,9 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
                     render_attr_unchanged(layout, w, opts, flavor, &attr.name, value)?;
                 }
             }
-            // Trailing comma (muted)
+            // Trailing comma (no background)
             opts.backend
-                .write_styled(w, flavor.trailing_separator(), SemanticColor::Comment)?;
+                .write_styled(w, flavor.trailing_separator(), SemanticColor::Whitespace)?;
             writeln!(w)?;
         }
 
@@ -531,9 +531,9 @@ fn render_element<W: Write, B: ColorBackend, F: DiffFlavor>(
             if let AttrStatus::Unchanged { value } = &attr.status {
                 render_attr_unchanged(layout, w, opts, flavor, &attr.name, value)?;
             }
-            // Trailing comma (muted)
+            // Trailing comma (no background)
             opts.backend
-                .write_styled(w, flavor.trailing_separator(), SemanticColor::Comment)?;
+                .write_styled(w, flavor.trailing_separator(), SemanticColor::Whitespace)?;
             writeln!(w)?;
         }
         // Close the opening (e.g., ">" for XML) - only if non-empty
@@ -630,11 +630,8 @@ fn render_inline_element<W: Write, B: ColorBackend, F: DiffFlavor>(
     // Attributes (old values or spaces for inserted)
     for (i, (attr, &slot_width)) in attrs.iter().zip(info.slot_widths.iter()).enumerate() {
         if i > 0 {
-            opts.backend.write_styled(
-                w,
-                flavor.field_separator(),
-                SemanticColor::DeletedStructure,
-            )?;
+            opts.backend
+                .write_styled(w, flavor.field_separator(), SemanticColor::Whitespace)?;
         } else {
             opts.backend.write_styled(w, " ", SemanticColor::Deleted)?;
         }
@@ -709,7 +706,7 @@ fn render_inline_element<W: Write, B: ColorBackend, F: DiffFlavor>(
         if padding > 0 {
             let spaces: String = " ".repeat(padding);
             opts.backend
-                .write_styled(w, &spaces, SemanticColor::Deleted)?;
+                .write_styled(w, &spaces, SemanticColor::Whitespace)?;
         }
     }
 
@@ -740,11 +737,8 @@ fn render_inline_element<W: Write, B: ColorBackend, F: DiffFlavor>(
     // Attributes (new values or spaces for deleted)
     for (i, (attr, &slot_width)) in attrs.iter().zip(info.slot_widths.iter()).enumerate() {
         if i > 0 {
-            opts.backend.write_styled(
-                w,
-                flavor.field_separator(),
-                SemanticColor::InsertedStructure,
-            )?;
+            opts.backend
+                .write_styled(w, flavor.field_separator(), SemanticColor::Whitespace)?;
         } else {
             opts.backend.write_styled(w, " ", SemanticColor::Inserted)?;
         }
@@ -814,12 +808,12 @@ fn render_inline_element<W: Write, B: ColorBackend, F: DiffFlavor>(
             }
         };
 
-        // Pad to slot width (line bg)
+        // Pad to slot width (no background for spaces)
         let padding = slot_width.saturating_sub(written);
         if padding > 0 {
             let spaces: String = " ".repeat(padding);
             opts.backend
-                .write_styled(w, &spaces, SemanticColor::Inserted)?;
+                .write_styled(w, &spaces, SemanticColor::Whitespace)?;
         }
     }
 
@@ -883,11 +877,8 @@ fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
 
         // Trailing comma for fields (context-aware)
         if field_name.is_some() {
-            opts.backend.write_styled(
-                w,
-                flavor.trailing_separator(),
-                syntax_color(SyntaxElement::Comment, change),
-            )?;
+            opts.backend
+                .write_styled(w, flavor.trailing_separator(), SemanticColor::Whitespace)?;
         }
         writeln!(w)?;
         return Ok(());
@@ -935,11 +926,8 @@ fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
 
     // Trailing comma for fields (context-aware)
     if field_name.is_some() {
-        opts.backend.write_styled(
-            w,
-            flavor.trailing_separator(),
-            syntax_color(SyntaxElement::Comment, change),
-        )?;
+        opts.backend
+            .write_styled(w, flavor.trailing_separator(), SemanticColor::Whitespace)?;
     }
     writeln!(w)?;
 
