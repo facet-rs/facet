@@ -16,10 +16,12 @@ facet-pretty = { path = "../facet-pretty" }
 facet-reflect = { path = "../facet-reflect" }
 indextree = "4"
 owo-colors = "4"
+tracing = "0.1"
 unicode-width = "0.2"
 
 [dev-dependencies]
 facet = { path = "../facet" }
 facet-diff = { path = "../facet-diff" }
+facet-testhelpers = { path = "../facet-testhelpers" }
 facet-value = { path = "../facet-value" }
 facet-xml = { path = "../facet-xml" }

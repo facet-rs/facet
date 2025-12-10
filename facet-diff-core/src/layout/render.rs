@@ -450,16 +450,18 @@ fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
             write!(w, " ")?;
         }
 
-        // Field name prefix (e.g., "elements: ")
+        // Open and close with optional field name
         if let Some(name) = field_name {
-            let field_prefix = flavor.format_field_prefix(name);
-            opts.backend.write_styled(w, &field_prefix, tag_color)?;
+            let open = flavor.format_seq_field_open(name);
+            let close = flavor.format_seq_field_close(name);
+            opts.backend.write_styled(w, &open, tag_color)?;
+            opts.backend.write_styled(w, &close, tag_color)?;
+        } else {
+            let open = flavor.seq_open();
+            let close = flavor.seq_close();
+            opts.backend.write_styled(w, &open, tag_color)?;
+            opts.backend.write_styled(w, &close, tag_color)?;
         }
-
-        let open = flavor.seq_open();
-        let close = flavor.seq_close();
-        opts.backend.write_styled(w, &open, tag_color)?;
-        opts.backend.write_styled(w, &close, tag_color)?;
 
         // Trailing comma for fields
         if field_name.is_some() {
@@ -478,14 +480,14 @@ fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
         write!(w, " ")?;
     }
 
-    // Field name prefix (e.g., "elements: ")
+    // Open with optional field name
     if let Some(name) = field_name {
-        let field_prefix = flavor.format_field_prefix(name);
-        opts.backend.write_styled(w, &field_prefix, tag_color)?;
+        let open = flavor.format_seq_field_open(name);
+        opts.backend.write_styled(w, &open, tag_color)?;
+    } else {
+        let open = flavor.seq_open();
+        opts.backend.write_styled(w, &open, tag_color)?;
     }
-
-    let open = flavor.seq_open();
-    opts.backend.write_styled(w, &open, tag_color)?;
     writeln!(w)?;
 
     // Children
@@ -500,8 +502,15 @@ fn render_sequence<W: Write, B: ColorBackend, F: DiffFlavor>(
             .write_prefix(w, prefix, element_change_to_semantic(change))?;
         write!(w, " ")?;
     }
-    let close = flavor.seq_close();
-    opts.backend.write_styled(w, &close, tag_color)?;
+
+    // Close with optional field name
+    if let Some(name) = field_name {
+        let close = flavor.format_seq_field_close(name);
+        opts.backend.write_styled(w, &close, tag_color)?;
+    } else {
+        let close = flavor.seq_close();
+        opts.backend.write_styled(w, &close, tag_color)?;
+    }
 
     // Trailing comma for fields
     if field_name.is_some() {

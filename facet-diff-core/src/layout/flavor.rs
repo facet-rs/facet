@@ -108,6 +108,28 @@ pub trait DiffFlavor {
         Cow::Borrowed(value)
     }
 
+    /// Opening for a sequence that is a struct field value.
+    /// - Rust: `fieldname: [`
+    /// - JSON: `"fieldname": [`
+    /// - XML: `<fieldname>` (wrapper element, not attribute!)
+    fn format_seq_field_open(&self, field_name: &str) -> String {
+        // Default: use field prefix + seq_open
+        format!(
+            "{}{}",
+            self.format_field_prefix(field_name),
+            self.seq_open()
+        )
+    }
+
+    /// Closing for a sequence that is a struct field value.
+    /// - Rust: `]`
+    /// - JSON: `]`
+    /// - XML: `</fieldname>`
+    fn format_seq_field_close(&self, _field_name: &str) -> Cow<'static, str> {
+        // Default: just seq_close
+        self.seq_close()
+    }
+
     /// Format a comment (for collapsed items).
     /// - Rust: `/* ...5 more */`
     /// - JSON: `// ...5 more`
@@ -399,6 +421,16 @@ impl DiffFlavor for XmlFlavor {
     fn trailing_separator(&self) -> &'static str {
         // XML doesn't use trailing commas/separators
         ""
+    }
+
+    fn format_seq_field_open(&self, field_name: &str) -> String {
+        // XML: sequence field becomes a wrapper element, not an attribute
+        format!("<{}>", field_name)
+    }
+
+    fn format_seq_field_close(&self, field_name: &str) -> Cow<'static, str> {
+        // XML: close the wrapper element
+        Cow::Owned(format!("</{}>", field_name))
     }
 }
 
