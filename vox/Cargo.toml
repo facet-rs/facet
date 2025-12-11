@@ -11,7 +11,6 @@ members = [
     "crates/rapace-transport-shm",
     "crates/rapace-transport-stream",
     "crates/rapace-transport-websocket",
-    "crates/rapace-wasm-client",
     "crates/rapace-testkit",
     "crates/rapace-explorer",
     "demos/dashboard",

@@ -1929,20 +1929,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rapace-wasm-client"
-version = "0.1.0"
-dependencies = [
- "facet",
- "facet-postcard",
- "js-sys",
- "rapace-core",
- "rapace-transport-websocket",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
-]
-
-[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
