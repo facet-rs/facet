@@ -1409,6 +1409,15 @@ pub enum VariantFormat {
         inner_shape: &'static Shape,
     },
 
+    /// Newtype variant wrapping a tuple struct/tuple
+    /// Serializes as a sequence for untagged enums.
+    NewtypeTuple {
+        /// The shape of the inner tuple type
+        inner_shape: &'static Shape,
+        /// Number of elements in the inner tuple
+        arity: usize,
+    },
+
     /// Newtype variant wrapping another type (enum, sequence, etc.)
     NewtypeOther {
         /// The shape of the inner type
@@ -1430,7 +1439,7 @@ pub enum VariantFormat {
 impl VariantFormat {
     /// Classify a variant's expected serialized format.
     pub fn from_variant(variant: &'static Variant) -> Self {
-        use facet_core::{StructKind, Type, UserType};
+        use facet_core::StructKind;
 
         let fields = variant.data.fields;
         let kind = variant.data.kind;
@@ -1445,7 +1454,9 @@ impl VariantFormat {
                     let inner_shape = fields[0].shape();
                     if is_scalar_shape(inner_shape) {
                         VariantFormat::NewtypeScalar { inner_shape }
-                    } else if matches!(inner_shape.ty, Type::User(UserType::Struct(_))) {
+                    } else if let Some(arity) = tuple_struct_arity(inner_shape) {
+                        VariantFormat::NewtypeTuple { inner_shape, arity }
+                    } else if is_named_struct_shape(inner_shape) {
                         VariantFormat::NewtypeStruct { inner_shape }
                     } else {
                         VariantFormat::NewtypeOther { inner_shape }
@@ -1468,7 +1479,10 @@ impl VariantFormat {
 
     /// Returns true if this variant expects a sequence in untagged format.
     pub fn expects_sequence(&self) -> bool {
-        matches!(self, VariantFormat::Tuple { .. })
+        matches!(
+            self,
+            VariantFormat::Tuple { .. } | VariantFormat::NewtypeTuple { .. }
+        )
     }
 
     /// Returns true if this variant expects a mapping in untagged format.
@@ -1488,6 +1502,29 @@ impl VariantFormat {
 /// Check if a shape represents a scalar type.
 fn is_scalar_shape(shape: &'static Shape) -> bool {
     shape.scalar_type().is_some()
+}
+
+/// Returns the arity of a tuple struct/tuple shape, if applicable.
+fn tuple_struct_arity(shape: &'static Shape) -> Option<usize> {
+    use facet_core::{StructKind, Type, UserType};
+
+    match shape.ty {
+        Type::User(UserType::Struct(struct_type)) => match struct_type.kind {
+            StructKind::Tuple | StructKind::TupleStruct => Some(struct_type.fields.len()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Returns true if the shape is a named struct (non-tuple).
+fn is_named_struct_shape(shape: &'static Shape) -> bool {
+    use facet_core::{StructKind, Type, UserType};
+
+    matches!(
+        shape.ty,
+        Type::User(UserType::Struct(struct_type)) if matches!(struct_type.kind, StructKind::Struct)
+    )
 }
 
 /// Information about variants grouped by their expected format.
@@ -1537,6 +1574,9 @@ impl VariantsByFormat {
                 }
                 VariantFormat::NewtypeStruct { .. } => {
                     result.struct_variants.push(variant);
+                }
+                VariantFormat::NewtypeTuple { arity, .. } => {
+                    result.tuple_variants.push((variant, arity));
                 }
                 VariantFormat::NewtypeOther { .. } => {
                     result.other_variants.push(variant);

@@ -2516,6 +2516,7 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
         // Select the first matching variant
         let variant = matching_variants[0];
         wip = wip.select_variant_named(variant.name)?;
+        let is_newtype = variant.data.fields.len() == 1;
 
         // Rewind and deserialize
         let rewound_adapter = self.adapter.at_offset(start_offset).ok_or_else(|| {
@@ -2525,24 +2526,37 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
         })?;
         let mut rewound_deser = Self::from_adapter(rewound_adapter);
 
-        // Consume ArrayStart
-        rewound_deser.next()?;
-
-        // Deserialize each field
-        for i in 0..arity {
-            wip = wip.begin_nth_field(i)?;
+        if is_newtype {
+            // Deserialize the entire array into the inner tuple value
+            wip = wip.begin_nth_field(0)?;
             wip = rewound_deser.deserialize_into(wip)?;
             wip = wip.end()?;
+        } else {
+            // Consume ArrayStart
+            rewound_deser.next()?;
 
-            // Skip comma if present
-            let next = rewound_deser.peek()?;
-            if matches!(next.token, Token::Comma) {
-                rewound_deser.next()?;
+            // Deserialize each field
+            for i in 0..arity {
+                wip = wip.begin_nth_field(i)?;
+                wip = rewound_deser.deserialize_into(wip)?;
+                wip = wip.end()?;
+
+                // Skip comma if present
+                let next = rewound_deser.peek()?;
+                if matches!(next.token, Token::Comma) {
+                    rewound_deser.next()?;
+                }
             }
-        }
 
-        // Consume ArrayEnd
-        rewound_deser.next()?;
+            debug_assert_eq!(
+                variant.data.fields.len(),
+                arity,
+                "tuple variant arity should match array length"
+            );
+
+            // Consume ArrayEnd
+            rewound_deser.next()?;
+        }
 
         Ok(wip)
     }

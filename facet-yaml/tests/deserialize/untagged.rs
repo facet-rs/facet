@@ -519,6 +519,32 @@ fn test_untagged_tuple_list() {
     assert_eq!(points[2], Point::XY(3, 4));
 }
 
+#[test]
+fn test_untagged_newtype_tuple_variant_issue_1189() {
+    // Regression test for tuple values nested inside a newtype variant
+    #[derive(Debug, Facet, PartialEq)]
+    #[repr(u8)]
+    #[facet(untagged)]
+    enum Counter {
+        Unit(String),
+        Weight((String, f64)),
+    }
+
+    let yaml = r#"
+- [AGRICIBPAR, 1.0]
+- [BARCLAYLDN, 2.5]
+"#;
+
+    let counters: Vec<Counter> = facet_yaml::from_str(yaml).unwrap();
+    assert_eq!(
+        counters,
+        vec![
+            Counter::Weight(("AGRICIBPAR".to_string(), 1.0)),
+            Counter::Weight(("BARCLAYLDN".to_string(), 2.5)),
+        ]
+    );
+}
+
 // ===========================================================================
 // Multiple String-Parseable Types (Trial Parsing)
 // ===========================================================================

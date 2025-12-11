@@ -543,6 +543,21 @@ fn test_untagged_newtype_variants() {
 }
 
 #[test]
+fn test_untagged_newtype_tuple_variant_issue_1189() {
+    #[derive(Debug, Facet, PartialEq)]
+    #[repr(u8)]
+    #[facet(untagged)]
+    enum Counter {
+        Unit(String),
+        Weight((String, f64)),
+    }
+
+    let json = r#"["AGRICIBPAR", 1.0]"#;
+    let counter: Counter = facet_json::from_str(json).unwrap();
+    assert_eq!(counter, Counter::Weight(("AGRICIBPAR".to_string(), 1.0)));
+}
+
+#[test]
 fn test_untagged_struct_variants() {
     #[derive(Debug, Facet, PartialEq)]
     #[repr(C)]

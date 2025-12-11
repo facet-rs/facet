@@ -1695,13 +1695,27 @@ impl<'input> YamlDeserializer<'input> {
             );
         }
 
-        let variant_name = matching_variants[0].name;
+        let selected_variant = matching_variants[0];
 
         // Rewind and deserialize into the selected variant
         self.pos = start_pos;
 
-        partial = partial.select_variant_named(variant_name)?;
-        partial = self.deserialize_tuple_variant_fields(partial, arity)?;
+        partial = partial.select_variant_named(selected_variant.name)?;
+
+        if selected_variant.data.fields.len() == 1 {
+            // Newtype tuple variant - deserialize the entire sequence as the inner value
+            partial = partial.begin_nth_field(0)?;
+            partial = self.deserialize_value(partial)?;
+            partial = partial.end()?;
+        } else {
+            debug_assert_eq!(
+                selected_variant.data.fields.len(),
+                arity,
+                "tuple variant arity should match sequence length"
+            );
+            partial =
+                self.deserialize_tuple_variant_fields(partial, selected_variant.data.fields.len())?;
+        }
 
         Ok(partial)
     }
