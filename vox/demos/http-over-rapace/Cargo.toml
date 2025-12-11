@@ -25,9 +25,9 @@ rapace-http = { path = "../../crates/rapace-http" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "process"] }
 
 # facet for shapes (required by macro-generated code)
-facet = { git = "https://github.com/facet-rs/facet" }
-facet-core = { git = "https://github.com/facet-rs/facet" }
-facet-postcard = { git = "https://github.com/facet-rs/facet" }
+facet = "0.32.1"
+facet-core = "0.32.1"
+facet-postcard = "0.32.1"
 
 # Plugin side: axum for HTTP routing
 axum = "0.8"

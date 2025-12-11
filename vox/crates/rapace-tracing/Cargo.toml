@@ -11,7 +11,7 @@ rapace = { path = "../rapace" }
 rapace-testkit = { path = "../rapace-testkit" }
 
 # facet for serialization
-facet = { git = "https://github.com/facet-rs/facet" }
+facet = "0.32.1"
 
 # tracing ecosystem
 tracing = "0.1"

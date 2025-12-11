@@ -21,7 +21,7 @@ path = "src/helper.rs"
 rapace = { path = "../../crates/rapace", features = ["mem", "shm"] }
 
 # facet for shapes (required by macro-generated code)
-facet = { git = "https://github.com/facet-rs/facet" }
+facet = "0.32.1"
 
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "process", "time"] }

@@ -27,9 +27,9 @@ rapace-registry = { path = "../../crates/rapace-registry" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "process", "time"] }
 
 # facet for shapes (required by macro-generated code)
-facet = { git = "https://github.com/facet-rs/facet" }
-facet-core = { git = "https://github.com/facet-rs/facet" }
-facet-postcard = { git = "https://github.com/facet-rs/facet" }
+facet = "0.32.1"
+facet-core = "0.32.1"
+facet-postcard = "0.32.1"
 
 # tracing
 tracing = "0.1"

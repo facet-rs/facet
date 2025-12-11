@@ -59,10 +59,10 @@ futures = "0.3"
 pin-project-lite = "0.2"
 parking_lot = "0.12"
 
-# facet ecosystem (from git until published)
-facet = { git = "https://github.com/facet-rs/facet" }
-facet-core = { git = "https://github.com/facet-rs/facet" }
-facet-postcard = { git = "https://github.com/facet-rs/facet" }
+# facet ecosystem
+facet = "0.32.1"
+facet-core = "0.32.1"
+facet-postcard = "0.32.1"
 
 # WebSocket
 tokio-tungstenite = "0.26"
