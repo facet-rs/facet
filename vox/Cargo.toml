@@ -5,6 +5,7 @@ members = [
     "crates/rapace-core",
     "crates/rapace-http",
     "crates/rapace-macros",
+    "crates/rapace-plugin",
     "crates/rapace-registry",
     "crates/rapace-tracing",
     "crates/rapace-transport-mem",
@@ -13,6 +14,7 @@ members = [
     "crates/rapace-transport-websocket",
     "crates/rapace-testkit",
     "crates/rapace-explorer",
+    "crates/ur-taking-me-with-you",
     "demos/dashboard",
     "demos/browser-tests-proto",
     "demos/browser-tests-server",
@@ -30,6 +32,7 @@ exclude = ["fuzz"]
 [workspace.package]
 version = "0.1.1"
 edition = "2021"
+rust-version = "1.91"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/bearcove/rapace"
 
@@ -46,7 +49,6 @@ rapace-transport-shm = { path = "crates/rapace-transport-shm", version = "0.1.1"
 rapace-transport-stream = { path = "crates/rapace-transport-stream", version = "0.1.1" }
 rapace-transport-websocket = { path = "crates/rapace-transport-websocket", version = "0.1.1" }
 rapace-testkit = { path = "crates/rapace-testkit", version = "0.1.1" }
-rapace-explorer = { path = "crates/rapace-explorer", version = "0.1.1" }
 
 # External dependencies
 async-stream = "0.3"
@@ -54,9 +56,7 @@ libc = "0.2"
 bitflags = "2"
 tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
 tokio-stream = "0.1"
-paste = "1"
 futures = "0.3"
-pin-project-lite = "0.2"
 parking_lot = "0.12"
 
 # facet ecosystem
@@ -70,10 +70,6 @@ tokio-tungstenite = "0.26"
 # Tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# Testing/fuzzing
-bolero = "0.11"
-proptest = "1"
 
 # Allocator API
 allocator-api2 = "0.2"

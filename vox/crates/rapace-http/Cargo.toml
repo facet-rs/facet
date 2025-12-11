@@ -10,8 +10,9 @@ publish = false
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
-tracing.workspace = true
 rapace.workspace = true
-rapace-testkit.workspace = true
 facet.workspace = true

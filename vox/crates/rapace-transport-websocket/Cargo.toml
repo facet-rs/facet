@@ -9,6 +9,9 @@ description = "WebSocket transport for rapace"
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 rapace-core.workspace = true
 futures.workspace = true

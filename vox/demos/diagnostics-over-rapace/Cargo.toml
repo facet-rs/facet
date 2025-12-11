@@ -7,6 +7,9 @@ publish = false
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [lib]
 path = "src/lib.rs"
 
@@ -29,13 +32,10 @@ facet = "0.32.1"
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "process", "time"] }
 tokio-stream = "0.1"
-futures = "0.3"
-
-# Tracing
-tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# Test utilities
-rapace-testkit = { path = "../../crates/rapace-testkit" }
 async-send-fd.workspace = true
+
+[dev-dependencies]
+futures = "0.3"
 libc.workspace = true
+rapace-testkit = { path = "../../crates/rapace-testkit" }

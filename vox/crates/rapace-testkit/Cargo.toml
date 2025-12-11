@@ -10,16 +10,11 @@ description = "Conformance test suite for rapace transports"
 # rapace is required for the #[rapace::service] macro to work
 rapace.workspace = true
 rapace-core.workspace = true
-rapace-macros.workspace = true
 rapace-registry.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 futures.workspace = true
-facet.workspace = true
-facet-core.workspace = true
 facet-postcard.workspace = true
-parking_lot.workspace = true
-tracing.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread"] }

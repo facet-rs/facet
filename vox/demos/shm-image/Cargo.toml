@@ -7,6 +7,9 @@ publish = false
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [[bin]]
 name = "rapace-shm-image"
 path = "src/main.rs"
@@ -20,11 +23,3 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 tokio-stream = "0.1"
-
-# facet for shapes (required by macro-generated code)
-facet = "0.32.1"
-facet-core = "0.32.1"
-facet-postcard = "0.32.1"
-
-# Tracing (required by macro-generated code)
-tracing = "0.1"

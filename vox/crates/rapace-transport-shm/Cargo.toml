@@ -9,6 +9,9 @@ description = "Shared memory transport for rapace (performance reference impleme
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [features]
 default = []
 # Enable the ShmAllocator for zero-copy allocation directly into SHM slots.

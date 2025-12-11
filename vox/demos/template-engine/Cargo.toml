@@ -7,6 +7,9 @@ publish = false
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [lib]
 path = "src/lib.rs"
 
@@ -24,14 +27,8 @@ rapace = { path = "../../crates/rapace" }
 
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "process"] }
-
-# facet for shapes (required by macro-generated code)
-facet = "0.32.1"
-facet-core = "0.32.1"
-facet-postcard = "0.32.1"
-tracing = "0.1"
-
-# Test utilities
-rapace-testkit = { path = "../../crates/rapace-testkit" }
 async-send-fd.workspace = true
+
+[dev-dependencies]
 libc.workspace = true
+rapace-testkit = { path = "../../crates/rapace-testkit" }

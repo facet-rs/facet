@@ -1,0 +1,17 @@
+[package]
+name = "rapace-plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "High-level plugin runtime for rapace that eliminates boilerplate"
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+rapace = { workspace = true, features = ["shm"] }
+tokio = { workspace = true, features = ["time"] }
+tracing = { workspace = true }

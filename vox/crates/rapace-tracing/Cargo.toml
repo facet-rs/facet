@@ -9,9 +9,11 @@ description = "Tracing subscriber that forwards spans/events over rapace RPC"
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 rapace.workspace = true
-rapace-testkit.workspace = true
 facet.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true

@@ -7,6 +7,9 @@ publish = false
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [lib]
 path = "src/lib.rs"
 
@@ -35,24 +38,13 @@ rapace = { path = "../../crates/rapace" }
 
 # Async runtime
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "io-util", "net", "process", "time"] }
-tokio-stream = "0.1"
-futures = "0.3"
 
 # facet for shapes (required by macro-generated code)
 facet = "0.32.1"
-facet-core = "0.32.1"
-facet-postcard = "0.32.1"
 
 # Plugin side: axum for HTTP routing
 axum = "0.8"
-tower = "0.5"
-tower-service = "0.3"
-http = "1.0"
-http-body-util = "0.1"
 bytes = "1"
-
-# Allocator API for SHM zero-copy
-allocator-api2 = "0.2"
 
 # Logging
 tracing = "0.1"

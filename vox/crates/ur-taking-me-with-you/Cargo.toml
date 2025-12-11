@@ -1,0 +1,24 @@
+[package]
+name = "ur-taking-me-with-you"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+description = "Ensure child processes die when their parent dies"
+repository = "https://github.com/bearcove/rapace"
+keywords = ["process", "child", "parent", "death", "cleanup"]
+categories = ["os", "development-tools"]
+
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]

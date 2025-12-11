@@ -4,9 +4,34 @@
 //! side (providing diagnostics), while the test runs the host side (requesting analysis).
 //! This proves that streaming diagnostics work across real process boundaries.
 
-use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::process::{Child, Command, Stdio};
+
+/// Guard that kills and waits on a child process when dropped.
+/// This prevents zombie processes by ensuring we always collect the exit status.
+struct ChildGuard(Option<Child>);
+
+impl ChildGuard {
+    fn new(child: Child) -> Self {
+        Self(Some(child))
+    }
+
+    /// Take ownership of the child, preventing automatic cleanup on drop.
+    #[allow(dead_code)]
+    fn take(&mut self) -> Option<Child> {
+        self.0.take()
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use futures::StreamExt;
@@ -352,15 +377,17 @@ async fn test_cross_process_unix() {
 
     eprintln!("[test] Spawning helper: {:?}", helper_path);
 
-    // Spawn helper
-    let mut helper = Command::new(&helper_path)
-        .arg("--transport=stream")
-        .arg(format!("--addr={}", socket_path))
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .expect("failed to spawn helper");
+    // Spawn helper (wrapped in guard to ensure cleanup on panic)
+    let _helper = ChildGuard::new(
+        Command::new(&helper_path)
+            .arg("--transport=stream")
+            .arg(format!("--addr={}", socket_path))
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("failed to spawn helper"),
+    );
 
     // Accept connection
     let stream = match tokio::time::timeout(Duration::from_secs(5), listener.accept()).await {
@@ -369,12 +396,10 @@ async fn test_cross_process_unix() {
             stream
         }
         Ok(Err(e)) => {
-            helper.kill().ok();
             let _ = std::fs::remove_file(&socket_path);
             panic!("Accept failed: {:?}", e);
         }
         Err(_) => {
-            helper.kill().ok();
             let _ = std::fs::remove_file(&socket_path);
             panic!("Accept timed out");
         }
@@ -388,8 +413,7 @@ async fn test_cross_process_unix() {
     // Run host scenario
     let diagnostics = run_host_scenario_stream(transport, TEST_SOURCE).await;
 
-    // Cleanup - kill helper since transport.close() doesn't actually close the socket
-    let _ = helper.kill();
+    // Cleanup (helper is killed by ChildGuard on drop)
     let _ = std::fs::remove_file(&socket_path);
 
     // Verify
@@ -439,15 +463,17 @@ async fn test_cross_process_shm() {
 
     eprintln!("[test] Spawning helper: {:?}", helper_path);
 
-    // Spawn helper
-    let mut helper = Command::new(&helper_path)
-        .arg("--transport=shm")
-        .arg(format!("--addr={}", shm_path))
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .expect("failed to spawn helper");
+    // Spawn helper (wrapped in guard to ensure cleanup on panic)
+    let _helper = ChildGuard::new(
+        Command::new(&helper_path)
+            .arg("--transport=shm")
+            .arg(format!("--addr={}", shm_path))
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .expect("failed to spawn helper"),
+    );
 
     // Give helper time to map SHM
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -455,8 +481,7 @@ async fn test_cross_process_shm() {
     // Run host scenario
     let diagnostics = run_host_scenario(transport, TEST_SOURCE).await;
 
-    // Cleanup - kill helper since transport.close() doesn't actually close the socket
-    let _ = helper.kill();
+    // Cleanup (helper is killed by ChildGuard on drop)
     let _ = std::fs::remove_file(&shm_path);
 
     // Verify

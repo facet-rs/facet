@@ -12,13 +12,13 @@
 
 use heck::{ToShoutySnakeCase, ToSnakeCase};
 use proc_macro::TokenStream;
+use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::{Ident, Span, TokenStream as TokenStream2, TokenTree};
-use proc_macro_crate::{crate_name, FoundCrate};
 use quote::{format_ident, quote};
 
 mod parser;
 
-use parser::{join_doc_lines, parse_trait, Error as MacroError, ParsedTrait};
+use parser::{Error as MacroError, ParsedTrait, join_doc_lines, parse_trait};
 
 /// Compute a method ID by hashing "ServiceName.method_name" using FNV-1a.
 ///
@@ -477,9 +477,9 @@ fn generate_service(
 enum MethodKind {
     /// Unary RPC: single request, single response.
     Unary,
-    /// Server-streaming: single request, returns Streaming<T>.
+    /// Server-streaming: single request, returns `Streaming<T>`.
     ServerStreaming {
-        /// The type T in Streaming<T>.
+        /// The type T in `Streaming<T>`.
         item_type: TokenStream2,
     },
 }
