@@ -50,7 +50,7 @@ fn test_parse_style_element() {
     let svg_str = include_str!("fixtures/basic/style.svg");
     let svg: Svg = facet_xml::from_str(svg_str).expect("Failed to parse style SVG");
 
-    assert!(svg.children.len() >= 1);
+    assert!(!svg.children.is_empty());
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn test_parse_defs_element() {
     let svg_str = include_str!("fixtures/basic/defs.svg");
     let svg: Svg = facet_xml::from_str(svg_str).expect("Failed to parse defs SVG");
 
-    assert!(svg.children.len() >= 1);
+    assert!(!svg.children.is_empty());
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn test_parse_pikchr_style_diagram() {
     let svg: Svg = facet_xml::from_str(svg_str).expect("Failed to parse pikchr-style SVG");
 
     // Should have the main group
-    assert!(svg.children.len() >= 1);
+    assert!(!svg.children.is_empty());
 }
 
 // Advanced SVG Element Tests
@@ -296,12 +296,12 @@ fn test_svg_desc_element_supported() {
 fn test_svg_symbol_element_supported() {
     let svg_str = include_str!("fixtures/advanced/symbol.svg");
     let svg: Svg = facet_xml::from_str(svg_str).expect("Failed to parse symbol element SVG");
-    assert!(svg.children.len() >= 1);
-    if let Some(facet_svg::SvgNode::Defs(defs)) = svg.children.first() {
-        if let Some(facet_svg::SvgNode::Symbol(sym)) = defs.children.first() {
-            assert_eq!(sym.id, Some("star".to_string()));
-            assert_eq!(sym.view_box, Some("0 0 100 100".to_string()));
-            println!("✓ Symbol element fully parsed with id and viewBox");
-        }
+    assert!(!svg.children.is_empty());
+    if let Some(facet_svg::SvgNode::Defs(defs)) = svg.children.first()
+        && let Some(facet_svg::SvgNode::Symbol(sym)) = defs.children.first()
+    {
+        assert_eq!(sym.id, Some("star".to_string()));
+        assert_eq!(sym.view_box, Some("0 0 100 100".to_string()));
+        println!("✓ Symbol element fully parsed with id and viewBox");
     }
 }
