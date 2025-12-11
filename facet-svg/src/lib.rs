@@ -361,39 +361,6 @@ pub struct Symbol {
 // Re-export XML utilities for convenience
 pub use facet_xml;
 
-/// Format a number like C pikchr does (%g equivalent).
-/// C's %g format uses 6 significant digits by default and trims trailing zeros.
-pub fn fmt_num(v: f64) -> String {
-    // Use %g behavior: 6 significant digits, trim trailing zeros
-    // Rust doesn't have %g, so we need to implement it manually
-    if v == 0.0 {
-        return "0".to_string();
-    }
-
-    // Determine magnitude to figure out how many decimal places we need
-    let abs_v = v.abs();
-    let log10 = abs_v.log10().floor() as i32;
-
-    // For %g with 6 significant digits:
-    // - If exponent < -4 or >= 6, use scientific notation (but C pikchr values rarely need this)
-    // - Otherwise use fixed-point notation with enough decimals for 6 sig figs
-    if log10 >= 6 || log10 < -4 {
-        // Scientific notation case (rare in pikchr coordinates)
-        let s = format!("{:.5e}", v);
-        return s;
-    }
-
-    // Fixed-point: we need (6 - log10 - 1) decimal places for 6 significant digits
-    // But ensure at least 0 decimal places
-    let decimals = (5 - log10).max(0) as usize;
-    let s = format!("{:.*}", decimals, v);
-
-    // Trim trailing zeros and decimal point
-    let s = s.trim_end_matches('0');
-    let s = s.trim_end_matches('.');
-    s.to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
