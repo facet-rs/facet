@@ -35,9 +35,9 @@ log = "0.4.27"
 num-traits = { version = "0.2.19", default-features = false }
 toml_writer = { version = "1.0.4", default-features = false, optional = true }
 toml_parser = { version = "1.0.4", default-features = false, features = ["alloc"] }
-facet-core = { path = "../facet-core", default-features = false }
-facet-reflect = { path = "../facet-reflect", default-features = false }
-facet-solver = { path = "../facet-solver", default-features = false }
+facet-core = { path = "../facet-core", version = "0.32.0", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.32.0", default-features = false }
+facet-solver = { path = "../facet-solver", version = "0.32.0", default-features = false }
 owo-colors = "4.2.2"
 
 # Axum integration (optional)

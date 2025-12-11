@@ -11,9 +11,9 @@ categories = ["encoding", "data-structures"]
 
 [dependencies]
 confusables = "0.1"
-facet-core = { path = "../facet-core" }
-facet-pretty = { path = "../facet-pretty" }
-facet-reflect = { path = "../facet-reflect" }
+facet-core = { path = "../facet-core", version = "0.32.0" }
+facet-pretty = { path = "../facet-pretty", version = "0.32.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.32.0" }
 indextree = "4"
 owo-colors = "4"
 palette = { version = "0.7", default-features = false, features = ["std"] }

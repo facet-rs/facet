@@ -14,13 +14,13 @@ ci = [] # CI feature
 default = []
 
 [dependencies]
-cinereus = { path = "../cinereus" }
+cinereus = { path = "../cinereus", version = "0.32.0" }
 confusables = "0.1"
-facet = { path = "../facet" }
-facet-core = { path = "../facet-core" }
-facet-diff-core = { path = "../facet-diff-core" }
-facet-pretty = { path = "../facet-pretty" }
-facet-reflect = { path = "../facet-reflect" }
+facet = { path = "../facet", version = "0.32.0" }
+facet-core = { path = "../facet-core", version = "0.32.0" }
+facet-diff-core = { path = "../facet-diff-core", version = "0.32.0" }
+facet-pretty = { path = "../facet-pretty", version = "0.32.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.32.0" }
 owo-colors = "4"
 log = "0.4"
 

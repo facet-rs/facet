@@ -21,8 +21,8 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc"] # Enables alloc support
 camino = ["alloc", "facet-core/camino"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "=0.32.0" }
-facet-reflect = { path = "../facet-reflect", version = "=0.32.0" }
+facet-core = { path = "../facet-core", version = "0.32.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.32.0" }
 owo-colors = "4"
 
 [dev-dependencies]

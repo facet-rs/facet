@@ -32,4 +32,4 @@ facet-macros-impl = { version = "0.32.0", path = "../facet-macros-impl", default
 
 # cf. https://hachyderm.io/@epage/114141126315983016
 [target.'cfg(any())'.dependencies]
-facet-core = { path = "../facet-core", version = "0.32.0" }
+facet-core = { path = "../facet-core", version = "=0.32.0" }

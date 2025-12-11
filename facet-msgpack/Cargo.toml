@@ -25,8 +25,8 @@ serialize = []
 axum = ["dep:axum-core", "dep:http", "dep:http-body-util"]
 
 [dependencies]
-facet-core = { path = "../facet-core" }
-facet-reflect = { path = "../facet-reflect" }
+facet-core = { path = "../facet-core", version = "0.32.0" }
+facet-reflect = { path = "../facet-reflect", version = "0.32.0" }
 log = "0.4.27"
 
 # Axum integration (optional)

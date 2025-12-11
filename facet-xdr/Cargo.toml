@@ -18,8 +18,8 @@ std = ["facet-core/std", "facet-reflect/std"]
 default = ["std"]
 
 [dependencies]
-facet-core = { path = "../facet-core", default-features = false }
-facet-reflect = { path = "../facet-reflect", default-features = false }
+facet-core = { path = "../facet-core", version = "0.32.0", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.32.0", default-features = false }
 
 [dev-dependencies]
 facet = { path = "../facet" }

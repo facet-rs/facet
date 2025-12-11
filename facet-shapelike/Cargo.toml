@@ -15,7 +15,7 @@ facet = { path = "../facet", version = "0.32.0", features = ["alloc"] }
 facet-core = { path = "../facet-core", version = "0.32.0", features = ["alloc"] }
 facet-macros = { path = "../facet-macros", version = "0.32.0" }
 facet-postcard = { path = "../facet-postcard", version = "0.32.0" }
-facet-reflect = { path = "../facet-reflect", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.32.0", default-features = false }
 
 [dev-dependencies]
 facet-json = { path = "../facet-json", version = "0.32.0" }

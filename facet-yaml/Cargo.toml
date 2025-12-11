@@ -24,10 +24,10 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"time\"))
 
 [dependencies]
 saphyr-parser = { git = "https://github.com/facet-rs/saphyr.git", branch = "feat/clone-parser-scanner" }
-facet = { path = "../facet", default-features = false }
-facet-core = { path = "../facet-core", default-features = false }
-facet-reflect = { path = "../facet-reflect", default-features = false, features = ["miette"] }
-facet-solver = { path = "../facet-solver" }
+facet = { path = "../facet", version = "0.32.0", default-features = false }
+facet-core = { path = "../facet-core", version = "0.32.0", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.32.0", default-features = false, features = ["miette"] }
+facet-solver = { path = "../facet-solver", version = "0.32.0" }
 miette = { version = "7", default-features = false }
 log = "0.4.27"
 

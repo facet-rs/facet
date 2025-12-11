@@ -28,8 +28,8 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
 [dependencies]
-facet-core = { path = "../facet-core", default-features = false }
-facet-reflect = { path = "../facet-reflect", default-features = false }
+facet-core = { path = "../facet-core", version = "0.32.0", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.32.0", default-features = false }
 log = "0.4"
 
 # Axum integration (optional)
