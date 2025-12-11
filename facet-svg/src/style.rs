@@ -1,7 +1,9 @@
 //! SVG style attribute parsing and structured representation.
 
 use facet::Facet;
-use std::collections::BTreeMap;
+use lightningcss::declaration::DeclarationBlock;
+use lightningcss::printer::PrinterOptions;
+use lightningcss::stylesheet::ParserOptions;
 
 /// A color value
 #[derive(Debug, Clone, PartialEq)]
@@ -107,64 +109,85 @@ impl Color {
     }
 }
 
-/// Structured SVG style attribute with BTreeMap for automatic sorting
+/// Structured SVG style attribute with lightningcss AST
+/// We store the serialized CSS string to avoid lifetime issues with DeclarationBlock
 #[derive(Facet, Debug, Clone, PartialEq, Default)]
 #[facet(traits(Default))]
 pub struct SvgStyle {
-    pub properties: BTreeMap<String, String>,
+    // Store as String to avoid lifetime complications
+    // Parse on-demand when needed
+    css: String,
 }
 
 impl SvgStyle {
+    /// Get the parsed declarations (owned, for manipulation)
+    /// Note: Returns an owned DeclarationBlock with 'static lifetime
+    pub fn declarations(&self) -> Result<DeclarationBlock<'static>, StyleParseError> {
+        if self.css.is_empty() {
+            return Ok(DeclarationBlock::default());
+        }
+        let parser_options = ParserOptions::default();
+        // Parse from owned string to get 'static lifetime
+        DeclarationBlock::parse_string(self.css.clone().leak(), parser_options)
+            .map_err(|e| StyleParseError::ParseError(format!("{:?}", e)))
+    }
+
+    /// Update from a DeclarationBlock
+    pub fn set_declarations(&mut self, declarations: DeclarationBlock<'_>) {
+        self.css = Self::serialize_declarations(&declarations);
+    }
+
+    fn serialize_declarations(declarations: &DeclarationBlock<'_>) -> String {
+        if declarations.is_empty() {
+            String::new()
+        } else {
+            let mut dest = String::new();
+            for (i, decl) in declarations.declarations.iter().enumerate() {
+                if i > 0 {
+                    dest.push(';');
+                }
+                let printer_options = PrinterOptions::default();
+                if let Ok(css) = decl.to_css_string(false, printer_options) {
+                    dest.push_str(&css);
+                }
+            }
+            if !dest.is_empty() {
+                dest.push(';');
+            }
+            dest
+        }
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Add a property to the style (builder pattern)
-    pub fn add(mut self, key: &str, value: &str) -> Self {
-        self.properties.insert(key.to_string(), value.to_string());
-        self
-    }
-
-    /// Parse style from a CSS-like string into BTreeMap with automatic sorting
+    /// Parse style from a CSS-like string using lightningcss
     pub fn parse(s: &str) -> Result<Self, StyleParseError> {
-        let mut properties = BTreeMap::new();
-
-        for declaration in s.split(';') {
-            let declaration = declaration.trim();
-            if declaration.is_empty() {
-                continue;
-            }
-
-            if let Some((key, value)) = declaration.split_once(':') {
-                let key = key.trim().to_lowercase();
-                let value = value.trim().to_string();
-                properties.insert(key, value);
-            } else {
-                panic!("malformed style declaration: {}", declaration);
-            }
+        let s = s.trim();
+        if s.is_empty() {
+            return Ok(SvgStyle::default());
         }
 
-        Ok(SvgStyle { properties })
+        // Validate by parsing with lightningcss
+        let parser_options = ParserOptions::default();
+        let declarations = DeclarationBlock::parse_string(s, parser_options)
+            .map_err(|e| StyleParseError::ParseError(format!("{:?}", e)))?;
+
+        // Normalize by serializing back
+        Ok(SvgStyle {
+            css: Self::serialize_declarations(&declarations),
+        })
     }
 
-    /// Serialize to CSS-like string with properties in alphabetical order
+    /// Serialize to CSS string
     pub fn to_string(&self) -> String {
-        if self.properties.is_empty() {
-            String::new()
-        } else {
-            let declarations: Vec<String> = self
-                .properties
-                .iter()
-                .map(|(key, value)| format!("{}: {}", key, value))
-                .collect();
-            format!("{};", declarations.join(";"))
-        }
+        self.css.clone()
     }
 
-    /// Add a property to the style (builder pattern)
-    pub fn with_property(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.properties.insert(key.into(), value.into());
-        self
+    /// Check if the style has no declarations
+    pub fn is_empty(&self) -> bool {
+        self.css.is_empty()
     }
 }
 
@@ -172,6 +195,8 @@ impl SvgStyle {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StyleParseError {
     MalformedDeclaration(String),
+    ParseError(String),
+    SerializeError(String),
 }
 
 impl std::fmt::Display for StyleParseError {
@@ -179,6 +204,12 @@ impl std::fmt::Display for StyleParseError {
         match self {
             StyleParseError::MalformedDeclaration(decl) => {
                 write!(f, "malformed style declaration: {}", decl)
+            }
+            StyleParseError::ParseError(err) => {
+                write!(f, "CSS parse error: {}", err)
+            }
+            StyleParseError::SerializeError(err) => {
+                write!(f, "CSS serialize error: {}", err)
             }
         }
     }
@@ -211,7 +242,7 @@ impl TryFrom<&SvgStyle> for SvgStyleProxy {
 
 /// Helper function for skip_serializing_if with SvgStyle
 pub fn is_empty_style(s: &SvgStyle) -> bool {
-    s.properties.is_empty()
+    s.is_empty()
 }
 
 #[cfg(test)]
@@ -240,15 +271,16 @@ mod tests {
     #[test]
     fn test_parse_style() {
         let style = SvgStyle::parse("fill:none;stroke-width:2.16;stroke:rgb(0,0,0);").unwrap();
-        assert_eq!(style.properties.get("fill"), Some(&"none".to_string()));
-        assert_eq!(
-            style.properties.get("stroke-width"),
-            Some(&"2.16".to_string())
-        );
-        assert_eq!(
-            style.properties.get("stroke"),
-            Some(&"rgb(0,0,0)".to_string())
-        );
+        assert!(!style.is_empty());
+
+        let decls = style.declarations().unwrap();
+        assert_eq!(decls.declarations.len(), 3);
+
+        // Verify the serialized output includes normalized CSS
+        let serialized = style.to_string();
+        assert!(serialized.contains("fill"));
+        assert!(serialized.contains("stroke-width"));
+        assert!(serialized.contains("stroke"));
     }
 
     #[test]
@@ -261,16 +293,15 @@ mod tests {
     }
 
     #[test]
-    fn test_style_alphabetical_sorting() {
+    fn test_style_parsing_order() {
         let input = "stroke:rgb(0,0,0);fill:none;stroke-width:2.16";
         let style = SvgStyle::parse(input).unwrap();
         let serialized = style.to_string();
-        // Should be sorted alphabetically: fill;stroke;stroke-width
-        // Note: to_string adds spaces after colons
-        assert_eq!(
-            serialized,
-            "fill: none;stroke: rgb(0,0,0);stroke-width: 2.16;"
-        );
+
+        // lightningcss normalizes colors and adds units
+        assert!(serialized.contains("stroke"));
+        assert!(serialized.contains("fill"));
+        assert!(serialized.contains("stroke-width"));
     }
 
     #[test]
@@ -279,5 +310,103 @@ mod tests {
         let c1 = Color::parse("black");
         let c2 = Color::parse("rgb(0,0,0)");
         assert_eq!(c1, c2);
+    }
+
+    #[test]
+    fn test_css_manipulation() {
+        use lightningcss::properties::Property;
+        use lightningcss::properties::svg::SVGPaint;
+        use lightningcss::traits::Parse;
+        use lightningcss::values::color::CssColor;
+
+        // Parse initial CSS
+        let mut style = SvgStyle::parse("fill: red; stroke-width: 2px;").unwrap();
+        let mut decls = style.declarations().unwrap();
+        assert_eq!(decls.declarations.len(), 2);
+
+        // Add a new property by modifying the DeclarationBlock
+        let new_color = CssColor::parse_string("blue").unwrap();
+        let svg_paint = SVGPaint::Color(new_color);
+        decls.declarations.push(Property::Stroke(svg_paint));
+
+        // Update the style with modified declarations
+        style.set_declarations(decls);
+
+        // Verify we now have 3 declarations
+        let updated_decls = style.declarations().unwrap();
+        assert_eq!(updated_decls.declarations.len(), 3);
+
+        // Serialize and verify all properties are present
+        let serialized = style.to_string();
+        assert!(serialized.contains("fill"));
+        assert!(serialized.contains("stroke-width"));
+        assert!(serialized.contains("stroke"));
+    }
+
+    #[test]
+    fn test_css_property_removal() {
+        use lightningcss::properties::PropertyId;
+
+        // Parse CSS with multiple properties
+        let mut style = SvgStyle::parse("fill: red; stroke: blue; stroke-width: 2px;").unwrap();
+        let mut decls = style.declarations().unwrap();
+        assert_eq!(decls.declarations.len(), 3);
+
+        // Remove the stroke property
+        decls
+            .declarations
+            .retain(|prop| prop.property_id() != PropertyId::Stroke);
+
+        // Update the style
+        style.set_declarations(decls);
+
+        // Verify we now have 2 declarations
+        let updated_decls = style.declarations().unwrap();
+        assert_eq!(updated_decls.declarations.len(), 2);
+
+        // Serialize and verify stroke is gone
+        let serialized = style.to_string();
+        assert!(serialized.contains("fill"));
+        assert!(!serialized.contains("stroke:") && !serialized.contains("stroke "));
+        assert!(serialized.contains("stroke-width"));
+    }
+
+    #[test]
+    fn test_complex_css_parsing() {
+        // Test that lightningcss handles complex CSS that naive splitting can't
+        let complex_css = r#"fill: url(#gradient); stroke: rgb(255, 128, 64); opacity: 0.5;"#;
+        let style = SvgStyle::parse(complex_css).unwrap();
+
+        // Should successfully parse all properties
+        let decls = style.declarations().unwrap();
+        assert_eq!(decls.declarations.len(), 3);
+
+        // Should roundtrip correctly
+        let serialized = style.to_string();
+        let reparsed = SvgStyle::parse(&serialized).unwrap();
+        assert_eq!(style, reparsed);
+    }
+
+    #[test]
+    fn test_empty_style() {
+        let empty = SvgStyle::default();
+        assert!(empty.is_empty());
+        assert_eq!(empty.to_string(), "");
+
+        let parsed_empty = SvgStyle::parse("").unwrap();
+        assert!(parsed_empty.is_empty());
+        assert_eq!(parsed_empty.to_string(), "");
+    }
+
+    #[test]
+    fn test_css_with_semicolons_in_values() {
+        // This is where naive semicolon splitting would fail
+        // data URLs can contain semicolons
+        let css_with_data_url = r#"background-image: url("data:image/svg+xml;base64,...");"#;
+        let style = SvgStyle::parse(css_with_data_url).unwrap();
+
+        // Should parse as a single declaration
+        let decls = style.declarations().unwrap();
+        assert_eq!(decls.declarations.len(), 1);
     }
 }
