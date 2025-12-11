@@ -214,6 +214,7 @@ impl PathData {
     }
 
     /// Arc to absolute position (A command)
+    #[allow(clippy::too_many_arguments)]
     pub fn a(
         mut self,
         rx: f64,
@@ -237,6 +238,7 @@ impl PathData {
     }
 
     /// Arc to relative position (a command)
+    #[allow(clippy::too_many_arguments)]
     pub fn a_rel(
         mut self,
         rx: f64,
@@ -438,7 +440,7 @@ impl PathData {
     }
 
     /// Serialize path data to a string
-    pub fn to_string(&self) -> String {
+    fn serialize(&self) -> String {
         let mut result = String::new();
         for cmd in &self.commands {
             if !result.is_empty() {
@@ -628,7 +630,7 @@ impl std::error::Error for PathParseError {}
 
 impl std::fmt::Display for PathData {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_string())
+        f.write_str(&self.serialize())
     }
 }
 
@@ -644,6 +646,7 @@ impl TryFrom<PathDataProxy> for PathData {
     }
 }
 
+#[allow(clippy::infallible_try_from)]
 impl TryFrom<&PathData> for PathDataProxy {
     type Error = std::convert::Infallible;
     fn try_from(v: &PathData) -> Result<Self, Self::Error> {
@@ -658,6 +661,7 @@ impl From<PathDataProxy> for Option<PathData> {
     }
 }
 
+#[allow(clippy::infallible_try_from)]
 impl TryFrom<&Option<PathData>> for PathDataProxy {
     type Error = std::convert::Infallible;
     fn try_from(v: &Option<PathData>) -> Result<Self, Self::Error> {
@@ -685,10 +689,10 @@ fn parse_number(chars: &mut std::iter::Peekable<std::str::Chars>) -> Result<f64,
     let mut num_str = String::new();
 
     // Handle optional sign
-    if let Some(&c) = chars.peek() {
-        if c == '-' || c == '+' {
-            num_str.push(chars.next().unwrap());
-        }
+    if let Some(&c) = chars.peek()
+        && (c == '-' || c == '+')
+    {
+        num_str.push(chars.next().unwrap());
     }
 
     // Parse digits and decimal point
@@ -700,10 +704,10 @@ fn parse_number(chars: &mut std::iter::Peekable<std::str::Chars>) -> Result<f64,
         } else if c == 'e' || c == 'E' {
             // Scientific notation
             num_str.push(chars.next().unwrap());
-            if let Some(&sign) = chars.peek() {
-                if sign == '-' || sign == '+' {
-                    num_str.push(chars.next().unwrap());
-                }
+            if let Some(&sign) = chars.peek()
+                && (sign == '-' || sign == '+')
+            {
+                num_str.push(chars.next().unwrap());
             }
             while let Some(&d) = chars.peek() {
                 if d.is_ascii_digit() {
@@ -729,10 +733,10 @@ fn parse_number(chars: &mut std::iter::Peekable<std::str::Chars>) -> Result<f64,
 
 fn try_parse_number(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<f64> {
     skip_wsp_comma(chars);
-    if let Some(&c) = chars.peek() {
-        if c.is_ascii_digit() || c == '-' || c == '+' || c == '.' {
-            return parse_number(chars).ok();
-        }
+    if let Some(&c) = chars.peek()
+        && (c.is_ascii_digit() || c == '-' || c == '+' || c == '.')
+    {
+        return parse_number(chars).ok();
     }
     None
 }
@@ -747,12 +751,11 @@ fn parse_coord_pair(
 
 fn try_parse_coord_pair(chars: &mut std::iter::Peekable<std::str::Chars>) -> Option<(f64, f64)> {
     skip_wsp_comma(chars);
-    if let Some(&c) = chars.peek() {
-        if c.is_ascii_digit() || c == '-' || c == '+' || c == '.' {
-            if let Ok(pair) = parse_coord_pair(chars) {
-                return Some(pair);
-            }
-        }
+    if let Some(&c) = chars.peek()
+        && (c.is_ascii_digit() || c == '-' || c == '+' || c == '.')
+        && let Ok(pair) = parse_coord_pair(chars)
+    {
+        return Some(pair);
     }
     None
 }

@@ -75,7 +75,7 @@ pub enum SameReport<'mem, 'facet> {
     /// The values are structurally the same.
     Same,
     /// The values differ - includes a diff report that can be rendered in multiple formats.
-    Different(DiffReport<'mem, 'facet>),
+    Different(Box<DiffReport<'mem, 'facet>>),
     /// Encountered an opaque type that cannot be compared.
     Opaque {
         /// The type name of the opaque type.
@@ -101,7 +101,7 @@ impl<'mem, 'facet> SameReport<'mem, 'facet> {
     /// Get the diff report if the values were different.
     pub fn diff(&self) -> Option<&DiffReport<'mem, 'facet>> {
         match self {
-            SameReport::Different(report) => Some(report),
+            SameReport::Different(report) => Some(report.as_ref()),
             _ => None,
         }
     }
@@ -256,10 +256,10 @@ pub fn check_same_with_report<'f, 'mem, T: Facet<'f>, U: Facet<'f>>(
     if diff.is_equal() {
         SameReport::Same
     } else {
-        SameReport::Different(DiffReport {
+        SameReport::Different(Box::new(DiffReport {
             diff,
             left: left_peek,
             right: right_peek,
-        })
+        }))
     }
 }

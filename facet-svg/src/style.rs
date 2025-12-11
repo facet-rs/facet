@@ -4,6 +4,7 @@ use facet::Facet;
 use lightningcss::declaration::DeclarationBlock;
 use lightningcss::printer::PrinterOptions;
 use lightningcss::stylesheet::ParserOptions;
+use std::fmt;
 
 /// A color value
 #[derive(Debug, Clone, PartialEq)]
@@ -27,40 +28,44 @@ impl Color {
         // Try parsing rgb(r,g,b)
         if let Some(inner) = s.strip_prefix("rgb(").and_then(|s| s.strip_suffix(')')) {
             let parts: Vec<&str> = inner.split(',').collect();
-            if parts.len() == 3 {
-                if let (Ok(r), Ok(g), Ok(b)) = (
+            if parts.len() == 3
+                && let (Ok(r), Ok(g), Ok(b)) = (
                     parts[0].trim().parse::<u8>(),
                     parts[1].trim().parse::<u8>(),
                     parts[2].trim().parse::<u8>(),
-                ) {
-                    return Color::Rgb { r, g, b };
-                }
+                )
+            {
+                return Color::Rgb { r, g, b };
             }
         }
 
         // Try parsing hex color
         if let Some(hex) = s.strip_prefix('#') {
-            if hex.len() == 6 {
-                if let (Ok(r), Ok(g), Ok(b)) = (
-                    u8::from_str_radix(&hex[0..2], 16),
-                    u8::from_str_radix(&hex[2..4], 16),
-                    u8::from_str_radix(&hex[4..6], 16),
-                ) {
-                    return Color::Rgb { r, g, b };
+            match hex.len() {
+                6 => {
+                    if let (Ok(r), Ok(g), Ok(b)) = (
+                        u8::from_str_radix(&hex[0..2], 16),
+                        u8::from_str_radix(&hex[2..4], 16),
+                        u8::from_str_radix(&hex[4..6], 16),
+                    ) {
+                        return Color::Rgb { r, g, b };
+                    }
                 }
-            } else if hex.len() == 3 {
-                if let (Ok(r), Ok(g), Ok(b)) = (
-                    u8::from_str_radix(&hex[0..1], 16),
-                    u8::from_str_radix(&hex[1..2], 16),
-                    u8::from_str_radix(&hex[2..3], 16),
-                ) {
-                    // Expand 3-digit hex: #abc -> #aabbcc
-                    return Color::Rgb {
-                        r: r * 17,
-                        g: g * 17,
-                        b: b * 17,
-                    };
+                3 => {
+                    if let (Ok(r), Ok(g), Ok(b)) = (
+                        u8::from_str_radix(&hex[0..1], 16),
+                        u8::from_str_radix(&hex[1..2], 16),
+                        u8::from_str_radix(&hex[2..3], 16),
+                    ) {
+                        // Expand 3-digit hex: #abc -> #aabbcc
+                        return Color::Rgb {
+                            r: r * 17,
+                            g: g * 17,
+                            b: b * 17,
+                        };
+                    }
                 }
+                _ => {}
             }
         }
 
@@ -98,13 +103,14 @@ impl Color {
             _ => Color::Named(s.to_string()),
         }
     }
+}
 
-    /// Serialize to string in rgb() format like C pikchr
-    pub fn to_string(&self) -> String {
+impl fmt::Display for Color {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Color::None => "none".to_string(),
-            Color::Rgb { r, g, b } => format!("rgb({},{},{})", r, g, b),
-            Color::Named(n) => n.clone(),
+            Color::None => f.write_str("none"),
+            Color::Rgb { r, g, b } => write!(f, "rgb({},{},{})", r, g, b),
+            Color::Named(n) => f.write_str(n),
         }
     }
 }
@@ -180,14 +186,15 @@ impl SvgStyle {
         })
     }
 
-    /// Serialize to CSS string
-    pub fn to_string(&self) -> String {
-        self.css.clone()
-    }
-
     /// Check if the style has no declarations
     pub fn is_empty(&self) -> bool {
         self.css.is_empty()
+    }
+}
+
+impl fmt::Display for SvgStyle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.css)
     }
 }
 
@@ -233,10 +240,9 @@ impl TryFrom<SvgStyleProxy> for SvgStyle {
     }
 }
 
-impl TryFrom<&SvgStyle> for SvgStyleProxy {
-    type Error = std::convert::Infallible;
-    fn try_from(v: &SvgStyle) -> Result<Self, Self::Error> {
-        Ok(SvgStyleProxy(v.to_string()))
+impl From<&SvgStyle> for SvgStyleProxy {
+    fn from(v: &SvgStyle) -> Self {
+        SvgStyleProxy(v.to_string())
     }
 }
 
