@@ -22,13 +22,16 @@ This makes facet-svg ideal for:
 
 ## Supported Elements
 
-The following SVG elements are fully supported for parsing:
+The following SVG elements are fully supported for parsing and type-safe access:
 
 - **Shapes**: `<rect>`, `<circle>`, `<ellipse>`, `<line>`, `<path>`, `<polygon>`, `<polyline>`
 - **Text**: `<text>` with styling attributes
-- **Grouping**: `<g>` with transform support, `<defs>`, `<style>`
+- **Grouping**: `<g>` with transform support, `<defs>`, `<style>`, `<symbol>`
+- **References**: `<use>` for referencing defined elements
+- **Media**: `<image>` for embedded or linked images
+- **Metadata**: `<title>`, `<desc>` for accessibility and documentation
 
-Unsupported elements (such as `<use>`, `<image>`, `<filter>`, `<marker>`, `<tspan>`, and metadata elements) are gracefully ignored during parsing, allowing real-world SVG files to be processed without errors.
+Unsupported elements (such as `<filter>`, `<marker>`, `<tspan>`, and specialized SVG filters) are gracefully ignored during parsing, allowing real-world SVG files to be processed without errors.
 
 ## Basic Usage
 

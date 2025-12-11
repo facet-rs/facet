@@ -69,6 +69,16 @@ pub enum SvgNode {
     Polyline(Polyline),
     #[facet(rename = "text")]
     Text(Text),
+    #[facet(rename = "use")]
+    Use(Use),
+    #[facet(rename = "image")]
+    Image(Image),
+    #[facet(rename = "title")]
+    Title(Title),
+    #[facet(rename = "desc")]
+    Desc(Desc),
+    #[facet(rename = "symbol")]
+    Symbol(Symbol),
 }
 
 /// SVG group element (`<g>`)
@@ -276,6 +286,72 @@ pub struct Text {
     pub dominant_baseline: Option<String>,
     #[facet(xml::text)]
     pub content: String,
+}
+
+/// SVG use element (`<use>`)
+#[derive(Facet, Debug, Clone, Default)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
+pub struct Use {
+    #[facet(xml::attribute)]
+    pub x: Option<f64>,
+    #[facet(xml::attribute)]
+    pub y: Option<f64>,
+    #[facet(xml::attribute)]
+    pub width: Option<f64>,
+    #[facet(xml::attribute)]
+    pub height: Option<f64>,
+    #[facet(xml::attribute, rename = "xlink:href")]
+    pub href: Option<String>,
+}
+
+/// SVG image element (`<image>`)
+#[derive(Facet, Debug, Clone, Default)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
+pub struct Image {
+    #[facet(xml::attribute)]
+    pub x: Option<f64>,
+    #[facet(xml::attribute)]
+    pub y: Option<f64>,
+    #[facet(xml::attribute)]
+    pub width: Option<f64>,
+    #[facet(xml::attribute)]
+    pub height: Option<f64>,
+    #[facet(xml::attribute)]
+    pub href: Option<String>,
+    #[facet(xml::attribute, proxy = SvgStyleProxy)]
+    pub style: SvgStyle,
+}
+
+/// SVG title element (`<title>`)
+#[derive(Facet, Debug, Clone, Default)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
+pub struct Title {
+    #[facet(xml::text)]
+    pub content: String,
+}
+
+/// SVG description element (`<desc>`)
+#[derive(Facet, Debug, Clone, Default)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
+pub struct Desc {
+    #[facet(xml::text)]
+    pub content: String,
+}
+
+/// SVG symbol element (`<symbol>`)
+#[derive(Facet, Debug, Clone, Default)]
+#[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
+pub struct Symbol {
+    #[facet(xml::attribute)]
+    pub id: Option<String>,
+    #[facet(xml::attribute, rename = "viewBox")]
+    pub view_box: Option<String>,
+    #[facet(xml::attribute)]
+    pub width: Option<String>,
+    #[facet(xml::attribute)]
+    pub height: Option<String>,
+    #[facet(xml::elements)]
+    pub children: Vec<SvgNode>,
 }
 
 // Re-export XML utilities for convenience
