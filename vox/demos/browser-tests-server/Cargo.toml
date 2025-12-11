@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "WebSocket harness that drives the rapace browser integration tests"
+publish = false
 
 [[bin]]
 name = "rapace-browser-tests-server"

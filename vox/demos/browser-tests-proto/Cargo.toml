@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Shared rapace service definitions for browser tests"
+publish = false
 
 [dependencies]
 rapace = { path = "../../crates/rapace", default-features = false }

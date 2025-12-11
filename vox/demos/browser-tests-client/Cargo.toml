@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "WASM harness that exercises rapace BrowserDemo services from the browser tests"
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]
