@@ -10,7 +10,7 @@ keywords = ["reflection", "core"]
 categories = ["development-tools"]
 
 [package.metadata.docs.rs]
-rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
+rustdoc-args = ["--html-in-header", "docs/meta/arborium-header.html"]
 
 [features]
 ci = [] # CI feature

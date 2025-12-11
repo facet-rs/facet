@@ -10,7 +10,7 @@ keywords = ["reflection", "introspection", "facet", "peek", "poke"]
 categories = ["development-tools", "rust-patterns"]
 
 [package.metadata.docs.rs]
-rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
+rustdoc-args = ["--html-in-header", "docs/meta/arborium-header.html"]
 
 [features]
 default = ["std"]

@@ -10,7 +10,7 @@ keywords = ["xdr", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parsing", "data-structures"]
 
 [package.metadata.docs.rs]
-rustdoc-args = ["--html-in-header", "docs/meta/highlight.html"]
+rustdoc-args = ["--html-in-header", "docs/meta/arborium-header.html"]
 
 [features]
 ci = [] # CI feature
