@@ -30,7 +30,6 @@ jobs:
 
   release:
     name: Publish
-    needs: release-pr
     runs-on: ubuntu-latest
     permissions:
       contents: write
