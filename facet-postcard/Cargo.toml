@@ -1,6 +1,6 @@
 [package]
 name = "facet-postcard"
-version = "0.1.0"
+version = "0.32.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

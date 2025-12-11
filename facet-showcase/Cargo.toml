@@ -1,6 +1,6 @@
 [package]
 name = "facet-showcase"
-version = "0.1.0"
+version = "0.32.0"
 edition.workspace = true
 rust-version.workspace = true
 description = "Unified showcase infrastructure for facet format crates"
@@ -20,8 +20,8 @@ owo-colors = "4"
 miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
 
 # Facet integration
-facet = { version = "0.31", path = "../facet" }
-facet-pretty = { version = "0.31", path = "../facet-pretty" }
+facet = { version = "0.32", path = "../facet" }
+facet-pretty = { version = "0.32", path = "../facet-pretty" }
 
 [features]
 ci = [] # CI feature
