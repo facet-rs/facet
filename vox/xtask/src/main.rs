@@ -178,12 +178,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .run()?;
 
             println!("\n=== Building browser WS server ===");
-            cmd!(sh, "cargo build --package browser-ws-server").run()?;
+            cmd!(sh, "cargo build --package rapace-browser-tests-server").run()?;
 
             println!("\n=== Wasm builds complete ===");
             println!("\nTo test in browser:");
-            println!("  1. cargo run --package browser-ws-server");
-            println!("  2. cd demos/browser-ws && wasm-pack build --target web ../../crates/rapace-wasm-client");
+            println!("  1. cargo run --package rapace-browser-tests-server");
+            println!("  2. cd demos/browser-tests-client && wasm-pack build --target web");
             println!("  3. python3 -m http.server 8080");
             println!("  4. Open http://localhost:8080");
             println!("\nOr run: cargo xtask browser-test");
@@ -323,11 +323,11 @@ fn run_browser_test(
     workspace_root: &std::path::Path,
     headed: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let browser_ws_dir = workspace_root.join("demos/browser-ws");
-    let wasm_client_dir = workspace_root.join("crates/rapace-wasm-client");
+    let browser_client_dir = workspace_root.join("demos/browser-tests-client");
+    let wasm_client_dir = browser_client_dir.clone();
 
     // Step 1: Build wasm client with wasm-pack
-    println!("=== Building wasm client with wasm-pack ===");
+    println!("=== Building BrowserDemo wasm harness ===");
     if cmd!(sh, "wasm-pack --version").quiet().run().is_err() {
         eprintln!("wasm-pack not found. Install with:");
         eprintln!("  cargo install wasm-pack");
@@ -337,27 +337,15 @@ fn run_browser_test(
     sh.change_dir(&wasm_client_dir);
     cmd!(sh, "wasm-pack build --target web").run()?;
 
-    // Copy pkg to browser-ws demo directory
-    let pkg_src = wasm_client_dir.join("pkg");
-    let pkg_dst = browser_ws_dir.join("pkg");
-    if pkg_dst.exists() {
-        std::fs::remove_dir_all(&pkg_dst)?;
-    }
-    std::fs::create_dir_all(&pkg_dst)?;
-    for entry in std::fs::read_dir(&pkg_src)? {
-        let entry = entry?;
-        let src_path = entry.path();
-        if src_path.is_file() {
-            let dst_path = pkg_dst.join(entry.file_name());
-            std::fs::copy(&src_path, &dst_path)?;
-        }
-    }
-    println!("Copied pkg to {}", pkg_dst.display());
+    println!(
+        "WASM bundle updated in {}",
+        browser_client_dir.join("pkg").display()
+    );
 
     // Step 2: Install npm deps if needed
     println!("\n=== Checking npm dependencies ===");
-    sh.change_dir(&browser_ws_dir);
-    if !browser_ws_dir.join("node_modules").exists() {
+    sh.change_dir(&browser_client_dir);
+    if !browser_client_dir.join("node_modules").exists() {
         println!("Installing npm dependencies...");
         cmd!(sh, "npm install").run()?;
     }
@@ -368,26 +356,31 @@ fn run_browser_test(
         cmd!(sh, "npx playwright install chromium").run()?;
     }
 
-    // Step 3: Build and start the dashboard (which provides ExplorerService)
-    println!("\n=== Starting dashboard server ===");
+    // Step 3: Build and start the BrowserDemo WebSocket server
+    println!("\n=== Starting BrowserDemo WebSocket server ===");
     sh.change_dir(workspace_root);
-    cmd!(sh, "cargo build --package rapace-dashboard --release").run()?;
+    cmd!(
+        sh,
+        "cargo build --package rapace-browser-tests-server --release"
+    )
+    .run()?;
 
-    let dashboard_path = workspace_root.join("target/release/rapace-dashboard");
-    let mut ws_server = std::process::Command::new(&dashboard_path)
+    let server_path = workspace_root.join("target/release/rapace-browser-tests-server");
+    let mut ws_server = std::process::Command::new(&server_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
+        .env("RAPACE_BROWSER_WS_PORT", "4788")
         .spawn()?;
 
     // Wait for server to start (spawns thread to drain remaining output)
     wait_for_server_ready(&mut ws_server, "ready")?;
-    println!("Dashboard server started on ws://127.0.0.1:4268");
+    println!("Browser demo server started on ws://127.0.0.1:4788");
 
     // Step 4: Start static file server
     println!("\n=== Starting static file server ===");
     let mut http_server = std::process::Command::new("python3")
         .args(["-m", "http.server", "8080"])
-        .current_dir(&browser_ws_dir)
+        .current_dir(&browser_client_dir)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
@@ -398,7 +391,7 @@ fn run_browser_test(
 
     // Step 5: Run Playwright tests
     println!("\n=== Running Playwright tests ===");
-    sh.change_dir(&browser_ws_dir);
+    sh.change_dir(&browser_client_dir);
 
     let test_result = if headed {
         cmd!(sh, "npx playwright test --headed").run()

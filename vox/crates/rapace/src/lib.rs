@@ -149,9 +149,9 @@ pub use facet_postcard;
 #[doc(hidden)]
 pub extern crate tracing;
 
-// Re-export tokio_stream for macro-generated code
+// Re-export futures so macro-generated code can rely on a stable path.
 #[doc(hidden)]
-pub extern crate tokio_stream;
+pub extern crate futures;
 
 // Re-export registry
 pub use rapace_registry as registry;

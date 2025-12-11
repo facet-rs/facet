@@ -17,7 +17,7 @@ use rapace_core::RpcSession;
 // This generates:
 // - `CalculatorClient<T>` - client stub with async methods
 // - `CalculatorServer<S>` - server dispatcher with serve() method
-// - `calculator_methods` module with METHOD_ID_* constants
+// - `CALCULATOR_METHOD_ID_*` constants and a `calculator_register` helper
 #[allow(async_fn_in_trait)]
 #[rapace::service]
 pub trait Calculator {

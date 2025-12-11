@@ -10,6 +10,7 @@
 //! then truncating to 32 bits. This ensures unique IDs across services without
 //! requiring a central registry or manual assignment.
 
+use heck::{ToShoutySnakeCase, ToSnakeCase};
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, Span, TokenStream as TokenStream2, TokenTree};
 use proc_macro_crate::{crate_name, FoundCrate};
@@ -99,6 +100,8 @@ fn generate_service(
 ) -> Result<TokenStream2, MacroError> {
     let trait_name = &input.ident;
     let trait_name_str = trait_name.to_string();
+    let trait_snake = trait_name_str.to_snake_case();
+    let trait_shouty = trait_name_str.to_shouty_snake_case();
     let vis = &input.vis_tokens;
 
     // Detect the rapace crate name
@@ -161,22 +164,38 @@ fn generate_service(
     });
 
     // Generate streaming dispatch arms
+    let mut streaming_method_matches = Vec::new();
     let streaming_dispatch_arms = methods.iter().map(|m| {
         let method_id = compute_method_id(&trait_name_str, &m.name.to_string());
         generate_streaming_dispatch_arm(m, method_id, &rapace_crate)
     });
+    for m in methods.iter() {
+        if matches!(m.kind, MethodKind::ServerStreaming { .. }) {
+            let method_id = compute_method_id(&trait_name_str, &m.name.to_string());
+            streaming_method_matches.push(quote! { #method_id => true, });
+        }
+    }
 
     // Generate method ID constants
     let method_id_consts = methods.iter().map(|m| {
         let method_id = compute_method_id(&trait_name_str, &m.name.to_string());
-        let const_name = format_ident!("METHOD_ID_{}", m.name.to_string().to_uppercase());
+        let method_shouty = m.name.to_string().to_shouty_snake_case();
+        let const_name = format_ident!("{}_METHOD_ID_{}", trait_shouty, method_shouty);
         quote! {
-            pub const #const_name: u32 = #method_id;
+            #vis const #const_name: u32 = #method_id;
         }
     });
 
     // Generate registry registration code
-    let register_fn = generate_register_fn(&trait_name_str, &trait_doc, &methods, &rapace_crate);
+    let register_fn_name = format_ident!("{}_register", trait_snake);
+    let register_fn = generate_register_fn(
+        &trait_name_str,
+        &trait_doc,
+        &methods,
+        &rapace_crate,
+        &register_fn_name,
+        vis,
+    );
 
     // Generate registry-aware client struct and constructor
     let registry_client_name = format_ident!("{}RegistryClient", trait_name);
@@ -200,18 +219,13 @@ fn generate_service(
         })
         .collect();
 
-    let mod_name = format_ident!("{}_methods", trait_name.to_string().to_lowercase());
-
     let expanded = quote! {
         // Keep the original trait
         #trait_tokens
 
-        /// Method ID constants for this service.
-        #vis mod #mod_name {
-            #(#method_id_consts)*
+        #(#method_id_consts)*
 
-            #register_fn
-        }
+        #register_fn
 
         /// Client stub for the #trait_name service.
         ///
@@ -841,6 +855,7 @@ fn generate_streaming_dispatch_arm(
                         })?;
 
                     let mut desc = #rapace_crate::rapace_core::MsgDescHot::new();
+                    desc.channel_id = channel_id;
                     desc.flags = #rapace_crate::rapace_core::FrameFlags::DATA | #rapace_crate::rapace_core::FrameFlags::EOS;
 
                     let frame = if response_bytes.len() <= #rapace_crate::rapace_core::INLINE_PAYLOAD_SIZE {
@@ -908,7 +923,7 @@ fn generate_streaming_dispatch_arm_server_streaming(
             let mut stream = self.service.#name(#call_args).await;
 
             // Iterate over the stream and send frames
-            use #rapace_crate::tokio_stream::StreamExt;
+            use #rapace_crate::futures::stream::StreamExt;
             #rapace_crate::tracing::debug!(channel_id, "streaming dispatch: starting to iterate stream");
 
             loop {
@@ -1058,6 +1073,8 @@ fn generate_register_fn(
     service_doc: &str,
     methods: &[MethodInfo],
     rapace_crate: &TokenStream2,
+    register_fn_name: &Ident,
+    vis: &TokenStream2,
 ) -> TokenStream2 {
     let method_registrations: Vec<TokenStream2> = methods
         .iter()
@@ -1135,16 +1152,7 @@ fn generate_register_fn(
         ///
         /// This function registers the service and all its methods,
         /// capturing request/response schemas and documentation via facet.
-        ///
-        /// # Example
-        ///
-        /// ```ignore
-        /// use rapace::registry::ServiceRegistry;
-        ///
-        /// let mut registry = ServiceRegistry::new();
-        /// adder_methods::register(&mut registry);
-        /// ```
-        pub fn register(registry: &mut #rapace_crate::registry::ServiceRegistry) {
+        #vis fn #register_fn_name(registry: &mut #rapace_crate::registry::ServiceRegistry) {
             let mut builder = registry.register_service(#service_name, #service_doc);
             #(#method_registrations)*
             builder.finish();

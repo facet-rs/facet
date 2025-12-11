@@ -27,21 +27,22 @@ rapace-transport-shm = { workspace = true, optional = true, features = ["allocat
 facet = { workspace = true }
 facet-core = { workspace = true }
 facet-postcard = { workspace = true }
+futures = { workspace = true }
 
 # Async runtime
-tokio = { workspace = true, features = ["net", "io-util"] }
-tokio-stream = { workspace = true }
+tokio = { workspace = true, features = ["net", "io-util"], optional = true }
 parking_lot.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio-stream = { workspace = true }
 
 [features]
 default = ["mem", "stream", "shm"]
 
 # Transport features
 mem = ["dep:rapace-transport-mem"]
-stream = ["dep:rapace-transport-stream"]
+stream = ["dep:rapace-transport-stream", "dep:tokio"]
 websocket = ["dep:rapace-transport-websocket"]
 shm = ["dep:rapace-transport-shm"]
 

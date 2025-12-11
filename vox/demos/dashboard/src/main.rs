@@ -796,12 +796,12 @@ async fn main() {
     let mut registry = ServiceRegistry::new();
 
     // Register demo services
-    calculator_methods::register(&mut registry);
-    greeter_methods::register(&mut registry);
-    counter_methods::register(&mut registry);
+    calculator_register(&mut registry);
+    greeter_register(&mut registry);
+    counter_register(&mut registry);
 
     // Register the Explorer service itself (for completeness, though we filter it out)
-    explorer_methods::register(&mut registry);
+    explorer_register(&mut registry);
 
     let registry = Arc::new(registry);
 

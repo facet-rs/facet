@@ -5,5 +5,5 @@ crates/rapace-wasm-client/pkg/
 
 # Node.js / Playwright
 node_modules/
-examples/browser_ws/test-results/
+demos/browser-tests-client/test-results/
 examples/browser_ws/playwright-report/

@@ -1,0 +1,11 @@
+[package]
+name = "rapace-browser-tests-proto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Shared rapace service definitions for browser tests"
+
+[dependencies]
+rapace = { path = "../../crates/rapace", default-features = false }
+facet = { workspace = true }

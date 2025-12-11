@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>rapace Browser Demo</title>
+        <style>
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                max-width: 900px;
+                margin: 0 auto;
+                padding: 20px;
+                background: #1a1a2e;
+                color: #eaeaea;
+            }
+            h1 {
+                color: #00d9ff;
+            }
+            .section {
+                background: #16213e;
+                border-radius: 8px;
+                padding: 20px;
+                margin-bottom: 20px;
+            }
+            h2 {
+                margin-top: 0;
+                color: #00d9ff;
+            }
+            button {
+                background: #00d9ff;
+                color: #1a1a2e;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 14px;
+                margin-right: 10px;
+                margin-bottom: 10px;
+            }
+            button:hover {
+                background: #00b8d9;
+            }
+            button:disabled {
+                background: #555;
+                cursor: not-allowed;
+            }
+            button.secondary {
+                background: #0f3460;
+                color: #00d9ff;
+                border: 1px solid #00d9ff;
+            }
+            button.secondary:hover {
+                background: #1a4a7a;
+            }
+            input,
+            textarea {
+                background: #0f3460;
+                border: 1px solid #00d9ff;
+                color: #eaeaea;
+                padding: 8px 12px;
+                border-radius: 4px;
+                margin-right: 10px;
+                font-family: inherit;
+            }
+            input {
+                width: 250px;
+            }
+            textarea {
+                width: 100%;
+                min-height: 80px;
+                font-family: "Monaco", "Menlo", monospace;
+                font-size: 13px;
+            }
+            label {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                margin-right: 12px;
+                font-size: 14px;
+            }
+            #log {
+                background: #0f0f1a;
+                border: 1px solid #333;
+                border-radius: 4px;
+                padding: 15px;
+                font-family: "Monaco", "Menlo", monospace;
+                font-size: 13px;
+                max-height: 300px;
+                overflow-y: auto;
+                white-space: pre-wrap;
+            }
+            .log-info {
+                color: #00d9ff;
+            }
+            .log-success {
+                color: #00ff88;
+            }
+            .log-error {
+                color: #ff6b6b;
+            }
+            .log-stream {
+                color: #ffd93d;
+            }
+            .status {
+                display: inline-block;
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-size: 12px;
+                margin-left: 10px;
+            }
+            .status-connected {
+                background: #00ff88;
+                color: #1a1a2e;
+            }
+            .status-disconnected {
+                background: #ff6b6b;
+                color: white;
+            }
+            .status-connecting {
+                background: #ffd93d;
+                color: #1a1a2e;
+            }
+            .result-card {
+                background: #0f0f1a;
+                border: 1px solid #333;
+                border-radius: 4px;
+                padding: 12px;
+                margin-top: 10px;
+                font-family: "Monaco", "Menlo", monospace;
+            }
+            #countdownList {
+                list-style: none;
+                padding-left: 0;
+                margin: 0;
+            }
+            #countdownList li {
+                background: #0f0f1a;
+                border: 1px solid #333;
+                border-radius: 4px;
+                padding: 8px 12px;
+                margin-bottom: 6px;
+                font-family: "Monaco", "Menlo", monospace;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>rapace Browser Demo</h1>
+
+        <div class="section">
+            <h2>
+                Connection <span id="status" class="status status-disconnected">Disconnected</span>
+            </h2>
+            <input type="text" id="wsUrl" value="ws://127.0.0.1:4788" placeholder="WebSocket URL" />
+            <button id="connectBtn" onclick="connect()">Connect</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+        </div>
+
+        <div class="section">
+            <h2>Summarize Numbers</h2>
+            <p>Enter comma-separated integers. The server computes sum/mean/min/max via the BrowserDemo RPC.</p>
+            <input type="text" id="numbersInput" data-requires-connection placeholder="e.g. 1, 2, 3, 5" />
+            <button id="numbersBtn" data-requires-connection onclick="runNumbers()" disabled>
+                Summarize
+            </button>
+            <div id="numbersResult" class="result-card">No data yet.</div>
+        </div>
+
+        <div class="section">
+            <h2>Transform Phrase</h2>
+            <p>Send text to the BrowserDemo service and let it title-case or shout the output.</p>
+            <input type="text" id="phraseInput" data-requires-connection placeholder="enter a phrase" />
+            <label>
+                <input type="checkbox" id="shoutToggle" data-requires-connection disabled />
+                Shout
+            </label>
+            <button id="phraseBtn" data-requires-connection onclick="runPhrase()" disabled>
+                Transform
+            </button>
+            <div id="phraseResult" class="result-card">No data yet.</div>
+        </div>
+
+        <div class="section">
+            <h2>Countdown Stream</h2>
+            <p>The streaming RPC emits one event per tick. We render each event as soon as it arrives.</p>
+            <input type="number" id="countdownStart" min="0" value="3" data-requires-connection />
+            <button id="countdownBtn" data-requires-connection onclick="runCountdown()" disabled>
+                Countdown
+            </button>
+            <ul id="countdownList"></ul>
+        </div>
+
+        <div class="section">
+            <h2>Log</h2>
+            <button class="secondary" onclick="clearLog()">Clear</button>
+            <div id="log"></div>
+        </div>
+
+        <script type="module">
+            import init, { BrowserDemoHarness } from "./pkg/rapace_browser_tests_client.js";
+
+            let harness = null;
+            let wasmReady = null;
+
+            function safeStringify(value) {
+                return JSON.stringify(value, (_, v) => (typeof v === "bigint" ? Number(v) : v));
+            }
+
+            function log(msg, className = "log-info") {
+                const logEl = document.getElementById("log");
+                const timestamp = new Date().toLocaleTimeString();
+                logEl.innerHTML += `<span class="${className}">[${timestamp}] ${msg}</span>\n`;
+                logEl.scrollTop = logEl.scrollHeight;
+            }
+
+            window.clearLog = function () {
+                document.getElementById("log").innerHTML = "";
+            };
+
+            function setStatus(status) {
+                const statusEl = document.getElementById("status");
+                statusEl.textContent = status;
+                statusEl.className = "status status-" + status.toLowerCase();
+            }
+
+            function setConnected(connected) {
+                document.getElementById("connectBtn").disabled = connected;
+                document.getElementById("disconnectBtn").disabled = !connected;
+                document.getElementById("wsUrl").disabled = connected;
+                document.querySelectorAll("[data-requires-connection]").forEach((el) => {
+                    if (el.tagName === "BUTTON" || el.tagName === "INPUT") {
+                        el.disabled = !connected;
+                    }
+                });
+            }
+
+            async function ensureWasm() {
+                if (!wasmReady) {
+                    log("Loading rapace wasm bindings...");
+                    wasmReady = init();
+                }
+                await wasmReady;
+            }
+
+            function requireHarness() {
+                if (!harness) {
+                    throw new Error("Not connected");
+                }
+                return harness;
+            }
+
+            window.connect = async function () {
+                try {
+                    await ensureWasm();
+                    const url = document.getElementById("wsUrl").value.trim();
+                    setStatus("Connecting");
+                    log(`Connecting to ${url}...`);
+                    harness = await BrowserDemoHarness.connect(url);
+                    setStatus("Connected");
+                    setConnected(true);
+                    log("Connected to BrowserDemo service", "log-success");
+                } catch (e) {
+                    harness = null;
+                    setStatus("Disconnected");
+                    setConnected(false);
+                    log(`Connection failed: ${e}`, "log-error");
+                }
+            };
+
+            window.disconnect = async function () {
+                if (harness) {
+                    try {
+                        await harness.disconnect();
+                    } catch (e) {
+                        log(`Disconnect error: ${e}`, "log-error");
+                    }
+                }
+                harness = null;
+                setStatus("Disconnected");
+                setConnected(false);
+                log("Disconnected");
+            };
+
+            window.runNumbers = async function () {
+                try {
+                    const client = requireHarness();
+                    const raw = document.getElementById("numbersInput").value.trim();
+                    const values = raw.length
+                        ? raw.split(",").map((v) => Number(v.trim()))
+                        : [];
+                    if (values.some((v) => Number.isNaN(v))) {
+                        throw new Error("values must be numbers");
+                    }
+
+                    const jsArray = window.Array.from(values);
+                    log(`summarize_numbers(${safeStringify(values)})`);
+                    const summary = await client.summarizeNumbers(jsArray);
+                    log(`Summary raw: ${safeStringify(summary)}`);
+                    const safeSummary = summary ?? {};
+                    const coerce = (value) => (typeof value === "bigint" ? Number(value) : Number(value ?? 0));
+                    const sum = coerce(safeSummary.sum);
+                    const mean = coerce(safeSummary.mean);
+                    const min = coerce(safeSummary.min);
+                    const max = coerce(safeSummary.max);
+                    const summaryText = `sum=${sum}, mean=${mean.toFixed(2)}, min=${min}, max=${max}`;
+                    document.getElementById("numbersResult").textContent = summaryText;
+                    log(`Summary result: ${summaryText}`, "log-success");
+                } catch (e) {
+                    log(`summarize_numbers failed: ${e}`, "log-error");
+                    console.error(e);
+                }
+            };
+
+            window.runPhrase = async function () {
+                try {
+                    const client = requireHarness();
+                    const phrase = document.getElementById("phraseInput").value;
+                    const shout = document.getElementById("shoutToggle").checked;
+                    log(`transform_phrase(phrase="${phrase}", shout=${shout})`);
+                    const response = await client.transformPhrase(phrase, shout);
+                    log(`Phrase raw: ${safeStringify(response)}`);
+                    const responseData = response ?? {};
+                    const text = `title="${responseData.title ?? ""}", original_len=${responseData.original_len ?? 0}`;
+                    document.getElementById("phraseResult").textContent = text;
+                    log(`Phrase response: ${text}`, "log-success");
+                } catch (e) {
+                    log(`transform_phrase failed: ${e}`, "log-error");
+                    console.error(e);
+                }
+            };
+
+            window.runCountdown = async function () {
+                try {
+                    const client = requireHarness();
+                    const startRaw = document.getElementById("countdownStart").value;
+                    const start = Number(startRaw);
+                    if (Number.isNaN(start) || start < 0) {
+                        throw new Error("start must be a non-negative integer");
+                    }
+                    log(`countdown(${start})...`);
+                    const events = await client.countdown(start);
+                    const eventsArray = Array.from(events);
+                    const list = document.getElementById("countdownList");
+                    list.innerHTML = "";
+                    eventsArray.forEach((event, idx) => {
+                        const li = document.createElement("li");
+                        li.textContent = `value=${event.value}, remaining=${event.remaining}`;
+                        list.appendChild(li);
+                        log(`[countdown ${idx}] ${li.textContent}`, "log-stream");
+                    });
+                    log("Countdown complete", "log-success");
+                } catch (e) {
+                    log(`countdown failed: ${e}`, "log-error");
+                }
+            };
+
+            setConnected(false);
+            log('Ready. Connect to ws://127.0.0.1:4788 and exercise BrowserDemo RPCs.');
+        </script>
+    </body>
+</html>

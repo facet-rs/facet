@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use rapace::tokio_stream::StreamExt;
+use futures::StreamExt;
 use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
 use rapace::{RpcSession, StreamTransport, Transport};
 use rapace_testkit::helper_binary::find_helper_binary;

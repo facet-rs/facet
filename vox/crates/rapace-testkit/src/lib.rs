@@ -2099,7 +2099,7 @@ mod registry_tests {
     #[test]
     fn test_adder_registration() {
         let mut registry = ServiceRegistry::new();
-        adder_methods::register(&mut registry);
+        adder_register(&mut registry);
 
         // Verify service was registered
         let service = registry
@@ -2132,7 +2132,7 @@ mod registry_tests {
     #[test]
     fn test_range_service_registration() {
         let mut registry = ServiceRegistry::new();
-        rangeservice_methods::register(&mut registry);
+        range_service_register(&mut registry);
 
         // Verify service was registered
         let service = registry
@@ -2155,8 +2155,8 @@ mod registry_tests {
         let mut registry = ServiceRegistry::new();
 
         // Register both services
-        adder_methods::register(&mut registry);
-        rangeservice_methods::register(&mut registry);
+        adder_register(&mut registry);
+        range_service_register(&mut registry);
 
         // Verify both exist
         assert_eq!(registry.service_count(), 2);
@@ -2175,8 +2175,8 @@ mod registry_tests {
     #[test]
     fn test_lookup_by_name() {
         let mut registry = ServiceRegistry::new();
-        adder_methods::register(&mut registry);
-        rangeservice_methods::register(&mut registry);
+        adder_register(&mut registry);
+        range_service_register(&mut registry);
 
         // Valid lookups
         assert!(registry.lookup_method("Adder", "add").is_some());
@@ -2196,8 +2196,8 @@ mod registry_tests {
         let mut registry = ServiceRegistry::new();
 
         // Register services in a specific order
-        adder_methods::register(&mut registry);
-        rangeservice_methods::register(&mut registry);
+        adder_register(&mut registry);
+        range_service_register(&mut registry);
 
         // Verify that registry assigns sequential IDs
         let add_id = registry.resolve_method_id("Adder", "add").unwrap();
@@ -2219,7 +2219,7 @@ mod registry_tests {
     fn test_doc_capture() {
         // Test that doc comments are captured from the trait and methods
         let mut registry = ServiceRegistry::new();
-        adder_methods::register(&mut registry);
+        adder_register(&mut registry);
 
         let service = registry
             .service("Adder")
@@ -2245,7 +2245,7 @@ mod registry_tests {
     fn test_streaming_method_doc_capture() {
         // Test that doc comments are captured for streaming methods
         let mut registry = ServiceRegistry::new();
-        rangeservice_methods::register(&mut registry);
+        range_service_register(&mut registry);
 
         let service = registry
             .service("RangeService")
