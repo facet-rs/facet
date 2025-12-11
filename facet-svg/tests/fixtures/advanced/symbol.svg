@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <defs>
+    <symbol id="star" viewBox="0 0 100 100">
+      <polygon points="50,10 61,35 87,35 70,57 79,82 50,60 21,82 30,57 13,35 39,35" fill="gold"/>
+    </symbol>
+  </defs>
+  <use x="50" y="50" href="data:star"/>
+</svg>

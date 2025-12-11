@@ -209,6 +209,11 @@ impl TryFrom<&SvgStyle> for SvgStyleProxy {
     }
 }
 
+/// Helper function for skip_serializing_if with SvgStyle
+pub fn is_empty_style(s: &SvgStyle) -> bool {
+    s.properties.is_empty()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

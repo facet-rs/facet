@@ -22,7 +22,7 @@ mod path;
 mod style;
 
 pub use path::{PathCommand, PathData, PathDataProxy};
-pub use style::{Color, SvgStyle, SvgStyleProxy};
+pub use style::{Color, SvgStyle, SvgStyleProxy, is_empty_style};
 
 /// SVG namespace URI
 pub const SVG_NS: &str = "http://www.w3.org/2000/svg";
@@ -32,11 +32,11 @@ pub const SVG_NS: &str = "http://www.w3.org/2000/svg";
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg", rename = "svg")]
 pub struct Svg {
     // Note: xmlns is handled by ns_all, not as a separate field
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub width: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub height: Option<String>,
-    #[facet(xml::attribute, rename = "viewBox")]
+    #[facet(xml::attribute, rename = "viewBox", default, skip_serializing_if = Option::is_none)]
     pub view_box: Option<String>,
     #[facet(xml::elements)]
     pub children: Vec<SvgNode>,
@@ -85,11 +85,11 @@ pub enum SvgNode {
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
 pub struct Group {
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub id: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub class: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub transform: Option<String>,
     #[facet(xml::elements)]
     pub children: Vec<SvgNode>,
@@ -106,7 +106,7 @@ pub struct Defs {
 /// SVG style element (`<style>`)
 #[derive(Facet, Debug, Clone, Default)]
 pub struct Style {
-    #[facet(xml::attribute, rename = "type")]
+    #[facet(xml::attribute, rename = "type", default, skip_serializing_if = Option::is_none)]
     pub type_: Option<String>,
     #[facet(xml::text)]
     pub content: String,
@@ -116,27 +116,27 @@ pub struct Style {
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg", rename_all = "kebab-case")]
 pub struct Rect {
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub x: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub y: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub width: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub height: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub rx: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub ry: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub fill: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke_width: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke_dasharray: Option<String>,
-    #[facet(xml::attribute, proxy = SvgStyleProxy)]
+    #[facet(xml::attribute, proxy = SvgStyleProxy, skip_serializing_if = is_empty_style)]
     pub style: SvgStyle,
 }
 
@@ -144,21 +144,21 @@ pub struct Rect {
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg", rename_all = "kebab-case")]
 pub struct Circle {
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub cx: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub cy: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub r: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub fill: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke_width: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke_dasharray: Option<String>,
-    #[facet(xml::attribute, proxy = SvgStyleProxy)]
+    #[facet(xml::attribute, proxy = SvgStyleProxy, skip_serializing_if = is_empty_style)]
     pub style: SvgStyle,
 }
 
@@ -166,23 +166,23 @@ pub struct Circle {
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg", rename_all = "kebab-case")]
 pub struct Ellipse {
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub cx: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub cy: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub rx: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub ry: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub fill: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke_width: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke_dasharray: Option<String>,
-    #[facet(xml::attribute, proxy = SvgStyleProxy)]
+    #[facet(xml::attribute, proxy = SvgStyleProxy, skip_serializing_if = is_empty_style)]
     pub style: SvgStyle,
 }
 
@@ -190,23 +190,23 @@ pub struct Ellipse {
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg", rename_all = "kebab-case")]
 pub struct Line {
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub x1: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub y1: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub x2: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub y2: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub fill: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke_width: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke_dasharray: Option<String>,
-    #[facet(xml::attribute, proxy = SvgStyleProxy)]
+    #[facet(xml::attribute, proxy = SvgStyleProxy, skip_serializing_if = is_empty_style)]
     pub style: SvgStyle,
 }
 
@@ -214,17 +214,17 @@ pub struct Line {
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
 pub struct Path {
-    #[facet(xml::attribute, proxy = PathDataProxy)]
+    #[facet(xml::attribute, proxy = PathDataProxy, default, skip_serializing_if = Option::is_none)]
     pub d: Option<PathData>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub fill: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke: Option<String>,
-    #[facet(xml::attribute, rename = "stroke-width")]
+    #[facet(xml::attribute, rename = "stroke-width", default, skip_serializing_if = Option::is_none)]
     pub stroke_width: Option<String>,
-    #[facet(xml::attribute, rename = "stroke-dasharray")]
+    #[facet(xml::attribute, rename = "stroke-dasharray", default, skip_serializing_if = Option::is_none)]
     pub stroke_dasharray: Option<String>,
-    #[facet(xml::attribute, proxy = SvgStyleProxy)]
+    #[facet(xml::attribute, proxy = SvgStyleProxy, skip_serializing_if = is_empty_style)]
     pub style: SvgStyle,
 }
 
@@ -232,17 +232,17 @@ pub struct Path {
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
 pub struct Polygon {
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub points: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub fill: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke: Option<String>,
-    #[facet(xml::attribute, rename = "stroke-width")]
+    #[facet(xml::attribute, rename = "stroke-width", default, skip_serializing_if = Option::is_none)]
     pub stroke_width: Option<String>,
-    #[facet(xml::attribute, rename = "stroke-dasharray")]
+    #[facet(xml::attribute, rename = "stroke-dasharray", default, skip_serializing_if = Option::is_none)]
     pub stroke_dasharray: Option<String>,
-    #[facet(xml::attribute, proxy = SvgStyleProxy)]
+    #[facet(xml::attribute, proxy = SvgStyleProxy, skip_serializing_if = is_empty_style)]
     pub style: SvgStyle,
 }
 
@@ -250,17 +250,17 @@ pub struct Polygon {
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
 pub struct Polyline {
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub points: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub fill: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke: Option<String>,
-    #[facet(xml::attribute, rename = "stroke-width")]
+    #[facet(xml::attribute, rename = "stroke-width", default, skip_serializing_if = Option::is_none)]
     pub stroke_width: Option<String>,
-    #[facet(xml::attribute, rename = "stroke-dasharray")]
+    #[facet(xml::attribute, rename = "stroke-dasharray", default, skip_serializing_if = Option::is_none)]
     pub stroke_dasharray: Option<String>,
-    #[facet(xml::attribute, proxy = SvgStyleProxy)]
+    #[facet(xml::attribute, proxy = SvgStyleProxy, skip_serializing_if = is_empty_style)]
     pub style: SvgStyle,
 }
 
@@ -268,21 +268,21 @@ pub struct Polyline {
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
 pub struct Text {
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub x: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub y: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub fill: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub stroke: Option<String>,
-    #[facet(xml::attribute, rename = "stroke-width")]
+    #[facet(xml::attribute, rename = "stroke-width", default, skip_serializing_if = Option::is_none)]
     pub stroke_width: Option<String>,
-    #[facet(xml::attribute, proxy = SvgStyleProxy)]
+    #[facet(xml::attribute, proxy = SvgStyleProxy, skip_serializing_if = is_empty_style)]
     pub style: SvgStyle,
-    #[facet(xml::attribute, rename = "text-anchor")]
+    #[facet(xml::attribute, rename = "text-anchor", default, skip_serializing_if = Option::is_none)]
     pub text_anchor: Option<String>,
-    #[facet(xml::attribute, rename = "dominant-baseline")]
+    #[facet(xml::attribute, rename = "dominant-baseline", default, skip_serializing_if = Option::is_none)]
     pub dominant_baseline: Option<String>,
     #[facet(xml::text)]
     pub content: String,
@@ -292,15 +292,15 @@ pub struct Text {
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
 pub struct Use {
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub x: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub y: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub width: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub height: Option<f64>,
-    #[facet(xml::attribute, rename = "xlink:href")]
+    #[facet(xml::attribute, rename = "xlink:href", default, skip_serializing_if = Option::is_none)]
     pub href: Option<String>,
 }
 
@@ -308,17 +308,17 @@ pub struct Use {
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
 pub struct Image {
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub x: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub y: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub width: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub height: Option<f64>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub href: Option<String>,
-    #[facet(xml::attribute, proxy = SvgStyleProxy)]
+    #[facet(xml::attribute, proxy = SvgStyleProxy, skip_serializing_if = is_empty_style)]
     pub style: SvgStyle,
 }
 
@@ -342,13 +342,13 @@ pub struct Desc {
 #[derive(Facet, Debug, Clone, Default)]
 #[facet(xml::ns_all = "http://www.w3.org/2000/svg")]
 pub struct Symbol {
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub id: Option<String>,
-    #[facet(xml::attribute, rename = "viewBox")]
+    #[facet(xml::attribute, rename = "viewBox", default, skip_serializing_if = Option::is_none)]
     pub view_box: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub width: Option<String>,
-    #[facet(xml::attribute)]
+    #[facet(xml::attribute, default, skip_serializing_if = Option::is_none)]
     pub height: Option<String>,
     #[facet(xml::elements)]
     pub children: Vec<SvgNode>,
