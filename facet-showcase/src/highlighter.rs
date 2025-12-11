@@ -454,3 +454,14 @@ fn ansi_256_to_rgb(n: u8) -> &'static str {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Language;
+
+    #[test]
+    fn xml_language_metadata_is_exposed() {
+        assert_eq!(Language::Xml.name(), "XML");
+        assert_eq!(Language::Xml.extension(), "xml");
+    }
+}
