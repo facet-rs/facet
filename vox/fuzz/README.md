@@ -6,9 +6,21 @@
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/fuzz.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-Fuzzing harness for rapace.
+Fuzz testing suite for rapace RPC framework.
 
-For developers running fuzz tests on rapace.
+## Running Fuzz Tests
+
+Execute fuzz tests using the standard cargo test framework:
+
+```bash
+cargo test --test fuzz
+```
+
+Or with specific seed/iteration controls via the underlying fuzzing engine.
+
+## Structure
+
+This crate provides property-based testing and fuzz targets for validating rapace's correctness under various inputs and conditions.
 
 ## Sponsors
 

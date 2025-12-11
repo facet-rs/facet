@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "Proc macros for rapace RPC (#[rapace::service])"
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [lib]
 proc-macro = true
 

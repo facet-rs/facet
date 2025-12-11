@@ -7,6 +7,9 @@ repository.workspace = true
 description = "HTTP types and service trait for rapace RPC"
 publish = false
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 tracing.workspace = true
 rapace.workspace = true

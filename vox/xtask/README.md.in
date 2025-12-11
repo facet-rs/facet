@@ -1,0 +1,13 @@
+Build and development tasks for the rapace workspace.
+
+This crate provides useful Cargo tasks and build utilities for developing rapace and all its subcrates.
+
+## Available Tasks
+
+Run tasks using `cargo xtask <command>`:
+
+```bash
+cargo xtask [command]
+```
+
+Tasks help automate common development workflows including testing, documentation generation, and release management.

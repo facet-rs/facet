@@ -6,9 +6,19 @@
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/xtask.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-Extra Cargo tasks for rapace build and development.
+Build and development tasks for the rapace workspace.
 
-Run with `cargo xtask ...` for common development operations.
+This crate provides useful Cargo tasks and build utilities for developing rapace and all its subcrates.
+
+## Available Tasks
+
+Run tasks using `cargo xtask <command>`:
+
+```bash
+cargo xtask [command]
+```
+
+Tasks help automate common development workflows including testing, documentation generation, and release management.
 
 ## Sponsors
 

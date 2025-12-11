@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "WebSocket transport for rapace"
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 rapace-core.workspace = true
 futures.workspace = true

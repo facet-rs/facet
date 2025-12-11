@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "Service registry with schema support for rapace RPC"
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 facet-core.workspace = true
 

@@ -7,6 +7,9 @@ repository.workspace = true
 description = "Explorer service for rapace - dynamic service discovery and method invocation"
 publish = false
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 rapace.workspace = true
 facet.workspace = true

@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "Core types and traits for rapace RPC"
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 async-stream.workspace = true
 bitflags.workspace = true

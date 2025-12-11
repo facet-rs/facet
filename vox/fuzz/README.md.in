@@ -1,0 +1,15 @@
+Fuzz testing suite for rapace RPC framework.
+
+## Running Fuzz Tests
+
+Execute fuzz tests using the standard cargo test framework:
+
+```bash
+cargo test --test fuzz
+```
+
+Or with specific seed/iteration controls via the underlying fuzzing engine.
+
+## Structure
+
+This crate provides property-based testing and fuzz targets for validating rapace's correctness under various inputs and conditions.

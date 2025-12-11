@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "TCP/Unix socket transport for rapace"
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 rapace-core.workspace = true
 tokio = { workspace = true, features = ["io-util"] }

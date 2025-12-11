@@ -6,6 +6,9 @@ license.workspace = true
 repository.workspace = true
 description = "In-process transport for rapace (semantic reference implementation)"
 
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 rapace-core.workspace = true
 tokio.workspace = true
