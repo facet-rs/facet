@@ -9,7 +9,7 @@ rust-version.workspace = true
 description = "Parser for facet derive macros - takes TokenStream and returns parsed type representations"
 
 [dependencies]
-facet-macro-types = { path = "../facet-macro-types" }
+facet-macro-types = { version = "0.32.0", path = "../facet-macro-types" }
 unsynn = "0.3.0"
 proc-macro2 = "1"
 quote = "1"
