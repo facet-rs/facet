@@ -7,18 +7,10 @@ repository.workspace = true
 description = "Tracing subscriber that forwards spans/events over rapace RPC"
 
 [dependencies]
-rapace = { path = "../rapace" }
-rapace-testkit = { path = "../rapace-testkit" }
-
-# facet for serialization
-facet = "0.32.1"
-
-# tracing ecosystem
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
-
-# async
-tokio = { version = "1", features = ["sync", "rt"] }
-
-# synchronization
-parking_lot = "0.12"
+rapace.workspace = true
+rapace-testkit.workspace = true
+facet.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio = { workspace = true, features = ["sync", "rt"] }
+parking_lot.workspace = true

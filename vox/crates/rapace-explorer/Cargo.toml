@@ -8,5 +8,5 @@ description = "Explorer service for rapace - dynamic service discovery and metho
 publish = false
 
 [dependencies]
-rapace = { path = "../rapace" }
-facet = { workspace = true }
+rapace.workspace = true
+facet.workspace = true

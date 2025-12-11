@@ -8,9 +8,7 @@ description = "HTTP types and service trait for rapace RPC"
 publish = false
 
 [dependencies]
-tracing = { workspace = true }
-rapace = { path = "../rapace" }
-rapace-testkit = { path = "../rapace-testkit" }
-
-# facet for serialization
-facet = "0.32.1"
+tracing.workspace = true
+rapace.workspace = true
+rapace-testkit.workspace = true
+facet.workspace = true
