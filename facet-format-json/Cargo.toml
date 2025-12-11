@@ -1,0 +1,29 @@
+[package]
+name = "facet-format-json"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet-core = { path = "../facet-core" }
+facet-format = { path = "../facet-format" }
+facet-json = { path = "../facet-json" }
+facet-reflect = { path = "../facet-reflect" }
+
+[dev-dependencies]
+facet = { path = "../facet" }
+facet-format-suite = { path = "../facet-format-suite" }
+indoc = "2"
+libtest-mimic = "0.8.1"
+
+[[test]]
+name = "format_suite"
+harness = false

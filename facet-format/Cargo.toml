@@ -1,0 +1,22 @@
+[package]
+name = "facet-format"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+facet-core = { path = "../facet-core" }
+facet-reflect = { path = "../facet-reflect" }
+facet-solver = { path = "../facet-solver" }
+facet-value = { path = "../facet-value" }
+
+[dev-dependencies]
+facet-format-json = { path = "../facet-format-json" }

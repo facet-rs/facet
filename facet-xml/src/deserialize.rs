@@ -2644,7 +2644,7 @@ impl<'input> XmlDeserializer<'input> {
 
         // First, handle attributes using the configuration
         for (attr_name, attr_value) in attributes {
-            if let Some(field_info) = config.field(&attr_name.local_name) {
+            if let Some(field_info) = config.resolution().field(&attr_name.local_name) {
                 let segments = field_info.path.segments();
 
                 // Navigate to the field through the path, tracking Option fields
@@ -2716,7 +2716,7 @@ impl<'input> XmlDeserializer<'input> {
                     } => {
                         let is_elem_empty = matches!(event.event, OwnedEvent::Empty { .. });
 
-                        if let Some(field_info) = config.field(&name.local_name) {
+                        if let Some(field_info) = config.resolution().field(&name.local_name) {
                             let segments = field_info.path.segments();
 
                             // Navigate to the field through the path, tracking Option fields

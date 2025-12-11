@@ -9,7 +9,8 @@ use facet_core::{
 };
 use facet_reflect::{Partial, is_spanned_shape};
 use facet_solver::{
-    FieldPath, KeyResult, MatchResult, PathSegment, Resolution, SatisfyResult, Schema, Solver,
+    FieldPath, KeyResult, MatchResult, PathSegment, Resolution, ResolutionHandle, SatisfyResult,
+    Schema, Solver,
 };
 use kdl::{KdlDocument, KdlEntry, KdlNode, KdlValue};
 use miette::SourceSpan;
@@ -1080,7 +1081,8 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 );
                 // Also mark the variant name as "seen" so finish() doesn't report it as missing
                 // We need to find the static variant name from the remaining candidates
-                if let Some(resolution) = solver.candidates().first() {
+                if let Some(handle) = solver.candidates().first() {
+                    let resolution = handle.resolution();
                     for vs in resolution.variant_selections() {
                         // Check both exact match and kebab conversion
                         if vs.variant_name == variant_name.as_str()
@@ -1138,7 +1140,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
         // Phase 1: Process all properties through the solver
         // The solver supports value-based disambiguation for same-named fields with different types
-        let mut resolved_resolution: Option<&Resolution> = None;
+        let mut resolved_resolution: Option<ResolutionHandle<'_>> = None;
 
         for (idx, prop_name) in property_names.iter().enumerate() {
             // If already resolved, skip solver interaction
@@ -1150,10 +1152,11 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             log::trace!("Solver result for '{prop_name}': {result:?}");
 
             match result {
-                KeyResult::Solved(resolution) => {
+                KeyResult::Solved(handle) => {
+                    let resolution = handle.resolution();
                     // Disambiguated by key alone
                     log::trace!("Solved to resolution: {}", resolution.describe());
-                    resolved_resolution = Some(resolution);
+                    resolved_resolution = Some(handle);
                     partial = start_deferred(partial, resolution)?;
                 }
                 KeyResult::Unambiguous { shape: _ } => {
@@ -1228,12 +1231,13 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                     // Use satisfy_at_path to check only THIS specific field, not all fields
                     // This is crucial because other fields might share the same type
                     match solver.satisfy_at_path(&[prop_name.as_str()], &satisfied_shapes) {
-                        SatisfyResult::Solved(resolution) => {
+                        SatisfyResult::Solved(handle) => {
+                            let resolution = handle.resolution();
                             log::trace!(
                                 "Value disambiguation solved to: {}",
                                 resolution.describe()
                             );
-                            resolved_resolution = Some(resolution);
+                            resolved_resolution = Some(handle);
                             partial = start_deferred(partial, resolution)?;
                         }
                         SatisfyResult::Continue => {
@@ -1292,13 +1296,14 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 log::trace!("Solver probe_key result for child '{child_name}': {result:?}");
 
                 match result {
-                    KeyResult::Solved(resolution) => {
+                    KeyResult::Solved(handle) => {
+                        let resolution = handle.resolution();
                         log::trace!(
                             "Child node '{}' solved to: {}",
                             child_name,
                             resolution.describe()
                         );
-                        resolved_resolution = Some(resolution);
+                        resolved_resolution = Some(handle);
                         partial = start_deferred(partial, resolution)?;
                     }
                     KeyResult::Unambiguous { .. } | KeyResult::Unknown => {
@@ -1326,12 +1331,13 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                             );
 
                             match result {
-                                KeyResult::Solved(resolution) => {
+                                KeyResult::Solved(handle) => {
+                                    let resolution = handle.resolution();
                                     log::trace!(
                                         "Nested property solved to: {}",
                                         resolution.describe()
                                     );
-                                    resolved_resolution = Some(resolution);
+                                    resolved_resolution = Some(handle);
                                     break;
                                 }
                                 KeyResult::Ambiguous { .. } => {
@@ -1374,12 +1380,13 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                                     );
 
                                     match solver.satisfy_at_path(&full_path, &satisfied_shapes) {
-                                        SatisfyResult::Solved(resolution) => {
+                                        SatisfyResult::Solved(handle) => {
+                                            let resolution = handle.resolution();
                                             log::trace!(
                                                 "Nested value disambiguation solved to: {}",
                                                 resolution.describe()
                                             );
-                                            resolved_resolution = Some(resolution);
+                                            resolved_resolution = Some(handle);
                                             partial = start_deferred(partial, resolution)?;
                                             break;
                                         }
@@ -1425,7 +1432,8 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             // Filter to only viable candidates (all required fields satisfied)
             let viable_candidates: Vec<_> = remaining_candidates
                 .iter()
-                .filter(|resolution| {
+                .filter(|handle| {
+                    let resolution = handle.resolution();
                     // Check if this resolution matches (not NoMatch = has all required fields)
                     !matches!(resolution.matches(&seen_props), MatchResult::NoMatch { .. })
                 })
@@ -1433,13 +1441,14 @@ impl<'input, 'facet> KdlDeserializer<'input> {
 
             if viable_candidates.len() > 1 {
                 // Check if all viable candidates have identical types for all seen props
-                let first = viable_candidates[0];
+                let first = viable_candidates[0].resolution();
                 let first_types: Vec<_> = seen_props
                     .iter()
                     .filter_map(|key| first.field(key).map(|f| f.value_shape))
                     .collect();
 
-                let all_identical = viable_candidates[1..].iter().all(|resolution| {
+                let all_identical = viable_candidates[1..].iter().all(|handle| {
+                    let resolution = handle.resolution();
                     seen_props
                         .iter()
                         .filter_map(|key| resolution.field(key).map(|f| f.value_shape))
@@ -1448,8 +1457,10 @@ impl<'input, 'facet> KdlDeserializer<'input> {
                 });
 
                 if all_identical {
-                    let candidates: Vec<_> =
-                        viable_candidates.iter().map(|c| c.describe()).collect();
+                    let candidates: Vec<_> = viable_candidates
+                        .iter()
+                        .map(|handle| handle.resolution().describe())
+                        .collect();
                     // Build a proper SolverError::Ambiguous
                     return Err(self.err(KdlErrorKind::Solver(
                         facet_solver::SolverError::Ambiguous {
@@ -1462,8 +1473,8 @@ impl<'input, 'facet> KdlDeserializer<'input> {
         }
 
         // Finish solving - this checks for ambiguity and missing required fields
-        let final_resolution = match resolved_resolution {
-            Some(resolution) => resolution,
+        let final_handle = match resolved_resolution {
+            Some(handle) => handle,
             None => {
                 // Call finish to get the resolution or error - pass through full error
                 solver
@@ -1472,6 +1483,7 @@ impl<'input, 'facet> KdlDeserializer<'input> {
             }
         };
 
+        let final_resolution = final_handle.resolution();
         partial = start_deferred(partial, final_resolution)?;
 
         log::trace!("Final resolution: {}", final_resolution.describe());

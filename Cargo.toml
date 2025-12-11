@@ -59,7 +59,13 @@ members = [
     "facet-bloatbench",
     "xtask",
 
-    "facet-shapelike"
+    "facet-shapelike",
+
+    # experimental format abstraction
+    "facet-format",
+    "facet-format-json",
+    "facet-format-xml",
+    "facet-format-suite",
 ]
 exclude = [
     # proto-attr experiment uses nightly features

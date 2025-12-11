@@ -36,7 +36,9 @@ use alloc::vec::Vec;
 #[cfg(feature = "diagnostics")]
 use alloc::boxed::Box;
 
-use facet_core::{Def, Facet, Shape, StructKind, Type, UserType};
+use facet_core::{
+    Def, Facet, NumericType, PrimitiveType, Shape, StructKind, Type, UserType, Variant,
+};
 use facet_reflect::{Partial, ReflectError};
 
 use crate::{VNumber, Value, ValueType};
@@ -792,6 +794,12 @@ fn deserialize_tuple<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<
 /// Deserialize an enum from a Value.
 fn deserialize_enum<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p>> {
     let mut partial = partial;
+    let shape = partial.shape();
+
+    if shape.is_untagged() {
+        return deserialize_untagged_enum(value, partial);
+    }
+
     match value.value_type() {
         // String = unit variant
         ValueType::String => {
@@ -813,81 +821,148 @@ fn deserialize_enum<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'
 
             partial = partial.select_variant_named(variant_name)?;
 
-            // Get the selected variant to determine how to deserialize
             let variant = partial.selected_variant().ok_or_else(|| {
                 ValueError::new(ValueErrorKind::Unsupported {
                     message: "failed to get selected variant".into(),
                 })
             })?;
 
-            match variant.data.kind {
-                StructKind::Unit => {
-                    // Unit variant - val should be null
-                    if !val.is_null() {
-                        return Err(ValueError::new(ValueErrorKind::TypeMismatch {
-                            expected: "null for unit variant",
-                            got: val.value_type(),
-                        }));
-                    }
-                }
-                StructKind::TupleStruct | StructKind::Tuple => {
-                    let num_fields = variant.data.fields.len();
-                    if num_fields == 0 {
-                        // Zero-field tuple variant, same as unit
-                    } else if num_fields == 1 {
-                        // Single-element tuple: value directly
-                        partial = partial.begin_nth_field(0)?;
-                        partial = deserialize_value_into(val, partial)?;
-                        partial = partial.end()?;
-                    } else {
-                        // Multi-element tuple: array
-                        let arr = val.as_array().ok_or_else(|| {
-                            ValueError::new(ValueErrorKind::TypeMismatch {
-                                expected: "array for tuple variant",
-                                got: val.value_type(),
-                            })
-                        })?;
-
-                        if arr.len() != num_fields {
-                            return Err(ValueError::new(ValueErrorKind::Unsupported {
-                                message: format!(
-                                    "tuple variant has {} fields but got {}",
-                                    num_fields,
-                                    arr.len()
-                                ),
-                            }));
-                        }
-
-                        for (i, item) in arr.iter().enumerate() {
-                            partial = partial.begin_nth_field(i)?;
-                            partial = deserialize_value_into(item, partial)?;
-                            partial = partial.end()?;
-                        }
-                    }
-                }
-                StructKind::Struct => {
-                    // Struct variant: object with named fields
-                    let inner_obj = val.as_object().ok_or_else(|| {
-                        ValueError::new(ValueErrorKind::TypeMismatch {
-                            expected: "object for struct variant",
-                            got: val.value_type(),
-                        })
-                    })?;
-
-                    for (field_key, field_val) in inner_obj.iter() {
-                        partial = partial.begin_field(field_key.as_str())?;
-                        partial = deserialize_value_into(field_val, partial)?;
-                        partial = partial.end()?;
-                    }
-                }
-            }
-
-            Ok(partial)
+            populate_variant_from_value(val, partial, &variant)
         }
         other => Err(ValueError::new(ValueErrorKind::TypeMismatch {
             expected: "string or object for enum",
             got: other,
         })),
+    }
+}
+
+fn deserialize_untagged_enum<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p>> {
+    let mut partial = partial;
+    let shape = partial.shape();
+    let enum_type = match &shape.ty {
+        Type::User(UserType::Enum(enum_def)) => enum_def,
+        _ => {
+            return Err(ValueError::new(ValueErrorKind::Unsupported {
+                message: "expected enum type".into(),
+            }));
+        }
+    };
+
+    for variant in enum_type.variants.iter() {
+        if value_matches_variant(value, variant) {
+            partial = partial.select_variant_named(variant.name)?;
+            return populate_variant_from_value(value, partial, variant);
+        }
+    }
+
+    Err(ValueError::new(ValueErrorKind::TypeMismatch {
+        expected: shape.type_identifier,
+        got: value.value_type(),
+    }))
+}
+
+fn populate_variant_from_value<'p>(
+    value: &Value,
+    mut partial: Partial<'p>,
+    variant: &Variant,
+) -> Result<Partial<'p>> {
+    match variant.data.kind {
+        StructKind::Unit => {
+            if !matches!(value.value_type(), ValueType::Null) {
+                return Err(ValueError::new(ValueErrorKind::TypeMismatch {
+                    expected: "null for unit variant",
+                    got: value.value_type(),
+                }));
+            }
+        }
+        StructKind::TupleStruct | StructKind::Tuple => {
+            let num_fields = variant.data.fields.len();
+            if num_fields == 0 {
+                // nothing to populate
+            } else if num_fields == 1 {
+                partial = partial.begin_nth_field(0)?;
+                partial = deserialize_value_into(value, partial)?;
+                partial = partial.end()?;
+            } else {
+                let arr = value.as_array().ok_or_else(|| {
+                    ValueError::new(ValueErrorKind::TypeMismatch {
+                        expected: "array for tuple variant",
+                        got: value.value_type(),
+                    })
+                })?;
+
+                if arr.len() != num_fields {
+                    return Err(ValueError::new(ValueErrorKind::Unsupported {
+                        message: format!(
+                            "tuple variant has {} fields but got {}",
+                            num_fields,
+                            arr.len()
+                        ),
+                    }));
+                }
+
+                for (i, item) in arr.iter().enumerate() {
+                    partial = partial.begin_nth_field(i)?;
+                    partial = deserialize_value_into(item, partial)?;
+                    partial = partial.end()?;
+                }
+            }
+        }
+        StructKind::Struct => {
+            let inner_obj = value.as_object().ok_or_else(|| {
+                ValueError::new(ValueErrorKind::TypeMismatch {
+                    expected: "object for struct variant",
+                    got: value.value_type(),
+                })
+            })?;
+
+            for (field_key, field_val) in inner_obj.iter() {
+                partial = partial.begin_field(field_key.as_str())?;
+                partial = deserialize_value_into(field_val, partial)?;
+                partial = partial.end()?;
+            }
+        }
+    }
+
+    Ok(partial)
+}
+
+fn value_matches_variant(value: &Value, variant: &Variant) -> bool {
+    match variant.data.kind {
+        StructKind::Unit => matches!(value.value_type(), ValueType::Null),
+        StructKind::TupleStruct | StructKind::Tuple => {
+            let fields = variant.data.fields;
+            if fields.is_empty() {
+                matches!(value.value_type(), ValueType::Null)
+            } else if fields.len() == 1 {
+                value_matches_shape(value, fields[0].shape.get())
+            } else {
+                value
+                    .as_array()
+                    .map(|arr| arr.len() == fields.len())
+                    .unwrap_or(false)
+            }
+        }
+        StructKind::Struct => matches!(value.value_type(), ValueType::Object),
+    }
+}
+
+fn value_matches_shape(value: &Value, shape: &'static Shape) -> bool {
+    match &shape.ty {
+        Type::Primitive(PrimitiveType::Boolean) => {
+            matches!(value.value_type(), ValueType::Bool)
+        }
+        Type::Primitive(PrimitiveType::Numeric(num)) => match num {
+            NumericType::Integer { signed } => {
+                if *signed {
+                    value.as_number().and_then(|n| n.to_i64()).is_some()
+                } else {
+                    value.as_number().and_then(|n| n.to_u64()).is_some()
+                }
+            }
+            NumericType::Float => value.as_number().and_then(|n| n.to_f64()).is_some(),
+        },
+        _ => true,
     }
 }
 

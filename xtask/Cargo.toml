@@ -5,8 +5,6 @@ edition = "2024"
 rust-version = "1.89.0"
 publish = false
 
-[package.metadata]
-
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 

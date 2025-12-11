@@ -9,8 +9,6 @@ description = "Unsynn grammar and type definitions for facet macro ecosystem"
 keywords = ["reflection", "macros", "derive"]
 categories = ["development-tools"]
 
-[package.metadata]
-
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 

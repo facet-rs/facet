@@ -10,9 +10,6 @@ documentation = "https://docs.rs/facet-args"
 keywords = ["cli", "args", "parser", "facet"]
 categories = ["command-line-interface"]
 
-[package.metadata.docs.rs]
-rustdoc-args = ["--html-in-header", "arborium-header.html"]
-
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 

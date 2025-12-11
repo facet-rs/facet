@@ -9,8 +9,6 @@ description = "Axum integration for Facet - extractors and responses using Facet
 keywords = ["axum", "web", "json", "serialization", "facet"]
 categories = ["web-programming", "encoding"]
 
-[package.metadata]
-
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 

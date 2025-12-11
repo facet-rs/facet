@@ -40,6 +40,41 @@ pub struct Schema {
     field_to_resolutions: BTreeMap<&'static str, ResolutionSet>,
 }
 
+/// Handle that identifies a specific resolution inside a schema.
+#[derive(Debug, Clone, Copy)]
+pub struct ResolutionHandle<'a> {
+    index: usize,
+    resolution: &'a Resolution,
+}
+
+impl<'a> PartialEq for ResolutionHandle<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index
+    }
+}
+
+impl<'a> Eq for ResolutionHandle<'a> {}
+
+impl<'a> ResolutionHandle<'a> {
+    /// Internal helper to build a handle for an index within a schema.
+    fn from_schema(schema: &'a Schema, index: usize) -> Self {
+        Self {
+            index,
+            resolution: &schema.resolutions[index],
+        }
+    }
+
+    /// Resolution index within the originating schema.
+    pub const fn index(self) -> usize {
+        self.index
+    }
+
+    /// Access the underlying resolution metadata.
+    pub const fn resolution(self) -> &'a Resolution {
+        self.resolution
+    }
+}
+
 /// A set of configuration indices, stored as a bitmask for O(1) intersection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolutionSet {
@@ -399,7 +434,7 @@ pub enum KeyResult<'a> {
     },
 
     /// This key disambiguated to exactly one configuration.
-    Solved(&'a Resolution),
+    Solved(ResolutionHandle<'a>),
 
     /// This key doesn't exist in any remaining candidate.
     Unknown,
@@ -412,7 +447,7 @@ pub enum SatisfyResult<'a> {
     Continue,
 
     /// Solved to exactly one configuration.
-    Solved(&'a Resolution),
+    Solved(ResolutionHandle<'a>),
 
     /// No configuration can accept the value (no fields were satisfied).
     NoMatch,
@@ -518,7 +553,7 @@ impl<'a> Solver<'a> {
         // Check if we've disambiguated to exactly one
         if self.candidates.len() == 1 {
             let idx = self.candidates.first().unwrap();
-            return KeyResult::Solved(&self.schema.resolutions[idx]);
+            return KeyResult::Solved(self.handle(idx));
         }
 
         // Collect unique fields (by shape pointer) across remaining candidates
@@ -636,7 +671,7 @@ impl<'a> Solver<'a> {
             0 => SatisfyResult::NoMatch,
             1 => {
                 let idx = self.candidates.first().unwrap();
-                SatisfyResult::Solved(&self.schema.resolutions[idx])
+                SatisfyResult::Solved(self.handle(idx))
             }
             _ => SatisfyResult::Continue,
         }
@@ -692,23 +727,25 @@ impl<'a> Solver<'a> {
             0 => SatisfyResult::NoMatch,
             1 => {
                 let idx = self.candidates.first().unwrap();
-                SatisfyResult::Solved(&self.schema.resolutions[idx])
+                SatisfyResult::Solved(self.handle(idx))
             }
             _ => SatisfyResult::Continue,
         }
     }
 
     /// Get the current candidate resolutions.
-    pub fn candidates(&self) -> Vec<&'a Resolution> {
-        self.candidates
-            .iter()
-            .map(|idx| &self.schema.resolutions[idx])
-            .collect()
+    pub fn candidates(&self) -> Vec<ResolutionHandle<'a>> {
+        self.candidates.iter().map(|idx| self.handle(idx)).collect()
     }
 
     /// Get the seen keys.
     pub fn seen_keys(&self) -> &BTreeSet<Cow<'a, str>> {
         &self.seen_keys
+    }
+
+    #[inline]
+    fn handle(&self, idx: usize) -> ResolutionHandle<'a> {
+        ResolutionHandle::from_schema(self.schema, idx)
     }
 
     /// Hint that a specific enum variant should be selected.
@@ -860,7 +897,7 @@ impl<'a> Solver<'a> {
         // Check if we've disambiguated to exactly one
         if self.candidates.len() == 1 {
             let idx = self.candidates.first().unwrap();
-            return KeyResult::Solved(&self.schema.resolutions[idx]);
+            return KeyResult::Solved(self.handle(idx));
         }
 
         // Get the shape at this path for each remaining candidate
@@ -974,18 +1011,22 @@ impl<'a> Solver<'a> {
     /// determine that `Git` is missing its required `branch` field, leaving `Http`
     /// as the sole viable configuration.
     #[allow(clippy::result_large_err)] // SolverError intentionally contains detailed diagnostic info
-    pub fn finish(self) -> Result<&'a Resolution, SolverError> {
+    pub fn finish(self) -> Result<ResolutionHandle<'a>, SolverError> {
+        let Solver {
+            schema,
+            candidates,
+            seen_keys,
+        } = self;
+
         // Compute all known fields across all resolutions (for unknown field detection)
-        let all_known_fields: BTreeSet<&'static str> = self
-            .schema
+        let all_known_fields: BTreeSet<&'static str> = schema
             .resolutions
             .iter()
             .flat_map(|r| r.fields().keys().copied())
             .collect();
 
         // Find unknown fields (fields in input that don't exist in ANY resolution)
-        let unknown_fields: Vec<String> = self
-            .seen_keys
+        let unknown_fields: Vec<String> = seen_keys
             .iter()
             .filter(|k| !all_known_fields.contains(k.as_ref()))
             .map(|s| s.to_string())
@@ -994,20 +1035,19 @@ impl<'a> Solver<'a> {
         // Compute suggestions for unknown fields
         let suggestions = compute_suggestions(&unknown_fields, &all_known_fields);
 
-        if self.candidates.is_empty() {
+        if candidates.is_empty() {
             // Build per-candidate failure info for all resolutions
-            let mut candidate_failures: Vec<CandidateFailure> = self
-                .schema
+            let mut candidate_failures: Vec<CandidateFailure> = schema
                 .resolutions
                 .iter()
-                .map(|config| build_candidate_failure(config, &self.seen_keys))
+                .map(|config| build_candidate_failure(config, &seen_keys))
                 .collect();
 
             // Sort by closeness (best match first)
             sort_candidates_by_closeness(&mut candidate_failures);
 
             return Err(SolverError::NoMatch {
-                input_fields: self.seen_keys.iter().map(|s| s.to_string()).collect(),
+                input_fields: seen_keys.iter().map(|s| s.to_string()).collect(),
                 missing_required: Vec::new(),
                 missing_required_detailed: Vec::new(),
                 unknown_fields,
@@ -1018,27 +1058,25 @@ impl<'a> Solver<'a> {
         }
 
         // Filter candidates to only those that have all required fields satisfied
-        let viable: Vec<usize> = self
-            .candidates
+        let viable: Vec<usize> = candidates
             .iter()
             .filter(|idx| {
-                let config = &self.schema.resolutions[*idx];
+                let config = &schema.resolutions[*idx];
                 config
                     .required_field_names()
                     .iter()
-                    .all(|f| self.seen_keys.iter().any(|k| k.as_ref() == *f))
+                    .all(|f| seen_keys.iter().any(|k| k.as_ref() == *f))
             })
             .collect();
 
         match viable.len() {
             0 => {
                 // No viable candidates - build per-candidate failure info
-                let mut candidate_failures: Vec<CandidateFailure> = self
-                    .candidates
+                let mut candidate_failures: Vec<CandidateFailure> = candidates
                     .iter()
                     .map(|idx| {
-                        let config = &self.schema.resolutions[idx];
-                        build_candidate_failure(config, &self.seen_keys)
+                        let config = &schema.resolutions[idx];
+                        build_candidate_failure(config, &seen_keys)
                     })
                     .collect();
 
@@ -1048,19 +1086,16 @@ impl<'a> Solver<'a> {
                 // For backwards compatibility, also populate the "closest" fields
                 // Now use the first (closest) candidate after sorting
                 let closest_name = candidate_failures.first().map(|f| f.variant_name.clone());
-                let closest_config = closest_name.as_ref().and_then(|name| {
-                    self.schema
-                        .resolutions
-                        .iter()
-                        .find(|r| r.describe() == *name)
-                });
+                let closest_config = closest_name
+                    .as_ref()
+                    .and_then(|name| schema.resolutions.iter().find(|r| r.describe() == *name));
 
                 let (missing, missing_detailed, closest_resolution) =
                     if let Some(config) = closest_config {
                         let missing: Vec<_> = config
                             .required_field_names()
                             .iter()
-                            .filter(|f| !self.seen_keys.iter().any(|k| k.as_ref() == **f))
+                            .filter(|f| !seen_keys.iter().any(|k| k.as_ref() == **f))
                             .copied()
                             .collect();
                         let missing_detailed: Vec<_> = missing
@@ -1074,7 +1109,7 @@ impl<'a> Solver<'a> {
                     };
 
                 Err(SolverError::NoMatch {
-                    input_fields: self.seen_keys.iter().map(|s| s.to_string()).collect(),
+                    input_fields: seen_keys.iter().map(|s| s.to_string()).collect(),
                     missing_required: missing,
                     missing_required_detailed: missing_detailed,
                     unknown_fields,
@@ -1085,14 +1120,11 @@ impl<'a> Solver<'a> {
             }
             1 => {
                 // Exactly one viable candidate - success!
-                Ok(&self.schema.resolutions[viable[0]])
+                Ok(ResolutionHandle::from_schema(schema, viable[0]))
             }
             _ => {
                 // Multiple viable candidates - ambiguous!
-                let configs: Vec<_> = viable
-                    .iter()
-                    .map(|&idx| &self.schema.resolutions[idx])
-                    .collect();
+                let configs: Vec<_> = viable.iter().map(|&idx| &schema.resolutions[idx]).collect();
                 let candidates: Vec<String> = configs.iter().map(|c| c.describe()).collect();
                 let disambiguating_fields = find_disambiguating_fields(&configs);
 

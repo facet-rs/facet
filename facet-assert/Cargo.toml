@@ -9,8 +9,6 @@ description = "Pretty assertions for Facet types - no PartialEq required"
 keywords = ["facet", "assert", "testing", "diff", "comparison"]
 categories = ["development-tools", "development-tools::testing"]
 
-[package.metadata]
-
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 

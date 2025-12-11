@@ -1760,9 +1760,10 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
         // ========== Get the resolved Configuration ==========
         // Get seen keys before finish() consumes the solver
         let seen_keys = solver.seen_keys().clone();
-        let config = solver
+        let config_handle = solver
             .finish()
             .map_err(|e| JsonError::without_span(JsonErrorKind::Solver(format!("{e}"))))?;
+        let config = config_handle.resolution();
 
         // ========== PASS 2: Deserialize with proper path handling ==========
         // Sort fields by path depth (deepest first within each prefix group)
@@ -2190,9 +2191,10 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
                 }
 
                 // ========== Get the resolved variant ==========
-                let config = solver
+                let config_handle = solver
                     .finish()
                     .map_err(|e| JsonError::without_span(JsonErrorKind::Solver(format!("{e}"))))?;
+                let config = config_handle.resolution();
 
                 // Extract the variant name from the resolution
                 let variant_name = config
