@@ -28,6 +28,7 @@ pub mod builtin {
     pub use crate::DefaultInPlaceFn;
     pub use crate::InvariantsFn;
     pub use crate::SkipSerializingIfFn;
+    pub use crate::TruthyFn;
 
     // Generate built-in attribute grammar.
     // Uses empty namespace "" for built-in facet attributes.
@@ -112,6 +113,12 @@ pub mod builtin {
             /// Usage: `#[facet(skip_serializing_if = is_empty)]`
             SkipSerializingIf(predicate SkipSerializingIfFn),
 
+            /// Skips serialization unless the value is truthy.
+            /// Uses the type's registered truthiness predicate when available.
+            ///
+            /// Usage: `#[facet(skip_unless_truthy)]`
+            SkipUnlessTruthy,
+
             /// Skips deserialization of this field (uses default value).
             ///
             /// Usage: `#[facet(skip_deserializing)]`
@@ -165,6 +172,17 @@ pub mod builtin {
             ///
             /// Usage: `#[facet(invariants = validate_fn)]`
             Invariants(predicate InvariantsFn),
+
+            /// Declares the truthiness predicate for this container type.
+            /// Stores a type-erased function pointer: `fn(PtrConst) -> bool`.
+            ///
+            /// Usage: `#[facet(truthy = Self::is_truthy)]`
+            Truthy(predicate TruthyFn),
+
+            /// Applies `skip_unless_truthy` to every field in the container.
+            ///
+            /// Usage: `#[facet(skip_all_unless_truthy)]`
+            SkipAllUnlessTruthy,
 
             /// Proxy type for serialization and deserialization.
             /// The proxy type must implement `TryFrom<ProxyType> for FieldType` (for deserialization)

@@ -123,6 +123,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Rc<T> {
                         drop_in_place: rc_drop::<T>,
                         default_in_place: None,
                         clone_into: None,
+                        is_truthy: None,
                     }
                 },
             )
@@ -210,6 +211,7 @@ unsafe impl<'a> Facet<'a> for Rc<str> {
             drop_in_place: rc_str_drop,
             default_in_place: None,
             clone_into: Some(rc_str_clone),
+            is_truthy: None,
         };
 
         ShapeBuilder::for_sized::<Rc<str>>("Rc")
@@ -392,6 +394,7 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Rc<[U]> {
                         drop_in_place: rc_slice_drop::<U>,
                         default_in_place: None,
                         clone_into: None,
+                        is_truthy: None,
                     }
                 },
             )
@@ -506,6 +509,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
                         drop_in_place: weak_drop::<T>,
                         default_in_place: Some(weak_default::<T>),
                         clone_into: Some(weak_clone::<T>),
+                        is_truthy: None,
                     }
                 },
             )
@@ -574,6 +578,7 @@ unsafe impl<'a> Facet<'a> for Weak<str> {
             drop_in_place: weak_str_drop,
             default_in_place: None,
             clone_into: Some(weak_str_clone),
+            is_truthy: None,
         };
 
         ShapeBuilder::for_sized::<Weak<str>>("Weak")
@@ -697,6 +702,7 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
                         drop_in_place: weak_slice_drop::<U>,
                         default_in_place: None,
                         clone_into: Some(weak_slice_clone::<U>),
+                        is_truthy: None,
                     }
                 },
             )

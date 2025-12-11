@@ -166,6 +166,7 @@ where
                         drop_in_place: indexmap_drop::<K, V, S>,
                         default_in_place: None,
                         clone_into: None,
+                        is_truthy: None,
                     }
                 },
             )

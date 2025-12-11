@@ -268,10 +268,15 @@ where
             .vtable_indirect(&ARRAY_VTABLE)
             .type_ops_indirect(
                 &const {
+                    unsafe fn truthy<const N: usize>(_: PtrConst) -> bool {
+                        N != 0
+                    }
+
                     TypeOpsIndirect {
                         drop_in_place: array_drop,
                         default_in_place: Some(array_default),
                         clone_into: Some(array_clone),
+                        is_truthy: Some(truthy::<N>),
                     }
                 },
             )

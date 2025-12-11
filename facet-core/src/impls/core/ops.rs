@@ -69,6 +69,7 @@ unsafe impl<'a, Idx: Facet<'a>> Facet<'a> for core::ops::Range<Idx> {
                 drop_in_place: range_drop::<Idx>,
                 default_in_place: None,
                 clone_into: None,
+                is_truthy: None,
             }
         }
 

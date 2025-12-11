@@ -80,6 +80,23 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         .iter()
         .any(|a| a.is_builtin() && a.key_str() == "opaque");
 
+    let skip_all_unless_truthy = pe.container.attrs.has_builtin("skip_all_unless_truthy");
+
+    let truthy_attr: Option<TokenStream> = pe.container.attrs.facet.iter().find_map(|attr| {
+        if attr.is_builtin() && attr.key_str() == "truthy" {
+            let args = &attr.args;
+            if args.is_empty() {
+                return None;
+            }
+            let args_str = args.to_string();
+            let fn_name_str = args_str.trim_start_matches('=').trim();
+            let fn_name: TokenStream = fn_name_str.parse().unwrap_or_else(|_| args.clone());
+            Some(fn_name)
+        } else {
+            None
+        }
+    });
+
     // Get the facet crate path (custom or default ::facet)
     let facet_crate = pe.container.attrs.facet_crate();
 
@@ -117,6 +134,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
         &trait_sources,
         &enum_type_for_vtable,
         has_type_or_const_generics,
+        truthy_attr.as_ref(),
     );
 
     let bgp = pe.container.bgp.clone();
@@ -148,7 +166,15 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
             // - auto_traits: compile-time directive for vtable generation
             if attr.is_builtin() {
                 let key = attr.key_str();
-                if matches!(key.as_str(), "crate" | "traits" | "auto_traits" | "proxy") {
+                if matches!(
+                    key.as_str(),
+                    "crate"
+                        | "traits"
+                        | "auto_traits"
+                        | "proxy"
+                        | "truthy"
+                        | "skip_all_unless_truthy"
+                ) {
                     continue;
                 }
             }
@@ -444,6 +470,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                                     &facet_bgp,
                                     Some(variant_offset.clone()),
                                     &facet_crate,
+                                    skip_all_unless_truthy,
                                 )
                             })
                             .collect();
@@ -504,6 +531,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                                     &facet_bgp,
                                     Some(variant_offset.clone()),
                                     &facet_crate,
+                                    skip_all_unless_truthy,
                                 )
                             })
                             .collect();
@@ -651,6 +679,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                                     &facet_bgp,
                                     None,
                                     &facet_crate,
+                                    skip_all_unless_truthy,
                                 )
                             })
                             .collect();
@@ -712,6 +741,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                                     &facet_bgp,
                                     None,
                                     &facet_crate,
+                                    skip_all_unless_truthy,
                                 )
                             })
                             .collect();

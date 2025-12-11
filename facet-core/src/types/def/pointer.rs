@@ -59,11 +59,11 @@ bitflags! {
         /// An empty set of flags
         const EMPTY = 0;
 
-        /// Whether the pointer is weak (like [`std::sync::Weak`])
+        /// Whether the pointer is weak (like `std::sync::Weak`)
         const WEAK = 1 << 0;
-        /// Whether the pointer is atomic (like [`std::sync::Arc`])
+        /// Whether the pointer is atomic (like `std::sync::Arc`)
         const ATOMIC = 1 << 1;
-        /// Whether the pointer is a lock (like [`std::sync::Mutex`])
+        /// Whether the pointer is a lock (like `std::sync::Mutex`)
         const LOCK = 1 << 2;
     }
 }

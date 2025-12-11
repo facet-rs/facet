@@ -177,6 +177,7 @@ static RESULT_TYPE_OPS: TypeOpsIndirect = TypeOpsIndirect {
     drop_in_place: result_drop,
     default_in_place: None,
     clone_into: None,
+    is_truthy: None,
 };
 
 /// Check if Result<T, E> is Ok

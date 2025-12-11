@@ -520,16 +520,17 @@ pub(crate) fn gen_type_ops(
     sources: &TraitSources<'_>,
     struct_type: &TokenStream,
     has_type_or_const_generics: bool,
+    truthy_fn: Option<&TokenStream>,
 ) -> Option<TokenStream> {
     // Only use TypeOpsIndirect when there are actual type or const generics.
     // For auto_traits WITHOUT generics, we can still use TypeOpsDirect since
     // the helper functions can use `Self` which resolves to the concrete type.
     if has_type_or_const_generics {
-        return gen_type_ops_indirect(facet_crate, sources, struct_type);
+        return gen_type_ops_indirect(facet_crate, sources, struct_type, truthy_fn);
     }
 
     // Use TypeOpsDirect for non-generic types (including auto_traits without generics)
-    gen_type_ops_direct(facet_crate, sources, struct_type)
+    gen_type_ops_direct(facet_crate, sources, struct_type, truthy_fn)
 }
 
 /// Generates TypeOpsDirect for non-generic types.
@@ -542,6 +543,7 @@ fn gen_type_ops_direct(
     facet_crate: &TokenStream,
     sources: &TraitSources<'_>,
     struct_type: &TokenStream,
+    truthy_fn: Option<&TokenStream>,
 ) -> Option<TokenStream> {
     // Check if Default is available (from declared traits or #[facet(default)])
     let has_default = sources.has_declared(|d| d.default) || sources.facet_default;
@@ -613,12 +615,27 @@ fn gen_type_ops_direct(
     // Generate TypeOpsDirect struct literal
     // Uses transmute to convert typed fn pointers to erased fn(*mut ()) etc.
     // Uses Self inside the const block which resolves to the implementing type
+    let truthy_field = if let Some(truthy) = truthy_fn {
+        quote! {
+            is_truthy: ::core::option::Option::Some({
+                unsafe fn __truthy(value: #facet_crate::PtrConst) -> bool {
+                    let this: &#struct_type = unsafe { value.get::<#struct_type>() };
+                    #truthy(this)
+                }
+                __truthy
+            }),
+        }
+    } else {
+        quote! { is_truthy: ::core::option::Option::None, }
+    };
+
     Some(quote! {
         #facet_crate::TypeOps::Direct(&const {
             #facet_crate::TypeOpsDirect {
                 drop_in_place: unsafe { ::core::mem::transmute(::core::ptr::drop_in_place::<Self> as unsafe fn(*mut Self)) },
                 #default_field
                 #clone_field
+                #truthy_field
             }
         })
     })
@@ -633,6 +650,7 @@ fn gen_type_ops_indirect(
     facet_crate: &TokenStream,
     sources: &TraitSources<'_>,
     _struct_type: &TokenStream,
+    truthy_fn: Option<&TokenStream>,
 ) -> Option<TokenStream> {
     // For TypeOpsIndirect, we always need drop_in_place
     // default_in_place and clone_into are optional based on available traits
@@ -665,12 +683,27 @@ fn gen_type_ops_indirect(
         quote! { clone_into: ::core::option::Option::None, }
     };
 
+    let truthy_field = if let Some(truthy) = truthy_fn {
+        quote! {
+            is_truthy: ::core::option::Option::Some({
+                unsafe fn __truthy(value: #facet_crate::PtrConst) -> bool {
+                    let this: &Self = unsafe { value.get::<Self>() };
+                    #truthy(this)
+                }
+                __truthy
+            }),
+        }
+    } else {
+        quote! { is_truthy: ::core::option::Option::None, }
+    };
+
     Some(quote! {
         #facet_crate::TypeOps::Indirect(&const {
             #facet_crate::TypeOpsIndirect {
                 drop_in_place: #facet_crate::𝟋::𝟋indirect_drop_for::<Self>(),
                 #default_field
                 #clone_field
+                #truthy_field
             }
         })
     })
@@ -748,6 +781,7 @@ pub(crate) fn gen_field_from_pfield(
     bgp: &BoundedGenericParams,
     base_offset: Option<TokenStream>,
     facet_crate: &TokenStream,
+    skip_all_unless_truthy: bool,
 ) -> TokenStream {
     let field_name_effective = &field.name.effective;
     let field_name_raw = &field.name.raw;
@@ -801,6 +835,8 @@ pub(crate) fn gen_field_from_pfield(
     let mut proxy_value: Option<TokenStream> = None;
     let mut metadata_value: Option<String> = None;
     let mut attribute_list: Vec<TokenStream> = Vec::new();
+
+    let mut want_truthy_skip = skip_all_unless_truthy;
 
     for attr in &field.attrs.facet {
         if attr.is_builtin() {
@@ -881,6 +917,9 @@ pub(crate) fn gen_field_from_pfield(
                         }
                     });
                 }
+                "skip_unless_truthy" => {
+                    want_truthy_skip = true;
+                }
                 "invariants" => {
                     // User provides a function name: #[facet(invariants = fn_name)]
                     let args = &attr.args;
@@ -942,6 +981,55 @@ pub(crate) fn gen_field_from_pfield(
             let ext_attr = emit_attr_for_field(attr, field_name_raw, field_type, facet_crate);
             attribute_list.push(quote! { #ext_attr });
         }
+    }
+
+    if skip_serializing_if_value.is_none() && want_truthy_skip {
+        skip_serializing_if_value = Some(quote! {
+            {
+                unsafe fn __truthiness_with_fallback(
+                    shape: &'static #facet_crate::Shape,
+                    ptr: #facet_crate::PtrConst,
+                ) -> Option<bool> {
+                    if let Some(truthy) = shape.truthiness_fn() {
+                        return Some(unsafe { truthy(ptr) });
+                    }
+                    if let #facet_crate::Def::Pointer(ptr_def) = shape.def {
+                        if let (Some(inner_shape), Some(borrow)) =
+                            (ptr_def.pointee(), ptr_def.vtable.borrow_fn)
+                        {
+                            let inner_ptr = unsafe { borrow(ptr) };
+                            return __truthiness_with_fallback(inner_shape, inner_ptr);
+                        }
+                    }
+                    if let #facet_crate::Type::User(#facet_crate::UserType::Struct(st)) = shape.ty
+                        && matches!(st.kind, #facet_crate::StructKind::Tuple)
+                    {
+                        for field in st.fields {
+                            if field.shape.get().layout.sized_layout().is_err() {
+                                continue;
+                            }
+                            let field_ptr = #facet_crate::PtrConst::new(unsafe {
+                                ptr.as_byte_ptr().add(field.offset)
+                            } as *const ());
+                            if let Some(true) = __truthiness_with_fallback(field.shape.get(), field_ptr) {
+                                return Some(true);
+                            }
+                        }
+                        return Some(false);
+                    }
+                    None
+                }
+
+                unsafe fn __skip_unless_truthy(ptr: #facet_crate::PtrConst) -> bool {
+                    let shape = <#field_type as #facet_crate::Facet>::SHAPE;
+                    match __truthiness_with_fallback(shape, ptr) {
+                        Some(result) => !result,
+                        None => false,
+                    }
+                }
+                __skip_unless_truthy
+            }
+        });
     }
 
     let maybe_attributes = if attribute_list.is_empty() {
@@ -1166,6 +1254,23 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
 
     let opaque = ps.container.attrs.has_builtin("opaque");
 
+    let skip_all_unless_truthy = ps.container.attrs.has_builtin("skip_all_unless_truthy");
+
+    let truthy_attr: Option<TokenStream> = ps.container.attrs.facet.iter().find_map(|attr| {
+        if attr.is_builtin() && attr.key_str() == "truthy" {
+            let args = &attr.args;
+            if args.is_empty() {
+                return None;
+            }
+            let args_str = args.to_string();
+            let fn_name_str = args_str.trim_start_matches('=').trim();
+            let fn_name: TokenStream = fn_name_str.parse().unwrap_or_else(|_| args.clone());
+            Some(fn_name)
+        } else {
+            None
+        }
+    });
+
     // Get the facet crate path (custom or default ::facet)
     let facet_crate = ps.container.attrs.facet_crate();
 
@@ -1296,6 +1401,7 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
         &trait_sources,
         &struct_type_for_vtable,
         has_type_or_const_generics,
+        truthy_attr.as_ref(),
     );
 
     // TODO: I assume the `PrimitiveRepr` is only relevant for enums, and does not need to be preserved?
@@ -1318,7 +1424,14 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             let fields_vec = fields
                 .iter()
                 .map(|field| {
-                    gen_field_from_pfield(field, struct_name, &ps.container.bgp, None, &facet_crate)
+                    gen_field_from_pfield(
+                        field,
+                        struct_name,
+                        &ps.container.bgp,
+                        None,
+                        &facet_crate,
+                        skip_all_unless_truthy,
+                    )
                 })
                 .collect::<Vec<_>>();
             (kind, fields_vec)
@@ -1328,7 +1441,14 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
             let fields_vec = fields
                 .iter()
                 .map(|field| {
-                    gen_field_from_pfield(field, struct_name, &ps.container.bgp, None, &facet_crate)
+                    gen_field_from_pfield(
+                        field,
+                        struct_name,
+                        &ps.container.bgp,
+                        None,
+                        &facet_crate,
+                        skip_all_unless_truthy,
+                    )
                 })
                 .collect::<Vec<_>>();
             (kind, fields_vec)
@@ -1397,7 +1517,13 @@ pub(crate) fn process_struct(parsed: Struct) -> TokenStream {
                     let key = attr.key_str();
                     !matches!(
                         key.as_str(),
-                        "invariants" | "crate" | "traits" | "auto_traits" | "proxy"
+                        "invariants"
+                            | "crate"
+                            | "traits"
+                            | "auto_traits"
+                            | "proxy"
+                            | "truthy"
+                            | "skip_all_unless_truthy"
                     )
                 } else {
                     true

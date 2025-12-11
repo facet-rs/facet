@@ -387,10 +387,15 @@ where
                     unsafe { ox.ptr().as_uninit().put(Vec::<T>::new()) };
                 }
 
+                unsafe fn truthy<T>(ptr: PtrConst) -> bool {
+                    !unsafe { ptr.get::<Vec<T>>() }.is_empty()
+                }
+
                 TypeOpsIndirect {
                     drop_in_place: drop_in_place::<T>,
                     default_in_place: Some(default_in_place::<T>),
                     clone_into: None,
+                    is_truthy: Some(truthy::<T>),
                 }
             })
             .build()

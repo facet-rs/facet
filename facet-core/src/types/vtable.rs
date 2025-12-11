@@ -936,6 +936,9 @@ pub type DefaultInPlaceFn = unsafe fn(target: crate::PtrUninit) -> crate::PtrMut
 /// Used by the `#[facet(invariants = fn)]` attribute.
 pub type InvariantsFn = unsafe fn(value: crate::PtrConst) -> bool;
 
+/// Function type for truthiness checks used by skip_unless_truthy-style helpers.
+pub type TruthyFn = unsafe fn(value: crate::PtrConst) -> bool;
+
 //////////////////////////////////////////////////////////////////////
 // type_ops_direct! macro
 //////////////////////////////////////////////////////////////////////
@@ -963,6 +966,7 @@ macro_rules! type_ops_direct {
             drop_in_place: unsafe { core::mem::transmute::<unsafe fn(*mut $ty), unsafe fn(*mut ())>(core::ptr::drop_in_place::<$ty>) },
             default_in_place: None,
             clone_into: None,
+            is_truthy: None,
         }
     }};
 
@@ -973,6 +977,7 @@ macro_rules! type_ops_direct {
             drop_in_place: unsafe { core::mem::transmute::<unsafe fn(*mut $ty), unsafe fn(*mut ())>(core::ptr::drop_in_place::<$ty>) },
             default_in_place: Some(unsafe { core::mem::transmute::<unsafe fn(*mut $ty), unsafe fn(*mut ())>($crate::𝟋::𝟋default_for::<$ty>()) }),
             clone_into: None,
+            is_truthy: None,
         }
     }};
 
@@ -983,6 +988,7 @@ macro_rules! type_ops_direct {
             drop_in_place: unsafe { core::mem::transmute::<unsafe fn(*mut $ty), unsafe fn(*mut ())>(core::ptr::drop_in_place::<$ty>) },
             default_in_place: None,
             clone_into: Some(unsafe { core::mem::transmute::<unsafe fn(*const $ty, *mut $ty), unsafe fn(*const (), *mut ())>($crate::𝟋::𝟋clone_for::<$ty>()) }),
+            is_truthy: None,
         }
     }};
 
@@ -993,6 +999,7 @@ macro_rules! type_ops_direct {
             drop_in_place: unsafe { core::mem::transmute::<unsafe fn(*mut $ty), unsafe fn(*mut ())>(core::ptr::drop_in_place::<$ty>) },
             default_in_place: Some(unsafe { core::mem::transmute::<unsafe fn(*mut $ty), unsafe fn(*mut ())>($crate::𝟋::𝟋default_for::<$ty>()) }),
             clone_into: Some(unsafe { core::mem::transmute::<unsafe fn(*const $ty, *mut $ty), unsafe fn(*const (), *mut ())>($crate::𝟋::𝟋clone_for::<$ty>()) }),
+            is_truthy: None,
         }
     }};
 
@@ -1039,6 +1046,9 @@ pub struct TypeOpsDirect {
     /// - `src` must point to a valid, initialized value
     /// - `dst` must point to uninitialized memory of sufficient size and alignment
     pub clone_into: Option<unsafe fn(src: *const (), dst: *mut ())>,
+
+    /// Truthiness predicate for this type. When absent, the type is never considered truthy.
+    pub is_truthy: Option<TruthyFn>,
 }
 
 // TypeOpsDirect uses struct literals directly - no builder needed
@@ -1074,6 +1084,9 @@ pub struct TypeOpsIndirect {
     /// - `src` must point to a valid, initialized value
     /// - `dst` must point to uninitialized memory of sufficient size and alignment
     pub clone_into: Option<unsafe fn(src: OxPtrConst, dst: OxPtrMut)>,
+
+    /// Truthiness predicate for this type. When absent, the type is never considered truthy.
+    pub is_truthy: Option<TruthyFn>,
 }
 
 // TypeOpsIndirect uses struct literals directly - no builder needed
@@ -1121,6 +1134,15 @@ impl TypeOps {
         match self {
             TypeOps::Direct(ops) => ops.default_in_place.is_some(),
             TypeOps::Indirect(ops) => ops.default_in_place.is_some(),
+        }
+    }
+
+    /// Returns the truthiness predicate for this type, if any.
+    #[inline]
+    pub const fn truthiness_fn(&self) -> Option<TruthyFn> {
+        match self {
+            TypeOps::Direct(ops) => ops.is_truthy,
+            TypeOps::Indirect(ops) => ops.is_truthy,
         }
     }
 }

@@ -23,6 +23,34 @@ unsafe fn slice_as_mut_ptr<T>(ptr: PtrMut) -> PtrMut {
     }
 }
 
+unsafe fn slice_drop(ox: OxPtrMut) {
+    let shape = ox.shape();
+    let Some(def) = get_slice_def(shape) else {
+        return;
+    };
+    let len = unsafe { (def.vtable.len)(ox.ptr().as_const()) };
+    let slice_ptr = unsafe { (def.vtable.as_mut_ptr)(ox.ptr()) };
+    let Some(stride) = def
+        .t
+        .layout
+        .sized_layout()
+        .ok()
+        .map(|l| l.pad_to_align().size())
+    else {
+        return;
+    };
+
+    for i in 0..len {
+        let elem_ptr = unsafe { PtrMut::new((slice_ptr.as_byte_ptr() as *mut u8).add(i * stride)) };
+        unsafe { def.t.call_drop_in_place(elem_ptr) };
+    }
+}
+
+#[inline(always)]
+unsafe fn slice_truthy<T>(ptr: PtrConst) -> bool {
+    !unsafe { ptr.get::<[T]>() }.is_empty()
+}
+
 /// Extract the SliceDef from a shape, returns None if not a slice
 #[inline]
 fn get_slice_def(shape: &'static Shape) -> Option<&'static SliceDef> {
@@ -204,6 +232,16 @@ where
                 name: "T",
                 shape: T::SHAPE,
             }])
+            .type_ops_indirect(
+                &const {
+                    TypeOpsIndirect {
+                        drop_in_place: slice_drop,
+                        default_in_place: None,
+                        clone_into: None,
+                        is_truthy: Some(slice_truthy::<T>),
+                    }
+                },
+            )
             .build()
     };
 }

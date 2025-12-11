@@ -122,6 +122,23 @@ struct Config {
 
 **When `assert_same!` encounters an opaque type**, it returns `Sameness::Opaque` — you cannot structurally compare opaque values.
 
+### `skip_all_unless_truthy`
+
+Applies `skip_unless_truthy` to every field in the container. This is a convenient shorthand when all or most fields should be omitted if they're falsy.
+
+```rust,noexec
+#[derive(Facet)]
+#[facet(skip_all_unless_truthy)]
+struct Config {
+    name: String,              // Omitted if empty
+    description: String,       // Omitted if empty
+    count: u32,                // Omitted if zero
+    enabled: bool,             // Omitted if false
+}
+```
+
+Individual fields can still override this with `#[facet(skip_serializing)]` or by not being marked for skipping.
+
 ### `type_tag`
 
 Add a type identifier for self-describing formats.
@@ -310,6 +327,35 @@ struct User {
     count: i32,
 }
 ```
+
+### `skip_unless_truthy`
+
+Conditionally skip serialization unless the value is truthy. Uses the type's registered truthiness predicate.
+
+Truthiness is evaluated based on the type:
+- **Booleans**: `true` is truthy, `false` is falsy
+- **Numbers**: non-zero is truthy (for floats, also excludes NaN)
+- **Collections** (Vec, String, slice, etc.): non-empty is truthy
+- **Option**: `Some(_)` is truthy, `None` is falsy
+- **Arrays**: non-zero-length arrays are truthy
+
+```rust,noexec
+#[derive(Facet)]
+struct User {
+    name: String,
+
+    #[facet(skip_unless_truthy)]
+    email: Option<String>,  // Omitted if None
+
+    #[facet(skip_unless_truthy)]
+    tags: Vec<String>,  // Omitted if empty
+
+    #[facet(skip_unless_truthy)]
+    bio: String,  // Omitted if empty
+}
+```
+
+This is more ergonomic than `skip_serializing_if` when the type already has a natural notion of truthiness.
 
 ### `sensitive`
 

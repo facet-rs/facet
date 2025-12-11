@@ -79,6 +79,7 @@ unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for Box<T> {
                         drop_in_place: drop_in_place::<T>,
                         default_in_place: None,
                         clone_into: None,
+                        is_truthy: None,
                     }
                 },
             )

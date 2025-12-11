@@ -169,6 +169,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Spanned<T> {
                         drop_in_place: drop_in_place::<T>,
                         default_in_place: None,
                         clone_into: None,
+                        is_truthy: None,
                     }
                 },
             )

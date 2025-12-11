@@ -177,6 +177,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
                         drop_in_place: arc_drop::<T>,
                         default_in_place: None,
                         clone_into: None,
+                        is_truthy: None,
                     }
                 },
             )
@@ -222,6 +223,7 @@ static ARC_STR_TYPE_OPS: TypeOpsIndirect = TypeOpsIndirect {
     drop_in_place: arc_str_drop,
     default_in_place: None,
     clone_into: None,
+    is_truthy: None,
 };
 
 unsafe impl<'a> Facet<'a> for Arc<str> {
@@ -309,6 +311,7 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Arc<[U]> {
                         drop_in_place: arc_slice_drop::<U>,
                         default_in_place: None,
                         clone_into: None,
+                        is_truthy: None,
                     }
                 },
             )
@@ -371,6 +374,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
                         drop_in_place: weak_drop::<T>,
                         default_in_place: Some(weak_default::<T>),
                         clone_into: Some(weak_clone::<Weak<T>>),
+                        is_truthy: None,
                     }
                 },
             )
@@ -402,6 +406,7 @@ static WEAK_STR_TYPE_OPS: TypeOpsIndirect = TypeOpsIndirect {
     drop_in_place: weak_str_drop,
     default_in_place: None,
     clone_into: Some(weak_clone::<Weak<str>>),
+    is_truthy: None,
 };
 
 static WEAK_VTABLE: VTableIndirect = VTableIndirect {
@@ -507,6 +512,7 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
                         drop_in_place: weak_slice_drop::<U>,
                         default_in_place: None,
                         clone_into: Some(weak_clone::<Weak<[U]>>),
+                        is_truthy: None,
                     }
                 },
             )

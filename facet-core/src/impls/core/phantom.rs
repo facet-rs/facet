@@ -31,6 +31,7 @@ static PHANTOM_TYPE_OPS: TypeOpsIndirect = TypeOpsIndirect {
     drop_in_place: phantom_drop,
     default_in_place: Some(phantom_default),
     clone_into: None,
+    is_truthy: None,
 };
 
 unsafe fn phantom_debug(

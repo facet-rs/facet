@@ -71,22 +71,62 @@ macro_rules! integer_try_from {
     }};
 }
 
-// TypeOps lifted out of const blocks - shared statics
-static BOOL_TYPE_OPS: TypeOpsDirect = type_ops_direct!(bool => Default, Clone);
-static U8_TYPE_OPS: TypeOpsDirect = type_ops_direct!(u8 => Default, Clone);
-static I8_TYPE_OPS: TypeOpsDirect = type_ops_direct!(i8 => Default, Clone);
-static U16_TYPE_OPS: TypeOpsDirect = type_ops_direct!(u16 => Default, Clone);
-static I16_TYPE_OPS: TypeOpsDirect = type_ops_direct!(i16 => Default, Clone);
-static U32_TYPE_OPS: TypeOpsDirect = type_ops_direct!(u32 => Default, Clone);
-static I32_TYPE_OPS: TypeOpsDirect = type_ops_direct!(i32 => Default, Clone);
-static U64_TYPE_OPS: TypeOpsDirect = type_ops_direct!(u64 => Default, Clone);
-static I64_TYPE_OPS: TypeOpsDirect = type_ops_direct!(i64 => Default, Clone);
-static U128_TYPE_OPS: TypeOpsDirect = type_ops_direct!(u128 => Default, Clone);
-static I128_TYPE_OPS: TypeOpsDirect = type_ops_direct!(i128 => Default, Clone);
-static USIZE_TYPE_OPS: TypeOpsDirect = type_ops_direct!(usize => Default, Clone);
-static ISIZE_TYPE_OPS: TypeOpsDirect = type_ops_direct!(isize => Default, Clone);
-static F32_TYPE_OPS: TypeOpsDirect = type_ops_direct!(f32 => Default, Clone);
-static F64_TYPE_OPS: TypeOpsDirect = type_ops_direct!(f64 => Default, Clone);
+// Truthiness helpers + TypeOps lifted out of const blocks - shared statics
+
+#[inline(always)]
+unsafe fn bool_truthy(value: PtrConst) -> bool {
+    *unsafe { value.get::<bool>() }
+}
+
+macro_rules! define_int_type_ops {
+    ($const_name:ident, $ty:ty, $fn_name:ident) => {
+        #[inline(always)]
+        unsafe fn $fn_name(value: PtrConst) -> bool {
+            *unsafe { value.get::<$ty>() } != 0
+        }
+
+        static $const_name: TypeOpsDirect = TypeOpsDirect {
+            is_truthy: Some($fn_name),
+    ..type_ops_direct!($ty => Default, Clone)
+        };
+    };
+}
+
+macro_rules! define_float_type_ops {
+    ($const_name:ident, $ty:ty, $fn_name:ident) => {
+        #[inline(always)]
+        unsafe fn $fn_name(value: PtrConst) -> bool {
+            let v = *unsafe { value.get::<$ty>() };
+            v != 0.0 && !v.is_nan()
+        }
+
+        static $const_name: TypeOpsDirect = TypeOpsDirect {
+            is_truthy: Some($fn_name),
+    ..type_ops_direct!($ty => Default, Clone)
+        };
+    };
+}
+
+static BOOL_TYPE_OPS: TypeOpsDirect = TypeOpsDirect {
+    is_truthy: Some(bool_truthy),
+    ..type_ops_direct!(bool => Default, Clone)
+};
+
+define_int_type_ops!(U8_TYPE_OPS, u8, u8_truthy);
+define_int_type_ops!(I8_TYPE_OPS, i8, i8_truthy);
+define_int_type_ops!(U16_TYPE_OPS, u16, u16_truthy);
+define_int_type_ops!(I16_TYPE_OPS, i16, i16_truthy);
+define_int_type_ops!(U32_TYPE_OPS, u32, u32_truthy);
+define_int_type_ops!(I32_TYPE_OPS, i32, i32_truthy);
+define_int_type_ops!(U64_TYPE_OPS, u64, u64_truthy);
+define_int_type_ops!(I64_TYPE_OPS, i64, i64_truthy);
+define_int_type_ops!(U128_TYPE_OPS, u128, u128_truthy);
+define_int_type_ops!(I128_TYPE_OPS, i128, i128_truthy);
+define_int_type_ops!(USIZE_TYPE_OPS, usize, usize_truthy);
+define_int_type_ops!(ISIZE_TYPE_OPS, isize, isize_truthy);
+
+define_float_type_ops!(F32_TYPE_OPS, f32, f32_truthy);
+define_float_type_ops!(F64_TYPE_OPS, f64, f64_truthy);
 
 unsafe impl Facet<'_> for bool {
     const SHAPE: &'static Shape = &const {
