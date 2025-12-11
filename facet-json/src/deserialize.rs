@@ -681,8 +681,8 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
         // Check the Type - structs and enums are identified by Type, not Def
         match &shape.ty {
             Type::User(UserType::Struct(struct_def)) => {
-                // Tuples are structs with StructKind::Tuple
-                if struct_def.kind == StructKind::Tuple {
+                // Tuples and tuple structs both deserialize from JSON arrays.
+                if matches!(struct_def.kind, StructKind::Tuple | StructKind::TupleStruct) {
                     return self.deserialize_tuple(wip);
                 }
                 return self.deserialize_struct(wip);
