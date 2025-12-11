@@ -34,3 +34,6 @@ facet-postcard = { git = "https://github.com/facet-rs/facet" }
 # tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["registry"] }
+
+# Test utilities
+rapace-testkit = { path = "../../crates/rapace-testkit" }

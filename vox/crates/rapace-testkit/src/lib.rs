@@ -36,6 +36,7 @@ use rapace_core::{
 };
 
 pub mod bidirectional;
+pub mod helper_binary;
 
 /// Error type for test scenarios.
 #[derive(Debug)]

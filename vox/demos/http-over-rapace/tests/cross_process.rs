@@ -11,6 +11,7 @@ use std::time::Duration;
 use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
 use rapace::{RpcSession, StreamTransport, Transport};
 use rapace_http::{HttpRequest, HttpResponse};
+use rapace_testkit::helper_binary::find_helper_binary;
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::TcpListener;
 
@@ -142,18 +143,27 @@ fn verify_results(results: &[(HttpRequest, HttpResponse)]) {
 
 #[tokio::test]
 async fn test_cross_process_tcp() {
-    // First, build the helper binary
-    let build_status = Command::new("cargo")
-        .args([
-            "build",
-            "--bin",
-            "http-plugin-helper",
-            "-p",
-            "rapace-http-over-rapace",
-        ])
-        .status()
-        .expect("failed to build helper");
-    assert!(build_status.success(), "helper build failed");
+    // Find or build the helper binary
+    let helper_path = match find_helper_binary("http-plugin-helper") {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("[test] {}; attempting to build inline", e);
+            let build_status = Command::new("cargo")
+                .args([
+                    "build",
+                    "--bin",
+                    "http-plugin-helper",
+                    "-p",
+                    "rapace-http-over-rapace",
+                ])
+                .status()
+                .expect("failed to build helper");
+            assert!(build_status.success(), "helper build failed");
+
+            find_helper_binary("http-plugin-helper")
+                .expect("helper binary still not found after building")
+        }
+    };
 
     // Find an available port
     let port = find_available_port().await;
@@ -163,15 +173,6 @@ async fn test_cross_process_tcp() {
 
     // Start listening
     let listener = TcpListener::bind(&addr).await.unwrap();
-
-    // Find the helper binary
-    let helper_path = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("http-plugin-helper");
 
     eprintln!("[test] Spawning helper: {:?}", helper_path);
 

@@ -11,13 +11,13 @@
 //! requiring a central registry or manual assignment.
 
 use proc_macro::TokenStream;
-use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro2::{Ident, Span, TokenStream as TokenStream2, TokenTree};
 use proc_macro_crate::{crate_name, FoundCrate};
 use quote::{format_ident, quote};
-use syn::{
-    parse_macro_input, FnArg, GenericArgument, Ident, ItemTrait, Pat, PathArguments, ReturnType,
-    TraitItem, TraitItemFn, Type, TypePath,
-};
+
+mod parser;
+
+use parser::{join_doc_lines, parse_trait, Error as MacroError, ParsedTrait};
 
 /// Compute a method ID by hashing "ServiceName.method_name" using FNV-1a.
 ///
@@ -80,18 +80,26 @@ fn compute_method_id(service_name: &str, method_name: &str) -> u32 {
 /// `async fn range(&self, n: u32) -> Result<Streaming<u32>, RpcError>`
 #[proc_macro_attribute]
 pub fn service(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as ItemTrait);
+    let trait_tokens = TokenStream2::from(item.clone());
 
-    match generate_service(&input) {
+    let parsed_trait = match parse_trait(&trait_tokens) {
+        Ok(parsed) => parsed,
+        Err(err) => return err.to_compile_error().into(),
+    };
+
+    match generate_service(&parsed_trait, &trait_tokens) {
         Ok(tokens) => tokens.into(),
-        Err(e) => e.to_compile_error().into(),
+        Err(err) => err.to_compile_error().into(),
     }
 }
 
-fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
+fn generate_service(
+    input: &ParsedTrait,
+    trait_tokens: &TokenStream2,
+) -> Result<TokenStream2, MacroError> {
     let trait_name = &input.ident;
     let trait_name_str = trait_name.to_string();
-    let vis = &input.vis;
+    let vis = &input.vis_tokens;
 
     // Detect the rapace crate name
     // Try to find `rapace` first (the facade crate).
@@ -108,38 +116,31 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
             if crate_name("rapace_core").is_ok() {
                 // We have rapace_core - this is likely an internal crate
                 // Create a local rapace module that re-exports what we need
-                return Err(syn::Error::new(
+                return Err(MacroError::new(
                     Span::call_site(),
                     "Internal crates using rapace_macros must add `rapace` as a dependency, \
                      or you can create a facade module. See rapace-testkit for an example.",
                 ));
             } else {
-                return Err(syn::Error::new(
+                return Err(MacroError::new(
                     Span::call_site(),
-                    "rapace crate not found in dependencies. Add `rapace = \"...\"` to your Cargo.toml"
+                    "rapace crate not found in dependencies. Add `rapace = \"...\"` to your Cargo.toml",
                 ));
             }
         }
     };
 
     // Capture trait doc comments
-    let trait_doc = collect_doc(&input.attrs);
+    let trait_doc = join_doc_lines(&input.doc_lines);
+
+    let methods: Vec<MethodInfo> = input
+        .methods
+        .iter()
+        .map(MethodInfo::try_from_parsed)
+        .collect::<Result<_, _>>()?;
 
     let client_name = format_ident!("{}Client", trait_name);
     let server_name = format_ident!("{}Server", trait_name);
-
-    // Collect method information
-    let methods: Vec<MethodInfo> = input
-        .items
-        .iter()
-        .filter_map(|item| {
-            if let TraitItem::Fn(method) = item {
-                Some(parse_method(method))
-            } else {
-                None
-            }
-        })
-        .collect::<syn::Result<Vec<_>>>()?;
 
     // Generate client methods with hashed method IDs
     let client_methods_hardcoded = methods.iter().map(|m| {
@@ -203,7 +204,7 @@ fn generate_service(input: &ItemTrait) -> syn::Result<TokenStream2> {
 
     let expanded = quote! {
         // Keep the original trait
-        #input
+        #trait_tokens
 
         /// Method ID constants for this service.
         #vis mod #mod_name {
@@ -465,125 +466,43 @@ enum MethodKind {
     /// Server-streaming: single request, returns Streaming<T>.
     ServerStreaming {
         /// The type T in Streaming<T>.
-        item_type: Type,
+        item_type: TokenStream2,
     },
 }
 
 struct MethodInfo {
     name: Ident,
-    args: Vec<(Ident, Type)>, // (name, type) pairs, excluding &self
-    return_type: Type,
+    args: Vec<(Ident, TokenStream2)>, // (name, type) pairs, excluding &self
+    return_type: TokenStream2,
     kind: MethodKind,
     doc: String,
 }
 
-/// Extract doc comments from attributes.
-///
-/// Collects all `#[doc = "..."]` attributes (which are what `///` comments
-/// become after parsing) and joins them with newlines.
-fn collect_doc(attrs: &[syn::Attribute]) -> String {
-    attrs
-        .iter()
-        .filter_map(|attr| {
-            // Check if this is a #[doc = "..."] attribute
-            if !attr.path().is_ident("doc") {
-                return None;
-            }
+impl MethodInfo {
+    fn try_from_parsed(method: &parser::ParsedMethod) -> Result<Self, MacroError> {
+        let doc = join_doc_lines(&method.doc_lines);
 
-            // Parse the meta to get the string value
-            if let syn::Meta::NameValue(nv) = &attr.meta {
-                if let syn::Expr::Lit(syn::ExprLit {
-                    lit: syn::Lit::Str(s),
-                    ..
-                }) = &nv.value
-                {
-                    return Some(s.value());
-                }
-            }
-            None
+        let args = method
+            .args
+            .iter()
+            .map(|arg| (arg.name.clone(), arg.ty.clone()))
+            .collect();
+
+        let return_type = method.return_type.clone();
+        let kind = if let Some(item_type) = extract_streaming_return_type(&return_type) {
+            MethodKind::ServerStreaming { item_type }
+        } else {
+            MethodKind::Unary
+        };
+
+        Ok(Self {
+            name: method.name.clone(),
+            args,
+            return_type,
+            kind,
+            doc,
         })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-fn parse_method(method: &TraitItemFn) -> syn::Result<MethodInfo> {
-    let sig = &method.sig;
-    let name = sig.ident.clone();
-
-    // Capture doc comments
-    let doc = collect_doc(&method.attrs);
-
-    // Check it's async
-    if sig.asyncness.is_none() {
-        return Err(syn::Error::new_spanned(
-            sig,
-            "rapace::service methods must be async",
-        ));
     }
-
-    // Parse arguments (skip &self)
-    let args: Vec<(Ident, Type)> = sig
-        .inputs
-        .iter()
-        .filter_map(|arg| match arg {
-            FnArg::Receiver(_) => None,
-            FnArg::Typed(pat_type) => {
-                if let Pat::Ident(pat_ident) = &*pat_type.pat {
-                    Some((pat_ident.ident.clone(), (*pat_type.ty).clone()))
-                } else {
-                    None // Skip complex patterns for now
-                }
-            }
-        })
-        .collect();
-
-    // Parse return type
-    let return_type = match &sig.output {
-        ReturnType::Default => syn::parse_quote!(()),
-        ReturnType::Type(_, ty) => (**ty).clone(),
-    };
-
-    // Check if return type is Streaming<T>
-    let kind = if let Some(item_type) = extract_streaming_return_type(&return_type) {
-        MethodKind::ServerStreaming { item_type }
-    } else {
-        MethodKind::Unary
-    };
-
-    Ok(MethodInfo {
-        name,
-        args,
-        return_type,
-        kind,
-        doc,
-    })
-}
-
-/// Try to extract T from `rapace_core::Streaming<T>` or `Streaming<T>`.
-fn extract_streaming_return_type(ty: &Type) -> Option<Type> {
-    let Type::Path(TypePath { path, .. }) = ty else {
-        return None;
-    };
-
-    // Look at the last segment of the path
-    let last = path.segments.last()?;
-
-    if last.ident != "Streaming" {
-        return None;
-    }
-
-    // Expect `Streaming<T>`
-    let PathArguments::AngleBracketed(args) = &last.arguments else {
-        return None;
-    };
-
-    for arg in &args.args {
-        if let GenericArgument::Type(item_type) = arg {
-            return Some(item_type.clone());
-        }
-    }
-
-    None
 }
 
 fn generate_client_method(
@@ -674,10 +593,112 @@ fn generate_client_method_unary(
     }
 }
 
+fn extract_streaming_return_type(ty: &TokenStream2) -> Option<TokenStream2> {
+    let tokens: Vec<TokenTree> = ty.clone().into_iter().collect();
+    let mut index = 0;
+    while index < tokens.len() {
+        match &tokens[index] {
+            TokenTree::Ident(ident) if ident == "Streaming" => {
+                let mut search = index + 1;
+                while search < tokens.len() {
+                    match &tokens[search] {
+                        TokenTree::Punct(p) if p.as_char() == '<' => {
+                            let inner = collect_generic_tokens(&tokens, search)?;
+                            return select_stream_item_type(inner);
+                        }
+                        TokenTree::Punct(p) if p.as_char() == ':' => {
+                            search += 1;
+                            continue;
+                        }
+                        _ => break,
+                    }
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+fn collect_generic_tokens(tokens: &[TokenTree], start: usize) -> Option<TokenStream2> {
+    let mut depth = 0usize;
+    let mut inner = TokenStream2::new();
+    let mut i = start;
+    while i < tokens.len() {
+        match &tokens[i] {
+            TokenTree::Punct(p) if p.as_char() == '<' => {
+                depth += 1;
+                if depth > 1 {
+                    inner.extend(std::iter::once(tokens[i].clone()));
+                }
+            }
+            TokenTree::Punct(p) if p.as_char() == '>' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    return Some(inner);
+                }
+                inner.extend(std::iter::once(tokens[i].clone()));
+            }
+            other => {
+                if depth >= 1 {
+                    inner.extend(std::iter::once(other.clone()));
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn select_stream_item_type(inner: TokenStream2) -> Option<TokenStream2> {
+    let segments = split_top_level(inner, ',');
+    for segment in segments.into_iter().rev() {
+        let text = segment.to_string();
+        if text.trim().is_empty() {
+            continue;
+        }
+        if text.trim_start().starts_with('\'') {
+            continue;
+        }
+        return Some(segment);
+    }
+    None
+}
+
+fn split_top_level(tokens: TokenStream2, delimiter: char) -> Vec<TokenStream2> {
+    let mut parts = Vec::new();
+    let mut current = TokenStream2::new();
+    let mut angle_depth = 0usize;
+    for tt in tokens.into_iter() {
+        match &tt {
+            TokenTree::Punct(p) if p.as_char() == '<' => {
+                angle_depth += 1;
+                current.extend(std::iter::once(tt));
+            }
+            TokenTree::Punct(p) if p.as_char() == '>' => {
+                angle_depth = angle_depth.saturating_sub(1);
+                current.extend(std::iter::once(tt));
+            }
+            TokenTree::Punct(p) if p.as_char() == delimiter && angle_depth == 0 => {
+                parts.push(current);
+                current = TokenStream2::new();
+                continue;
+            }
+            _ => current.extend(std::iter::once(tt)),
+        }
+    }
+    parts.push(current);
+    parts
+}
+
 fn generate_client_method_server_streaming(
     method: &MethodInfo,
     method_id: u32,
-    item_type: &Type,
+    item_type: &TokenStream2,
     rapace_crate: &TokenStream2,
 ) -> TokenStream2 {
     let name = &method.name;
@@ -835,13 +856,8 @@ fn generate_streaming_dispatch_arm(
                 }
             }
         }
-        MethodKind::ServerStreaming { item_type } => {
-            generate_streaming_dispatch_arm_server_streaming(
-                method,
-                method_id,
-                item_type,
-                rapace_crate,
-            )
+        MethodKind::ServerStreaming { .. } => {
+            generate_streaming_dispatch_arm_server_streaming(method, method_id, rapace_crate)
         }
     }
 }
@@ -849,7 +865,6 @@ fn generate_streaming_dispatch_arm(
 fn generate_streaming_dispatch_arm_server_streaming(
     method: &MethodInfo,
     method_id: u32,
-    _item_type: &Type,
     rapace_crate: &TokenStream2,
 ) -> TokenStream2 {
     let name = &method.name;
@@ -1193,7 +1208,7 @@ fn generate_client_method_unary_registry(
 fn generate_client_method_server_streaming_registry(
     method: &MethodInfo,
     _method_index: usize,
-    item_type: &Type,
+    item_type: &TokenStream2,
     rapace_crate: &TokenStream2,
 ) -> TokenStream2 {
     let name = &method.name;

@@ -17,6 +17,9 @@ js-sys = { workspace = true }
 web-sys = { workspace = true }
 facet = { workspace = true }
 facet-postcard = { workspace = true }
+rapace-transport-websocket = { workspace = true, optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
 rapace-transport-websocket = { workspace = true }
 
 [features]

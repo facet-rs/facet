@@ -1598,6 +1598,7 @@ dependencies = [
  "facet",
  "futures",
  "rapace",
+ "rapace-testkit",
  "tokio",
  "tokio-stream",
  "tracing",
@@ -1637,6 +1638,7 @@ dependencies = [
  "hyper-util",
  "rapace",
  "rapace-http",
+ "rapace-testkit",
  "serde",
  "serde_json",
  "tokio",
@@ -1677,7 +1679,7 @@ dependencies = [
  "proc-macro2",
  "quote",
  "rapace-core",
- "syn",
+ "unsynn",
 ]
 
 [[package]]
@@ -1710,6 +1712,7 @@ dependencies = [
  "facet-core",
  "facet-postcard",
  "rapace",
+ "rapace-testkit",
  "tokio",
  "tracing",
 ]
@@ -1756,6 +1759,7 @@ dependencies = [
  "rapace",
  "rapace-macros",
  "rapace-registry",
+ "rapace-testkit",
  "rapace-tracing",
  "tokio",
  "tracing",

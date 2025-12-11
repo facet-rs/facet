@@ -33,46 +33,12 @@
 //! client.close();
 //! ```
 
-use std::sync::Arc;
-
-use rapace_core::{Frame, FrameFlags, MsgDescHot, Transport, TransportError, INLINE_PAYLOAD_SIZE};
+#[cfg(target_arch = "wasm32")]
 use rapace_transport_websocket::WebSocketTransport;
+#[cfg(target_arch = "wasm32")]
+use std::sync::Arc;
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::spawn_local;
-
-/// Compute a method ID by hashing "ServiceName.method_name" using FNV-1a.
-/// Must match the implementation in rapace-macros.
-const fn compute_method_id(service_name: &str, method_name: &str) -> u32 {
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x100000001b3;
-
-    let mut hash = FNV_OFFSET;
-
-    let service_bytes = service_name.as_bytes();
-    let mut i = 0;
-    while i < service_bytes.len() {
-        hash ^= service_bytes[i] as u64;
-        hash = hash.wrapping_mul(FNV_PRIME);
-        i += 1;
-    }
-    hash ^= b'.' as u64;
-    hash = hash.wrapping_mul(FNV_PRIME);
-    let method_bytes = method_name.as_bytes();
-    i = 0;
-    while i < method_bytes.len() {
-        hash ^= method_bytes[i] as u64;
-        hash = hash.wrapping_mul(FNV_PRIME);
-        i += 1;
-    }
-
-    ((hash >> 32) ^ hash) as u32
-}
-
-// ExplorerService method IDs (computed via FNV-1a hash to match rapace-macros)
-const METHOD_LIST_SERVICES: u32 = compute_method_id("Explorer", "list_services");
-const METHOD_GET_SERVICE: u32 = compute_method_id("Explorer", "get_service");
-const METHOD_CALL_UNARY: u32 = compute_method_id("Explorer", "call_unary");
-const METHOD_CALL_STREAMING: u32 = compute_method_id("Explorer", "call_streaming");
 
 // ============================================================================
 // ExplorerService types (must match dashboard types exactly)
@@ -201,13 +167,15 @@ pub struct StreamItem {
 /// - Service discovery (list_services, get_service)
 /// - Dynamic unary method invocation (call_unary)
 /// - Dynamic streaming method invocation (call_streaming)
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub struct ExplorerClient {
-    transport: Arc<WebSocketTransport>,
+    transport: Arc<WebSocketTransport<web_sys::WebSocket>>,
     next_msg_id: u64,
     next_channel_id: u32,
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 impl ExplorerClient {
     /// Connect to a rapace ExplorerService WebSocket server.
@@ -493,9 +461,10 @@ impl ExplorerClient {
 // ============================================================================
 
 /// Async iterator for streaming RPC results.
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub struct StreamingCall {
-    transport: Arc<WebSocketTransport>,
+    transport: Arc<WebSocketTransport<web_sys::WebSocket>>,
     channel_id: u32,
     msg_id: u64,
     service: String,
@@ -505,6 +474,7 @@ pub struct StreamingCall {
     finished: bool,
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 impl StreamingCall {
     /// Get the next value from the stream.
@@ -591,95 +561,3 @@ impl StreamingCall {
 // ============================================================================
 // Helpers
 // ============================================================================
-
-/// Convert ShapeInfo to a JS object.
-fn shape_to_js(shape: &ShapeInfo) -> Result<JsValue, JsValue> {
-    let obj = js_sys::Object::new();
-
-    match shape {
-        ShapeInfo::Scalar {
-            type_name,
-            affinity,
-        } => {
-            js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("Scalar"))?;
-            js_sys::Reflect::set(&obj, &"type_name".into(), &JsValue::from_str(type_name))?;
-            js_sys::Reflect::set(&obj, &"affinity".into(), &JsValue::from_str(affinity))?;
-        }
-        ShapeInfo::String => {
-            js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("String"))?;
-        }
-        ShapeInfo::Option { inner } => {
-            js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("Option"))?;
-            js_sys::Reflect::set(&obj, &"inner".into(), &shape_to_js(inner)?)?;
-        }
-        ShapeInfo::List { item } => {
-            js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("List"))?;
-            js_sys::Reflect::set(&obj, &"item".into(), &shape_to_js(item)?)?;
-        }
-        ShapeInfo::Struct { type_name, fields } => {
-            js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("Struct"))?;
-            js_sys::Reflect::set(&obj, &"type_name".into(), &JsValue::from_str(type_name))?;
-            let fields_arr = js_sys::Array::new();
-            for field in fields {
-                let field_obj = js_sys::Object::new();
-                js_sys::Reflect::set(&field_obj, &"name".into(), &JsValue::from_str(&field.name))?;
-                js_sys::Reflect::set(&field_obj, &"shape".into(), &shape_to_js(&field.shape)?)?;
-                fields_arr.push(&field_obj);
-            }
-            js_sys::Reflect::set(&obj, &"fields".into(), &fields_arr)?;
-        }
-        ShapeInfo::Enum {
-            type_name,
-            variants,
-        } => {
-            js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("Enum"))?;
-            js_sys::Reflect::set(&obj, &"type_name".into(), &JsValue::from_str(type_name))?;
-            let variants_arr = js_sys::Array::new();
-            for variant in variants {
-                let variant_obj = js_sys::Object::new();
-                js_sys::Reflect::set(
-                    &variant_obj,
-                    &"name".into(),
-                    &JsValue::from_str(&variant.name),
-                )?;
-                if let Some(fields) = &variant.fields {
-                    let fields_arr = js_sys::Array::new();
-                    for field in fields {
-                        let field_obj = js_sys::Object::new();
-                        js_sys::Reflect::set(
-                            &field_obj,
-                            &"name".into(),
-                            &JsValue::from_str(&field.name),
-                        )?;
-                        js_sys::Reflect::set(
-                            &field_obj,
-                            &"shape".into(),
-                            &shape_to_js(&field.shape)?,
-                        )?;
-                        fields_arr.push(&field_obj);
-                    }
-                    js_sys::Reflect::set(&variant_obj, &"fields".into(), &fields_arr)?;
-                } else {
-                    js_sys::Reflect::set(&variant_obj, &"fields".into(), &JsValue::NULL)?;
-                }
-                variants_arr.push(&variant_obj);
-            }
-            js_sys::Reflect::set(&obj, &"variants".into(), &variants_arr)?;
-        }
-        ShapeInfo::Map { key, value } => {
-            js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("Map"))?;
-            js_sys::Reflect::set(&obj, &"key".into(), &shape_to_js(key)?)?;
-            js_sys::Reflect::set(&obj, &"value".into(), &shape_to_js(value)?)?;
-        }
-        ShapeInfo::Unknown { type_name } => {
-            js_sys::Reflect::set(&obj, &"kind".into(), &JsValue::from_str("Unknown"))?;
-            js_sys::Reflect::set(&obj, &"type_name".into(), &JsValue::from_str(type_name))?;
-        }
-    }
-
-    Ok(obj.into())
-}
-
-fn transport_error(err: TransportError) -> JsValue {
-    JsValue::from_str(&format!("transport error: {err}"))
-}

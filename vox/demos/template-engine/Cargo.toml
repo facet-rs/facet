@@ -27,3 +27,6 @@ facet = { git = "https://github.com/facet-rs/facet" }
 facet-core = { git = "https://github.com/facet-rs/facet" }
 facet-postcard = { git = "https://github.com/facet-rs/facet" }
 tracing = "0.1"
+
+# Test utilities
+rapace-testkit = { path = "../../crates/rapace-testkit" }

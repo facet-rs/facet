@@ -12,8 +12,8 @@ proc-macro = true
 [dependencies]
 proc-macro2 = "1"
 quote = "1"
-syn = { version = "2", features = ["full", "parsing", "extra-traits"] }
 proc-macro-crate = "3.0"
+unsynn = "0.3.0"
 
 [dev-dependencies]
 rapace-core.workspace = true

@@ -123,10 +123,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Build docs
-        run: cargo doc --no-deps --all-features
-        env:
-          RUSTDOCFLAGS: -D warnings
+      - name: Build docs (xtask)
+        run: cargo xtask doc
 
   miri:
     name: Miri (undefined behavior)
@@ -142,11 +140,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Setup Miri
-        run: cargo miri setup
-
-      - name: Run Miri
-        run: cargo miri test
+      - name: Run Miri (xtask)
+        run: cargo xtask miri
         # Note: Miri doesn't support all libc calls, so some tests may need to be skipped
         continue-on-error: true
 
@@ -167,8 +162,8 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
-      - name: Generate coverage
-        run: cargo llvm-cov --all-features --lcov --output-path lcov.info
+      - name: Generate coverage (xtask)
+        run: cargo xtask coverage
 
       - name: Upload coverage
         uses: codecov/codecov-action@v3

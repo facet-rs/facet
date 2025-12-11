@@ -31,3 +31,6 @@ futures = "0.3"
 # Tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Test utilities
+rapace-testkit = { path = "../../crates/rapace-testkit" }

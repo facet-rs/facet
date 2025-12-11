@@ -41,6 +41,12 @@ mod shared {
         payload: Vec<u8>,
     }
 
+    impl Default for WebSocketEncoder {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
     impl WebSocketEncoder {
         pub fn new() -> Self {
             Self {

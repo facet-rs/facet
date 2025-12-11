@@ -12,6 +12,7 @@ use std::time::Duration;
 use rapace::tokio_stream::StreamExt;
 use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
 use rapace::{RpcSession, StreamTransport, Transport};
+use rapace_testkit::helper_binary::find_helper_binary;
 use tokio::io::{ReadHalf, WriteHalf};
 use tokio::net::TcpListener;
 
@@ -137,18 +138,27 @@ fn verify_diagnostics(diagnostics: &[Diagnostic]) {
 async fn test_cross_process_tcp() {
     init_tracing();
 
-    // First, build the helper binary
-    let build_status = Command::new("cargo")
-        .args([
-            "build",
-            "--bin",
-            "diagnostics-plugin-helper",
-            "-p",
-            "rapace-diagnostics-over-rapace",
-        ])
-        .status()
-        .expect("failed to build helper");
-    assert!(build_status.success(), "helper build failed");
+    // Find or build the helper binary
+    let helper_path = match find_helper_binary("diagnostics-plugin-helper") {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("[test] {}; attempting to build inline", e);
+            let build_status = Command::new("cargo")
+                .args([
+                    "build",
+                    "--bin",
+                    "diagnostics-plugin-helper",
+                    "-p",
+                    "rapace-diagnostics-over-rapace",
+                ])
+                .status()
+                .expect("failed to build helper");
+            assert!(build_status.success(), "helper build failed");
+
+            find_helper_binary("diagnostics-plugin-helper")
+                .expect("helper binary still not found after building")
+        }
+    };
 
     // Find an available port
     let port = find_available_port().await;
@@ -158,15 +168,6 @@ async fn test_cross_process_tcp() {
 
     // Start listening
     let listener = TcpListener::bind(&addr).await.unwrap();
-
-    // Find the helper binary
-    let helper_path = std::env::current_exe()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("diagnostics-plugin-helper");
 
     eprintln!("[test] Spawning helper: {:?}", helper_path);
 

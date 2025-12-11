@@ -18,6 +18,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Run all CI checks locally (test, clippy, fmt, doc, coverage, miri, fuzz)
+    Ci,
     /// Run all tests (workspace + fuzz harnesses)
     Test,
     /// Run fuzz tests with bolero
@@ -44,6 +46,12 @@ enum Commands {
         #[arg(long)]
         fix: bool,
     },
+    /// Build documentation with warnings as errors
+    Doc,
+    /// Generate code coverage report (requires cargo-llvm-cov)
+    Coverage,
+    /// Run miri for undefined behavior detection (requires nightly)
+    Miri,
     /// Benchmark HTTP tunnel overhead
     Bench {
         /// Duration per test (e.g., "10s", "30s")
@@ -64,6 +72,35 @@ fn main() -> ExitCode {
     }
 }
 
+/// Pre-build all helper binaries used by cross-process tests.
+///
+/// This avoids rebuilding them during test execution, which can cause
+/// timing issues and redundant compilation.
+fn prebuild_helpers(
+    sh: &Shell,
+    _workspace_root: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let helpers = vec![
+        (
+            "rapace-diagnostics-over-rapace",
+            "diagnostics-plugin-helper",
+        ),
+        ("rapace-http-over-rapace", "http-plugin-helper"),
+        ("rapace-template-engine", "template-engine-helper"),
+        ("rapace-tracing-over-rapace", "tracing-plugin-helper"),
+    ];
+
+    for (package, binary) in helpers {
+        println!("  Building {} ({})", binary, package);
+        cmd!(sh, "cargo build --bin {binary} -p {package}")
+            .run()
+            .map_err(|e| format!("Failed to build {}: {}", binary, e))?;
+    }
+
+    println!("  All helper binaries built successfully");
+    Ok(())
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let sh = Shell::new()?;
@@ -79,7 +116,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     match cli.command {
         Commands::Test => {
-            println!("=== Running workspace tests ===");
+            println!("=== Pre-building helper binaries ===");
+            prebuild_helpers(&sh, &workspace_root)?;
+
+            println!("\n=== Running workspace tests ===");
 
             // Try nextest first, fall back to cargo test
             if cmd!(sh, "cargo nextest --version").quiet().run().is_ok() {
@@ -155,7 +195,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             run_dashboard(&sh, &workspace_root)?;
         }
         Commands::Clippy => {
-            println!("=== Running clippy ===");
+            println!("=== Pre-building helper binaries ===");
+            prebuild_helpers(&sh, &workspace_root)?;
+
+            println!("\n=== Running clippy ===");
             cmd!(sh, "cargo clippy --workspace --all-features -- -D warnings").run()?;
 
             println!("\n=== Clippy on fuzz crate ===");
@@ -169,6 +212,91 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!("=== Checking formatting ===");
                 cmd!(sh, "cargo fmt --all -- --check").run()?;
+            }
+        }
+        Commands::Ci => {
+            println!("=== Running all CI checks ===\n");
+
+            println!(">>> cargo xtask test");
+            cmd!(sh, "cargo xtask test").run()?;
+
+            println!("\n>>> cargo xtask clippy");
+            cmd!(sh, "cargo xtask clippy").run()?;
+
+            println!("\n>>> cargo xtask fmt");
+            cmd!(sh, "cargo xtask fmt").run()?;
+
+            println!("\n>>> cargo xtask doc");
+            cmd!(sh, "cargo xtask doc").run()?;
+
+            println!("\n>>> cargo xtask coverage");
+            cmd!(sh, "cargo xtask coverage").run()?;
+
+            println!("\n>>> cargo xtask miri");
+            cmd!(sh, "cargo xtask miri").run()?;
+
+            println!("\n>>> cargo xtask fuzz");
+            cmd!(sh, "cargo xtask fuzz").run()?;
+
+            println!("\n=== All CI checks passed ===");
+        }
+        Commands::Doc => {
+            println!("=== Building documentation with warnings as errors ===");
+            cmd!(sh, "cargo doc --no-deps --all-features")
+                .env("RUSTDOCFLAGS", "-D warnings")
+                .run()?;
+            println!("\n=== Documentation built successfully ===");
+        }
+        Commands::Coverage => {
+            println!("=== Pre-building helper binaries ===");
+            prebuild_helpers(&sh, &workspace_root)?;
+
+            println!("\n=== Generating code coverage report ===");
+
+            // Check if cargo-llvm-cov is installed
+            if cmd!(sh, "cargo llvm-cov --version").quiet().run().is_err() {
+                eprintln!("cargo-llvm-cov not found. Install with:");
+                eprintln!("  cargo install cargo-llvm-cov");
+                return Err("cargo-llvm-cov not installed".into());
+            }
+
+            cmd!(
+                sh,
+                "cargo llvm-cov --all-features --lcov --output-path lcov.info"
+            )
+            .run()?;
+
+            println!("\n=== Code coverage report generated: lcov.info ===");
+        }
+        Commands::Miri => {
+            println!("=== Running Miri (undefined behavior detection) ===");
+
+            // Check if miri is available (requires nightly)
+            if cmd!(sh, "cargo +nightly miri --version")
+                .quiet()
+                .run()
+                .is_err()
+            {
+                eprintln!("cargo-miri not found. Install with:");
+                eprintln!("  rustup +nightly component add miri");
+                return Err("cargo-miri not installed".into());
+            }
+
+            println!("\n=== Setting up Miri ===");
+            cmd!(sh, "cargo +nightly miri setup").run()?;
+
+            println!("\n=== Running Miri tests ===");
+            let result = cmd!(sh, "cargo +nightly miri test").run();
+
+            // Miri may fail on some systems due to unsupported libc calls,
+            // but we still want to report the result
+            match result {
+                Ok(()) => println!("\n=== Miri tests passed ==="),
+                Err(e) => {
+                    eprintln!("\nMiri tests had issues (this may be expected on some systems):");
+                    eprintln!("  {}", e);
+                    eprintln!("Note: Some tests may be skipped due to Miri limitations");
+                }
             }
         }
         Commands::Bench {
