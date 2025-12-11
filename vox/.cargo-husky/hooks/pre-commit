@@ -1,3 +1,2 @@
-#!/usr/bin/env bash
-cargo install --git https://github.com/bearcove/facet-dev
-facet-dev --template-dir .readme-templates
+cargo install --git https://github.com/facet-rs/facet-dev
+facet-dev generate
