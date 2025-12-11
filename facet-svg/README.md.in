@@ -1,5 +1,25 @@
 Provides strongly-typed SVG parsing for Facet types using facet-xml.
 
+## Why facet-svg?
+
+SVG is ubiquitous in diagram generation—tools like **pikchr**, **Graphviz**, **Mermaid**, and countless design applications output SVG as their primary format. However, SVG parsing in Rust typically requires either:
+
+- **Generic XML libraries** that lose type information and require error-prone casting
+- **Special-purpose SVG libraries** that add heavyweight dependencies and force you into their abstractions
+- **Manual string parsing** that's fragile and doesn't scale
+
+facet-svg solves this by providing **strongly-typed, compile-time-safe SVG structures** derived from Facet's reflection system. You get:
+
+- **Type Safety**: The Rust compiler catches mismatches between your SVG structure and actual data
+- **Zero Dependencies**: Built on facet-xml, which uses only quick-xml for parsing
+- **Graceful Degradation**: Unknown elements are safely ignored, so SVGs from any tool work without modification
+- **Structured Access**: Navigate SVG geometry programmatically with full IDE support and type checking
+
+This makes facet-svg ideal for:
+- Processing SVG output from diagram tools in build pipelines
+- Extracting geometric data (paths, shapes, text) for analysis or transformation
+- Building Rust applications that need to consume or validate SVGs at compile time
+
 ## Supported Elements
 
 The following SVG elements are fully supported for parsing:
