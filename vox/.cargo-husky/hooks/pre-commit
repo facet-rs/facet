@@ -1,13 +1,3 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
-# Build facet-dev locally or install from crates.io if in CI
-if [ -d "../../facet-dev" ]; then
-  # Local development: use local facet-dev
-  cargo build --release -p facet-dev --manifest-path ../../facet-dev/Cargo.toml
-  ../../facet-dev/target/release/facet-dev --template-dir .readme-templates
-else
-  # CI/published: install from crates.io
-  cargo install facet-dev --locked
-  facet-dev --template-dir .readme-templates
-fi
+cargo install --git https://github.com/bearcove/facet-dev
+facet-dev --template-dir .readme-templates
