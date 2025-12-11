@@ -10,10 +10,10 @@ pub(crate) enum XmlAnnotationPhase {
 }
 
 /// Return all fields that require an XML annotation but don't have one.
-pub(crate) fn fields_missing_xml_annotations<'a>(
-    fields: &'a [Field],
+pub(crate) fn fields_missing_xml_annotations(
+    fields: &[Field],
     phase: XmlAnnotationPhase,
-) -> Vec<&'a Field> {
+) -> Vec<&Field> {
     fields
         .iter()
         .filter(|field| field_requires_xml_annotation(field, phase))

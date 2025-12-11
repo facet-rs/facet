@@ -272,13 +272,7 @@ title = "Pretty Printing"
 <p class="description">Vectors show their elements in a list. The shape describes the element type.</p>
 <div class="value-output">
 <h4>Value</h4>
-<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;i32&gt;</span><span style="opacity:0.7"> [</span>
-  <span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,93)">3</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,93)">4</span><span style="opacity:0.7">,</span>
-  <span style="color:rgb(224,81,93)">5</span><span style="opacity:0.7">,</span>
-<span style="opacity:0.7">]</span></code></pre>
+<pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">Vec&lt;i32&gt;</span><span style="opacity:0.7"> [</span><span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">,</span> <span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7">,</span> <span style="color:rgb(224,81,93)">3</span><span style="opacity:0.7">,</span> <span style="color:rgb(224,81,93)">4</span><span style="opacity:0.7">,</span> <span style="color:rgb(224,81,93)">5</span><span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="shape-output">
 <h4>Shape</h4>
@@ -314,8 +308,8 @@ title = "Pretty Printing"
 <h4>Value</h4>
 <pre><code><span style="font-weight:bold"></span><span style="color:rgb(122,162,247)">HashMap&lt;String, i32&gt;</span><span style="opacity:0.7"> [</span>
   "<span style="color:rgb(158,206,106)">three</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">3</span><span style="opacity:0.7">,</span>
-  "<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">,</span>
   "<span style="color:rgb(158,206,106)">two</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">2</span><span style="opacity:0.7">,</span>
+  "<span style="color:rgb(158,206,106)">one</span>"<span style="opacity:0.7"> =&gt; </span><span style="color:rgb(224,81,93)">1</span><span style="opacity:0.7">,</span>
 <span style="opacity:0.7">]</span></code></pre>
 </div>
 <div class="shape-output">
@@ -453,9 +447,9 @@ title = "Pretty Printing"
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6/facet-pretty/examples/pretty_showcase.rs"><code>facet-pretty/examples/pretty_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/0d55a3ebfa82957a782ca62da24eb0ecec4d4fd6"><code>0d55a3ebf</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2025-12-09T19:29:12+01:00">2025-12-09T19:29:12+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/c7bc095e123eeb10ec9201e9972b3d9d0a43ee01/facet-pretty/examples/pretty_showcase.rs"><code>facet-pretty/examples/pretty_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/c7bc095e123eeb10ec9201e9972b3d9d0a43ee01"><code>c7bc095e1</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2025-12-11T12:16:12+01:00">2025-12-11T12:16:12+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>
