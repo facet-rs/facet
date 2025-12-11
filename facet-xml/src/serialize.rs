@@ -8,8 +8,9 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use facet_core::{Def, Facet, Field, Shape, StructKind};
 use facet_reflect::{HasFields, Peek, is_spanned_shape};
 
+use crate::annotation::{XmlAnnotationPhase, fields_missing_xml_annotations};
 use crate::deserialize::{XmlFieldExt, XmlShapeExt};
-use crate::error::{XmlError, XmlErrorKind};
+use crate::error::{MissingAnnotationPhase, XmlError, XmlErrorKind};
 
 /// A function that formats a floating-point number to a writer.
 ///
@@ -786,7 +787,9 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
         struct_peek: facet_reflect::PeekStruct<'mem, 'facet>,
         shape: &'static Shape,
     ) -> Result<()> {
-        match struct_peek.ty().kind {
+        let struct_ty = struct_peek.ty();
+
+        match struct_ty.kind {
             StructKind::Unit => {
                 // Unit struct - just output empty element
                 write!(self.writer, "<{}/>", escape_element_name(element_name))
@@ -818,6 +821,20 @@ impl<'a, W: Write> XmlSerializer<'a, W> {
             StructKind::Struct => {
                 // Named struct - fall through to normal handling
             }
+        }
+
+        let fields = struct_ty.fields;
+        let missing = fields_missing_xml_annotations(fields, XmlAnnotationPhase::Serialize);
+        if !missing.is_empty() {
+            let field_info = missing
+                .into_iter()
+                .map(|field| (field.name, field.shape().type_identifier))
+                .collect();
+            return Err(XmlError::new(XmlErrorKind::MissingXmlAnnotations {
+                type_name: shape.type_identifier,
+                phase: MissingAnnotationPhase::Serialize,
+                fields: field_info,
+            }));
         }
 
         // Get container-level namespace default

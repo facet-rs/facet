@@ -63,6 +63,15 @@ impl<K: Into<XmlErrorKind>> From<K> for XmlError {
     }
 }
 
+/// Public phase indicator for [`XmlErrorKind::MissingXmlAnnotations`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingAnnotationPhase {
+    /// Error triggered while serializing.
+    Serialize,
+    /// Error triggered while deserializing.
+    Deserialize,
+}
+
 /// Detailed classification of XML errors.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -140,6 +149,15 @@ pub enum XmlErrorKind {
     SerializeUnknownElementType,
     /// Unknown value type during serialization.
     SerializeUnknownValueType,
+    /// Struct fields lack XML annotations, so they cannot be mapped automatically.
+    MissingXmlAnnotations {
+        /// Fully-qualified type name of the struct.
+        type_name: &'static str,
+        /// Whether the failure happened while serializing or deserializing.
+        phase: MissingAnnotationPhase,
+        /// Offending fields paired with their Rust type identifiers.
+        fields: Vec<(&'static str, &'static str)>,
+    },
 }
 
 impl XmlErrorKind {
@@ -172,6 +190,7 @@ impl XmlErrorKind {
             XmlErrorKind::SerializeNotList => "xml::serialize_not_list",
             XmlErrorKind::SerializeUnknownElementType => "xml::serialize_unknown_element_type",
             XmlErrorKind::SerializeUnknownValueType => "xml::serialize_unknown_value_type",
+            XmlErrorKind::MissingXmlAnnotations { .. } => "xml::missing_xml_annotations",
         }
     }
 }
@@ -260,6 +279,38 @@ impl Display for XmlErrorKind {
             }
             XmlErrorKind::SerializeUnknownValueType => {
                 write!(f, "cannot serialize value: unknown type")
+            }
+            XmlErrorKind::MissingXmlAnnotations {
+                type_name,
+                phase,
+                fields,
+            } => {
+                let verb = match phase {
+                    MissingAnnotationPhase::Serialize => "serialize",
+                    MissingAnnotationPhase::Deserialize => "deserialize",
+                };
+
+                write!(
+                    f,
+                    "{type_name} cannot {verb} because these fields lack XML annotations: "
+                )?;
+                for (idx, (field, ty)) in fields.iter().enumerate() {
+                    if idx > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{field}: {ty}")?;
+                }
+                write!(
+                    f,
+                    ". Each field must opt into XML via one of:\n\
+                     • #[facet(xml::attribute)]  → <{type_name} field=\"…\" /> (attributes)\n\
+                     • #[facet(xml::element)]    → <{type_name}><field>…</field></{type_name}> (single child)\n\
+                     • #[facet(xml::elements)]   → <{type_name}><field>…</field>…</{type_name}> (lists of children)\n\
+                     • #[facet(xml::text)]       → <{type_name}>…</{type_name}> (text content)\n\
+                     • #[facet(xml::element_name)] to capture the element/tag name itself.\n\
+                     `#[facet(child)]` is accepted as shorthand for xml::element. \
+                     Use #[facet(flatten)] or #[facet(skip*)] if the field should be omitted."
+                )
             }
         }
     }

@@ -44,6 +44,11 @@ facet = { path = "../facet" }
 facet-core = { path = "../facet-core" }
 facet-pretty = { path = "../facet-pretty" }
 facet-testhelpers = { path = "../facet-testhelpers" }
+facet-showcase = { path = "../facet-showcase" }
 miette = { version = "7", default-features = false }
 indoc = "2"
 cargo-husky = { version = "1.5.0", default-features = false, features = ["user-hooks"] }
+
+[[example]]
+name = "xml_showcase"
+path = "examples/xml_showcase.rs"

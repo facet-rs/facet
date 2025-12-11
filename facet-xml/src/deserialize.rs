@@ -16,7 +16,8 @@ use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
 use quick_xml::reader::NsReader;
 
-use crate::error::{XmlError, XmlErrorKind};
+use crate::annotation::{XmlAnnotationPhase, fields_missing_xml_annotations};
+use crate::error::{MissingAnnotationPhase, XmlError, XmlErrorKind};
 
 pub(crate) type Result<T> = std::result::Result<T, XmlError>;
 
@@ -997,6 +998,20 @@ impl<'input> XmlDeserializer<'input> {
                         }
                         // Normal named struct - fall through to standard handling
                     }
+                }
+
+                let missing =
+                    fields_missing_xml_annotations(fields, XmlAnnotationPhase::Deserialize);
+                if !missing.is_empty() {
+                    let field_info = missing
+                        .into_iter()
+                        .map(|field| (field.name, field.shape().type_identifier))
+                        .collect();
+                    return Err(self.err(XmlErrorKind::MissingXmlAnnotations {
+                        type_name: shape.type_identifier,
+                        phase: MissingAnnotationPhase::Deserialize,
+                        fields: field_info,
+                    }));
                 }
 
                 // First, deserialize attributes
