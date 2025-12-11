@@ -199,3 +199,100 @@ fn test_svg_with_opacity() {
     let svg: Svg = facet_xml::from_str(svg_str).expect("Failed to parse opacity SVG");
     assert_eq!(svg.children.len(), 1);
 }
+
+/// SVG with use element (now fully supported)
+#[test]
+fn test_svg_use_element_supported() {
+    let svg_str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
+  <defs>
+    <g id="myCircle">
+      <circle cx="0" cy="0" r="20" fill="red"/>
+    </g>
+  </defs>
+  <use x="50" y="50" href="data:myCircle"/>
+</svg>"#;
+
+    let svg: Svg = facet_xml::from_str(svg_str).expect("Failed to parse use element SVG");
+    assert_eq!(svg.children.len(), 2); // defs and use
+    if let Some(facet_svg::SvgNode::Use(use_elem)) = svg.children.last() {
+        assert_eq!(use_elem.x, Some(50.0));
+        assert_eq!(use_elem.y, Some(50.0));
+        println!(
+            "✓ Use element fully parsed with x={:?}, y={:?}",
+            use_elem.x, use_elem.y
+        );
+    }
+}
+
+/// SVG with image element (now fully supported)
+#[test]
+fn test_svg_image_element_supported() {
+    let svg_str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <image x="10" y="10" width="100" height="100" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Crect fill='red' width='100' height='100'/%3E%3C/svg%3E"/>
+</svg>"#;
+
+    let svg: Svg = facet_xml::from_str(svg_str).expect("Failed to parse image element SVG");
+    assert_eq!(svg.children.len(), 1);
+    if let Some(facet_svg::SvgNode::Image(img)) = svg.children.first() {
+        assert_eq!(img.x, Some(10.0));
+        assert_eq!(img.y, Some(10.0));
+        assert_eq!(img.width, Some(100.0));
+        assert_eq!(img.height, Some(100.0));
+        println!("✓ Image element fully parsed with dimensions");
+    }
+}
+
+/// SVG with title element (now fully supported)
+#[test]
+fn test_svg_title_element_supported() {
+    let svg_str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
+  <title>My Diagram</title>
+  <rect x="10" y="10" width="80" height="80" fill="blue"/>
+</svg>"#;
+
+    let svg: Svg = facet_xml::from_str(svg_str).expect("Failed to parse title element SVG");
+    assert_eq!(svg.children.len(), 2); // title and rect
+    if let Some(facet_svg::SvgNode::Title(title)) = svg.children.first() {
+        assert_eq!(title.content, "My Diagram");
+        println!("✓ Title element fully parsed: {}", title.content);
+    }
+}
+
+/// SVG with desc element (now fully supported)
+#[test]
+fn test_svg_desc_element_supported() {
+    let svg_str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
+  <desc>A simple diagram with one rectangle</desc>
+  <rect x="10" y="10" width="80" height="80" fill="green"/>
+</svg>"#;
+
+    let svg: Svg = facet_xml::from_str(svg_str).expect("Failed to parse desc element SVG");
+    assert_eq!(svg.children.len(), 2); // desc and rect
+    if let Some(facet_svg::SvgNode::Desc(desc)) = svg.children.first() {
+        assert_eq!(desc.content, "A simple diagram with one rectangle");
+        println!("✓ Desc element fully parsed: {}", desc.content);
+    }
+}
+
+/// SVG with symbol element (now fully supported)
+#[test]
+fn test_svg_symbol_element_supported() {
+    let svg_str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <defs>
+    <symbol id="star" viewBox="0 0 100 100">
+      <polygon points="50,10 61,35 87,35 70,57 79,82 50,60 21,82 30,57 13,35 39,35" fill="gold"/>
+    </symbol>
+  </defs>
+  <use x="50" y="50" href="data:star"/>
+</svg>"#;
+
+    let svg: Svg = facet_xml::from_str(svg_str).expect("Failed to parse symbol element SVG");
+    assert!(svg.children.len() >= 1);
+    if let Some(facet_svg::SvgNode::Defs(defs)) = svg.children.first() {
+        if let Some(facet_svg::SvgNode::Symbol(sym)) = defs.children.first() {
+            assert_eq!(sym.id, Some("star".to_string()));
+            assert_eq!(sym.view_box, Some("0 0 100 100".to_string()));
+            println!("✓ Symbol element fully parsed with id and viewBox");
+        }
+    }
+}
