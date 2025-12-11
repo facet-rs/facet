@@ -1,6 +1,6 @@
 [package]
 name = "facet-msgpack"
-version = "0.32.1"
+version = "0.32.2"
 edition = "2024"
 rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
@@ -25,8 +25,8 @@ serialize = []
 axum = ["dep:axum-core", "dep:http", "dep:http-body-util"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.32.1" }
-facet-reflect = { path = "../facet-reflect", version = "0.32.1" }
+facet-core = { path = "../facet-core", version = "0.32.2" }
+facet-reflect = { path = "../facet-reflect", version = "0.32.2" }
 log = "0.4.27"
 
 # Axum integration (optional)

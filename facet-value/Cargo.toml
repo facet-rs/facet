@@ -1,6 +1,6 @@
 [package]
 name = "facet-value"
-version = "0.32.1"
+version = "0.32.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -18,9 +18,9 @@ diagnostics = ["alloc", "dep:miette", "dep:facet-pretty", "dep:syntect", "dep:on
 bolero-inline-tests = ["alloc"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.32.1", default-features = false }
-facet-pretty = { path = "../facet-pretty", version = "0.32.1", optional = true }
-facet-reflect = { path = "../facet-reflect", version = "0.32.1", default-features = false, optional = true }
+facet-core = { path = "../facet-core", version = "0.32.2", default-features = false }
+facet-pretty = { path = "../facet-pretty", version = "0.32.2", optional = true }
+facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false, optional = true }
 miette = { version = "7", optional = true, default-features = false }
 syntect = { version = "5.3", optional = true }
 once_cell = { version = "1", optional = true }

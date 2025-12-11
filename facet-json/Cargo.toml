@@ -1,6 +1,6 @@
 [package]
 name = "facet-json"
-version = "0.32.1"
+version = "0.32.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.89.0"
@@ -27,10 +27,10 @@ cranelift = ["std", "dep:cranelift", "dep:cranelift-jit", "dep:cranelift-module"
 ci = ["cranelift"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.32.1", default-features = false }
-facet-core = { path = "../facet-core", version = "0.32.1", default-features = false }
-facet-reflect = { path = "../facet-reflect", version = "0.32.1", default-features = false }
-facet-solver = { path = "../facet-solver", version = "0.32.1" }
+facet = { path = "../facet", version = "0.32.2", default-features = false }
+facet-core = { path = "../facet-core", version = "0.32.2", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false }
+facet-solver = { path = "../facet-solver", version = "0.32.2" }
 
 miette = { version = "7", default-features = false }
 strsim = "0.11"

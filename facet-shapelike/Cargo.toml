@@ -14,16 +14,16 @@ ci = [] # CI feature
 
 [dependencies]
 bitflags = "2.10.0"
-facet = { path = "../facet", version = "0.32.1", features = ["alloc"] }
-facet-core = { path = "../facet-core", version = "0.32.1", features = ["alloc"] }
-facet-macros = { path = "../facet-macros", version = "0.32.1" }
-facet-postcard = { path = "../facet-postcard", version = "0.32.1" }
-facet-reflect = { path = "../facet-reflect", version = "0.32.1", default-features = false }
+facet = { path = "../facet", version = "0.32.2", features = ["alloc"] }
+facet-core = { path = "../facet-core", version = "0.32.2", features = ["alloc"] }
+facet-macros = { path = "../facet-macros", version = "0.32.2" }
+facet-postcard = { path = "../facet-postcard", version = "0.32.2" }
+facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false }
 
 [dev-dependencies]
-facet-json = { path = "../facet-json", version = "0.32.1" }
-facet-kdl = { path = "../facet-kdl", version = "0.32.1" }
-facet-assert = { path = "../facet-assert", version = "0.32.1" }
-facet-xml = { path = "../facet-xml", version = "0.32.1" }
-facet-args = { path = "../facet-args", version = "0.32.1" }
+facet-json = { path = "../facet-json", version = "0.32.2" }
+facet-kdl = { path = "../facet-kdl", version = "0.32.2" }
+facet-assert = { path = "../facet-assert", version = "0.32.2" }
+facet-xml = { path = "../facet-xml", version = "0.32.2" }
+facet-args = { path = "../facet-args", version = "0.32.2" }
 facet-testhelpers = { path = "../facet-testhelpers" }

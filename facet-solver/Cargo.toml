@@ -1,6 +1,6 @@
 [package]
 name = "facet-solver"
-version = "0.32.1"
+version = "0.32.2"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -17,8 +17,8 @@ alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 suggestions = ["strsim", "alloc"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.32.1", default-features = false }
-facet-reflect = { path = "../facet-reflect", version = "0.32.1", default-features = false }
+facet-core = { path = "../facet-core", version = "0.32.2", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false }
 strsim = { version = "0.11", optional = true }
 
 [dev-dependencies]
