@@ -1,6 +1,6 @@
 [package]
 name = "facet-xdr"
-version = "0.32.0"
+version = "0.32.1"
 edition = "2024"
 rust-version = "1.89.0"
 license = "MIT OR Apache-2.0"
@@ -18,8 +18,8 @@ std = ["facet-core/std", "facet-reflect/std"]
 default = ["std"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.32.0", default-features = false }
-facet-reflect = { path = "../facet-reflect", version = "0.32.0", default-features = false }
+facet-core = { path = "../facet-core", version = "0.32.1", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.32.1", default-features = false }
 
 [dev-dependencies]
 facet = { path = "../facet" }

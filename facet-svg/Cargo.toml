@@ -10,10 +10,10 @@ keywords = ["svg", "serialization", "facet"]
 categories = ["encoding", "parsing"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.32.0", default-features = false }
-facet-core = { path = "../facet-core", version = "0.32.0", default-features = false }
-facet-reflect = { path = "../facet-reflect", version = "0.32.0", default-features = false }
-facet-xml = { path = "../facet-xml", version = "0.32.0" }
+facet = { path = "../facet", version = "0.32.1", default-features = false }
+facet-core = { path = "../facet-core", version = "0.32.1", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.32.1", default-features = false }
+facet-xml = { path = "../facet-xml", version = "0.32.1" }
 lightningcss = "1.0.0-alpha.68"
 
 [dev-dependencies]
