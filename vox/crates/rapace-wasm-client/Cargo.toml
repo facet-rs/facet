@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "WebAssembly client for rapace RPC (browser support)"
+publish = false
 
 [lib]
 crate-type = ["cdylib", "rlib"]

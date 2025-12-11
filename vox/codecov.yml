@@ -1,0 +1,5 @@
+# Configure Codecov reporting.
+# The demos/ tree hosts example apps and browser harnesses that should not
+# impact the main workspace's coverage metrics.
+ignore:
+  - "demos/**/*"

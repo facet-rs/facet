@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Conformance test suite for rapace transports"
+publish = false
 
 [dependencies]
 # rapace is required for the #[rapace::service] macro to work

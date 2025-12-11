@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Explorer service for rapace - dynamic service discovery and method invocation"
+publish = false
 
 [dependencies]
 rapace = { path = "../rapace" }
