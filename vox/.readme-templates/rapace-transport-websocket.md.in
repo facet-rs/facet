@@ -1,0 +1,28 @@
+WebSocket transport for rapace RPC.
+
+Enable RPC communication over WebSocket connections for browser clients and web servers.
+
+## Features
+
+- **Browser support**: WebAssembly clients in the browser
+- **Server-side WebSocket**: Accept WebSocket connections from web clients
+- **Cross-platform**: Works on both native and WASM targets
+
+## Usage
+
+Native server:
+```rust
+use rapace::RpcSession;
+use rapace_transport_websocket::WebSocketTransport;
+
+// Accept WebSocket connections...
+```
+
+WASM client:
+```rust
+use rapace::RpcSession;
+use rapace_transport_websocket::WebSocketTransport;
+
+let transport = WebSocketTransport::connect("ws://localhost:9000").await?;
+let session = RpcSession::new(transport);
+```

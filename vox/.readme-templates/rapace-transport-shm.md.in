@@ -1,0 +1,22 @@
+Shared memory transport for rapace RPC.
+
+The performance reference implementation using POSIX shared memory for ultra-low latency local IPC.
+
+## Features
+
+- **Ultra-low latency**: Microsecond-scale message passing via shared memory
+- **Zero-copy**: Optional zero-copy allocation directly into SHM slots
+- **Linux/Unix**: Requires a POSIX-compliant OS
+
+## Performance
+
+For latency-sensitive applications requiring local inter-process communication, this transport delivers sub-microsecond message round-trip times.
+
+## Configuration
+
+Enable the `allocator` feature for zero-copy SHM allocation:
+
+```toml
+rapace = { version = "0.1", features = ["shm"] }
+rapace-transport-shm = { version = "0.1", features = ["allocator"] }
+```

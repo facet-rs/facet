@@ -1,0 +1,11 @@
+In-process memory transport for rapace RPC.
+
+The semantic reference implementation for rapace transports. All messages are passed via memory without any I/O overhead. Useful for:
+
+- **Testing**: Unit tests and integration tests
+- **Single-process RPC**: When you need RPC semantics without cross-process boundaries
+- **Reference implementation**: Understanding how rapace transports work
+
+## Feature
+
+Enabled by default in rapace. Use `default-features = false` to disable.

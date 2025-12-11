@@ -1,0 +1,10 @@
+Procedural macros for rapace RPC framework.
+
+Provides the `#[rapace::service]` macro for:
+
+- **Code generation**: Automatically generates client and server types from trait definitions
+- **Type-safe RPC**: Compile-time verification of RPC method signatures
+- **Streaming support**: Seamless async stream handling
+- **Zero boilerplate**: Write your service interface once, get everything else
+
+This crate is used internally by rapace. Most users will interact through the re-export in the main `rapace` crate.
