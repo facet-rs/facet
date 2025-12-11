@@ -29,6 +29,7 @@ members = [
     # format crates
     "facet-json",
     "facet-kdl",
+    "facet-svg",
     "facet-xml",
     "facet-yaml",
     "facet-toml",

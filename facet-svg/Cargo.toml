@@ -1,0 +1,19 @@
+[package]
+name = "facet-svg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "SVG serialization for Facet types"
+keywords = ["svg", "serialization", "facet"]
+categories = ["encoding", "parsing"]
+
+[dependencies]
+facet = { path = "../facet", default-features = false }
+facet-core = { path = "../facet-core", default-features = false }
+facet-reflect = { path = "../facet-reflect", default-features = false }
+facet-xml = { path = "../facet-xml" }
+
+[dev-dependencies]
+facet-testhelpers = { path = "../facet-testhelpers" }
