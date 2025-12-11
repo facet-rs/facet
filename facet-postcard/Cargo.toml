@@ -6,15 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Postcard serialization and deserialization for Facet types"
-keywords = [
-    "postcard",
-    "serialization",
-    "deserialization",
-    "reflection",
-    "facet",
-    "no_std",
-    "embedded",
-]
+keywords = ["postcard", "serialization", "facet", "no_std", "embedded"]
 categories = ["encoding", "no-std", "embedded"]
 
 [package.metadata.docs.rs]
