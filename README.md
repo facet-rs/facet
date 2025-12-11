@@ -1,9 +1,9 @@
-# cinereus
+# facet-core
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/cinereus/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
-[![crates.io](https://img.shields.io/crates/v/cinereus.svg)](https://crates.io/crates/cinereus)
-[![documentation](https://docs.rs/cinereus/badge.svg)](https://docs.rs/cinereus)
-[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/cinereus.svg)](./LICENSE)
+[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-core/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![crates.io](https://img.shields.io/crates/v/facet-core.svg)](https://crates.io/crates/facet-core)
+[![documentation](https://docs.rs/facet-core/badge.svg)](https://docs.rs/facet-core)
+[![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-core.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
 
