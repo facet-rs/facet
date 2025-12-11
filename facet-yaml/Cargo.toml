@@ -23,7 +23,7 @@ axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"time\"))"] }
 
 [dependencies]
-saphyr-parser = { git = "https://github.com/facet-rs/saphyr.git", branch = "feat/clone-parser-scanner" }
+saphyr-parser = "0.0.6"
 facet = { path = "../facet", version = "0.32.1", default-features = false }
 facet-core = { path = "../facet-core", version = "0.32.1", default-features = false }
 facet-reflect = { path = "../facet-reflect", version = "0.32.1", default-features = false, features = ["miette"] }
