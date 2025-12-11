@@ -1,49 +1,42 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+HOOK_SOURCE_DIR="$(git rev-parse --show-toplevel)/.cargo-husky/hooks"
+GIT_DIR="$(git rev-parse --git-dir)"
 
-HOOKS_SOURCE="$PROJECT_ROOT/.cargo-husky/hooks"
+copy_hook() {
+  local src="$1"
+  local dst="$2"
 
-GIT_METADATA="$PROJECT_ROOT/.git"
-if [ -d "$GIT_METADATA" ]; then
-    GIT_DIR="$GIT_METADATA"
-elif [ -f "$GIT_METADATA" ]; then
-    GITDIR_LINE="$(sed -n 's/^gitdir: //p' "$GIT_METADATA")"
-    if [ -z "$GITDIR_LINE" ]; then
-        echo "Error: Unable to determine git dir from $GIT_METADATA"
-        exit 1
-    fi
-    if [[ "$GITDIR_LINE" = /* ]]; then
-        GIT_DIR="$GITDIR_LINE"
-    else
-        GIT_DIR="$(cd "$PROJECT_ROOT/$GITDIR_LINE" && pwd)"
-    fi
-else
-    echo "Error: $PROJECT_ROOT does not appear to be a git repository"
-    exit 1
-fi
+  mkdir -p "$(dirname "$dst")"
+  cp "$src" "$dst"
+  chmod +x "$dst"
 
-HOOKS_DEST="$GIT_DIR/hooks"
+  echo "✔ installed $(basename "$src") → $dst"
+}
 
-# Check if source directory exists
-if [ ! -d "$HOOKS_SOURCE" ]; then
-    echo "Error: Source hooks directory not found: $HOOKS_SOURCE"
-    exit 1
-fi
+install_for_dir() {
+  local hook_dir="$1"
 
-# Ensure .git/hooks directory exists
-if [ ! -d "$HOOKS_DEST" ]; then
-    echo "Git hooks directory not found, creating: $HOOKS_DEST"
-    mkdir -p "$HOOKS_DEST"
-fi
+  for hook in "$HOOK_SOURCE_DIR"/*; do
+    local name
+    name="$(basename "$hook")"
+    local target="$hook_dir/$name"
 
-# Copy hooks
-echo "Copying hooks from $HOOKS_SOURCE to $HOOKS_DEST..."
-cp -v "$HOOKS_SOURCE"/* "$HOOKS_DEST/"
+    copy_hook "$hook" "$target"
+  done
+}
 
-# Make hooks executable
-chmod -v +x "$HOOKS_DEST"/*
+echo "Installing hooks from $HOOK_SOURCE_DIR …"
 
-echo "✓ Hooks installed successfully"
+# main repo
+install_for_dir "$GIT_DIR/hooks"
+
+# worktrees
+for wt in "$GIT_DIR"/worktrees/*; do
+  if [ -d "$wt" ]; then
+    install_for_dir "$wt/hooks"
+  fi
+done
+
+echo "All hooks installed successfully."
