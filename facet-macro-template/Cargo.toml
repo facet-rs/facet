@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Token-based templating engine for facet macro code generation"
 keywords = ["reflection", "macros", "template", "codegen"]
 categories = ["development-tools"]
+publish = false
 
 [dependencies]
 facet-macro-parse = { path = "../facet-macro-parse" }
