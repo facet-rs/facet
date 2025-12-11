@@ -309,10 +309,8 @@ mod tests {
     impl TransportFactory for InProcFactory {
         type Transport = InProcTransport;
 
-        fn connect_pair(
-        ) -> impl std::future::Future<Output = Result<(Self::Transport, Self::Transport), TestError>>
-               + Send {
-            async { Ok(InProcTransport::pair()) }
+        async fn connect_pair() -> Result<(Self::Transport, Self::Transport), TestError> {
+            Ok(InProcTransport::pair())
         }
     }
 

@@ -46,7 +46,7 @@ struct ShmAllocHeader {
     /// Slot index in the data segment.
     slot: u32,
     /// Generation at time of allocation (for freeing).
-    gen: u32,
+    generation: u32,
     /// User-requested allocation size.
     len: u32,
     /// Padding for alignment.
@@ -109,7 +109,7 @@ unsafe impl Allocator for ShmAllocator {
         }
 
         // Allocate a slot.
-        let (slot, gen) = data_segment.alloc().map_err(|_| AllocError)?;
+        let (slot, generation) = data_segment.alloc().map_err(|_| AllocError)?;
 
         // Get the base pointer for this slot.
         // SAFETY: slot < slot_count, guaranteed by alloc().
@@ -118,7 +118,7 @@ unsafe impl Allocator for ShmAllocator {
         // Write the header at base.
         let header = ShmAllocHeader {
             slot,
-            gen,
+            generation,
             len: layout.size() as u32,
             _pad: 0,
         };
@@ -159,7 +159,7 @@ unsafe impl Allocator for ShmAllocator {
         // For now, we'll try to transition Allocated -> Free directly.
         // This is safe for local allocations that were never sent.
         let data_segment = self.session.data_segment();
-        let _ = data_segment.free_allocated(header.slot, header.gen);
+        let _ = data_segment.free_allocated(header.slot, header.generation);
     }
 }
 
@@ -216,9 +216,9 @@ mod tests {
         let b3: AllocBox<[u8; 100], _> = AllocBox::new_in([3u8; 100], alloc.clone());
 
         // Each should be in a different slot.
-        let p1 = b1.as_ptr() as *const u8;
-        let p2 = b2.as_ptr() as *const u8;
-        let p3 = b3.as_ptr() as *const u8;
+        let p1 = b1.as_ptr();
+        let p2 = b2.as_ptr();
+        let p3 = b3.as_ptr();
 
         let (s1, _) = alloc.session.find_slot_location(p1, 100).unwrap();
         let (s2, _) = alloc.session.find_slot_location(p2, 100).unwrap();
