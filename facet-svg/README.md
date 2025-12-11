@@ -6,7 +6,44 @@
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-svg.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
 
-Provides strongly-typed SVG parsing and serialization for Facet types using facet-xml.
+Provides strongly-typed SVG parsing for Facet types using facet-xml.
+
+## Supported Elements
+
+The following SVG elements are fully supported for parsing:
+
+- **Shapes**: `<rect>`, `<circle>`, `<ellipse>`, `<line>`, `<path>`, `<polygon>`, `<polyline>`
+- **Text**: `<text>` with styling attributes
+- **Grouping**: `<g>` with transform support, `<defs>`, `<style>`
+
+Unsupported elements (such as `<use>`, `<image>`, `<filter>`, `<marker>`, `<tspan>`, and metadata elements) are gracefully ignored during parsing, allowing real-world SVG files to be processed without errors.
+
+## Basic Usage
+
+```rust
+use facet_svg::Svg;
+
+let svg_str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100">
+    <rect x="10" y="10" width="80" height="80" fill="blue"/>
+</svg>"#;
+
+let svg: Svg = facet_xml::from_str(svg_str)?;
+assert_eq!(svg.width, Some("100".to_string()));
+```
+
+## Features
+
+- **Type-safe parsing**: Strongly-typed SVG structures via Facet's derive macro
+- **Attribute support**: Full attribute parsing for colors, dimensions, transforms, and styling
+- **Namespace handling**: Proper SVG namespace support
+- **Graceful degradation**: Unknown elements are safely ignored
+- **Path parsing**: Complex SVG path data with multiple commands
+
+## Use Cases
+
+- Parsing SVG output from diagram tools (like pikchr, Graphviz)
+- Extracting geometric data from SVG files
+- Type-safe SVG manipulation in Rust applications
 
 ## Sponsors
 
