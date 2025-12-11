@@ -11,7 +11,7 @@ categories = ["development-tools"]
 
 [package.metadata.docs.rs]
 features = ["std", "reflect", "camino", "ordered-float"]
-rustdoc-args = ["--html-in-header", "docs/meta/arborium-header.html"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 ci = [] # CI feature

@@ -7,7 +7,7 @@ license = "MIT or Apache-2.0"
 description = "KDL serialization and deserialization for Facet types"
 
 [package.metadata.docs.rs]
-rustdoc-args = ["--html-in-header", "docs/meta/arborium-header.html"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 std = ["alloc", "facet-core/std", "facet-reflect/std"]

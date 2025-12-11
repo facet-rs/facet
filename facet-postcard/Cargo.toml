@@ -10,7 +10,7 @@ keywords = ["postcard", "serialization", "facet", "no_std", "embedded"]
 categories = ["encoding", "no-std", "embedded"]
 
 [package.metadata.docs.rs]
-rustdoc-args = ["--html-in-header", "docs/meta/arborium-header.html"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 ci = [] # CI feature

@@ -10,7 +10,7 @@ keywords = ["csv", "serialization", "deserialization", "reflection", "facet"]
 categories = ["encoding", "parser-implementations"]
 
 [package.metadata.docs.rs]
-rustdoc-args = ["--html-in-header", "docs/meta/arborium-header.html"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 ci = [] # CI feature

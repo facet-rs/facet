@@ -11,7 +11,7 @@ keywords = ["cli", "args", "parser", "facet"]
 categories = ["command-line-interface"]
 
 [package.metadata.docs.rs]
-rustdoc-args = ["--html-in-header", "docs/meta/arborium-header.html"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet = { path = "../facet", version = "0.32.1" }
