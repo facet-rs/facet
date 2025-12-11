@@ -156,6 +156,7 @@ static TUPLE_TYPE_OPS: TypeOpsIndirect = TypeOpsIndirect {
     drop_in_place: tuple_drop,
     default_in_place: None,
     clone_into: None,
+    is_truthy: None,
 };
 
 /// Type-erased type_name for tuples - reads field types from the shape

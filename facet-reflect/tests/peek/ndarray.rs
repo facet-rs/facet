@@ -150,6 +150,7 @@ const fn build_type_ops<T>() -> facet_core::TypeOpsIndirect {
         drop_in_place: mat_drop::<T>,
         default_in_place: None,
         clone_into: None,
+        is_truthy: None,
     }
 }
 

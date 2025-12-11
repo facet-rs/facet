@@ -9,8 +9,8 @@ pub use shape_builder::*;
 use core::alloc::Layout;
 
 use crate::{
-    Attr, ConstTypeId, Def, Facet, MAX_VARIANCE_DEPTH, MarkerTraits, Type, TypeOps, UserType,
-    VTableErased, Variance,
+    Attr, ConstTypeId, Def, Facet, MAX_VARIANCE_DEPTH, MarkerTraits, TruthyFn, Type, TypeOps,
+    UserType, VTableErased, Variance,
 };
 #[cfg(feature = "alloc")]
 use crate::{PtrMut, PtrUninit, UnsizedError};
@@ -764,5 +764,11 @@ impl Shape {
     #[inline]
     pub fn is_type<T: crate::Facet<'static>>(&self) -> bool {
         self.id == Self::id_of::<T>()
+    }
+
+    /// Returns the truthiness predicate stored on this shape, if any.
+    #[inline]
+    pub fn truthiness_fn(&self) -> Option<TruthyFn> {
+        self.type_ops.and_then(|ops| ops.truthiness_fn())
     }
 }

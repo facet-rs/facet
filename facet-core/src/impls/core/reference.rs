@@ -183,6 +183,7 @@ static REF_TYPE_OPS: TypeOpsIndirect = TypeOpsIndirect {
     drop_in_place: ref_drop,
     default_in_place: None,
     clone_into: Some(ref_clone),
+    is_truthy: None,
 };
 
 // Vtable for &mut T (not Clone since &mut T is not Clone)
@@ -205,6 +206,7 @@ static REF_MUT_TYPE_OPS: TypeOpsIndirect = TypeOpsIndirect {
     drop_in_place: ref_drop,
     default_in_place: None,
     clone_into: None,
+    is_truthy: None,
 };
 
 /// Borrow function for &T - dereferences to get inner pointer

@@ -267,6 +267,7 @@ where
                         drop_in_place: hashset_drop::<T, S>,
                         default_in_place: None,
                         clone_into: None,
+                        is_truthy: None,
                     }
                 },
             )

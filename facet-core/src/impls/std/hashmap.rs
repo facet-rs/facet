@@ -163,6 +163,7 @@ where
                         drop_in_place: hashmap_drop::<K, V, S>,
                         default_in_place: None,
                         clone_into: None,
+                        is_truthy: None,
                     }
                 },
             )

@@ -3,8 +3,16 @@ use crate::{
     type_ops_direct, vtable_direct,
 };
 
+#[inline(always)]
+unsafe fn string_truthy(value: PtrConst) -> bool {
+    !unsafe { value.get::<alloc::string::String>() }.is_empty()
+}
+
 // TypeOps lifted out - shared static
-static STRING_TYPE_OPS: TypeOpsDirect = type_ops_direct!(alloc::string::String => Default, Clone);
+static STRING_TYPE_OPS: TypeOpsDirect = TypeOpsDirect {
+    is_truthy: Some(string_truthy),
+    ..type_ops_direct!(alloc::string::String => Default, Clone)
+};
 
 /// Try to convert from &str or String to String
 ///

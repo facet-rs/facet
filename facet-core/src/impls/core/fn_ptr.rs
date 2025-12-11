@@ -1,8 +1,8 @@
 #![cfg(feature = "fn-ptr")]
 
 use crate::{
-    Facet, FunctionAbi, FunctionPointerDef, PointerType, Shape, ShapeBuilder, Type, TypeParam,
-    VTableIndirect,
+    Facet, FunctionAbi, FunctionPointerDef, PointerType, Shape, ShapeBuilder, Type, TypeOpsDirect,
+    TypeParam, VTableDirect, type_ops_direct, vtable_direct,
 };
 
 macro_rules! impl_facet_for_fn_ptr {
@@ -32,10 +32,18 @@ macro_rules! impl_facet_for_fn_ptr {
             R: Facet<'a>,
         {
             const SHAPE: &'static Shape = &const {
-                // We can't implement vtable functions for generic fn pointers because
-                // static items can't reference generic parameters from outer items.
-                // The vtable is empty - fn pointers are opaque for reflection purposes.
-                const VTABLE: VTableIndirect = VTableIndirect::EMPTY;
+                const fn build_vtable<$($args,)* R>() -> VTableDirect {
+                    vtable_direct!($(extern $extern)? fn($($args),*) -> R =>
+                        Debug,
+                        PartialEq,
+                        PartialOrd,
+                        Ord,
+                    )
+                }
+
+                const fn build_type_ops<$($args,)* R>() -> TypeOpsDirect {
+                    type_ops_direct!($(extern $extern)? fn($($args),*) -> R => Clone)
+                }
 
                 ShapeBuilder::for_sized::<$(extern $extern)? fn($($args),*) -> R>("fn")
                     .ty(Type::Pointer(PointerType::Function(
@@ -44,7 +52,8 @@ macro_rules! impl_facet_for_fn_ptr {
                     .type_params(&[
                         $(TypeParam { name: stringify!($args), shape: $args::SHAPE },)*
                     ])
-                    .vtable_indirect(&VTABLE)
+                    .vtable_direct(&const { build_vtable::<$($args,)* R>() })
+                    .type_ops_direct(&const { build_type_ops::<$($args,)* R>() })
                     .eq()
                     .copy()
                     .build()

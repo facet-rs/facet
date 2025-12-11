@@ -119,6 +119,7 @@ where
                         drop_in_place: btreeset_drop::<T>,
                         default_in_place: None,
                         clone_into: None,
+                        is_truthy: None,
                     }
                 },
             )

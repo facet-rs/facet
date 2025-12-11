@@ -176,6 +176,7 @@ unsafe impl<'facet, T: Facet<'facet>> Facet<'facet> for Complex<T> {
                     None
                 },
                 clone_into: None,
+                is_truthy: None,
             }
         }
 

@@ -142,6 +142,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *const T {
                 drop_in_place: const_ptr_drop::<T>,
                 default_in_place: None,
                 clone_into: Some(const_ptr_clone::<T>),
+                is_truthy: None,
             }
         }
 
@@ -193,6 +194,7 @@ unsafe impl<'a, T: Facet<'a> + ?Sized> Facet<'a> for *mut T {
                 drop_in_place: mut_ptr_drop::<T>,
                 default_in_place: None,
                 clone_into: Some(mut_ptr_clone::<T>),
+                is_truthy: None,
             }
         }
 

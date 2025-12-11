@@ -235,6 +235,7 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Option<T> {
                 drop_in_place: option_drop,
                 default_in_place: Some(option_default::<T>),
                 clone_into: None,
+                is_truthy: Some(option_is_some::<T>),
             }
         }
 

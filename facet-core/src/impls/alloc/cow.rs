@@ -161,8 +161,9 @@ where
             }
         }
 
-        const fn build_cow_type_ops<T: ?Sized + ToOwned + 'static>() -> TypeOpsIndirect
+        const fn build_cow_type_ops<'facet, T>() -> TypeOpsIndirect
         where
+            T: ?Sized + ToOwned + 'static + Facet<'facet>,
             T::Owned: Facet<'static> + 'static,
         {
             unsafe fn drop_in_place<T: ?Sized + ToOwned + 'static>(ox: OxPtrMut)
@@ -229,10 +230,26 @@ where
                 *dst_cow_ref = Cow::Owned(owned_value);
             }
 
+            unsafe fn truthy<'facet, T>(ptr: PtrConst) -> bool
+            where
+                T: ?Sized + ToOwned + 'static + Facet<'facet>,
+                T::Owned: Facet<'static> + 'static,
+            {
+                let cow_ref: &Cow<'_, T> = unsafe { ptr.get::<Cow<'static, T>>() };
+                let inner_shape = <T as Facet<'facet>>::SHAPE;
+                if let Some(truthy) = inner_shape.truthiness_fn() {
+                    let inner: &T = cow_ref.as_ref();
+                    unsafe { truthy(PtrConst::new(inner as *const T)) }
+                } else {
+                    false
+                }
+            }
+
             TypeOpsIndirect {
                 drop_in_place: drop_in_place::<T>,
                 default_in_place: Some(default_in_place::<T>),
                 clone_into: Some(clone_into::<T>),
+                is_truthy: Some(truthy::<'facet, T>),
             }
         }
 
@@ -283,7 +300,7 @@ where
             ])
             .inner(T::SHAPE)
             .vtable_indirect(&const { build_cow_vtable::<T>() })
-            .type_ops_indirect(&const { build_cow_type_ops::<T>() })
+            .type_ops_indirect(&const { build_cow_type_ops::<'a, T>() })
             .build()
     };
 }

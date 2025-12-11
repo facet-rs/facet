@@ -406,6 +406,7 @@ static VALUE_TYPE_OPS_INDIRECT: facet_core::TypeOpsIndirect = facet_core::TypeOp
     drop_in_place: value_drop_in_place,
     default_in_place: Some(value_default_in_place),
     clone_into: Some(value_clone_into),
+    is_truthy: None,
 };
 
 unsafe impl Facet<'_> for Value {
