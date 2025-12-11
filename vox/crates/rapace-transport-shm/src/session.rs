@@ -256,6 +256,80 @@ impl ShmSession {
 
         Some((slot_index as u32, offset as u32))
     }
+
+    /// Update our heartbeat timestamp in the SHM header.
+    ///
+    /// This should be called periodically to signal that we're still alive.
+    /// The peer can check our last_seen timestamp to detect if we've crashed.
+    pub fn update_heartbeat(&self) {
+        use std::sync::atomic::Ordering;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let header = self.header();
+        let now_nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+
+        match self.role {
+            PeerRole::A => {
+                header.peer_a_last_seen.store(now_nanos, Ordering::Release);
+                header.peer_a_epoch.fetch_add(1, Ordering::Relaxed);
+            }
+            PeerRole::B => {
+                header.peer_b_last_seen.store(now_nanos, Ordering::Release);
+                header.peer_b_epoch.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Check if the peer is alive based on their last heartbeat.
+    ///
+    /// Returns `true` if the peer's heartbeat is recent enough.
+    /// A peer is considered dead if their last_seen timestamp is older than `timeout_nanos`.
+    ///
+    /// # Arguments
+    ///
+    /// * `timeout_nanos` - Maximum age of the peer's heartbeat in nanoseconds.
+    ///   Recommended value: 1-5 seconds (1_000_000_000 to 5_000_000_000 nanos).
+    pub fn is_peer_alive(&self, timeout_nanos: u64) -> bool {
+        use std::sync::atomic::Ordering;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let header = self.header();
+        let now_nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+
+        let peer_last_seen = match self.role {
+            PeerRole::A => header.peer_b_last_seen.load(Ordering::Acquire),
+            PeerRole::B => header.peer_a_last_seen.load(Ordering::Acquire),
+        };
+
+        // If peer has never sent a heartbeat (last_seen == 0), they're not alive yet.
+        // Once they start sending heartbeats, we check for staleness.
+        if peer_last_seen == 0 {
+            // Peer hasn't initialized yet - consider them alive for now
+            // to avoid false positives during startup.
+            return true;
+        }
+
+        let age_nanos = now_nanos.saturating_sub(peer_last_seen);
+        age_nanos < timeout_nanos
+    }
+
+    /// Get the peer's epoch counter.
+    ///
+    /// This can be used to detect if the peer is making progress.
+    pub fn peer_epoch(&self) -> u64 {
+        use std::sync::atomic::Ordering;
+        let header = self.header();
+        match self.role {
+            PeerRole::A => header.peer_b_epoch.load(Ordering::Acquire),
+            PeerRole::B => header.peer_a_epoch.load(Ordering::Acquire),
+        }
+    }
 }
 
 impl ShmSession {

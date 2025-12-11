@@ -141,6 +141,9 @@ impl Transport for ShmTransport {
             return Err(TransportError::Closed);
         }
 
+        // Update our heartbeat when sending to signal we're alive
+        self.session.update_heartbeat();
+
         let send_ring = self.session.send_ring();
         let data_segment = self.session.data_segment();
 
@@ -246,6 +249,16 @@ impl Transport for ShmTransport {
             }
         }
 
+        // Update our heartbeat at the start to signal we're alive
+        self.session.update_heartbeat();
+
+        // Peer liveness timeout: 3 seconds
+        const PEER_TIMEOUT_NANOS: u64 = 3_000_000_000;
+
+        // Track last heartbeat update time to avoid updating too frequently
+        let mut last_heartbeat_update = std::time::Instant::now();
+        const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+
         // Poll for a descriptor.
         // TODO: Use eventfd for proper async notification instead of polling.
         loop {
@@ -302,7 +315,20 @@ impl Transport for ShmTransport {
                 return Ok(FrameView::new(desc, payload));
             }
 
-            // No descriptor available. Yield and try again.
+            // No descriptor available. Check peer liveness before yielding.
+            if !self.session.is_peer_alive(PEER_TIMEOUT_NANOS) {
+                eprintln!("[rapace-transport-shm] Peer appears to have died (no heartbeat for 3s)");
+                return Err(TransportError::Closed);
+            }
+
+            // Update our heartbeat periodically while polling
+            let now = std::time::Instant::now();
+            if now.duration_since(last_heartbeat_update) >= HEARTBEAT_INTERVAL {
+                self.session.update_heartbeat();
+                last_heartbeat_update = now;
+            }
+
+            // Yield and try again.
             // TODO: Wait on eventfd instead of polling.
             tokio::task::yield_now().await;
 
