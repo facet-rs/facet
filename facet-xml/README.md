@@ -8,6 +8,10 @@
 
 Provides XML serialization and deserialization for Facet types.
 
+> **Important:** Every struct field must declare how it maps to XML using one of the
+> `#[facet(xml::…)]` attributes (or `#[facet(child)]`). Unannotated fields now produce
+> a descriptive error instead of being silently skipped.
+
 ## Sponsors
 
 Thanks to all individual sponsors:

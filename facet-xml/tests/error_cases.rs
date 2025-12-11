@@ -161,6 +161,32 @@ fn test_missing_attribute_uses_default() {
     assert_eq!(result.name, "Test");
 }
 
+// ============================================================================
+// Missing XML annotations
+// ============================================================================
+
+#[derive(Facet, Debug)]
+struct UnannotatedField {
+    // Intentionally missing #[facet(xml::...)]
+    value: String,
+}
+
+#[test]
+fn test_deserialize_missing_xml_annotation_errors() {
+    let xml = r#"<UnannotatedField><value>hi</value></UnannotatedField>"#;
+    let result: Result<UnannotatedField, _> = xml::from_str(xml);
+    assert_err_kind!(result, XmlErrorKind::MissingXmlAnnotations { .. });
+}
+
+#[test]
+fn test_serialize_missing_xml_annotation_errors() {
+    let value = UnannotatedField {
+        value: "hi".to_string(),
+    };
+    let result = xml::to_string(&value);
+    assert_err_kind!(result, XmlErrorKind::MissingXmlAnnotations { .. });
+}
+
 #[test]
 fn test_missing_element_uses_default() {
     // Note: facet-xml uses default values for missing elements

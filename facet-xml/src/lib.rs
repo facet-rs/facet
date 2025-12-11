@@ -32,6 +32,13 @@
 //! }
 //! ```
 //!
+//! > **Important:** Every struct field must declare how it maps to XML. Add
+//! > `#[facet(xml::attribute)]`, `#[facet(xml::element)]`,
+//! > `#[facet(xml::elements)]`, `#[facet(xml::text)]`,
+//! > `#[facet(xml::element_name)]`, or `#[facet(child)]` to every field that
+//! > should appear in XML. Fields without an annotation now trigger an error
+//! > instead of being silently skipped.
+//!
 //! # Attribute Guide
 //!
 //! ## `#[facet(xml::element)]`
@@ -114,6 +121,7 @@
 #![warn(missing_docs)]
 #![allow(clippy::result_large_err)]
 
+mod annotation;
 mod deserialize;
 mod error;
 mod serialize;

@@ -13,6 +13,8 @@ pub enum Language {
     Json,
     /// YAML format
     Yaml,
+    /// XML format
+    Xml,
     /// KDL format (requires custom syntax definition)
     Kdl,
     /// Rust code (for type definitions)
@@ -25,6 +27,7 @@ impl Language {
         match self {
             Language::Json => "json",
             Language::Yaml => "yaml",
+            Language::Xml => "xml",
             Language::Kdl => "kdl",
             Language::Rust => "rs",
         }
@@ -35,6 +38,7 @@ impl Language {
         match self {
             Language::Json => "JSON",
             Language::Yaml => "YAML",
+            Language::Xml => "XML",
             Language::Kdl => "KDL",
             Language::Rust => "Rust",
         }
