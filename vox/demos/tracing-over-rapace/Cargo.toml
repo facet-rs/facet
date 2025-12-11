@@ -37,3 +37,5 @@ tracing-subscriber = { version = "0.3", features = ["registry"] }
 
 # Test utilities
 rapace-testkit = { path = "../../crates/rapace-testkit" }
+async-send-fd.workspace = true
+libc.workspace = true

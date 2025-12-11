@@ -47,3 +47,5 @@ serde_json = "1"
 
 # Test utilities
 rapace-testkit = { path = "../../crates/rapace-testkit" }
+async-send-fd.workspace = true
+libc.workspace = true

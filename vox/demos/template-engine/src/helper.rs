@@ -46,7 +46,7 @@ enum TransportType {
 #[derive(Debug)]
 struct Args {
     transport: TransportType,
-    addr: String,
+    addr: Option<String>,
 }
 
 fn parse_args() -> Args {
@@ -72,8 +72,65 @@ fn parse_args() -> Args {
 
     Args {
         transport: transport.expect("--transport required"),
-        addr: addr.expect("--addr required"),
+        addr,
     }
+}
+
+#[cfg(unix)]
+const STREAM_CONTROL_ENV: &str = "RAPACE_STREAM_CONTROL_FD";
+
+#[cfg(unix)]
+async fn accept_inherited_stream() -> Option<TcpStream> {
+    use async_send_fd::AsyncRecvFd;
+    use std::os::unix::{
+        io::{FromRawFd, RawFd},
+        net::UnixStream as StdUnixStream,
+    };
+    use tokio::{
+        io::AsyncWriteExt,
+        net::{TcpListener, UnixStream},
+    };
+
+    let fd_str = match std::env::var(STREAM_CONTROL_ENV) {
+        Ok(val) => val,
+        Err(_) => return None,
+    };
+
+    let fd: RawFd = fd_str
+        .parse()
+        .expect("RAPACE_STREAM_CONTROL_FD is not a valid fd");
+    let control_std = unsafe { StdUnixStream::from_raw_fd(fd) };
+    control_std
+        .set_nonblocking(true)
+        .expect("failed to configure control socket");
+    let mut control = UnixStream::from_std(control_std).expect("failed to create control stream");
+
+    let listener_fd = control
+        .recv_fd()
+        .await
+        .expect("failed to receive listener fd");
+    let std_listener = unsafe { std::net::TcpListener::from_raw_fd(listener_fd) };
+    std_listener
+        .set_nonblocking(true)
+        .expect("failed to configure listener");
+    let listener = TcpListener::from_std(std_listener).expect("failed to create tokio listener");
+
+    control
+        .write_all(&[1u8])
+        .await
+        .expect("failed to ack listener receipt");
+
+    let (stream, peer) = listener
+        .accept()
+        .await
+        .expect("failed to accept inherited stream");
+    eprintln!("[helper] Accepted inherited stream from {:?}", peer);
+    Some(stream)
+}
+
+#[cfg(not(unix))]
+async fn accept_inherited_stream() -> Option<TcpStream> {
+    None
 }
 
 async fn run_plugin_stream<S: AsyncRead + AsyncWrite + Send + Sync + 'static>(stream: S) {
@@ -116,17 +173,28 @@ async fn main() {
     let args = parse_args();
 
     eprintln!(
-        "[helper] Starting with transport={:?} addr={}",
+        "[helper] Starting with transport={:?} addr={:?}",
         args.transport, args.addr
     );
 
     match args.transport {
         TransportType::Stream => {
+            if let Some(stream) = accept_inherited_stream().await {
+                eprintln!("[helper] Using inherited TCP listener");
+                run_plugin_stream(stream).await;
+                return;
+            }
+
             // Check if it's a TCP address (contains ':') or Unix socket path
-            if args.addr.contains(':') {
+            let addr = args
+                .addr
+                .as_ref()
+                .expect("--addr required when no inherited listener");
+
+            if addr.contains(':') {
                 // TCP
-                eprintln!("[helper] Connecting to TCP address: {}", args.addr);
-                let stream = TcpStream::connect(&args.addr)
+                eprintln!("[helper] Connecting to TCP address: {}", addr);
+                let stream = TcpStream::connect(addr)
                     .await
                     .expect("failed to connect to host");
                 eprintln!("[helper] Connected!");
@@ -136,8 +204,8 @@ async fn main() {
                 #[cfg(unix)]
                 {
                     use tokio::net::UnixStream;
-                    eprintln!("[helper] Connecting to Unix socket: {}", args.addr);
-                    let stream = UnixStream::connect(&args.addr)
+                    eprintln!("[helper] Connecting to Unix socket: {}", addr);
+                    let stream = UnixStream::connect(addr)
                         .await
                         .expect("failed to connect to host");
                     eprintln!("[helper] Connected!");
@@ -150,19 +218,23 @@ async fn main() {
             }
         }
         TransportType::Shm => {
+            let addr = args
+                .addr
+                .as_ref()
+                .expect("--addr required for shm transport");
             // Wait a bit for the host to create the SHM file
             for i in 0..50 {
-                if std::path::Path::new(&args.addr).exists() {
+                if std::path::Path::new(addr).exists() {
                     break;
                 }
                 if i == 49 {
-                    panic!("SHM file not created by host: {}", args.addr);
+                    panic!("SHM file not created by host: {}", addr);
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             }
 
-            eprintln!("[helper] Opening SHM file: {}", args.addr);
-            let session = ShmSession::open_file(&args.addr, ShmSessionConfig::default())
+            eprintln!("[helper] Opening SHM file: {}", addr);
+            let session = ShmSession::open_file(addr, ShmSessionConfig::default())
                 .expect("failed to open SHM file");
             let transport = Arc::new(ShmTransport::new(session));
             eprintln!("[helper] SHM mapped!");

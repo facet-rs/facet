@@ -92,6 +92,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-send-fd"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "271c48dabbc5a61a5aa55b2fc05f75435eba8a2e80bd785395f775584486ba4f"
+dependencies = [
+ "nix",
+ "passfd",
+ "tokio",
+]
+
+[[package]]
 name = "async-stream"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -267,6 +278,12 @@ name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
+
+[[package]]
+name = "cfg_aliases"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
 
 [[package]]
 name = "cfg_aliases"
@@ -1258,6 +1275,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc0287524726960e07b119cebd01678f852f147742ae0d925e6a520dca956126"
 
 [[package]]
+name = "nix"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
+dependencies = [
+ "bitflags",
+ "cfg-if",
+ "cfg_aliases 0.1.1",
+ "libc",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1323,6 +1352,15 @@ dependencies = [
  "redox_syscall",
  "smallvec",
  "windows-link",
+]
+
+[[package]]
+name = "passfd"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b332c50e4d07c0011fff51ea305374408319908908bc1dbed7a0ffaaf63a8151"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -1433,7 +1471,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e20a958963c291dc322d98411f541009df2ced7b5a4f2bd52337638cfccf20"
 dependencies = [
  "bytes",
- "cfg_aliases",
+ "cfg_aliases 0.2.1",
  "pin-project-lite",
  "quinn-proto",
  "quinn-udp",
@@ -1473,7 +1511,7 @@ version = "0.5.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "addec6a0dcad8a8d96a771f815f0eaf55f9d1805756410b39f5fa81332574cbd"
 dependencies = [
- "cfg_aliases",
+ "cfg_aliases 0.2.1",
  "libc",
  "once_cell",
  "socket2",
@@ -1595,8 +1633,10 @@ dependencies = [
 name = "rapace-diagnostics-over-rapace"
 version = "0.1.0"
 dependencies = [
+ "async-send-fd",
  "facet",
  "futures",
+ "libc",
  "rapace",
  "rapace-testkit",
  "tokio",
@@ -1627,6 +1667,7 @@ dependencies = [
 name = "rapace-http-over-rapace"
 version = "0.1.0"
 dependencies = [
+ "async-send-fd",
  "axum",
  "bytes",
  "facet",
@@ -1636,6 +1677,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "libc",
  "rapace",
  "rapace-http",
  "rapace-testkit",
@@ -1708,9 +1750,11 @@ dependencies = [
 name = "rapace-template-engine"
 version = "0.1.0"
 dependencies = [
+ "async-send-fd",
  "facet",
  "facet-core",
  "facet-postcard",
+ "libc",
  "rapace",
  "rapace-testkit",
  "tokio",
@@ -1753,9 +1797,11 @@ dependencies = [
 name = "rapace-tracing-over-rapace"
 version = "0.1.0"
 dependencies = [
+ "async-send-fd",
  "facet",
  "facet-core",
  "facet-postcard",
+ "libc",
  "rapace",
  "rapace-macros",
  "rapace-registry",

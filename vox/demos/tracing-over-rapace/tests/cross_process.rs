@@ -12,14 +12,147 @@ use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
 use rapace::{RpcSession, StreamTransport, Transport};
 use rapace_testkit::helper_binary::find_helper_binary;
 use tokio::io::{ReadHalf, WriteHalf};
+#[cfg(not(unix))]
 use tokio::net::TcpListener;
 
 use rapace_tracing_over_rapace::{create_tracing_sink_dispatcher, HostTracingSink, TraceRecord};
 
-/// Find an available port for testing.
-async fn find_available_port() -> u16 {
+#[cfg(unix)]
+const STREAM_CONTROL_ENV: &str = "RAPACE_STREAM_CONTROL_FD";
+
+#[cfg(unix)]
+fn make_inheritable(stream: &std::os::unix::net::UnixStream) {
+    use std::os::fd::AsRawFd;
+
+    let fd = stream.as_raw_fd();
+    unsafe {
+        let flags = libc::fcntl(fd, libc::F_GETFD);
+        if flags == -1 {
+            panic!("fcntl(F_GETFD) failed: {}", std::io::Error::last_os_error());
+        }
+        if libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) == -1 {
+            panic!("fcntl(F_SETFD) failed: {}", std::io::Error::last_os_error());
+        }
+    }
+}
+
+#[cfg(unix)]
+async fn spawn_helper_stream(
+    helper_path: &std::path::Path,
+    extra_args: &[&str],
+) -> (std::process::Child, tokio::net::TcpStream) {
+    use async_send_fd::AsyncSendFd;
+    use std::os::unix::{
+        io::{AsRawFd, IntoRawFd},
+        net::UnixStream as StdUnixStream,
+    };
+    use tokio::{
+        io::AsyncReadExt,
+        net::{TcpStream, UnixStream},
+        time::timeout,
+    };
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    listener
+        .set_nonblocking(true)
+        .expect("failed to configure listener");
+    let addr = listener.local_addr().unwrap();
+    let addr_str = addr.to_string();
+    eprintln!("[test] Listening on TCP {}", addr_str);
+
+    let (control_parent, control_child) = StdUnixStream::pair().unwrap();
+    make_inheritable(&control_parent);
+    make_inheritable(&control_child);
+    control_parent
+        .set_nonblocking(true)
+        .expect("failed to configure control socket");
+    control_child
+        .set_nonblocking(true)
+        .expect("failed to configure control socket");
+    let mut control_parent = UnixStream::from_std(control_parent).unwrap();
+
+    let mut cmd = Command::new(helper_path);
+    cmd.args(extra_args)
+        .arg(format!("--addr={}", addr_str))
+        .env(STREAM_CONTROL_ENV, control_child.as_raw_fd().to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    let mut helper = cmd.spawn().expect("failed to spawn helper");
+    drop(control_child);
+
+    let raw_listener = listener.into_raw_fd();
+    if let Err(e) = control_parent.send_fd(raw_listener).await {
+        let _ = helper.kill();
+        let _ = helper.wait();
+        panic!("failed to transfer listener fd: {:?}", e);
+    }
+
+    let mut ack = [0u8; 1];
+    if let Err(e) = control_parent.read_exact(&mut ack).await {
+        let _ = helper.kill();
+        let _ = helper.wait();
+        panic!("failed to read listener ack: {:?}", e);
+    }
+    drop(control_parent);
+
+    let stream = match timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(e)) => {
+            let _ = helper.kill();
+            let _ = helper.wait();
+            panic!("failed to connect to inherited listener: {:?}", e);
+        }
+        Err(_) => {
+            let _ = helper.kill();
+            let _ = helper.wait();
+            panic!("TCP connect timed out");
+        }
+    };
+
+    (helper, stream)
+}
+
+#[cfg(not(unix))]
+async fn spawn_helper_stream(
+    helper_path: &std::path::Path,
+    extra_args: &[&str],
+) -> (std::process::Child, tokio::net::TcpStream) {
+    use tokio::time::timeout;
+
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    listener.local_addr().unwrap().port()
+    let addr = listener.local_addr().unwrap();
+    let addr_str = addr.to_string();
+    eprintln!("[test] Listening on TCP {}", addr_str);
+
+    let mut cmd = Command::new(helper_path);
+    cmd.args(extra_args)
+        .arg(format!("--addr={}", addr_str))
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    let mut helper = cmd.spawn().expect("failed to spawn helper");
+
+    let stream = match timeout(Duration::from_secs(5), listener.accept()).await {
+        Ok(Ok((stream, peer))) => {
+            eprintln!("[test] Accepted connection from {:?}", peer);
+            stream
+        }
+        Ok(Err(e)) => {
+            let _ = helper.kill();
+            let _ = helper.wait();
+            panic!("Accept failed: {:?}", e);
+        }
+        Err(_) => {
+            let _ = helper.kill();
+            let _ = helper.wait();
+            panic!("Accept timed out");
+        }
+    };
+
+    (helper, stream)
 }
 
 /// Run the host side of the scenario with a stream transport.
@@ -156,42 +289,8 @@ async fn test_cross_process_tcp() {
         }
     };
 
-    // Find an available port
-    let port = find_available_port().await;
-    let addr = format!("127.0.0.1:{}", port);
-
-    eprintln!("[test] Using TCP address: {}", addr);
-
-    // Start listening
-    let listener = TcpListener::bind(&addr).await.unwrap();
-
     eprintln!("[test] Spawning helper: {:?}", helper_path);
-
-    // Spawn the helper
-    let mut helper = Command::new(&helper_path)
-        .arg("--transport=stream")
-        .arg(format!("--addr={}", addr))
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .expect("failed to spawn helper");
-
-    // Accept the connection
-    let stream = match tokio::time::timeout(Duration::from_secs(5), listener.accept()).await {
-        Ok(Ok((stream, peer))) => {
-            eprintln!("[test] Accepted connection from {:?}", peer);
-            stream
-        }
-        Ok(Err(e)) => {
-            helper.kill().ok();
-            panic!("Accept failed: {:?}", e);
-        }
-        Err(_) => {
-            helper.kill().ok();
-            panic!("Accept timed out");
-        }
-    };
+    let (mut helper, stream) = spawn_helper_stream(&helper_path, &["--transport=stream"]).await;
 
     let transport: StreamTransport<
         ReadHalf<tokio::net::TcpStream>,

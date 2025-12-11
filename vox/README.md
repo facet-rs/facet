@@ -1,5 +1,7 @@
 # rapace
 
+[![codecov](https://codecov.io/gh/bearcove/rapace/branch/main/graph/badge.svg)](https://codecov.io/gh/bearcove/rapace)
+
 > **⚠️ EXPERIMENTAL - DO NOT USE ⚠️**
 >
 > rapace is a research project. APIs churn, transports change, and there are **zero stability or performance guarantees**.
