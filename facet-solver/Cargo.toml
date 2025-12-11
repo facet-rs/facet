@@ -9,8 +9,6 @@ description = "Constraint solver for facet - resolves type shapes from field nam
 keywords = ["reflection", "introspection", "facet", "solver", "serde"]
 categories = ["development-tools", "rust-patterns"]
 
-[package.metadata]
-
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
@@ -31,7 +29,7 @@ facet = { path = "../facet" }
 json-event-parser = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-miette = { version = "7", default-features = false }
+miette = { version = "7", features = ["derive"] }
 thiserror = "2"
 divan = "0.1"
 

@@ -9,8 +9,6 @@ description = "SVG serialization for Facet types"
 keywords = ["svg", "serialization", "facet"]
 categories = ["encoding", "parsing"]
 
-[package.metadata]
-
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 

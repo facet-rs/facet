@@ -15,8 +15,6 @@ keywords = [
 ]
 categories = ["development-tools", "visualization", "command-line-utilities"]
 
-[package.metadata]
-
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 

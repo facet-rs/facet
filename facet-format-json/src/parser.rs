@@ -1,0 +1,511 @@
+extern crate alloc;
+
+use alloc::{borrow::Cow, vec::Vec};
+
+use facet_format::{
+    FieldEvidence, FieldLocationHint, FormatParser, ParseEvent, ProbeStream, ScalarValue,
+};
+pub use facet_json::JsonError;
+use facet_json::{AdapterToken, JsonErrorKind, SliceAdapter, SpannedAdapterToken};
+
+/// Streaming JSON parser backed by `facet-json`'s `SliceAdapter`.
+pub struct JsonParser<'de> {
+    input: &'de [u8],
+    adapter: SliceAdapter<'de, true>,
+    stack: Vec<ContextState>,
+    /// Cached event for `peek_event`.
+    event_peek: Option<ParseEvent<'de>>,
+    /// Whether the root value has started.
+    root_started: bool,
+    /// Whether the root value has fully completed.
+    root_complete: bool,
+    /// Absolute offset (in bytes) of the next unread token.
+    current_offset: usize,
+}
+
+#[derive(Debug)]
+enum ContextState {
+    Object(ObjectState),
+    Array(ArrayState),
+}
+
+#[derive(Debug)]
+enum ObjectState {
+    KeyOrEnd,
+    Value,
+    CommaOrEnd,
+}
+
+#[derive(Debug)]
+enum ArrayState {
+    ValueOrEnd,
+    CommaOrEnd,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DelimKind {
+    Object,
+    Array,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NextAction {
+    ObjectKey,
+    ObjectValue,
+    ObjectComma,
+    ArrayValue,
+    ArrayComma,
+    RootValue,
+    RootFinished,
+}
+
+impl<'de> JsonParser<'de> {
+    pub fn new(input: &'de [u8]) -> Self {
+        Self {
+            input,
+            adapter: SliceAdapter::new(input),
+            stack: Vec::new(),
+            event_peek: None,
+            root_started: false,
+            root_complete: false,
+            current_offset: 0,
+        }
+    }
+
+    fn consume_token(&mut self) -> Result<SpannedAdapterToken<'de>, JsonError> {
+        let token = self.adapter.next_token().map_err(JsonError::from)?;
+        self.current_offset = token.span.offset + token.span.len;
+        Ok(token)
+    }
+
+    fn expect_colon(&mut self) -> Result<(), JsonError> {
+        let token = self.consume_token()?;
+        if !matches!(token.token, AdapterToken::Colon) {
+            return Err(self.unexpected(&token, "':'"));
+        }
+        Ok(())
+    }
+
+    fn parse_value_start_with_token(
+        &mut self,
+        first: Option<SpannedAdapterToken<'de>>,
+    ) -> Result<ParseEvent<'de>, JsonError> {
+        let token = match first {
+            Some(tok) => tok,
+            None => self.consume_token()?,
+        };
+
+        self.root_started = true;
+
+        match token.token {
+            AdapterToken::ObjectStart => {
+                self.stack.push(ContextState::Object(ObjectState::KeyOrEnd));
+                Ok(ParseEvent::StructStart)
+            }
+            AdapterToken::ArrayStart => {
+                self.stack.push(ContextState::Array(ArrayState::ValueOrEnd));
+                Ok(ParseEvent::SequenceStart)
+            }
+            AdapterToken::String(s) => {
+                let event = ParseEvent::Scalar(ScalarValue::Str(s));
+                self.finish_value_in_parent();
+                Ok(event)
+            }
+            AdapterToken::True => {
+                self.finish_value_in_parent();
+                Ok(ParseEvent::Scalar(ScalarValue::Bool(true)))
+            }
+            AdapterToken::False => {
+                self.finish_value_in_parent();
+                Ok(ParseEvent::Scalar(ScalarValue::Bool(false)))
+            }
+            AdapterToken::Null => {
+                self.finish_value_in_parent();
+                Ok(ParseEvent::Scalar(ScalarValue::Null))
+            }
+            AdapterToken::U64(n) => {
+                self.finish_value_in_parent();
+                Ok(ParseEvent::Scalar(ScalarValue::U64(n)))
+            }
+            AdapterToken::I64(n) => {
+                self.finish_value_in_parent();
+                Ok(ParseEvent::Scalar(ScalarValue::I64(n)))
+            }
+            AdapterToken::U128(n) => {
+                self.finish_value_in_parent();
+                Ok(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
+                    n.to_string(),
+                ))))
+            }
+            AdapterToken::I128(n) => {
+                self.finish_value_in_parent();
+                Ok(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
+                    n.to_string(),
+                ))))
+            }
+            AdapterToken::F64(n) => {
+                self.finish_value_in_parent();
+                Ok(ParseEvent::Scalar(ScalarValue::F64(n)))
+            }
+            AdapterToken::ObjectEnd | AdapterToken::ArrayEnd => {
+                Err(self.unexpected(&token, "value"))
+            }
+            AdapterToken::Comma | AdapterToken::Colon => Err(self.unexpected(&token, "value")),
+            AdapterToken::Eof => Err(JsonError::new(
+                JsonErrorKind::UnexpectedEof { expected: "value" },
+                token.span,
+            )),
+        }
+    }
+
+    fn finish_value_in_parent(&mut self) {
+        if let Some(context) = self.stack.last_mut() {
+            match context {
+                ContextState::Object(state) => *state = ObjectState::CommaOrEnd,
+                ContextState::Array(state) => *state = ArrayState::CommaOrEnd,
+            }
+        } else if self.root_started {
+            self.root_complete = true;
+        }
+    }
+
+    fn unexpected(&self, token: &SpannedAdapterToken<'de>, expected: &'static str) -> JsonError {
+        JsonError::new(
+            JsonErrorKind::UnexpectedToken {
+                got: format!("{:?}", token.token),
+                expected,
+            },
+            token.span,
+        )
+    }
+
+    fn consume_value_tokens(&mut self) -> Result<(), JsonError> {
+        let first = self.consume_token()?;
+        match first.token {
+            AdapterToken::ObjectStart => self.skip_container(DelimKind::Object),
+            AdapterToken::ArrayStart => self.skip_container(DelimKind::Array),
+            AdapterToken::ObjectEnd
+            | AdapterToken::ArrayEnd
+            | AdapterToken::Comma
+            | AdapterToken::Colon => Err(self.unexpected(&first, "value")),
+            AdapterToken::Eof => Err(JsonError::new(
+                JsonErrorKind::UnexpectedEof { expected: "value" },
+                first.span,
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    fn skip_container(&mut self, start_kind: DelimKind) -> Result<(), JsonError> {
+        let mut stack = vec![start_kind];
+        while let Some(current) = stack.last().copied() {
+            let token = self.consume_token()?;
+            match token.token {
+                AdapterToken::ObjectStart => stack.push(DelimKind::Object),
+                AdapterToken::ArrayStart => stack.push(DelimKind::Array),
+                AdapterToken::ObjectEnd => {
+                    if current != DelimKind::Object {
+                        return Err(self.unexpected(&token, "'}'"));
+                    }
+                    stack.pop();
+                    if stack.is_empty() {
+                        break;
+                    }
+                }
+                AdapterToken::ArrayEnd => {
+                    if current != DelimKind::Array {
+                        return Err(self.unexpected(&token, "']'"));
+                    }
+                    stack.pop();
+                    if stack.is_empty() {
+                        break;
+                    }
+                }
+                AdapterToken::Eof => {
+                    return Err(JsonError::new(
+                        JsonErrorKind::UnexpectedEof { expected: "value" },
+                        token.span,
+                    ));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn determine_action(&self) -> NextAction {
+        if let Some(context) = self.stack.last() {
+            match context {
+                ContextState::Object(state) => match state {
+                    ObjectState::KeyOrEnd => NextAction::ObjectKey,
+                    ObjectState::Value => NextAction::ObjectValue,
+                    ObjectState::CommaOrEnd => NextAction::ObjectComma,
+                },
+                ContextState::Array(state) => match state {
+                    ArrayState::ValueOrEnd => NextAction::ArrayValue,
+                    ArrayState::CommaOrEnd => NextAction::ArrayComma,
+                },
+            }
+        } else if self.root_complete {
+            NextAction::RootFinished
+        } else {
+            NextAction::RootValue
+        }
+    }
+
+    fn produce_event(&mut self) -> Result<ParseEvent<'de>, JsonError> {
+        loop {
+            match self.determine_action() {
+                NextAction::ObjectKey => {
+                    let token = self.consume_token()?;
+                    match token.token {
+                        AdapterToken::ObjectEnd => {
+                            self.stack.pop();
+                            self.finish_value_in_parent();
+                            return Ok(ParseEvent::StructEnd);
+                        }
+                        AdapterToken::String(name) => {
+                            self.expect_colon()?;
+                            if let Some(ContextState::Object(state)) = self.stack.last_mut() {
+                                *state = ObjectState::Value;
+                            }
+                            return Ok(ParseEvent::FieldKey(name, FieldLocationHint::KeyValue));
+                        }
+                        AdapterToken::Eof => {
+                            return Err(JsonError::new(
+                                JsonErrorKind::UnexpectedEof {
+                                    expected: "field name or '}'",
+                                },
+                                token.span,
+                            ));
+                        }
+                        _ => return Err(self.unexpected(&token, "field name or '}'")),
+                    }
+                }
+                NextAction::ObjectValue => {
+                    return self.parse_value_start_with_token(None);
+                }
+                NextAction::ObjectComma => {
+                    let token = self.consume_token()?;
+                    match token.token {
+                        AdapterToken::Comma => {
+                            if let Some(ContextState::Object(state)) = self.stack.last_mut() {
+                                *state = ObjectState::KeyOrEnd;
+                            }
+                            continue;
+                        }
+                        AdapterToken::ObjectEnd => {
+                            self.stack.pop();
+                            self.finish_value_in_parent();
+                            return Ok(ParseEvent::StructEnd);
+                        }
+                        AdapterToken::Eof => {
+                            return Err(JsonError::new(
+                                JsonErrorKind::UnexpectedEof {
+                                    expected: "',' or '}'",
+                                },
+                                token.span,
+                            ));
+                        }
+                        _ => return Err(self.unexpected(&token, "',' or '}'")),
+                    }
+                }
+                NextAction::ArrayValue => {
+                    let token = self.consume_token()?;
+                    match token.token {
+                        AdapterToken::ArrayEnd => {
+                            self.stack.pop();
+                            self.finish_value_in_parent();
+                            return Ok(ParseEvent::SequenceEnd);
+                        }
+                        AdapterToken::Eof => {
+                            return Err(JsonError::new(
+                                JsonErrorKind::UnexpectedEof {
+                                    expected: "value or ']'",
+                                },
+                                token.span,
+                            ));
+                        }
+                        AdapterToken::Comma | AdapterToken::Colon => {
+                            return Err(self.unexpected(&token, "value or ']'"));
+                        }
+                        _ => {
+                            return self.parse_value_start_with_token(Some(token));
+                        }
+                    }
+                }
+                NextAction::ArrayComma => {
+                    let token = self.consume_token()?;
+                    match token.token {
+                        AdapterToken::Comma => {
+                            if let Some(ContextState::Array(state)) = self.stack.last_mut() {
+                                *state = ArrayState::ValueOrEnd;
+                            }
+                            continue;
+                        }
+                        AdapterToken::ArrayEnd => {
+                            self.stack.pop();
+                            self.finish_value_in_parent();
+                            return Ok(ParseEvent::SequenceEnd);
+                        }
+                        AdapterToken::Eof => {
+                            return Err(JsonError::new(
+                                JsonErrorKind::UnexpectedEof {
+                                    expected: "',' or ']'",
+                                },
+                                token.span,
+                            ));
+                        }
+                        _ => return Err(self.unexpected(&token, "',' or ']'")),
+                    }
+                }
+                NextAction::RootValue => {
+                    return self.parse_value_start_with_token(None);
+                }
+                NextAction::RootFinished => {
+                    return Err(JsonError::without_span(JsonErrorKind::UnexpectedToken {
+                        got: "end of input".into(),
+                        expected: "no additional JSON values",
+                    }));
+                }
+            }
+        }
+    }
+
+    fn build_probe(&self) -> Result<Vec<FieldEvidence<'de>>, JsonError> {
+        let remaining = self.input.get(self.current_offset..).unwrap_or_default();
+        if remaining.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut adapter = SliceAdapter::<true>::new(remaining);
+        let first = adapter.next_token().map_err(JsonError::from)?;
+        if !matches!(first.token, AdapterToken::ObjectStart) {
+            return Ok(Vec::new());
+        }
+
+        let mut evidence = Vec::new();
+        loop {
+            let token = adapter.next_token().map_err(JsonError::from)?;
+            match token.token {
+                AdapterToken::ObjectEnd => break,
+                AdapterToken::String(name) => {
+                    let colon = adapter.next_token().map_err(JsonError::from)?;
+                    if !matches!(colon.token, AdapterToken::Colon) {
+                        return Err(JsonError::new(
+                            JsonErrorKind::UnexpectedToken {
+                                got: format!("{:?}", colon.token),
+                                expected: "':'",
+                            },
+                            colon.span,
+                        ));
+                    }
+
+                    evidence.push(FieldEvidence::new(name, FieldLocationHint::KeyValue, None));
+
+                    adapter.skip().map_err(JsonError::from)?;
+
+                    let sep = adapter.next_token().map_err(JsonError::from)?;
+                    match sep.token {
+                        AdapterToken::Comma => continue,
+                        AdapterToken::ObjectEnd => break,
+                        AdapterToken::Eof => {
+                            return Err(JsonError::new(
+                                JsonErrorKind::UnexpectedEof {
+                                    expected: "',' or '}'",
+                                },
+                                sep.span,
+                            ));
+                        }
+                        _ => {
+                            return Err(JsonError::new(
+                                JsonErrorKind::UnexpectedToken {
+                                    got: format!("{:?}", sep.token),
+                                    expected: "',' or '}'",
+                                },
+                                sep.span,
+                            ));
+                        }
+                    }
+                }
+                AdapterToken::Eof => {
+                    return Err(JsonError::new(
+                        JsonErrorKind::UnexpectedEof {
+                            expected: "field name or '}'",
+                        },
+                        token.span,
+                    ));
+                }
+                _ => {
+                    return Err(JsonError::new(
+                        JsonErrorKind::UnexpectedToken {
+                            got: format!("{:?}", token.token),
+                            expected: "field name or '}'",
+                        },
+                        token.span,
+                    ));
+                }
+            }
+        }
+
+        Ok(evidence)
+    }
+}
+
+impl<'de> FormatParser<'de> for JsonParser<'de> {
+    type Error = JsonError;
+    type Probe<'a>
+        = JsonProbe<'de>
+    where
+        Self: 'a;
+
+    fn next_event(&mut self) -> Result<ParseEvent<'de>, Self::Error> {
+        if let Some(event) = self.event_peek.take() {
+            return Ok(event);
+        }
+        self.produce_event()
+    }
+
+    fn peek_event(&mut self) -> Result<ParseEvent<'de>, Self::Error> {
+        if let Some(event) = self.event_peek.clone() {
+            return Ok(event);
+        }
+        let event = self.produce_event()?;
+        self.event_peek = Some(event.clone());
+        Ok(event)
+    }
+
+    fn skip_value(&mut self) -> Result<(), Self::Error> {
+        debug_assert!(
+            self.event_peek.is_none(),
+            "skip_value called while an event is buffered"
+        );
+        self.consume_value_tokens()?;
+        self.finish_value_in_parent();
+        Ok(())
+    }
+
+    fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
+        let evidence = self.build_probe()?;
+        Ok(JsonProbe { evidence, idx: 0 })
+    }
+}
+
+pub struct JsonProbe<'de> {
+    evidence: Vec<FieldEvidence<'de>>,
+    idx: usize,
+}
+
+impl<'de> ProbeStream<'de> for JsonProbe<'de> {
+    type Error = JsonError;
+
+    fn next(&mut self) -> Result<Option<FieldEvidence<'de>>, Self::Error> {
+        if self.idx >= self.evidence.len() {
+            Ok(None)
+        } else {
+            let ev = self.evidence[self.idx].clone();
+            self.idx += 1;
+            Ok(Some(ev))
+        }
+    }
+}

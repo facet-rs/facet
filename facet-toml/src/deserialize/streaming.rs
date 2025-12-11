@@ -607,7 +607,8 @@ pub fn from_str_with_options<'input, 'facet, T: Facet<'facet>>(
             trace!("Solver result for '{key}': {result:?}");
 
             match result {
-                KeyResult::Solved(res) => {
+                KeyResult::Solved(handle) => {
+                    let res = handle.resolution();
                     trace!("Solved to resolution: {}", res.describe());
                     resolved = Some(res.clone());
                     break;
@@ -639,7 +640,8 @@ pub fn from_str_with_options<'input, 'facet, T: Facet<'facet>>(
         // If not solved by keys, try finish()
         if resolved.is_none() {
             match solver.finish() {
-                Ok(res) => {
+                Ok(handle) => {
+                    let res = handle.resolution();
                     trace!("Solver finished with resolution: {}", res.describe());
                     resolved = Some(res.clone());
                 }

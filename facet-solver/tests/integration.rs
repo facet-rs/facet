@@ -144,10 +144,10 @@ impl<'a> JsonDeserializer<'a> {
                             info!(
                                 key = %key_str,
                                 path = ?path_refs,
-                                config = %config.describe(),
+                                config = %config.resolution().describe(),
                                 "SOLVED! Key disambiguated to single configuration"
                             );
-                            return Ok(config);
+                            return Ok(config.resolution());
                         }
                         KeyResult::Unknown => {
                             warn!(key = %key_str, path = ?path_refs, "no configuration matches");
@@ -261,8 +261,8 @@ impl<'a> JsonDeserializer<'a> {
             // Check if we've solved after processing value
             if solver.candidates().len() == 1 {
                 let config = solver.candidates()[0];
-                info!(config = %config.describe(), "SOLVED by value type disambiguation!");
-                return Ok(config);
+                info!(config = %config.resolution().describe(), "SOLVED by value type disambiguation!");
+                return Ok(config.resolution());
             }
         }
 
@@ -274,8 +274,8 @@ impl<'a> JsonDeserializer<'a> {
 
         match solver.finish() {
             Ok(config) => {
-                info!(config = %config.describe(), "resolved at end of input");
-                Ok(config)
+                info!(config = %config.resolution().describe(), "resolved at end of input");
+                Ok(config.resolution())
             }
             Err(e) => {
                 warn!(error = %e, "failed to resolve");
@@ -1504,7 +1504,7 @@ fn probe_int_json(json: &[u8]) -> Result<String, String> {
 
     for (key, value_str) in &fields {
         match solver.see_key(key) {
-            KeyResult::Solved(config) => return Ok(config.describe()),
+            KeyResult::Solved(config) => return Ok(config.resolution().describe()),
             KeyResult::Unknown => return Err(format!("unknown key: {key}")),
             KeyResult::Unambiguous { .. } => {
                 // Same type in all candidates - continue
@@ -1526,7 +1526,7 @@ fn probe_int_json(json: &[u8]) -> Result<String, String> {
                     .collect();
 
                 match solver.satisfy(&satisfied) {
-                    SatisfyResult::Solved(config) => return Ok(config.describe()),
+                    SatisfyResult::Solved(config) => return Ok(config.resolution().describe()),
                     SatisfyResult::Continue => {}
                     SatisfyResult::NoMatch => return Err("no type can accept value".into()),
                 }
@@ -1537,7 +1537,7 @@ fn probe_int_json(json: &[u8]) -> Result<String, String> {
     // Finish - check required fields
     solver
         .finish()
-        .map(|c| c.describe())
+        .map(|c| c.resolution().describe())
         .map_err(|e| format!("{e}"))
 }
 
@@ -1682,7 +1682,7 @@ fn probe_signed_json(json: &[u8]) -> Result<String, String> {
 
     for (key, value_str) in &fields {
         match solver.see_key(key) {
-            KeyResult::Solved(config) => return Ok(config.describe()),
+            KeyResult::Solved(config) => return Ok(config.resolution().describe()),
             KeyResult::Unknown => return Err(format!("unknown key: {key}")),
             KeyResult::Unambiguous { .. } => {}
             KeyResult::Ambiguous { fields } => {
@@ -1701,7 +1701,7 @@ fn probe_signed_json(json: &[u8]) -> Result<String, String> {
                     .collect();
 
                 match solver.satisfy(&satisfied) {
-                    SatisfyResult::Solved(config) => return Ok(config.describe()),
+                    SatisfyResult::Solved(config) => return Ok(config.resolution().describe()),
                     SatisfyResult::Continue => {}
                     SatisfyResult::NoMatch => return Err("no type can accept value".into()),
                 }
@@ -1711,7 +1711,7 @@ fn probe_signed_json(json: &[u8]) -> Result<String, String> {
 
     solver
         .finish()
-        .map(|c| c.describe())
+        .map(|c| c.resolution().describe())
         .map_err(|e| format!("{e}"))
 }
 
@@ -1846,7 +1846,7 @@ fn probe_multitype_json(json: &[u8]) -> Result<String, String> {
 
     for (key, value) in &fields {
         match solver.see_key(key) {
-            KeyResult::Solved(config) => return Ok(config.describe()),
+            KeyResult::Solved(config) => return Ok(config.resolution().describe()),
             KeyResult::Unknown => return Err(format!("unknown key: {key}")),
             KeyResult::Unambiguous { .. } => {}
             KeyResult::Ambiguous { fields } => {
@@ -1869,7 +1869,7 @@ fn probe_multitype_json(json: &[u8]) -> Result<String, String> {
                     .collect();
 
                 match solver.satisfy(&satisfied) {
-                    SatisfyResult::Solved(config) => return Ok(config.describe()),
+                    SatisfyResult::Solved(config) => return Ok(config.resolution().describe()),
                     SatisfyResult::Continue => {}
                     SatisfyResult::NoMatch => return Err("no type can accept value".into()),
                 }
@@ -1879,7 +1879,7 @@ fn probe_multitype_json(json: &[u8]) -> Result<String, String> {
 
     solver
         .finish()
-        .map(|c| c.describe())
+        .map(|c| c.resolution().describe())
         .map_err(|e| format!("{e}"))
 }
 
@@ -2033,7 +2033,7 @@ fn probe_string_format_json(json: &[u8]) -> Result<String, String> {
 
     for (key, value) in &fields {
         match solver.see_key(key) {
-            KeyResult::Solved(config) => return Ok(config.describe()),
+            KeyResult::Solved(config) => return Ok(config.resolution().describe()),
             KeyResult::Unknown => return Err(format!("unknown key: {key}")),
             KeyResult::Unambiguous { .. } => {
                 // All variants have same type (String) - disambiguate by format
@@ -2052,7 +2052,7 @@ fn probe_string_format_json(json: &[u8]) -> Result<String, String> {
                 let satisfied: Vec<_> = fields.iter().map(|(f, _)| *f).collect();
 
                 match solver.satisfy(&satisfied) {
-                    SatisfyResult::Solved(config) => return Ok(config.describe()),
+                    SatisfyResult::Solved(config) => return Ok(config.resolution().describe()),
                     SatisfyResult::Continue => {}
                     SatisfyResult::NoMatch => return Err("no type can accept value".into()),
                 }
@@ -2062,7 +2062,7 @@ fn probe_string_format_json(json: &[u8]) -> Result<String, String> {
 
     solver
         .finish()
-        .map(|c| c.describe())
+        .map(|c| c.resolution().describe())
         .map_err(|e| format!("{e}"))
 }
 

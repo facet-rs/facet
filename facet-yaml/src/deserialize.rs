@@ -1349,11 +1349,12 @@ impl<'input> YamlDeserializer<'input> {
                 }
 
                 // ========== Get the resolved variant ==========
-                let config = solver.finish().map_err(|e| {
+                let config_handle = solver.finish().map_err(|e| {
                     self.error(YamlErrorKind::InvalidValue {
                         message: format!("solver error: {e}"),
                     })
                 })?;
+                let config = config_handle.resolution();
 
                 // Extract the variant name from the resolution
                 let variant_name = config

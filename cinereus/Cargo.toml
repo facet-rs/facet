@@ -9,8 +9,6 @@ repository = "https://github.com/facet-rs/facet"
 keywords = ["tree", "diff", "gumtree", "chawathe", "edit-script"]
 categories = ["algorithms", "data-structures"]
 
-[package.metadata]
-
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 

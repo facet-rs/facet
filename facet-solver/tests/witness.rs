@@ -127,10 +127,10 @@ fn test_integer_large_value_picks_second() {
 
             match solver.satisfy(&satisfied) {
                 SatisfyResult::Solved(config) => {
+                    let desc = config.resolution().describe();
                     assert!(
-                        config.describe().contains("Large"),
-                        "Expected Large variant, got: {}",
-                        config.describe()
+                        desc.contains("Large"),
+                        "Expected Large variant, got: {desc}"
                     );
                 }
                 other => panic!("Expected Solved, got: {other:?}"),
@@ -193,10 +193,10 @@ fn test_integer_boundary_256() {
 
             match solver.satisfy(&satisfied) {
                 SatisfyResult::Solved(config) => {
+                    let desc = config.resolution().describe();
                     assert!(
-                        config.describe().contains("Large"),
-                        "Expected Large variant for 256, got: {}",
-                        config.describe()
+                        desc.contains("Large"),
+                        "Expected Large variant for 256, got: {desc}"
                     );
                 }
                 other => panic!("Expected Solved, got: {other:?}"),
@@ -245,10 +245,10 @@ fn test_negative_value_picks_signed() {
 
             match solver.satisfy(&satisfied) {
                 SatisfyResult::Solved(config) => {
+                    let desc = config.resolution().describe();
                     assert!(
-                        config.describe().contains("Signed"),
-                        "Expected Signed variant for -10, got: {}",
-                        config.describe()
+                        desc.contains("Signed"),
+                        "Expected Signed variant for -10, got: {desc}"
                     );
                 }
                 other => panic!("Expected Solved, got: {other:?}"),
@@ -314,10 +314,10 @@ fn test_large_positive_picks_unsigned() {
 
             match solver.satisfy(&satisfied) {
                 SatisfyResult::Solved(config) => {
+                    let desc = config.resolution().describe();
                     assert!(
-                        config.describe().contains("Unsigned"),
-                        "Expected Unsigned variant for 200, got: {}",
-                        config.describe()
+                        desc.contains("Unsigned"),
+                        "Expected Unsigned variant for 200, got: {desc}"
                     );
                 }
                 other => panic!("Expected Solved, got: {other:?}"),
@@ -375,9 +375,9 @@ fn test_key_disambiguation_git() {
     match solver.see_key("branch") {
         KeyResult::Solved(config) => {
             assert!(
-                config.describe().contains("Git"),
+                config.resolution().describe().contains("Git"),
                 "Expected Git variant, got: {}",
-                config.describe()
+                config.resolution().describe()
             );
         }
         other => panic!("Expected Solved for 'branch', got: {other:?}"),
@@ -400,9 +400,9 @@ fn test_key_disambiguation_http() {
     // Finish - Git is filtered out because it's missing required "branch"
     let config = solver.finish().expect("should resolve");
     assert!(
-        config.describe().contains("Http"),
+        config.resolution().describe().contains("Http"),
         "Expected Http variant (Git missing required 'branch'), got: {}",
-        config.describe()
+        config.resolution().describe()
     );
 }
 
@@ -529,7 +529,7 @@ fn test_different_field_names_no_ambiguity() {
     // "timestamp" only in Timestamp variant
     match solver.see_key("timestamp") {
         KeyResult::Solved(config) => {
-            assert!(config.describe().contains("Timestamp"));
+            assert!(config.resolution().describe().contains("Timestamp"));
         }
         other => panic!("Expected Solved, got: {other:?}"),
     }
@@ -543,7 +543,7 @@ fn test_uuid_field_disambiguation() {
     // "id" only in Uuid variant
     match solver.see_key("id") {
         KeyResult::Solved(config) => {
-            assert!(config.describe().contains("Uuid"));
+            assert!(config.resolution().describe().contains("Uuid"));
         }
         other => panic!("Expected Solved, got: {other:?}"),
     }
@@ -657,9 +657,9 @@ fn test_same_field_different_types_float_value() {
             match solver.satisfy(&satisfied) {
                 SatisfyResult::Solved(config) => {
                     assert!(
-                        config.describe().contains("Float"),
+                        config.resolution().describe().contains("Float"),
                         "Expected Float variant, got: {}",
-                        config.describe()
+                        config.resolution().describe()
                     );
                 }
                 other => panic!("Expected Solved, got: {other:?}"),
@@ -689,9 +689,9 @@ fn test_same_field_different_types_string_value() {
             match solver.satisfy(&satisfied) {
                 SatisfyResult::Solved(config) => {
                     assert!(
-                        config.describe().contains("Text"),
+                        config.resolution().describe().contains("Text"),
                         "Expected Text variant, got: {}",
-                        config.describe()
+                        config.resolution().describe()
                     );
                 }
                 other => panic!("Expected Solved, got: {other:?}"),
@@ -748,7 +748,7 @@ fn test_same_type_is_unambiguous() {
     // "value_a" disambiguates to A
     match solver.see_key("value_a") {
         KeyResult::Solved(config) => {
-            assert!(config.describe().contains("::A"));
+            assert!(config.resolution().describe().contains("::A"));
         }
         other => panic!("Expected Solved for 'value_a', got: {other:?}"),
     }
