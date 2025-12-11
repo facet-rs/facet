@@ -1602,7 +1602,7 @@ dependencies = [
 
 [[package]]
 name = "rapace"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "facet",
  "facet-core",
@@ -1623,7 +1623,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-browser-tests-client"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "console_error_panic_hook",
  "futures",
@@ -1637,7 +1637,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-browser-tests-proto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "facet",
  "rapace",
@@ -1645,7 +1645,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-browser-tests-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rapace",
  "rapace-browser-tests-proto",
@@ -1658,7 +1658,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-stream",
  "bitflags",
@@ -1673,7 +1673,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-dashboard"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "facet",
@@ -1695,7 +1695,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-diagnostics-over-rapace"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-send-fd",
  "facet",
@@ -1711,7 +1711,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-explorer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "facet",
  "rapace",
@@ -1719,7 +1719,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-http"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "facet",
  "rapace",
@@ -1729,7 +1729,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-http-over-rapace"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-send-fd",
  "axum",
@@ -1754,7 +1754,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-http-tunnel"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "allocator-api2",
  "axum",
@@ -1779,7 +1779,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-macros"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "heck 0.4.1",
  "proc-macro-crate",
@@ -1791,7 +1791,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-registry"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "facet",
  "facet-core",
@@ -1799,7 +1799,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-shm-image"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "facet",
  "facet-core",
@@ -1813,7 +1813,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-template-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-send-fd",
  "facet",
@@ -1828,7 +1828,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-testkit"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "facet",
  "facet-core",
@@ -1847,7 +1847,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-tracing"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "facet",
  "parking_lot",
@@ -1860,7 +1860,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-tracing-over-rapace"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-send-fd",
  "facet",
@@ -1879,7 +1879,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-transport-mem"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures",
  "parking_lot",
@@ -1892,7 +1892,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-transport-shm"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "allocator-api2",
  "libc",
@@ -1904,7 +1904,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-transport-stream"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "parking_lot",
  "rapace-core",
@@ -1914,7 +1914,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-transport-websocket"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures",
  "gloo-timers",
@@ -3063,7 +3063,7 @@ checksum = "32ac00cd3f8ec9c1d33fb3e7958a82df6989c42d747bd326c822b1d625283547"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "clap",
