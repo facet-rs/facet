@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "Serializable owned versions of Facet shape types"
+keywords = ["facet", "reflection", "schema", "serialization"]
+categories = ["encoding", "data-structures"]
 
 [features]
 ci = [] # CI feature
