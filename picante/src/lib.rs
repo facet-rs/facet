@@ -14,12 +14,13 @@
 //! ## Minimal example
 //!
 //! ```no_run
-//! use picante::{DerivedIngredient, HasRuntime, InputIngredient, QueryKindId, Runtime};
+//! use picante::{DerivedIngredient, DynIngredient, HasRuntime, IngredientLookup, IngredientRegistry, InputIngredient, QueryKindId, Runtime};
 //! use std::sync::Arc;
 //!
 //! #[derive(Default)]
 //! struct Db {
 //!     runtime: Runtime,
+//!     ingredients: IngredientRegistry<Db>,
 //! }
 //!
 //! impl HasRuntime for Db {
@@ -28,8 +29,16 @@
 //!     }
 //! }
 //!
+//! impl IngredientLookup for Db {
+//!     fn ingredient(&self, kind: QueryKindId) -> Option<&dyn DynIngredient<Self>> {
+//!         self.ingredients.ingredient(kind)
+//!     }
+//! }
+//!
 //! # #[tokio::main(flavor = "current_thread")]
 //! # async fn main() -> picante::PicanteResult<()> {
+//! let db = Db::default();
+//!
 //! let text: Arc<InputIngredient<String, String>> =
 //!     Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
 //!
@@ -44,7 +53,6 @@
 //!     }))
 //! };
 //!
-//! let db = Db::default();
 //! text.set(&db, "a".into(), "hello".into());
 //! assert_eq!(len.get(&db, "a".into()).await?, 5);
 //! # Ok(()) }
