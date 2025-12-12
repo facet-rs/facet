@@ -104,6 +104,11 @@ pub trait FormatSuite {
 
     /// Case: field with `#[facet(alias = "...")]` accepts alternative name.
     fn attr_alias() -> CaseSpec;
+
+    // ── Proxy tests ──
+
+    /// Case: container-level `#[facet(proxy = ...)]` for custom serialization.
+    fn proxy_container() -> CaseSpec;
 }
 
 /// Execute suite cases; kept for convenience, but formats should register each
@@ -167,6 +172,8 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, DenyUnknownStruct>(&CASE_DENY_UNKNOWN_FIELDS, S::deny_unknown_fields),
         // Alias cases
         SuiteCase::new::<S, WithAlias>(&CASE_ATTR_ALIAS, S::attr_alias),
+        // Proxy cases
+        SuiteCase::new::<S, ProxyInt>(&CASE_PROXY_CONTAINER, S::proxy_container),
     ]
 }
 
@@ -590,6 +597,14 @@ const CASE_ATTR_ALIAS: CaseDescriptor<WithAlias> = CaseDescriptor {
     },
 };
 
+// ── Proxy case descriptors ──
+
+const CASE_PROXY_CONTAINER: CaseDescriptor<ProxyInt> = CaseDescriptor {
+    id: "proxy::container",
+    description: "container-level #[facet(proxy = IntAsString)] deserializes int from string",
+    expected: || ProxyInt { value: 42 },
+};
+
 /// Shared fixture type for the struct case.
 #[derive(Facet, Debug, Clone)]
 pub struct StructSingleField {
@@ -745,6 +760,37 @@ pub struct WithAlias {
     #[facet(alias = "old_name")]
     pub new_name: String,
     pub count: u32,
+}
+
+// ── Proxy test fixtures ──
+
+/// Proxy type that wraps a string for serialization.
+#[derive(Facet, Clone, Debug)]
+#[facet(transparent)]
+pub struct IntAsString(pub String);
+
+/// Target type that uses the proxy for serialization.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(proxy = IntAsString)]
+pub struct ProxyInt {
+    pub value: i32,
+}
+
+/// Convert from proxy (deserialization): string -> ProxyInt
+impl TryFrom<IntAsString> for ProxyInt {
+    type Error = std::num::ParseIntError;
+    fn try_from(proxy: IntAsString) -> Result<Self, Self::Error> {
+        Ok(ProxyInt {
+            value: proxy.0.parse()?,
+        })
+    }
+}
+
+/// Convert to proxy (serialization): ProxyInt -> string
+impl From<&ProxyInt> for IntAsString {
+    fn from(v: &ProxyInt) -> Self {
+        IntAsString(v.value.to_string())
+    }
 }
 
 fn emit_case_showcase<S, T>(

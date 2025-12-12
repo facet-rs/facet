@@ -485,6 +485,18 @@ fn deserialize_value_into<'p>(value: &Value, partial: Partial<'p>) -> Result<Par
         return deserialize_pointer(value, partial);
     }
 
+    // Check for container-level proxy
+    #[cfg(feature = "alloc")]
+    if shape.proxy.is_some() {
+        let (partial_returned, has_proxy) = partial.begin_custom_deserialization_from_shape()?;
+        partial = partial_returned;
+        if has_proxy {
+            partial = deserialize_value_into(value, partial)?;
+            partial = partial.end()?;
+            return Ok(partial);
+        }
+    }
+
     // Check for transparent/inner wrapper types
     if shape.inner.is_some() {
         partial = partial.begin_inner()?;
@@ -540,7 +552,27 @@ fn deserialize_scalar<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial
         }
         ValueType::Number => {
             let num = value.as_number().unwrap();
-            set_number(num, partial, shape)
+            // If target expects a string, stringify the number
+            // This is needed for formats like XML where type inference may produce
+            // numbers even when strings are expected
+            if shape.type_identifier == "String" {
+                let s = if let Some(i) = num.to_i64() {
+                    format!("{i}")
+                } else if let Some(u) = num.to_u64() {
+                    format!("{u}")
+                } else if let Some(f) = num.to_f64() {
+                    format!("{f}")
+                } else {
+                    return Err(ValueError::new(ValueErrorKind::TypeMismatch {
+                        expected: "String",
+                        got: ValueType::Number,
+                    }));
+                };
+                partial = partial.set(s)?;
+                Ok(partial)
+            } else {
+                set_number(num, partial, shape)
+            }
         }
         ValueType::String => {
             let s = value.as_string().unwrap();
@@ -738,7 +770,19 @@ fn deserialize_struct<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial
 
         if let Some((idx, field)) = field_info {
             partial = partial.begin_field(field.name)?;
-            partial = deserialize_value_into(val, partial)?;
+            // Check for field-level proxy
+            #[cfg(feature = "alloc")]
+            if field.proxy_convert_in_fn().is_some() {
+                partial = partial.begin_custom_deserialization()?;
+                partial = deserialize_value_into(val, partial)?;
+                partial = partial.end()?;
+            } else {
+                partial = deserialize_value_into(val, partial)?;
+            }
+            #[cfg(not(feature = "alloc"))]
+            {
+                partial = deserialize_value_into(val, partial)?;
+            }
             partial = partial.end()?;
             fields_set[idx] = true;
         } else if deny_unknown_fields {
@@ -813,7 +857,19 @@ fn deserialize_struct_with_flatten<'p>(
 
         if let Some((idx, field)) = direct_field {
             partial = partial.begin_field(field.name)?;
-            partial = deserialize_value_into(val, partial)?;
+            // Check for field-level proxy
+            #[cfg(feature = "alloc")]
+            if field.proxy_convert_in_fn().is_some() {
+                partial = partial.begin_custom_deserialization()?;
+                partial = deserialize_value_into(val, partial)?;
+                partial = partial.end()?;
+            } else {
+                partial = deserialize_value_into(val, partial)?;
+            }
+            #[cfg(not(feature = "alloc"))]
+            {
+                partial = deserialize_value_into(val, partial)?;
+            }
             partial = partial.end()?;
             fields_set[idx] = true;
             continue;

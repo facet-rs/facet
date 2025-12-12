@@ -225,6 +225,14 @@ impl FormatSuite for JsonSlice {
         CaseSpec::from_str(r#"{"old_name":"value","count":5}"#)
             .without_roundtrip("alias is only for deserialization, serializes as new_name")
     }
+
+    // ── Proxy cases ──
+
+    fn proxy_container() -> CaseSpec {
+        // ProxyInt deserializes from a string "42" via IntAsString proxy
+        CaseSpec::from_str(r#""42""#)
+            .without_roundtrip("facet-format serializer doesn't support proxy yet")
+    }
 }
 
 fn main() {

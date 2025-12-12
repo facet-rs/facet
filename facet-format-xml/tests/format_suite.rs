@@ -240,6 +240,14 @@ impl FormatSuite for XmlSlice {
         CaseSpec::from_str(r#"<record><old_name>value</old_name><count>5</count></record>"#)
             .without_roundtrip("alias is only for deserialization, serializes as new_name")
     }
+
+    // ── Proxy cases ──
+
+    fn proxy_container() -> CaseSpec {
+        // ProxyInt deserializes from a string "42" via IntAsString proxy
+        CaseSpec::from_str(r#"<value>42</value>"#)
+            .without_roundtrip("facet-format serializer doesn't support proxy yet")
+    }
 }
 
 fn main() {
