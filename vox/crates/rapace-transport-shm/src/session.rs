@@ -44,12 +44,17 @@ fn max_segment_size_bytes() -> usize {
         .unwrap_or(DEFAULT_MAX_SEGMENT_SIZE_BYTES)
 }
 
+/// What backs a shared memory mapping (used for logging and error context).
 #[derive(Debug, Clone)]
 enum ShmMappingKind {
     Anonymous,
     File { path: PathBuf },
 }
 
+/// An mmap-backed region that is unmapped on drop.
+///
+/// This type is expected to be used behind an `Arc` so the region is unmapped
+/// exactly once, when the final reference is dropped.
 #[derive(Debug)]
 struct ShmMapping {
     base_addr: usize,
@@ -689,10 +694,19 @@ unsafe fn create_file_mapping(
     } else {
         let file = OpenOptions::new().read(true).write(true).open(path)?;
         let meta = file.metadata()?;
-        if meta.len() < size as u64 {
+        let actual_len = meta.len();
+        let expected_len = size as u64;
+        if actual_len < expected_len {
             return Err(SessionError::InvalidConfig(
                 "SHM file is smaller than expected for provided config",
             ));
+        } else if actual_len > expected_len {
+            tracing::warn!(
+                path = %path.display(),
+                actual = actual_len,
+                expected = expected_len,
+                "SHM file is larger than expected; extra bytes will be ignored"
+            );
         }
         file
     };
@@ -788,6 +802,14 @@ fn calculate_segment_size_checked_with_max(
     Ok(total)
 }
 
+/// Unmap an mmap region.
+///
+/// # Safety
+///
+/// `ptr` must have been returned by `mmap` (or equivalent) and `size` must match
+/// the mapped length.
+///
+/// In tests, this also records successful `munmap` calls for leak/cleanup assertions.
 unsafe fn munmap_region(ptr: *mut u8, size: usize) -> Result<(), std::io::Error> {
     use libc::{c_void, munmap};
     if size == 0 {

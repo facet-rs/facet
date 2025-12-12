@@ -38,6 +38,10 @@ fn max_tracked_channels() -> usize {
         .unwrap_or(DEFAULT_MAX_TRACKED_CHANNELS)
 }
 
+/// Bounded set of recently-closed channels.
+///
+/// Used to drop late frames for channels that have been closed/cancelled, while
+/// preventing unbounded memory growth. Eviction is FIFO.
 #[derive(Debug)]
 struct Tombstones {
     max: usize,
@@ -62,6 +66,7 @@ impl Tombstones {
         self.map.get(&channel_id)
     }
 
+    /// Insert or update a tombstone entry, evicting oldest entries if needed.
     fn insert(&mut self, channel_id: u32, info: TombstoneInfo) {
         let existed = self.map.insert(channel_id, info).is_some();
         if !existed {
@@ -76,6 +81,7 @@ impl Tombstones {
     }
 }
 
+/// Snapshot of a channel's terminal state, retained after state is pruned.
 #[derive(Debug, Clone, Copy)]
 struct TombstoneInfo {
     lifecycle: ChannelLifecycle,
@@ -241,11 +247,14 @@ impl<T: Transport + Send + Sync> Session<T> {
         // Control channel is exempt from credit checks and state tracking
         if channel_id != 0 && frame.desc.flags.contains(FrameFlags::DATA) {
             if self.is_tombstoned(channel_id) {
+                let mut channels = self.channels.lock();
+                channels.remove(&channel_id);
                 tracing::trace!(channel_id, "dropping send on tombstoned channel");
                 return Ok(());
             }
 
             let mut channels = self.channels.lock();
+
             if !channels.contains_key(&channel_id) && channels.len() >= max_tracked_channels() {
                 tracing::warn!(
                     channel_id,
@@ -291,7 +300,9 @@ impl<T: Transport + Send + Sync> Session<T> {
             if should_remove {
                 channels.remove(&channel_id);
             }
+
             drop(channels);
+
             if should_remove {
                 if cancelled {
                     self.tombstone_cancelled(channel_id);
@@ -329,6 +340,8 @@ impl<T: Transport + Send + Sync> Session<T> {
             let has_eos = frame.desc.flags.contains(FrameFlags::EOS);
 
             if channel_id != 0 && self.is_tombstoned(channel_id) {
+                let mut channels = self.channels.lock();
+                channels.remove(&channel_id);
                 tracing::trace!(channel_id, "dropping recv on tombstoned channel");
                 continue;
             }
@@ -414,10 +427,6 @@ impl<T: Transport + Send + Sync> Session<T> {
 
         {
             let mut channels = self.channels.lock();
-            if let Some(state) = channels.get_mut(&channel_id) {
-                state.cancelled = true;
-                state.lifecycle = ChannelLifecycle::Closed;
-            }
             let _ = channels.remove(&channel_id);
         }
         self.tombstone_cancelled(channel_id);

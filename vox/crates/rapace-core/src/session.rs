@@ -225,10 +225,28 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
     }
 
     /// Register a pending waiter for a response on the given channel.
-    fn register_pending(&self, channel_id: u32) -> oneshot::Receiver<ReceivedFrame> {
+    fn register_pending(
+        &self,
+        channel_id: u32,
+    ) -> Result<oneshot::Receiver<ReceivedFrame>, RpcError> {
+        let mut pending = self.pending.lock();
+        let pending_len = pending.len();
+        let max = max_pending();
+        if pending_len >= max {
+            tracing::warn!(
+                pending_len,
+                max_pending = max,
+                "too many pending RPC calls; refusing new call"
+            );
+            return Err(RpcError::Status {
+                code: ErrorCode::ResourceExhausted,
+                message: "too many pending RPC calls".into(),
+            });
+        }
+
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().insert(channel_id, tx);
-        rx
+        pending.insert(channel_id, tx);
+        Ok(rx)
     }
 
     /// Try to route a frame to a pending waiter.
@@ -503,25 +521,8 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
             }
         }
 
-        // Safeguard: bound pending waiter growth (otherwise dropped/cancelled calls can leak)
-        {
-            let pending_len = self.pending.lock().len();
-            let max = max_pending();
-            if pending_len >= max {
-                tracing::warn!(
-                    pending_len,
-                    max_pending = max,
-                    "too many pending RPC calls; refusing new call"
-                );
-                return Err(RpcError::Status {
-                    code: ErrorCode::ResourceExhausted,
-                    message: "too many pending RPC calls".into(),
-                });
-            }
-        }
-
         // Register waiter before sending
-        let rx = self.register_pending(channel_id);
+        let rx = self.register_pending(channel_id)?;
         let mut guard = PendingGuard {
             session: self,
             channel_id,

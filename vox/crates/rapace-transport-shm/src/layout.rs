@@ -469,8 +469,8 @@ impl DataSegment {
 
             if result.is_ok() {
                 // Successfully allocated. Increment generation.
-                let r#gen = meta.generation.fetch_add(1, Ordering::AcqRel) + 1;
-                return Ok((i, r#gen));
+                let generation = meta.generation.fetch_add(1, Ordering::AcqRel) + 1;
+                return Ok((i, generation));
             }
         }
 
