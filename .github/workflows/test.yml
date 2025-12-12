@@ -23,10 +23,23 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: ✨ Run tests
+      - name: ✨ Run tests with coverage
         shell: bash
         run: |
-          just test-ci
+          # Run unit and integration tests with coverage
+          cargo llvm-cov --no-report nextest --features ci
+          
+          # Run doc tests with coverage
+          cargo llvm-cov --no-report --doc --features ci
+          
+          # Generate merged coverage report
+          mkdir coverage
+          cargo llvm-cov report --doctests --lcov --output-path coverage/lcov.info
+
+      - name: ✨ Publish to Coveralls
+        uses: coverallsapp/github-action@master
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
   nostd:
     runs-on: depot-ubuntu-24.04-32
@@ -42,21 +55,6 @@ jobs:
         shell: bash
         run: |
           just nostd-ci
-
-  doc-tests:
-    runs-on: depot-ubuntu-24.04-32
-
-    container:
-      image: ghcr.io/facet-rs/facet-ci:latest-amd64
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: ✨ Run doc tests
-        shell: bash
-        run: |
-          just doc-tests-ci
 
   miri:
     runs-on: depot-ubuntu-24.04-64
@@ -215,26 +213,3 @@ jobs:
         shell: bash
         run: |
           cargo check
-
-  coverage:
-    runs-on: depot-ubuntu-24.04-32
-
-    container:
-      image: ghcr.io/facet-rs/facet-ci:latest-miri-amd64
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: ✨ Gather coverage
-        shell: bash
-        run: |
-          cargo llvm-cov --no-report nextest
-          cargo llvm-cov --no-report --doc
-          mkdir coverage
-          cargo llvm-cov report --doctests --lcov --output-path coverage/lcov.info
-
-      - name: ✨ Publish to Coveralls
-        uses: coverallsapp/github-action@master
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
