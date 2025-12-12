@@ -21,3 +21,6 @@ indoc = "2"
 
 [dev-dependencies]
 facet-format-json = { path = "../facet-format-json" }
+
+[features]
+ci = []

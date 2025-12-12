@@ -16,7 +16,7 @@ pub trait FormatParser<'de> {
     /// Parser-specific error type.
     type Error;
 
-    /// Evidence cursor type produced by [`begin_probe`].
+    /// Evidence cursor type produced by [`FormatParser::begin_probe`].
     type Probe<'a>: ProbeStream<'de, Error = Self::Error>
     where
         Self: 'a;

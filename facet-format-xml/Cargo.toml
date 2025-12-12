@@ -1,8 +1,10 @@
 [package]
 name = "facet-format-xml"
-version = "0.1.0"
-edition = "2024"
-
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
@@ -26,3 +28,6 @@ libtest-mimic = "0.8.1"
 [[test]]
 name = "format_suite"
 harness = false
+
+[features]
+ci = []
