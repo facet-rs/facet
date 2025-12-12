@@ -10,8 +10,14 @@ repository = "https://github.com/bearcove/picante"
 homepage = "https://github.com/bearcove/picante"
 readme = "../../README.md"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 dashmap.workspace = true
+facet-assert.workspace = true
 facet.workspace = true
 facet-postcard.workspace = true
 futures.workspace = true
