@@ -18,7 +18,7 @@ picante provides:
 
 Minimal example (trimmed; see the crate docs for more):
 
-```rust
+```rust,noexec
 use picante::{DerivedIngredient, HasRuntime, InputIngredient, QueryKindId, Runtime};
 use std::sync::Arc;
 
@@ -34,24 +34,25 @@ impl HasRuntime for Db {
 }
 
 #[tokio::main]
-#async fn main() -> picante::PicanteResult<()> {
-let text: Arc<InputIngredient<String, String>> =
-    Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
+async fn main() -> picante::PicanteResult<()> {
+    let text: Arc<InputIngredient<String, String>> =
+        Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
 
-let len: Arc<DerivedIngredient<Db, String, u64>> = {
-    let text = text.clone();
-    Arc::new(DerivedIngredient::new(QueryKindId(2), "Len", move |db, key| {
+    let len: Arc<DerivedIngredient<Db, String, u64>> = {
         let text = text.clone();
-        Box::pin(async move {
-            let s = text.get(db, &key)?.unwrap_or_default();
-            Ok(s.len() as u64)
-        })
-    }))
-};
+        Arc::new(DerivedIngredient::new(QueryKindId(2), "Len", move |db, key| {
+            let text = text.clone();
+            Box::pin(async move {
+                let s = text.get(db, &key)?.unwrap_or_default();
+                Ok(s.len() as u64)
+            })
+        }))
+    };
 
-let db = Db::default();
-text.set(&db, "a".into(), "hello".into());
-assert_eq!(len.get(&db, "a".into()).await?, 5);
-# Ok(()) }
+    let db = Db::default();
+    text.set(&db, "a".into(), "hello".into());
+    assert_eq!(len.get(&db, "a".into()).await?, 5);
+    Ok(())
+}
 ```
 
