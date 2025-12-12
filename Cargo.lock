@@ -1569,7 +1569,6 @@ name = "facet-format"
 version = "0.32.2"
 dependencies = [
  "facet-core",
- "facet-format-json",
  "facet-reflect",
  "facet-solver",
  "facet-value",
@@ -1596,7 +1595,6 @@ dependencies = [
  "arborium",
  "facet",
  "facet-assert",
- "facet-format-json",
  "facet-pretty",
  "indoc",
 ]
