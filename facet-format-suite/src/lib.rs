@@ -99,6 +99,11 @@ pub trait FormatSuite {
 
     /// Case: `#[facet(deny_unknown_fields)]` rejects unknown fields.
     fn deny_unknown_fields() -> CaseSpec;
+
+    // ── Alias tests ──
+
+    /// Case: field with `#[facet(alias = "...")]` accepts alternative name.
+    fn attr_alias() -> CaseSpec;
 }
 
 /// Execute suite cases; kept for convenience, but formats should register each
@@ -160,6 +165,8 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, UserRecord>(&CASE_TRANSPARENT_NEWTYPE, S::transparent_newtype),
         // Error cases
         SuiteCase::new::<S, DenyUnknownStruct>(&CASE_DENY_UNKNOWN_FIELDS, S::deny_unknown_fields),
+        // Alias cases
+        SuiteCase::new::<S, WithAlias>(&CASE_ATTR_ALIAS, S::attr_alias),
     ]
 }
 
@@ -572,6 +579,17 @@ const CASE_DENY_UNKNOWN_FIELDS: CaseDescriptor<DenyUnknownStruct> = CaseDescript
     },
 };
 
+// ── Alias case descriptors ──
+
+const CASE_ATTR_ALIAS: CaseDescriptor<WithAlias> = CaseDescriptor {
+    id: "attr::alias",
+    description: "field with #[facet(alias = \"old_name\")] accepts alternative name",
+    expected: || WithAlias {
+        new_name: "value".into(),
+        count: 5,
+    },
+};
+
 /// Shared fixture type for the struct case.
 #[derive(Facet, Debug, Clone)]
 pub struct StructSingleField {
@@ -719,6 +737,14 @@ pub struct UserRecord {
 pub struct DenyUnknownStruct {
     pub foo: String,
     pub bar: i32,
+}
+
+/// Fixture for `#[facet(alias = "...")]` test.
+#[derive(Facet, Debug, Clone)]
+pub struct WithAlias {
+    #[facet(alias = "old_name")]
+    pub new_name: String,
+    pub count: u32,
 }
 
 fn emit_case_showcase<S, T>(

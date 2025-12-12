@@ -232,6 +232,14 @@ impl FormatSuite for XmlSlice {
             "unknown field",
         )
     }
+
+    // ── Alias cases ──
+
+    fn attr_alias() -> CaseSpec {
+        // Input uses the alias "old_name" which should map to field "new_name"
+        CaseSpec::from_str(r#"<record><old_name>value</old_name><count>5</count></record>"#)
+            .without_roundtrip("alias is only for deserialization, serializes as new_name")
+    }
 }
 
 fn main() {
