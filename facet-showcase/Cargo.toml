@@ -15,14 +15,15 @@ categories = ["development-tools"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-# Syntax highlighting
-syntect = "5.3"
+# Syntax highlighting (tree-sitter based)
+arborium = { version = "1.1.5", default-features = false, features = ["lang-json", "lang-yaml", "lang-xml", "lang-kdl", "lang-rust"] }
+miette-arborium = "1.1.5"
 
 # Terminal colors
 owo-colors = "4"
 
 # Error diagnostics
-miette = { version = "7", features = ["fancy", "syntect-highlighter"] }
+miette = { version = "7", features = ["fancy"] }
 
 # Facet integration
 facet = { version = "0.32", path = "../facet" }
