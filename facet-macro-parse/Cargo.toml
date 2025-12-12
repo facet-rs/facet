@@ -15,7 +15,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet-macro-types = { version = "0.32.2", path = "../facet-macro-types" }
-unsynn = "0.3.0"
 proc-macro2 = "1"
 quote = "1"
 

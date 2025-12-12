@@ -488,12 +488,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "btparse"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "387e80962b798815a2b5c4bcfdb6bf626fa922ffe9f74e373103b858738e9f31"
-
-[[package]]
 name = "bumpalo"
 version = "3.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -553,12 +547,6 @@ name = "camino"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "276a59bf2b2c967788139340c9f0c5b12d7fd6630315c15c217e559de85d2609"
-
-[[package]]
-name = "cargo-husky"
-version = "1.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b02b629252fe8ef6460461409564e2c21d0c8e77e0944f3d189ff06c4e932ad"
 
 [[package]]
 name = "castaway"
@@ -657,16 +645,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
 dependencies = [
  "thiserror 2.0.17",
-]
-
-[[package]]
-name = "color-backtrace"
-version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "308329d5d62e877ba02943db3a8e8c052de9fde7ab48283395ba0e6494efbabd"
-dependencies = [
- "btparse",
- "termcolor",
 ]
 
 [[package]]
@@ -1335,8 +1313,6 @@ name = "facet"
 version = "0.32.2"
 dependencies = [
  "autocfg",
- "cargo-husky",
- "eyre",
  "facet-core",
  "facet-macros",
  "facet-reflect",
@@ -1351,7 +1327,6 @@ dependencies = [
 name = "facet-args"
 version = "0.32.2"
 dependencies = [
- "eyre",
  "facet",
  "facet-core",
  "facet-pretty",
@@ -1360,7 +1335,6 @@ dependencies = [
  "heck",
  "insta",
  "miette",
- "owo-colors",
  "tracing",
 ]
 
@@ -1421,7 +1395,6 @@ name = "facet-core"
 version = "0.32.2"
 dependencies = [
  "autocfg",
- "bitflags 2.10.0",
  "bytes",
  "camino",
  "chrono",
@@ -1442,12 +1415,10 @@ dependencies = [
 name = "facet-csv"
 version = "0.32.2"
 dependencies = [
- "eyre",
  "facet",
  "facet-core",
  "facet-reflect",
  "facet-testhelpers",
- "insta",
 ]
 
 [[package]]
@@ -1456,7 +1427,6 @@ version = "0.32.2"
 dependencies = [
  "boxen",
  "cinereus",
- "confusables",
  "facet",
  "facet-core",
  "facet-diff-core",
@@ -1480,7 +1450,6 @@ dependencies = [
  "facet-diff",
  "facet-pretty",
  "facet-reflect",
- "facet-testhelpers",
  "facet-value",
  "facet-xml",
  "indextree",
@@ -1496,11 +1465,9 @@ version = "0.32.2"
 dependencies = [
  "axum-core",
  "bolero",
- "boxen",
  "brotli",
  "bytes",
  "camino",
- "cargo-husky",
  "chrono",
  "corosensei",
  "cranelift",
@@ -1510,13 +1477,11 @@ dependencies = [
  "divan",
  "facet",
  "facet-core",
- "facet-pretty",
  "facet-reflect",
  "facet-showcase",
  "facet-solver",
  "facet-testhelpers",
  "facet-value",
- "flate2",
  "futures-io",
  "http",
  "http-body-util",
@@ -1530,13 +1495,11 @@ dependencies = [
  "miette",
  "mime",
  "ordered-float 5.1.0",
- "owo-colors",
  "parking_lot",
  "ryu",
  "serde",
  "serde_json",
  "strsim",
- "syntect",
  "time",
  "tokio",
  "ulid",
@@ -1549,10 +1512,8 @@ version = "0.32.2"
 dependencies = [
  "axum-core",
  "camino",
- "cargo-husky",
  "facet",
  "facet-core",
- "facet-pretty",
  "facet-reflect",
  "facet-showcase",
  "facet-singularize",
@@ -1574,7 +1535,6 @@ dependencies = [
  "facet-macro-types",
  "proc-macro2",
  "quote",
- "unsynn",
 ]
 
 [[package]]
@@ -1590,7 +1550,6 @@ dependencies = [
 name = "facet-macros"
 version = "0.32.2"
 dependencies = [
- "facet-core",
  "facet-macros-impl",
 ]
 
@@ -1600,13 +1559,9 @@ version = "0.32.2"
 dependencies = [
  "facet-macro-parse",
  "facet-macro-types",
- "insta",
- "owo-colors",
  "proc-macro2",
  "quote",
- "rust-format",
  "strsim",
- "tempfile",
  "unsynn",
 ]
 
@@ -1668,9 +1623,7 @@ dependencies = [
  "eyre",
  "facet",
  "facet-core",
- "facet-macros",
  "facet-testhelpers",
- "facet-value",
  "insta",
  "log",
  "miette",
@@ -1684,14 +1637,12 @@ dependencies = [
 name = "facet-shapelike"
 version = "0.32.2"
 dependencies = [
- "bitflags 2.10.0",
  "facet",
  "facet-args",
  "facet-assert",
  "facet-core",
  "facet-json",
  "facet-kdl",
- "facet-macros",
  "facet-postcard",
  "facet-reflect",
  "facet-testhelpers",
@@ -1721,7 +1672,6 @@ dependencies = [
  "facet",
  "facet-core",
  "facet-reflect",
- "facet-testhelpers",
  "json-event-parser",
  "miette",
  "strsim",
@@ -1736,10 +1686,6 @@ version = "0.32.2"
 dependencies = [
  "datatest-stable",
  "facet",
- "facet-assert",
- "facet-core",
- "facet-reflect",
- "facet-testhelpers",
  "facet-xml",
  "lightningcss",
 ]
@@ -1749,7 +1695,6 @@ name = "facet-testhelpers"
 version = "0.32.2"
 dependencies = [
  "boxen",
- "color-backtrace",
  "facet-testhelpers-macros",
  "log",
  "owo-colors",
@@ -1783,8 +1728,6 @@ dependencies = [
  "log",
  "micromap",
  "num-traits",
- "owo-colors",
- "snapbox",
  "toml-test-data",
  "toml_parser",
  "toml_writer",
@@ -1795,7 +1738,6 @@ name = "facet-urlencoded"
 version = "0.32.2"
 dependencies = [
  "axum-core",
- "eyre",
  "facet",
  "facet-core",
  "facet-reflect",
@@ -1824,7 +1766,6 @@ dependencies = [
  "kstring",
  "miette",
  "once_cell",
- "owo-colors",
  "serde_json",
  "static_assertions",
  "syntect",
@@ -1846,18 +1787,15 @@ version = "0.32.2"
 dependencies = [
  "axum-core",
  "base64",
- "cargo-husky",
  "facet",
  "facet-core",
  "facet-diff-core",
- "facet-pretty",
  "facet-reflect",
  "facet-showcase",
  "facet-solver",
  "facet-testhelpers",
  "http",
  "http-body-util",
- "indoc",
  "log",
  "miette",
  "owo-colors",
@@ -1869,29 +1807,19 @@ name = "facet-yaml"
 version = "0.32.2"
 dependencies = [
  "axum-core",
- "boxen",
- "camino",
- "cargo-husky",
  "eyre",
  "facet",
  "facet-core",
- "facet-pretty",
  "facet-reflect",
  "facet-showcase",
  "facet-solver",
  "facet-testhelpers",
- "flate2",
  "http",
  "http-body-util",
- "indoc",
  "log",
  "miette",
- "owo-colors",
  "saphyr-parser",
- "strsim",
- "syntect",
  "time",
- "ulid",
 ]
 
 [[package]]
@@ -2934,12 +2862,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "normalize-line-endings"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61807f77802ff30975e01f4f071c8ba10c022052f98b3294119f3e615d13e5be"
-
-[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3824,15 +3746,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48fd7bd8a6377e15ad9d42a8ec25371b94ddc67abe7c8b9127bec79bebaaae18"
 
 [[package]]
-name = "rust-format"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60e7c00b6c3bf5e38a880eec01d7e829d12ca682079f8238a464def3c4b31627"
-dependencies = [
- "proc-macro2",
-]
-
-[[package]]
 name = "rustc-demangle"
 version = "0.1.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4104,28 +4017,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b7c388c1b5e93756d0c740965c41e8822f866621d41acbdf6336a6a168f8840c"
 
 [[package]]
-name = "snapbox"
-version = "0.6.23"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96fa1ce81be900d083b30ec2d481e6658c2acfaa2cfc7be45ccc2cc1b820edb3"
-dependencies = [
- "anstream",
- "anstyle",
- "normalize-line-endings",
- "similar",
- "snapbox-macros",
-]
-
-[[package]]
-name = "snapbox-macros"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3b750c344002d7cc69afb9da00ebd9b5c0f8ac2eb7d115d9d45d5b5f47718d74"
-dependencies = [
- "anstream",
-]
-
-[[package]]
 name = "socket2"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4287,15 +4178,6 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "termcolor"
-version = "1.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "06794f8f6c5c898b3275aebefa6b8a1cb24cd2c6c79397ab15774837a0bc5755"
-dependencies = [
- "winapi-util",
 ]
 
 [[package]]

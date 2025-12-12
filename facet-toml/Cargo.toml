@@ -41,7 +41,6 @@ toml_parser = { version = "1.0.4", default-features = false, features = ["alloc"
 facet-core = { path = "../facet-core", version = "0.32.2", default-features = false }
 facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false }
 facet-solver = { path = "../facet-solver", version = "0.32.2", default-features = false }
-owo-colors = "4.2.2"
 
 # Axum integration (optional)
 axum-core = { version = "0.5", optional = true }
@@ -55,5 +54,4 @@ facet-assert = { path = "../facet-assert" }
 facet-json = { path = "../facet-json" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-value = { path = "../facet-value" }
-snapbox = "0.6.21"
 toml-test-data = "2.3"

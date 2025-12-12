@@ -20,7 +20,6 @@ default = []
 
 [dependencies]
 cinereus = { path = "../cinereus", version = "0.32.2" }
-confusables = "0.1"
 facet = { path = "../facet", version = "0.32.2" }
 facet-core = { path = "../facet-core", version = "0.32.2" }
 facet-diff-core = { path = "../facet-diff-core", version = "0.32.2" }
@@ -35,5 +34,4 @@ insta = "1.43.1"
 owo-colors = "4"
 facet-value = { path = "../facet-value" }
 facet-testhelpers = { path = "../facet-testhelpers" }
-confusables = "0.1"
 facet-showcase = { path = "../facet-showcase", version = "0.32.2" }

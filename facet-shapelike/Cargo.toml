@@ -18,10 +18,8 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 ci = [] # CI feature
 
 [dependencies]
-bitflags = "2.10.0"
 facet = { path = "../facet", version = "0.32.2", features = ["alloc"] }
 facet-core = { path = "../facet-core", version = "0.32.2", features = ["alloc"] }
-facet-macros = { path = "../facet-macros", version = "0.32.2" }
 facet-postcard = { path = "../facet-postcard", version = "0.32.2" }
 facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false }
 

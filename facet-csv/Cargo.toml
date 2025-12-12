@@ -25,7 +25,5 @@ facet-core = { path = "../facet-core", version = "0.32.2", default-features = fa
 facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false }
 
 [dev-dependencies]
-eyre = "0.6.12"
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
-insta = "1.43.1"
