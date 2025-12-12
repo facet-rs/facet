@@ -20,3 +20,6 @@ facet-value = { path = "../facet-value" }
 
 [dev-dependencies]
 facet-format-json = { path = "../facet-format-json" }
+
+[features]
+ci = []

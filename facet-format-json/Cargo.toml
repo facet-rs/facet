@@ -27,3 +27,6 @@ libtest-mimic = "0.8.1"
 [[test]]
 name = "format_suite"
 harness = false
+
+[features]
+ci = []

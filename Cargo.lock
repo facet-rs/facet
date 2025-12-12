@@ -1603,7 +1603,7 @@ dependencies = [
 
 [[package]]
 name = "facet-format-xml"
-version = "0.1.0"
+version = "0.32.2"
 dependencies = [
  "facet",
  "facet-core",
