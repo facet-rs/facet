@@ -12,6 +12,9 @@ categories = ["development-tools", "rust-patterns"]
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [features]
 default = ["std"]
 std = ["alloc"] # Enable the standard library features

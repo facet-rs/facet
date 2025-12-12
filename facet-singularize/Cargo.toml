@@ -9,6 +9,11 @@ description = "Fast, no-regex English singularization for the facet ecosystem"
 keywords = ["singular", "plural", "inflection", "facet"]
 categories = ["text-processing"]
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [features]
 ci = [] # CI feature
 default = ["std"]

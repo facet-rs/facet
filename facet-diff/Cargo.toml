@@ -9,6 +9,11 @@ description = "Diffing capabilities for types implementing the Facet trait"
 keywords = ["facet", "diff", "comparison", "reflection", "data-structures"]
 categories = ["development-tools", "data-structures"]
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [features]
 ci = [] # CI feature
 default = []
@@ -31,3 +36,4 @@ owo-colors = "4"
 facet-value = { path = "../facet-value" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 confusables = "0.1"
+facet-showcase = { path = "../facet-showcase", version = "0.32.2" }

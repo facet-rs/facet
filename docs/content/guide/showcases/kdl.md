@@ -957,9 +957,9 @@ Error: 
 <footer class="showcase-provenance">
 <p>This showcase was auto-generated from source code.</p>
 <dl>
-<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/c7bc095e123eeb10ec9201e9972b3d9d0a43ee01/facet-kdl/examples/kdl_showcase.rs"><code>facet-kdl/examples/kdl_showcase.rs</code></a></dd>
-<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/c7bc095e123eeb10ec9201e9972b3d9d0a43ee01"><code>c7bc095e1</code></a></dd>
-<dt>Generated</dt><dd><time datetime="2025-12-11T12:16:12+01:00">2025-12-11T12:16:12+01:00</time></dd>
+<dt>Source</dt><dd><a href="https://github.com/facet-rs/facet/blob/a275f00e2c5593da5eaa528fe0b00814b555b5d7/facet-kdl/examples/kdl_showcase.rs"><code>facet-kdl/examples/kdl_showcase.rs</code></a></dd>
+<dt>Commit</dt><dd><a href="https://github.com/facet-rs/facet/commit/a275f00e2c5593da5eaa528fe0b00814b555b5d7"><code>a275f00e2</code></a></dd>
+<dt>Generated</dt><dd><time datetime="2025-12-12T07:18:58+01:00">2025-12-12T07:18:58+01:00</time></dd>
 <dt>Compiler</dt><dd><code>rustc 1.91.1 (ed61e7d7e 2025-11-07)</code></dd>
 </dl>
 </footer>

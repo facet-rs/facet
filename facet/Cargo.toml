@@ -13,6 +13,9 @@ categories = ["development-tools"]
 features = ["std", "reflect", "camino", "ordered-float"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [features]
 ci = [] # CI feature
 default = ["std", "helpful-derive"]

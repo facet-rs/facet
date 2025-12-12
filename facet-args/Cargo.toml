@@ -13,6 +13,9 @@ categories = ["command-line-interface"]
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 facet = { path = "../facet", version = "0.32.2" }
 facet-reflect = { path = "../facet-reflect", version = "0.32.2" }

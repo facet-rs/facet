@@ -12,6 +12,9 @@ categories = ["encoding", "parsing", "data-structures"]
 [package.metadata.docs.rs]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [features]
 ci = [] # CI feature
 # TODO features for different encoding rules

@@ -9,6 +9,11 @@ description = "Memory-efficient dynamic value type for facet, supporting JSON-li
 keywords = ["serialization", "value", "dynamic", "json"]
 categories = ["encoding", "data-structures"]
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [features]
 ci = [] # CI feature
 default = ["std"]

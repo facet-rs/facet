@@ -9,6 +9,11 @@ repository.workspace = true
 keywords = ["facet", "showcase", "demo"]
 categories = ["development-tools"]
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 # Syntax highlighting
 syntect = "5.3"
