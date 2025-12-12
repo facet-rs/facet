@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{% block title %}{{ section.title }} - rapace{% endblock title %}
+
+{% block content %}
+<article>
+    <h1>{{ section.title }}</h1>
+    {{ section.content | safe }}
+</article>
+{% endblock content %}

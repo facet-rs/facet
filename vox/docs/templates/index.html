@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}rapace documentation{% endblock title %}
+{% block body_class %}home{% endblock body_class %}
+
+{% block body %}
+<div class="hero">
+    <div class="hero-content">
+        <h1 class="hero-title">rapace</h1>
+        <p class="hero-tagline">RPC over SHM / WS / TCP / MEM.</p>
+        <p class="hero-sub">an unpretentious universal system for talking to other stuff.</p>
+        <div class="hero-actions">
+            <a href="/guide/architecture" class="btn btn-primary">Read the architecture</a>
+            <a href="https://github.com/bearcove/rapace" class="btn btn-secondary">View on GitHub</a>
+        </div>
+    </div>
+</div>
+
+<div class="layout">
+    <aside class="sidebar">
+        <nav class="sidebar-nav">
+            {% for sub in root.subsections %}
+            <div class="sidebar-section">
+                <h3><a href="{{ sub.permalink }}">{{ sub.title }}</a></h3>
+                <ul>
+                    {% for page in sub.pages %}
+                    <li><a href="{{ page.permalink }}">{{ page.title }}</a></li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endfor %}
+        </nav>
+    </aside>
+    <main class="content">
+        <article>
+            {{ section.content | safe }}
+        </article>
+    </main>
+</div>
+{% endblock body %}

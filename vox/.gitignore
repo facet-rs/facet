@@ -7,3 +7,5 @@ crates/rapace-wasm-client/pkg/
 node_modules/
 demos/browser-tests-client/test-results/
 examples/browser_ws/playwright-report/
+.cache
+.dodeca.db

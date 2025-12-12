@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Rapace{% endblock title %}</title>
+    <meta name="description" content="{% block description %}A small IPC/RPC library for Rust{% endblock description %}">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="/pagefind/pagefind-ui.css">
+</head>
+<body class="{% block body_class %}{% endblock body_class %}">
+    <nav class="site-nav">
+        <a href="/" class="site-nav-brand">
+            <svg viewBox="0 0 64 64" width="28" height="28" class="site-nav-logo">
+                <path fill="#ff6b35" d="m32 8 16 8v16l-16 8-16-8V16z"/>
+                <path fill="#cc5429" d="m16 24v8l16 8V32z"/>
+                <path fill="#ff8c5a" d="m32 16 16 8v8l-16-8z"/>
+            </svg>
+            <span>Rapace</span>
+        </a>
+        <div class="site-nav-spacer"></div>
+        <div id="search" class="site-nav-search"></div>
+        <a href="https://github.com/bearcove/rapace" class="site-nav-github" title="GitHub">
+            <svg viewBox="0 0 16 16" width="24" height="24" fill="currentColor">
+                <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+            </svg>
+        </a>
+    </nav>
+
+    {% block body %}
+    <div class="layout">
+        <aside class="sidebar">
+            <nav class="sidebar-nav">
+                {% for sub in root.subsections %}
+                <div class="sidebar-section">
+                    <h3><a href="{{ sub.permalink }}">{{ sub.title }}</a></h3>
+                    <ul>
+                        {% for page in sub.pages %}
+                        <li><a href="{{ page.permalink }}">{{ page.title }}</a></li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                {% endfor %}
+            </nav>
+        </aside>
+        <main class="content">
+            {% block content %}{% endblock content %}
+        </main>
+    </div>
+    {% endblock body %}
+
+    <footer>
+        <p>
+            Made by <a href="https://fasterthanli.me">fasterthanlime</a>
+            · <a href="https://github.com/bearcove/rapace">GitHub</a>
+            · Typeset in <a href="https://fonts.google.com/specimen/Public+Sans">Public Sans</a> & <a href="https://typeof.net/Iosevka/">Iosevka</a>
+        </p>
+    </footer>
+
+    <script src="/pagefind/pagefind-ui.js"></script>
+    <script src="/js/dodeca.js"></script>
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        new PagefindUI({
+            element: "#search",
+            showSubResults: true,
+            showImages: false,
+            translations: {
+                placeholder: "Search..."
+            }
+        });
+
+        document.addEventListener('keydown', function(e) {
+            const searchInput = document.querySelector('#search input');
+            if (!searchInput) return;
+            if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+                e.preventDefault();
+                searchInput.focus();
+                searchInput.select();
+            }
+            if (e.key === '/' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+                e.preventDefault();
+                searchInput.focus();
+                searchInput.select();
+            }
+        });
+    });
+    </script>
+</body>
+</html>

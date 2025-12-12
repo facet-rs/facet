@@ -26,7 +26,7 @@ reflection, and tooling layer that sits at the "body" level and above.
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Facet is relevant starting at layer 3, and becomes powerful at layers 4-5.**
+**facet starts to matter at layer 3, and is heavily used at layers 4–5.**
 
 The transport layer (rings, slots, eventfds) only sees `payload_len` as "opaque byte length".
 It doesn't know or care that facet exists.

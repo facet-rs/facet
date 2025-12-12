@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} - rapace{% endblock title %}
+
+{% block content %}
+<div class="page-layout">
+    <article class="page-main">
+        <h1>{{ page.title }}</h1>
+        {{ page.content | safe }}
+    </article>
+
+    {% if page.toc and page.toc | length > 0 %}
+    <aside class="page-toc" aria-label="On this page">
+        <nav>
+            <h2>On this page</h2>
+            <ul>
+                {% for h1 in page.toc %}
+                <li>
+                    <a href="{{ h1.permalink }}">{{ h1.title }}</a>
+                    {% if h1.children and h1.children | length > 0 %}
+                    <ul>
+                        {% for h2 in h1.children %}
+                        <li><a href="{{ h2.permalink }}">{{ h2.title }}</a></li>
+                        {% endfor %}
+                    </ul>
+                    {% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+        </nav>
+    </aside>
+    {% endif %}
+</div>
+{% endblock content %}

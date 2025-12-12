@@ -1,0 +1,33 @@
+content "docs/content"
+output "docs/public"
+link_check {
+}
+stable_assets {
+}
+code_execution {
+    enabled #true
+    fail_on_error #true
+    timeout_secs 30
+    cache_dir ".cache/code-execution"
+
+    // Extra dependencies for code samples (merged with dodeca's defaults)
+    dependency "serde" version="1.0"
+    // cf. tokio features=["full"] in some setups; simple examples don't require it
+    dependency "tokio" version="1.0"
+    dependency "rapace" version="0.2.0" path="crates/rapace"
+    dependency "rapace-core" version="0.2.0" path="crates/rapace-core"
+    dependency "rapace-transport-mem" version="0.2.0" path="crates/rapace-transport-mem"
+    dependency "rapace-transport-shm" version="0.2.0" path="crates/rapace-transport-shm"
+    dependency "rapace-transport-stream" version="0.2.0" path="crates/rapace-transport-stream"
+    dependency "rapace-transport-websocket" version="0.2.0" path="crates/rapace-transport-websocket"
+    dependency "rapace-testkit" version="0.2.0" path="crates/rapace-testkit"
+
+    rust {
+        command "cargo"
+        args "run" "--quiet" "--release"
+        extension "rs"
+        prepare_code #true
+        auto_imports "use std::collections::HashMap;" 
+        show_output #true
+    }
+}

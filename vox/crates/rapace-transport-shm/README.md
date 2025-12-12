@@ -6,17 +6,16 @@
 
 Shared memory transport for rapace RPC.
 
-The performance reference implementation using POSIX shared memory for ultra-low latency local IPC.
+This crate implements a transport on top of POSIX shared memory. It follows the layout described in the crate documentation (segment header, descriptor rings, and a data segment managed by a slab-style allocator).
 
-## Features
+## Characteristics
 
-- **Ultra-low latency**: Microsecond-scale message passing via shared memory
-- **Zero-copy**: Optional zero-copy allocation directly into SHM slots
-- **Linux/Unix**: Requires a POSIX-compliant OS
+- single-writer/single-reader rings in each direction;
+- descriptors that point into a shared data segment;
+- optional SHM-backed allocation for callers that want to avoid extra copies;
+- Linux/Unix only (requires a POSIX-style shared memory API).
 
-## Performance
-
-For latency-sensitive applications requiring local inter-process communication, this transport delivers sub-microsecond message round-trip times.
+See the crate docs for details about the layout and configuration options.
 
 ## Configuration
 
