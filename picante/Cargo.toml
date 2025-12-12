@@ -1,0 +1,18 @@
+[package]
+name = "picante"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+dashmap.workspace = true
+facet.workspace = true
+facet-postcard.workspace = true
+futures.workspace = true
+parking_lot.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tracing-subscriber.workspace = true
