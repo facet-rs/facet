@@ -4,6 +4,10 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+authors = ["Amos Wenger <amos@bearcove.eu>"]
+description = "An async incremental query runtime"
+repository = "https://github.com/bearcove/picante"
+homepage = "https://github.com/bearcove/picante"
 
 [dependencies]
 dashmap.workspace = true
