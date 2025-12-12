@@ -41,7 +41,6 @@ facet-showcase = { path = "../facet-showcase" }
 facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 miette = { version = "7", default-features = false }
-owo-colors = "4"
 bolero = "0.13"
 serde_json = "1"
 divan = "0.1"

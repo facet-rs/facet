@@ -16,15 +16,11 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet = { path = "../facet", version = "0.32.2", default-features = false }
-facet-core = { path = "../facet-core", version = "0.32.2", default-features = false }
-facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false }
 facet-xml = { path = "../facet-xml", version = "0.32.2" }
 lightningcss = "1.0.0-alpha.68"
 
 [dev-dependencies]
 datatest-stable = "0.2"
-facet-assert = { path = "../facet-assert" }
-facet-testhelpers = { path = "../facet-testhelpers" }
 
 [[test]]
 name = "roundtrip"

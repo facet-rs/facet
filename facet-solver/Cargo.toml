@@ -28,7 +28,6 @@ strsim = { version = "0.11", optional = true }
 
 [dev-dependencies]
 facet = { path = "../facet" }
-facet-testhelpers = { path = "../facet-testhelpers" }
 json-event-parser = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

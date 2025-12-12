@@ -39,7 +39,3 @@ quote = "1.0.40"
 strsim = { version = "0.11", optional = true }
 
 [dev-dependencies]
-insta = { version = "1.43.1" }
-rust-format = { version = "0.3.4", features = ["proc-macro2", "token_stream"] }
-owo-colors = { version = "4.2.2" }
-tempfile = { version = "3.20.0" }
