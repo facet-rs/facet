@@ -9,6 +9,11 @@ description = "SVG serialization for Facet types"
 keywords = ["svg", "serialization", "facet"]
 categories = ["encoding", "parsing"]
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 facet = { path = "../facet", version = "0.32.2", default-features = false }
 facet-core = { path = "../facet-core", version = "0.32.2", default-features = false }

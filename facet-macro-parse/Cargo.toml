@@ -8,6 +8,11 @@ rust-version.workspace = true
 
 description = "Parser for facet derive macros - takes TokenStream and returns parsed type representations"
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [dependencies]
 facet-macro-types = { version = "0.32.2", path = "../facet-macro-types" }
 unsynn = "0.3.0"

@@ -9,6 +9,11 @@ description = "Serializable owned versions of Facet shape types"
 keywords = ["facet", "reflection", "schema", "serialization"]
 categories = ["encoding", "data-structures"]
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [features]
 ci = [] # CI feature
 

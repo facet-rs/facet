@@ -655,6 +655,30 @@ impl<'a> Scenario<'a> {
         }
     }
 
+    /// Display output with ANSI color codes, automatically converted to HTML in markdown mode.
+    ///
+    /// In terminal mode, the ANSI codes are printed as-is.
+    /// In markdown mode, they are converted to HTML `<span>` elements with inline styles.
+    pub fn ansi_output(mut self, ansi_text: &str) -> Self {
+        if self.skipped {
+            return self;
+        }
+        self.ensure_header();
+
+        match self.runner.mode {
+            OutputMode::Terminal => {
+                println!();
+                println!("{ansi_text}");
+            }
+            OutputMode::Markdown => {
+                println!("<div class=\"output\">");
+                println!("<pre><code>{}</code></pre>", ansi_to_html(ansi_text));
+                println!("</div>");
+            }
+        }
+        self
+    }
+
     /// Finish this scenario.
     pub fn finish(mut self) {
         if self.skipped {

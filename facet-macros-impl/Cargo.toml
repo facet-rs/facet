@@ -15,6 +15,11 @@ keywords = [
 ]
 categories = ["development-tools", "encoding"]
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [features]
 default = ["helpful-derive"]
 slow-tests = [] # Enable slow tests (compile tests)

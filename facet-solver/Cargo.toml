@@ -9,6 +9,11 @@ description = "Constraint solver for facet - resolves type shapes from field nam
 keywords = ["reflection", "introspection", "facet", "solver", "serde"]
 categories = ["development-tools", "rust-patterns"]
 
+[package.metadata]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
 [features]
 ci = [] # CI feature
 default = ["std", "suggestions"]
