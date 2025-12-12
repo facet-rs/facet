@@ -1,7 +1,10 @@
 //! Shared runtime state for a Picante database (revisions, notifications, etc.).
 
-use crate::key::{Key, QueryKindId};
+use crate::key::{Dep, DynKey, Key, QueryKindId};
 use crate::revision::Revision;
+use dashmap::{DashMap, DashSet};
+use std::collections::{HashSet, VecDeque};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{broadcast, watch};
 
@@ -11,6 +14,8 @@ pub struct Runtime {
     current_revision: AtomicU64,
     revision_tx: watch::Sender<Revision>,
     events_tx: broadcast::Sender<RuntimeEvent>,
+    deps_by_query: DashMap<DynKey, Arc<[Dep]>>,
+    reverse_deps: DashMap<DynKey, DashSet<DynKey>>,
 }
 
 impl Runtime {
@@ -54,22 +59,112 @@ impl Runtime {
 
     /// Emit an input change event (for live reload / diagnostics).
     pub fn notify_input_set(&self, revision: Revision, kind: QueryKindId, key: Key) {
+        let source = DynKey {
+            kind,
+            key: key.clone(),
+        };
         let _ = self.events_tx.send(RuntimeEvent::InputSet {
             revision,
             kind,
             key_hash: key.hash(),
             key,
         });
+        self.propagate_invalidation(revision, &source);
     }
 
     /// Emit an input removal event (for live reload / diagnostics).
     pub fn notify_input_removed(&self, revision: Revision, kind: QueryKindId, key: Key) {
+        let source = DynKey {
+            kind,
+            key: key.clone(),
+        };
         let _ = self.events_tx.send(RuntimeEvent::InputRemoved {
             revision,
             kind,
             key_hash: key.hash(),
             key,
         });
+        self.propagate_invalidation(revision, &source);
+    }
+
+    /// Update the dependency edges for `query`.
+    pub fn update_query_deps(&self, query: DynKey, deps: Arc<[Dep]>) {
+        let old = self.deps_by_query.insert(query.clone(), deps.clone());
+
+        let new_set: HashSet<Dep> = deps.iter().cloned().collect();
+
+        let old_set: HashSet<Dep> = old
+            .as_deref()
+            .map(|d| d.iter().cloned().collect())
+            .unwrap_or_default();
+
+        for dep in old_set.difference(&new_set) {
+            let dep_key = DynKey {
+                kind: dep.kind,
+                key: dep.key.clone(),
+            };
+
+            if let Some(set) = self.reverse_deps.get(&dep_key) {
+                set.remove(&query);
+                if set.is_empty() {
+                    drop(set);
+                    self.reverse_deps.remove(&dep_key);
+                }
+            }
+        }
+
+        for dep in new_set {
+            let dep_key = DynKey {
+                kind: dep.kind,
+                key: dep.key.clone(),
+            };
+
+            let set = self.reverse_deps.entry(dep_key).or_default();
+            set.insert(query.clone());
+        }
+    }
+
+    /// Emit a derived query change event (for live reload / diagnostics).
+    pub fn notify_query_changed(&self, revision: Revision, query: DynKey) {
+        let _ = self.events_tx.send(RuntimeEvent::QueryChanged {
+            revision,
+            kind: query.kind,
+            key_hash: query.key.hash(),
+            key: query.key,
+        });
+    }
+
+    fn propagate_invalidation(&self, revision: Revision, source: &DynKey) {
+        let mut queue = VecDeque::new();
+        let mut seen: HashSet<DynKey> = HashSet::new();
+
+        queue.push_back(source.clone());
+        seen.insert(source.clone());
+
+        while let Some(node) = queue.pop_front() {
+            let Some(dependents) = self.reverse_deps.get(&node) else {
+                continue;
+            };
+
+            for dependent in dependents.iter() {
+                let dependent = dependent.clone();
+                if !seen.insert(dependent.clone()) {
+                    continue;
+                }
+
+                let _ = self.events_tx.send(RuntimeEvent::QueryInvalidated {
+                    revision,
+                    kind: dependent.kind,
+                    key_hash: dependent.key.hash(),
+                    key: dependent.key.clone(),
+                    by_kind: source.kind,
+                    by_key_hash: source.key.hash(),
+                    by_key: source.key.clone(),
+                });
+
+                queue.push_back(dependent);
+            }
+        }
     }
 }
 
@@ -81,6 +176,8 @@ impl Default for Runtime {
             current_revision: AtomicU64::new(0),
             revision_tx,
             events_tx,
+            deps_by_query: DashMap::new(),
+            reverse_deps: DashMap::new(),
         }
     }
 }
@@ -118,6 +215,34 @@ pub enum RuntimeEvent {
         /// Stable hash of the encoded key bytes (for diagnostics).
         key_hash: u64,
         /// Postcard-encoded key bytes.
+        key: Key,
+    },
+    /// A derived query was invalidated by an input change.
+    QueryInvalidated {
+        /// Revision at which invalidation happened.
+        revision: Revision,
+        /// Kind id of the invalidated query.
+        kind: QueryKindId,
+        /// Stable hash of the invalidated key bytes (for diagnostics).
+        key_hash: u64,
+        /// Postcard-encoded key bytes for the invalidated query.
+        key: Key,
+        /// Kind id of the root input that caused invalidation.
+        by_kind: QueryKindId,
+        /// Stable hash of the root input key bytes (for diagnostics).
+        by_key_hash: u64,
+        /// Postcard-encoded key bytes for the root input key.
+        by_key: Key,
+    },
+    /// A derived query's output changed at `revision`.
+    QueryChanged {
+        /// Revision at which the query changed.
+        revision: Revision,
+        /// Kind id of the changed query.
+        kind: QueryKindId,
+        /// Stable hash of the changed key bytes (for diagnostics).
+        key_hash: u64,
+        /// Postcard-encoded key bytes for the changed query.
         key: Key,
     },
 }
