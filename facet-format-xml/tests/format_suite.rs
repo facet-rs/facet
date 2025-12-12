@@ -222,6 +222,16 @@ impl FormatSuite for XmlSlice {
         "#
         ))
     }
+
+    // ── Error cases ──
+
+    fn deny_unknown_fields() -> CaseSpec {
+        // Input has extra element "baz" which should trigger an error
+        CaseSpec::expect_error(
+            r#"<record><foo>abc</foo><bar>42</bar><baz>true</baz></record>"#,
+            "unknown field",
+        )
+    }
 }
 
 fn main() {
