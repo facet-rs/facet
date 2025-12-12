@@ -1,10 +1,18 @@
 //! Syntax highlighting support for showcases.
 
-use syntect::easy::HighlightLines;
-use syntect::highlighting::{Style, Theme, ThemeSet};
-use syntect::html::highlighted_html_for_string;
-use syntect::parsing::{SyntaxSet, SyntaxSetBuilder};
-use syntect::util::{LinesWithEndings, as_24_bit_terminal_escaped};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::future::Future;
+use std::sync::LazyLock;
+use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+
+use arborium::highlights::{HIGHLIGHTS, tag_for_capture};
+use arborium::theme::{self, Theme};
+use arborium::{Grammar, GrammarProvider, HighlightConfig, Injection, Span, StaticProvider};
+use miette_arborium::MietteHighlighter;
+use owo_colors::OwoColorize;
+
+const INDENT: &str = "    ";
 
 /// Supported languages for syntax highlighting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,7 +23,7 @@ pub enum Language {
     Yaml,
     /// XML format
     Xml,
-    /// KDL format (requires custom syntax definition)
+    /// KDL format
     Kdl,
     /// Rust code (for type definitions)
     Rust,
@@ -43,15 +51,21 @@ impl Language {
             Language::Rust => "Rust",
         }
     }
+
+    fn arborium_name(self) -> &'static str {
+        match self {
+            Language::Json => "json",
+            Language::Yaml => "yaml",
+            Language::Xml => "xml",
+            Language::Kdl => "kdl",
+            Language::Rust => "rust",
+        }
+    }
 }
 
-/// Syntax highlighter using Tokyo Night theme.
+/// Syntax highlighter using Tokyo Night theme powered by arborium.
 pub struct Highlighter {
-    /// Default syntax set (JSON, YAML, Rust, etc.)
-    default_ps: SyntaxSet,
-    /// Custom syntax set for KDL (built from .sublime-syntax files)
-    kdl_ps: Option<SyntaxSet>,
-    /// Tokyo Night theme
+    engine: RefCell<ArboriumEngine>,
     theme: Theme,
 }
 
@@ -62,50 +76,16 @@ impl Default for Highlighter {
 }
 
 impl Highlighter {
-    /// Create a new highlighter with Tokyo Night theme.
+    /// Create a new highlighter with the Tokyo Night theme.
     pub fn new() -> Self {
-        let default_ps = SyntaxSet::load_defaults_newlines();
-
-        // Try to load Tokyo Night theme from the shared themes directory
-        let theme = Self::load_tokyo_night_theme();
-
         Self {
-            default_ps,
-            kdl_ps: None,
-            theme,
+            engine: RefCell::new(ArboriumEngine::new()),
+            theme: theme::builtin::tokyo_night().clone(),
         }
     }
 
-    /// Load Tokyo Night theme, falling back to base16-ocean.dark if not found.
-    fn load_tokyo_night_theme() -> Theme {
-        // Try common locations for the theme
-        let possible_paths = [
-            // When running from workspace root
-            "themes/TokyoNight.tmTheme",
-            // When running from a subcrate
-            "../themes/TokyoNight.tmTheme",
-            // When running from examples
-            "../../themes/TokyoNight.tmTheme",
-        ];
-
-        for path in possible_paths {
-            if let Ok(theme) = ThemeSet::get_theme(path) {
-                return theme;
-            }
-        }
-
-        // Fallback to default theme
-        let ts = ThemeSet::load_defaults();
-        ts.themes["base16-ocean.dark"].clone()
-    }
-
-    /// Add KDL syntax support from a directory containing .sublime-syntax files.
-    pub fn with_kdl_syntaxes(mut self, syntax_dir: &str) -> Self {
-        let mut builder = SyntaxSetBuilder::new();
-        builder.add_plain_text_syntax();
-        if builder.add_from_folder(syntax_dir, true).is_ok() {
-            self.kdl_ps = Some(builder.build());
-        }
+    /// KDL grammars ship with arborium, so this is a no-op retained for API compatibility.
+    pub fn with_kdl_syntaxes(self, _syntax_dir: &str) -> Self {
         self
     }
 
@@ -116,154 +96,47 @@ impl Highlighter {
 
     /// Highlight code and return terminal-escaped string.
     pub fn highlight_to_terminal(&self, code: &str, lang: Language) -> String {
-        let mut output = String::new();
-
-        let (ps, syntax) = match lang {
-            Language::Kdl => {
-                if let Some(ref kdl_ps) = self.kdl_ps {
-                    // Try "KDL" first (simpler syntax), then "KDL1" (complex syntax)
-                    if let Some(syntax) = kdl_ps
-                        .find_syntax_by_name("KDL")
-                        .or_else(|| kdl_ps.find_syntax_by_name("KDL1"))
-                    {
-                        (kdl_ps, syntax)
-                    } else {
-                        // Fallback to plain text
-                        return self.plain_text_with_indent(code);
-                    }
-                } else {
-                    return self.plain_text_with_indent(code);
-                }
+        match self.collect_segments(code, lang) {
+            Some(segments) => {
+                render_segments_to_terminal(&segments, &self.theme, LineNumberMode::None)
             }
-            _ => {
-                let syntax = self
-                    .default_ps
-                    .find_syntax_by_extension(lang.extension())
-                    .unwrap_or_else(|| self.default_ps.find_syntax_plain_text());
-                (&self.default_ps, syntax)
-            }
-        };
-
-        let mut h = HighlightLines::new(syntax, &self.theme);
-        for line in LinesWithEndings::from(code) {
-            let ranges: Vec<(Style, &str)> = h.highlight_line(line, ps).unwrap_or_default();
-            let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
-            output.push_str("    ");
-            output.push_str(&escaped);
+            None => self.plain_text_with_indent(code),
         }
-        output.push_str("\x1b[0m"); // Reset terminal colors
-
-        // Ensure there's a trailing newline
-        if !output.ends_with('\n') {
-            output.push('\n');
-        }
-
-        output
     }
 
     /// Highlight code with line numbers for terminal output.
     pub fn highlight_to_terminal_with_line_numbers(&self, code: &str, lang: Language) -> String {
-        use owo_colors::OwoColorize;
-
-        let mut output = String::new();
-
-        let (ps, syntax) = match lang {
-            Language::Kdl => {
-                if let Some(ref kdl_ps) = self.kdl_ps {
-                    if let Some(syntax) = kdl_ps
-                        .find_syntax_by_name("KDL")
-                        .or_else(|| kdl_ps.find_syntax_by_name("KDL1"))
-                    {
-                        (kdl_ps, syntax)
-                    } else {
-                        return self.plain_text_with_line_numbers(code);
-                    }
-                } else {
-                    return self.plain_text_with_line_numbers(code);
-                }
+        match self.collect_segments(code, lang) {
+            Some(segments) => {
+                render_segments_to_terminal(&segments, &self.theme, LineNumberMode::Numbers)
             }
-            _ => {
-                let syntax = self
-                    .default_ps
-                    .find_syntax_by_extension(lang.extension())
-                    .unwrap_or_else(|| self.default_ps.find_syntax_plain_text());
-                (&self.default_ps, syntax)
-            }
-        };
-
-        let mut h = HighlightLines::new(syntax, &self.theme);
-        for (i, line) in code.lines().enumerate() {
-            let line_with_newline = format!("{line}\n");
-            let ranges: Vec<(Style, &str)> =
-                h.highlight_line(&line_with_newline, ps).unwrap_or_default();
-            let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
-
-            output.push_str(&format!(
-                "{} {} {}",
-                format!("{:3}", i + 1).dimmed(),
-                "│".dimmed(),
-                escaped
-            ));
+            None => self.plain_text_with_line_numbers(code),
         }
-        output.push_str("\x1b[0m"); // Reset terminal colors
-
-        output
     }
 
-    /// Build a SyntectHighlighter for miette error rendering.
-    pub fn build_miette_highlighter(
-        &self,
-        lang: Language,
-    ) -> miette::highlighters::SyntectHighlighter {
-        let (syntax_set, _) = match lang {
-            Language::Kdl => {
-                if let Some(ref kdl_ps) = self.kdl_ps {
-                    (kdl_ps.clone(), ())
-                } else {
-                    (self.default_ps.clone(), ())
-                }
-            }
-            _ => (self.default_ps.clone(), ()),
-        };
-
-        miette::highlighters::SyntectHighlighter::new(syntax_set, self.theme.clone(), false)
+    /// Build a miette highlighter using arborium.
+    pub fn build_miette_highlighter(&self, _lang: Language) -> MietteHighlighter {
+        MietteHighlighter::new()
     }
 
     /// Highlight code and return HTML with inline styles.
     pub fn highlight_to_html(&self, code: &str, lang: Language) -> String {
-        let (ps, syntax) = match lang {
-            Language::Kdl => {
-                if let Some(ref kdl_ps) = self.kdl_ps {
-                    if let Some(syntax) = kdl_ps
-                        .find_syntax_by_name("KDL")
-                        .or_else(|| kdl_ps.find_syntax_by_name("KDL1"))
-                    {
-                        (kdl_ps, syntax)
-                    } else {
-                        return html_escape(code);
-                    }
-                } else {
-                    return html_escape(code);
-                }
-            }
-            _ => {
-                let syntax = self
-                    .default_ps
-                    .find_syntax_by_extension(lang.extension())
-                    .unwrap_or_else(|| self.default_ps.find_syntax_plain_text());
-                (&self.default_ps, syntax)
-            }
-        };
+        match self.collect_segments(code, lang) {
+            Some(segments) => render_segments_to_html(&segments, &self.theme),
+            None => wrap_plain_text_html(code, &self.theme),
+        }
+    }
 
-        // Use highlighted_html_for_string which produces inline styles
-        highlighted_html_for_string(code, ps, syntax, &self.theme)
-            .unwrap_or_else(|_| html_escape(code))
+    fn collect_segments<'a>(&'a self, code: &'a str, lang: Language) -> Option<Vec<Segment<'a>>> {
+        let mut engine = self.engine.borrow_mut();
+        let spans = engine.collect_spans(lang.arborium_name(), code)?;
+        Some(segments_from_spans(code, spans))
     }
 
     fn plain_text_with_indent(&self, code: &str) -> String {
         let mut output = String::new();
         for line in code.lines() {
-            output.push_str("    ");
+            output.push_str(INDENT);
             output.push_str(line);
             output.push('\n');
         }
@@ -393,37 +266,67 @@ fn parse_ansi_style(seq: &str) -> Option<String> {
                         styles.push(format!("color:rgb({r},{g},{b})"));
                         i += 4;
                     }
-                } else if i + 1 < parts.len() && parts[i + 1] == "5" {
-                    // 256-color palette
-                    if i + 2 < parts.len() {
-                        if let Ok(n) = parts[i + 2].parse::<u8>() {
-                            let color = ansi_256_to_rgb(n);
-                            styles.push(format!("color:{color}"));
-                        }
-                        i += 2;
-                    }
+                } else if i + 1 < parts.len()
+                    && parts[i + 1] == "5"
+                    && i + 2 < parts.len()
+                    && let Ok(n) = parts[i + 2].parse::<u8>()
+                {
+                    let color = ansi_256_to_rgb(n);
+                    styles.push(format!("color:{color}"));
+                    i += 2;
                 }
             }
-            "90" => styles.push("color:#5c6370".to_string()), // Bright black (gray)
+            "39" => styles.push("color:inherit".to_string()),
+            "40" => styles.push("background-color:#000".to_string()),
+            "41" => styles.push("background-color:#e06c75".to_string()),
+            "42" => styles.push("background-color:#98c379".to_string()),
+            "43" => styles.push("background-color:#e5c07b".to_string()),
+            "44" => styles.push("background-color:#61afef".to_string()),
+            "45" => styles.push("background-color:#c678dd".to_string()),
+            "46" => styles.push("background-color:#56b6c2".to_string()),
+            "47" => styles.push("background-color:#abb2bf".to_string()),
+            "48" => {
+                if i + 1 < parts.len() && parts[i + 1] == "2" {
+                    if i + 4 < parts.len() {
+                        let r = parts[i + 2];
+                        let g = parts[i + 3];
+                        let b = parts[i + 4];
+                        styles.push(format!("background-color:rgb({r},{g},{b})"));
+                        i += 4;
+                    }
+                } else if i + 1 < parts.len()
+                    && parts[i + 1] == "5"
+                    && i + 2 < parts.len()
+                    && let Ok(n) = parts[i + 2].parse::<u8>()
+                {
+                    let color = ansi_256_to_rgb(n);
+                    styles.push(format!("background-color:{color}"));
+                    i += 2;
+                }
+            }
+            "49" => styles.push("background-color:transparent".to_string()),
+            "90" => styles.push("color:#5c6370".to_string()), // Bright black (dim)
             "91" => styles.push("color:#e06c75".to_string()), // Bright red
-            "92" => styles.push("color:#98c379".to_string()), // Bright green
+            "92" => styles.push("color:#98c379".to_string()),
             "93" => styles.push("color:#e5c07b".to_string()), // Bright yellow
-            "94" => styles.push("color:#61afef".to_string()), // Bright blue
+            "94" => styles.push("color:#61afef".to_string()),
             "95" => styles.push("color:#c678dd".to_string()), // Bright magenta
-            "96" => styles.push("color:#56b6c2".to_string()), // Bright cyan
-            "97" => styles.push("color:#fff".to_string()),    // Bright white
+            "96" => styles.push("color:#56b6c2".to_string()),
+            "97" => styles.push("color:#fff".to_string()), // Bright white
             _ => {}
         }
         i += 1;
     }
 
-    Some(styles.join(";"))
+    if styles.is_empty() {
+        None
+    } else {
+        Some(styles.join(";"))
+    }
 }
 
-/// Convert ANSI 256-color palette index to hex color.
 fn ansi_256_to_rgb(n: u8) -> &'static str {
     match n {
-        // Standard colors (0-7)
         0 => "#000000",
         1 => "#800000",
         2 => "#008000",
@@ -432,26 +335,15 @@ fn ansi_256_to_rgb(n: u8) -> &'static str {
         5 => "#800080",
         6 => "#008080",
         7 => "#c0c0c0",
-        // High-intensity colors (8-15)
         8 => "#808080",
-        9 => "#e06c75",  // Bright red (used by rustc for errors)
-        10 => "#98c379", // Bright green
-        11 => "#e5c07b", // Bright yellow
-        12 => "#61afef", // Bright blue (used by rustc for line numbers)
-        13 => "#c678dd", // Bright magenta
-        14 => "#56b6c2", // Bright cyan
+        9 => "#ff0000",
+        10 => "#00ff00",
+        11 => "#ffff00",
+        12 => "#0000ff",
+        13 => "#ff00ff",
+        14 => "#00ffff",
         15 => "#ffffff",
-        // 216-color cube (16-231)
-        16..=231 => {
-            // This is a cube where each RGB component goes 0, 95, 135, 175, 215, 255
-            // For simplicity, return a reasonable approximation
-            "#888888"
-        }
-        // Grayscale (232-255)
-        232..=255 => {
-            // Grayscale from dark to light
-            "#888888"
-        }
+        _ => "#888888",
     }
 }
 
@@ -464,4 +356,416 @@ mod tests {
         assert_eq!(Language::Xml.name(), "XML");
         assert_eq!(Language::Xml.extension(), "xml");
     }
+}
+
+// ============================================================================
+// Internal helpers
+// ============================================================================
+
+struct ArboriumEngine {
+    provider: StaticProvider,
+    config: HighlightConfig,
+}
+
+impl ArboriumEngine {
+    fn new() -> Self {
+        Self {
+            provider: StaticProvider::new(),
+            config: HighlightConfig::default(),
+        }
+    }
+
+    fn collect_spans(&mut self, language: &str, source: &str) -> Option<Vec<Span>> {
+        let grammar = self.get_grammar(language)?;
+        let result = grammar.parse(source);
+        let mut spans = result.spans;
+        if !result.injections.is_empty() {
+            self.process_injections(
+                source,
+                result.injections,
+                0,
+                self.config.max_injection_depth,
+                &mut spans,
+            );
+        }
+        Some(spans)
+    }
+
+    fn process_injections(
+        &mut self,
+        source: &str,
+        injections: Vec<Injection>,
+        base_offset: u32,
+        remaining_depth: u32,
+        spans: &mut Vec<Span>,
+    ) {
+        if remaining_depth == 0 {
+            return;
+        }
+
+        for injection in injections {
+            let start = injection.start as usize;
+            let end = injection.end as usize;
+
+            if start >= end || end > source.len() {
+                continue;
+            }
+
+            let injected_text = &source[start..end];
+            let Some(grammar) = self.get_grammar_optional(&injection.language) else {
+                continue;
+            };
+
+            let result = grammar.parse(injected_text);
+            spans.extend(result.spans.into_iter().map(|mut span| {
+                span.start += base_offset + injection.start;
+                span.end += base_offset + injection.start;
+                span
+            }));
+
+            if !result.injections.is_empty() {
+                self.process_injections(
+                    injected_text,
+                    result.injections,
+                    base_offset + injection.start,
+                    remaining_depth - 1,
+                    spans,
+                );
+            }
+        }
+    }
+
+    fn get_grammar(
+        &mut self,
+        language: &str,
+    ) -> Option<&mut <StaticProvider as arborium::GrammarProvider>::Grammar> {
+        self.poll_provider(language)
+    }
+
+    fn get_grammar_optional(
+        &mut self,
+        language: &str,
+    ) -> Option<&mut <StaticProvider as arborium::GrammarProvider>::Grammar> {
+        self.poll_provider(language)
+    }
+
+    fn poll_provider(
+        &mut self,
+        language: &str,
+    ) -> Option<&mut <StaticProvider as arborium::GrammarProvider>::Grammar> {
+        let future = self.provider.get(language);
+        let mut future = std::pin::pin!(future);
+        let waker = noop_waker();
+        let mut cx = Context::from_waker(&waker);
+        match future.as_mut().poll(&mut cx) {
+            Poll::Ready(result) => result,
+            Poll::Pending => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LineNumberMode {
+    None,
+    Numbers,
+}
+
+struct Segment<'a> {
+    text: &'a str,
+    tag: Option<&'static str>,
+}
+
+fn render_segments_to_terminal(
+    segments: &[Segment<'_>],
+    theme: &Theme,
+    mode: LineNumberMode,
+) -> String {
+    let mut output = String::new();
+    let mut active_code: Option<String> = None;
+    let mut line = 1usize;
+    let mut at_line_start = true;
+
+    for segment in segments {
+        let target_code = segment
+            .tag
+            .and_then(|tag| ansi_for_tag(theme, tag))
+            .filter(|s| !s.is_empty());
+
+        if target_code != active_code {
+            output.push_str(Theme::ANSI_RESET);
+            if let Some(code) = &target_code {
+                output.push_str(code);
+            }
+            active_code = target_code;
+        }
+
+        for ch in segment.text.chars() {
+            if at_line_start {
+                output.push_str(Theme::ANSI_RESET);
+                output.push_str(&line_prefix(mode, line));
+                if let Some(code) = &active_code {
+                    output.push_str(code);
+                }
+                at_line_start = false;
+            }
+            output.push(ch);
+            if ch == '\n' {
+                at_line_start = true;
+                line += 1;
+            }
+        }
+    }
+
+    output.push_str(Theme::ANSI_RESET);
+    if !output.ends_with('\n') {
+        output.push('\n');
+    }
+    output
+}
+
+fn render_segments_to_html(segments: &[Segment<'_>], theme: &Theme) -> String {
+    let mut body = String::new();
+    for segment in segments {
+        let escaped = html_escape(segment.text);
+        if let Some(tag) = segment.tag {
+            if let Some(style) = css_for_tag(theme, tag) {
+                body.push_str("<span style=\"");
+                body.push_str(&style);
+                body.push_str("\">");
+                body.push_str(&escaped);
+                body.push_str("</span>");
+            } else {
+                body.push_str(&escaped);
+            }
+        } else {
+            body.push_str(&escaped);
+        }
+    }
+    wrap_with_pre(body, theme)
+}
+
+fn wrap_plain_text_html(code: &str, theme: &Theme) -> String {
+    wrap_with_pre(html_escape(code), theme)
+}
+
+fn wrap_with_pre(content: String, theme: &Theme) -> String {
+    let mut styles = Vec::new();
+    if let Some(bg) = theme.background {
+        styles.push(format!("background-color:{};", bg.to_hex()));
+    }
+    if let Some(fg) = theme.foreground {
+        styles.push(format!("color:{};", fg.to_hex()));
+    }
+    styles.push("padding:12px;".to_string());
+    styles.push("border-radius:8px;".to_string());
+    styles.push(
+        "font-family:var(--facet-mono, SFMono-Regular, Consolas, 'Liberation Mono', monospace);"
+            .to_string(),
+    );
+    styles.push("font-size:0.9rem;".to_string());
+    styles.push("overflow:auto;".to_string());
+    format!(
+        "<pre style=\"{}\"><code>{}</code></pre>",
+        styles.join(" "),
+        content
+    )
+}
+
+fn line_prefix(mode: LineNumberMode, line: usize) -> String {
+    match mode {
+        LineNumberMode::None => INDENT.to_string(),
+        LineNumberMode::Numbers => format!("{} {} ", format!("{:3}", line).dimmed(), "│".dimmed()),
+    }
+}
+
+fn segments_from_spans<'a>(source: &'a str, spans: Vec<Span>) -> Vec<Segment<'a>> {
+    if source.is_empty() {
+        return vec![Segment {
+            text: "",
+            tag: None,
+        }];
+    }
+
+    let normalized = normalize_and_coalesce(dedup_spans(spans));
+    if normalized.is_empty() {
+        return vec![Segment {
+            text: source,
+            tag: None,
+        }];
+    }
+
+    let mut events: Vec<(u32, bool, usize)> = Vec::new();
+    for (idx, span) in normalized.iter().enumerate() {
+        events.push((span.start, true, idx));
+        events.push((span.end, false, idx));
+    }
+    events.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+    let mut segments = Vec::new();
+    let mut last_pos = 0usize;
+    let mut stack: Vec<usize> = Vec::new();
+
+    for (pos, is_start, idx) in events {
+        let pos = pos as usize;
+        if pos > last_pos && pos <= source.len() {
+            let text = &source[last_pos..pos];
+            let tag = stack.last().map(|&active| normalized[active].tag);
+            segments.push(Segment { text, tag });
+            last_pos = pos;
+        }
+
+        if is_start {
+            stack.push(idx);
+        } else if let Some(position) = stack.iter().rposition(|&active| active == idx) {
+            stack.remove(position);
+        }
+    }
+
+    if last_pos < source.len() {
+        let tag = stack.last().map(|&active| normalized[active].tag);
+        segments.push(Segment {
+            text: &source[last_pos..],
+            tag,
+        });
+    }
+
+    segments
+}
+
+fn dedup_spans(mut spans: Vec<Span>) -> Vec<Span> {
+    spans.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| b.end.cmp(&a.end)));
+    let mut deduped = HashMap::new();
+    for span in spans {
+        let key = (span.start, span.end);
+        let new_has_style = tag_for_capture(&span.capture).is_some();
+        deduped
+            .entry(key)
+            .and_modify(|existing: &mut Span| {
+                let existing_has_style = tag_for_capture(&existing.capture).is_some();
+                if new_has_style || !existing_has_style {
+                    *existing = span.clone();
+                }
+            })
+            .or_insert(span);
+    }
+    deduped.into_values().collect()
+}
+
+struct NormalizedSpan {
+    start: u32,
+    end: u32,
+    tag: &'static str,
+}
+
+fn normalize_and_coalesce(spans: Vec<Span>) -> Vec<NormalizedSpan> {
+    let mut normalized: Vec<NormalizedSpan> = spans
+        .into_iter()
+        .filter_map(|span| {
+            let tag = tag_for_capture(&span.capture)?;
+            Some(NormalizedSpan {
+                start: span.start,
+                end: span.end,
+                tag,
+            })
+        })
+        .collect();
+
+    if normalized.is_empty() {
+        return normalized;
+    }
+
+    normalized.sort_by_key(|s| (s.start, s.end));
+    let mut coalesced: Vec<NormalizedSpan> = Vec::with_capacity(normalized.len());
+
+    for span in normalized {
+        if let Some(last) = coalesced.last_mut()
+            && span.tag == last.tag
+            && span.start <= last.end
+        {
+            last.end = last.end.max(span.end);
+            continue;
+        }
+        coalesced.push(span);
+    }
+
+    coalesced
+}
+
+static TAG_TO_INDEX: LazyLock<HashMap<&'static str, usize>> = LazyLock::new(|| {
+    let mut map = HashMap::new();
+    for (idx, highlight) in HIGHLIGHTS.iter().enumerate() {
+        if !highlight.tag.is_empty() {
+            map.insert(highlight.tag, idx);
+        }
+    }
+    map
+});
+
+fn css_for_tag(theme: &Theme, tag: &str) -> Option<String> {
+    let index = find_style_index(theme, tag)?;
+    let style = theme.style(index)?;
+    if style.is_empty() {
+        return None;
+    }
+
+    let mut parts = Vec::new();
+    if let Some(fg) = style.fg {
+        parts.push(format!("color:{};", fg.to_hex()));
+    }
+    if let Some(bg) = style.bg {
+        parts.push(format!("background-color:{};", bg.to_hex()));
+    }
+    if style.modifiers.bold {
+        parts.push("font-weight:bold;".to_string());
+    }
+    if style.modifiers.italic {
+        parts.push("font-style:italic;".to_string());
+    }
+    let mut decorations = Vec::new();
+    if style.modifiers.underline {
+        decorations.push("underline");
+    }
+    if style.modifiers.strikethrough {
+        decorations.push("line-through");
+    }
+    if !decorations.is_empty() {
+        parts.push(format!("text-decoration:{};", decorations.join(" ")));
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
+}
+
+fn ansi_for_tag(theme: &Theme, tag: &str) -> Option<String> {
+    let index = find_style_index(theme, tag)?;
+    let ansi = theme.ansi_style(index);
+    if ansi.is_empty() { None } else { Some(ansi) }
+}
+
+fn find_style_index(theme: &Theme, tag: &str) -> Option<usize> {
+    let mut current = tag.strip_prefix("a-").unwrap_or(tag);
+    loop {
+        let &idx = TAG_TO_INDEX.get(current)?;
+        if theme
+            .style(idx)
+            .map(|style| !style.is_empty())
+            .unwrap_or(false)
+        {
+            return Some(idx);
+        }
+        let parent = HIGHLIGHTS[idx].parent_tag;
+        if parent.is_empty() {
+            return None;
+        }
+        current = parent;
+    }
+}
+
+fn noop_waker() -> Waker {
+    const VTABLE: RawWakerVTable = RawWakerVTable::new(|_| RAW_WAKER, |_| {}, |_| {}, |_| {});
+    const RAW_WAKER: RawWaker = RawWaker::new(std::ptr::null(), &VTABLE);
+    unsafe { Waker::from_raw(RAW_WAKER) }
 }
