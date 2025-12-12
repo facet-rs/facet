@@ -82,6 +82,16 @@ where
         return serializer.scalar(scalar).map_err(SerializeError::Backend);
     }
 
+    // Handle Option<T> - Some(x) serializes x, None serializes null
+    if let Ok(opt) = value.into_option() {
+        return match opt.value() {
+            Some(inner) => shared_serialize(serializer, inner),
+            None => serializer
+                .scalar(ScalarValue::Null)
+                .map_err(SerializeError::Backend),
+        };
+    }
+
     if let Ok(list) = value.into_list_like() {
         serializer.begin_seq().map_err(SerializeError::Backend)?;
         for item in list.iter() {

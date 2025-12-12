@@ -102,6 +102,126 @@ impl FormatSuite for XmlSlice {
         "#
         ))
     }
+
+    // ── Attribute cases ──
+
+    fn attr_rename_field() -> CaseSpec {
+        CaseSpec::from_str(indoc!(
+            r#"
+            <record>
+                <userName>alice</userName>
+                <age>30</age>
+            </record>
+        "#
+        ))
+    }
+
+    fn attr_rename_all_camel() -> CaseSpec {
+        CaseSpec::from_str(indoc!(
+            r#"
+            <record>
+                <firstName>Jane</firstName>
+                <lastName>Doe</lastName>
+                <isActive>true</isActive>
+            </record>
+        "#
+        ))
+    }
+
+    fn attr_default_field() -> CaseSpec {
+        // optional_count is missing, should default to 0
+        CaseSpec::from_str(indoc!(
+            r#"
+            <record>
+                <required>present</required>
+            </record>
+        "#
+        ))
+    }
+
+    fn option_none() -> CaseSpec {
+        // nickname is missing, should be None
+        CaseSpec::from_str(indoc!(
+            r#"
+            <record>
+                <name>test</name>
+            </record>
+        "#
+        ))
+    }
+
+    fn attr_skip_serializing() -> CaseSpec {
+        // hidden field not in input (will use default), not serialized on roundtrip
+        CaseSpec::from_str(indoc!(
+            r#"
+            <record>
+                <visible>shown</visible>
+            </record>
+        "#
+        ))
+    }
+
+    fn attr_skip() -> CaseSpec {
+        // internal field is completely ignored - not read from input, not written on output
+        CaseSpec::from_str(indoc!(
+            r#"
+            <record>
+                <visible>data</visible>
+            </record>
+        "#
+        ))
+    }
+
+    // ── Enum tagging cases ──
+
+    fn enum_internally_tagged() -> CaseSpec {
+        CaseSpec::from_str(indoc!(
+            r#"
+            <shape>
+                <type>Circle</type>
+                <radius>5.0</radius>
+            </shape>
+        "#
+        ))
+    }
+
+    fn enum_adjacently_tagged() -> CaseSpec {
+        CaseSpec::from_str(indoc!(
+            r#"
+            <value>
+                <t>Message</t>
+                <c>hello</c>
+            </value>
+        "#
+        ))
+    }
+
+    // ── Advanced cases ──
+
+    fn struct_flatten() -> CaseSpec {
+        // x and y are flattened into the outer element
+        CaseSpec::from_str(indoc!(
+            r#"
+            <record>
+                <name>point</name>
+                <x>10</x>
+                <y>20</y>
+            </record>
+        "#
+        ))
+    }
+
+    fn transparent_newtype() -> CaseSpec {
+        // UserId(42) serializes as just 42, not a nested element
+        CaseSpec::from_str(indoc!(
+            r#"
+            <record>
+                <id>42</id>
+                <name>alice</name>
+            </record>
+        "#
+        ))
+    }
 }
 
 fn main() {
