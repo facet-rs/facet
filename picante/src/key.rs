@@ -1,0 +1,117 @@
+use crate::error::{PicanteError, PicanteResult};
+use facet::Facet;
+use std::fmt;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
+
+/// Stable identifier for a query/input kind.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct QueryKindId(pub u32);
+
+impl QueryKindId {
+    /// Convert to the underlying `u32`.
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+}
+
+/// Postcard-encoded bytes for a key, plus a deterministic hash for tracing/debugging.
+#[derive(Clone)]
+pub struct Key {
+    bytes: Arc<[u8]>,
+    hash: u64,
+}
+
+impl Key {
+    /// Encode a key using `facet-postcard`.
+    pub fn encode_facet<T: Facet<'static>>(value: &T) -> PicanteResult<Self> {
+        let bytes = facet_postcard::to_vec(value).map_err(|e| {
+            Arc::new(PicanteError::Encode {
+                what: "key",
+                message: format!("{e:?}"),
+            })
+        })?;
+        Ok(Self::from_bytes(bytes))
+    }
+
+    /// Decode a key using `facet-postcard`.
+    pub fn decode_facet<T: Facet<'static>>(&self) -> PicanteResult<T> {
+        facet_postcard::from_slice(self.bytes()).map_err(|e| {
+            Arc::new(PicanteError::Decode {
+                what: "key",
+                message: format!("{e:?}"),
+            })
+        })
+    }
+
+    /// Construct from already-encoded bytes.
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
+        let hash = stable_hash(&bytes);
+        Self {
+            bytes: bytes.into(),
+            hash,
+        }
+    }
+
+    /// Access the encoded bytes.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Deterministic hash of the encoded bytes.
+    pub fn hash(&self) -> u64 {
+        self.hash
+    }
+
+    /// Length in bytes of the encoded key.
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+}
+
+impl PartialEq for Key {
+    fn eq(&self, other: &Self) -> bool {
+        self.bytes == other.bytes
+    }
+}
+
+impl Eq for Key {}
+
+impl Hash for Key {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.hash);
+    }
+}
+
+impl fmt::Debug for Key {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Key")
+            .field("hash", &format_args!("{:016x}", self.hash))
+            .field("len", &self.bytes.len())
+            .finish()
+    }
+}
+
+/// Erased key for diagnostics/cycle detection.
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub struct DynKey {
+    /// Kind identifier.
+    pub kind: QueryKindId,
+    /// Encoded key.
+    pub key: Key,
+}
+
+/// A recorded dependency edge.
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub struct Dep {
+    /// The depended-on query kind.
+    pub kind: QueryKindId,
+    /// Encoded key for that kind.
+    pub key: Key,
+}
+
+fn stable_hash(bytes: &[u8]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
+}

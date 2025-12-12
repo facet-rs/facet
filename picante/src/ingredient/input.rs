@@ -1,0 +1,169 @@
+use crate::error::{PicanteError, PicanteResult};
+use crate::frame;
+use crate::key::{Dep, Key, QueryKindId};
+use crate::persist::{PersistableIngredient, SectionType};
+use crate::revision::Revision;
+use crate::runtime::HasRuntime;
+use dashmap::DashMap;
+use facet::Facet;
+use futures::future::BoxFuture;
+use std::hash::Hash;
+use std::sync::Arc;
+use tracing::{debug, trace};
+
+struct InputEntry<V> {
+    value: V,
+    changed_at: Revision,
+}
+
+/// A key-value input ingredient.
+///
+/// Reads record dependencies into the current query frame (if one exists).
+pub struct InputIngredient<K, V> {
+    kind: QueryKindId,
+    kind_name: &'static str,
+    entries: DashMap<K, InputEntry<V>>,
+}
+
+impl<K, V> InputIngredient<K, V>
+where
+    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    V: Clone + Facet<'static> + Send + Sync + 'static,
+{
+    /// Create an empty input ingredient.
+    pub fn new(kind: QueryKindId, kind_name: &'static str) -> Self {
+        Self {
+            kind,
+            kind_name,
+            entries: DashMap::new(),
+        }
+    }
+
+    /// The stable kind id.
+    pub fn kind(&self) -> QueryKindId {
+        self.kind
+    }
+
+    /// Debug name for this ingredient.
+    pub fn kind_name(&self) -> &'static str {
+        self.kind_name
+    }
+
+    /// Set an input value, bumping the runtime revision.
+    #[tracing::instrument(level = "debug", skip_all, fields(kind = self.kind.0))]
+    pub fn set<DB: HasRuntime>(&self, db: &DB, key: K, value: V) -> Revision {
+        let rev = db.runtime().bump_revision();
+        self.entries.insert(
+            key,
+            InputEntry {
+                value,
+                changed_at: rev,
+            },
+        );
+        rev
+    }
+
+    /// Remove an input value, bumping the runtime revision.
+    #[tracing::instrument(level = "debug", skip_all, fields(kind = self.kind.0))]
+    pub fn remove<DB: HasRuntime>(&self, db: &DB, key: &K) -> Revision {
+        let rev = db.runtime().bump_revision();
+        self.entries.remove(key);
+        rev
+    }
+
+    /// Read an input value.
+    ///
+    /// If there's an active query frame, records a dependency edge.
+    #[tracing::instrument(level = "trace", skip_all, fields(kind = self.kind.0))]
+    pub fn get<DB: HasRuntime>(&self, _db: &DB, key: &K) -> PicanteResult<Option<V>> {
+        if frame::has_active_frame() {
+            let key = Key::encode_facet(key)?;
+            trace!(kind = self.kind.0, key_hash = %format!("{:016x}", key.hash()), "input dep");
+            frame::record_dep(Dep {
+                kind: self.kind,
+                key,
+            });
+        }
+
+        Ok(self.entries.get(key).map(|e| e.value.clone()))
+    }
+
+    /// The last revision at which this input was changed.
+    pub fn changed_at(&self, key: &K) -> Option<Revision> {
+        self.entries.get(key).map(|e| e.changed_at)
+    }
+}
+
+#[derive(Debug, Clone, Facet)]
+struct InputRecord<K, V> {
+    key: K,
+    value: V,
+    changed_at: u64,
+}
+
+impl<K, V> PersistableIngredient for InputIngredient<K, V>
+where
+    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    V: Clone + Facet<'static> + Send + Sync + 'static,
+{
+    fn kind(&self) -> QueryKindId {
+        self.kind
+    }
+
+    fn kind_name(&self) -> &'static str {
+        self.kind_name
+    }
+
+    fn section_type(&self) -> SectionType {
+        SectionType::Input
+    }
+
+    fn clear(&self) {
+        self.entries.clear();
+    }
+
+    fn save_records(&self) -> BoxFuture<'_, PicanteResult<Vec<Vec<u8>>>> {
+        Box::pin(async move {
+            let mut records = Vec::with_capacity(self.entries.len());
+            for entry in self.entries.iter() {
+                let rec = InputRecord::<K, V> {
+                    key: entry.key().clone(),
+                    value: entry.value().value.clone(),
+                    changed_at: entry.value().changed_at.0,
+                };
+                let bytes = facet_postcard::to_vec(&rec).map_err(|e| {
+                    Arc::new(PicanteError::Encode {
+                        what: "input record",
+                        message: format!("{e:?}"),
+                    })
+                })?;
+                records.push(bytes);
+            }
+            debug!(
+                kind = self.kind.0,
+                records = records.len(),
+                "save_records (input)"
+            );
+            Ok(records)
+        })
+    }
+
+    fn load_records(&self, records: Vec<Vec<u8>>) -> PicanteResult<()> {
+        for bytes in records {
+            let rec: InputRecord<K, V> = facet_postcard::from_slice(&bytes).map_err(|e| {
+                Arc::new(PicanteError::Decode {
+                    what: "input record",
+                    message: format!("{e:?}"),
+                })
+            })?;
+            self.entries.insert(
+                rec.key,
+                InputEntry {
+                    value: rec.value,
+                    changed_at: Revision(rec.changed_at),
+                },
+            );
+        }
+        Ok(())
+    }
+}

@@ -1,0 +1,48 @@
+use crate::key::DynKey;
+use std::fmt;
+use std::sync::Arc;
+
+/// Result type used by Picante APIs.
+pub type PicanteResult<T> = std::result::Result<T, Arc<PicanteError>>;
+
+/// A Picante runtime / persistence error.
+#[derive(Debug)]
+pub enum PicanteError {
+    /// A query tried to (directly or indirectly) depend on itself within the same async task.
+    Cycle {
+        /// The query that was requested.
+        requested: DynKey,
+        /// The task-local query stack at the point the cycle was detected.
+        stack: Vec<DynKey>,
+    },
+
+    /// Failed to encode a value using `facet-postcard`.
+    Encode { what: &'static str, message: String },
+
+    /// Failed to decode a value using `facet-postcard`.
+    Decode { what: &'static str, message: String },
+
+    /// Cache I/O or format errors.
+    Cache { message: String },
+
+    /// A query panicked during execution (caught to avoid poisoning the runtime).
+    Panic { message: String },
+}
+
+impl fmt::Display for PicanteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PicanteError::Cycle { requested, stack } => write!(
+                f,
+                "cycle detected requesting {requested:?}; stack depth {}",
+                stack.len()
+            ),
+            PicanteError::Encode { what, message } => write!(f, "encode {what} failed: {message}"),
+            PicanteError::Decode { what, message } => write!(f, "decode {what} failed: {message}"),
+            PicanteError::Cache { message } => write!(f, "cache error: {message}"),
+            PicanteError::Panic { message } => write!(f, "query panicked: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for PicanteError {}
