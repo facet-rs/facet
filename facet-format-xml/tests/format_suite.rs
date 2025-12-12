@@ -2,8 +2,8 @@
 
 use facet::Facet;
 use facet_format::{DeserializeError, FormatDeserializer};
-use facet_format_xml::{XmlError, XmlParser, to_vec};
 use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases};
+use facet_format_xml::{XmlError, XmlParser, to_vec};
 use indoc::indoc;
 use libtest_mimic::{Arguments, Failed, Trial};
 
