@@ -73,7 +73,7 @@ match solver.see_key("id") {
 match solver.see_key("content") {
     KeyResult::Solved(config) => {
         // Only Text has "content" - we now know the variant!
-        assert!(config.has_key_path(&["content"]));
+        assert!(config.resolution().has_key_path(&["content"]));
     }
     _ => {}
 }
