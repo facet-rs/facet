@@ -50,6 +50,7 @@
 //! # Ok(()) }
 //! ```
 
+pub mod db;
 pub mod error;
 pub mod frame;
 pub mod ingredient;
@@ -58,6 +59,7 @@ pub mod persist;
 pub mod revision;
 pub mod runtime;
 
+pub use db::{DynIngredient, IngredientLookup, IngredientRegistry, Touch};
 pub use error::{PicanteError, PicanteResult};
 pub use ingredient::{DerivedIngredient, InputIngredient};
 pub use key::{Dep, DynKey, Key, QueryKindId};

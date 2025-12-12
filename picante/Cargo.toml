@@ -17,6 +17,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 dashmap.workspace = true
+facet-assert.workspace = true
 facet.workspace = true
 facet-postcard.workspace = true
 futures.workspace = true
@@ -26,7 +27,6 @@ tracing.workspace = true
 
 [dev-dependencies]
 divan.workspace = true
-facet-assert.workspace = true
 tracing-subscriber.workspace = true
 
 [[bench]]

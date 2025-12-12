@@ -1,11 +1,12 @@
+use crate::db::{DynIngredient, IngredientLookup, Touch};
 use crate::error::{PicanteError, PicanteResult};
 use crate::frame::{self, ActiveFrameHandle};
 use crate::key::{Dep, DynKey, Key, QueryKindId};
 use crate::persist::{PersistableIngredient, SectionType};
 use crate::revision::Revision;
-use crate::runtime::HasRuntime;
 use dashmap::DashMap;
 use facet::Facet;
+use facet_assert::{Sameness, check_same};
 use futures::FutureExt;
 use futures::future::BoxFuture;
 use std::hash::Hash;
@@ -15,6 +16,11 @@ use tracing::{debug, trace};
 
 type ComputeFuture<'db, V> = BoxFuture<'db, PicanteResult<V>>;
 type ComputeFn<DB, K, V> = dyn for<'db> Fn(&'db DB, K) -> ComputeFuture<'db, V> + Send + Sync;
+
+struct AccessResult<V> {
+    value: Option<V>,
+    changed_at: Revision,
+}
 
 /// A memoized async derived query ingredient.
 pub struct DerivedIngredient<DB, K, V> {
@@ -26,7 +32,7 @@ pub struct DerivedIngredient<DB, K, V> {
 
 impl<DB, K, V> DerivedIngredient<DB, K, V>
 where
-    DB: HasRuntime + Send + Sync + 'static,
+    DB: IngredientLookup + Send + Sync + 'static,
     K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
@@ -56,10 +62,28 @@ where
 
     /// Get the value for `key` at the database's current revision.
     pub async fn get(&self, db: &DB, key: K) -> PicanteResult<V> {
-        frame::scope_if_needed(|| async move { self.get_scoped(db, key).await }).await
+        let result =
+            frame::scope_if_needed(|| async move { self.access_scoped(db, key, true).await })
+                .await?;
+        Ok(result
+            .value
+            .expect("access_scoped(want_value = true) returned no value"))
     }
 
-    async fn get_scoped(&self, db: &DB, key: K) -> PicanteResult<V> {
+    /// Ensure the value is valid at the current revision and return its `changed_at`.
+    pub async fn touch(&self, db: &DB, key: K) -> PicanteResult<Revision> {
+        let result =
+            frame::scope_if_needed(|| async move { self.access_scoped(db, key, false).await })
+                .await?;
+        Ok(result.changed_at)
+    }
+
+    async fn access_scoped(
+        &self,
+        db: &DB,
+        key: K,
+        want_value: bool,
+    ) -> PicanteResult<AccessResult<V>> {
         let requested = DynKey {
             kind: self.kind,
             key: Key::encode_facet(&key)?,
@@ -74,7 +98,7 @@ where
         }
 
         // 0) record dependency into parent frame (if any)
-        if frame::has_active_frame() {
+        if want_value && frame::has_active_frame() {
             trace!(
                 kind = self.kind.0,
                 key_hash = %format!("{:016x}", key_hash),
@@ -97,18 +121,31 @@ where
 
             // 1) fast path: read current state
             enum Observed<V> {
-                Ready(V),
+                Ready {
+                    value: Option<V>,
+                    changed_at: Revision,
+                },
                 Error(Arc<PicanteError>),
                 Running,
-                Stale,
+                StaleReady {
+                    deps: Arc<[Dep]>,
+                    changed_at: Revision,
+                },
+                StaleOther,
             }
 
             let observed = {
                 let state = cell.state.lock().await;
                 match &*state {
                     State::Ready {
-                        value, verified_at, ..
-                    } if *verified_at == rev => Observed::Ready(value.clone()),
+                        value,
+                        verified_at,
+                        changed_at,
+                        ..
+                    } if *verified_at == rev => Observed::Ready {
+                        value: want_value.then(|| value.clone()),
+                        changed_at: *changed_at,
+                    },
                     State::Poisoned { error, verified_at } if *verified_at == rev => {
                         Observed::Error(error.clone())
                     }
@@ -121,15 +158,21 @@ where
                         );
                         Observed::Running
                     }
-                    _ => Observed::Stale,
+                    State::Ready {
+                        deps, changed_at, ..
+                    } => Observed::StaleReady {
+                        deps: deps.clone(),
+                        changed_at: *changed_at,
+                    },
+                    _ => Observed::StaleOther,
                 }
             };
 
             match observed {
-                Observed::Ready(v) => {
+                Observed::Ready { value, changed_at } => {
                     // Ensure we return a value consistent with *now*.
                     if db.runtime().current_revision() == rev {
-                        return Ok(v);
+                        return Ok(AccessResult { value, changed_at });
                     }
                     continue;
                 }
@@ -144,19 +187,61 @@ where
                     cell.notify.notified().await;
                     continue;
                 }
-                Observed::Stale => {}
+                Observed::StaleReady { deps, changed_at } => {
+                    if self
+                        .try_revalidate(db, &requested, rev, &deps, changed_at)
+                        .await?
+                    {
+                        let mut state = cell.state.lock().await;
+                        match &mut *state {
+                            State::Ready {
+                                value,
+                                verified_at,
+                                changed_at,
+                                ..
+                            } => {
+                                *verified_at = rev;
+                                let out_value = want_value.then(|| value.clone());
+                                let out_changed_at = *changed_at;
+                                drop(state);
+
+                                if db.runtime().current_revision() == rev {
+                                    return Ok(AccessResult {
+                                        value: out_value,
+                                        changed_at: out_changed_at,
+                                    });
+                                }
+                                continue;
+                            }
+                            State::Running { .. } => {
+                                // Someone else raced and started recomputing.
+                                continue;
+                            }
+                            _ => continue,
+                        }
+                    }
+                }
+                Observed::StaleOther => {}
             }
 
             // 2) attempt to start computation
-            let started = {
+            let (started, prev) = {
+                let mut prev: Option<(V, Revision)> = None;
                 let mut state = cell.state.lock().await;
                 match &*state {
-                    State::Ready { verified_at, .. } if *verified_at == rev => false, // raced
-                    State::Poisoned { verified_at, .. } if *verified_at == rev => false, // raced
-                    State::Running { .. } => false, // someone else started
+                    State::Ready { verified_at, .. } if *verified_at == rev => (false, None), // raced
+                    State::Poisoned { verified_at, .. } if *verified_at == rev => (false, None), // raced
+                    State::Running { .. } => (false, None), // someone else started
                     _ => {
-                        *state = State::Running { started_at: rev };
-                        true
+                        let old =
+                            std::mem::replace(&mut *state, State::Running { started_at: rev });
+                        if let State::Ready {
+                            value, changed_at, ..
+                        } = old
+                        {
+                            prev = Some((value, changed_at));
+                        }
+                        (true, prev)
                     }
                 }
             };
@@ -181,15 +266,33 @@ where
                 .catch_unwind()
                 .await;
 
-            let deps = frame.take_deps();
+            let deps: Arc<[Dep]> = frame.take_deps().into();
 
             // 4) finalize
             match result {
                 Ok(Ok(out)) => {
+                    let changed_at = match prev {
+                        Some((prev_value, prev_changed_at)) => {
+                            match check_same(&prev_value, &out) {
+                                Sameness::Same => prev_changed_at,
+                                _ => rev,
+                            }
+                        }
+                        None => rev,
+                    };
+
+                    db.runtime()
+                        .update_query_deps(requested.clone(), deps.clone());
+                    if changed_at == rev {
+                        db.runtime().notify_query_changed(rev, requested.clone());
+                    }
+
+                    let out_value = want_value.then(|| out.clone());
                     let mut state = cell.state.lock().await;
                     *state = State::Ready {
-                        value: out.clone(),
+                        value: out,
                         verified_at: rev,
+                        changed_at,
                         deps,
                     };
                     drop(state);
@@ -204,7 +307,10 @@ where
 
                     // 5) stale check
                     if db.runtime().current_revision() == rev {
-                        return Ok(out);
+                        return Ok(AccessResult {
+                            value: out_value,
+                            changed_at,
+                        });
                     }
                     continue;
                 }
@@ -257,6 +363,38 @@ where
             }
         }
     }
+
+    async fn try_revalidate(
+        &self,
+        db: &DB,
+        requested: &DynKey,
+        rev: Revision,
+        deps: &Arc<[Dep]>,
+        self_changed_at: Revision,
+    ) -> PicanteResult<bool> {
+        trace!(
+            kind = self.kind.0,
+            key_hash = %format!("{:016x}", requested.key.hash()),
+            deps = deps.len(),
+            "revalidate: start"
+        );
+
+        let frame = ActiveFrameHandle::new(requested.clone(), rev);
+        let _guard = frame::push_frame(frame);
+
+        for dep in deps.iter() {
+            let Some(ingredient) = db.ingredient(dep.kind) else {
+                return Ok(false);
+            };
+
+            let touch = ingredient.touch(db, dep.key.clone()).await?;
+            if touch.changed_at > self_changed_at {
+                return Ok(false);
+            }
+        }
+
+        Ok(true)
+    }
 }
 
 struct Cell<V> {
@@ -272,11 +410,12 @@ impl<V> Cell<V> {
         }
     }
 
-    fn new_ready(value: V, verified_at: Revision, deps: Vec<Dep>) -> Self {
+    fn new_ready(value: V, verified_at: Revision, changed_at: Revision, deps: Arc<[Dep]>) -> Self {
         Self {
             state: Mutex::new(State::Ready {
                 value,
                 verified_at,
+                changed_at,
                 deps,
             }),
             notify: Notify::new(),
@@ -292,7 +431,8 @@ enum State<V> {
     Ready {
         value: V,
         verified_at: Revision,
-        deps: Vec<Dep>,
+        changed_at: Revision,
+        deps: Arc<[Dep]>,
     },
     Poisoned {
         error: Arc<PicanteError>,
@@ -311,12 +451,13 @@ struct DerivedRecord<K, V> {
     key: K,
     value: V,
     verified_at: u64,
+    changed_at: u64,
     deps: Vec<DepRecord>,
 }
 
 impl<DB, K, V> PersistableIngredient for DerivedIngredient<DB, K, V>
 where
-    DB: HasRuntime + Send + Sync + 'static,
+    DB: IngredientLookup + Send + Sync + 'static,
     K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
     V: Clone + Facet<'static> + Send + Sync + 'static,
 {
@@ -350,6 +491,7 @@ where
                 let State::Ready {
                     value,
                     verified_at,
+                    changed_at,
                     deps,
                 } = &*state
                 else {
@@ -368,6 +510,7 @@ where
                     key,
                     value: value.clone(),
                     verified_at: verified_at.0,
+                    changed_at: changed_at.0,
                     deps,
                 };
 
@@ -397,19 +540,40 @@ where
                 })
             })?;
 
-            let deps = rec
+            let deps: Arc<[Dep]> = rec
                 .deps
                 .into_iter()
                 .map(|d| Dep {
                     kind: QueryKindId(d.kind_id),
                     key: Key::from_bytes(d.key_bytes),
                 })
-                .collect();
+                .collect::<Vec<_>>()
+                .into();
 
-            let cell = Arc::new(Cell::new_ready(rec.value, Revision(rec.verified_at), deps));
+            let cell = Arc::new(Cell::new_ready(
+                rec.value,
+                Revision(rec.verified_at),
+                Revision(rec.changed_at),
+                deps,
+            ));
             self.cells.insert(rec.key, cell);
         }
         Ok(())
+    }
+}
+
+impl<DB, K, V> DynIngredient<DB> for DerivedIngredient<DB, K, V>
+where
+    DB: IngredientLookup + Send + Sync + 'static,
+    K: Clone + Eq + Hash + Facet<'static> + Send + Sync + 'static,
+    V: Clone + Facet<'static> + Send + Sync + 'static,
+{
+    fn touch<'a>(&'a self, db: &'a DB, key: Key) -> BoxFuture<'a, PicanteResult<Touch>> {
+        Box::pin(async move {
+            let key: K = key.decode_facet()?;
+            let changed_at = self.touch(db, key).await?;
+            Ok(Touch { changed_at })
+        })
     }
 }
 

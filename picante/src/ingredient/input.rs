@@ -1,3 +1,4 @@
+use crate::db::{DynIngredient, Touch};
 use crate::error::{PicanteError, PicanteResult};
 use crate::frame;
 use crate::key::{Dep, Key, QueryKindId};
@@ -12,7 +13,7 @@ use std::sync::Arc;
 use tracing::{debug, trace};
 
 struct InputEntry<V> {
-    value: V,
+    value: Option<V>,
     changed_at: Revision,
 }
 
@@ -57,7 +58,7 @@ where
         self.entries.insert(
             key,
             InputEntry {
-                value,
+                value: Some(value),
                 changed_at: rev,
             },
         );
@@ -72,7 +73,13 @@ where
     pub fn remove<DB: HasRuntime>(&self, db: &DB, key: &K) -> Revision {
         let encoded_key = Key::encode_facet(key).ok();
         let rev = db.runtime().bump_revision();
-        self.entries.remove(key);
+        self.entries.insert(
+            key.clone(),
+            InputEntry {
+                value: None,
+                changed_at: rev,
+            },
+        );
         if let Some(encoded_key) = encoded_key {
             db.runtime()
                 .notify_input_removed(rev, self.kind, encoded_key);
@@ -94,7 +101,7 @@ where
             });
         }
 
-        Ok(self.entries.get(key).map(|e| e.value.clone()))
+        Ok(self.entries.get(key).and_then(|e| e.value.clone()))
     }
 
     /// The last revision at which this input was changed.
@@ -106,7 +113,7 @@ where
 #[derive(Debug, Clone, Facet)]
 struct InputRecord<K, V> {
     key: K,
-    value: V,
+    value: Option<V>,
     changed_at: u64,
 }
 
@@ -174,5 +181,24 @@ where
             );
         }
         Ok(())
+    }
+}
+
+impl<DB, K, V> DynIngredient<DB> for InputIngredient<K, V>
+where
+    DB: HasRuntime + Send + Sync + 'static,
+    K: Clone + Eq + Hash + facet::Facet<'static> + Send + Sync + 'static,
+    V: Clone + facet::Facet<'static> + Send + Sync + 'static,
+{
+    fn touch<'a>(&'a self, _db: &'a DB, key: Key) -> BoxFuture<'a, PicanteResult<Touch>> {
+        Box::pin(async move {
+            let key: K = key.decode_facet()?;
+            let changed_at = self
+                .entries
+                .get(&key)
+                .map(|e| e.changed_at)
+                .unwrap_or(Revision(0));
+            Ok(Touch { changed_at })
+        })
     }
 }

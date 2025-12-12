@@ -2,7 +2,7 @@
 title = "Motivation"
 +++
 
-Picante exists because the “Salsa model” is extremely useful for large pipelines, but Dodeca’s query graph needs **async** queries.
+picante exists because the "Salsa model" is extremely useful for large pipelines, but Dodeca's query graph needs **async** queries.
 
 In Dodeca, many queries naturally want to:
 
@@ -11,5 +11,5 @@ In Dodeca, many queries naturally want to:
 - spawn work on a thread pool,
 - stream data.
 
-Keeping those queries deterministic while still getting incremental recomputation is the point of Picante.
+Keeping those queries deterministic while still getting incremental recomputation is the point of picante.
 
