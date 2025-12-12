@@ -90,6 +90,126 @@ impl FormatSuite for JsonSlice {
         "#
         ))
     }
+
+    // ── Attribute cases ──
+
+    fn attr_rename_field() -> CaseSpec {
+        CaseSpec::from_str(indoc!(
+            r#"
+            {
+                "userName": "alice",
+                "age": 30
+            }
+        "#
+        ))
+    }
+
+    fn attr_rename_all_camel() -> CaseSpec {
+        CaseSpec::from_str(indoc!(
+            r#"
+            {
+                "firstName": "Jane",
+                "lastName": "Doe",
+                "isActive": true
+            }
+        "#
+        ))
+    }
+
+    fn attr_default_field() -> CaseSpec {
+        // optional_count is missing, should default to 0
+        CaseSpec::from_str(indoc!(
+            r#"
+            {
+                "required": "present"
+            }
+        "#
+        ))
+    }
+
+    fn option_none() -> CaseSpec {
+        // nickname is missing, should be None
+        CaseSpec::from_str(indoc!(
+            r#"
+            {
+                "name": "test"
+            }
+        "#
+        ))
+    }
+
+    fn attr_skip_serializing() -> CaseSpec {
+        // hidden field not in input (will use default), not serialized on roundtrip
+        CaseSpec::from_str(indoc!(
+            r#"
+            {
+                "visible": "shown"
+            }
+        "#
+        ))
+    }
+
+    fn attr_skip() -> CaseSpec {
+        // internal field is completely ignored - not read from input, not written on output
+        CaseSpec::from_str(indoc!(
+            r#"
+            {
+                "visible": "data"
+            }
+        "#
+        ))
+    }
+
+    // ── Enum tagging cases ──
+
+    fn enum_internally_tagged() -> CaseSpec {
+        CaseSpec::from_str(indoc!(
+            r#"
+            {
+                "type": "Circle",
+                "radius": 5.0
+            }
+        "#
+        ))
+    }
+
+    fn enum_adjacently_tagged() -> CaseSpec {
+        CaseSpec::from_str(indoc!(
+            r#"
+            {
+                "t": "Message",
+                "c": "hello"
+            }
+        "#
+        ))
+    }
+
+    // ── Advanced cases ──
+
+    fn struct_flatten() -> CaseSpec {
+        // x and y are flattened into the outer object
+        CaseSpec::from_str(indoc!(
+            r#"
+            {
+                "name": "point",
+                "x": 10,
+                "y": 20
+            }
+        "#
+        ))
+    }
+
+    fn transparent_newtype() -> CaseSpec {
+        // UserId(42) serializes as just 42, not {"0": 42}
+        CaseSpec::from_str(indoc!(
+            r#"
+            {
+                "id": 42,
+                "name": "alice"
+            }
+        "#
+        ))
+    }
 }
 
 fn main() {

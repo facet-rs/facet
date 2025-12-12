@@ -714,6 +714,13 @@ fn deserialize_struct<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial
 
     let deny_unknown_fields = partial.shape().has_deny_unknown_fields_attr();
 
+    // Check if we have any flattened fields
+    let has_flattened = struct_def.fields.iter().any(|f| f.is_flattened());
+
+    if has_flattened {
+        return deserialize_struct_with_flatten(obj, partial, struct_def, deny_unknown_fields);
+    }
+
     // Track which fields we've set
     let num_fields = struct_def.fields.len();
     let mut fields_set = alloc::vec![false; num_fields];
@@ -740,6 +747,115 @@ fn deserialize_struct<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial
             }));
         }
         // else: skip unknown field
+    }
+
+    // Handle missing fields - try to set defaults
+    for (idx, field) in struct_def.fields.iter().enumerate() {
+        if fields_set[idx] {
+            continue;
+        }
+
+        // Try to set default for the field
+        partial = partial
+            .set_nth_field_to_default(idx)
+            .map_err(|_| ValueError::new(ValueErrorKind::MissingField { field: field.name }))?;
+    }
+
+    Ok(partial)
+}
+
+/// Deserialize a struct that has flattened fields.
+fn deserialize_struct_with_flatten<'p>(
+    obj: &crate::VObject,
+    mut partial: Partial<'p>,
+    struct_def: &'static facet_core::StructType,
+    deny_unknown_fields: bool,
+) -> Result<Partial<'p>> {
+    use alloc::collections::BTreeMap;
+
+    let num_fields = struct_def.fields.len();
+    let mut fields_set = alloc::vec![false; num_fields];
+
+    // Collect which keys go to which flattened field
+    // Key -> (flattened_field_idx, inner_field_name)
+    let mut flatten_keys: BTreeMap<&str, (usize, &str)> = BTreeMap::new();
+
+    // First pass: identify which keys belong to flattened fields
+    for (idx, field) in struct_def.fields.iter().enumerate() {
+        if !field.is_flattened() {
+            continue;
+        }
+
+        // Get the inner struct's fields
+        let inner_shape = field.shape.get();
+        if let Type::User(UserType::Struct(inner_struct)) = &inner_shape.ty {
+            for inner_field in inner_struct.fields.iter() {
+                // Use the serialization name (rename if present, else name)
+                let key_name = inner_field.rename.unwrap_or(inner_field.name);
+                flatten_keys.insert(key_name, (idx, inner_field.name));
+            }
+        }
+    }
+
+    // Collect values for each flattened field
+    let mut flatten_values: Vec<BTreeMap<String, Value>> =
+        (0..num_fields).map(|_| BTreeMap::new()).collect();
+
+    // Process each key-value pair in the object
+    for (key, val) in obj.iter() {
+        let key_str = key.as_str();
+
+        // First, check for direct field match (non-flattened fields)
+        let direct_field = struct_def
+            .fields
+            .iter()
+            .enumerate()
+            .find(|(_, f)| !f.is_flattened() && f.name == key_str);
+
+        if let Some((idx, _field)) = direct_field {
+            partial = partial.begin_field(key_str)?;
+            partial = deserialize_value_into(val, partial)?;
+            partial = partial.end()?;
+            fields_set[idx] = true;
+            continue;
+        }
+
+        // Check if this key belongs to a flattened field
+        if let Some(&(flatten_idx, inner_name)) = flatten_keys.get(key_str) {
+            flatten_values[flatten_idx].insert(inner_name.to_string(), val.clone());
+            fields_set[flatten_idx] = true;
+            continue;
+        }
+
+        // Unknown field
+        if deny_unknown_fields {
+            return Err(ValueError::new(ValueErrorKind::UnknownField {
+                field: key_str.to_string(),
+            }));
+        }
+        // else: skip unknown field
+    }
+
+    // Deserialize each flattened field from its collected values
+    for (idx, field) in struct_def.fields.iter().enumerate() {
+        if !field.is_flattened() {
+            continue;
+        }
+
+        if !flatten_values[idx].is_empty() {
+            // Build a synthetic Value::Object for this flattened field
+            let mut synthetic_obj = crate::VObject::new();
+            let values = core::mem::take(&mut flatten_values[idx]);
+            for (k, v) in values {
+                synthetic_obj.insert(k, v);
+            }
+            let synthetic_value = Value::from(synthetic_obj);
+
+            partial = partial.begin_field(field.name)?;
+            partial = deserialize_value_into(&synthetic_value, partial)?;
+            partial = partial.end()?;
+            fields_set[idx] = true;
+        }
     }
 
     // Handle missing fields - try to set defaults
@@ -793,13 +909,36 @@ fn deserialize_tuple<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<
 
 /// Deserialize an enum from a Value.
 fn deserialize_enum<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p>> {
-    let mut partial = partial;
     let shape = partial.shape();
 
     if shape.is_untagged() {
         return deserialize_untagged_enum(value, partial);
     }
 
+    let tag_key = shape.get_tag_attr();
+    let content_key = shape.get_content_attr();
+
+    match (tag_key, content_key) {
+        // Internally tagged: {"type": "Circle", "radius": 5.0}
+        (Some(tag_key), None) => deserialize_internally_tagged_enum(value, partial, tag_key),
+        // Adjacently tagged: {"t": "Message", "c": "hello"}
+        (Some(tag_key), Some(content_key)) => {
+            deserialize_adjacently_tagged_enum(value, partial, tag_key, content_key)
+        }
+        // Externally tagged (default): {"VariantName": {...}}
+        (None, None) => deserialize_externally_tagged_enum(value, partial),
+        // Invalid: content without tag
+        (None, Some(_)) => Err(ValueError::new(ValueErrorKind::Unsupported {
+            message: "content key without tag key is invalid".into(),
+        })),
+    }
+}
+
+/// Deserialize an externally tagged enum: {"VariantName": data} or "VariantName"
+fn deserialize_externally_tagged_enum<'p>(
+    value: &Value,
+    mut partial: Partial<'p>,
+) -> Result<Partial<'p>> {
     match value.value_type() {
         // String = unit variant
         ValueType::String => {
@@ -833,6 +972,121 @@ fn deserialize_enum<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'
             expected: "string or object for enum",
             got: other,
         })),
+    }
+}
+
+/// Deserialize an internally tagged enum: {"type": "Circle", "radius": 5.0}
+fn deserialize_internally_tagged_enum<'p>(
+    value: &Value,
+    mut partial: Partial<'p>,
+    tag_key: &str,
+) -> Result<Partial<'p>> {
+    let obj = value.as_object().ok_or_else(|| {
+        ValueError::new(ValueErrorKind::TypeMismatch {
+            expected: "object for internally tagged enum",
+            got: value.value_type(),
+        })
+    })?;
+
+    // Find the tag value
+    let tag_value = obj.get(tag_key).ok_or_else(|| {
+        ValueError::new(ValueErrorKind::Unsupported {
+            message: format!("internally tagged enum missing tag key '{tag_key}'"),
+        })
+    })?;
+
+    let variant_name = tag_value.as_string().ok_or_else(|| {
+        ValueError::new(ValueErrorKind::TypeMismatch {
+            expected: "string for enum tag",
+            got: tag_value.value_type(),
+        })
+    })?;
+
+    partial = partial.select_variant_named(variant_name.as_str())?;
+
+    let variant = partial.selected_variant().ok_or_else(|| {
+        ValueError::new(ValueErrorKind::Unsupported {
+            message: "failed to get selected variant".into(),
+        })
+    })?;
+
+    // For struct variants, deserialize the remaining fields (excluding the tag)
+    match variant.data.kind {
+        StructKind::Unit => {
+            // Unit variant - just the tag, no other fields expected
+            Ok(partial)
+        }
+        StructKind::Struct => {
+            // Struct variant - deserialize fields from the same object (excluding tag)
+            for field in variant.data.fields.iter() {
+                if let Some(field_value) = obj.get(field.name) {
+                    partial = partial.begin_field(field.name)?;
+                    partial = deserialize_value_into(field_value, partial)?;
+                    partial = partial.end()?;
+                }
+            }
+            Ok(partial)
+        }
+        StructKind::TupleStruct | StructKind::Tuple => {
+            Err(ValueError::new(ValueErrorKind::Unsupported {
+                message: "internally tagged tuple variants are not supported".into(),
+            }))
+        }
+    }
+}
+
+/// Deserialize an adjacently tagged enum: {"t": "Message", "c": "hello"}
+fn deserialize_adjacently_tagged_enum<'p>(
+    value: &Value,
+    mut partial: Partial<'p>,
+    tag_key: &str,
+    content_key: &str,
+) -> Result<Partial<'p>> {
+    let obj = value.as_object().ok_or_else(|| {
+        ValueError::new(ValueErrorKind::TypeMismatch {
+            expected: "object for adjacently tagged enum",
+            got: value.value_type(),
+        })
+    })?;
+
+    // Find the tag value
+    let tag_value = obj.get(tag_key).ok_or_else(|| {
+        ValueError::new(ValueErrorKind::Unsupported {
+            message: format!("adjacently tagged enum missing tag key '{tag_key}'"),
+        })
+    })?;
+
+    let variant_name = tag_value.as_string().ok_or_else(|| {
+        ValueError::new(ValueErrorKind::TypeMismatch {
+            expected: "string for enum tag",
+            got: tag_value.value_type(),
+        })
+    })?;
+
+    partial = partial.select_variant_named(variant_name.as_str())?;
+
+    let variant = partial.selected_variant().ok_or_else(|| {
+        ValueError::new(ValueErrorKind::Unsupported {
+            message: "failed to get selected variant".into(),
+        })
+    })?;
+
+    // For non-unit variants, get the content
+    match variant.data.kind {
+        StructKind::Unit => {
+            // Unit variant - no content field needed
+            Ok(partial)
+        }
+        _ => {
+            // Get the content value
+            let content_value = obj.get(content_key).ok_or_else(|| {
+                ValueError::new(ValueErrorKind::Unsupported {
+                    message: format!("adjacently tagged enum missing content key '{content_key}'"),
+                })
+            })?;
+
+            populate_variant_from_value(content_value, partial, &variant)
+        }
     }
 }
 

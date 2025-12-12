@@ -65,6 +65,35 @@ pub trait FormatSuite {
     fn struct_nested() -> CaseSpec;
     /// Case: enum with multiple variant styles.
     fn enum_complex() -> CaseSpec;
+
+    // ── Attribute tests ──
+
+    /// Case: field with `#[facet(rename = "...")]` attribute.
+    fn attr_rename_field() -> CaseSpec;
+    /// Case: container with `#[facet(rename_all = "camelCase")]` attribute.
+    fn attr_rename_all_camel() -> CaseSpec;
+    /// Case: field with `#[facet(default)]` attribute.
+    fn attr_default_field() -> CaseSpec;
+    /// Case: `Option<T>` field with `None` value (missing in input).
+    fn option_none() -> CaseSpec;
+    /// Case: `#[facet(skip_serializing)]` field.
+    fn attr_skip_serializing() -> CaseSpec;
+    /// Case: `#[facet(skip)]` field (skipped for both ser and de).
+    fn attr_skip() -> CaseSpec;
+
+    // ── Enum tagging tests ──
+
+    /// Case: internally tagged enum `#[facet(tag = "type")]`.
+    fn enum_internally_tagged() -> CaseSpec;
+    /// Case: adjacently tagged enum `#[facet(tag = "t", content = "c")]`.
+    fn enum_adjacently_tagged() -> CaseSpec;
+
+    // ── Advanced tests ──
+
+    /// Case: flattened struct `#[facet(flatten)]`.
+    fn struct_flatten() -> CaseSpec;
+    /// Case: transparent newtype `#[facet(transparent)]`.
+    fn transparent_newtype() -> CaseSpec;
 }
 
 /// Execute suite cases; kept for convenience, but formats should register each
@@ -93,6 +122,7 @@ pub fn run_suite<S: FormatSuite>() {
 /// Enumerate every canonical case with its typed descriptor.
 pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
     vec![
+        // Core cases
         SuiteCase::new::<S, StructSingleField>(&CASE_STRUCT_SINGLE_FIELD, S::struct_single_field),
         SuiteCase::new::<S, Vec<u64>>(&CASE_SEQUENCE_NUMBERS, S::sequence_numbers),
         SuiteCase::new::<S, Vec<MixedScalar>>(
@@ -101,6 +131,28 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         ),
         SuiteCase::new::<S, NestedParent>(&CASE_STRUCT_NESTED, S::struct_nested),
         SuiteCase::new::<S, ComplexEnum>(&CASE_ENUM_COMPLEX, S::enum_complex),
+        // Attribute cases
+        SuiteCase::new::<S, RenamedField>(&CASE_ATTR_RENAME_FIELD, S::attr_rename_field),
+        SuiteCase::new::<S, CamelCaseStruct>(&CASE_ATTR_RENAME_ALL_CAMEL, S::attr_rename_all_camel),
+        SuiteCase::new::<S, WithDefault>(&CASE_ATTR_DEFAULT_FIELD, S::attr_default_field),
+        SuiteCase::new::<S, WithOption>(&CASE_OPTION_NONE, S::option_none),
+        SuiteCase::new::<S, WithSkipSerializing>(
+            &CASE_ATTR_SKIP_SERIALIZING,
+            S::attr_skip_serializing,
+        ),
+        SuiteCase::new::<S, WithSkip>(&CASE_ATTR_SKIP, S::attr_skip),
+        // Enum tagging cases
+        SuiteCase::new::<S, InternallyTagged>(
+            &CASE_ENUM_INTERNALLY_TAGGED,
+            S::enum_internally_tagged,
+        ),
+        SuiteCase::new::<S, AdjacentlyTagged>(
+            &CASE_ENUM_ADJACENTLY_TAGGED,
+            S::enum_adjacently_tagged,
+        ),
+        // Advanced cases
+        SuiteCase::new::<S, FlattenOuter>(&CASE_STRUCT_FLATTEN, S::struct_flatten),
+        SuiteCase::new::<S, UserRecord>(&CASE_TRANSPARENT_NEWTYPE, S::transparent_newtype),
     ]
 }
 
@@ -359,6 +411,97 @@ const CASE_ENUM_COMPLEX: CaseDescriptor<ComplexEnum> = CaseDescriptor {
     },
 };
 
+// ── Attribute test case descriptors ──
+
+const CASE_ATTR_RENAME_FIELD: CaseDescriptor<RenamedField> = CaseDescriptor {
+    id: "attr::rename_field",
+    description: "field with #[facet(rename = \"userName\")]",
+    expected: || RenamedField {
+        user_name: "alice".into(),
+        age: 30,
+    },
+};
+
+const CASE_ATTR_RENAME_ALL_CAMEL: CaseDescriptor<CamelCaseStruct> = CaseDescriptor {
+    id: "attr::rename_all_camel",
+    description: "struct with #[facet(rename_all = \"camelCase\")]",
+    expected: || CamelCaseStruct {
+        first_name: "Jane".into(),
+        last_name: "Doe".into(),
+        is_active: true,
+    },
+};
+
+const CASE_ATTR_DEFAULT_FIELD: CaseDescriptor<WithDefault> = CaseDescriptor {
+    id: "attr::default_field",
+    description: "field with #[facet(default)] missing from input",
+    expected: || WithDefault {
+        required: "present".into(),
+        optional_count: 0, // default value
+    },
+};
+
+const CASE_OPTION_NONE: CaseDescriptor<WithOption> = CaseDescriptor {
+    id: "option::none",
+    description: "Option<T> field missing from input becomes None",
+    expected: || WithOption {
+        name: "test".into(),
+        nickname: None,
+    },
+};
+
+const CASE_ATTR_SKIP_SERIALIZING: CaseDescriptor<WithSkipSerializing> = CaseDescriptor {
+    id: "attr::skip_serializing",
+    description: "field with #[facet(skip_serializing)] not in output",
+    expected: || WithSkipSerializing {
+        visible: "shown".into(),
+        hidden: String::new(), // default, not in input
+    },
+};
+
+const CASE_ATTR_SKIP: CaseDescriptor<WithSkip> = CaseDescriptor {
+    id: "attr::skip",
+    description: "field with #[facet(skip)] ignored for both ser and de",
+    expected: || WithSkip {
+        visible: "data".into(),
+        internal: 0, // always uses default (u32::default())
+    },
+};
+
+// ── Enum tagging case descriptors ──
+
+const CASE_ENUM_INTERNALLY_TAGGED: CaseDescriptor<InternallyTagged> = CaseDescriptor {
+    id: "enum::internally_tagged",
+    description: "internally tagged enum with #[facet(tag = \"type\")]",
+    expected: || InternallyTagged::Circle { radius: 5.0 },
+};
+
+const CASE_ENUM_ADJACENTLY_TAGGED: CaseDescriptor<AdjacentlyTagged> = CaseDescriptor {
+    id: "enum::adjacently_tagged",
+    description: "adjacently tagged enum with #[facet(tag = \"t\", content = \"c\")]",
+    expected: || AdjacentlyTagged::Message("hello".into()),
+};
+
+// ── Advanced case descriptors ──
+
+const CASE_STRUCT_FLATTEN: CaseDescriptor<FlattenOuter> = CaseDescriptor {
+    id: "struct::flatten",
+    description: "struct with #[facet(flatten)] flattening inner fields",
+    expected: || FlattenOuter {
+        name: "point".into(),
+        coords: FlattenInner { x: 10, y: 20 },
+    },
+};
+
+const CASE_TRANSPARENT_NEWTYPE: CaseDescriptor<UserRecord> = CaseDescriptor {
+    id: "attr::transparent",
+    description: "struct containing #[facet(transparent)] newtype",
+    expected: || UserRecord {
+        id: UserId(42),
+        name: "alice".into(),
+    },
+};
+
 /// Shared fixture type for the struct case.
 #[derive(Facet, Debug, Clone)]
 pub struct StructSingleField {
@@ -395,6 +538,107 @@ pub enum ComplexEnum {
     Empty,
     Count(u64),
     Label { name: String, level: u8 },
+}
+
+// ── Attribute test fixtures ──
+
+/// Fixture for `#[facet(rename = "...")]` test.
+#[derive(Facet, Debug, Clone)]
+pub struct RenamedField {
+    #[facet(rename = "userName")]
+    pub user_name: String,
+    pub age: u32,
+}
+
+/// Fixture for `#[facet(rename_all = "camelCase")]` test.
+#[derive(Facet, Debug, Clone)]
+#[facet(rename_all = "camelCase")]
+pub struct CamelCaseStruct {
+    pub first_name: String,
+    pub last_name: String,
+    pub is_active: bool,
+}
+
+/// Fixture for `#[facet(default)]` test.
+#[derive(Facet, Debug, Clone)]
+pub struct WithDefault {
+    pub required: String,
+    #[facet(default)]
+    pub optional_count: u32,
+}
+
+/// Fixture for `Option<T>` with `None`.
+#[derive(Facet, Debug, Clone)]
+pub struct WithOption {
+    pub name: String,
+    pub nickname: Option<String>,
+}
+
+/// Fixture for `#[facet(skip_serializing)]` test.
+#[derive(Facet, Debug, Clone)]
+pub struct WithSkipSerializing {
+    pub visible: String,
+    #[facet(skip_serializing)]
+    #[facet(default)]
+    pub hidden: String,
+}
+
+/// Fixture for `#[facet(skip)]` test (skipped for both ser and de).
+#[derive(Facet, Debug, Clone)]
+pub struct WithSkip {
+    pub visible: String,
+    #[facet(skip)]
+    #[facet(default)]
+    pub internal: u32,
+}
+
+// ── Enum tagging fixtures ──
+
+/// Internally tagged enum `#[facet(tag = "type")]`.
+#[derive(Facet, Debug, Clone)]
+#[facet(tag = "type")]
+#[repr(u8)]
+pub enum InternallyTagged {
+    Circle { radius: f64 },
+    Rectangle { width: f64, height: f64 },
+}
+
+/// Adjacently tagged enum `#[facet(tag = "t", content = "c")]`.
+#[derive(Facet, Debug, Clone)]
+#[facet(tag = "t", content = "c")]
+#[repr(u8)]
+pub enum AdjacentlyTagged {
+    Message(String),
+    Count(u64),
+}
+
+// ── Advanced fixtures ──
+
+/// Inner struct for flatten test.
+#[derive(Facet, Debug, Clone)]
+pub struct FlattenInner {
+    pub x: i32,
+    pub y: i32,
+}
+
+/// Outer struct with `#[facet(flatten)]`.
+#[derive(Facet, Debug, Clone)]
+pub struct FlattenOuter {
+    pub name: String,
+    #[facet(flatten)]
+    pub coords: FlattenInner,
+}
+
+/// Transparent newtype wrapper.
+#[derive(Facet, Debug, Clone)]
+#[facet(transparent)]
+pub struct UserId(pub u64);
+
+/// Struct containing a transparent newtype.
+#[derive(Facet, Debug, Clone)]
+pub struct UserRecord {
+    pub id: UserId,
+    pub name: String,
 }
 
 fn emit_case_showcase<S, T>(
