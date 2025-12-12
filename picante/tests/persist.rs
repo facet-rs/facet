@@ -1,4 +1,5 @@
 use picante::Revision;
+use picante::db::{DynIngredient, IngredientLookup, IngredientRegistry};
 use picante::error::PicanteError;
 use picante::ingredient::{DerivedIngredient, InputIngredient};
 use picante::key::QueryKindId;
@@ -22,11 +23,18 @@ fn init_tracing() {
 #[derive(Default)]
 struct TestDb {
     runtime: Runtime,
+    ingredients: IngredientRegistry<TestDb>,
 }
 
 impl HasRuntime for TestDb {
     fn runtime(&self) -> &Runtime {
         &self.runtime
+    }
+}
+
+impl IngredientLookup for TestDb {
+    fn ingredient(&self, kind: QueryKindId) -> Option<&dyn DynIngredient<Self>> {
+        self.ingredients.ingredient(kind)
     }
 }
 

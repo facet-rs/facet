@@ -1,4 +1,5 @@
 use divan::{Bencher, black_box};
+use picante::db::{DynIngredient, IngredientLookup, IngredientRegistry};
 use picante::ingredient::{DerivedIngredient, InputIngredient};
 use picante::key::QueryKindId;
 use picante::runtime::{HasRuntime, Runtime};
@@ -8,11 +9,18 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[derive(Default)]
 struct Db {
     runtime: Runtime,
+    ingredients: IngredientRegistry<Db>,
 }
 
 impl HasRuntime for Db {
     fn runtime(&self) -> &Runtime {
         &self.runtime
+    }
+}
+
+impl IngredientLookup for Db {
+    fn ingredient(&self, kind: QueryKindId) -> Option<&dyn DynIngredient<Self>> {
+        self.ingredients.ingredient(kind)
     }
 }
 

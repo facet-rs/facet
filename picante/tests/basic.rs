@@ -1,3 +1,4 @@
+use picante::db::{DynIngredient, IngredientLookup, IngredientRegistry};
 use picante::error::PicanteError;
 use picante::ingredient::{DerivedIngredient, InputIngredient};
 use picante::key::QueryKindId;
@@ -19,6 +20,7 @@ fn init_tracing() {
 #[derive(Default)]
 struct TestDb {
     runtime: Runtime,
+    ingredients: IngredientRegistry<TestDb>,
 }
 
 impl HasRuntime for TestDb {
@@ -27,13 +29,29 @@ impl HasRuntime for TestDb {
     }
 }
 
+impl IngredientLookup for TestDb {
+    fn ingredient(&self, kind: QueryKindId) -> Option<&dyn DynIngredient<Self>> {
+        self.ingredients.ingredient(kind)
+    }
+}
+
+impl TestDb {
+    fn register<I>(&mut self, ingredient: Arc<I>)
+    where
+        I: DynIngredient<Self> + 'static,
+    {
+        self.ingredients.register(ingredient);
+    }
+}
+
 #[tokio::test]
 async fn derived_caches_and_invalidates() {
     init_tracing();
 
-    let db = TestDb::default();
+    let mut db = TestDb::default();
     let input: Arc<InputIngredient<String, String>> =
         Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
+    db.register(input.clone());
 
     input.set(&db, "a".into(), "hello".into());
 
@@ -54,6 +72,7 @@ async fn derived_caches_and_invalidates() {
             })
         },
     ));
+    db.register(derived.clone());
 
     let v1 = derived.get(&db, "a".into()).await.unwrap();
     let v2 = derived.get(&db, "a".into()).await.unwrap();
@@ -72,7 +91,7 @@ async fn derived_caches_and_invalidates() {
 async fn derived_singleflight_across_tasks() {
     init_tracing();
 
-    let db = Arc::new(TestDb::default());
+    let mut db = TestDb::default();
     let executions = Arc::new(AtomicUsize::new(0));
     let executions_for_compute = executions.clone();
 
@@ -88,6 +107,8 @@ async fn derived_singleflight_across_tasks() {
             })
         },
     ));
+    db.register(derived.clone());
+    let db = Arc::new(db);
 
     let mut joins = Vec::new();
     for _ in 0..10 {
@@ -109,7 +130,7 @@ async fn derived_singleflight_across_tasks() {
 async fn detects_cycles_within_task() {
     init_tracing();
 
-    let db = TestDb::default();
+    let mut db = TestDb::default();
 
     let ingredient: Arc<DerivedIngredient<TestDb, String, u64>> = Arc::new_cyclic(
         |weak: &std::sync::Weak<DerivedIngredient<TestDb, String, u64>>| {
@@ -123,6 +144,7 @@ async fn detects_cycles_within_task() {
             })
         },
     );
+    db.register(ingredient.clone());
 
     let err = ingredient.get(&db, "k".into()).await.unwrap_err();
     match &*err {
@@ -144,9 +166,10 @@ async fn persistence_roundtrip() {
         std::env::temp_dir().join(format!("picante-cache-{pid}-{nanos}.bin"))
     };
 
-    let db = TestDb::default();
+    let mut db = TestDb::default();
     let input: Arc<InputIngredient<String, String>> =
         Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
+    db.register(input.clone());
 
     input.set(&db, "a".into(), "hello".into());
 
@@ -168,6 +191,7 @@ async fn persistence_roundtrip() {
             },
         ))
     };
+    db.register(derived.clone());
 
     let v = derived.get(&db, "a".into()).await.unwrap();
     assert_eq!(v, 5);
@@ -177,9 +201,10 @@ async fn persistence_roundtrip() {
         .await
         .unwrap();
 
-    let db2 = TestDb::default();
+    let mut db2 = TestDb::default();
     let input2: Arc<InputIngredient<String, String>> =
         Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
+    db2.register(input2.clone());
 
     let exec2 = Arc::new(AtomicUsize::new(0));
     let derived2: Arc<DerivedIngredient<TestDb, String, u64>> = {
@@ -199,6 +224,7 @@ async fn persistence_roundtrip() {
             },
         ))
     };
+    db2.register(derived2.clone());
 
     let loaded = load_cache(&cache_path, db2.runtime(), &[&*input2, &*derived2])
         .await
@@ -221,7 +247,7 @@ async fn persistence_roundtrip() {
 async fn poisoned_cells_recompute_after_revision_bump() {
     init_tracing();
 
-    let db = TestDb::default();
+    let mut db = TestDb::default();
 
     let executions = Arc::new(AtomicUsize::new(0));
     let executions_for_compute = executions.clone();
@@ -240,6 +266,7 @@ async fn poisoned_cells_recompute_after_revision_bump() {
             })
         },
     ));
+    db.register(derived.clone());
 
     let err1 = derived.get(&db, "k".into()).await.unwrap_err();
     match &*err1 {
