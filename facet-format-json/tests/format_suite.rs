@@ -210,6 +210,13 @@ impl FormatSuite for JsonSlice {
         "#
         ))
     }
+
+    // ── Error cases ──
+
+    fn deny_unknown_fields() -> CaseSpec {
+        // Input has extra field "baz" which should trigger an error
+        CaseSpec::expect_error(r#"{"foo":"abc","bar":42,"baz":true}"#, "unknown field")
+    }
 }
 
 fn main() {

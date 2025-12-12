@@ -94,6 +94,11 @@ pub trait FormatSuite {
     fn struct_flatten() -> CaseSpec;
     /// Case: transparent newtype `#[facet(transparent)]`.
     fn transparent_newtype() -> CaseSpec;
+
+    // ── Error cases ──
+
+    /// Case: `#[facet(deny_unknown_fields)]` rejects unknown fields.
+    fn deny_unknown_fields() -> CaseSpec;
 }
 
 /// Execute suite cases; kept for convenience, but formats should register each
@@ -153,6 +158,8 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         // Advanced cases
         SuiteCase::new::<S, FlattenOuter>(&CASE_STRUCT_FLATTEN, S::struct_flatten),
         SuiteCase::new::<S, UserRecord>(&CASE_TRANSPARENT_NEWTYPE, S::transparent_newtype),
+        // Error cases
+        SuiteCase::new::<S, DenyUnknownStruct>(&CASE_DENY_UNKNOWN_FIELDS, S::deny_unknown_fields),
     ]
 }
 
@@ -200,12 +207,33 @@ impl CaseSpec {
         self.roundtrip = RoundtripSpec::Disabled { reason };
         self
     }
+
+    /// Expect deserialization to fail with an error containing the given substring.
+    pub fn expect_error(input: &'static str, error_contains: &'static str) -> Self {
+        Self {
+            payload: CasePayload::ExpectError {
+                input: input.as_bytes(),
+                error_contains,
+            },
+            note: None,
+            roundtrip: RoundtripSpec::Disabled {
+                reason: "error case",
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 enum CasePayload {
     Input(&'static [u8]),
-    Skip { reason: &'static str },
+    Skip {
+        reason: &'static str,
+    },
+    /// Expect deserialization to fail with an error containing the given substring.
+    ExpectError {
+        input: &'static [u8],
+        error_contains: &'static str,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -347,6 +375,37 @@ where
             })) {
                 Ok(_) => CaseOutcome::Passed,
                 Err(payload) => CaseOutcome::Failed(format_panic(payload)),
+            }
+        }
+        CasePayload::ExpectError {
+            input,
+            error_contains,
+        } => {
+            emit_error_case_showcase::<S>(
+                desc.id,
+                desc.description,
+                note,
+                input,
+                highlight_language,
+                error_contains,
+            );
+
+            match S::deserialize::<T>(input) {
+                Ok(_) => CaseOutcome::Failed(format!(
+                    "facet-format-suite {} ({}) expected error containing '{}' but deserialization succeeded",
+                    desc.id, desc.description, error_contains
+                )),
+                Err(err) => {
+                    let err_str = err.to_string();
+                    if err_str.contains(error_contains) {
+                        CaseOutcome::Passed
+                    } else {
+                        CaseOutcome::Failed(format!(
+                            "facet-format-suite {} ({}) expected error containing '{}' but got: {}",
+                            desc.id, desc.description, error_contains, err_str
+                        ))
+                    }
+                }
             }
         }
     }
@@ -502,6 +561,17 @@ const CASE_TRANSPARENT_NEWTYPE: CaseDescriptor<UserRecord> = CaseDescriptor {
     },
 };
 
+// ── Error case descriptors ──
+
+const CASE_DENY_UNKNOWN_FIELDS: CaseDescriptor<DenyUnknownStruct> = CaseDescriptor {
+    id: "error::deny_unknown_fields",
+    description: "#[facet(deny_unknown_fields)] rejects input with extra fields",
+    expected: || DenyUnknownStruct {
+        foo: "abc".into(),
+        bar: 42,
+    },
+};
+
 /// Shared fixture type for the struct case.
 #[derive(Facet, Debug, Clone)]
 pub struct StructSingleField {
@@ -641,6 +711,16 @@ pub struct UserRecord {
     pub name: String,
 }
 
+// ── Error test fixtures ──
+
+/// Fixture for `#[facet(deny_unknown_fields)]` test.
+#[derive(Facet, Debug, Clone)]
+#[facet(deny_unknown_fields)]
+pub struct DenyUnknownStruct {
+    pub foo: String,
+    pub bar: i32,
+}
+
 fn emit_case_showcase<S, T>(
     desc: &'static CaseDescriptor<T>,
     note: Option<&'static str>,
@@ -696,6 +776,51 @@ fn emit_case_showcase<S, T>(
             input_label = input_label,
             input_block = input_block,
             pretty_output = pretty_output,
+        )
+    );
+}
+
+fn emit_error_case_showcase<S: FormatSuite>(
+    case_id: &str,
+    description: &str,
+    note: Option<&'static str>,
+    input: &[u8],
+    highlight_language: Option<&'static str>,
+    error_contains: &str,
+) {
+    let (input_label, input_block) = match highlight_language {
+        Some(language) => match highlight_payload(language, input) {
+            Some(html) => (format!("Input highlighted via arborium ({language})"), html),
+            None => (
+                format!("Input (UTF-8, highlighting unavailable for {language})"),
+                String::from_utf8_lossy(input).into_owned(),
+            ),
+        },
+        None => (
+            "Input (UTF-8)".to_string(),
+            String::from_utf8_lossy(input).into_owned(),
+        ),
+    };
+
+    let note_line = note.map(|n| format!("note: {n}\n")).unwrap_or_default();
+
+    println!(
+        "{}",
+        formatdoc!(
+            "
+            ── facet-format-suite :: {format_name} :: {case_id} ──
+            description: {description}
+            {note_line}expects error containing: \"{error_contains}\"
+            {input_label}:
+            {input_block}
+            ",
+            format_name = S::format_name(),
+            case_id = case_id,
+            description = description,
+            note_line = note_line,
+            error_contains = error_contains,
+            input_label = input_label,
+            input_block = input_block,
         )
     );
 }
