@@ -217,6 +217,14 @@ impl FormatSuite for JsonSlice {
         // Input has extra field "baz" which should trigger an error
         CaseSpec::expect_error(r#"{"foo":"abc","bar":42,"baz":true}"#, "unknown field")
     }
+
+    // ── Alias cases ──
+
+    fn attr_alias() -> CaseSpec {
+        // Input uses the alias "old_name" which should map to field "new_name"
+        CaseSpec::from_str(r#"{"old_name":"value","count":5}"#)
+            .without_roundtrip("alias is only for deserialization, serializes as new_name")
+    }
 }
 
 fn main() {

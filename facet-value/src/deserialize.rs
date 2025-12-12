@@ -729,15 +729,15 @@ fn deserialize_struct<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial
     for (key, val) in obj.iter() {
         let key_str = key.as_str();
 
-        // Find matching field
+        // Find matching field by name or alias
         let field_info = struct_def
             .fields
             .iter()
             .enumerate()
-            .find(|(_, f)| f.name == key_str);
+            .find(|(_, f)| f.name == key_str || f.alias == Some(key_str));
 
-        if let Some((idx, _field)) = field_info {
-            partial = partial.begin_field(key_str)?;
+        if let Some((idx, field)) = field_info {
+            partial = partial.begin_field(field.name)?;
             partial = deserialize_value_into(val, partial)?;
             partial = partial.end()?;
             fields_set[idx] = true;
@@ -805,15 +805,14 @@ fn deserialize_struct_with_flatten<'p>(
     for (key, val) in obj.iter() {
         let key_str = key.as_str();
 
-        // First, check for direct field match (non-flattened fields)
-        let direct_field = struct_def
-            .fields
-            .iter()
-            .enumerate()
-            .find(|(_, f)| !f.is_flattened() && f.name == key_str);
+        // First, check for direct field match (non-flattened fields) by name or alias
+        let direct_field =
+            struct_def.fields.iter().enumerate().find(|(_, f)| {
+                !f.is_flattened() && (f.name == key_str || f.alias == Some(key_str))
+            });
 
-        if let Some((idx, _field)) = direct_field {
-            partial = partial.begin_field(key_str)?;
+        if let Some((idx, field)) = direct_field {
+            partial = partial.begin_field(field.name)?;
             partial = deserialize_value_into(val, partial)?;
             partial = partial.end()?;
             fields_set[idx] = true;
