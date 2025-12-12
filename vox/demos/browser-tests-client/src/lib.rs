@@ -10,10 +10,10 @@
 use std::sync::Arc;
 
 use futures::StreamExt;
-use rapace::rapace_core::{RpcError, TransportError};
 use rapace::RpcSession;
 use rapace::Transport;
 use rapace::WebSocketTransport;
+use rapace::rapace_core::{RpcError, TransportError};
 use rapace_browser_tests_proto::{
     BrowserDemoClient, CountEvent, NumbersRequest, NumbersSummary, PhraseRequest, PhraseResponse,
 };

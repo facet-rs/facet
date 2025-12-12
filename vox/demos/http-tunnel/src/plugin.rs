@@ -163,9 +163,9 @@ pub fn create_tunnel_dispatcher<T: Transport + Send + Sync + 'static>(
     u32,
     Vec<u8>,
 ) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
-       + Send
-       + Sync
-       + 'static {
++ Send
++ Sync
++ 'static {
     move |_channel_id, method_id, payload| {
         let service = service.clone();
         Box::pin(async move {
@@ -195,7 +195,7 @@ fn large_response() -> String {
 
 /// Create a demo axum router with test routes.
 pub fn create_demo_router() -> axum::Router {
-    use axum::{routing::get, Router};
+    use axum::{Router, routing::get};
 
     Router::new()
         .route("/hello", get(hello_handler))

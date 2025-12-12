@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use rapace::{transport::InProcTransport, RpcSession, Transport};
+use rapace::{RpcSession, Transport, transport::InProcTransport};
 use tokio_stream::StreamExt;
 
 use rapace_diagnostics_over_rapace::{DiagnosticsClient, DiagnosticsImpl, DiagnosticsServer};

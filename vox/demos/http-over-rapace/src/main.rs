@@ -15,14 +15,14 @@ use bytes::Bytes;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
-use rapace::transport::InProcTransport;
 use rapace::RpcSession;
+use rapace::transport::InProcTransport;
 use rapace_http::HttpRequest;
 use tokio::net::TcpListener;
 
 use rapace_http_over_rapace::{
-    convert_hyper_to_rapace, convert_rapace_to_hyper, create_http_service_dispatcher,
-    AxumHttpService, HttpServiceClient,
+    AxumHttpService, HttpServiceClient, convert_hyper_to_rapace, convert_rapace_to_hyper,
+    create_http_service_dispatcher,
 };
 
 #[tokio::main]
@@ -241,10 +241,12 @@ mod tests {
         // Test JSON endpoint
         let response = client.handle(HttpRequest::get("/json")).await.unwrap();
         assert_eq!(response.status, 200);
-        assert!(response
-            .headers
-            .iter()
-            .any(|(k, v)| k == "content-type" && v.contains("application/json")));
+        assert!(
+            response
+                .headers
+                .iter()
+                .any(|(k, v)| k == "content-type" && v.contains("application/json"))
+        );
         let json: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
         assert_eq!(json["status"], "success");
 

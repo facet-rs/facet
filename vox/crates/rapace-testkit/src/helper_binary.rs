@@ -126,39 +126,97 @@ pub fn find_helper_binary(binary_name: &str) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
 
+    fn env_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
+    fn get_prebuilt_helpers_var() -> Option<std::ffi::OsString> {
+        std::env::var_os("RAPACE_PREBUILT_HELPERS")
+    }
+
+    fn set_prebuilt_helpers_var(value: &str) {
+        // SAFETY: Mutating the process environment is unsafe on newer Rust versions because it is
+        // global state. In these unit tests we serialize access via `env_lock()` and restore the
+        // previous value to avoid cross-test interference.
+        unsafe { std::env::set_var("RAPACE_PREBUILT_HELPERS", value) };
+    }
+
+    fn remove_prebuilt_helpers_var() {
+        // SAFETY: See `set_prebuilt_helpers_var`.
+        unsafe { std::env::remove_var("RAPACE_PREBUILT_HELPERS") };
+    }
+
     #[test]
     fn test_enforce_prebuilt_helpers_off_by_default() {
+        let _guard = env_lock().lock().unwrap();
+        let prev = get_prebuilt_helpers_var();
+        remove_prebuilt_helpers_var();
+
         // Should be false when env var is not set
-        std::env::remove_var("RAPACE_PREBUILT_HELPERS");
         assert!(!enforce_prebuilt_helpers());
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("RAPACE_PREBUILT_HELPERS", v) },
+            None => remove_prebuilt_helpers_var(),
+        }
     }
 
     #[test]
     fn test_enforce_prebuilt_helpers_true() {
-        std::env::set_var("RAPACE_PREBUILT_HELPERS", "true");
+        let _guard = env_lock().lock().unwrap();
+        let prev = get_prebuilt_helpers_var();
+        set_prebuilt_helpers_var("true");
+
         assert!(enforce_prebuilt_helpers());
-        std::env::remove_var("RAPACE_PREBUILT_HELPERS");
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("RAPACE_PREBUILT_HELPERS", v) },
+            None => remove_prebuilt_helpers_var(),
+        }
     }
 
     #[test]
     fn test_enforce_prebuilt_helpers_1() {
-        std::env::set_var("RAPACE_PREBUILT_HELPERS", "1");
+        let _guard = env_lock().lock().unwrap();
+        let prev = get_prebuilt_helpers_var();
+        set_prebuilt_helpers_var("1");
+
         assert!(enforce_prebuilt_helpers());
-        std::env::remove_var("RAPACE_PREBUILT_HELPERS");
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("RAPACE_PREBUILT_HELPERS", v) },
+            None => remove_prebuilt_helpers_var(),
+        }
     }
 
     #[test]
     fn test_enforce_prebuilt_helpers_false() {
-        std::env::set_var("RAPACE_PREBUILT_HELPERS", "false");
+        let _guard = env_lock().lock().unwrap();
+        let prev = get_prebuilt_helpers_var();
+        set_prebuilt_helpers_var("false");
+
         assert!(!enforce_prebuilt_helpers());
-        std::env::remove_var("RAPACE_PREBUILT_HELPERS");
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("RAPACE_PREBUILT_HELPERS", v) },
+            None => remove_prebuilt_helpers_var(),
+        }
     }
 
     #[test]
     fn test_find_helper_binary_not_found_not_enforced() {
-        std::env::remove_var("RAPACE_PREBUILT_HELPERS");
+        let _guard = env_lock().lock().unwrap();
+        let prev = get_prebuilt_helpers_var();
+        remove_prebuilt_helpers_var();
+
         // Should return an error without panicking
         let result = find_helper_binary("nonexistent-binary");
         assert!(result.is_err());
+
+        match prev {
+            Some(v) => unsafe { std::env::set_var("RAPACE_PREBUILT_HELPERS", v) },
+            None => remove_prebuilt_helpers_var(),
+        }
     }
 }

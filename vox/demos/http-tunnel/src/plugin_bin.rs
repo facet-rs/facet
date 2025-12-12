@@ -16,17 +16,17 @@
 
 use std::sync::Arc;
 
-use rapace::transport::shm::{ShmMetrics, ShmSession, ShmSessionConfig, ShmTransport};
-use rapace::transport::StreamTransport;
 use rapace::RpcSession;
 use rapace::Transport;
+use rapace::transport::StreamTransport;
+use rapace::transport::shm::{ShmMetrics, ShmSession, ShmSessionConfig, ShmTransport};
 use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use rapace_http_tunnel::{
-    create_tunnel_dispatcher, run_http_server, GlobalTunnelMetrics, TcpTunnelImpl,
-    INTERNAL_HTTP_PORT,
+    GlobalTunnelMetrics, INTERNAL_HTTP_PORT, TcpTunnelImpl, create_tunnel_dispatcher,
+    run_http_server,
 };
 
 #[derive(Debug)]

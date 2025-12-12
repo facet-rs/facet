@@ -1,12 +1,20 @@
+# Enable experimental features
+experimental = ["setup-scripts"]
+
 [profile.default]
 # Fail fast - stop on first failure
 fail-fast = true
 
-# Timeout for individual tests (10 seconds should be plenty for unit tests)
-slow-timeout = { period = "5s", terminate-after = 2 }
+# Timeout for individual tests (5s slow timeout, 4 extra seconds = 20s total)
+slow-timeout = { period = "5s", terminate-after = 4 }
 
 # Status level
 status-level = "pass"
+
+# Pre-build helper binaries before running tests
+[scripts.setup.build-helpers]
+command = "cargo build --bins -p rapace-diagnostics-over-rapace -p rapace-http-over-rapace -p rapace-template-engine -p rapace-tracing-over-rapace"
+slow-timeout = { period = "60s" }
 
 [profile.ci]
 # CI profile with longer timeouts for cross-process tests

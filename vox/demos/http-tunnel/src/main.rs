@@ -12,13 +12,13 @@
 
 use std::sync::Arc;
 
-use rapace::transport::InProcTransport;
 use rapace::RpcSession;
+use rapace::transport::InProcTransport;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use rapace_http_tunnel::{
-    create_tunnel_dispatcher, run_host_server, run_http_server, GlobalTunnelMetrics, TcpTunnelImpl,
-    TunnelHost, INTERNAL_HTTP_PORT,
+    GlobalTunnelMetrics, INTERNAL_HTTP_PORT, TcpTunnelImpl, TunnelHost, create_tunnel_dispatcher,
+    run_host_server, run_http_server,
 };
 
 /// Port the host listens on for browser connections.

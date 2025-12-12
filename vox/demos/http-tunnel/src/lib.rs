@@ -35,10 +35,10 @@ pub mod plugin;
 pub mod protocol;
 
 // Re-export key types explicitly to avoid ambiguous glob conflicts
-pub use host::{run_host_server, TunnelHost};
+pub use host::{TunnelHost, run_host_server};
 pub use metrics::{GlobalTunnelMetrics, TunnelMetrics};
 pub use plugin::{
-    create_demo_router, create_tunnel_dispatcher, run_http_server, TcpTunnelImpl,
-    INTERNAL_HTTP_PORT,
+    INTERNAL_HTTP_PORT, TcpTunnelImpl, create_demo_router, create_tunnel_dispatcher,
+    run_http_server,
 };
 pub use protocol::{TcpTunnel, TcpTunnelClient, TcpTunnelServer, TunnelHandle};

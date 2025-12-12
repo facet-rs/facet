@@ -31,8 +31,8 @@ use std::sync::Arc;
 
 use rapace::session::Session;
 use rapace_core::{
-    control_method, CancelReason, ControlPayload, ErrorCode, Frame, FrameFlags, MsgDescHot,
-    RpcError, RpcSession, Transport, NO_DEADLINE,
+    CancelReason, ControlPayload, ErrorCode, Frame, FrameFlags, MsgDescHot, NO_DEADLINE, RpcError,
+    RpcSession, Transport, control_method,
 };
 
 pub mod bidirectional;
@@ -88,8 +88,8 @@ pub trait TransportFactory: Send + Sync + 'static {
     ///
     /// Returns (client_side, server_side) where frames sent from client
     /// are received by server and vice versa.
-    fn connect_pair(
-    ) -> impl Future<Output = Result<(Self::Transport, Self::Transport), TestError>> + Send;
+    fn connect_pair()
+    -> impl Future<Output = Result<(Self::Transport, Self::Transport), TestError>> + Send;
 }
 
 // ============================================================================
@@ -1100,8 +1100,8 @@ pub async fn run_session_grant_credits_control_frame<F: TransportFactory>() {
     }
 }
 
-async fn run_session_grant_credits_control_frame_inner<F: TransportFactory>(
-) -> Result<(), TestError> {
+async fn run_session_grant_credits_control_frame_inner<F: TransportFactory>()
+-> Result<(), TestError> {
     use rapace::session::DEFAULT_INITIAL_CREDITS;
 
     let (client_transport, server_transport) = F::connect_pair().await?;

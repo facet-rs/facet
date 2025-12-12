@@ -16,7 +16,7 @@
 //! oha http://127.0.0.1:4000/large -z 10s -c 64
 //! ```
 
-use axum::{routing::get, Router};
+use axum::{Router, routing::get};
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
 

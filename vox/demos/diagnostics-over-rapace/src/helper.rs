@@ -21,11 +21,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rapace::{
-    transport::{
-        shm::{ShmSession, ShmSessionConfig, ShmTransport},
-        StreamTransport,
-    },
     Transport,
+    transport::{
+        StreamTransport,
+        shm::{ShmSession, ShmSessionConfig, ShmTransport},
+    },
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;

@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader};
 use std::process::{Child, ExitCode, Stdio};
 
 use clap::{Parser, Subcommand};
-use xshell::{cmd, Shell};
+use xshell::{Shell, cmd};
 
 #[derive(Parser)]
 #[command(name = "xtask")]

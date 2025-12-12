@@ -34,7 +34,7 @@ use rapace::{RpcSession, StreamTransport, Transport};
 use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
 
-use rapace_http_over_rapace::{create_http_service_dispatcher, AxumHttpService};
+use rapace_http_over_rapace::{AxumHttpService, create_http_service_dispatcher};
 
 #[derive(Debug)]
 enum TransportType {

@@ -27,8 +27,8 @@ use rapace::{InProcTransport, RpcSession, Transport};
 
 // Import from library
 use rapace_template_engine::{
-    create_template_engine_dispatcher, create_value_host_dispatcher, TemplateEngineClient,
-    ValueHostImpl,
+    TemplateEngineClient, ValueHostImpl, create_template_engine_dispatcher,
+    create_value_host_dispatcher,
 };
 
 #[tokio::main]

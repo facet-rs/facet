@@ -15,7 +15,7 @@ use tokio::io::{ReadHalf, WriteHalf};
 #[cfg(not(unix))]
 use tokio::net::TcpListener;
 
-use rapace_tracing_over_rapace::{create_tracing_sink_dispatcher, HostTracingSink, TraceRecord};
+use rapace_tracing_over_rapace::{HostTracingSink, TraceRecord, create_tracing_sink_dispatcher};
 
 #[cfg(unix)]
 const STREAM_CONTROL_ENV: &str = "RAPACE_STREAM_CONTROL_FD";

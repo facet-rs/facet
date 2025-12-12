@@ -1,12 +1,12 @@
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, quote_spanned};
 use unsynn::operator::names::{And, Assign, Comma, Gt, Lt, Pound, RArrow, Semicolon};
-use unsynn::{keyword, unsynn, IParse, ToTokenIter, ToTokens};
 use unsynn::{
     BraceGroupContaining, BracketGroupContaining, Colon, CommaDelimitedVec, Cons, Either,
     EndOfStream, Except, Ident, LiteralString, Many, ParenthesisGroupContaining, Parse, TokenIter,
     TokenStream, TokenTree,
 };
+use unsynn::{IParse, ToTokenIter, ToTokens, keyword, unsynn};
 
 keyword! {
     pub KAsync = "async";
@@ -191,13 +191,13 @@ fn parse_methods(body: TokenStream2) -> Result<Vec<ParsedMethod>> {
         let name = Ident::parse(&mut iter).map_err(Error::from)?;
         let name_span = name.span();
 
-        if let Some(TokenTree::Punct(p)) = iter.clone().next() {
-            if p.as_char() == '<' {
-                return Err(Error::new(
-                    name_span,
-                    "rapace::service methods cannot be generic yet",
-                ));
-            }
+        if let Some(TokenTree::Punct(p)) = iter.clone().next()
+            && p.as_char() == '<'
+        {
+            return Err(Error::new(
+                name_span,
+                "rapace::service methods cannot be generic yet",
+            ));
         }
 
         let params_group =

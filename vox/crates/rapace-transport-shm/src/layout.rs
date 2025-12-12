@@ -444,7 +444,7 @@ impl DataSegment {
     /// Index must be < slot_count and the caller must own the slot.
     #[inline]
     pub unsafe fn data_ptr_public(&self, index: u32) -> *mut u8 {
-        self.data_ptr(index)
+        unsafe { self.data_ptr(index) }
     }
 
     /// Allocate a slot.
@@ -469,8 +469,8 @@ impl DataSegment {
 
             if result.is_ok() {
                 // Successfully allocated. Increment generation.
-                let gen = meta.generation.fetch_add(1, Ordering::AcqRel) + 1;
-                return Ok((i, gen));
+                let r#gen = meta.generation.fetch_add(1, Ordering::AcqRel) + 1;
+                return Ok((i, r#gen));
             }
         }
 
@@ -706,22 +706,50 @@ impl std::error::Error for SlotError {}
 // Layout Calculations
 // =============================================================================
 
-/// Calculate the total size needed for a SHM segment.
-pub fn calculate_segment_size(ring_capacity: u32, slot_size: u32, slot_count: u32) -> usize {
+/// Calculate the total size needed for a SHM segment (checked).
+///
+/// Returns an error string describing where the overflow occurred.
+pub fn calculate_segment_size_checked(
+    ring_capacity: u32,
+    slot_size: u32,
+    slot_count: u32,
+) -> Result<usize, &'static str> {
     let header_size = core::mem::size_of::<SegmentHeader>();
     let ring_header_size = core::mem::size_of::<DescRingHeader>();
     let desc_size = core::mem::size_of::<MsgDescHot>();
-    let ring_size = ring_header_size + (ring_capacity as usize * desc_size);
     let data_header_size = core::mem::size_of::<DataSegmentHeader>();
-    let slot_meta_size = core::mem::size_of::<SlotMeta>() * slot_count as usize;
-    let slot_data_size = slot_size as usize * slot_count as usize;
+    let slot_meta_size = core::mem::size_of::<SlotMeta>();
 
-    header_size              // SegmentHeader
-        + ring_size          // A→B ring
-        + ring_size          // B→A ring
-        + data_header_size   // DataSegmentHeader
-        + slot_meta_size     // SlotMeta array
-        + slot_data_size // Slot data
+    let ring_descs_size = (ring_capacity as usize)
+        .checked_mul(desc_size)
+        .ok_or("SHM size overflow (ring descs)")?;
+    let ring_size = ring_header_size
+        .checked_add(ring_descs_size)
+        .ok_or("SHM size overflow (ring)")?;
+
+    let slot_meta_total = slot_meta_size
+        .checked_mul(slot_count as usize)
+        .ok_or("SHM size overflow (slot meta)")?;
+    let slot_data_total = (slot_size as usize)
+        .checked_mul(slot_count as usize)
+        .ok_or("SHM size overflow (slot data)")?;
+
+    let mut total = header_size;
+    total = total
+        .checked_add(ring_size)
+        .and_then(|v| v.checked_add(ring_size))
+        .and_then(|v| v.checked_add(data_header_size))
+        .and_then(|v| v.checked_add(slot_meta_total))
+        .and_then(|v| v.checked_add(slot_data_total))
+        .ok_or("SHM size overflow (total)")?;
+
+    Ok(total)
+}
+
+/// Calculate the total size needed for a SHM segment.
+pub fn calculate_segment_size(ring_capacity: u32, slot_size: u32, slot_count: u32) -> usize {
+    calculate_segment_size_checked(ring_capacity, slot_size, slot_count)
+        .expect("SHM segment size overflow")
 }
 
 /// Offsets within the SHM segment.
@@ -740,23 +768,50 @@ pub struct SegmentOffsets {
 impl SegmentOffsets {
     /// Calculate offsets for given parameters.
     pub fn calculate(ring_capacity: u32, slot_count: u32) -> Self {
+        Self::calculate_checked(ring_capacity, slot_count).expect("SHM offset overflow")
+    }
+
+    /// Calculate offsets for given parameters (checked).
+    ///
+    /// Returns an error string describing where the overflow occurred.
+    pub fn calculate_checked(ring_capacity: u32, slot_count: u32) -> Result<Self, &'static str> {
         let header_size = core::mem::size_of::<SegmentHeader>();
         let ring_header_size = core::mem::size_of::<DescRingHeader>();
         let desc_size = core::mem::size_of::<MsgDescHot>();
-        let ring_descs_size = ring_capacity as usize * desc_size;
         let data_header_size = core::mem::size_of::<DataSegmentHeader>();
-        let slot_meta_size = core::mem::size_of::<SlotMeta>() * slot_count as usize;
+        let slot_meta_size = core::mem::size_of::<SlotMeta>();
 
-        let header = 0;
-        let ring_a_to_b_header = header + header_size;
-        let ring_a_to_b_descs = ring_a_to_b_header + ring_header_size;
-        let ring_b_to_a_header = ring_a_to_b_descs + ring_descs_size;
-        let ring_b_to_a_descs = ring_b_to_a_header + ring_header_size;
-        let data_header = ring_b_to_a_descs + ring_descs_size;
-        let slot_meta = data_header + data_header_size;
-        let slot_data = slot_meta + slot_meta_size;
+        let ring_descs_size = (ring_capacity as usize)
+            .checked_mul(desc_size)
+            .ok_or("SHM offset overflow (ring descs)")?;
+        let slot_meta_total = slot_meta_size
+            .checked_mul(slot_count as usize)
+            .ok_or("SHM offset overflow (slot meta)")?;
 
-        Self {
+        let header = 0usize;
+        let ring_a_to_b_header = header
+            .checked_add(header_size)
+            .ok_or("SHM offset overflow (ring A->B header)")?;
+        let ring_a_to_b_descs = ring_a_to_b_header
+            .checked_add(ring_header_size)
+            .ok_or("SHM offset overflow (ring A->B descs)")?;
+        let ring_b_to_a_header = ring_a_to_b_descs
+            .checked_add(ring_descs_size)
+            .ok_or("SHM offset overflow (ring B->A header)")?;
+        let ring_b_to_a_descs = ring_b_to_a_header
+            .checked_add(ring_header_size)
+            .ok_or("SHM offset overflow (ring B->A descs)")?;
+        let data_header = ring_b_to_a_descs
+            .checked_add(ring_descs_size)
+            .ok_or("SHM offset overflow (data header)")?;
+        let slot_meta = data_header
+            .checked_add(data_header_size)
+            .ok_or("SHM offset overflow (slot meta)")?;
+        let slot_data = slot_meta
+            .checked_add(slot_meta_total)
+            .ok_or("SHM offset overflow (slot data)")?;
+
+        Ok(Self {
             header,
             ring_a_to_b_header,
             ring_a_to_b_descs,
@@ -765,7 +820,7 @@ impl SegmentOffsets {
             data_header,
             slot_meta,
             slot_data,
-        }
+        })
     }
 }
 

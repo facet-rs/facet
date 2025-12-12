@@ -30,11 +30,11 @@
 use std::pin::Pin;
 
 use axum::{
+    Router,
     body::Body,
     extract::Path,
     http::{Request, Response, StatusCode},
     routing::get,
-    Router,
 };
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -266,9 +266,9 @@ pub fn create_http_service_dispatcher(
     u32,
     Vec<u8>,
 ) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
-       + Send
-       + Sync
-       + 'static {
++ Send
++ Sync
++ 'static {
     move |_channel_id, method_id, payload| {
         let service = service.clone();
         Box::pin(async move {

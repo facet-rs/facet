@@ -52,9 +52,9 @@ mod transport;
 #[cfg(any(feature = "allocator", test))]
 pub use alloc::ShmAllocator;
 pub use layout::{
-    calculate_segment_size, DataSegment, DataSegmentHeader, DescRing, DescRingHeader, LayoutError,
-    RingError, SegmentHeader, SegmentOffsets, SlotError, SlotMeta, SlotState,
-    DEFAULT_RING_CAPACITY, DEFAULT_SLOT_COUNT, DEFAULT_SLOT_SIZE,
+    DEFAULT_RING_CAPACITY, DEFAULT_SLOT_COUNT, DEFAULT_SLOT_SIZE, DataSegment, DataSegmentHeader,
+    DescRing, DescRingHeader, LayoutError, RingError, SegmentHeader, SegmentOffsets, SlotError,
+    SlotMeta, SlotState, calculate_segment_size,
 };
 pub use session::{ShmSession, ShmSessionConfig};
 pub use transport::{ShmMetrics, ShmTransport};

@@ -118,8 +118,6 @@ pub extern crate rapace_core;
 
 // Re-export core types
 pub use rapace_core::{
-    // Error payload parsing
-    parse_error_payload,
     // Error types
     DecodeError,
     EncodeError,
@@ -136,6 +134,8 @@ pub use rapace_core::{
     Transport,
     TransportError,
     ValidationError,
+    // Error payload parsing
+    parse_error_payload,
 };
 
 // Re-export serialization crates for macro-generated code
@@ -162,7 +162,7 @@ pub use rapace_registry as registry;
 /// use rapace::prelude::*;
 /// ```
 pub mod prelude {
-    pub use crate::{service, ErrorCode, RpcError, Streaming, Transport};
+    pub use crate::{ErrorCode, RpcError, Streaming, Transport, service};
 
     // Re-export facet for derive macros in service types
     pub use facet::Facet;

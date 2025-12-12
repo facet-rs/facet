@@ -1,7 +1,7 @@
 //! Descriptor validation.
 
 use crate::{
-    DescriptorLimits, MsgDescHot, ValidationError, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT,
+    DescriptorLimits, INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT, MsgDescHot, ValidationError,
 };
 
 /// Validate a descriptor against the given limits.

@@ -50,16 +50,16 @@
 
 use std::collections::HashMap;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::Mutex;
 use rapace::{Frame, RpcError, RpcSession, Transport};
 use tracing::span::{Attributes, Record};
 use tracing::{Event, Id, Subscriber};
+use tracing_subscriber::Layer;
 use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::Layer;
 
 // ============================================================================
 // Facet Types (transport-agnostic)
@@ -255,9 +255,9 @@ pub fn create_tracing_config_dispatcher(
     u32,
     Vec<u8>,
 ) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
-       + Send
-       + Sync
-       + 'static {
++ Send
++ Sync
++ 'static {
     move |_channel_id, method_id, payload| {
         let config = config.clone();
         Box::pin(async move {
@@ -625,9 +625,9 @@ pub fn create_tracing_sink_dispatcher(
     u32,
     Vec<u8>,
 ) -> Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
-       + Send
-       + Sync
-       + 'static {
++ Send
++ Sync
++ 'static {
     move |_channel_id, method_id, payload| {
         let sink = sink.clone();
         Box::pin(async move {

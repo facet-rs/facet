@@ -34,8 +34,8 @@ use std::io::Cursor;
 use std::sync::Arc;
 
 use rapace::{
-    transport::shm::{allocator_api2, ShmAllocator, ShmMetrics, ShmSession, ShmTransport},
     ErrorCode, RpcError, RpcSession, Streaming, Transport,
+    transport::shm::{ShmAllocator, ShmMetrics, ShmSession, ShmTransport, allocator_api2},
 };
 
 type AllocVec<T, A> = allocator_api2::vec::Vec<T, A>;

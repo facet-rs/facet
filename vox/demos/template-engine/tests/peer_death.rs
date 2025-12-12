@@ -13,7 +13,7 @@ use rapace::{RpcSession, StreamTransport, Transport};
 use rapace_testkit::helper_binary::find_helper_binary;
 use tokio::io::{ReadHalf, WriteHalf};
 
-use rapace_template_engine::{create_value_host_dispatcher, TemplateEngineClient, ValueHostImpl};
+use rapace_template_engine::{TemplateEngineClient, ValueHostImpl, create_value_host_dispatcher};
 
 #[cfg(unix)]
 const STREAM_CONTROL_ENV: &str = "RAPACE_STREAM_CONTROL_FD";
@@ -191,7 +191,9 @@ async fn test_stream_helper_death() {
             panic!("Session panicked instead of exiting gracefully");
         }
         Err(_) => {
-            panic!("Session did not exit within 5 seconds after helper was killed - likely a busy loop!");
+            panic!(
+                "Session did not exit within 5 seconds after helper was killed - likely a busy loop!"
+            );
         }
     }
 
@@ -280,7 +282,9 @@ async fn test_stream_host_death() {
                     // 50 * 100ms = 5 seconds
                     let _ = helper.kill();
                     let _ = helper.wait();
-                    panic!("Helper did not exit within 5 seconds after host closed - likely a busy loop!");
+                    panic!(
+                        "Helper did not exit within 5 seconds after host closed - likely a busy loop!"
+                    );
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
@@ -397,7 +401,9 @@ async fn test_shm_helper_death() {
             panic!("Session panicked instead of exiting gracefully");
         }
         Err(_) => {
-            panic!("Session did not exit within 10 seconds after helper was killed - likely a busy loop!");
+            panic!(
+                "Session did not exit within 10 seconds after helper was killed - likely a busy loop!"
+            );
         }
     }
 

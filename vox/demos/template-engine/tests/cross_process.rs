@@ -15,7 +15,7 @@ use tokio::io::{ReadHalf, WriteHalf};
 #[cfg(not(unix))]
 use tokio::net::TcpListener;
 
-use rapace_template_engine::{create_value_host_dispatcher, TemplateEngineClient, ValueHostImpl};
+use rapace_template_engine::{TemplateEngineClient, ValueHostImpl, create_value_host_dispatcher};
 
 #[cfg(unix)]
 const STREAM_CONTROL_ENV: &str = "RAPACE_STREAM_CONTROL_FD";

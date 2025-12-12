@@ -16,13 +16,13 @@
 //! - Full-duplex: send and receive can happen concurrently
 //! - Same RPC semantics as other transports
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex as SyncMutex;
 use rapace_core::{
-    DecodeError, EncodeCtx, EncodeError, Frame, FrameView, MsgDescHot, Transport, TransportError,
-    INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT,
+    DecodeError, EncodeCtx, EncodeError, Frame, FrameView, INLINE_PAYLOAD_SIZE,
+    INLINE_PAYLOAD_SLOT, MsgDescHot, Transport, TransportError,
 };
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::sync::Mutex as AsyncMutex;

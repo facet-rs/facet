@@ -21,7 +21,7 @@
 
 use std::sync::Arc;
 
-use axum::{response::Html, routing::get, Router};
+use axum::{Router, response::Html, routing::get};
 use owo_colors::OwoColorize;
 use rapace::facet_core::{Def, ScalarType, Shape, Type, UserType};
 use rapace::registry::{ServiceId, ServiceRegistry};
@@ -526,7 +526,7 @@ impl Explorer for ExplorerImpl {
                 return CallResponse {
                     result_json: "null".to_string(),
                     error: Some(format!("Invalid JSON args: {}", e)),
-                }
+                };
             }
         };
 
@@ -538,7 +538,7 @@ impl Explorer for ExplorerImpl {
                 return CallResponse {
                     result_json: "null".to_string(),
                     error: Some("Counter methods are streaming-only. Use call_streaming.".into()),
-                }
+                };
             }
             _ => Err(format!("Unknown service: {}", request.service)),
         };

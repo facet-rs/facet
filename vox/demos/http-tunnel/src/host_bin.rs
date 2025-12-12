@@ -21,15 +21,15 @@
 
 use std::sync::Arc;
 
-use rapace::transport::shm::{ShmMetrics, ShmSession, ShmSessionConfig, ShmTransport};
-use rapace::transport::StreamTransport;
 use rapace::RpcSession;
 use rapace::Transport;
+use rapace::transport::StreamTransport;
+use rapace::transport::shm::{ShmMetrics, ShmSession, ShmSessionConfig, ShmTransport};
 use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf};
 use tokio::net::TcpListener;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use rapace_http_tunnel::{run_host_server, GlobalTunnelMetrics, TunnelHost};
+use rapace_http_tunnel::{GlobalTunnelMetrics, TunnelHost, run_host_server};
 
 /// Port the host listens on for browser connections.
 const HOST_PORT: u16 = 4000;

@@ -14,7 +14,7 @@ use rapace::{InProcTransport, RpcSession, Transport};
 use tracing_subscriber::layer::SubscriberExt;
 
 use rapace_tracing_over_rapace::{
-    create_tracing_sink_dispatcher, HostTracingSink, RapaceTracingLayer, TraceRecord,
+    HostTracingSink, RapaceTracingLayer, TraceRecord, create_tracing_sink_dispatcher,
 };
 
 #[tokio::main]

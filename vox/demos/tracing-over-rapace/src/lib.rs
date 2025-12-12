@@ -5,6 +5,6 @@
 
 // Re-export from rapace-tracing for convenience
 pub use rapace_tracing::{
-    create_tracing_sink_dispatcher, EventMeta, Field, HostTracingSink, RapaceTracingLayer,
-    SpanMeta, TraceRecord, TracingSink, TracingSinkClient, TracingSinkServer,
+    EventMeta, Field, HostTracingSink, RapaceTracingLayer, SpanMeta, TraceRecord, TracingSink,
+    TracingSinkClient, TracingSinkServer, create_tracing_sink_dispatcher,
 };

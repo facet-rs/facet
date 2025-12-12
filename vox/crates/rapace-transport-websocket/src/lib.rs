@@ -3,8 +3,8 @@
 //! For browser clients or WebSocket-based infrastructure.
 
 use rapace_core::{
-    DecodeError, EncodeCtx, EncodeError, Frame, FrameView, MsgDescHot, Transport, TransportError,
-    INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT,
+    DecodeError, EncodeCtx, EncodeError, Frame, FrameView, INLINE_PAYLOAD_SIZE,
+    INLINE_PAYLOAD_SLOT, MsgDescHot, Transport, TransportError,
 };
 
 mod shared {
@@ -101,17 +101,17 @@ pub use shared::{Decoder as WebSocketDecoder, Encoder as WebSocketEncoder};
 
 #[cfg(not(target_arch = "wasm32"))]
 mod native {
-    use super::shared::{to_bytes, to_desc, ReceivedFrame, DESC_SIZE};
+    use super::shared::{DESC_SIZE, ReceivedFrame, to_bytes, to_desc};
     use super::*;
     use futures::stream::{SplitSink, SplitStream};
     use futures::{SinkExt, StreamExt};
     use parking_lot::Mutex as SyncMutex;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::io::{AsyncRead, AsyncWrite};
     use tokio::sync::Mutex as AsyncMutex;
-    use tokio_tungstenite::tungstenite::Message;
     use tokio_tungstenite::WebSocketStream;
+    use tokio_tungstenite::tungstenite::Message;
 
     /// WebSocket-based transport implementation.
     ///
@@ -536,7 +536,7 @@ pub use native::WebSocketTransport;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use super::shared::{to_bytes, to_desc, ReceivedFrame, DESC_SIZE};
+    use super::shared::{DESC_SIZE, ReceivedFrame, to_bytes, to_desc};
     use super::*;
     use gloo_timers::future::TimeoutFuture;
     use parking_lot::Mutex as SyncMutex;
@@ -545,11 +545,11 @@ mod wasm {
     use std::future::Future;
     use std::pin::Pin;
     use std::rc::Rc;
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::task::{Context, Poll};
-    use wasm_bindgen::prelude::*;
     use wasm_bindgen::JsCast;
+    use wasm_bindgen::prelude::*;
     use web_sys::{BinaryType, CloseEvent, ErrorEvent, MessageEvent, WebSocket};
 
     /// WebSocket transport implementation for browser environments.

@@ -23,6 +23,7 @@ rapace-core.workspace = true
 tokio.workspace = true
 libc.workspace = true
 parking_lot.workspace = true
+tracing = { workspace = true }
 
 # Optional: allocator-api2 for ShmAllocator
 allocator-api2 = { workspace = true, optional = true }

@@ -161,9 +161,9 @@ pub fn create_value_host_dispatcher(
     u32,
     Vec<u8>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
-       + Send
-       + Sync
-       + 'static {
++ Send
++ Sync
++ 'static {
     move |_channel_id, method_id, payload| {
         let value_host = value_host.clone();
         Box::pin(async move {
@@ -181,9 +181,9 @@ pub fn create_template_engine_dispatcher<T: Transport + Send + Sync + 'static>(
     u32,
     Vec<u8>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Frame, RpcError>> + Send>>
-       + Send
-       + Sync
-       + 'static {
++ Send
++ Sync
++ 'static {
     move |_channel_id, method_id, payload| {
         let engine = TemplateEngineImpl::new(session.clone());
         let server = TemplateEngineServer::new(engine);

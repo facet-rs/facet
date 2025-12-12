@@ -5,11 +5,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use rapace::transport::InProcTransport;
 use rapace::RpcSession;
+use rapace::transport::InProcTransport;
 
 use rapace_http_tunnel::{
-    create_tunnel_dispatcher, run_http_server, GlobalTunnelMetrics, TcpTunnelImpl, TunnelHost,
+    GlobalTunnelMetrics, TcpTunnelImpl, TunnelHost, create_tunnel_dispatcher, run_http_server,
 };
 
 /// Helper to start the plugin side (HTTP server + tunnel service).
