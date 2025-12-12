@@ -69,7 +69,7 @@ pub mod runtime;
 
 pub use db::{DynIngredient, IngredientLookup, IngredientRegistry, Touch};
 pub use error::{PicanteError, PicanteResult};
-pub use ingredient::{DerivedIngredient, InputIngredient};
+pub use ingredient::{DerivedIngredient, InputIngredient, InternId, InternedIngredient};
 pub use key::{Dep, DynKey, Key, QueryKindId};
 pub use revision::Revision;
 pub use runtime::{HasRuntime, Runtime, RuntimeEvent};

@@ -47,7 +47,7 @@ impl Default for CacheLoadOptions {
 pub struct CacheSaveOptions {
     /// If set, best-effort truncates records to fit within this many bytes.
     ///
-    /// Truncation prefers dropping derived records over input records.
+    /// Truncation prefers dropping derived records over input/interned records.
     pub max_bytes: Option<usize>,
     /// If set, truncates each section to at most this many records.
     pub max_records_per_section: Option<usize>,
@@ -87,6 +87,8 @@ pub enum SectionType {
     Input,
     /// Memoized derived query cells.
     Derived,
+    /// Interned value tables.
+    Interned,
 }
 
 /// An ingredient that can be saved to / loaded from a cache file.
@@ -395,6 +397,7 @@ fn shrink_cache_to_fit(cache: &mut CacheFile, max_bytes: usize) -> PicanteResult
     while current_record_bytes > budget_for_records {
         if !drop_one_record(cache, SectionType::Derived, &mut current_record_bytes)
             && !drop_one_record(cache, SectionType::Input, &mut current_record_bytes)
+            && !drop_one_record(cache, SectionType::Interned, &mut current_record_bytes)
         {
             break;
         }
@@ -427,6 +430,7 @@ fn shrink_cache_to_fit(cache: &mut CacheFile, max_bytes: usize) -> PicanteResult
         while current_record_bytes > budget_for_records {
             if !drop_one_record(cache, SectionType::Derived, &mut current_record_bytes)
                 && !drop_one_record(cache, SectionType::Input, &mut current_record_bytes)
+                && !drop_one_record(cache, SectionType::Interned, &mut current_record_bytes)
             {
                 break;
             }

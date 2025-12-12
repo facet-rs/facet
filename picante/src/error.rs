@@ -1,6 +1,6 @@
 //! Error types used throughout Picante.
 
-use crate::key::DynKey;
+use crate::key::{DynKey, QueryKindId};
 use std::fmt;
 use std::sync::Arc;
 
@@ -40,6 +40,14 @@ pub enum PicanteError {
         message: String,
     },
 
+    /// An interned id was requested but is not present in the interning table.
+    MissingInternedValue {
+        /// Kind id of the interned ingredient.
+        kind: QueryKindId,
+        /// Missing id.
+        id: u32,
+    },
+
     /// A query panicked during execution (caught to avoid poisoning the runtime).
     Panic {
         /// Human-readable panic message (best effort).
@@ -58,6 +66,9 @@ impl fmt::Display for PicanteError {
             PicanteError::Encode { what, message } => write!(f, "encode {what} failed: {message}"),
             PicanteError::Decode { what, message } => write!(f, "decode {what} failed: {message}"),
             PicanteError::Cache { message } => write!(f, "cache error: {message}"),
+            PicanteError::MissingInternedValue { kind, id } => {
+                write!(f, "missing interned value (kind {}, id {id})", kind.0)
+            }
             PicanteError::Panic { message } => write!(f, "query panicked: {message}"),
         }
     }
