@@ -497,7 +497,7 @@ pub enum SatisfyResult<'a> {
 ///
 ///         match solver.satisfy(&satisfied) {
 ///             SatisfyResult::Solved(config) => {
-///                 assert!(config.describe().contains("Large"));
+///                 assert!(config.resolution().describe().contains("Large"));
 ///             }
 ///             _ => panic!("expected solved"),
 ///         }
