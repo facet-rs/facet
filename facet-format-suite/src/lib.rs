@@ -16,7 +16,7 @@ use indoc::formatdoc;
 /// When the suite adds a new case, the trait sprouts another required method,
 /// forcing every format crate to acknowledge and implement it.
 ///
-/// The [`deserialize`] hook is intentionally generic over every `T: Facet` – in
+/// The [`FormatSuite::deserialize`] hook is intentionally generic over every `T: Facet` – in
 /// the end state it will invoke the shared `FormatDeserializer` to produce a
 /// typed value, not just raw events.
 pub trait FormatSuite {
