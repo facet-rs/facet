@@ -1,3 +1,5 @@
+//! Query key encoding and erased identifiers used for dependency graphs.
+
 use crate::error::{PicanteError, PicanteResult};
 use facet::Facet;
 use std::fmt;
@@ -66,6 +68,11 @@ impl Key {
     /// Length in bytes of the encoded key.
     pub fn len(&self) -> usize {
         self.bytes.len()
+    }
+
+    /// Returns `true` if the encoded key is empty.
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
     }
 }
 

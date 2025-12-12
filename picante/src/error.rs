@@ -1,3 +1,5 @@
+//! Error types used throughout Picante.
+
 use crate::key::DynKey;
 use std::fmt;
 use std::sync::Arc;
@@ -17,16 +19,32 @@ pub enum PicanteError {
     },
 
     /// Failed to encode a value using `facet-postcard`.
-    Encode { what: &'static str, message: String },
+    Encode {
+        /// What we were trying to encode (for diagnostics).
+        what: &'static str,
+        /// Human-readable error message.
+        message: String,
+    },
 
     /// Failed to decode a value using `facet-postcard`.
-    Decode { what: &'static str, message: String },
+    Decode {
+        /// What we were trying to decode (for diagnostics).
+        what: &'static str,
+        /// Human-readable error message.
+        message: String,
+    },
 
     /// Cache I/O or format errors.
-    Cache { message: String },
+    Cache {
+        /// Human-readable error message.
+        message: String,
+    },
 
     /// A query panicked during execution (caught to avoid poisoning the runtime).
-    Panic { message: String },
+    Panic {
+        /// Human-readable panic message (best effort).
+        message: String,
+    },
 }
 
 impl fmt::Display for PicanteError {

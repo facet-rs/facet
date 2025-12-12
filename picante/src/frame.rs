@@ -1,3 +1,5 @@
+//! Tokio task-local query frames used for dependency recording and cycle detection.
+
 use crate::key::{Dep, DynKey};
 use crate::revision::Revision;
 use parking_lot::Mutex;

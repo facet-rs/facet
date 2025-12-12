@@ -1,3 +1,5 @@
+//! Revision counters used for global invalidation.
+
 use facet::Facet;
 
 /// A monotonically increasing revision counter.

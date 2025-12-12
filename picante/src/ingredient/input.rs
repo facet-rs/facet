@@ -52,6 +52,7 @@ where
     /// Set an input value, bumping the runtime revision.
     #[tracing::instrument(level = "debug", skip_all, fields(kind = self.kind.0))]
     pub fn set<DB: HasRuntime>(&self, db: &DB, key: K, value: V) -> Revision {
+        let encoded_key = Key::encode_facet(&key).ok();
         let rev = db.runtime().bump_revision();
         self.entries.insert(
             key,
@@ -60,14 +61,22 @@ where
                 changed_at: rev,
             },
         );
+        if let Some(encoded_key) = encoded_key {
+            db.runtime().notify_input_set(rev, self.kind, encoded_key);
+        }
         rev
     }
 
     /// Remove an input value, bumping the runtime revision.
     #[tracing::instrument(level = "debug", skip_all, fields(kind = self.kind.0))]
     pub fn remove<DB: HasRuntime>(&self, db: &DB, key: &K) -> Revision {
+        let encoded_key = Key::encode_facet(key).ok();
         let rev = db.runtime().bump_revision();
         self.entries.remove(key);
+        if let Some(encoded_key) = encoded_key {
+            db.runtime()
+                .notify_input_removed(rev, self.kind, encoded_key);
+        }
         rev
     }
 

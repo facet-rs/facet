@@ -216,3 +216,49 @@ async fn persistence_roundtrip() {
 
     let _ = tokio::fs::remove_file(&cache_path).await;
 }
+
+#[tokio::test]
+async fn poisoned_cells_recompute_after_revision_bump() {
+    init_tracing();
+
+    let db = TestDb::default();
+
+    let executions = Arc::new(AtomicUsize::new(0));
+    let executions_for_compute = executions.clone();
+
+    let derived: Arc<DerivedIngredient<TestDb, String, u64>> = Arc::new(DerivedIngredient::new(
+        QueryKindId(1),
+        "MaybePanic",
+        move |_db, _key| {
+            let executions = executions_for_compute.clone();
+            Box::pin(async move {
+                let n = executions.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    panic!("boom");
+                }
+                Ok(42)
+            })
+        },
+    ));
+
+    let err1 = derived.get(&db, "k".into()).await.unwrap_err();
+    match &*err1 {
+        PicanteError::Panic { .. } => {}
+        other => panic!("expected panic error, got {other:?}"),
+    }
+
+    let err2 = derived.get(&db, "k".into()).await.unwrap_err();
+    match &*err2 {
+        PicanteError::Panic { .. } => {}
+        other => panic!("expected panic error, got {other:?}"),
+    }
+
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+
+    // Bump revision so the poisoned value becomes stale and can be recomputed.
+    db.runtime().bump_revision();
+
+    let v = derived.get(&db, "k".into()).await.unwrap();
+    assert_eq!(v, 42);
+    assert_eq!(executions.load(Ordering::SeqCst), 2);
+}

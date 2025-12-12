@@ -13,12 +13,15 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
 use tracing::{debug, trace};
 
+type ComputeFuture<'db, V> = BoxFuture<'db, PicanteResult<V>>;
+type ComputeFn<DB, K, V> = dyn for<'db> Fn(&'db DB, K) -> ComputeFuture<'db, V> + Send + Sync;
+
 /// A memoized async derived query ingredient.
 pub struct DerivedIngredient<DB, K, V> {
     kind: QueryKindId,
     kind_name: &'static str,
     cells: DashMap<K, Arc<Cell<V>>>,
-    compute: Arc<dyn for<'db> Fn(&'db DB, K) -> BoxFuture<'db, PicanteResult<V>> + Send + Sync>,
+    compute: Arc<ComputeFn<DB, K, V>>,
 }
 
 impl<DB, K, V> DerivedIngredient<DB, K, V>
@@ -31,10 +34,7 @@ where
     pub fn new(
         kind: QueryKindId,
         kind_name: &'static str,
-        compute: impl for<'db> Fn(&'db DB, K) -> BoxFuture<'db, PicanteResult<V>>
-        + Send
-        + Sync
-        + 'static,
+        compute: impl for<'db> Fn(&'db DB, K) -> ComputeFuture<'db, V> + Send + Sync + 'static,
     ) -> Self {
         Self {
             kind,

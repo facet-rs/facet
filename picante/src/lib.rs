@@ -1,6 +1,53 @@
 #![warn(missing_docs)]
 
-//! Picante: an async incremental query runtime.
+//! Picante is an async incremental query runtime, inspired by Salsa but designed for Tokio-first
+//! pipelines.
+//!
+//! Picante provides:
+//!
+//! - Inputs via [`InputIngredient`]
+//! - Async derived queries via [`DerivedIngredient`]
+//! - Dependency tracking via Tokio task-local frames
+//! - Snapshot persistence via [`persist`] (using `facet` + `facet-postcard`, **no serde**)
+//!
+//! ## Minimal example
+//!
+//! ```no_run
+//! use picante::{DerivedIngredient, HasRuntime, InputIngredient, QueryKindId, Runtime};
+//! use std::sync::Arc;
+//!
+//! #[derive(Default)]
+//! struct Db {
+//!     runtime: Runtime,
+//! }
+//!
+//! impl HasRuntime for Db {
+//!     fn runtime(&self) -> &Runtime {
+//!         &self.runtime
+//!     }
+//! }
+//!
+//! # #[tokio::main(flavor = "current_thread")]
+//! # async fn main() -> picante::PicanteResult<()> {
+//! let text: Arc<InputIngredient<String, String>> =
+//!     Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
+//!
+//! let len: Arc<DerivedIngredient<Db, String, u64>> = {
+//!     let text = text.clone();
+//!     Arc::new(DerivedIngredient::new(QueryKindId(2), "Len", move |db, key| {
+//!         let text = text.clone();
+//!         Box::pin(async move {
+//!             let s = text.get(db, &key)?.unwrap_or_default();
+//!             Ok(s.len() as u64)
+//!         })
+//!     }))
+//! };
+//!
+//! let db = Db::default();
+//! text.set(&db, "a".into(), "hello".into());
+//! assert_eq!(len.get(&db, "a".into()).await?, 5);
+//! # Ok(()) }
+//! ```
 
 pub mod error;
 pub mod frame;
@@ -14,4 +61,4 @@ pub use error::{PicanteError, PicanteResult};
 pub use ingredient::{DerivedIngredient, InputIngredient};
 pub use key::{Dep, DynKey, Key, QueryKindId};
 pub use revision::Revision;
-pub use runtime::{HasRuntime, Runtime};
+pub use runtime::{HasRuntime, Runtime, RuntimeEvent};
