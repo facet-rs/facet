@@ -1,4 +1,5 @@
 #![warn(missing_docs)]
+#![doc = include_str!("../../../README.md")]
 
 //! Picante is an async incremental query runtime, inspired by Salsa but designed for Tokio-first
 //! pipelines.

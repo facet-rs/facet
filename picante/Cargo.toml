@@ -8,6 +8,7 @@ authors = ["Amos Wenger <amos@bearcove.eu>"]
 description = "An async incremental query runtime"
 repository = "https://github.com/bearcove/picante"
 homepage = "https://github.com/bearcove/picante"
+readme = "../../README.md"
 
 [dependencies]
 dashmap.workspace = true

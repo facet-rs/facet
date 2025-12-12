@@ -3,11 +3,11 @@ title = "picante"
 description = "An async incremental query runtime (Tokio-first Salsa alternative)"
 +++
 
-Picante is an async incremental query runtime for Rust.
+picante is an async incremental query runtime for Rust.
 
-It’s motivated by **Dodeca’s** main use-case: a large query graph where many nodes want to do async I/O (reading files, calling plugins, spawning work) while still benefiting from memoization, dependency tracking, and persistence across restarts.
+It's motivated by **Dodeca's** main use-case: a large query graph where many nodes want to do async I/O (reading files, calling plugins, spawning work) while still benefiting from memoization, dependency tracking, and persistence across restarts.
 
-Picante provides:
+picante provides:
 
 - **Inputs** (`InputIngredient<K, V>`)
 - **Derived** async queries (`DerivedIngredient<DB, K, V>`)
@@ -33,8 +33,8 @@ impl HasRuntime for Db {
     }
 }
 
-# #[tokio::main]
-# async fn main() -> picante::PicanteResult<()> {
+#[tokio::main]
+#async fn main() -> picante::PicanteResult<()> {
 let text: Arc<InputIngredient<String, String>> =
     Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
 
