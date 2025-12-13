@@ -5,7 +5,7 @@ use crate::key::{Dep, DynKey, Key, QueryKindId};
 use crate::persist::{PersistableIngredient, SectionType};
 use crate::revision::Revision;
 use dashmap::DashMap;
-use facet::Facet;
+use facet::{Def, Facet, KnownPointer, PtrConst};
 use facet_assert::{Sameness, check_same};
 use futures::FutureExt;
 use futures::future::BoxFuture;
@@ -20,6 +20,32 @@ type ComputeFn<DB, K, V> = dyn for<'db> Fn(&'db DB, K) -> ComputeFuture<'db, V> 
 struct AccessResult<V> {
     value: Option<V>,
     changed_at: Revision,
+}
+
+#[inline]
+fn is_same_known_pointer_allocation<V: Facet<'static>>(left: &V, right: &V) -> bool {
+    let Def::Pointer(pointer_def) = V::SHAPE.def else {
+        return false;
+    };
+
+    match pointer_def.known {
+        Some(KnownPointer::Arc | KnownPointer::Rc | KnownPointer::Box) => {}
+        _ => return false,
+    };
+
+    let Some(borrow_fn) = pointer_def.vtable.borrow_fn else {
+        return false;
+    };
+
+    let left_ptr = PtrConst::new_sized(left as *const V);
+    let right_ptr = PtrConst::new_sized(right as *const V);
+
+    // SAFETY: `left_ptr`/`right_ptr` are valid `*const V` pointers, and `borrow_fn` is only
+    // invoked for Facet-known pointer types (`Arc`/`Rc`/`Box`) where `borrow_fn` is present.
+    let left_pointee = unsafe { borrow_fn(left_ptr) };
+    let right_pointee = unsafe { borrow_fn(right_ptr) };
+
+    left_pointee.raw_ptr() == right_pointee.raw_ptr()
 }
 
 /// A memoized async derived query ingredient.
@@ -273,10 +299,9 @@ where
                 Ok(Ok(out)) => {
                     let changed_at = match prev {
                         Some((prev_value, prev_changed_at)) => {
-                            match check_same(&prev_value, &out) {
-                                Sameness::Same => prev_changed_at,
-                                _ => rev,
-                            }
+                            let is_same = is_same_known_pointer_allocation(&prev_value, &out)
+                                || matches!(check_same(&prev_value, &out), Sameness::Same);
+                            if is_same { prev_changed_at } else { rev }
                         }
                         None => rev,
                     };

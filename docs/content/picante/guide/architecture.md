@@ -5,17 +5,27 @@ weight = 3
 
 picante is intentionally layered:
 
-1. **Runtime** (`Runtime`): owns the global `Revision` counter and event channels.
-2. **Execution frames** (`frame`): Tokio task-local stack frames that record dependencies and detect cycles.
-3. **Ingredients**: storage and logic for each query kind (currently: input + derived).
+1. **Runtime** (`Runtime`): owns the global `Revision` counter, dependency graphs, and event channels.
+2. **Execution frames** (`frame`): tokio task-local stack frames that record dependencies and detect cycles.
+3. **Ingredients**: storage and logic for each query kind (input, derived, interned).
 
-## Revisions and invalidation
+## Revisions and change tracking
 
-picante v1 uses a single monotonically increasing `Revision`.
+picante uses a monotonically increasing `Revision` as a logical clock. Each cached value tracks two revisions:
 
-- Any input update bumps the revision.
-- Memoized derived values are tagged with the revision they were computed for.
-- If a caller asks for a value at revision `Rnew`, a value computed at `Rold != Rnew` is considered stale and will be recomputed.
+- **`verified_at`**: when we last checked if the value is still valid
+- **`changed_at`**: when the value actually changed (may be older than `verified_at`)
+
+This distinction enables **early cutoff**: if a query recomputes and produces the same result, `changed_at` stays the same. Downstream queries see that their dep's `changed_at` hasn't advanced, so they don't need to recompute.
+
+## Dependency tracking
+
+picante maintains both forward and reverse dependency graphs:
+
+- **Forward deps**: each derived query records which keys it read during computation
+- **Reverse deps**: maps each key to the set of queries that depend on it
+
+When an input changes, `propagate_invalidation()` walks the reverse dep graph to find all affected queries. Only those queries need revalidation — everything else is untouched.
 
 ## Derived queries (single-flight)
 
