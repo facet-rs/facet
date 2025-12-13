@@ -1592,11 +1592,13 @@ name = "facet-format-suite"
 version = "0.32.2"
 dependencies = [
  "arborium",
+ "bytes",
  "camino",
  "chrono",
  "facet",
  "facet-assert",
  "facet-pretty",
+ "facet-value",
  "indoc",
  "jiff",
  "ordered-float 5.1.0",

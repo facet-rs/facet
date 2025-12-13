@@ -643,6 +643,48 @@ impl FormatSuite for JsonSlice {
         CaseSpec::from_str(r#"{"alarm_time":"12:34:56"}"#)
             .without_roundtrip("opaque type serialization not yet supported")
     }
+
+    // ── Bytes crate cases ──
+
+    fn bytes_bytes() -> CaseSpec {
+        CaseSpec::from_str(r#"{"data":[1,2,3,4,255]}"#)
+    }
+
+    fn bytes_bytes_mut() -> CaseSpec {
+        CaseSpec::from_str(r#"{"data":[1,2,3,4,255]}"#)
+    }
+
+    // ── Dynamic value cases ──
+    // NOTE: facet_value::Value uses DynamicValue def which requires specialized handling
+    // in the deserializer. The format deserializer doesn't support this yet.
+
+    fn value_null() -> CaseSpec {
+        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+    }
+
+    fn value_bool() -> CaseSpec {
+        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+    }
+
+    fn value_integer() -> CaseSpec {
+        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+    }
+
+    fn value_float() -> CaseSpec {
+        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+    }
+
+    fn value_string() -> CaseSpec {
+        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+    }
+
+    fn value_array() -> CaseSpec {
+        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+    }
+
+    fn value_object() -> CaseSpec {
+        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+    }
 }
 
 fn main() {

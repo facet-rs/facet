@@ -347,6 +347,46 @@ pub trait FormatSuite {
     /// Case: chrono::NaiveTime type.
     #[cfg(feature = "chrono")]
     fn chrono_naive_time() -> CaseSpec;
+
+    // ── Bytes crate tests ──
+
+    /// Case: `bytes::Bytes` type.
+    #[cfg(feature = "bytes")]
+    fn bytes_bytes() -> CaseSpec;
+
+    /// Case: `bytes::BytesMut` type.
+    #[cfg(feature = "bytes")]
+    fn bytes_bytes_mut() -> CaseSpec;
+
+    // ── Dynamic value tests ──
+
+    /// Case: `facet_value::Value` dynamic type - null.
+    #[cfg(feature = "facet-value")]
+    fn value_null() -> CaseSpec;
+
+    /// Case: `facet_value::Value` dynamic type - bool.
+    #[cfg(feature = "facet-value")]
+    fn value_bool() -> CaseSpec;
+
+    /// Case: `facet_value::Value` dynamic type - integer.
+    #[cfg(feature = "facet-value")]
+    fn value_integer() -> CaseSpec;
+
+    /// Case: `facet_value::Value` dynamic type - float.
+    #[cfg(feature = "facet-value")]
+    fn value_float() -> CaseSpec;
+
+    /// Case: `facet_value::Value` dynamic type - string.
+    #[cfg(feature = "facet-value")]
+    fn value_string() -> CaseSpec;
+
+    /// Case: `facet_value::Value` dynamic type - array.
+    #[cfg(feature = "facet-value")]
+    fn value_array() -> CaseSpec;
+
+    /// Case: `facet_value::Value` dynamic type - object.
+    #[cfg(feature = "facet-value")]
+    fn value_object() -> CaseSpec;
 }
 
 /// Execute suite cases; kept for convenience, but formats should register each
@@ -582,6 +622,26 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, ChronoNaiveDateWrapper>(&CASE_CHRONO_NAIVE_DATE, S::chrono_naive_date),
         #[cfg(feature = "chrono")]
         SuiteCase::new::<S, ChronoNaiveTimeWrapper>(&CASE_CHRONO_NAIVE_TIME, S::chrono_naive_time),
+        // Bytes crate cases
+        #[cfg(feature = "bytes")]
+        SuiteCase::new::<S, BytesBytesWrapper>(&CASE_BYTES_BYTES, S::bytes_bytes),
+        #[cfg(feature = "bytes")]
+        SuiteCase::new::<S, BytesBytesMutWrapper>(&CASE_BYTES_BYTES_MUT, S::bytes_bytes_mut),
+        // Dynamic value cases
+        #[cfg(feature = "facet-value")]
+        SuiteCase::new::<S, facet_value::Value>(&CASE_VALUE_NULL, S::value_null),
+        #[cfg(feature = "facet-value")]
+        SuiteCase::new::<S, facet_value::Value>(&CASE_VALUE_BOOL, S::value_bool),
+        #[cfg(feature = "facet-value")]
+        SuiteCase::new::<S, facet_value::Value>(&CASE_VALUE_INTEGER, S::value_integer),
+        #[cfg(feature = "facet-value")]
+        SuiteCase::new::<S, facet_value::Value>(&CASE_VALUE_FLOAT, S::value_float),
+        #[cfg(feature = "facet-value")]
+        SuiteCase::new::<S, facet_value::Value>(&CASE_VALUE_STRING, S::value_string),
+        #[cfg(feature = "facet-value")]
+        SuiteCase::new::<S, facet_value::Value>(&CASE_VALUE_ARRAY, S::value_array),
+        #[cfg(feature = "facet-value")]
+        SuiteCase::new::<S, facet_value::Value>(&CASE_VALUE_OBJECT, S::value_object),
     ]
 }
 
@@ -2530,6 +2590,89 @@ const CASE_CHRONO_NAIVE_TIME: CaseDescriptor<ChronoNaiveTimeWrapper> = CaseDescr
     },
 };
 
+// ── Bytes crate case descriptors ──
+
+#[cfg(feature = "bytes")]
+const CASE_BYTES_BYTES: CaseDescriptor<BytesBytesWrapper> = CaseDescriptor {
+    id: "third_party::bytes_bytes",
+    description: "bytes::Bytes type",
+    expected: || BytesBytesWrapper {
+        data: bytes::Bytes::from_static(&[1, 2, 3, 4, 255]),
+    },
+};
+
+#[cfg(feature = "bytes")]
+const CASE_BYTES_BYTES_MUT: CaseDescriptor<BytesBytesMutWrapper> = CaseDescriptor {
+    id: "third_party::bytes_bytes_mut",
+    description: "bytes::BytesMut type",
+    expected: || BytesBytesMutWrapper {
+        data: bytes::BytesMut::from(&[1, 2, 3, 4, 255][..]),
+    },
+};
+
+// ── Dynamic value case descriptors ──
+
+#[cfg(feature = "facet-value")]
+const CASE_VALUE_NULL: CaseDescriptor<facet_value::Value> = CaseDescriptor {
+    id: "value::null",
+    description: "facet_value::Value - null",
+    expected: || facet_value::Value::NULL,
+};
+
+#[cfg(feature = "facet-value")]
+const CASE_VALUE_BOOL: CaseDescriptor<facet_value::Value> = CaseDescriptor {
+    id: "value::bool",
+    description: "facet_value::Value - bool",
+    expected: || facet_value::Value::TRUE,
+};
+
+#[cfg(feature = "facet-value")]
+const CASE_VALUE_INTEGER: CaseDescriptor<facet_value::Value> = CaseDescriptor {
+    id: "value::integer",
+    description: "facet_value::Value - integer",
+    expected: || facet_value::Value::from(42i64),
+};
+
+#[cfg(feature = "facet-value")]
+const CASE_VALUE_FLOAT: CaseDescriptor<facet_value::Value> = CaseDescriptor {
+    id: "value::float",
+    description: "facet_value::Value - float",
+    expected: || facet_value::Value::from(2.5f64),
+};
+
+#[cfg(feature = "facet-value")]
+const CASE_VALUE_STRING: CaseDescriptor<facet_value::Value> = CaseDescriptor {
+    id: "value::string",
+    description: "facet_value::Value - string",
+    expected: || facet_value::Value::from("hello world"),
+};
+
+#[cfg(feature = "facet-value")]
+const CASE_VALUE_ARRAY: CaseDescriptor<facet_value::Value> = CaseDescriptor {
+    id: "value::array",
+    description: "facet_value::Value - array",
+    expected: || {
+        facet_value::VArray::from_iter([
+            facet_value::Value::from(1i64),
+            facet_value::Value::from(2i64),
+            facet_value::Value::from(3i64),
+        ])
+        .into()
+    },
+};
+
+#[cfg(feature = "facet-value")]
+const CASE_VALUE_OBJECT: CaseDescriptor<facet_value::Value> = CaseDescriptor {
+    id: "value::object",
+    description: "facet_value::Value - object",
+    expected: || {
+        let mut map = facet_value::VObject::new();
+        map.insert("name", facet_value::Value::from("test"));
+        map.insert("count", facet_value::Value::from(42i64));
+        map.into()
+    },
+};
+
 // ── Third-party type test fixtures ──
 
 /// Fixture for uuid::Uuid test.
@@ -2607,6 +2750,22 @@ pub struct ChronoNaiveDateWrapper {
 #[derive(Facet, Debug, Clone, PartialEq)]
 pub struct ChronoNaiveTimeWrapper {
     pub alarm_time: chrono::NaiveTime,
+}
+
+// ── Bytes crate test fixtures ──
+
+/// Fixture for `bytes::Bytes` test.
+#[cfg(feature = "bytes")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct BytesBytesWrapper {
+    pub data: bytes::Bytes,
+}
+
+/// Fixture for `bytes::BytesMut` test.
+#[cfg(feature = "bytes")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct BytesBytesMutWrapper {
+    pub data: bytes::BytesMut,
 }
 
 fn emit_case_showcase<S, T>(
