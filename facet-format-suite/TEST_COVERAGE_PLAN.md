@@ -14,7 +14,7 @@ to achieve comprehensive coverage of the **format abstraction layer**.
 3. **Focus on semantic behavior**: Test how attributes affect deserialization, type
    construction paths, error handling, and feature interactions.
 
-## Current Coverage (65 test cases)
+## Current Coverage (71 test cases)
 
 ✅ Basic types (structs, sequences, enums, scalars, collections)
 ✅ Core attributes (rename, default, skip, alias, transparent)
@@ -22,6 +22,8 @@ to achieve comprehensive coverage of the **format abstraction layer**.
 ✅ Enum tagging (unit, complex, internally/adjacently tagged, untagged)
 ✅ Collections (maps, tuples, sets, arrays)
 ✅ Third-party types (uuid, ulid, camino, ordered_float, time, jiff, chrono)
+✅ Error cases (type mismatches, missing fields, unknown fields)
+✅ Attribute precedence (rename vs alias, rename_all variations)
 
 ## High Priority Additions (~15-20 tests)
 
@@ -72,17 +74,18 @@ to achieve comprehensive coverage of the **format abstraction layer**.
 
 ### Error Cases (semantic level)
 
-- [ ] `error_type_mismatch_string_to_int` - Semantic type error (not parse error)
-- [ ] `error_type_mismatch_object_to_array` - Structure mismatch
-- [ ] `error_missing_required_field` - Non-optional field missing
-- [ ] `deny_unknown_fields_behavior` - Verify rejection works correctly
+- [x] `error_type_mismatch_string_to_int` - Semantic type error (JSON/XML)
+- [x] `error_type_mismatch_object_to_array` - Structure mismatch (JSON/XML)
+- [x] `error_missing_required_field` - Non-optional field missing (JSON/XML)
+- [x] `deny_unknown_fields` - Verify rejection works correctly (JSON/XML)
 
 **Rationale**: Tests error reporting at the format layer, not parser errors.
 
 ### Attribute Precedence
 
-- [ ] `rename_vs_alias_precedence` - When both are present, rename wins
-- [ ] `rename_all_variations` - kebab-case, SCREAMING_SNAKE_CASE coverage
+- [x] `rename_vs_alias_precedence` - When both are present, rename wins (JSON/XML)
+- [x] `rename_all_kebab` - kebab-case coverage (JSON/XML)
+- [x] `rename_all_screaming` - SCREAMING_SNAKE_CASE coverage (JSON/XML)
 
 **Rationale**: Tests attribute interaction and precedence rules.
 
