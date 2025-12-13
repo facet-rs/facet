@@ -5,26 +5,35 @@ use crate::key::{Dep, Key, QueryKindId};
 use crate::persist::{PersistableIngredient, SectionType};
 use crate::revision::Revision;
 use crate::runtime::HasRuntime;
-use dashmap::DashMap;
 use facet::Facet;
 use facet_assert::check_same_report;
 use futures::future::BoxFuture;
+use parking_lot::RwLock;
 use std::hash::Hash;
 use std::sync::Arc;
 use tracing::{debug, trace};
 
-struct InputEntry<V> {
-    value: Option<V>,
-    changed_at: Revision,
+/// Entry in an input ingredient, containing the value and its change revision.
+#[derive(Clone)]
+pub struct InputEntry<V> {
+    /// The value, or None if removed.
+    pub value: Option<V>,
+    /// The revision at which this entry was last changed.
+    pub changed_at: Revision,
 }
 
 /// A key-value input ingredient.
 ///
 /// Reads record dependencies into the current query frame (if one exists).
-pub struct InputIngredient<K, V> {
+/// Uses `im::HashMap` internally for O(1) snapshot cloning via structural sharing.
+pub struct InputIngredient<K, V>
+where
+    K: Clone + Eq + Hash,
+    V: Clone,
+{
     kind: QueryKindId,
     kind_name: &'static str,
-    entries: DashMap<K, InputEntry<V>>,
+    entries: RwLock<im::HashMap<K, InputEntry<V>>>,
 }
 
 impl<K, V> InputIngredient<K, V>
@@ -37,7 +46,7 @@ where
         Self {
             kind,
             kind_name,
-            entries: DashMap::new(),
+            entries: RwLock::new(im::HashMap::new()),
         }
     }
 
@@ -56,27 +65,35 @@ where
     /// Bumps the runtime revision only if the value actually changed.
     #[tracing::instrument(level = "debug", skip_all, fields(kind = self.kind.0))]
     pub fn set<DB: HasRuntime>(&self, db: &DB, key: K, value: V) -> Revision {
-        if let Some(existing) = self.entries.get(&key)
-            && let Some(existing_value) = existing.value.as_ref()
-            && check_same_report(existing_value, &value).is_same()
+        // Check if value is unchanged (read lock)
         {
-            trace!(
-                kind = self.kind.0,
-                changed_at = existing.changed_at.0,
-                "input set no-op (same value)"
-            );
-            return existing.changed_at;
+            let entries = self.entries.read();
+            if let Some(existing) = entries.get(&key)
+                && let Some(existing_value) = existing.value.as_ref()
+                && check_same_report(existing_value, &value).is_same()
+            {
+                trace!(
+                    kind = self.kind.0,
+                    changed_at = existing.changed_at.0,
+                    "input set no-op (same value)"
+                );
+                return existing.changed_at;
+            }
         }
 
+        // Value changed, take write lock
         let encoded_key = Key::encode_facet(&key).ok();
         let rev = db.runtime().bump_revision();
-        self.entries.insert(
-            key,
-            InputEntry {
-                value: Some(value),
-                changed_at: rev,
-            },
-        );
+        {
+            let mut entries = self.entries.write();
+            entries.insert(
+                key,
+                InputEntry {
+                    value: Some(value),
+                    changed_at: rev,
+                },
+            );
+        }
         if let Some(encoded_key) = encoded_key {
             db.runtime().notify_input_set(rev, self.kind, encoded_key);
         }
@@ -88,31 +105,39 @@ where
     /// Bumps the runtime revision only if the value existed.
     #[tracing::instrument(level = "debug", skip_all, fields(kind = self.kind.0))]
     pub fn remove<DB: HasRuntime>(&self, db: &DB, key: &K) -> Revision {
-        match self.entries.get(key) {
-            Some(existing) if existing.value.is_none() => {
-                trace!(
-                    kind = self.kind.0,
-                    changed_at = existing.changed_at.0,
-                    "input remove no-op (already removed)"
-                );
-                return existing.changed_at;
+        // Check current state (read lock)
+        {
+            let entries = self.entries.read();
+            match entries.get(key) {
+                Some(existing) if existing.value.is_none() => {
+                    trace!(
+                        kind = self.kind.0,
+                        changed_at = existing.changed_at.0,
+                        "input remove no-op (already removed)"
+                    );
+                    return existing.changed_at;
+                }
+                None => {
+                    trace!(kind = self.kind.0, "input remove no-op (missing)");
+                    return Revision(0);
+                }
+                _ => {}
             }
-            None => {
-                trace!(kind = self.kind.0, "input remove no-op (missing)");
-                return Revision(0);
-            }
-            _ => {}
         }
 
+        // Need to remove, take write lock
         let encoded_key = Key::encode_facet(key).ok();
         let rev = db.runtime().bump_revision();
-        self.entries.insert(
-            key.clone(),
-            InputEntry {
-                value: None,
-                changed_at: rev,
-            },
-        );
+        {
+            let mut entries = self.entries.write();
+            entries.insert(
+                key.clone(),
+                InputEntry {
+                    value: None,
+                    changed_at: rev,
+                },
+            );
+        }
         if let Some(encoded_key) = encoded_key {
             db.runtime()
                 .notify_input_removed(rev, self.kind, encoded_key);
@@ -126,20 +151,47 @@ where
     #[tracing::instrument(level = "trace", skip_all, fields(kind = self.kind.0))]
     pub fn get<DB: HasRuntime>(&self, _db: &DB, key: &K) -> PicanteResult<Option<V>> {
         if frame::has_active_frame() {
-            let key = Key::encode_facet(key)?;
-            trace!(kind = self.kind.0, key_hash = %format!("{:016x}", key.hash()), "input dep");
+            let encoded_key = Key::encode_facet(key)?;
+            trace!(kind = self.kind.0, key_hash = %format!("{:016x}", encoded_key.hash()), "input dep");
             frame::record_dep(Dep {
                 kind: self.kind,
-                key,
+                key: encoded_key,
             });
         }
 
-        Ok(self.entries.get(key).and_then(|e| e.value.clone()))
+        let entries = self.entries.read();
+        Ok(entries.get(key).and_then(|e| e.value.clone()))
     }
 
     /// The last revision at which this input was changed.
     pub fn changed_at(&self, key: &K) -> Option<Revision> {
-        self.entries.get(key).map(|e| e.changed_at)
+        let entries = self.entries.read();
+        entries.get(key).map(|e| e.changed_at)
+    }
+
+    /// Create a snapshot of this ingredient's data.
+    ///
+    /// This is an O(1) operation due to structural sharing in `im::HashMap`.
+    /// The returned map is immutable and can be used for consistent reads
+    /// while the live ingredient continues to be modified.
+    pub fn snapshot(&self) -> im::HashMap<K, InputEntry<V>> {
+        self.entries.read().clone()
+    }
+
+    /// Create a new ingredient initialized from a snapshot.
+    ///
+    /// This is used when creating database snapshots. The returned ingredient
+    /// contains the same data as the snapshot but is independent of the original.
+    pub fn new_from_snapshot(
+        kind: QueryKindId,
+        kind_name: &'static str,
+        entries: im::HashMap<K, InputEntry<V>>,
+    ) -> Self {
+        Self {
+            kind,
+            kind_name,
+            entries: RwLock::new(entries),
+        }
     }
 }
 
@@ -168,17 +220,19 @@ where
     }
 
     fn clear(&self) {
-        self.entries.clear();
+        let mut entries = self.entries.write();
+        *entries = im::HashMap::new();
     }
 
     fn save_records(&self) -> BoxFuture<'_, PicanteResult<Vec<Vec<u8>>>> {
         Box::pin(async move {
-            let mut records = Vec::with_capacity(self.entries.len());
-            for entry in self.entries.iter() {
+            let entries = self.entries.read();
+            let mut records = Vec::with_capacity(entries.len());
+            for (key, entry) in entries.iter() {
                 let rec = InputRecord::<K, V> {
-                    key: entry.key().clone(),
-                    value: entry.value().value.clone(),
-                    changed_at: entry.value().changed_at.0,
+                    key: key.clone(),
+                    value: entry.value.clone(),
+                    changed_at: entry.changed_at.0,
                 };
                 let bytes = facet_postcard::to_vec(&rec).map_err(|e| {
                     Arc::new(PicanteError::Encode {
@@ -198,6 +252,7 @@ where
     }
 
     fn load_records(&self, records: Vec<Vec<u8>>) -> PicanteResult<()> {
+        let mut entries = self.entries.write();
         for bytes in records {
             let rec: InputRecord<K, V> = facet_postcard::from_slice(&bytes).map_err(|e| {
                 Arc::new(PicanteError::Decode {
@@ -205,7 +260,7 @@ where
                     message: format!("{e:?}"),
                 })
             })?;
-            self.entries.insert(
+            entries.insert(
                 rec.key,
                 InputEntry {
                     value: rec.value,
@@ -226,8 +281,8 @@ where
     fn touch<'a>(&'a self, _db: &'a DB, key: Key) -> BoxFuture<'a, PicanteResult<Touch>> {
         Box::pin(async move {
             let key: K = key.decode_facet()?;
-            let changed_at = self
-                .entries
+            let entries = self.entries.read();
+            let changed_at = entries
                 .get(&key)
                 .map(|e| e.changed_at)
                 .unwrap_or(Revision(0));

@@ -373,6 +373,199 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         impl #db_trait_name for #db_name {}
     };
 
+    // === Generate Snapshot struct and implementations ===
+
+    let snapshot_name = format_ident!("{}Snapshot", db_name);
+
+    // Snapshot fields (same as db, but without custom fields)
+    let mut snapshot_fields = Vec::<TokenStream2>::new();
+    let mut snapshot_inits = Vec::<TokenStream2>::new();
+    let mut snapshot_trait_impls = Vec::<TokenStream2>::new();
+
+    // Inputs: snapshot the data, share the keys (interned)
+    for input in &args.inputs {
+        let entity = &input.name;
+        let entity_snake = snake_ident(entity);
+
+        let keys_field = format_ident!("{entity_snake}_keys_ingredient");
+        let data_field = format_ident!("{entity_snake}_data_ingredient");
+
+        let keys_ty_ident = format_ident!("{entity}KeysIngredient");
+        let data_ty_ident = format_ident!("{entity}DataIngredient");
+        let has_trait_ident = format_ident!("Has{entity}Ingredient");
+
+        let keys_ty = input.qualify(&keys_ty_ident);
+        let data_ty = input.qualify(&data_ty_ident);
+        let has_trait = input.qualify(&has_trait_ident);
+
+        let _make_data_ident = format_ident!("make_{entity_snake}_data");
+
+        snapshot_fields.push(quote! {
+            #keys_field: ::std::sync::Arc<#keys_ty>,
+            #data_field: ::std::sync::Arc<#data_ty>,
+        });
+
+        // Keys are shared (interned, append-only), data is snapshotted
+        snapshot_inits.push(quote! {
+            #keys_field: db.#keys_field.clone(),
+            #data_field: {
+                let snapshot_data = db.#data_field.snapshot();
+                ::std::sync::Arc::new(picante::InputIngredient::new_from_snapshot(
+                    db.#data_field.kind(),
+                    db.#data_field.kind_name(),
+                    snapshot_data,
+                ))
+            },
+        });
+
+        let keys_method = format_ident!("{entity_snake}_keys");
+        let data_method = format_ident!("{entity_snake}_data");
+
+        snapshot_trait_impls.push(quote! {
+            impl #has_trait for #snapshot_name {
+                fn #keys_method(&self) -> &#keys_ty {
+                    &self.#keys_field
+                }
+
+                fn #data_method(&self) -> &#data_ty {
+                    &self.#data_field
+                }
+            }
+        });
+    }
+
+    // Interned: share the Arc (append-only, stable)
+    for interned in &args.interned {
+        let entity = &interned.name;
+        let entity_snake = snake_ident(entity);
+
+        let field = format_ident!("{entity_snake}_ingredient");
+
+        let ingredient_ty_ident = format_ident!("{entity}Ingredient");
+        let has_trait_ident = format_ident!("Has{entity}Ingredient");
+
+        let ingredient_ty = interned.qualify(&ingredient_ty_ident);
+        let has_trait = interned.qualify(&has_trait_ident);
+
+        snapshot_fields.push(quote! {
+            #field: ::std::sync::Arc<#ingredient_ty>,
+        });
+
+        // Share the Arc directly (interned values are append-only)
+        snapshot_inits.push(quote! {
+            #field: db.#field.clone(),
+        });
+
+        let accessor = format_ident!("{entity_snake}_ingredient");
+
+        snapshot_trait_impls.push(quote! {
+            impl #has_trait for #snapshot_name {
+                fn #accessor(&self) -> &#ingredient_ty {
+                    &self.#field
+                }
+            }
+        });
+    }
+
+    // Tracked: create new DerivedIngredient with snapshotted cells
+    for tracked in &args.tracked {
+        let func = &tracked.name;
+        let func_snake = snake_ident(func);
+        let field = func_snake.clone();
+
+        let pascal = pascal_ident(func);
+        let query_ty_ident = format_ident!("{pascal}Query");
+        let has_trait_ident = format_ident!("Has{pascal}Query");
+
+        let query_ty = tracked.qualify(&query_ty_ident);
+        let has_trait = tracked.qualify(&has_trait_ident);
+
+        let getter = format_ident!("{func_snake}_query");
+        let make_ident = format_ident!("make_{func_snake}_query");
+        let make_fn = tracked.qualify(&make_ident);
+
+        snapshot_fields.push(quote! {
+            #field: ::std::sync::Arc<#query_ty<#snapshot_name>>,
+        });
+
+        // Create new DerivedIngredient and load deep-cloned cells
+        snapshot_inits.push(quote! {
+            #field: {
+                let cells = db.#field.snapshot_cells_deep().await;
+                let ingredient = #make_fn::<#snapshot_name>();
+                ingredient.load_cells(cells);
+                ingredient
+            },
+        });
+
+        snapshot_trait_impls.push(quote! {
+            impl #has_trait for #snapshot_name {
+                fn #getter(&self) -> &#query_ty<Self> {
+                    &self.#field
+                }
+            }
+        });
+    }
+
+    let snapshot_def = quote! {
+        /// A point-in-time snapshot of the database.
+        ///
+        /// Snapshots share structure with the original database via `im::HashMap`,
+        /// making them cheap to create (O(1)). Queries can be executed against
+        /// a snapshot to get results as of the snapshot time.
+        ///
+        /// Snapshots are read-only views. While the ingredient methods technically
+        /// allow mutations, modifying a snapshot is not supported and may cause
+        /// unexpected behavior.
+        #vis struct #snapshot_name {
+            runtime: picante::Runtime,
+            ingredients: picante::IngredientRegistry<#snapshot_name>,
+            #(#snapshot_fields)*
+        }
+
+        impl #snapshot_name {
+            /// Create a snapshot from a database.
+            ///
+            /// This captures the current state of all inputs and cached query results.
+            /// Input data uses O(1) structural sharing via `im::HashMap`.
+            /// Cached query results are deep-cloned to ensure snapshot independence.
+            #vis async fn from_database(db: &#db_name) -> Self {
+                let runtime = picante::Runtime::new();
+                // Set the snapshot's revision to match the database's current revision.
+                // This ensures cached query results (which have verified_at from the db's revision)
+                // are considered valid in the snapshot.
+                runtime.set_current_revision(picante::HasRuntime::runtime(db).current_revision());
+                let ingredients = picante::IngredientRegistry::new();
+
+                let snapshot = Self {
+                    runtime,
+                    ingredients,
+                    #(#snapshot_inits)*
+                };
+
+                snapshot
+            }
+        }
+
+        impl picante::HasRuntime for #snapshot_name {
+            fn runtime(&self) -> &picante::Runtime {
+                &self.runtime
+            }
+        }
+
+        impl picante::IngredientLookup for #snapshot_name {
+            fn ingredient(&self, kind: picante::QueryKindId) -> Option<&dyn picante::DynIngredient<Self>> {
+                // Snapshots don't support dynamic ingredient lookup yet
+                // This could be added if needed
+                None
+            }
+        }
+
+        #(#snapshot_trait_impls)*
+
+        impl #db_trait_name for #snapshot_name {}
+    };
+
     let expanded = quote! {
         #(#struct_attrs)*
         #vis struct #db_name {
@@ -419,6 +612,8 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         #(#trait_impls)*
 
         #db_trait_def
+
+        #snapshot_def
     };
 
     expanded.into()

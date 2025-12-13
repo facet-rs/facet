@@ -4,11 +4,11 @@ use crate::frame::{self, ActiveFrameHandle};
 use crate::key::{Dep, DynKey, Key, QueryKindId};
 use crate::persist::{PersistableIngredient, SectionType};
 use crate::revision::Revision;
-use dashmap::DashMap;
 use facet::{Def, Facet, KnownPointer, PtrConst};
 use facet_assert::{Sameness, check_same};
 use futures::FutureExt;
 use futures::future::BoxFuture;
+use parking_lot::RwLock;
 use std::hash::Hash;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
@@ -49,10 +49,15 @@ fn is_same_known_pointer_allocation<V: Facet<'static>>(left: &V, right: &V) -> b
 }
 
 /// A memoized async derived query ingredient.
-pub struct DerivedIngredient<DB, K, V> {
+///
+/// Uses `im::HashMap` internally for O(1) snapshot cloning via structural sharing.
+pub struct DerivedIngredient<DB, K, V>
+where
+    K: Clone + Eq + Hash,
+{
     kind: QueryKindId,
     kind_name: &'static str,
-    cells: DashMap<K, Arc<Cell<V>>>,
+    cells: RwLock<im::HashMap<K, Arc<Cell<V>>>>,
     compute: Arc<ComputeFn<DB, K, V>>,
 }
 
@@ -71,7 +76,7 @@ where
         Self {
             kind,
             kind_name,
-            cells: DashMap::new(),
+            cells: RwLock::new(im::HashMap::new()),
             compute: Arc::new(compute),
         }
     }
@@ -136,11 +141,20 @@ where
             });
         }
 
-        let cell = self
-            .cells
-            .entry(key.clone())
-            .or_insert_with(|| Arc::new(Cell::new()))
-            .clone();
+        // Get or create the cell for this key
+        let cell = {
+            // Fast path: read lock
+            if let Some(cell) = self.cells.read().get(&key) {
+                cell.clone()
+            } else {
+                // Slow path: write lock, double-check
+                let mut cells = self.cells.write();
+                cells
+                    .entry(key.clone())
+                    .or_insert_with(|| Arc::new(Cell::new()))
+                    .clone()
+            }
+        };
 
         loop {
             let rev = db.runtime().current_revision();
@@ -420,9 +434,70 @@ where
 
         Ok(true)
     }
+
+    /// Create a snapshot of this ingredient's cells.
+    ///
+    /// This is an O(1) operation due to structural sharing in `im::HashMap`.
+    /// The returned map shares structure with the live ingredient.
+    pub fn snapshot(&self) -> im::HashMap<K, Arc<Cell<V>>> {
+        self.cells.read().clone()
+    }
+
+    /// Load cells from a snapshot into this ingredient.
+    ///
+    /// This is used when creating database snapshots. Existing cells are replaced.
+    pub fn load_cells(&self, cells: im::HashMap<K, Arc<Cell<V>>>) {
+        *self.cells.write() = cells;
+    }
+
+    /// Create a deep snapshot of this ingredient's cells.
+    ///
+    /// Unlike `snapshot()` which shares `Arc<Cell>` references, this method
+    /// creates new `Cell` instances with cloned Ready states. This ensures
+    /// the snapshot's cells are independent of the original and won't be
+    /// affected by subsequent updates to the original.
+    ///
+    /// Cells that are not Ready (Vacant, Running, Poisoned) are not included
+    /// in the snapshot since they represent transient or invalid states.
+    pub async fn snapshot_cells_deep(&self) -> im::HashMap<K, Arc<Cell<V>>>
+    where
+        V: Clone,
+    {
+        // Collect all cells under lock, then release before async work
+        let cells_snapshot: Vec<(K, Arc<Cell<V>>)> = {
+            let cells = self.cells.read();
+            cells.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        };
+
+        let mut result = im::HashMap::new();
+
+        for (key, cell) in cells_snapshot {
+            let state = cell.state.lock().await;
+            if let State::Ready {
+                value,
+                verified_at,
+                changed_at,
+                deps,
+            } = &*state
+            {
+                let new_cell = Arc::new(Cell::new_ready(
+                    value.clone(),
+                    *verified_at,
+                    *changed_at,
+                    deps.clone(),
+                ));
+                result.insert(key, new_cell);
+            }
+        }
+
+        result
+    }
 }
 
-struct Cell<V> {
+/// A memoization cell for a single query key.
+///
+/// Contains the cached state (vacant, running, ready, or poisoned).
+pub struct Cell<V> {
     state: Mutex<State<V>>,
     notify: Notify,
 }
@@ -499,17 +574,18 @@ where
     }
 
     fn clear(&self) {
-        self.cells.clear();
+        let mut cells = self.cells.write();
+        *cells = im::HashMap::new();
     }
 
     fn save_records(&self) -> BoxFuture<'_, PicanteResult<Vec<Vec<u8>>>> {
         Box::pin(async move {
-            let mut records = Vec::with_capacity(self.cells.len());
-            let snapshot: Vec<(K, Arc<Cell<V>>)> = self
-                .cells
-                .iter()
-                .map(|e| (e.key().clone(), e.value().clone()))
-                .collect();
+            // Collect snapshot under lock, then release before async work
+            let snapshot: Vec<(K, Arc<Cell<V>>)> = {
+                let cells = self.cells.read();
+                cells.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            };
+            let mut records = Vec::with_capacity(snapshot.len());
 
             for (key, cell) in snapshot {
                 let state = cell.state.lock().await;
@@ -581,7 +657,8 @@ where
                 Revision(rec.changed_at),
                 deps,
             ));
-            self.cells.insert(rec.key, cell);
+            let mut cells = self.cells.write();
+            cells.insert(rec.key, cell);
         }
         Ok(())
     }
@@ -591,11 +668,11 @@ where
         runtime: &'a crate::runtime::Runtime,
     ) -> BoxFuture<'a, PicanteResult<()>> {
         Box::pin(async move {
-            let snapshot: Vec<(K, Arc<Cell<V>>)> = self
-                .cells
-                .iter()
-                .map(|e| (e.key().clone(), e.value().clone()))
-                .collect();
+            // Collect snapshot under lock, then release before async work
+            let snapshot: Vec<(K, Arc<Cell<V>>)> = {
+                let cells = self.cells.read();
+                cells.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            };
 
             for (key, cell) in snapshot {
                 let state = cell.state.lock().await;
