@@ -27,8 +27,8 @@ fn to_string<T: Facet<'static>>(value: &T) -> Result<String, Box<dyn std::error:
 // ============================================================================
 
 /// Test that elements with declared namespaces are matched correctly.
-#[derive(Facet, Debug, PartialEq)]
-#[facet(rename = "root")]
+#[derive(Facet, Debug, PartialEq, Default)]
+#[facet(rename = "root", default)]
 struct NamespacedRoot {
     /// This field requires the element to be in the "http://example.com/ns" namespace.
     #[facet(xml::element, xml::ns = "http://example.com/ns")]
@@ -65,8 +65,8 @@ fn test_element_namespace_mismatch() {
 // Attribute namespace matching
 // ============================================================================
 
-#[derive(Facet, Debug, PartialEq)]
-#[facet(rename = "root")]
+#[derive(Facet, Debug, PartialEq, Default)]
+#[facet(rename = "root", default)]
 struct NamespacedAttr {
     /// This field requires the attribute to be in the "http://example.com/ns" namespace.
     #[facet(xml::attribute, xml::ns = "http://example.com/ns")]
@@ -135,8 +135,8 @@ fn test_mixed_namespaces_with_default() {
 // Same local name, different namespaces
 // ============================================================================
 
-#[derive(Facet, Debug, PartialEq)]
-#[facet(rename = "root")]
+#[derive(Facet, Debug, PartialEq, Default)]
+#[facet(rename = "root", default)]
 struct SameLocalNameDifferentNs {
     #[facet(xml::element, rename = "item", xml::ns = "http://ns1.com")]
     item_ns1: String,
@@ -222,8 +222,8 @@ fn test_backward_compatible_with_default_namespace() {
 // ============================================================================
 
 /// Container with ns_all - all fields default to this namespace
-#[derive(Facet, Debug, PartialEq)]
-#[facet(rename = "root", xml::ns_all = "http://example.com/ns")]
+#[derive(Facet, Debug, PartialEq, Default)]
+#[facet(rename = "root", xml::ns_all = "http://example.com/ns", default)]
 struct NsAllContainer {
     #[facet(xml::element)]
     first: String,
