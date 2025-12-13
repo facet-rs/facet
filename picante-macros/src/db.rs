@@ -155,8 +155,8 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         let entity = &input.name;
         let entity_snake = snake_ident(entity);
 
-        let keys_field = format_ident!("{entity_snake}_keys");
-        let data_field = format_ident!("{entity_snake}_data");
+        let keys_field = format_ident!("{entity_snake}_keys_ingredient");
+        let data_field = format_ident!("{entity_snake}_data_ingredient");
 
         for name in [&keys_field, &data_field] {
             let name_s = name.to_string();
@@ -204,8 +204,8 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         });
         ctor_inits.push(quote! { #keys_field, #data_field });
 
-        let keys_method = keys_field.clone();
-        let data_method = data_field.clone();
+        let keys_method = format_ident!("{entity_snake}_keys");
+        let data_method = format_ident!("{entity_snake}_data");
 
         trait_impls.push(quote! {
             impl #has_trait for #db_name {
@@ -225,7 +225,7 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         let entity = &interned.name;
         let entity_snake = snake_ident(entity);
 
-        let field = entity_snake.clone();
+        let field = format_ident!("{entity_snake}_ingredient");
         let field_s = field.to_string();
         if custom_field_names.contains(&field_s) {
             return compile_error(&format!(
