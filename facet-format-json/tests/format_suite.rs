@@ -302,8 +302,11 @@ impl FormatSuite for JsonSlice {
     }
 
     fn flatten_overlapping_fields_error() -> CaseSpec {
-        // TODO: overlapping field detection not yet implemented
-        CaseSpec::skip("overlapping field detection not yet implemented")
+        // Two flattened structs both have a "shared" field - should error
+        CaseSpec::expect_error(
+            r#"{"field_a":"a","field_b":"b","shared":1}"#,
+            "duplicate field",
+        )
     }
 
     // ── Scalar cases ──
