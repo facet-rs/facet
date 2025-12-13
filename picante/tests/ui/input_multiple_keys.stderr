@@ -1,5 +1,5 @@
-error: picante: #[picante::input] requires exactly one field marked #[key]
- --> tests/ui/input_missing_key.rs:1:1
+error: picante: #[picante::input] requires at most one #[key] field
+ --> tests/ui/input_multiple_keys.rs:1:1
   |
 1 | #[picante::input]
   | ^^^^^^^^^^^^^^^^^

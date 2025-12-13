@@ -247,3 +247,66 @@ mod db_trait {
         }
     }
 }
+
+/// Tests for singleton inputs (no #[key] field)
+mod singleton {
+    use picante::PicanteResult;
+
+    /// A singleton config - no #[key] field means only one instance
+    #[picante::input]
+    pub struct Config {
+        pub debug: bool,
+        pub timeout: u64,
+    }
+
+    // Test singleton with tracked query
+    #[picante::tracked]
+    pub async fn get_timeout<DB: DatabaseTrait>(db: &DB) -> PicanteResult<Option<u64>> {
+        Config::timeout(db)
+    }
+
+    #[picante::db(inputs(Config), tracked(get_timeout))]
+    pub struct Database {}
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn singleton_set_and_get() -> PicanteResult<()> {
+        let db = Database::new();
+
+        // Initially not set
+        assert!(Config::get(&db)?.is_none());
+        assert!(Config::debug(&db)?.is_none());
+
+        // Set the singleton
+        Config::set(&db, true, 30)?;
+
+        // Now it's set
+        let config = Config::get(&db)?.expect("config should be set");
+        assert!(config.debug);
+        assert_eq!(config.timeout, 30);
+
+        // Field accessors work
+        assert_eq!(Config::debug(&db)?, Some(true));
+        assert_eq!(Config::timeout(&db)?, Some(30));
+
+        // Update the singleton
+        Config::set(&db, false, 60)?;
+        assert_eq!(Config::debug(&db)?, Some(false));
+        assert_eq!(Config::timeout(&db)?, Some(60));
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn singleton_with_tracked() -> PicanteResult<()> {
+        let db = Database::new();
+
+        // Query returns None when not set
+        assert_eq!(get_timeout(&db).await?, None);
+
+        // Set and query
+        Config::set(&db, true, 42)?;
+        assert_eq!(get_timeout(&db).await?, Some(42));
+
+        Ok(())
+    }
+}

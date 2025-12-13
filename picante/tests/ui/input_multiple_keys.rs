@@ -1,6 +1,9 @@
 #[picante::input]
 pub struct Text {
-    pub key: String,
+    #[key]
+    pub key1: String,
+    #[key]
+    pub key2: String,
     pub value: String,
 }
 
