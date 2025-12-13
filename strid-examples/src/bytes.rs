@@ -14,6 +14,7 @@
 
 #[cfg(feature = "bytestring-facet")]
 use bytestring::ByteString;
+#[cfg(feature = "bytestring-facet")]
 use strid::braid;
 
 /// A basic example of a wrapper around a [`Bytes`]
