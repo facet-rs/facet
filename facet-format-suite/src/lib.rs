@@ -112,11 +112,26 @@ pub trait FormatSuite {
 
     /// Case: `#[facet(deny_unknown_fields)]` rejects unknown fields.
     fn deny_unknown_fields() -> CaseSpec;
+    /// Case: type mismatch - string provided where integer expected.
+    fn error_type_mismatch_string_to_int() -> CaseSpec;
+    /// Case: structure mismatch - object provided where array expected.
+    fn error_type_mismatch_object_to_array() -> CaseSpec;
+    /// Case: missing required field error.
+    fn error_missing_required_field() -> CaseSpec;
 
     // ── Alias tests ──
 
     /// Case: field with `#[facet(alias = "...")]` accepts alternative name.
     fn attr_alias() -> CaseSpec;
+
+    // ── Attribute precedence tests ──
+
+    /// Case: field with both rename and alias - rename takes precedence.
+    fn attr_rename_vs_alias_precedence() -> CaseSpec;
+    /// Case: struct with `#[facet(rename_all = "kebab-case")]`.
+    fn attr_rename_all_kebab() -> CaseSpec;
+    /// Case: struct with `#[facet(rename_all = "SCREAMING_SNAKE_CASE")]`.
+    fn attr_rename_all_screaming() -> CaseSpec;
 
     // ── Proxy tests ──
 
@@ -399,8 +414,30 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         ),
         // Error cases
         SuiteCase::new::<S, DenyUnknownStruct>(&CASE_DENY_UNKNOWN_FIELDS, S::deny_unknown_fields),
+        SuiteCase::new::<S, ExpectsInteger>(
+            &CASE_ERROR_TYPE_MISMATCH_STRING_TO_INT,
+            S::error_type_mismatch_string_to_int,
+        ),
+        SuiteCase::new::<S, ExpectsArray>(
+            &CASE_ERROR_TYPE_MISMATCH_OBJECT_TO_ARRAY,
+            S::error_type_mismatch_object_to_array,
+        ),
+        SuiteCase::new::<S, RequiresAllFields>(
+            &CASE_ERROR_MISSING_REQUIRED_FIELD,
+            S::error_missing_required_field,
+        ),
         // Alias cases
         SuiteCase::new::<S, WithAlias>(&CASE_ATTR_ALIAS, S::attr_alias),
+        // Attribute precedence cases
+        SuiteCase::new::<S, RenameVsAlias>(
+            &CASE_ATTR_RENAME_VS_ALIAS,
+            S::attr_rename_vs_alias_precedence,
+        ),
+        SuiteCase::new::<S, RenameAllKebab>(&CASE_ATTR_RENAME_ALL_KEBAB, S::attr_rename_all_kebab),
+        SuiteCase::new::<S, RenameAllScreaming>(
+            &CASE_ATTR_RENAME_ALL_SCREAMING,
+            S::attr_rename_all_screaming,
+        ),
         // Proxy cases
         SuiteCase::new::<S, ProxyInt>(&CASE_PROXY_CONTAINER, S::proxy_container),
         SuiteCase::new::<S, ProxyFieldLevel>(&CASE_PROXY_FIELD_LEVEL, S::proxy_field_level),
@@ -998,6 +1035,30 @@ const CASE_DENY_UNKNOWN_FIELDS: CaseDescriptor<DenyUnknownStruct> = CaseDescript
     },
 };
 
+const CASE_ERROR_TYPE_MISMATCH_STRING_TO_INT: CaseDescriptor<ExpectsInteger> = CaseDescriptor {
+    id: "error::type_mismatch_string_to_int",
+    description: "type mismatch - string provided where integer expected",
+    expected: || ExpectsInteger { value: 42 },
+};
+
+const CASE_ERROR_TYPE_MISMATCH_OBJECT_TO_ARRAY: CaseDescriptor<ExpectsArray> = CaseDescriptor {
+    id: "error::type_mismatch_object_to_array",
+    description: "structure mismatch - object provided where array expected",
+    expected: || ExpectsArray {
+        items: vec![1, 2, 3],
+    },
+};
+
+const CASE_ERROR_MISSING_REQUIRED_FIELD: CaseDescriptor<RequiresAllFields> = CaseDescriptor {
+    id: "error::missing_required_field",
+    description: "missing required field error",
+    expected: || RequiresAllFields {
+        name: "Alice".into(),
+        age: 30,
+        email: "alice@example.com".into(),
+    },
+};
+
 // ── Alias case descriptors ──
 
 const CASE_ATTR_ALIAS: CaseDescriptor<WithAlias> = CaseDescriptor {
@@ -1006,6 +1067,36 @@ const CASE_ATTR_ALIAS: CaseDescriptor<WithAlias> = CaseDescriptor {
     expected: || WithAlias {
         new_name: "value".into(),
         count: 5,
+    },
+};
+
+// ── Attribute precedence case descriptors ──
+
+const CASE_ATTR_RENAME_VS_ALIAS: CaseDescriptor<RenameVsAlias> = CaseDescriptor {
+    id: "attr::rename_vs_alias_precedence",
+    description: "when both rename and alias present, rename takes precedence",
+    expected: || RenameVsAlias {
+        field: "test".into(),
+        id: 1,
+    },
+};
+
+const CASE_ATTR_RENAME_ALL_KEBAB: CaseDescriptor<RenameAllKebab> = CaseDescriptor {
+    id: "attr::rename_all_kebab",
+    description: "struct with #[facet(rename_all = \"kebab-case\")]",
+    expected: || RenameAllKebab {
+        first_name: "John".into(),
+        last_name: "Doe".into(),
+        user_id: 42,
+    },
+};
+
+const CASE_ATTR_RENAME_ALL_SCREAMING: CaseDescriptor<RenameAllScreaming> = CaseDescriptor {
+    id: "attr::rename_all_screaming",
+    description: "struct with #[facet(rename_all = \"SCREAMING_SNAKE_CASE\")]",
+    expected: || RenameAllScreaming {
+        api_key: "secret-123".into(),
+        max_retry_count: 5,
     },
 };
 
@@ -1656,12 +1747,60 @@ pub struct DenyUnknownStruct {
     pub bar: i32,
 }
 
+/// Fixture for type mismatch error (string to int).
+#[derive(Facet, Debug, Clone)]
+pub struct ExpectsInteger {
+    pub value: i32,
+}
+
+/// Fixture for structure mismatch error (object to array).
+#[derive(Facet, Debug, Clone)]
+pub struct ExpectsArray {
+    pub items: Vec<i32>,
+}
+
+/// Fixture for missing required field error.
+#[derive(Facet, Debug, Clone)]
+pub struct RequiresAllFields {
+    pub name: String,
+    pub age: u32,
+    pub email: String,
+}
+
 /// Fixture for `#[facet(alias = "...")]` test.
 #[derive(Facet, Debug, Clone)]
 pub struct WithAlias {
     #[facet(alias = "old_name")]
     pub new_name: String,
     pub count: u32,
+}
+
+// ── Attribute precedence test fixtures ──
+
+/// Fixture for testing rename vs alias precedence (rename should win).
+#[derive(Facet, Debug, Clone)]
+pub struct RenameVsAlias {
+    #[facet(rename = "officialName")]
+    #[facet(alias = "oldName")]
+    pub field: String,
+    pub id: u32,
+}
+
+/// Fixture for `#[facet(rename_all = "kebab-case")]` test.
+#[derive(Facet, Debug, Clone)]
+#[facet(rename_all = "kebab-case")]
+pub struct RenameAllKebab {
+    pub first_name: String,
+    pub last_name: String,
+    pub user_id: u32,
+}
+
+/// Fixture for `#[facet(rename_all = "SCREAMING_SNAKE_CASE")]` test.
+#[derive(Facet, Debug, Clone)]
+#[facet(rename_all = "SCREAMING_SNAKE_CASE")]
+pub struct RenameAllScreaming {
+    pub api_key: String,
+    pub max_retry_count: u32,
 }
 
 // ── Proxy test fixtures ──

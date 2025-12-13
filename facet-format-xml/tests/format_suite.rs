@@ -250,12 +250,55 @@ impl FormatSuite for XmlSlice {
         )
     }
 
+    fn error_type_mismatch_string_to_int() -> CaseSpec {
+        // String provided where integer expected
+        CaseSpec::expect_error(
+            r#"<record><value>not_a_number</value></record>"#,
+            "Failed to parse",
+        )
+    }
+
+    fn error_type_mismatch_object_to_array() -> CaseSpec {
+        // Object (nested struct) provided where array expected
+        CaseSpec::expect_error(
+            r#"<record><items><wrong>structure</wrong></items></record>"#,
+            "opaque type",
+        )
+    }
+
+    fn error_missing_required_field() -> CaseSpec {
+        // Missing required field "email"
+        CaseSpec::expect_error(
+            r#"<record><name>Alice</name><age>30</age></record>"#,
+            "missing field",
+        )
+    }
+
     // ── Alias cases ──
 
     fn attr_alias() -> CaseSpec {
         // Input uses the alias "old_name" which should map to field "new_name"
         CaseSpec::from_str(r#"<record><old_name>value</old_name><count>5</count></record>"#)
             .without_roundtrip("alias is only for deserialization, serializes as new_name")
+    }
+
+    // ── Attribute precedence cases ──
+
+    fn attr_rename_vs_alias_precedence() -> CaseSpec {
+        // When both rename and alias are present, rename takes precedence for serialization
+        CaseSpec::from_str(r#"<record><officialName>test</officialName><id>1</id></record>"#)
+    }
+
+    fn attr_rename_all_kebab() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"<record><first-name>John</first-name><last-name>Doe</last-name><user-id>42</user-id></record>"#,
+        )
+    }
+
+    fn attr_rename_all_screaming() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"<record><API_KEY>secret-123</API_KEY><MAX_RETRY_COUNT>5</MAX_RETRY_COUNT></record>"#,
+        )
     }
 
     // ── Proxy cases ──
