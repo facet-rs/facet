@@ -1099,6 +1099,10 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
                 // - Struct/Array/Enum: uses iset to drop individual fields/elements
                 frame.deinit();
 
+                // deinit() doesn't set is_init to false, so we need to do it here
+                // before calling dealloc() which requires is_init to be false
+                frame.is_init = false;
+
                 // Deallocate if this frame owns the allocation
                 // (Field ownership means parent owns the memory, but Owned frames must be deallocated)
                 if let FrameOwnership::Owned = frame.ownership {

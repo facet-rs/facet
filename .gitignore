@@ -22,6 +22,9 @@ tarpaulin-report.html
 **/fuzz/target/
 **/fuzz/corpus/
 **/fuzz/artifacts/
+*.log
+**/leak_test.rs
+**/test_leak.rs
 
 # Profiling
 *.mm_profdata
