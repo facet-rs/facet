@@ -107,6 +107,10 @@ pub trait FormatSuite {
     fn flatten_optional_none() -> CaseSpec;
     /// Case: two flattened structs with overlapping field names (error).
     fn flatten_overlapping_fields_error() -> CaseSpec;
+    /// Case: three levels of nested flatten (A -> B -> C, all flattened).
+    fn flatten_multilevel() -> CaseSpec;
+    /// Case: two different enums flattened into same struct.
+    fn flatten_multiple_enums() -> CaseSpec;
 
     // ── Error cases ──
 
@@ -197,6 +201,8 @@ pub trait FormatSuite {
     fn enum_unit_variant() -> CaseSpec;
     /// Case: untagged enum.
     fn enum_untagged() -> CaseSpec;
+    /// Case: enum with renamed variants `#[facet(rename = "...")]`.
+    fn enum_variant_rename() -> CaseSpec;
 
     // ── Untagged enum variation tests ──
 
@@ -348,6 +354,10 @@ pub trait FormatSuite {
     #[cfg(feature = "chrono")]
     fn chrono_naive_time() -> CaseSpec;
 
+    /// Case: `Vec<chrono::DateTime<Utc>>` - chrono in collections.
+    #[cfg(feature = "chrono")]
+    fn chrono_in_vec() -> CaseSpec;
+
     // ── Bytes crate tests ──
 
     /// Case: `bytes::Bytes` type.
@@ -461,6 +471,11 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
             &CASE_FLATTEN_OVERLAPPING_FIELDS_ERROR,
             S::flatten_overlapping_fields_error,
         ),
+        SuiteCase::new::<S, FlattenLevel1>(&CASE_FLATTEN_MULTILEVEL, S::flatten_multilevel),
+        SuiteCase::new::<S, FlattenMultipleEnums>(
+            &CASE_FLATTEN_MULTIPLE_ENUMS,
+            S::flatten_multiple_enums,
+        ),
         // Error cases
         SuiteCase::new::<S, DenyUnknownStruct>(&CASE_DENY_UNKNOWN_FIELDS, S::deny_unknown_fields),
         SuiteCase::new::<S, ExpectsInteger>(
@@ -534,6 +549,7 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         // Enum variant cases
         SuiteCase::new::<S, UnitVariantEnum>(&CASE_ENUM_UNIT_VARIANT, S::enum_unit_variant),
         SuiteCase::new::<S, UntaggedEnum>(&CASE_ENUM_UNTAGGED, S::enum_untagged),
+        SuiteCase::new::<S, EnumVariantRename>(&CASE_ENUM_VARIANT_RENAME, S::enum_variant_rename),
         // Untagged enum variation cases
         SuiteCase::new::<S, UntaggedWithNull>(&CASE_UNTAGGED_WITH_NULL, S::untagged_with_null),
         SuiteCase::new::<S, UntaggedNewtype>(
@@ -622,6 +638,8 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, ChronoNaiveDateWrapper>(&CASE_CHRONO_NAIVE_DATE, S::chrono_naive_date),
         #[cfg(feature = "chrono")]
         SuiteCase::new::<S, ChronoNaiveTimeWrapper>(&CASE_CHRONO_NAIVE_TIME, S::chrono_naive_time),
+        #[cfg(feature = "chrono")]
+        SuiteCase::new::<S, ChronoInVecWrapper>(&CASE_CHRONO_IN_VEC, S::chrono_in_vec),
         // Bytes crate cases
         #[cfg(feature = "bytes")]
         SuiteCase::new::<S, BytesBytesWrapper>(&CASE_BYTES_BYTES, S::bytes_bytes),
@@ -1141,6 +1159,30 @@ const CASE_FLATTEN_OVERLAPPING_FIELDS_ERROR: CaseDescriptor<FlattenOverlapping> 
     },
 };
 
+const CASE_FLATTEN_MULTILEVEL: CaseDescriptor<FlattenLevel1> = CaseDescriptor {
+    id: "flatten::multilevel",
+    description: "three levels of nested flatten (A -> B -> C, all flattened)",
+    expected: || FlattenLevel1 {
+        top_field: "top".into(),
+        level2: FlattenLevel2 {
+            mid_field: 42,
+            level3: FlattenLevel3 { deep_field: 100 },
+        },
+    },
+};
+
+const CASE_FLATTEN_MULTIPLE_ENUMS: CaseDescriptor<FlattenMultipleEnums> = CaseDescriptor {
+    id: "flatten::multiple_enums",
+    description: "two different enums flattened into same struct",
+    expected: || FlattenMultipleEnums {
+        name: "service".into(),
+        auth: FlattenAuthMethod::Password(FlattenAuthPassword {
+            password: "secret".into(),
+        }),
+        transport: FlattenTransport::Tcp(FlattenTransportTcp { port: 8080 }),
+    },
+};
+
 // ── Error case descriptors ──
 
 const CASE_DENY_UNKNOWN_FIELDS: CaseDescriptor<DenyUnknownStruct> = CaseDescriptor {
@@ -1411,6 +1453,12 @@ const CASE_ENUM_UNTAGGED: CaseDescriptor<UntaggedEnum> = CaseDescriptor {
     id: "enum::untagged",
     description: "#[facet(untagged)] enum matches by structure",
     expected: || UntaggedEnum::Point { x: 10, y: 20 },
+};
+
+const CASE_ENUM_VARIANT_RENAME: CaseDescriptor<EnumVariantRename> = CaseDescriptor {
+    id: "enum::variant_rename",
+    description: "#[facet(rename = \"...\")] on enum variants",
+    expected: || EnumVariantRename::Active,
 };
 
 // ── Untagged enum variation case descriptors ──
@@ -1876,6 +1924,80 @@ pub struct FlattenOverlapping {
     pub part_b: FlattenPartB,
 }
 
+/// Deepest level for three-level flatten test.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct FlattenLevel3 {
+    pub deep_field: i32,
+}
+
+/// Middle level for three-level flatten test.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct FlattenLevel2 {
+    pub mid_field: i32,
+    #[facet(flatten)]
+    pub level3: FlattenLevel3,
+}
+
+/// Top level for three-level flatten test.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct FlattenLevel1 {
+    pub top_field: String,
+    #[facet(flatten)]
+    pub level2: FlattenLevel2,
+}
+
+/// Password auth data for multiple flattened enums test.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct FlattenAuthPassword {
+    pub password: String,
+}
+
+/// Token auth data for multiple flattened enums test.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct FlattenAuthToken {
+    pub token: String,
+}
+
+/// Auth method enum for multiple flattened enums test.
+#[allow(dead_code)]
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[repr(u8)]
+pub enum FlattenAuthMethod {
+    Password(FlattenAuthPassword),
+    Token(FlattenAuthToken),
+}
+
+/// TCP transport data for multiple flattened enums test.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct FlattenTransportTcp {
+    pub port: u16,
+}
+
+/// Unix transport data for multiple flattened enums test.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct FlattenTransportUnix {
+    pub socket: String,
+}
+
+/// Transport enum for multiple flattened enums test.
+#[allow(dead_code)]
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[repr(u8)]
+pub enum FlattenTransport {
+    Tcp(FlattenTransportTcp),
+    Unix(FlattenTransportUnix),
+}
+
+/// Container with two different flattened enums.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct FlattenMultipleEnums {
+    pub name: String,
+    #[facet(flatten)]
+    pub auth: FlattenAuthMethod,
+    #[facet(flatten)]
+    pub transport: FlattenTransport,
+}
+
 // ── Error test fixtures ──
 
 /// Fixture for `#[facet(deny_unknown_fields)]` test.
@@ -2215,6 +2337,16 @@ pub enum UnitVariantEnum {
     Active,
     Inactive,
     Pending,
+}
+
+/// Enum with renamed variants.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[repr(u8)]
+pub enum EnumVariantRename {
+    #[facet(rename = "enabled")]
+    Active,
+    #[facet(rename = "disabled")]
+    Inactive,
 }
 
 /// Untagged enum that matches by structure.
@@ -2590,6 +2722,18 @@ const CASE_CHRONO_NAIVE_TIME: CaseDescriptor<ChronoNaiveTimeWrapper> = CaseDescr
     },
 };
 
+#[cfg(feature = "chrono")]
+const CASE_CHRONO_IN_VEC: CaseDescriptor<ChronoInVecWrapper> = CaseDescriptor {
+    id: "third_party::chrono_in_vec",
+    description: "Vec<chrono::DateTime<Utc>> - chrono in collections",
+    expected: || ChronoInVecWrapper {
+        timestamps: vec![
+            chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2023, 1, 1, 0, 0, 0).unwrap(),
+            chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2023, 6, 15, 12, 30, 0).unwrap(),
+        ],
+    },
+};
+
 // ── Bytes crate case descriptors ──
 
 #[cfg(feature = "bytes")]
@@ -2750,6 +2894,13 @@ pub struct ChronoNaiveDateWrapper {
 #[derive(Facet, Debug, Clone, PartialEq)]
 pub struct ChronoNaiveTimeWrapper {
     pub alarm_time: chrono::NaiveTime,
+}
+
+/// Fixture for chrono in collections test.
+#[cfg(feature = "chrono")]
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct ChronoInVecWrapper {
+    pub timestamps: Vec<chrono::DateTime<chrono::Utc>>,
 }
 
 // ── Bytes crate test fixtures ──

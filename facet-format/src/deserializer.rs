@@ -359,8 +359,183 @@ where
 
     fn deserialize_struct(
         &mut self,
+        wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        // Get struct fields for lookup
+        let struct_def = match &wip.shape().ty {
+            Type::User(UserType::Struct(def)) => def,
+            _ => {
+                return Err(DeserializeError::Unsupported(format!(
+                    "expected struct type but got {:?}",
+                    wip.shape().ty
+                )));
+            }
+        };
+
+        // Check if we have any flattened fields
+        let has_flatten = struct_def.fields.iter().any(|f| f.is_flattened());
+
+        if has_flatten {
+            // Check if any flatten field is an enum (requires solver)
+            // or if there's nested flatten (flatten inside flatten)
+            let needs_solver = struct_def.fields.iter().any(|f| {
+                if !f.is_flattened() {
+                    return false;
+                }
+                // Get inner type, unwrapping Option if present
+                let inner_shape = match f.shape().def {
+                    Def::Option(opt) => opt.t,
+                    _ => f.shape(),
+                };
+                match inner_shape.ty {
+                    // Enum flatten needs solver
+                    Type::User(UserType::Enum(_)) => true,
+                    // Check for nested flatten (flatten field has its own flatten fields)
+                    Type::User(UserType::Struct(inner_struct)) => inner_struct
+                        .fields
+                        .iter()
+                        .any(|inner_f| inner_f.is_flattened()),
+                    _ => false,
+                }
+            });
+
+            if needs_solver {
+                self.deserialize_struct_with_flatten(wip)
+            } else {
+                // Simple single-level flatten - use the original approach
+                self.deserialize_struct_single_flatten(wip)
+            }
+        } else {
+            self.deserialize_struct_simple(wip)
+        }
+    }
+
+    /// Deserialize a struct without flattened fields (simple case).
+    fn deserialize_struct_simple(
+        &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        use facet_core::Characteristic;
+
+        // Expect StructStart
+        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        if !matches!(event, ParseEvent::StructStart) {
+            return Err(DeserializeError::TypeMismatch {
+                expected: "struct start",
+                got: format!("{event:?}"),
+            });
+        }
+
+        // Get struct fields for lookup
+        let struct_def = match &wip.shape().ty {
+            Type::User(UserType::Struct(def)) => def,
+            _ => {
+                return Err(DeserializeError::Unsupported(format!(
+                    "expected struct type but got {:?}",
+                    wip.shape().ty
+                )));
+            }
+        };
+
+        let struct_has_default = wip.shape().has_default_attr();
+        let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
+
+        // Extract container-level default namespace (xml::ns_all) for namespace-aware matching
+        let ns_all = wip
+            .shape()
+            .attributes
+            .iter()
+            .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
+            .and_then(|attr| attr.get_as::<&str>().copied());
+
+        // Track which fields have been set
+        let num_fields = struct_def.fields.len();
+        let mut fields_set = alloc::vec![false; num_fields];
+
+        loop {
+            let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+            match event {
+                ParseEvent::StructEnd => break,
+                ParseEvent::FieldKey(key) => {
+                    // Look up field in struct fields
+                    let field_info = struct_def.fields.iter().enumerate().find(|(_, f)| {
+                        Self::field_matches_with_namespace(
+                            f,
+                            key.name.as_ref(),
+                            key.namespace.as_deref(),
+                            key.location,
+                            ns_all,
+                        )
+                    });
+
+                    if let Some((idx, _field)) = field_info {
+                        wip = wip
+                            .begin_nth_field(idx)
+                            .map_err(DeserializeError::Reflect)?;
+                        wip = self.deserialize_into(wip)?;
+                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        fields_set[idx] = true;
+                        continue;
+                    }
+
+                    if deny_unknown_fields {
+                        return Err(DeserializeError::UnknownField(key.name.into_owned()));
+                    } else {
+                        // Unknown field - skip it
+                        self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                    }
+                }
+                other => {
+                    return Err(DeserializeError::TypeMismatch {
+                        expected: "field key or struct end",
+                        got: format!("{other:?}"),
+                    });
+                }
+            }
+        }
+
+        // Apply defaults for missing fields
+        for (idx, field) in struct_def.fields.iter().enumerate() {
+            if fields_set[idx] {
+                continue;
+            }
+
+            let field_has_default = field.has_default();
+            let field_type_has_default = field.shape().is(Characteristic::Default);
+            let field_is_option = matches!(field.shape().def, Def::Option(_));
+
+            if field_has_default || (struct_has_default && field_type_has_default) {
+                wip = wip
+                    .set_nth_field_to_default(idx)
+                    .map_err(DeserializeError::Reflect)?;
+            } else if field_is_option {
+                wip = wip
+                    .begin_field(field.name)
+                    .map_err(DeserializeError::Reflect)?;
+                wip = wip.set_default().map_err(DeserializeError::Reflect)?;
+                wip = wip.end().map_err(DeserializeError::Reflect)?;
+            } else if field.should_skip_deserializing() {
+                wip = wip
+                    .set_nth_field_to_default(idx)
+                    .map_err(DeserializeError::Reflect)?;
+            } else {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "field to be present or have default",
+                    got: format!("missing field '{}'", field.name),
+                });
+            }
+        }
+
+        Ok(wip)
+    }
+
+    /// Deserialize a struct with single-level flattened fields (original approach).
+    /// This handles simple flatten cases where there's no nested flatten or enum flatten.
+    fn deserialize_struct_single_flatten(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        use alloc::collections::BTreeMap;
         use facet_core::Characteristic;
         use facet_reflect::Resolution;
 
@@ -399,9 +574,6 @@ where
         let num_fields = struct_def.fields.len();
         let mut fields_set = alloc::vec![false; num_fields];
 
-        // Check if we have any flattened fields - if so, we need deferred mode
-        let has_flatten = struct_def.fields.iter().any(|f| f.is_flattened());
-
         // Build flatten info: for each flattened field, get its inner struct fields
         // and track which inner fields have been set
         let mut flatten_info: alloc::vec::Vec<
@@ -409,37 +581,40 @@ where
         > = alloc::vec![None; num_fields];
 
         // Track field names across flattened structs to detect duplicates
-        use alloc::collections::BTreeMap;
         let mut flatten_field_names: BTreeMap<&str, usize> = BTreeMap::new();
 
         for (idx, field) in struct_def.fields.iter().enumerate() {
-            if field.is_flattened()
-                && let Type::User(UserType::Struct(inner_def)) = &field.shape().ty
-            {
-                let inner_fields = inner_def.fields;
-                let inner_set = alloc::vec![false; inner_fields.len()];
-                flatten_info[idx] = Some((inner_fields, inner_set));
+            if field.is_flattened() {
+                // Handle Option<T> flatten by unwrapping to inner type
+                let inner_shape = match field.shape().def {
+                    Def::Option(opt) => opt.t,
+                    _ => field.shape(),
+                };
 
-                // Check for duplicate field names across flattened structs
-                for inner_field in inner_fields.iter() {
-                    let field_name = inner_field.rename.unwrap_or(inner_field.name);
-                    if let Some(_prev_idx) = flatten_field_names.insert(field_name, idx) {
-                        return Err(DeserializeError::Unsupported(format!(
-                            "duplicate field `{}` in flattened structs",
-                            field_name
-                        )));
+                if let Type::User(UserType::Struct(inner_def)) = &inner_shape.ty {
+                    let inner_fields = inner_def.fields;
+                    let inner_set = alloc::vec![false; inner_fields.len()];
+                    flatten_info[idx] = Some((inner_fields, inner_set));
+
+                    // Check for duplicate field names across flattened structs
+                    for inner_field in inner_fields.iter() {
+                        let field_name = inner_field.rename.unwrap_or(inner_field.name);
+                        if let Some(_prev_idx) = flatten_field_names.insert(field_name, idx) {
+                            return Err(DeserializeError::Unsupported(format!(
+                                "duplicate field `{}` in flattened structs",
+                                field_name
+                            )));
+                        }
                     }
                 }
             }
         }
 
-        // Enter deferred mode if we have flattened fields
-        if has_flatten {
-            let resolution = Resolution::new();
-            wip = wip
-                .begin_deferred(resolution)
-                .map_err(DeserializeError::Reflect)?;
-        }
+        // Enter deferred mode for flatten handling
+        let resolution = Resolution::new();
+        wip = wip
+            .begin_deferred(resolution)
+            .map_err(DeserializeError::Reflect)?;
 
         loop {
             let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
@@ -447,7 +622,6 @@ where
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(key) => {
                     // First, look up field in direct struct fields (non-flattened)
-                    // Uses namespace-aware matching when namespace is present
                     let direct_field_info = struct_def.fields.iter().enumerate().find(|(_, f)| {
                         !f.is_flattened()
                             && Self::field_matches_with_namespace(
@@ -460,7 +634,6 @@ where
                     });
 
                     if let Some((idx, _field)) = direct_field_info {
-                        // Direct field match - use begin_nth_field to handle renamed fields correctly
                         wip = wip
                             .begin_nth_field(idx)
                             .map_err(DeserializeError::Reflect)?;
@@ -478,8 +651,6 @@ where
                         }
                         if let Some((inner_fields, inner_set)) = flatten_info[flatten_idx].as_mut()
                         {
-                            // Look for the field in the inner struct
-                            // Uses namespace-aware matching when namespace is present
                             let inner_match = inner_fields.iter().enumerate().find(|(_, f)| {
                                 Self::field_matches_with_namespace(
                                     f,
@@ -491,18 +662,25 @@ where
                             });
 
                             if let Some((inner_idx, _inner_field)) = inner_match {
-                                // Found it! Navigate into the flattened field
+                                // Check if flatten field is Option - if so, wrap in Some
+                                let is_option = matches!(field.shape().def, Def::Option(_));
                                 wip = wip
                                     .begin_nth_field(flatten_idx)
                                     .map_err(DeserializeError::Reflect)?;
+                                if is_option {
+                                    wip = wip.begin_some().map_err(DeserializeError::Reflect)?;
+                                }
                                 wip = wip
                                     .begin_nth_field(inner_idx)
                                     .map_err(DeserializeError::Reflect)?;
                                 wip = self.deserialize_into(wip)?;
                                 wip = wip.end().map_err(DeserializeError::Reflect)?;
+                                if is_option {
+                                    wip = wip.end().map_err(DeserializeError::Reflect)?;
+                                }
                                 wip = wip.end().map_err(DeserializeError::Reflect)?;
                                 inner_set[inner_idx] = true;
-                                fields_set[flatten_idx] = true; // Mark flattened field as touched
+                                fields_set[flatten_idx] = true;
                                 found_flatten = true;
                                 break;
                             }
@@ -516,7 +694,6 @@ where
                     if deny_unknown_fields {
                         return Err(DeserializeError::UnknownField(key.name.into_owned()));
                     } else {
-                        // Unknown field - skip it
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
                     }
                 }
@@ -532,15 +709,18 @@ where
         // Apply defaults for missing fields
         for (idx, field) in struct_def.fields.iter().enumerate() {
             if field.is_flattened() {
-                // For flattened fields, check if all inner fields are set or have defaults
                 if let Some((inner_fields, inner_set)) = flatten_info[idx].as_ref() {
-                    // Check if any inner field was set
                     let any_inner_set = inner_set.iter().any(|&s| s);
+                    let is_option = matches!(field.shape().def, Def::Option(_));
+
                     if any_inner_set {
-                        // Some inner fields were set - need to apply defaults to missing ones
+                        // Some inner fields were set - apply defaults to missing ones
                         wip = wip
                             .begin_nth_field(idx)
                             .map_err(DeserializeError::Reflect)?;
+                        if is_option {
+                            wip = wip.begin_some().map_err(DeserializeError::Reflect)?;
+                        }
                         for (inner_idx, inner_field) in inner_fields.iter().enumerate() {
                             if inner_set[inner_idx] {
                                 continue;
@@ -571,6 +751,16 @@ where
                                 });
                             }
                         }
+                        if is_option {
+                            wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        }
+                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                    } else if is_option {
+                        // No inner fields set and field is Option - set to None
+                        wip = wip
+                            .begin_nth_field(idx)
+                            .map_err(DeserializeError::Reflect)?;
+                        wip = wip.set_default().map_err(DeserializeError::Reflect)?;
                         wip = wip.end().map_err(DeserializeError::Reflect)?;
                     } else {
                         // No inner fields set - try to default the whole flattened field
@@ -581,7 +771,6 @@ where
                                 .set_nth_field_to_default(idx)
                                 .map_err(DeserializeError::Reflect)?;
                         } else {
-                            // Can't default the flattened struct - check if all inner fields can default
                             let all_inner_can_default = inner_fields.iter().all(|f| {
                                 f.has_default()
                                     || f.shape().is(Characteristic::Default)
@@ -630,7 +819,7 @@ where
             }
 
             if fields_set[idx] {
-                continue; // Field was already set
+                continue;
             }
 
             let field_has_default = field.has_default();
@@ -648,7 +837,6 @@ where
                 wip = wip.set_default().map_err(DeserializeError::Reflect)?;
                 wip = wip.end().map_err(DeserializeError::Reflect)?;
             } else if field.should_skip_deserializing() {
-                // Skipped fields should use their default
                 wip = wip
                     .set_nth_field_to_default(idx)
                     .map_err(DeserializeError::Reflect)?;
@@ -660,9 +848,404 @@ where
             }
         }
 
-        // Finish deferred mode if we were in it
-        if has_flatten {
-            wip = wip.finish_deferred().map_err(DeserializeError::Reflect)?;
+        // Finish deferred mode
+        wip = wip.finish_deferred().map_err(DeserializeError::Reflect)?;
+
+        Ok(wip)
+    }
+
+    /// Deserialize a struct with flattened fields using facet-solver.
+    ///
+    /// This uses the solver's Schema/Resolution to handle arbitrarily nested
+    /// flatten structures by looking up the full path for each field.
+    /// It also handles flattened enums by using probing to collect keys first,
+    /// then using the Solver to disambiguate between resolutions.
+    fn deserialize_struct_with_flatten(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        use alloc::collections::BTreeSet;
+        use facet_core::Characteristic;
+        use facet_reflect::Resolution;
+        use facet_solver::{PathSegment, Schema, Solver};
+
+        let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
+
+        // Build the schema for this type - this recursively expands all flatten fields
+        let schema = Schema::build_auto(wip.shape())
+            .map_err(|e| DeserializeError::Unsupported(format!("failed to build schema: {e}")))?;
+
+        // Check if we have multiple resolutions (i.e., flattened enums)
+        let resolutions = schema.resolutions();
+        if resolutions.is_empty() {
+            return Err(DeserializeError::Unsupported(
+                "schema has no resolutions".into(),
+            ));
+        }
+
+        // ========== PASS 1: Probe to collect all field keys ==========
+        let probe = self
+            .parser
+            .begin_probe()
+            .map_err(DeserializeError::Parser)?;
+        let evidence = Self::collect_evidence(probe).map_err(DeserializeError::Parser)?;
+
+        // Feed keys to solver to narrow down resolutions
+        let mut solver = Solver::new(&schema);
+        for ev in &evidence {
+            solver.see_key(ev.name.clone());
+        }
+
+        // Get the resolved configuration
+        let config_handle = solver
+            .finish()
+            .map_err(|e| DeserializeError::Unsupported(format!("solver failed: {e}")))?;
+        let resolution = config_handle.resolution();
+
+        // ========== PASS 2: Parse the struct with resolved paths ==========
+        // Expect StructStart
+        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        if !matches!(event, ParseEvent::StructStart) {
+            return Err(DeserializeError::TypeMismatch {
+                expected: "struct start",
+                got: format!("{event:?}"),
+            });
+        }
+
+        // Enter deferred mode for flatten handling
+        let reflect_resolution = Resolution::new();
+        wip = wip
+            .begin_deferred(reflect_resolution)
+            .map_err(DeserializeError::Reflect)?;
+
+        // Track which fields have been set (by serialized name - uses 'static str from resolution)
+        let mut fields_set: BTreeSet<&'static str> = BTreeSet::new();
+
+        // Track currently open path segments: (field_name, is_option, is_variant)
+        // The is_variant flag indicates if we've selected a variant at this level
+        let mut open_segments: alloc::vec::Vec<(&str, bool, bool)> = alloc::vec::Vec::new();
+
+        loop {
+            let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+            match event {
+                ParseEvent::StructEnd => break,
+                ParseEvent::FieldKey(key) => {
+                    // Look up field in the resolution
+                    if let Some(field_info) = resolution.field(key.name.as_ref()) {
+                        let segments = field_info.path.segments();
+
+                        // Check if this path ends with a Variant segment (externally-tagged enum)
+                        let ends_with_variant = segments
+                            .last()
+                            .is_some_and(|s| matches!(s, PathSegment::Variant(_, _)));
+
+                        // Extract field names from the path (excluding trailing Variant)
+                        let field_segments: alloc::vec::Vec<&str> = segments
+                            .iter()
+                            .filter_map(|s| match s {
+                                PathSegment::Field(name) => Some(*name),
+                                PathSegment::Variant(_, _) => None,
+                            })
+                            .collect();
+
+                        // Find common prefix with currently open segments
+                        let common_len = open_segments
+                            .iter()
+                            .zip(field_segments.iter())
+                            .take_while(|((name, _, _), b)| *name == **b)
+                            .count();
+
+                        // Close segments that are no longer needed (in reverse order)
+                        while open_segments.len() > common_len {
+                            let (_, is_option, _) = open_segments.pop().unwrap();
+                            if is_option {
+                                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                            }
+                            wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        }
+
+                        // Open new segments
+                        for &segment in &field_segments[common_len..] {
+                            wip = wip
+                                .begin_field(segment)
+                                .map_err(DeserializeError::Reflect)?;
+                            let is_option = matches!(wip.shape().def, Def::Option(_));
+                            if is_option {
+                                wip = wip.begin_some().map_err(DeserializeError::Reflect)?;
+                            }
+                            open_segments.push((segment, is_option, false));
+                        }
+
+                        if ends_with_variant {
+                            // For externally-tagged enums: select variant and deserialize content
+                            if let Some(PathSegment::Variant(_, variant_name)) = segments.last() {
+                                wip = wip
+                                    .select_variant_named(variant_name)
+                                    .map_err(DeserializeError::Reflect)?;
+                                // Deserialize the variant's struct content (the nested object)
+                                wip = self.deserialize_variant_struct_fields(wip)?;
+                            }
+                        } else {
+                            // Regular field: deserialize into it
+                            wip = self.deserialize_into(wip)?;
+                        }
+
+                        // Close segments we just opened (we're done with this field)
+                        while open_segments.len() > common_len {
+                            let (_, is_option, _) = open_segments.pop().unwrap();
+                            if is_option {
+                                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                            }
+                            wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        }
+
+                        // Store the static serialized_name from the resolution
+                        fields_set.insert(field_info.serialized_name);
+                        continue;
+                    }
+
+                    if deny_unknown_fields {
+                        return Err(DeserializeError::UnknownField(key.name.into_owned()));
+                    } else {
+                        self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                    }
+                }
+                other => {
+                    return Err(DeserializeError::TypeMismatch {
+                        expected: "field key or struct end",
+                        got: format!("{other:?}"),
+                    });
+                }
+            }
+        }
+
+        // Close any remaining open segments
+        while let Some((_, is_option, _)) = open_segments.pop() {
+            if is_option {
+                wip = wip.end().map_err(DeserializeError::Reflect)?;
+            }
+            wip = wip.end().map_err(DeserializeError::Reflect)?;
+        }
+
+        // Handle missing fields - apply defaults
+        // Get all fields sorted by path depth (deepest first for proper default handling)
+        let all_fields = resolution.deserialization_order();
+
+        // Track which top-level flatten fields have had any sub-fields set
+        let mut touched_top_fields: BTreeSet<&str> = BTreeSet::new();
+        for field_name in &fields_set {
+            if let Some(info) = resolution.field(field_name)
+                && let Some(PathSegment::Field(top)) = info.path.segments().first()
+            {
+                touched_top_fields.insert(*top);
+            }
+        }
+
+        for field_info in all_fields {
+            if fields_set.contains(field_info.serialized_name) {
+                continue;
+            }
+
+            // Skip fields that end with Variant - these are handled by enum deserialization
+            let ends_with_variant = field_info
+                .path
+                .segments()
+                .last()
+                .is_some_and(|s| matches!(s, PathSegment::Variant(_, _)));
+            if ends_with_variant {
+                continue;
+            }
+
+            let path_segments: alloc::vec::Vec<&str> = field_info
+                .path
+                .segments()
+                .iter()
+                .filter_map(|s| match s {
+                    PathSegment::Field(name) => Some(*name),
+                    PathSegment::Variant(_, _) => None,
+                })
+                .collect();
+
+            // Check if this field's parent was touched
+            let first_segment = path_segments.first().copied();
+            let parent_touched = first_segment
+                .map(|s| touched_top_fields.contains(s))
+                .unwrap_or(false);
+
+            // If parent wasn't touched at all, we might default the whole parent
+            // For now, handle individual field defaults
+            let field_has_default = field_info.field.has_default();
+            let field_type_has_default = field_info.value_shape.is(Characteristic::Default);
+            let field_is_option = matches!(field_info.value_shape.def, Def::Option(_));
+
+            if field_has_default
+                || field_type_has_default
+                || field_is_option
+                || field_info.field.should_skip_deserializing()
+            {
+                // Navigate to the field and set default
+                for &segment in &path_segments[..path_segments.len().saturating_sub(1)] {
+                    wip = wip
+                        .begin_field(segment)
+                        .map_err(DeserializeError::Reflect)?;
+                    if matches!(wip.shape().def, Def::Option(_)) {
+                        wip = wip.begin_some().map_err(DeserializeError::Reflect)?;
+                    }
+                }
+
+                if let Some(&last) = path_segments.last() {
+                    wip = wip.begin_field(last).map_err(DeserializeError::Reflect)?;
+                    wip = wip.set_default().map_err(DeserializeError::Reflect)?;
+                    wip = wip.end().map_err(DeserializeError::Reflect)?;
+                }
+
+                // Close the path we opened
+                for _ in 0..path_segments.len().saturating_sub(1) {
+                    // Need to check if we're in an option
+                    wip = wip.end().map_err(DeserializeError::Reflect)?;
+                }
+            } else if !parent_touched && path_segments.len() > 1 {
+                // Parent wasn't touched and field has no default - this is OK if the whole
+                // parent can be defaulted (handled by deferred mode)
+                continue;
+            } else if field_info.required {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "field to be present or have default",
+                    got: format!("missing field '{}'", field_info.serialized_name),
+                });
+            }
+        }
+
+        // Finish deferred mode
+        wip = wip.finish_deferred().map_err(DeserializeError::Reflect)?;
+
+        Ok(wip)
+    }
+
+    /// Deserialize the struct fields of a variant.
+    /// Expects the variant to already be selected.
+    fn deserialize_variant_struct_fields(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        use facet_core::StructKind;
+
+        let variant = wip
+            .selected_variant()
+            .ok_or_else(|| DeserializeError::TypeMismatch {
+                expected: "selected variant",
+                got: "no variant selected".into(),
+            })?;
+
+        let variant_fields = variant.data.fields;
+        let kind = variant.data.kind;
+
+        // Handle based on variant kind
+        match kind {
+            StructKind::TupleStruct if variant_fields.len() == 1 => {
+                // Single-element tuple variant (newtype): deserialize the inner value directly
+                wip = wip.begin_nth_field(0).map_err(DeserializeError::Reflect)?;
+                wip = self.deserialize_into(wip)?;
+                wip = wip.end().map_err(DeserializeError::Reflect)?;
+                return Ok(wip);
+            }
+            StructKind::TupleStruct | StructKind::Tuple => {
+                // Multi-element tuple variant - not yet supported in this context
+                return Err(DeserializeError::Unsupported(
+                    "multi-element tuple variants in flatten not yet supported".into(),
+                ));
+            }
+            StructKind::Unit => {
+                // Unit variant - nothing to deserialize
+                return Ok(wip);
+            }
+            StructKind::Struct => {
+                // Struct variant - fall through to struct deserialization below
+            }
+        }
+
+        // Struct variant: deserialize as a struct with named fields
+        // Expect StructStart for the variant content
+        let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+        if !matches!(event, ParseEvent::StructStart) {
+            return Err(DeserializeError::TypeMismatch {
+                expected: "struct start for variant content",
+                got: format!("{event:?}"),
+            });
+        }
+
+        // Track which fields have been set
+        let num_fields = variant_fields.len();
+        let mut fields_set = alloc::vec![false; num_fields];
+
+        // Process all fields
+        loop {
+            let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+            match event {
+                ParseEvent::StructEnd => break,
+                ParseEvent::FieldKey(key) => {
+                    // Look up field in variant's fields
+                    let field_info = variant_fields.iter().enumerate().find(|(_, f)| {
+                        Self::field_matches_with_namespace(
+                            f,
+                            key.name.as_ref(),
+                            key.namespace.as_deref(),
+                            key.location,
+                            None,
+                        )
+                    });
+
+                    if let Some((idx, _field)) = field_info {
+                        wip = wip
+                            .begin_nth_field(idx)
+                            .map_err(DeserializeError::Reflect)?;
+                        wip = self.deserialize_into(wip)?;
+                        wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        fields_set[idx] = true;
+                    } else {
+                        // Unknown field - skip
+                        self.parser.skip_value().map_err(DeserializeError::Parser)?;
+                    }
+                }
+                other => {
+                    return Err(DeserializeError::TypeMismatch {
+                        expected: "field key or struct end",
+                        got: format!("{other:?}"),
+                    });
+                }
+            }
+        }
+
+        // Apply defaults for missing fields
+        for (idx, field) in variant_fields.iter().enumerate() {
+            if fields_set[idx] {
+                continue;
+            }
+
+            let field_has_default = field.has_default();
+            let field_type_has_default = field.shape().is(facet_core::Characteristic::Default);
+            let field_is_option = matches!(field.shape().def, Def::Option(_));
+
+            if field_has_default || field_type_has_default {
+                wip = wip
+                    .set_nth_field_to_default(idx)
+                    .map_err(DeserializeError::Reflect)?;
+            } else if field_is_option {
+                wip = wip
+                    .begin_nth_field(idx)
+                    .map_err(DeserializeError::Reflect)?;
+                wip = wip.set_default().map_err(DeserializeError::Reflect)?;
+                wip = wip.end().map_err(DeserializeError::Reflect)?;
+            } else if field.should_skip_deserializing() {
+                wip = wip
+                    .set_nth_field_to_default(idx)
+                    .map_err(DeserializeError::Reflect)?;
+            } else {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "field to be present or have default",
+                    got: format!("missing field '{}'", field.name),
+                });
+            }
         }
 
         Ok(wip)

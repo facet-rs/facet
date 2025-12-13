@@ -474,7 +474,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                                 )
                             })
                             .collect();
-                        let kind = quote! { 𝟋Sk::Tuple };
+                        let kind = quote! { 𝟋Sk::TupleStruct };
                         let variant = gen_variant(
                             &name_token,
                             &discriminant_ts,
@@ -683,7 +683,7 @@ pub(crate) fn process_enum(parsed: Enum) -> TokenStream {
                                 )
                             })
                             .collect();
-                        let kind = quote! { 𝟋Sk::Tuple };
+                        let kind = quote! { 𝟋Sk::TupleStruct };
                         let variant = gen_variant(
                             &name_token,
                             &discriminant_ts,
