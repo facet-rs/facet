@@ -7,11 +7,72 @@ use alloc::vec::Vec;
 use core::fmt;
 
 use facet_format::{
-    FieldEvidence, FieldLocationHint, FormatParser, ParseEvent, ProbeStream, ScalarValue,
+    FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent, ProbeStream, ScalarValue,
 };
 use quick_xml::Reader;
 use quick_xml::events::{BytesStart, Event};
 use std::io::Cursor;
+
+/// A qualified XML name with optional namespace URI.
+///
+/// In XML, elements and attributes can be in a namespace. The namespace is
+/// identified by a URI, not the prefix used in the document. For example,
+/// `android:label` and `a:label` are the same if both prefixes resolve to
+/// the same namespace URI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)] // Will be used in Phase 2
+struct QName {
+    /// The namespace URI, or `None` for "no namespace".
+    ///
+    /// - Elements without a prefix and no default `xmlns` are in no namespace.
+    /// - Attributes without a prefix are always in no namespace (even with default xmlns).
+    /// - Elements/attributes with a prefix have their namespace resolved via xmlns declarations.
+    namespace: Option<String>,
+    /// The local name (without prefix).
+    local_name: String,
+}
+
+#[allow(dead_code)] // Will be used in Phase 2
+impl QName {
+    /// Create a qualified name with no namespace.
+    fn local(name: impl Into<String>) -> Self {
+        Self {
+            namespace: None,
+            local_name: name.into(),
+        }
+    }
+
+    /// Create a qualified name with a namespace.
+    fn with_ns(namespace: impl Into<String>, local_name: impl Into<String>) -> Self {
+        Self {
+            namespace: Some(namespace.into()),
+            local_name: local_name.into(),
+        }
+    }
+
+    /// Check if this name matches a local name with an optional expected namespace.
+    ///
+    /// If `expected_ns` is `None`, matches any name with the given local name.
+    /// If `expected_ns` is `Some(ns)`, only matches if both local name and namespace match.
+    fn matches(&self, local_name: &str, expected_ns: Option<&str>) -> bool {
+        if self.local_name != local_name {
+            return false;
+        }
+        match expected_ns {
+            None => true, // No namespace constraint - match any namespace (or none)
+            Some(ns) => self.namespace.as_deref() == Some(ns),
+        }
+    }
+}
+
+impl fmt::Display for QName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.namespace {
+            Some(ns) => write!(f, "{{{}}}{}", ns, self.local_name),
+            None => write!(f, "{}", self.local_name),
+        }
+    }
+}
 
 pub struct XmlParser<'de> {
     events: Vec<ParseEvent<'de>>,
@@ -106,7 +167,7 @@ impl<'de> FormatParser<'de> for XmlParser<'de> {
                         break;
                     }
                 }
-                ParseEvent::FieldKey(_, _) => {
+                ParseEvent::FieldKey(_) => {
                     // Value will follow; treat as entering one more depth level.
                     depth += 1;
                 }
@@ -154,7 +215,7 @@ impl<'de> XmlParser<'de> {
                     depth -= 1;
                     i += 1;
                 }
-                ParseEvent::FieldKey(name, location) if depth == 0 => {
+                ParseEvent::FieldKey(key) if depth == 0 => {
                     // This is a top-level field in the struct we're probing
                     // Look at the next event to see if it's a scalar
                     let scalar_value = if let Some(next_event) = self.events.get(i + 1) {
@@ -168,13 +229,19 @@ impl<'de> XmlParser<'de> {
 
                     if let Some(sv) = scalar_value {
                         evidence.push(FieldEvidence::with_scalar_value(
-                            name.clone(),
-                            *location,
+                            key.name.clone(),
+                            key.location,
                             None,
                             sv,
+                            key.namespace.clone(),
                         ));
                     } else {
-                        evidence.push(FieldEvidence::new(name.clone(), *location, None));
+                        evidence.push(FieldEvidence::new(
+                            key.name.clone(),
+                            key.location,
+                            None,
+                            key.namespace.clone(),
+                        ));
                     }
                     i += 1;
                 }
@@ -449,10 +516,10 @@ fn emit_value_events<'de>(value: &XmlValue, events: &mut Vec<ParseEvent<'de>>) {
         XmlValue::Object(fields) => {
             events.push(ParseEvent::StructStart);
             for field in fields {
-                events.push(ParseEvent::FieldKey(
+                events.push(ParseEvent::FieldKey(FieldKey::new(
                     Cow::Owned(field.name.clone()),
                     field.location,
-                ));
+                )));
                 emit_value_events(&field.value, events);
             }
             events.push(ParseEvent::StructEnd);

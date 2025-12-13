@@ -20,6 +20,34 @@ pub enum FieldLocationHint {
     Argument,
 }
 
+/// Field key with optional namespace (for XML).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldKey<'de> {
+    /// Field name.
+    pub name: Cow<'de, str>,
+    /// Location hint.
+    pub location: FieldLocationHint,
+    /// Optional namespace URI (for XML namespace support).
+    pub namespace: Option<Cow<'de, str>>,
+}
+
+impl<'de> FieldKey<'de> {
+    /// Create a new field key without namespace.
+    pub fn new(name: impl Into<Cow<'de, str>>, location: FieldLocationHint) -> Self {
+        Self {
+            name: name.into(),
+            location,
+            namespace: None,
+        }
+    }
+
+    /// Add a namespace to this field key (builder pattern).
+    pub fn with_namespace(mut self, namespace: impl Into<Cow<'de, str>>) -> Self {
+        self.namespace = Some(namespace.into());
+        self
+    }
+}
+
 /// Value classification hint for evidence gathering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueTypeHint {
@@ -66,7 +94,7 @@ pub enum ParseEvent<'de> {
     /// End of a struct/object/node.
     StructEnd,
     /// Encountered a field key.
-    FieldKey(Cow<'de, str>, FieldLocationHint),
+    FieldKey(FieldKey<'de>),
     /// Beginning of a sequence/array/tuple.
     SequenceStart,
     /// End of a sequence/array/tuple.
@@ -82,9 +110,7 @@ impl<'de> fmt::Debug for ParseEvent<'de> {
         match self {
             ParseEvent::StructStart => f.write_str("StructStart"),
             ParseEvent::StructEnd => f.write_str("StructEnd"),
-            ParseEvent::FieldKey(name, loc) => {
-                f.debug_tuple("FieldKey").field(name).field(loc).finish()
-            }
+            ParseEvent::FieldKey(key) => f.debug_tuple("FieldKey").field(key).finish(),
             ParseEvent::SequenceStart => f.write_str("SequenceStart"),
             ParseEvent::SequenceEnd => f.write_str("SequenceEnd"),
             ParseEvent::Scalar(value) => f.debug_tuple("Scalar").field(value).finish(),
