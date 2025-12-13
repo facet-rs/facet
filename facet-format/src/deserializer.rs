@@ -272,25 +272,24 @@ where
             return false;
         }
 
-        // Check namespace if present
-        if let Some(field_ns) = namespace {
-            let field_xml_ns = field
-                .get_attr(Some("xml"), "ns")
-                .and_then(|attr| attr.get_as::<&str>().copied());
+        // Get the expected namespace for this field
+        let field_xml_ns = field
+            .get_attr(Some("xml"), "ns")
+            .and_then(|attr| attr.get_as::<&str>().copied());
 
-            // CRITICAL: Attributes don't inherit ns_all (per XML spec)
-            let expected_ns = if matches!(location, FieldLocationHint::Attribute) {
-                field_xml_ns // Attributes: only explicit xml::ns
-            } else {
-                field_xml_ns.or(ns_all) // Elements: xml::ns OR ns_all
-            };
-
-            match expected_ns {
-                None => true, // No constraint - backwards compatible
-                Some(ns) => field_ns == ns,
-            }
+        // CRITICAL: Attributes don't inherit ns_all (per XML spec)
+        let expected_ns = if matches!(location, FieldLocationHint::Attribute) {
+            field_xml_ns // Attributes: only explicit xml::ns
         } else {
-            true // No namespace in input - backwards compatible
+            field_xml_ns.or(ns_all) // Elements: xml::ns OR ns_all
+        };
+
+        // Check if namespaces match
+        match (namespace, expected_ns) {
+            (Some(input_ns), Some(expected)) => input_ns == expected,
+            (Some(_input_ns), None) => true, // Input has namespace, field doesn't require one - match
+            (None, Some(_expected)) => false, // Input has no namespace, field requires one - NO match
+            (None, None) => true,             // Neither has namespace - match
         }
     }
 
