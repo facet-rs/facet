@@ -1,0 +1,6 @@
+---
+source: facet-json/tests/nonzero.rs
+assertion_line: 28
+expression: result.unwrap_err().to_string()
+---
+unexpected token: got U64(0), expected '['

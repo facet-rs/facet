@@ -497,8 +497,8 @@ fn deserialize_value_into<'p>(value: &Value, partial: Partial<'p>) -> Result<Par
         }
     }
 
-    // Check for transparent/inner wrapper types
-    if shape.inner.is_some() {
+    // Priority 1: Check for builder_shape (immutable collections like Bytes -> BytesMut)
+    if shape.builder_shape.is_some() {
         partial = partial.begin_inner()?;
         partial = deserialize_value_into(value, partial)?;
         partial = partial.end()?;
@@ -529,9 +529,19 @@ fn deserialize_value_into<'p>(value: &Value, partial: Partial<'p>) -> Result<Par
             partial = partial.set(value.clone())?;
             Ok(partial)
         }
-        _ => Err(ValueError::new(ValueErrorKind::Unsupported {
-            message: format!("unsupported shape def: {:?}", shape.def),
-        })),
+        _ => {
+            // Priority 3: Check for .inner (transparent wrappers, or types with .inner for variance)
+            if shape.inner.is_some() {
+                partial = partial.begin_inner()?;
+                partial = deserialize_value_into(value, partial)?;
+                partial = partial.end()?;
+                Ok(partial)
+            } else {
+                Err(ValueError::new(ValueErrorKind::Unsupported {
+                    message: format!("unsupported shape def: {:?}", shape.def),
+                }))
+            }
+        }
     }
 }
 

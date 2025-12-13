@@ -90,6 +90,11 @@ pub struct Shape {
     /// Serializes as the inner type: `NonZero<u8>` becomes `128`, not `{"value": 128}`.
     pub inner: Option<&'static Shape>,
 
+    /// Optional builder type for immutable collections.
+    /// If set, deserializers should build this type first, then convert to the target type.
+    /// Examples: `Bytes` builds through `BytesMut`, `Arc<[T]>` builds through `Vec<T>`.
+    pub builder_shape: Option<&'static Shape>,
+
     /// Custom type name formatter for generic types.
     /// If `None`, uses `type_identifier`. If `Some`, calls the function to format
     /// the full type name including generic parameters (e.g., `Vec<String>`).

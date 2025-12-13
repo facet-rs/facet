@@ -122,7 +122,7 @@ unsafe impl Facet<'_> for Bytes {
         const VTABLE: VTableDirect = VTableDirect::builder_for::<Bytes>()
             .display(bytes_display)
             .debug(bytes_debug)
-            // Convert from BytesMut (inner type) to Bytes
+            // Convert from BytesMut (builder type) to Bytes
             .try_from(bytes_try_from)
             .build();
 
@@ -133,7 +133,7 @@ unsafe impl Facet<'_> for Bytes {
                 &BYTES_LIST_TYPE_OPS,
                 u8::SHAPE,
             )))
-            .inner(BytesMut::SHAPE)
+            .builder_shape(BytesMut::SHAPE)
             .vtable_direct(&VTABLE)
             .send()
             .sync()
