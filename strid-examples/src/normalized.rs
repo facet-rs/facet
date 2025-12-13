@@ -107,6 +107,10 @@ impl strid::Normalizer for LowerString {
 ///
 /// This type includes an explicit parameter indicating that
 /// the borrowed form of this type should be named [`LowerStr`].
+///
+/// Note: This example requires facet support for `compact_str::CompactString`.
+/// See: https://github.com/facet-rs/facet/issues/1282
+#[cfg(feature = "compact_str-facet")]
 #[braid(
     serde,
     normalizer,
@@ -114,6 +118,7 @@ impl strid::Normalizer for LowerString {
 )]
 pub struct LowerCompactString(compact_str::CompactString);
 
+#[cfg(feature = "compact_str-facet")]
 impl strid::Validator for LowerCompactString {
     type Error = InvalidString;
 
@@ -128,6 +133,7 @@ impl strid::Validator for LowerCompactString {
     }
 }
 
+#[cfg(feature = "compact_str-facet")]
 impl strid::Normalizer for LowerCompactString {
     fn normalize(s: &str) -> Result<Cow<str>, Self::Error> {
         if s.is_empty() {

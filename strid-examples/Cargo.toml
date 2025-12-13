@@ -9,7 +9,13 @@ edition.workspace = true
 readme = "../../README.md"
 license.workspace = true
 repository.workspace = true
-publish = false
+publish = true
+
+[features]
+# These features are placeholders for when facet adds support for these types
+bytestring-facet = []
+compact_str-facet = []
+smartstring-facet = []
 
 [dependencies]
 strid = { version = "1.0.0", path = "../strid" }
