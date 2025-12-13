@@ -136,3 +136,114 @@ mod db_paths {
         Ok(())
     }
 }
+
+/// Tests for the combined db trait feature (#7)
+mod db_trait {
+    use picante::PicanteResult;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static QUERY_CALLS: AtomicUsize = AtomicUsize::new(0);
+
+    #[picante::input]
+    pub struct Item {
+        #[key]
+        pub id: u32,
+        pub name: String,
+    }
+
+    #[picante::interned]
+    pub struct Tag {
+        pub label: String,
+    }
+
+    // Tracked functions use the combined trait to access inputs/interned
+    #[picante::tracked]
+    pub async fn process_item<DB: DatabaseTrait>(db: &DB, item: Item) -> PicanteResult<String> {
+        QUERY_CALLS.fetch_add(1, Ordering::Relaxed);
+        let name = item.name(db)?;
+        // We can access Tag via the combined trait
+        let _tag = Tag::new(db, format!("tag-{}", name))?;
+        Ok(format!("processed: {}", name))
+    }
+
+    // Default trait name: {DbName}Trait
+    #[picante::db(inputs(Item), interned(Tag), tracked(process_item))]
+    pub struct Database {}
+
+    // Generic function that operates on data sources (inputs + interned)
+    // doesn't need query access - just reads/creates data
+    fn create_tagged_item<DB: DatabaseTrait>(
+        db: &DB,
+        id: u32,
+        name: &str,
+    ) -> PicanteResult<(Item, Tag)> {
+        let item = Item::new(db, id, name.to_string())?;
+        let tag = Tag::new(db, format!("tag-{}", name))?;
+        Ok((item, tag))
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn combined_trait_works() -> PicanteResult<()> {
+        QUERY_CALLS.store(0, Ordering::Relaxed);
+
+        let db = Database::new();
+
+        // Use the generic function that uses DatabaseTrait bound
+        let (item, tag) = create_tagged_item(&db, 1, "foo")?;
+        assert_eq!(item.name(&db)?, "foo");
+        assert_eq!(tag.label(&db)?, "tag-foo");
+
+        // Call the tracked query (uses HasProcessItemQuery bound internally)
+        let result = process_item(&db, item).await?;
+        assert_eq!(result, "processed: foo");
+        assert_eq!(QUERY_CALLS.load(Ordering::Relaxed), 1);
+
+        // Cached on second call
+        let result = process_item(&db, item).await?;
+        assert_eq!(result, "processed: foo");
+        assert_eq!(QUERY_CALLS.load(Ordering::Relaxed), 1);
+
+        Ok(())
+    }
+
+    // Test custom trait name via db_trait()
+    mod custom_name {
+        use picante::PicanteResult;
+
+        #[picante::input]
+        pub struct Entry {
+            #[key]
+            pub key: String,
+            pub value: String,
+        }
+
+        #[picante::tracked]
+        pub async fn get_value<DB: Db>(db: &DB, entry: Entry) -> PicanteResult<String> {
+            Ok(entry.value(db)?.to_string())
+        }
+
+        // Custom trait name: Db
+        #[picante::db(inputs(Entry), tracked(get_value), db_trait(Db))]
+        pub struct AppDatabase {}
+
+        // Function using the custom trait name for data access
+        fn create_entry<DB: Db>(db: &DB, key: &str, value: &str) -> PicanteResult<Entry> {
+            Entry::new(db, key.to_string(), value.to_string())
+        }
+
+        #[tokio::test(flavor = "current_thread")]
+        async fn custom_trait_name_works() -> PicanteResult<()> {
+            let db = AppDatabase::new();
+
+            // Use generic function with custom Db trait
+            let entry = create_entry(&db, "test-key", "test-value")?;
+            assert_eq!(entry.key(&db)?.as_ref(), "test-key");
+
+            // Call tracked query
+            let value = get_value(&db, entry).await?;
+            assert_eq!(value, "test-value");
+
+            Ok(())
+        }
+    }
+}

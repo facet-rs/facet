@@ -10,6 +10,8 @@ struct DbArgs {
     inputs: Vec<ItemPath>,
     interned: Vec<ItemPath>,
     tracked: Vec<ItemPath>,
+    /// Custom name for the generated combined trait. If None, defaults to `{DbName}Trait`.
+    db_trait: Option<Ident>,
 }
 
 #[derive(Clone)]
@@ -145,6 +147,9 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let mut trait_impls = Vec::<TokenStream2>::new();
 
+    // Collect Has* trait bounds for the combined db trait
+    let mut has_trait_bounds = Vec::<TokenStream2>::new();
+
     // Inputs: two ingredients per input "entity" (keys + data)
     for input in &args.inputs {
         let entity = &input.name;
@@ -176,6 +181,8 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         let keys_ty = input.qualify(&keys_ty_ident);
         let data_ty = input.qualify(&data_ty_ident);
         let has_trait = input.qualify(&has_trait_ident);
+
+        has_trait_bounds.push(quote! { #has_trait });
 
         let make_keys_ident = format_ident!("make_{entity_snake}_keys");
         let make_data_ident = format_ident!("make_{entity_snake}_data");
@@ -239,6 +246,8 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         let ingredient_ty = interned.qualify(&ingredient_ty_ident);
         let has_trait = interned.qualify(&has_trait_ident);
 
+        has_trait_bounds.push(quote! { #has_trait });
+
         let accessor = format_ident!("{entity_snake}_ingredient");
         let make_ident = format_ident!("make_{entity_snake}_ingredient");
         let make_fn = interned.qualify(&make_ident);
@@ -291,6 +300,11 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         let query_ty = tracked.qualify(&query_ty_ident);
         let has_trait = tracked.qualify(&has_trait_ident);
 
+        // NOTE: We intentionally do NOT add Has*Query traits to the combined db trait.
+        // Query traits can have user-specified bounds that might reference the combined trait,
+        // which would create a cycle. Instead, query dependencies are expressed through
+        // explicit bounds on tracked functions.
+
         let getter = format_ident!("{func_snake}_query");
         let make_ident = format_ident!("make_{func_snake}_query");
         let make_fn = tracked.qualify(&make_ident);
@@ -334,6 +348,30 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         let name = &f.name;
         quote! { #name }
     });
+
+    // Generate the combined db trait
+    let db_trait_name = args
+        .db_trait
+        .unwrap_or_else(|| format_ident!("{db_name}Trait"));
+
+    let db_trait_def = quote! {
+        /// Combined trait for all ingredients in this database.
+        ///
+        /// Use this as a bound instead of listing all `Has*Ingredient` traits individually:
+        /// ```ignore
+        /// async fn my_query<DB: #db_trait_name>(db: &DB, ...) -> ...
+        /// ```
+        #vis trait #db_trait_name:
+            #(#has_trait_bounds +)*
+            picante::HasRuntime +
+            picante::IngredientLookup +
+            ::core::marker::Send +
+            ::core::marker::Sync +
+            'static
+        {}
+
+        impl #db_trait_name for #db_name {}
+    };
 
     let expanded = quote! {
         #(#struct_attrs)*
@@ -379,6 +417,8 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
 
         #(#trait_impls)*
+
+        #db_trait_def
     };
 
     expanded.into()
@@ -412,7 +452,28 @@ fn parse_args(attr: TokenStream2) -> Result<DbArgs, String> {
                     "inputs" | "input" => out.inputs.extend(items),
                     "interned" => out.interned.extend(items),
                     "tracked" => out.tracked.extend(items),
-                    _ => return Err("picante: unknown #[picante::db] key (expected `inputs`, `interned`, `tracked`)".to_string()),
+                    "db_trait" => {
+                        if items.len() != 1 {
+                            return Err(
+                                "picante: `db_trait(...)` expects exactly one identifier"
+                                    .to_string(),
+                            );
+                        }
+                        let item = &items[0];
+                        if !item.prefix.is_empty() {
+                            return Err(
+                                "picante: `db_trait(...)` expects a simple identifier, not a path"
+                                    .to_string(),
+                            );
+                        }
+                        if out.db_trait.is_some() {
+                            return Err(
+                                "picante: `db_trait(...)` specified multiple times".to_string()
+                            );
+                        }
+                        out.db_trait = Some(item.name.clone());
+                    }
+                    _ => return Err("picante: unknown #[picante::db] key (expected `inputs`, `interned`, `tracked`, `db_trait`)".to_string()),
                 }
 
                 if let Some(TokenTree::Punct(p)) = it.peek()
