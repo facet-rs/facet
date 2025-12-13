@@ -316,12 +316,12 @@ where
             let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
             match event {
                 ParseEvent::StructEnd => break,
-                ParseEvent::FieldKey(name, _hint) => {
+                ParseEvent::FieldKey(key) => {
                     // First, look up field in direct struct fields (non-flattened)
                     let direct_field_info = struct_def.fields.iter().enumerate().find(|(_, f)| {
                         !f.is_flattened()
-                            && (f.name == name.as_ref()
-                                || f.alias.iter().any(|alias| *alias == name.as_ref()))
+                            && (f.name == key.name.as_ref()
+                                || f.alias.iter().any(|alias| *alias == key.name.as_ref()))
                     });
 
                     if let Some((idx, field)) = direct_field_info {
@@ -345,8 +345,8 @@ where
                         {
                             // Look for the field in the inner struct
                             let inner_match = inner_fields.iter().enumerate().find(|(_, f)| {
-                                f.name == name.as_ref()
-                                    || f.alias.iter().any(|alias| *alias == name.as_ref())
+                                f.name == key.name.as_ref()
+                                    || f.alias.iter().any(|alias| *alias == key.name.as_ref())
                             });
 
                             if let Some((inner_idx, _inner_field)) = inner_match {
@@ -373,7 +373,7 @@ where
                     }
 
                     if deny_unknown_fields {
-                        return Err(DeserializeError::UnknownField(name.into_owned()));
+                        return Err(DeserializeError::UnknownField(key.name.into_owned()));
                     } else {
                         // Unknown field - skip it
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
@@ -619,7 +619,7 @@ where
         // Get the variant name
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
         let variant_name = match event {
-            ParseEvent::FieldKey(name, _) => name,
+            ParseEvent::FieldKey(key) => key.name,
             other => {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "variant name",
@@ -699,7 +699,7 @@ where
                 let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
                 match event {
                     ParseEvent::StructEnd => break,
-                    ParseEvent::FieldKey(_, _) => {
+                    ParseEvent::FieldKey(_) => {
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
                     }
                     other => {
@@ -722,17 +722,17 @@ where
             let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
             match event {
                 ParseEvent::StructEnd => break,
-                ParseEvent::FieldKey(name, _) => {
+                ParseEvent::FieldKey(key) => {
                     // Skip the tag field - already used
-                    if name.as_ref() == tag_key {
+                    if key.name.as_ref() == tag_key {
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
                         continue;
                     }
 
                     // Look up field in variant's fields
                     let field_info = variant_fields.iter().enumerate().find(|(_, f)| {
-                        f.name == name.as_ref()
-                            || f.alias.iter().any(|alias| *alias == name.as_ref())
+                        f.name == key.name.as_ref()
+                            || f.alias.iter().any(|alias| *alias == key.name.as_ref())
                     });
 
                     if let Some((idx, _field)) = field_info {
@@ -856,11 +856,11 @@ where
             let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
             match event {
                 ParseEvent::StructEnd => break,
-                ParseEvent::FieldKey(name, _) => {
-                    if name.as_ref() == tag_key {
+                ParseEvent::FieldKey(key) => {
+                    if key.name.as_ref() == tag_key {
                         // Skip the tag field - already used
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
-                    } else if name.as_ref() == content_key {
+                    } else if key.name.as_ref() == content_key {
                         // Deserialize the content
                         wip = self.deserialize_enum_variant_content(wip)?;
                         content_seen = true;
@@ -970,10 +970,10 @@ where
                     let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
                     match event {
                         ParseEvent::StructEnd => break,
-                        ParseEvent::FieldKey(name, _) => {
+                        ParseEvent::FieldKey(key) => {
                             let field_info = variant_fields.iter().enumerate().find(|(_, f)| {
-                                f.name == name.as_ref()
-                                    || f.alias.iter().any(|alias| *alias == name.as_ref())
+                                f.name == key.name.as_ref()
+                                    || f.alias.iter().any(|alias| *alias == key.name.as_ref())
                             });
 
                             if let Some((idx, _field)) = field_info {
@@ -1274,11 +1274,11 @@ where
             let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
             match event {
                 ParseEvent::StructEnd => break,
-                ParseEvent::FieldKey(key, _) => {
+                ParseEvent::FieldKey(key) => {
                     // Begin key
                     wip = wip.begin_key().map_err(DeserializeError::Reflect)?;
                     wip = wip
-                        .set(key.into_owned())
+                        .set(key.name.into_owned())
                         .map_err(DeserializeError::Reflect)?;
                     wip = wip.end().map_err(DeserializeError::Reflect)?;
 

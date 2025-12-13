@@ -12,7 +12,7 @@ mod solver;
 mod visitor;
 
 pub use deserializer::{DeserializeError, FormatDeserializer};
-pub use event::{FieldLocationHint, ParseEvent, ScalarValue, ValueTypeHint};
+pub use event::{FieldKey, FieldLocationHint, ParseEvent, ScalarValue, ValueTypeHint};
 pub use evidence::FieldEvidence;
 pub use parser::{FormatParser, ProbeStream};
 pub use serializer::{FormatSerializer, SerializeError, serialize_root};
