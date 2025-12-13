@@ -262,7 +262,7 @@ impl FormatSuite for XmlSlice {
         // Object (nested struct) provided where array expected
         CaseSpec::expect_error(
             r#"<record><items><wrong>structure</wrong></items></record>"#,
-            "opaque type",
+            "type mismatch",
         )
     }
 

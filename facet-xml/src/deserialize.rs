@@ -952,6 +952,21 @@ impl<'input> XmlDeserializer<'input> {
             return self.deserialize_map_content(partial, element_name);
         }
 
+        // Check for .inner (transparent wrappers like NonZero)
+        // Collections (List/Map/Set/Array) have .inner for variance but shouldn't use this path
+        if shape.inner.is_some()
+            && !matches!(
+                &shape.def,
+                Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
+            )
+        {
+            partial = partial.begin_inner()?;
+            partial =
+                self.deserialize_element(partial, element_name, attributes, span, is_empty)?;
+            partial = partial.end()?;
+            return Ok(partial);
+        }
+
         // Handle different shapes
         match &shape.ty {
             Type::User(UserType::Struct(struct_def)) => {
@@ -2128,8 +2143,14 @@ impl<'input> XmlDeserializer<'input> {
             return Ok(partial);
         }
 
-        // Priority 3: Check for .inner (transparent wrappers, or types with .inner for variance)
-        if shape.inner.is_some() {
+        // Priority 2: Check for .inner (transparent wrappers like NonZero)
+        // Collections (List/Map/Set/Array) have .inner for variance but shouldn't use this path
+        if shape.inner.is_some()
+            && !matches!(
+                &shape.def,
+                Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
+            )
+        {
             partial = partial.begin_inner()?;
             partial = self.set_scalar_value(partial, value)?;
             partial = partial.end()?;
