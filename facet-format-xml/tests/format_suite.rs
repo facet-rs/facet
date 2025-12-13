@@ -279,6 +279,40 @@ impl FormatSuite for XmlSlice {
         CaseSpec::from_str(r#"<record><name>test</name><count>42</count></record>"#)
     }
 
+    fn proxy_with_enum() -> CaseSpec {
+        CaseSpec::from_str(r#"<value><Value>99</Value></value>"#)
+    }
+
+    fn proxy_with_transparent() -> CaseSpec {
+        CaseSpec::from_str(r#"<value>42</value>"#)
+    }
+
+    fn transparent_multilevel() -> CaseSpec {
+        CaseSpec::from_str(r#"<value>42</value>"#)
+    }
+
+    fn transparent_option() -> CaseSpec {
+        CaseSpec::from_str(r#"<value>99</value>"#)
+    }
+
+    fn transparent_nonzero() -> CaseSpec {
+        CaseSpec::from_str(r#"<value>42</value>"#)
+    }
+
+    fn flatten_optional_some() -> CaseSpec {
+        // TODO: flatten with Option<T> not yet fully supported
+        CaseSpec::skip("flatten with Option<T> not yet implemented")
+    }
+
+    fn flatten_optional_none() -> CaseSpec {
+        CaseSpec::from_str(r#"<record><name>test</name></record>"#)
+    }
+
+    fn flatten_overlapping_fields_error() -> CaseSpec {
+        // TODO: overlapping field detection not yet implemented
+        CaseSpec::skip("overlapping field detection not yet implemented")
+    }
+
     // ── Scalar cases ──
 
     fn scalar_bool() -> CaseSpec {

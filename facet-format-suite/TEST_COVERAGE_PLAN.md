@@ -30,8 +30,8 @@ to achieve comprehensive coverage of the **format abstraction layer**.
 - [x] `proxy_field_level` - Field-level `#[facet(proxy = ...)]` vs container-level
 - [~] `proxy_field_overrides_container` - SKIPPED: container-level proxy changes entire serialization format, can't meaningfully combine with field-level proxies
 - [x] `proxy_validation_error` - Proxy conversion error handling
-- [ ] `proxy_with_enum` - Proxy on enum variants
-- [ ] `proxy_with_transparent` - Interaction between proxy and transparent
+- [x] `proxy_with_enum` - Proxy on enum variants
+- [x] `proxy_with_transparent` - Interaction between proxy and transparent
 - [x] `proxy_with_option` - Proxy wrapping Option<T>
 
 **Rationale**: Proxies are a core feature with complex precedence rules and error paths.
@@ -47,18 +47,18 @@ to achieve comprehensive coverage of the **format abstraction layer**.
 
 ### Transparent Variations (IMPORTANT)
 
-- [ ] `transparent_multilevel` - Transparent wrapping another transparent type
-- [ ] `transparent_option` - Transparent wrapping Option<T>
-- [ ] `transparent_nonzero` - Transparent wrapping NonZero types
-- [ ] `repr_transparent_behavior` - Verify repr(transparent) implications
+- [x] `transparent_multilevel` - Transparent wrapping another transparent type
+- [x] `transparent_option` - Transparent wrapping Option<T>
+- [x] `transparent_nonzero` - Transparent wrapping NonZero types
+- [~] `repr_transparent_behavior` - SKIPPED: repr behavior is a Rust concern, not format layer
 
 **Rationale**: Tests attribute composition and repr interaction.
 
 ### Flatten Variations (IMPORTANT)
 
-- [ ] `flatten_optional_some` - Flattened field is Option<T> with Some
-- [ ] `flatten_optional_none` - Flattened field is Option<T> with None
-- [ ] `flatten_overlapping_fields_error` - Two flattened structs with same field name
+- [~] `flatten_optional_some` - SKIPPED: flatten with Option<T> not yet implemented
+- [x] `flatten_optional_none` - Flattened field is Option<T> with None
+- [~] `flatten_overlapping_fields_error` - SKIPPED: overlapping field detection not yet implemented
 
 **Rationale**: Tests flatten with Option (common pattern) and error cases.
 

@@ -272,6 +272,40 @@ impl FormatSuite for JsonSlice {
         CaseSpec::from_str(r#"{"name":"test","count":"42"}"#)
     }
 
+    fn proxy_with_enum() -> CaseSpec {
+        CaseSpec::from_str(r#"{"Value":"99"}"#)
+    }
+
+    fn proxy_with_transparent() -> CaseSpec {
+        CaseSpec::from_str(r#""42""#)
+    }
+
+    fn transparent_multilevel() -> CaseSpec {
+        CaseSpec::from_str(r#"42"#)
+    }
+
+    fn transparent_option() -> CaseSpec {
+        CaseSpec::from_str(r#"99"#)
+    }
+
+    fn transparent_nonzero() -> CaseSpec {
+        CaseSpec::from_str(r#"42"#)
+    }
+
+    fn flatten_optional_some() -> CaseSpec {
+        // TODO: flatten with Option<T> not yet fully supported
+        CaseSpec::skip("flatten with Option<T> not yet implemented")
+    }
+
+    fn flatten_optional_none() -> CaseSpec {
+        CaseSpec::from_str(r#"{"name":"test"}"#)
+    }
+
+    fn flatten_overlapping_fields_error() -> CaseSpec {
+        // TODO: overlapping field detection not yet implemented
+        CaseSpec::skip("overlapping field detection not yet implemented")
+    }
+
     // ── Scalar cases ──
 
     fn scalar_bool() -> CaseSpec {
