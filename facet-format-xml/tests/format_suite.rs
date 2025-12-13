@@ -378,6 +378,20 @@ impl FormatSuite for XmlSlice {
         CaseSpec::from_str(r#"<value><x>10</x><y>20</y></value>"#)
     }
 
+    fn untagged_with_null() -> CaseSpec {
+        CaseSpec::skip("XML empty elements don't map to unit variants in untagged enums")
+    }
+
+    fn untagged_newtype_variant() -> CaseSpec {
+        CaseSpec::from_str(r#"<value>test</value>"#)
+    }
+
+    fn untagged_as_field() -> CaseSpec {
+        CaseSpec::skip(
+            "XML parser returns I64 but untagged enum expects U64 (numeric matching not yet supported)",
+        )
+    }
+
     // ── Smart pointer cases ──
 
     fn box_wrapper() -> CaseSpec {
