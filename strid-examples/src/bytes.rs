@@ -5,9 +5,16 @@
 //! of their values, so every valid UTF-8 string is potentially valid for
 //! these types.
 //!
+//! Note: This example requires facet support for `bytestring::ByteString`.
+//! See: https://github.com/facet-rs/facet/issues/1284
+//!
 //! [`Bytes`]: https://docs.rs/bytes/*/bytes/struct.Bytes.html
 
+#![allow(dead_code)]
+
 use strid::braid;
+
+#[cfg(feature = "bytestring-facet")]
 use bytestring::ByteString;
 
 /// A basic example of a wrapper around a [`Bytes`]
@@ -16,6 +23,7 @@ use bytestring::ByteString;
 /// will be named [`Username`].
 ///
 /// [`Bytes`]: https://docs.rs/bytes/*/bytes/struct.Bytes.html
+#[cfg(feature = "bytestring-facet")]
 #[braid(
     serde,
     ref_doc = "A borrowed reference to a basic string slice wrapper"

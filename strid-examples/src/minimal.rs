@@ -11,8 +11,18 @@ pub struct MinimalUsernameBuf(MinimalString);
 /// An example of a minimal string implementaiton that can be wrapped inside
 /// an owned braid type.
 #[derive(
-    Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+    Clone,
+    Debug,
+    Hash,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    facet::Facet,
 )]
+#[facet(transparent)]
 pub struct MinimalString(String);
 
 impl From<String> for MinimalString {
