@@ -592,9 +592,8 @@ fn scalar_from_peek<'mem, 'facet, E: Debug>(
         }
         ScalarType::U64 => ScalarValue::U64(*value.get::<u64>().map_err(SerializeError::Reflect)?),
         ScalarType::U128 => {
-            return Err(SerializeError::Unsupported(
-                "u128 scalar serialization is not supported yet",
-            ));
+            let n = *value.get::<u128>().map_err(SerializeError::Reflect)?;
+            ScalarValue::Str(Cow::Owned(alloc::string::ToString::to_string(&n)))
         }
         ScalarType::USize => {
             ScalarValue::U64(*value.get::<usize>().map_err(SerializeError::Reflect)? as u64)
@@ -610,9 +609,8 @@ fn scalar_from_peek<'mem, 'facet, E: Debug>(
         }
         ScalarType::I64 => ScalarValue::I64(*value.get::<i64>().map_err(SerializeError::Reflect)?),
         ScalarType::I128 => {
-            return Err(SerializeError::Unsupported(
-                "i128 scalar serialization is not supported yet",
-            ));
+            let n = *value.get::<i128>().map_err(SerializeError::Reflect)?;
+            ScalarValue::Str(Cow::Owned(alloc::string::ToString::to_string(&n)))
         }
         ScalarType::ISize => {
             ScalarValue::I64(*value.get::<isize>().map_err(SerializeError::Reflect)? as i64)

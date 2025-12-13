@@ -340,8 +340,9 @@ impl FormatSuite for XmlSlice {
     }
 
     fn scalar_integers_128() -> CaseSpec {
-        // Skip: VNumber can't hold values outside i64/u64 range, so deserialization fails
-        CaseSpec::skip("i128/u128 values exceed VNumber range")
+        CaseSpec::from_str(
+            r#"<record><signed_128>-170141183460469231731687303715884105728</signed_128><unsigned_128>340282366920938463463374607431768211455</unsigned_128></record>"#,
+        )
     }
 
     fn scalar_integers_size() -> CaseSpec {
@@ -498,8 +499,9 @@ impl FormatSuite for XmlSlice {
     // ── Extended NonZero cases ──
 
     fn nonzero_integers_extended() -> CaseSpec {
-        // Skip: i128/u128 values exceed VNumber range
-        CaseSpec::skip("i128/u128 values exceed VNumber range")
+        CaseSpec::from_str(
+            r#"<record><nz_u8>255</nz_u8><nz_i8>-128</nz_i8><nz_u16>65535</nz_u16><nz_i16>-32768</nz_i16><nz_u128>1</nz_u128><nz_i128>-1</nz_i128><nz_usize>1000</nz_usize><nz_isize>-500</nz_isize></record>"#,
+        )
     }
 
     // ── DateTime type cases ──
