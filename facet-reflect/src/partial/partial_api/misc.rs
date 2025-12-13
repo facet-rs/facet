@@ -711,15 +711,17 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
         );
 
         // Check if we need to do a conversion - this happens when:
-        // 1. The parent frame has an inner type that matches the popped frame's shape
+        // 1. The parent frame has a builder_shape or inner type that matches the popped frame's shape
         // 2. The parent frame has try_from
         // 3. The parent frame is not yet initialized
         // 4. The parent frame's tracker is Scalar (not Option, SmartPointer, etc.)
         //    This ensures we only do conversion when begin_inner was used, not begin_some
         let needs_conversion = !parent_frame.is_init
             && matches!(parent_frame.tracker, Tracker::Scalar)
-            && parent_frame.shape.inner.is_some()
-            && parent_frame.shape.inner.unwrap() == popped_frame.shape
+            && ((parent_frame.shape.builder_shape.is_some()
+                && parent_frame.shape.builder_shape.unwrap() == popped_frame.shape)
+                || (parent_frame.shape.inner.is_some()
+                    && parent_frame.shape.inner.unwrap() == popped_frame.shape))
             && match parent_frame.shape.vtable {
                 facet_core::VTableErased::Direct(vt) => vt.try_from.is_some(),
                 facet_core::VTableErased::Indirect(vt) => vt.try_from.is_some(),
