@@ -1,4 +1,5 @@
 use quote::ToTokens;
+use unsynn::{IParse, ToTokenIter};
 
 pub const VALIDATOR: &str = "validator";
 pub const NORMALIZER: &str = "normalizer";
@@ -7,8 +8,8 @@ pub const NORMALIZER: &str = "normalizer";
 pub enum CheckMode {
     #[default]
     None,
-    Validate(syn::Type),
-    Normalize(syn::Type),
+    Validate(crate::grammar::Type),
+    Normalize(crate::grammar::Type),
 }
 
 impl CheckMode {
@@ -24,12 +25,15 @@ impl CheckMode {
 pub enum IndefiniteCheckMode {
     #[default]
     None,
-    Validate(Option<syn::Type>),
-    Normalize(Option<syn::Type>),
+    Validate(Option<crate::grammar::Type>),
+    Normalize(Option<crate::grammar::Type>),
 }
 
 impl IndefiniteCheckMode {
-    pub fn try_set_validator(&mut self, validator: Option<syn::Type>) -> Result<(), String> {
+    pub fn try_set_validator(
+        &mut self,
+        validator: Option<crate::grammar::Type>,
+    ) -> Result<(), String> {
         if matches!(self, Self::None) {
             *self = Self::Validate(validator);
             return Ok(());
@@ -47,7 +51,10 @@ impl IndefiniteCheckMode {
         Err(err_desc)
     }
 
-    pub fn try_set_normalizer(&mut self, normalizer: Option<syn::Type>) -> Result<(), String> {
+    pub fn try_set_normalizer(
+        &mut self,
+        normalizer: Option<crate::grammar::Type>,
+    ) -> Result<(), String> {
         if matches!(self, Self::None) {
             *self = Self::Normalize(normalizer);
             return Ok(());
@@ -65,7 +72,7 @@ impl IndefiniteCheckMode {
         Err(err_desc)
     }
 
-    pub fn infer_validator_if_missing(self, default: &syn::Ident) -> CheckMode {
+    pub fn infer_validator_if_missing(self, default: &unsynn::Ident) -> CheckMode {
         match self {
             Self::None => CheckMode::None,
             Self::Validate(Some(validator)) => CheckMode::Validate(validator),
@@ -76,8 +83,11 @@ impl IndefiniteCheckMode {
     }
 }
 
-pub fn ident_to_type(ident: &syn::Ident) -> syn::Type {
+pub fn ident_to_type(ident: &unsynn::Ident) -> crate::grammar::Type {
     let tokens = ident.to_token_stream();
+    let mut iter = tokens.to_token_iter();
 
-    syn::parse_quote!(#tokens)
+    // Parse the identifier as a type
+    iter.parse::<crate::grammar::Type>()
+        .expect("failed to parse identifier as type")
 }

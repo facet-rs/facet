@@ -19,7 +19,7 @@ proc-macro = true
 [dependencies]
 proc-macro2.workspace = true
 quote.workspace = true
-syn.workspace = true
+unsynn.workspace = true
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"

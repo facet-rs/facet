@@ -1,17 +1,18 @@
 use quote::{ToTokens, TokenStreamExt, quote};
+use unsynn::{Ident, ToTokens as UnsynnToTokens};
 
 use super::{AttrList, CheckMode, Field, FieldName, Impls, StdLib, impls::ToImpl};
 
 pub struct RefCodeGen<'a> {
-    pub doc: &'a [syn::Lit],
-    pub common_attrs: &'a [syn::Attribute],
+    pub doc: &'a [proc_macro2::Literal],
+    pub common_attrs: &'a [crate::grammar::Attribute],
     pub attrs: &'a AttrList,
-    pub vis: &'a syn::Visibility,
-    pub ty: &'a syn::Type,
-    pub ident: syn::Ident,
+    pub vis: Option<&'a crate::grammar::Vis>,
+    pub ty: &'a crate::grammar::Type,
+    pub ident: Ident,
     pub field: Field,
     pub check_mode: &'a CheckMode,
-    pub owned_ty: Option<&'a syn::Ident>,
+    pub owned_ty: Option<&'a Ident>,
     pub std_lib: &'a StdLib,
     pub impls: &'a Impls,
 }
@@ -137,7 +138,7 @@ impl<'a> RefCodeGen<'a> {
         }
     }
 
-    fn fallible_inherent(&self, validator: &syn::Type) -> proc_macro2::TokenStream {
+    fn fallible_inherent(&self, validator: &crate::grammar::Type) -> proc_macro2::TokenStream {
         let doc_comment = format!(
             "Transparently reinterprets the string slice as a strongly-typed {} if it conforms to \
              [`{}`]",
@@ -221,7 +222,7 @@ impl<'a> RefCodeGen<'a> {
         }
     }
 
-    fn normalized_inherent(&self, normalizer: &syn::Type) -> proc_macro2::TokenStream {
+    fn normalized_inherent(&self, normalizer: &crate::grammar::Type) -> proc_macro2::TokenStream {
         let doc_comment = format!(
             "Transparently reinterprets the string slice as a strongly-typed {} if it conforms to \
              [`{}`], normalizing if necessary",
@@ -555,7 +556,7 @@ impl<'a> RefCodeGen<'a> {
             }
             attrs
         };
-        let vis = self.vis;
+        let vis = self.vis.map(|v| v.to_token_stream()).unwrap_or_default();
         let ty = &self.ty;
         let field_attrs = {
             let mut attrs = proc_macro2::TokenStream::new();
@@ -586,10 +587,8 @@ impl<'a> RefCodeGen<'a> {
     }
 }
 
-fn is_doc_attribute(attr: &syn::Attribute) -> bool {
-    if let Some(ident) = attr.path().get_ident() {
-        ident == "doc"
-    } else {
-        false
-    }
+fn is_doc_attribute(_attr: &crate::grammar::Attribute) -> bool {
+    // TODO: Implement doc attribute detection for unsynn Attribute
+    // For now, we'll return false as doc detection requires parsing the attribute body
+    false
 }

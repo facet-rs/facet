@@ -19,11 +19,15 @@
 
 extern crate proc_macro;
 
+mod attr_grammar;
 mod codegen;
+mod grammar;
 
 use codegen::{Params, ParamsRef};
+use grammar::ItemStruct;
 use proc_macro::TokenStream;
-use syn::parse_macro_input;
+use proc_macro2::TokenStream as TokenStream2;
+use unsynn::*;
 
 /// Constructs a braid
 ///
@@ -65,12 +69,29 @@ use syn::parse_macro_input;
 ///   * Generates `no_std`-compatible braid (still requires `alloc`)
 #[proc_macro_attribute]
 pub fn braid(args: TokenStream, input: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(args as Params);
-    let body = parse_macro_input!(input as syn::ItemStruct);
+    let args_ts: TokenStream2 = args.into();
+    let input_ts: TokenStream2 = input.into();
 
-    args.build(body)
-        .map_or_else(syn::Error::into_compile_error, |codegen| codegen.generate())
-        .into()
+    let mut args_iter = args_ts.to_token_iter();
+    let parsed_args = match args_iter.parse::<attr_grammar::AttrArgs>() {
+        Ok(args) => args,
+        Err(e) => return compile_error(format!("failed to parse braid args: {e}")).into(),
+    };
+    let args = match Params::from_args(parsed_args) {
+        Ok(args) => args,
+        Err(e) => return compile_error(format!("failed to process braid args: {e}")).into(),
+    };
+
+    let mut input_iter = input_ts.to_token_iter();
+    let body = match input_iter.parse::<ItemStruct>() {
+        Ok(body) => body,
+        Err(e) => return compile_error(format!("failed to parse struct: {e}")).into(),
+    };
+
+    args.build(body).map_or_else(
+        |e| compile_error(e).into(),
+        |codegen| codegen.generate().into(),
+    )
 }
 
 /// Constructs a ref-only braid
@@ -94,18 +115,43 @@ pub fn braid(args: TokenStream, input: TokenStream) -> TokenStream {
 ///   * Generates a `no_std`-compatible braid that doesn't require `alloc`
 #[proc_macro_attribute]
 pub fn braid_ref(args: TokenStream, input: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(args as ParamsRef);
-    let mut body = parse_macro_input!(input as syn::ItemStruct);
+    let args_ts: TokenStream2 = args.into();
+    let input_ts: TokenStream2 = input.into();
+
+    let mut args_iter = args_ts.to_token_iter();
+    let parsed_args = match args_iter.parse::<attr_grammar::AttrArgs>() {
+        Ok(args) => args,
+        Err(e) => return compile_error(format!("failed to parse braid_ref args: {e}")).into(),
+    };
+    let args = match ParamsRef::from_args(parsed_args) {
+        Ok(args) => args,
+        Err(e) => return compile_error(format!("failed to process braid_ref args: {e}")).into(),
+    };
+
+    let mut input_iter = input_ts.to_token_iter();
+    let mut body = match input_iter.parse::<ItemStruct>() {
+        Ok(body) => body,
+        Err(e) => return compile_error(format!("failed to parse struct: {e}")).into(),
+    };
 
     args.build(&mut body)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
+        .map_or_else(|e| compile_error(e).into(), |tokens| tokens.into())
 }
 
-fn as_validator(validator: &syn::Type) -> proc_macro2::TokenStream {
-    quote::quote! { <#validator as ::strid::Validator> }
+/// Helper to create a compile error.
+fn compile_error(msg: impl std::fmt::Display) -> TokenStream2 {
+    let msg = msg.to_string();
+    quote::quote! {
+        compile_error!(#msg)
+    }
 }
 
-fn as_normalizer(normalizer: &syn::Type) -> proc_macro2::TokenStream {
-    quote::quote! { <#normalizer as ::strid::Normalizer> }
+fn as_validator(validator: &grammar::Type) -> proc_macro2::TokenStream {
+    let ty = validator.to_token_stream();
+    quote::quote! { <#ty as ::strid::Validator> }
+}
+
+fn as_normalizer(normalizer: &grammar::Type) -> proc_macro2::TokenStream {
+    let ty = normalizer.to_token_stream();
+    quote::quote! { <#ty as ::strid::Normalizer> }
 }

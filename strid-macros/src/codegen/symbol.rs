@@ -1,6 +1,6 @@
 use std::fmt::{self, Display};
 
-use syn::{Ident, Path};
+use unsynn::{IParse, Ident, Literal, ToTokenIter};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Symbol(&'static str);
@@ -33,34 +33,24 @@ impl PartialEq<Symbol> for &Ident {
     }
 }
 
-impl PartialEq<Symbol> for Path {
-    fn eq(&self, word: &Symbol) -> bool {
-        self.is_ident(word.0)
-    }
-}
-
-impl PartialEq<Symbol> for &Path {
-    fn eq(&self, word: &Symbol) -> bool {
-        self.is_ident(word.0)
-    }
-}
-
 impl Display for Symbol {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str(self.0)
     }
 }
 
-fn get_lit_str(attr_name: Symbol, lit: &syn::Lit) -> Result<&syn::LitStr, syn::Error> {
-    if let syn::Lit::Str(lit) = lit {
-        Ok(lit)
+fn get_lit_str(attr_name: Symbol, lit: &Literal) -> Result<String, String> {
+    // proc_macro2::Literal doesn't have variants, so we parse its string representation
+    let lit_str = lit.to_string();
+
+    // Check if it's a string literal (starts and ends with quotes)
+    if lit_str.starts_with('"') && lit_str.ends_with('"') && lit_str.len() >= 2 {
+        // Remove the surrounding quotes and unescape
+        Ok(lit_str[1..lit_str.len() - 1].to_string())
     } else {
-        Err(syn::Error::new_spanned(
-            lit,
-            format!(
-                "expected attribute `{}` to have a string value (`{} = \"value\"`)",
-                attr_name, attr_name
-            ),
+        Err(format!(
+            "expected attribute `{}` to have a string value (`{} = \"value\"`)",
+            attr_name, attr_name
         ))
     }
 }
@@ -72,65 +62,21 @@ fn get_lit_str(attr_name: Symbol, lit: &syn::Lit) -> Result<&syn::LitStr, syn::E
 //     })
 // }
 
-pub(super) fn parse_expr_as_lit(expr: &syn::Expr) -> Result<&syn::Lit, syn::Error> {
-    if let syn::Expr::Lit(l) = expr {
-        Ok(&l.lit)
-    } else {
-        Err(syn::Error::new_spanned(
-            expr,
-            "expected a literal in this position",
-        ))
-    }
+/// Parse a literal into a string.
+pub(super) fn parse_lit_into_string(attr_name: Symbol, lit: &Literal) -> Result<String, String> {
+    get_lit_str(attr_name, lit)
 }
 
+/// Parse a string literal into a type by parsing its contents.
 pub(super) fn parse_lit_into_type(
-    attr_name: Symbol,
-    lit: &syn::Lit,
-) -> Result<syn::Type, syn::Error> {
-    let string = get_lit_str(attr_name, lit)?;
-    parse_lit_str(string).map_err(|_| {
-        syn::Error::new_spanned(lit, format!("failed to parse type: {:?}", string.value()))
-    })
-}
+    _attr_name: Symbol,
+    string: &str,
+) -> Result<crate::grammar::Type, String> {
+    let tokens: proc_macro2::TokenStream = string
+        .parse()
+        .map_err(|e| format!("failed to parse type from string: {}", e))?;
 
-pub(super) fn parse_lit_into_string(
-    attr_name: Symbol,
-    lit: &syn::Lit,
-) -> Result<String, syn::Error> {
-    let string = get_lit_str(attr_name, lit)?;
-    Ok(string.value())
-}
-
-fn parse_lit_str<T>(s: &syn::LitStr) -> syn::parse::Result<T>
-where
-    T: syn::parse::Parse,
-{
-    let tokens = spanned_tokens(s)?;
-    syn::parse2(tokens)
-}
-
-fn spanned_tokens(s: &syn::LitStr) -> syn::parse::Result<proc_macro2::TokenStream> {
-    let stream = syn::parse_str(&s.value())?;
-    Ok(respan_token_stream(stream, s.span()))
-}
-
-fn respan_token_stream(
-    stream: proc_macro2::TokenStream,
-    span: proc_macro2::Span,
-) -> proc_macro2::TokenStream {
-    stream
-        .into_iter()
-        .map(|token| respan_token_tree(token, span))
-        .collect()
-}
-
-fn respan_token_tree(
-    mut token: proc_macro2::TokenTree,
-    span: proc_macro2::Span,
-) -> proc_macro2::TokenTree {
-    if let proc_macro2::TokenTree::Group(g) = &mut token {
-        *g = proc_macro2::Group::new(g.delimiter(), respan_token_stream(g.stream(), span));
-    }
-    token.set_span(span);
-    token
+    let mut iter = tokens.to_token_iter();
+    iter.parse::<crate::grammar::Type>()
+        .map_err(|e| format!("failed to parse type: {}", e))
 }
