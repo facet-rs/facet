@@ -9,8 +9,9 @@ use core::fmt;
 use facet_format::{
     FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent, ProbeStream, ScalarValue,
 };
-use quick_xml::Reader;
-use quick_xml::events::{BytesStart, Event};
+use quick_xml::NsReader;
+use quick_xml::events::Event;
+use quick_xml::name::ResolveResult;
 use std::io::Cursor;
 
 /// A qualified XML name with optional namespace URI.
@@ -274,37 +275,34 @@ impl<'de> ProbeStream<'de> for XmlProbe<'de> {
     }
 }
 
+/// Resolve a namespace from quick-xml's ResolveResult.
+fn resolve_namespace(resolve: ResolveResult<'_>) -> Result<Option<String>, XmlError> {
+    match resolve {
+        ResolveResult::Bound(ns) => Ok(Some(String::from_utf8_lossy(ns.as_ref()).into_owned())),
+        ResolveResult::Unbound => Ok(None),
+        ResolveResult::Unknown(_) => {
+            // Unknown prefix - treat as no namespace
+            Ok(None)
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct Element {
-    name: String,
-    attributes: Vec<(String, String)>,
+    name: QName,
+    attributes: Vec<(QName, String)>,
     children: Vec<Element>,
     text: String,
 }
 
 impl Element {
-    fn from_start(start: BytesStart<'_>) -> Result<Self, XmlError> {
-        let name = core::str::from_utf8(start.name().as_ref())
-            .map_err(|_| XmlError::InvalidUtf8)?
-            .to_string();
-        let mut attributes = Vec::new();
-        for attr in start.attributes() {
-            let attr = attr.map_err(|e| XmlError::ParseError(e.to_string()))?;
-            let key = core::str::from_utf8(attr.key.as_ref())
-                .map_err(|_| XmlError::InvalidUtf8)?
-                .to_string();
-            let value = attr
-                .unescape_value()
-                .map_err(|e| XmlError::ParseError(e.to_string()))?
-                .into_owned();
-            attributes.push((key, value));
-        }
-        Ok(Self {
+    fn new(name: QName, attributes: Vec<(QName, String)>) -> Self {
+        Self {
             name,
             attributes,
             children: Vec::new(),
             text: String::new(),
-        })
+        }
     }
 
     fn push_text(&mut self, text: &str) {
@@ -333,12 +331,13 @@ enum XmlValue {
 #[derive(Debug, Clone)]
 struct XmlField {
     name: String,
+    namespace: Option<String>,
     location: FieldLocationHint,
     value: XmlValue,
 }
 
 fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, XmlError> {
-    let mut reader = Reader::from_reader(Cursor::new(input));
+    let mut reader = NsReader::from_reader(Cursor::new(input));
     reader.config_mut().trim_text(true);
 
     let mut buf = Vec::new();
@@ -347,20 +346,53 @@ fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, XmlError>
 
     loop {
         buf.clear();
-        match reader
-            .read_event_into(&mut buf)
-            .map_err(|e| XmlError::ParseError(e.to_string()))?
-        {
-            Event::Start(e) => {
-                let elem = Element::from_start(e)?;
-                stack.push(elem);
+        let (resolve, event) = reader
+            .read_resolved_event_into(&mut buf)
+            .map_err(|e| XmlError::ParseError(e.to_string()))?;
+
+        match event {
+            Event::Start(ref e) | Event::Empty(ref e) => {
+                // Resolve element namespace
+                let ns = resolve_namespace(resolve)?;
+                let local = core::str::from_utf8(e.local_name().as_ref())
+                    .map_err(|_| XmlError::InvalidUtf8)?
+                    .to_string();
+                let name = match ns {
+                    Some(uri) => QName::with_ns(uri, local),
+                    None => QName::local(local),
+                };
+
+                // Resolve attribute namespaces
+                let mut attributes = Vec::new();
+                for attr in e.attributes() {
+                    let attr = attr.map_err(|e| XmlError::ParseError(e.to_string()))?;
+                    let (attr_resolve, _) = reader.resolve_attribute(attr.key);
+                    let attr_ns = resolve_namespace(attr_resolve)?;
+                    let attr_local = core::str::from_utf8(attr.key.local_name().as_ref())
+                        .map_err(|_| XmlError::InvalidUtf8)?
+                        .to_string();
+                    let attr_qname = match attr_ns {
+                        Some(uri) => QName::with_ns(uri, attr_local),
+                        None => QName::local(attr_local),
+                    };
+                    let value = attr
+                        .unescape_value()
+                        .map_err(|e| XmlError::ParseError(e.to_string()))?
+                        .into_owned();
+                    attributes.push((attr_qname, value));
+                }
+
+                let elem = Element::new(name, attributes);
+
+                if matches!(event, Event::Start(_)) {
+                    stack.push(elem);
+                } else {
+                    // Empty element
+                    attach_element(stack.as_mut_slice(), elem, &mut root)?;
+                }
             }
             Event::End(_) => {
                 let elem = stack.pop().ok_or(XmlError::UnbalancedTags)?;
-                attach_element(stack.as_mut_slice(), elem, &mut root)?;
-            }
-            Event::Empty(e) => {
-                let elem = Element::from_start(e)?;
                 attach_element(stack.as_mut_slice(), elem, &mut root)?;
             }
             Event::Text(e) => {
@@ -423,7 +455,8 @@ fn element_to_value(elem: &Element) -> XmlValue {
 
     if !has_attrs && has_children && text.is_empty() && elem.children.len() > 1 {
         let first = &elem.children[0].name;
-        if elem.children.iter().all(|child| child.name == *first) {
+        // Check if all children have the same name (both local name and namespace)
+        if elem.children.iter().all(|child| &child.name == first) {
             let items = elem
                 .children
                 .iter()
@@ -434,30 +467,35 @@ fn element_to_value(elem: &Element) -> XmlValue {
     }
 
     let mut fields = Vec::new();
-    for (name, value) in &elem.attributes {
+    for (qname, value) in &elem.attributes {
         fields.push(XmlField {
-            name: name.clone(),
+            name: qname.local_name.clone(),
+            namespace: qname.namespace.clone(),
             location: FieldLocationHint::Attribute,
             value: XmlValue::String(value.clone()),
         });
     }
 
-    let mut grouped: BTreeMap<&str, Vec<XmlValue>> = BTreeMap::new();
+    let mut grouped: BTreeMap<&str, Vec<(&QName, XmlValue)>> = BTreeMap::new();
     for child in &elem.children {
         grouped
-            .entry(child.name.as_str())
+            .entry(child.name.local_name.as_str())
             .or_default()
-            .push(element_to_value(child));
+            .push((&child.name, element_to_value(child)));
     }
 
-    for (name, mut values) in grouped {
+    for (local_name, mut values) in grouped {
+        // Get the namespace from the first element with this local name
+        let namespace = values[0].0.namespace.clone();
+
         let value = if values.len() == 1 {
-            values.pop().unwrap()
+            values.pop().unwrap().1
         } else {
-            XmlValue::Array(values)
+            XmlValue::Array(values.into_iter().map(|(_, v)| v).collect())
         };
         fields.push(XmlField {
-            name: name.to_string(),
+            name: local_name.to_string(),
+            namespace,
             location: FieldLocationHint::Child,
             value,
         });
@@ -469,6 +507,7 @@ fn element_to_value(elem: &Element) -> XmlValue {
         }
         fields.push(XmlField {
             name: "_text".into(),
+            namespace: None,
             location: FieldLocationHint::Text,
             value: XmlValue::String(text.to_string()),
         });
@@ -516,10 +555,11 @@ fn emit_value_events<'de>(value: &XmlValue, events: &mut Vec<ParseEvent<'de>>) {
         XmlValue::Object(fields) => {
             events.push(ParseEvent::StructStart);
             for field in fields {
-                events.push(ParseEvent::FieldKey(FieldKey::new(
-                    Cow::Owned(field.name.clone()),
-                    field.location,
-                )));
+                let mut key = FieldKey::new(Cow::Owned(field.name.clone()), field.location);
+                if let Some(ns) = &field.namespace {
+                    key = key.with_namespace(Cow::Owned(ns.clone()));
+                }
+                events.push(ParseEvent::FieldKey(key));
                 emit_value_events(&field.value, events);
             }
             events.push(ParseEvent::StructEnd);
