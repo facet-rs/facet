@@ -32,7 +32,7 @@ to achieve comprehensive coverage of the **format abstraction layer**.
 - [x] `proxy_validation_error` - Proxy conversion error handling
 - [ ] `proxy_with_enum` - Proxy on enum variants
 - [ ] `proxy_with_transparent` - Interaction between proxy and transparent
-- [ ] `proxy_with_option` - Proxy wrapping Option<T>
+- [x] `proxy_with_option` - Proxy wrapping Option<T>
 
 **Rationale**: Proxies are a core feature with complex precedence rules and error paths.
 
@@ -40,8 +40,8 @@ to achieve comprehensive coverage of the **format abstraction layer**.
 
 - [x] `tuple_empty` - Empty tuple `()` as a field
 - [x] `tuple_single_element` - 1-element tuple `(T,)` (edge case in construction)
-- [ ] `tuple_struct_variant` - Enum with tuple variant: `Variant(i32, String)`
-- [ ] `tuple_newtype_variant` - Enum with newtype variant: `Variant(T)`
+- [x] `tuple_struct_variant` - Enum with tuple variant: `Variant(i32, String)`
+- [x] `tuple_newtype_variant` - Enum with newtype variant: `Variant(T)`
 
 **Rationale**: Different tuple arities use different construction paths in Partial.
 
