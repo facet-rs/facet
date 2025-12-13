@@ -51,7 +51,7 @@ miette = ["dep:miette"] # Enable Spanned<T> type for source span tracking
 
 [dependencies]
 camino = { workspace = true, optional = true } #unified
-facet-core = { path = "../facet-core", version = "0.32.2", default-features = false, features = ["auto-traits", "bytes", "chrono", "indexmap", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "tuples-12", "url"] }
+facet-core = { path = "../facet-core", version = "0.32.2", default-features = false }
 log = { version = "0.4.27", optional = true }
 miette = { workspace = true, optional = true, features = ["derive", "fancy-no-backtrace"] } #unified
 ulid = { workspace = true, optional = true } #unified
@@ -59,7 +59,7 @@ uuid = { workspace = true, optional = true } #unified
 
 [dev-dependencies]
 eyre = { workspace = true } #unified
-facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "ordered-float", "time", "ulid", "uuid"] } #unified
+facet = { workspace = true, features = ["net", "nonzero"] }
 facet-testhelpers = { path = "../facet-testhelpers" }
 insta = { workspace = true } #unified
 log = { workspace = true } #unified

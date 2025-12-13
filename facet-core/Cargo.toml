@@ -37,7 +37,7 @@ ulid = ["alloc", "dep:ulid"]
 # Provide Facet trait implementations for time crate types
 time = ["alloc", "dep:time"]
 # Provide Facet trait implementations for chrono crate types
-chrono = ["alloc", "dep:chrono"]
+chrono = ["alloc", "dep:chrono", "chrono/clock"]
 # Provide Facet trait implementations for url::Url
 url = ["alloc", "dep:url"]
 # Provide Facet trait implementations for jiff crate types
