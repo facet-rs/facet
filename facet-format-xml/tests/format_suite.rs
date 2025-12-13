@@ -309,8 +309,11 @@ impl FormatSuite for XmlSlice {
     }
 
     fn flatten_overlapping_fields_error() -> CaseSpec {
-        // TODO: overlapping field detection not yet implemented
-        CaseSpec::skip("overlapping field detection not yet implemented")
+        // Two flattened structs both have a "shared" element - should error
+        CaseSpec::expect_error(
+            r#"<record><field_a>a</field_a><field_b>b</field_b><shared>1</shared></record>"#,
+            "duplicate field",
+        )
     }
 
     // ── Scalar cases ──

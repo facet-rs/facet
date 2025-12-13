@@ -58,7 +58,7 @@ to achieve comprehensive coverage of the **format abstraction layer**.
 
 - [~] `flatten_optional_some` - SKIPPED: flatten with Option<T> not yet implemented
 - [x] `flatten_optional_none` - Flattened field is Option<T> with None
-- [~] `flatten_overlapping_fields_error` - SKIPPED: overlapping field detection not yet implemented
+- [x] `flatten_overlapping_fields_error` - Two flattened structs with same field name (error)
 
 **Rationale**: Tests flatten with Option (common pattern) and error cases.
 

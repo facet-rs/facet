@@ -378,6 +378,11 @@ where
         let mut flatten_info: alloc::vec::Vec<
             Option<(&'static [facet_core::Field], alloc::vec::Vec<bool>)>,
         > = alloc::vec![None; num_fields];
+
+        // Track field names across flattened structs to detect duplicates
+        use alloc::collections::BTreeMap;
+        let mut flatten_field_names: BTreeMap<&str, usize> = BTreeMap::new();
+
         for (idx, field) in struct_def.fields.iter().enumerate() {
             if field.is_flattened()
                 && let Type::User(UserType::Struct(inner_def)) = &field.shape().ty
@@ -385,6 +390,17 @@ where
                 let inner_fields = inner_def.fields;
                 let inner_set = alloc::vec![false; inner_fields.len()];
                 flatten_info[idx] = Some((inner_fields, inner_set));
+
+                // Check for duplicate field names across flattened structs
+                for inner_field in inner_fields.iter() {
+                    let field_name = inner_field.rename.unwrap_or(inner_field.name);
+                    if let Some(_prev_idx) = flatten_field_names.insert(field_name, idx) {
+                        return Err(DeserializeError::Unsupported(format!(
+                            "duplicate field `{}` in flattened structs",
+                            field_name
+                        )));
+                    }
+                }
             }
         }
 
