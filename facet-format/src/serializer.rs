@@ -30,6 +30,20 @@ pub trait FormatSerializer {
 
     /// Emit a scalar value.
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error>;
+
+    /// Optional: Provide field metadata before field_key is called.
+    /// This allows formats like XML to extract namespace information.
+    /// Default implementation does nothing.
+    fn field_metadata(&mut self, _field: &facet_reflect::FieldItem) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Optional: Provide struct/enum type metadata when beginning to serialize it.
+    /// This allows formats to extract container-level attributes like xml::ns_all.
+    /// Default implementation does nothing.
+    fn struct_metadata(&mut self, _shape: &facet_core::Shape) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 /// Error produced by the shared serializer.
@@ -147,8 +161,14 @@ where
             serializer.end_seq().map_err(SerializeError::Backend)?;
         } else {
             // Regular structs as objects
+            serializer
+                .struct_metadata(value.shape())
+                .map_err(SerializeError::Backend)?;
             serializer.begin_struct().map_err(SerializeError::Backend)?;
             for (field_item, field_value) in struct_.fields_for_serialize() {
+                serializer
+                    .field_metadata(&field_item)
+                    .map_err(SerializeError::Backend)?;
                 serializer
                     .field_key(field_item.name)
                     .map_err(SerializeError::Backend)?;
@@ -188,6 +208,9 @@ where
                     StructKind::Struct => {
                         for (field_item, field_value) in enum_.fields_for_serialize() {
                             serializer
+                                .field_metadata(&field_item)
+                                .map_err(SerializeError::Backend)?;
+                            serializer
                                 .field_key(field_item.name)
                                 .map_err(SerializeError::Backend)?;
                             shared_serialize(serializer, field_value)?;
@@ -223,6 +246,9 @@ where
                             .map_err(SerializeError::Backend)?;
                         serializer.begin_struct().map_err(SerializeError::Backend)?;
                         for (field_item, field_value) in enum_.fields_for_serialize() {
+                            serializer
+                                .field_metadata(&field_item)
+                                .map_err(SerializeError::Backend)?;
                             serializer
                                 .field_key(field_item.name)
                                 .map_err(SerializeError::Backend)?;
@@ -324,6 +350,9 @@ where
                 serializer.begin_struct().map_err(SerializeError::Backend)?;
                 for (field_item, field_value) in enum_.fields_for_serialize() {
                     serializer
+                        .field_metadata(&field_item)
+                        .map_err(SerializeError::Backend)?;
+                    serializer
                         .field_key(field_item.name)
                         .map_err(SerializeError::Backend)?;
                     shared_serialize(serializer, field_value)?;
@@ -391,6 +420,9 @@ where
         StructKind::Struct => {
             serializer.begin_struct().map_err(SerializeError::Backend)?;
             for (field_item, field_value) in enum_.fields_for_serialize() {
+                serializer
+                    .field_metadata(&field_item)
+                    .map_err(SerializeError::Backend)?;
                 serializer
                     .field_key(field_item.name)
                     .map_err(SerializeError::Backend)?;
