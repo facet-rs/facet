@@ -26,7 +26,7 @@ camino = { version = "1", optional = true }
 ordered-float = { version = "5.0.0", optional = true, default-features = false }
 time = { version = "0.3", optional = true, features = ["macros"] }
 jiff = { version = "0.2", optional = true }
-chrono = { version = "0.4", optional = true, default-features = false }
+chrono = { version = "0.4.35", optional = true, default-features = false }
 
 [dev-dependencies]
 

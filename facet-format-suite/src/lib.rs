@@ -10,6 +10,9 @@ use facet_assert::assert_same;
 use facet_pretty::{FacetPretty, PrettyPrinter};
 use indoc::formatdoc;
 
+#[cfg(feature = "chrono")]
+use chrono::TimeZone;
+
 /// Trait every format variant implements to participate in the suite.
 ///
 /// Each method returning a [`CaseSpec`] corresponds to a canonical test case.
@@ -1760,7 +1763,8 @@ const CASE_CHRONO_DATETIME_UTC: CaseDescriptor<ChronoDateTimeUtcWrapper> = CaseD
     id: "third_party::chrono_datetime_utc",
     description: "chrono::DateTime<Utc> type",
     expected: || ChronoDateTimeUtcWrapper {
-        created_at: chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2023, 1, 15, 12, 34, 56)
+        created_at: chrono::Utc
+            .with_ymd_and_hms(2023, 1, 15, 12, 34, 56)
             .unwrap(),
     },
 };

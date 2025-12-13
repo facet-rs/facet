@@ -76,7 +76,7 @@ time = { version = "0.3.41", optional = true, features = [
     "parsing",
     "formatting",
 ] }
-chrono = { version = "0.4", optional = true, default-features = false, features = [
+chrono = { version = "0.4.35", optional = true, default-features = false, features = [
     "alloc",
     "clock",
 ] }
