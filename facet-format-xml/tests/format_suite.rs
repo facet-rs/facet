@@ -690,6 +690,52 @@ impl FormatSuite for XmlSlice {
         CaseSpec::from_str(r#"<record><alarm_time>12:34:56</alarm_time></record>"#)
             .without_roundtrip("opaque type serialization not yet supported")
     }
+
+    // ── Bytes crate cases ──
+
+    fn bytes_bytes() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"<record><data><item>1</item><item>2</item><item>3</item><item>4</item><item>255</item></data></record>"#,
+        )
+    }
+
+    fn bytes_bytes_mut() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"<record><data><item>1</item><item>2</item><item>3</item><item>4</item><item>255</item></data></record>"#,
+        )
+    }
+
+    // ── Dynamic value cases ──
+    // NOTE: facet_value::Value uses DynamicValue def which requires specialized handling
+    // in the deserializer. The format deserializer doesn't support this yet.
+
+    fn value_null() -> CaseSpec {
+        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+    }
+
+    fn value_bool() -> CaseSpec {
+        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+    }
+
+    fn value_integer() -> CaseSpec {
+        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+    }
+
+    fn value_float() -> CaseSpec {
+        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+    }
+
+    fn value_string() -> CaseSpec {
+        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+    }
+
+    fn value_array() -> CaseSpec {
+        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+    }
+
+    fn value_object() -> CaseSpec {
+        CaseSpec::skip("DynamicValue not yet supported in format deserializer")
+    }
 }
 
 fn main() {
