@@ -59,8 +59,12 @@ pub struct XmlSerializer {
     pending_field: Option<String>,
     /// Pending namespace for the next field to be serialized
     pending_namespace: Option<String>,
+    /// True if the current field is an attribute (vs element)
+    pending_is_attribute: bool,
     /// Container-level default namespace (from xml::ns_all) for current struct
     current_ns_all: Option<String>,
+    /// Buffered attributes for the current element (name, value, namespace_opt)
+    pending_attributes: Vec<(String, String, Option<String>)>,
     item_tag: &'static str,
     /// Namespace URI -> prefix mapping for already-declared namespaces.
     declared_namespaces: HashMap<String, String>,
@@ -69,26 +73,32 @@ pub struct XmlSerializer {
     /// The currently active default namespace (from xmlns="..." on an ancestor).
     #[allow(dead_code)] // Will be used for optimizing namespace declarations
     current_default_ns: Option<String>,
+    /// True if we've written the opening `<root>` tag
+    root_tag_written: bool,
 }
 
 impl XmlSerializer {
     pub fn new() -> Self {
-        let mut out = Vec::new();
-        out.extend_from_slice(b"<root>");
         Self {
-            out,
+            out: Vec::new(),
             stack: vec![Ctx::Root { kind: None }],
             pending_field: None,
             pending_namespace: None,
+            pending_is_attribute: false,
             current_ns_all: None,
+            pending_attributes: Vec::new(),
             item_tag: "item",
             declared_namespaces: HashMap::new(),
             next_ns_index: 0,
             current_default_ns: None,
+            root_tag_written: false,
         }
     }
 
     pub fn finish(mut self) -> Vec<u8> {
+        // Ensure root tag is written (even if struct is empty)
+        self.ensure_root_tag_written();
+
         // Close any remaining non-root elements.
         while let Some(ctx) = self.stack.pop() {
             match ctx {
@@ -128,6 +138,48 @@ impl XmlSerializer {
             self.out.extend_from_slice(name.as_bytes());
         }
 
+        // Write buffered attributes
+        // Drain attributes first to avoid borrow checker issues
+        let attrs: Vec<_> = self.pending_attributes.drain(..).collect();
+
+        // Now resolve prefixes for namespaced attributes
+        let mut attrs_with_prefixes = Vec::new();
+        for (name, value, ns) in attrs {
+            let prefix = ns.as_ref().map(|uri| self.get_or_create_prefix(uri));
+            attrs_with_prefixes.push((name, value, ns, prefix));
+        }
+
+        for (attr_name, attr_value, attr_ns, prefix_opt) in attrs_with_prefixes {
+            self.out.push(b' ');
+
+            if let (Some(ns_uri), Some(prefix)) = (attr_ns, prefix_opt) {
+                // Namespaced attribute - write xmlns declaration first
+                self.out.extend_from_slice(b"xmlns:");
+                self.out.extend_from_slice(prefix.as_bytes());
+                self.out.extend_from_slice(b"=\"");
+                self.out.extend_from_slice(ns_uri.as_bytes());
+                self.out.extend_from_slice(b"\" ");
+
+                // Now write the prefixed attribute
+                self.out.extend_from_slice(prefix.as_bytes());
+                self.out.push(b':');
+            }
+
+            self.out.extend_from_slice(attr_name.as_bytes());
+            self.out.extend_from_slice(b"=\"");
+            // Escape attribute value
+            for b in attr_value.as_bytes() {
+                match *b {
+                    b'&' => self.out.extend_from_slice(b"&amp;"),
+                    b'<' => self.out.extend_from_slice(b"&lt;"),
+                    b'>' => self.out.extend_from_slice(b"&gt;"),
+                    b'"' => self.out.extend_from_slice(b"&quot;"),
+                    _ => self.out.push(*b),
+                }
+            }
+            self.out.push(b'"');
+        }
+
         self.out.push(b'>');
     }
 
@@ -148,7 +200,56 @@ impl XmlSerializer {
         }
     }
 
+    fn ensure_root_tag_written(&mut self) {
+        if !self.root_tag_written {
+            self.out.extend_from_slice(b"<root");
+
+            // Write buffered attributes if any (for root-level attributes)
+            let attrs: Vec<_> = self.pending_attributes.drain(..).collect();
+            let mut attrs_with_prefixes = Vec::new();
+            for (name, value, ns) in attrs {
+                let prefix = ns.as_ref().map(|uri| self.get_or_create_prefix(uri));
+                attrs_with_prefixes.push((name, value, ns, prefix));
+            }
+
+            for (attr_name, attr_value, attr_ns, prefix_opt) in attrs_with_prefixes {
+                self.out.push(b' ');
+
+                if let (Some(ns_uri), Some(prefix)) = (attr_ns, prefix_opt) {
+                    // Namespaced attribute - write xmlns declaration first
+                    self.out.extend_from_slice(b"xmlns:");
+                    self.out.extend_from_slice(prefix.as_bytes());
+                    self.out.extend_from_slice(b"=\"");
+                    self.out.extend_from_slice(ns_uri.as_bytes());
+                    self.out.extend_from_slice(b"\" ");
+
+                    // Now write the prefixed attribute
+                    self.out.extend_from_slice(prefix.as_bytes());
+                    self.out.push(b':');
+                }
+
+                self.out.extend_from_slice(attr_name.as_bytes());
+                self.out.extend_from_slice(b"=\"");
+                // Escape attribute value
+                for b in attr_value.as_bytes() {
+                    match *b {
+                        b'&' => self.out.extend_from_slice(b"&amp;"),
+                        b'<' => self.out.extend_from_slice(b"&lt;"),
+                        b'>' => self.out.extend_from_slice(b"&gt;"),
+                        b'"' => self.out.extend_from_slice(b"&quot;"),
+                        _ => self.out.push(*b),
+                    }
+                }
+                self.out.push(b'"');
+            }
+
+            self.out.push(b'>');
+            self.root_tag_written = true;
+        }
+    }
+
     fn open_value_element_if_needed(&mut self) -> Result<Option<String>, XmlSerializeError> {
+        self.ensure_root_tag_written();
         match self.stack.last() {
             Some(Ctx::Root { .. }) => Ok(None),
             Some(Ctx::Struct { .. }) => {
@@ -325,6 +426,34 @@ impl FormatSerializer for XmlSerializer {
     }
 
     fn scalar(&mut self, scalar: ScalarValue<'_>) -> Result<(), Self::Error> {
+        // If this is an attribute, buffer it instead of writing as a child element
+        if self.pending_is_attribute {
+            let name = self.pending_field.take().ok_or(XmlSerializeError {
+                msg: "attribute value without field name",
+            })?;
+            let namespace = self.pending_namespace.take();
+
+            // Convert scalar to string for attribute value
+            let value = match scalar {
+                ScalarValue::Null => "null".to_string(),
+                ScalarValue::Bool(v) => if v { "true" } else { "false" }.to_string(),
+                ScalarValue::I64(v) => v.to_string(),
+                ScalarValue::U64(v) => v.to_string(),
+                ScalarValue::F64(v) => v.to_string(),
+                ScalarValue::Str(s) => s.into_owned(),
+                ScalarValue::Bytes(_) => {
+                    return Err(XmlSerializeError {
+                        msg: "bytes serialization unsupported for xml",
+                    });
+                }
+            };
+
+            self.pending_attributes.push((name, value, namespace));
+            self.pending_is_attribute = false;
+            return Ok(());
+        }
+
+        // Regular child element
         let close = self.open_value_element_if_needed()?;
 
         match scalar {
@@ -352,6 +481,9 @@ impl FormatSerializer for XmlSerializer {
     }
 
     fn field_metadata(&mut self, field: &facet_reflect::FieldItem) -> Result<(), Self::Error> {
+        // Check if this field is an attribute
+        self.pending_is_attribute = field.field.get_attr(Some("xml"), "attribute").is_some();
+
         // Extract xml::ns attribute from the field
         if let Some(ns_attr) = field.field.get_attr(Some("xml"), "ns")
             && let Some(ns_uri) = ns_attr.get_as::<&str>().copied()
@@ -362,8 +494,9 @@ impl FormatSerializer for XmlSerializer {
 
         // If field doesn't have explicit xml::ns, check for container-level xml::ns_all
         // Only apply ns_all to elements, not attributes (per XML spec)
-        let is_attribute = field.field.get_attr(Some("xml"), "attribute").is_some();
-        if !is_attribute && let Some(ns_all) = &self.current_ns_all {
+        if !self.pending_is_attribute
+            && let Some(ns_all) = &self.current_ns_all
+        {
             self.pending_namespace = Some(ns_all.clone());
         }
 
@@ -379,6 +512,10 @@ impl FormatSerializer for XmlSerializer {
             .and_then(|attr| attr.get_as::<&str>().copied())
             .map(String::from);
         Ok(())
+    }
+
+    fn preferred_field_order(&self) -> facet_format::FieldOrdering {
+        facet_format::FieldOrdering::AttributesFirst
     }
 }
 
