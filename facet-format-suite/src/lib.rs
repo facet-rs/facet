@@ -148,6 +148,12 @@ pub trait FormatSuite {
     /// Case: interaction between proxy and transparent.
     fn proxy_with_transparent() -> CaseSpec;
 
+    /// Case: `#[facet(opaque, proxy = ...)]` where target type doesn't implement Facet.
+    fn opaque_proxy() -> CaseSpec;
+
+    /// Case: `#[facet(opaque, proxy = ...)]` on `Option<OpaqueType>`.
+    fn opaque_proxy_option() -> CaseSpec;
+
     // ── Transparent tests ──
 
     /// Case: transparent wrapping another transparent type (multilevel).
@@ -200,6 +206,9 @@ pub trait FormatSuite {
     fn untagged_newtype_variant() -> CaseSpec;
     /// Case: untagged enum as struct field (nesting test).
     fn untagged_as_field() -> CaseSpec;
+
+    /// Case: untagged enum with only unit variants (dataless enum).
+    fn untagged_unit_only() -> CaseSpec;
 
     // ── Smart pointer tests ──
 
@@ -448,6 +457,11 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
             &CASE_PROXY_WITH_TRANSPARENT,
             S::proxy_with_transparent,
         ),
+        SuiteCase::new::<S, OpaqueProxyWrapper>(&CASE_OPAQUE_PROXY, S::opaque_proxy),
+        SuiteCase::new::<S, OpaqueProxyOptionWrapper>(
+            &CASE_OPAQUE_PROXY_OPTION,
+            S::opaque_proxy_option,
+        ),
         // Transparent cases
         SuiteCase::new::<S, OuterTransparent>(
             &CASE_TRANSPARENT_MULTILEVEL,
@@ -487,6 +501,7 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
             S::untagged_newtype_variant,
         ),
         SuiteCase::new::<S, UntaggedAsField>(&CASE_UNTAGGED_AS_FIELD, S::untagged_as_field),
+        SuiteCase::new::<S, UntaggedUnitOnly>(&CASE_UNTAGGED_UNIT_ONLY, S::untagged_unit_only),
         // Smart pointer cases
         SuiteCase::new::<S, BoxWrapper>(&CASE_BOX_WRAPPER, S::box_wrapper),
         SuiteCase::new::<S, ArcWrapper>(&CASE_ARC_WRAPPER, S::arc_wrapper),
@@ -570,12 +585,23 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
     ]
 }
 
+/// How to compare the deserialized value against the expected value.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum CompareMode {
+    /// Use `assert_same!` (reflection-based comparison) - default for most types.
+    #[default]
+    Reflection,
+    /// Use `assert_eq!` (PartialEq comparison) - required for types containing opaque fields.
+    PartialEq,
+}
+
 /// Specification returned by each trait method.
 #[derive(Debug, Clone)]
 pub struct CaseSpec {
     payload: CasePayload,
     note: Option<&'static str>,
     roundtrip: RoundtripSpec,
+    compare_mode: CompareMode,
 }
 
 impl CaseSpec {
@@ -585,6 +611,7 @@ impl CaseSpec {
             payload: CasePayload::Input(input),
             note: None,
             roundtrip: RoundtripSpec::Enabled,
+            compare_mode: CompareMode::Reflection,
         }
     }
 
@@ -600,6 +627,7 @@ impl CaseSpec {
             payload: CasePayload::Skip { reason },
             note: None,
             roundtrip: RoundtripSpec::Enabled,
+            compare_mode: CompareMode::Reflection,
         }
     }
 
@@ -615,6 +643,13 @@ impl CaseSpec {
         self
     }
 
+    /// Use PartialEq comparison instead of reflection-based comparison.
+    /// Required for types containing opaque fields that can't be compared via reflection.
+    pub fn with_partial_eq(mut self) -> Self {
+        self.compare_mode = CompareMode::PartialEq;
+        self
+    }
+
     /// Expect deserialization to fail with an error containing the given substring.
     pub fn expect_error(input: &'static str, error_contains: &'static str) -> Self {
         Self {
@@ -626,6 +661,7 @@ impl CaseSpec {
             roundtrip: RoundtripSpec::Disabled {
                 reason: "error case",
             },
+            compare_mode: CompareMode::Reflection,
         }
     }
 }
@@ -674,7 +710,7 @@ impl SuiteCase {
     where
         S: FormatSuite,
         for<'facet> T: Facet<'facet>,
-        T: Debug + 'static,
+        T: Debug + PartialEq + 'static,
     {
         let spec = provider();
         let skip_reason = match spec.payload {
@@ -704,9 +740,10 @@ fn execute_case<S, T>(desc: &'static CaseDescriptor<T>, spec: CaseSpec) -> CaseO
 where
     S: FormatSuite,
     for<'facet> T: Facet<'facet>,
-    T: Debug,
+    T: Debug + PartialEq,
 {
     let note = spec.note;
+    let compare_mode = spec.compare_mode;
     let roundtrip_disabled_reason = match spec.roundtrip {
         RoundtripSpec::Enabled => None,
         RoundtripSpec::Disabled { reason } => Some(reason),
@@ -730,14 +767,24 @@ where
                 &actual,
             );
 
-            let first_assert = panic::catch_unwind(AssertUnwindSafe(|| {
-                assert_same!(
-                    actual,
-                    expected,
-                    "facet-format-suite {} ({}) produced unexpected value",
-                    desc.id,
-                    desc.description
-                );
+            // Compare deserialized value against expected
+            let first_assert = panic::catch_unwind(AssertUnwindSafe(|| match compare_mode {
+                CompareMode::Reflection => {
+                    assert_same!(
+                        actual,
+                        expected,
+                        "facet-format-suite {} ({}) produced unexpected value",
+                        desc.id,
+                        desc.description
+                    );
+                }
+                CompareMode::PartialEq => {
+                    assert_eq!(
+                        actual, expected,
+                        "facet-format-suite {} ({}) produced unexpected value",
+                        desc.id, desc.description
+                    );
+                }
             }));
             if let Err(payload) = first_assert {
                 return CaseOutcome::Failed(format_panic(payload));
@@ -771,14 +818,24 @@ where
                 }
             };
 
-            match panic::catch_unwind(AssertUnwindSafe(|| {
-                assert_same!(
-                    roundtripped,
-                    actual,
-                    "facet-format-suite {} ({}) round-trip mismatch",
-                    desc.id,
-                    desc.description
-                );
+            // Compare round-tripped value against original
+            match panic::catch_unwind(AssertUnwindSafe(|| match compare_mode {
+                CompareMode::Reflection => {
+                    assert_same!(
+                        roundtripped,
+                        actual,
+                        "facet-format-suite {} ({}) round-trip mismatch",
+                        desc.id,
+                        desc.description
+                    );
+                }
+                CompareMode::PartialEq => {
+                    assert_eq!(
+                        roundtripped, actual,
+                        "facet-format-suite {} ({}) round-trip mismatch",
+                        desc.id, desc.description
+                    );
+                }
             })) {
                 Ok(_) => CaseOutcome::Passed,
                 Err(payload) => CaseOutcome::Failed(format_panic(payload)),
@@ -1144,6 +1201,22 @@ const CASE_PROXY_WITH_TRANSPARENT: CaseDescriptor<TransparentProxy> = CaseDescri
     expected: || TransparentProxy(42),
 };
 
+const CASE_OPAQUE_PROXY: CaseDescriptor<OpaqueProxyWrapper> = CaseDescriptor {
+    id: "proxy::opaque",
+    description: "#[facet(opaque, proxy = ...)] where target type doesn't implement Facet",
+    expected: || OpaqueProxyWrapper {
+        value: OpaqueType { inner: 42 },
+    },
+};
+
+const CASE_OPAQUE_PROXY_OPTION: CaseDescriptor<OpaqueProxyOptionWrapper> = CaseDescriptor {
+    id: "proxy::opaque_option",
+    description: "#[facet(opaque, proxy = ...)] on Option<OpaqueType>",
+    expected: || OpaqueProxyOptionWrapper {
+        value: Some(OpaqueType { inner: 99 }),
+    },
+};
+
 // ── Transparent case descriptors ──
 
 const CASE_TRANSPARENT_MULTILEVEL: CaseDescriptor<OuterTransparent> = CaseDescriptor {
@@ -1301,6 +1374,12 @@ const CASE_UNTAGGED_AS_FIELD: CaseDescriptor<UntaggedAsField> = CaseDescriptor {
         name: "test".into(),
         value: UntaggedNewtype::Number(42),
     },
+};
+
+const CASE_UNTAGGED_UNIT_ONLY: CaseDescriptor<UntaggedUnitOnly> = CaseDescriptor {
+    id: "untagged::unit_only",
+    description: "untagged enum with only unit variants (dataless)",
+    expected: || UntaggedUnitOnly::Alpha,
 };
 
 // ── Smart pointer case descriptors ──
@@ -1551,13 +1630,13 @@ const CASE_UNIT_STRUCT: CaseDescriptor<UnitStruct> = CaseDescriptor {
 };
 
 /// Shared fixture type for the struct case.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct StructSingleField {
     pub name: String,
 }
 
 /// Shared fixture type for the mixed scalars case.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 #[facet(untagged)]
 #[repr(u8)]
 pub enum MixedScalar {
@@ -1567,20 +1646,20 @@ pub enum MixedScalar {
     Null,
 }
 
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct NestedParent {
     pub id: u64,
     pub child: NestedChild,
     pub tags: Vec<String>,
 }
 
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct NestedChild {
     pub code: String,
     pub active: bool,
 }
 
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 #[repr(u8)]
 pub enum ComplexEnum {
     Empty,
@@ -1591,7 +1670,7 @@ pub enum ComplexEnum {
 // ── Attribute test fixtures ──
 
 /// Fixture for `#[facet(rename = "...")]` test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct RenamedField {
     #[facet(rename = "userName")]
     pub user_name: String,
@@ -1599,7 +1678,7 @@ pub struct RenamedField {
 }
 
 /// Fixture for `#[facet(rename_all = "camelCase")]` test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 #[facet(rename_all = "camelCase")]
 pub struct CamelCaseStruct {
     pub first_name: String,
@@ -1608,7 +1687,7 @@ pub struct CamelCaseStruct {
 }
 
 /// Fixture for `#[facet(default)]` test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct WithDefault {
     pub required: String,
     #[facet(default)]
@@ -1616,14 +1695,14 @@ pub struct WithDefault {
 }
 
 /// Fixture for `Option<T>` with `None`.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct WithOption {
     pub name: String,
     pub nickname: Option<String>,
 }
 
 /// Fixture for `#[facet(skip_serializing)]` test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct WithSkipSerializing {
     pub visible: String,
     #[facet(skip_serializing)]
@@ -1632,7 +1711,7 @@ pub struct WithSkipSerializing {
 }
 
 /// Fixture for `#[facet(skip)]` test (skipped for both ser and de).
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct WithSkip {
     pub visible: String,
     #[facet(skip)]
@@ -1643,7 +1722,7 @@ pub struct WithSkip {
 // ── Enum tagging fixtures ──
 
 /// Internally tagged enum `#[facet(tag = "type")]`.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 #[facet(tag = "type")]
 #[repr(u8)]
 pub enum InternallyTagged {
@@ -1652,7 +1731,7 @@ pub enum InternallyTagged {
 }
 
 /// Adjacently tagged enum `#[facet(tag = "t", content = "c")]`.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 #[facet(tag = "t", content = "c")]
 #[repr(u8)]
 pub enum AdjacentlyTagged {
@@ -1663,14 +1742,14 @@ pub enum AdjacentlyTagged {
 // ── Advanced fixtures ──
 
 /// Inner struct for flatten test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct FlattenInner {
     pub x: i32,
     pub y: i32,
 }
 
 /// Outer struct with `#[facet(flatten)]`.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct FlattenOuter {
     pub name: String,
     #[facet(flatten)]
@@ -1678,12 +1757,12 @@ pub struct FlattenOuter {
 }
 
 /// Transparent newtype wrapper.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 #[facet(transparent)]
 pub struct UserId(pub u64);
 
 /// Struct containing a transparent newtype.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct UserRecord {
     pub id: UserId,
     pub name: String,
@@ -1740,7 +1819,7 @@ pub struct FlattenOverlapping {
 // ── Error test fixtures ──
 
 /// Fixture for `#[facet(deny_unknown_fields)]` test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 #[facet(deny_unknown_fields)]
 pub struct DenyUnknownStruct {
     pub foo: String,
@@ -1748,19 +1827,19 @@ pub struct DenyUnknownStruct {
 }
 
 /// Fixture for type mismatch error (string to int).
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct ExpectsInteger {
     pub value: i32,
 }
 
 /// Fixture for structure mismatch error (object to array).
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct ExpectsArray {
     pub items: Vec<i32>,
 }
 
 /// Fixture for missing required field error.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct RequiresAllFields {
     pub name: String,
     pub age: u32,
@@ -1768,7 +1847,7 @@ pub struct RequiresAllFields {
 }
 
 /// Fixture for `#[facet(alias = "...")]` test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct WithAlias {
     #[facet(alias = "old_name")]
     pub new_name: String,
@@ -1778,7 +1857,7 @@ pub struct WithAlias {
 // ── Attribute precedence test fixtures ──
 
 /// Fixture for testing rename vs alias precedence (rename should win).
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct RenameVsAlias {
     #[facet(rename = "officialName")]
     #[facet(alias = "oldName")]
@@ -1787,7 +1866,7 @@ pub struct RenameVsAlias {
 }
 
 /// Fixture for `#[facet(rename_all = "kebab-case")]` test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 #[facet(rename_all = "kebab-case")]
 pub struct RenameAllKebab {
     pub first_name: String,
@@ -1796,7 +1875,7 @@ pub struct RenameAllKebab {
 }
 
 /// Fixture for `#[facet(rename_all = "SCREAMING_SNAKE_CASE")]` test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 #[facet(rename_all = "SCREAMING_SNAKE_CASE")]
 pub struct RenameAllScreaming {
     pub api_key: String,
@@ -1916,6 +1995,66 @@ impl From<&TransparentProxy> for IntAsString {
     }
 }
 
+// ── Opaque proxy test fixtures ──
+
+/// An opaque type that does NOT implement Facet.
+/// This tests the `#[facet(opaque, proxy = ...)]` pattern.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpaqueType {
+    pub inner: u64,
+}
+
+/// Proxy type for OpaqueType that implements Facet.
+#[derive(Facet, Clone, Debug)]
+pub struct OpaqueTypeProxy {
+    pub inner: u64,
+}
+
+/// Convert from proxy (deserialization): OpaqueTypeProxy -> OpaqueType
+impl From<OpaqueTypeProxy> for OpaqueType {
+    fn from(proxy: OpaqueTypeProxy) -> Self {
+        OpaqueType { inner: proxy.inner }
+    }
+}
+
+/// Convert to proxy (serialization): &OpaqueType -> OpaqueTypeProxy
+impl From<&OpaqueType> for OpaqueTypeProxy {
+    fn from(v: &OpaqueType) -> Self {
+        OpaqueTypeProxy { inner: v.inner }
+    }
+}
+
+/// Wrapper struct with an opaque field using proxy.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct OpaqueProxyWrapper {
+    #[facet(opaque, proxy = OpaqueTypeProxy)]
+    pub value: OpaqueType,
+}
+
+/// Convert from proxy for `Option<OpaqueType>`
+impl From<OpaqueTypeProxy> for Option<OpaqueType> {
+    fn from(proxy: OpaqueTypeProxy) -> Self {
+        Some(OpaqueType { inner: proxy.inner })
+    }
+}
+
+/// Convert to proxy for `Option<OpaqueType>`
+impl From<&Option<OpaqueType>> for OpaqueTypeProxy {
+    fn from(v: &Option<OpaqueType>) -> Self {
+        match v {
+            Some(ot) => OpaqueTypeProxy { inner: ot.inner },
+            None => OpaqueTypeProxy { inner: 0 },
+        }
+    }
+}
+
+/// Wrapper struct with an optional opaque field using proxy.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct OpaqueProxyOptionWrapper {
+    #[facet(opaque, proxy = OpaqueTypeProxy)]
+    pub value: Option<OpaqueType>,
+}
+
 // ── Transparent test fixtures ──
 
 /// Inner transparent wrapper.
@@ -1941,14 +2080,14 @@ pub struct TransparentNonZero(pub std::num::NonZeroU32);
 // ── Scalar test fixtures ──
 
 /// Fixture for boolean scalar test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct BoolWrapper {
     pub yes: bool,
     pub no: bool,
 }
 
 /// Fixture for integer scalar test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct IntegerTypes {
     pub signed_8: i8,
     pub unsigned_8: u8,
@@ -1959,14 +2098,14 @@ pub struct IntegerTypes {
 }
 
 /// Fixture for float scalar test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct FloatTypes {
     pub float_32: f32,
     pub float_64: f64,
 }
 
 /// Fixture for scientific notation float test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct FloatTypesScientific {
     pub large: f64,
     pub small: f64,
@@ -1976,19 +2115,19 @@ pub struct FloatTypesScientific {
 // ── Collection test fixtures ──
 
 /// Fixture for BTreeMap test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct MapWrapper {
     pub data: std::collections::BTreeMap<String, i32>,
 }
 
 /// Fixture for tuple test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct TupleWrapper {
     pub triple: (String, i32, bool),
 }
 
 /// Fixture for nested tuple test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct NestedTupleWrapper {
     pub outer: ((i32, i32), (String, bool)),
 }
@@ -2053,6 +2192,17 @@ pub struct UntaggedAsField {
     pub value: UntaggedNewtype,
 }
 
+/// Untagged enum with only unit variants (dataless enum).
+/// Tests issue #1228: deserializing untagged dataless enums from strings.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(untagged)]
+#[repr(u8)]
+pub enum UntaggedUnitOnly {
+    Alpha,
+    Beta,
+    Gamma,
+}
+
 /// Enum with tuple variant (multiple fields).
 #[derive(Facet, Debug, Clone, PartialEq)]
 #[repr(u8)]
@@ -2073,43 +2223,43 @@ pub enum NewtypeVariantEnum {
 // ── Smart pointer test fixtures ──
 
 /// Fixture for `Box<T>` test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct BoxWrapper {
     pub inner: Box<i32>,
 }
 
 /// Fixture for `Arc<T>` test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct ArcWrapper {
     pub inner: std::sync::Arc<i32>,
 }
 
 /// Fixture for `Rc<T>` test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct RcWrapper {
     pub inner: std::rc::Rc<i32>,
 }
 
 /// Fixture for `Box<str>` test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct BoxStrWrapper {
     pub inner: Box<str>,
 }
 
 /// Fixture for `Arc<str>` test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct ArcStrWrapper {
     pub inner: std::sync::Arc<str>,
 }
 
 /// Fixture for `Rc<str>` test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct RcStrWrapper {
     pub inner: std::rc::Rc<str>,
 }
 
 /// Fixture for `Arc<[T]>` test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct ArcSliceWrapper {
     pub inner: std::sync::Arc<[i32]>,
 }
@@ -2117,7 +2267,7 @@ pub struct ArcSliceWrapper {
 // ── Set test fixtures ──
 
 /// Fixture for BTreeSet test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct SetWrapper {
     pub items: std::collections::BTreeSet<String>,
 }
@@ -2125,21 +2275,21 @@ pub struct SetWrapper {
 // ── Extended numeric test fixtures ──
 
 /// Fixture for 16-bit integer test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct IntegerTypes16 {
     pub signed_16: i16,
     pub unsigned_16: u16,
 }
 
 /// Fixture for 128-bit integer test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct IntegerTypes128 {
     pub signed_128: i128,
     pub unsigned_128: u128,
 }
 
 /// Fixture for pointer-sized integer test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct IntegerTypesSize {
     pub signed_size: isize,
     pub unsigned_size: usize,
@@ -2148,14 +2298,14 @@ pub struct IntegerTypesSize {
 // ── NonZero test fixtures ──
 
 /// Fixture for NonZero integer test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct NonZeroTypes {
     pub nz_u32: std::num::NonZeroU32,
     pub nz_i64: std::num::NonZeroI64,
 }
 
 /// Fixture for extended NonZero integer test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct NonZeroTypesExtended {
     pub nz_u8: std::num::NonZeroU8,
     pub nz_i8: std::num::NonZeroI8,
@@ -2170,7 +2320,7 @@ pub struct NonZeroTypesExtended {
 // ── Borrowed string test fixtures ──
 
 /// Fixture for Cow<'static, str> test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct CowStrWrapper {
     pub owned: std::borrow::Cow<'static, str>,
     pub message: std::borrow::Cow<'static, str>,
@@ -2179,23 +2329,23 @@ pub struct CowStrWrapper {
 // ── Newtype test fixtures ──
 
 /// Newtype wrapper around u64.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 #[facet(transparent)]
 pub struct NewtypeU64(pub u64);
 
 /// Fixture containing newtype u64.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct NewtypeU64Wrapper {
     pub value: NewtypeU64,
 }
 
 /// Newtype wrapper around String.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 #[facet(transparent)]
 pub struct NewtypeString(pub String);
 
 /// Fixture containing newtype String.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct NewtypeStringWrapper {
     pub value: NewtypeString,
 }
@@ -2203,7 +2353,7 @@ pub struct NewtypeStringWrapper {
 // ── Char test fixtures ──
 
 /// Fixture for char scalar test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct CharWrapper {
     pub letter: char,
     pub emoji: char,
@@ -2212,7 +2362,7 @@ pub struct CharWrapper {
 // ── HashSet test fixtures ──
 
 /// Fixture for HashSet test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct HashSetWrapper {
     pub items: std::collections::HashSet<String>,
 }
@@ -2220,7 +2370,7 @@ pub struct HashSetWrapper {
 // ── Nested collection test fixtures ──
 
 /// Fixture for nested Vec test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct NestedVecWrapper {
     pub matrix: Vec<Vec<i32>>,
 }
@@ -2228,7 +2378,7 @@ pub struct NestedVecWrapper {
 // ── Bytes/binary data test fixtures ──
 
 /// Fixture for `Vec<u8>` binary data test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct BytesWrapper {
     pub data: Vec<u8>,
 }
@@ -2236,7 +2386,7 @@ pub struct BytesWrapper {
 // ── Fixed-size array test fixtures ──
 
 /// Fixture for fixed-size array test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct ArrayWrapper {
     pub values: [u64; 3],
 }
@@ -2244,7 +2394,7 @@ pub struct ArrayWrapper {
 // ── Unknown field handling test fixtures ──
 
 /// Fixture for skip_unknown_fields test (no deny_unknown_fields attribute).
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct SkipUnknownStruct {
     pub known: String,
 }
@@ -2252,13 +2402,13 @@ pub struct SkipUnknownStruct {
 // ── String escape test fixtures ──
 
 /// Fixture for string escape test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct StringEscapes {
     pub text: String,
 }
 
 /// Fixture for extended string escape test.
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct StringEscapesExtended {
     pub backspace: String,
     pub formfeed: String,
@@ -2269,7 +2419,7 @@ pub struct StringEscapesExtended {
 // ── Unit type test fixtures ──
 
 /// Fixture for unit struct test (zero-sized type).
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct UnitStruct;
 
 // ── Third-party type case descriptors ──
@@ -2384,77 +2534,77 @@ const CASE_CHRONO_NAIVE_TIME: CaseDescriptor<ChronoNaiveTimeWrapper> = CaseDescr
 
 /// Fixture for uuid::Uuid test.
 #[cfg(feature = "uuid")]
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct UuidWrapper {
     pub id: uuid::Uuid,
 }
 
 /// Fixture for ulid::Ulid test.
 #[cfg(feature = "ulid")]
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct UlidWrapper {
     pub id: ulid::Ulid,
 }
 
 /// Fixture for camino::Utf8PathBuf test.
 #[cfg(feature = "camino")]
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct CaminoWrapper {
     pub path: camino::Utf8PathBuf,
 }
 
 /// Fixture for ordered_float::OrderedFloat test.
 #[cfg(feature = "ordered-float")]
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct OrderedFloatWrapper {
     pub value: ordered_float::OrderedFloat<f64>,
 }
 
 /// Fixture for time::OffsetDateTime test.
 #[cfg(feature = "time")]
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct TimeOffsetDateTimeWrapper {
     pub created_at: time::OffsetDateTime,
 }
 
 /// Fixture for jiff::Timestamp test.
 #[cfg(feature = "jiff02")]
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct JiffTimestampWrapper {
     pub created_at: jiff::Timestamp,
 }
 
 /// Fixture for jiff::civil::DateTime test.
 #[cfg(feature = "jiff02")]
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct JiffCivilDateTimeWrapper {
     pub created_at: jiff::civil::DateTime,
 }
 
 /// Fixture for `chrono::DateTime<Utc>` test.
 #[cfg(feature = "chrono")]
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct ChronoDateTimeUtcWrapper {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Fixture for chrono::NaiveDateTime test.
 #[cfg(feature = "chrono")]
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct ChronoNaiveDateTimeWrapper {
     pub created_at: chrono::NaiveDateTime,
 }
 
 /// Fixture for chrono::NaiveDate test.
 #[cfg(feature = "chrono")]
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct ChronoNaiveDateWrapper {
     pub birth_date: chrono::NaiveDate,
 }
 
 /// Fixture for chrono::NaiveTime test.
 #[cfg(feature = "chrono")]
-#[derive(Facet, Debug, Clone)]
+#[derive(Facet, Debug, Clone, PartialEq)]
 pub struct ChronoNaiveTimeWrapper {
     pub alarm_time: chrono::NaiveTime,
 }

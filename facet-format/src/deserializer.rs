@@ -144,6 +144,20 @@ where
             return wip.end().map_err(DeserializeError::Reflect);
         }
 
+        // Check for field-level proxy (opaque types with proxy attribute)
+        if wip
+            .parent_field()
+            .and_then(|field| field.proxy_convert_in_fn())
+            .is_some()
+        {
+            wip = wip
+                .begin_custom_deserialization()
+                .map_err(DeserializeError::Reflect)?;
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            return Ok(wip);
+        }
+
         // Check Def first for Option
         if matches!(&shape.def, Def::Option(_)) {
             return self.deserialize_option(wip);
@@ -1198,6 +1212,28 @@ where
                     // Consume the null
                     self.parser.next_event().map_err(DeserializeError::Parser)?;
                     return Ok(wip);
+                }
+
+                // Try unit variants for string values (match variant name)
+                // This handles untagged enums with only unit variants like:
+                // #[facet(untagged)] enum Color { Red, Green, Blue }
+                // which deserialize from "Red", "Green", "Blue"
+                if let ScalarValue::Str(s) = scalar {
+                    for variant in &variants_by_format.unit_variants {
+                        // Match against variant name or rename attribute
+                        let variant_display_name = variant
+                            .get_builtin_attr("rename")
+                            .and_then(|attr| attr.get_as::<&str>().copied())
+                            .unwrap_or(variant.name);
+                        if s.as_ref() == variant_display_name {
+                            wip = wip
+                                .select_variant_named(variant.name)
+                                .map_err(DeserializeError::Reflect)?;
+                            // Consume the string
+                            self.parser.next_event().map_err(DeserializeError::Parser)?;
+                            return Ok(wip);
+                        }
+                    }
                 }
 
                 // Try scalar variants - match by type

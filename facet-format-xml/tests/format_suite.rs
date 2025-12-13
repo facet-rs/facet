@@ -330,6 +330,24 @@ impl FormatSuite for XmlSlice {
         CaseSpec::from_str(r#"<value>42</value>"#)
     }
 
+    fn opaque_proxy() -> CaseSpec {
+        // OpaqueType doesn't implement Facet, but OpaqueTypeProxy does
+        // Use PartialEq comparison since reflection can't peek into opaque types
+        // Roundtrip disabled: serialization of opaque types not yet supported
+        CaseSpec::from_str(r#"<record><value><inner>42</inner></value></record>"#)
+            .with_partial_eq()
+            .without_roundtrip("serialization of opaque types not yet supported")
+    }
+
+    fn opaque_proxy_option() -> CaseSpec {
+        // Optional opaque field with proxy
+        // Use PartialEq comparison since reflection can't peek into opaque types
+        // Roundtrip disabled: serialization of opaque types not yet supported
+        CaseSpec::from_str(r#"<record><value><inner>99</inner></value></record>"#)
+            .with_partial_eq()
+            .without_roundtrip("serialization of opaque types not yet supported")
+    }
+
     fn transparent_multilevel() -> CaseSpec {
         CaseSpec::from_str(r#"<value>42</value>"#)
     }
@@ -433,6 +451,11 @@ impl FormatSuite for XmlSlice {
         CaseSpec::skip(
             "XML parser returns I64 but untagged enum expects U64 (numeric matching not yet supported)",
         )
+    }
+
+    fn untagged_unit_only() -> CaseSpec {
+        // Untagged enum with only unit variants, deserialized from string "Alpha"
+        CaseSpec::from_str(r#"<value>Alpha</value>"#)
     }
 
     // ── Smart pointer cases ──
