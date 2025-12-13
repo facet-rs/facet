@@ -135,8 +135,8 @@ fn test_mixed_namespaces_with_default() {
 // Same local name, different namespaces
 // ============================================================================
 
-#[derive(Facet, Debug, PartialEq, Default)]
-#[facet(rename = "root", default)]
+#[derive(Facet, Debug, PartialEq)]
+#[facet(rename = "root")]
 struct SameLocalNameDifferentNs {
     #[facet(xml::element, rename = "item", xml::ns = "http://ns1.com")]
     item_ns1: String,
