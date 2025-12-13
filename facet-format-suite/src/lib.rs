@@ -99,6 +99,15 @@ pub trait FormatSuite {
     /// Case: transparent newtype `#[facet(transparent)]`.
     fn transparent_newtype() -> CaseSpec;
 
+    // ── Flatten variation tests ──
+
+    /// Case: flattened field is `Option<T>` with `Some` value.
+    fn flatten_optional_some() -> CaseSpec;
+    /// Case: flattened field is `Option<T>` with `None` value.
+    fn flatten_optional_none() -> CaseSpec;
+    /// Case: two flattened structs with overlapping field names (error).
+    fn flatten_overlapping_fields_error() -> CaseSpec;
+
     // ── Error cases ──
 
     /// Case: `#[facet(deny_unknown_fields)]` rejects unknown fields.
@@ -119,6 +128,19 @@ pub trait FormatSuite {
     fn proxy_validation_error() -> CaseSpec;
     /// Case: proxy wrapping `Option<T>`.
     fn proxy_with_option() -> CaseSpec;
+    /// Case: proxy on enum variants.
+    fn proxy_with_enum() -> CaseSpec;
+    /// Case: interaction between proxy and transparent.
+    fn proxy_with_transparent() -> CaseSpec;
+
+    // ── Transparent tests ──
+
+    /// Case: transparent wrapping another transparent type (multilevel).
+    fn transparent_multilevel() -> CaseSpec;
+    /// Case: transparent wrapping `Option<T>`.
+    fn transparent_option() -> CaseSpec;
+    /// Case: transparent wrapping NonZero types.
+    fn transparent_nonzero() -> CaseSpec;
 
     // ── Scalar tests ──
 
@@ -353,6 +375,19 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         // Advanced cases
         SuiteCase::new::<S, FlattenOuter>(&CASE_STRUCT_FLATTEN, S::struct_flatten),
         SuiteCase::new::<S, UserRecord>(&CASE_TRANSPARENT_NEWTYPE, S::transparent_newtype),
+        // Flatten variation cases
+        SuiteCase::new::<S, FlattenOptionalSome>(
+            &CASE_FLATTEN_OPTIONAL_SOME,
+            S::flatten_optional_some,
+        ),
+        SuiteCase::new::<S, FlattenOptionalNone>(
+            &CASE_FLATTEN_OPTIONAL_NONE,
+            S::flatten_optional_none,
+        ),
+        SuiteCase::new::<S, FlattenOverlapping>(
+            &CASE_FLATTEN_OVERLAPPING_FIELDS_ERROR,
+            S::flatten_overlapping_fields_error,
+        ),
         // Error cases
         SuiteCase::new::<S, DenyUnknownStruct>(&CASE_DENY_UNKNOWN_FIELDS, S::deny_unknown_fields),
         // Alias cases
@@ -362,6 +397,18 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, ProxyFieldLevel>(&CASE_PROXY_FIELD_LEVEL, S::proxy_field_level),
         SuiteCase::new::<S, ProxyInt>(&CASE_PROXY_VALIDATION_ERROR, S::proxy_validation_error),
         SuiteCase::new::<S, ProxyWithOption>(&CASE_PROXY_WITH_OPTION, S::proxy_with_option),
+        SuiteCase::new::<S, ProxyEnum>(&CASE_PROXY_WITH_ENUM, S::proxy_with_enum),
+        SuiteCase::new::<S, TransparentProxy>(
+            &CASE_PROXY_WITH_TRANSPARENT,
+            S::proxy_with_transparent,
+        ),
+        // Transparent cases
+        SuiteCase::new::<S, OuterTransparent>(
+            &CASE_TRANSPARENT_MULTILEVEL,
+            S::transparent_multilevel,
+        ),
+        SuiteCase::new::<S, TransparentOption>(&CASE_TRANSPARENT_OPTION, S::transparent_option),
+        SuiteCase::new::<S, TransparentNonZero>(&CASE_TRANSPARENT_NONZERO, S::transparent_nonzero),
         // Scalar cases
         SuiteCase::new::<S, BoolWrapper>(&CASE_SCALAR_BOOL, S::scalar_bool),
         SuiteCase::new::<S, IntegerTypes>(&CASE_SCALAR_INTEGERS, S::scalar_integers),
@@ -886,6 +933,44 @@ const CASE_TRANSPARENT_NEWTYPE: CaseDescriptor<UserRecord> = CaseDescriptor {
     },
 };
 
+// ── Flatten variation case descriptors ──
+
+const CASE_FLATTEN_OPTIONAL_SOME: CaseDescriptor<FlattenOptionalSome> = CaseDescriptor {
+    id: "flatten::optional_some",
+    description: "flattened field is Option<T> with Some value",
+    expected: || FlattenOptionalSome {
+        name: "test".into(),
+        metadata: Some(FlattenMetadata {
+            version: 1,
+            author: "alice".into(),
+        }),
+    },
+};
+
+const CASE_FLATTEN_OPTIONAL_NONE: CaseDescriptor<FlattenOptionalNone> = CaseDescriptor {
+    id: "flatten::optional_none",
+    description: "flattened field is Option<T> with None value",
+    expected: || FlattenOptionalNone {
+        name: "test".into(),
+        metadata: None,
+    },
+};
+
+const CASE_FLATTEN_OVERLAPPING_FIELDS_ERROR: CaseDescriptor<FlattenOverlapping> = CaseDescriptor {
+    id: "flatten::overlapping_fields_error",
+    description: "two flattened structs with overlapping field names (error)",
+    expected: || FlattenOverlapping {
+        part_a: FlattenPartA {
+            field_a: "a".into(),
+            shared: 1,
+        },
+        part_b: FlattenPartB {
+            field_b: "b".into(),
+            shared: 2,
+        },
+    },
+};
+
 // ── Error case descriptors ──
 
 const CASE_DENY_UNKNOWN_FIELDS: CaseDescriptor<DenyUnknownStruct> = CaseDescriptor {
@@ -938,6 +1023,38 @@ const CASE_PROXY_WITH_OPTION: CaseDescriptor<ProxyWithOption> = CaseDescriptor {
         name: "test".into(),
         count: Some(42),
     },
+};
+
+const CASE_PROXY_WITH_ENUM: CaseDescriptor<ProxyEnum> = CaseDescriptor {
+    id: "proxy::with_enum",
+    description: "proxy on enum variant",
+    expected: || ProxyEnum::Value(99),
+};
+
+const CASE_PROXY_WITH_TRANSPARENT: CaseDescriptor<TransparentProxy> = CaseDescriptor {
+    id: "proxy::with_transparent",
+    description: "transparent wrapper with proxy",
+    expected: || TransparentProxy(42),
+};
+
+// ── Transparent case descriptors ──
+
+const CASE_TRANSPARENT_MULTILEVEL: CaseDescriptor<OuterTransparent> = CaseDescriptor {
+    id: "transparent::multilevel",
+    description: "transparent wrapping another transparent type",
+    expected: || OuterTransparent(InnerTransparent(42)),
+};
+
+const CASE_TRANSPARENT_OPTION: CaseDescriptor<TransparentOption> = CaseDescriptor {
+    id: "transparent::option",
+    description: "transparent wrapping Option<T>",
+    expected: || TransparentOption(Some(99)),
+};
+
+const CASE_TRANSPARENT_NONZERO: CaseDescriptor<TransparentNonZero> = CaseDescriptor {
+    id: "transparent::nonzero",
+    description: "transparent wrapping NonZero type",
+    expected: || TransparentNonZero(std::num::NonZeroU32::new(42).unwrap()),
 };
 
 // ── Scalar case descriptors ──
@@ -1442,6 +1559,54 @@ pub struct UserRecord {
     pub name: String,
 }
 
+// ── Flatten variation fixtures ──
+
+/// Struct for flatten with optional flattened field (Some case).
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct FlattenOptionalSome {
+    pub name: String,
+    #[facet(flatten)]
+    pub metadata: Option<FlattenMetadata>,
+}
+
+/// Struct for flatten with optional flattened field (None case).
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct FlattenOptionalNone {
+    pub name: String,
+    #[facet(flatten)]
+    pub metadata: Option<FlattenMetadata>,
+}
+
+/// Metadata struct for flatten optional tests.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct FlattenMetadata {
+    pub version: i32,
+    pub author: String,
+}
+
+/// First flattened struct with overlapping fields.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct FlattenPartA {
+    pub field_a: String,
+    pub shared: i32,
+}
+
+/// Second flattened struct with overlapping fields.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct FlattenPartB {
+    pub field_b: String,
+    pub shared: i32,
+}
+
+/// Container with two flattened structs that have overlapping field names.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct FlattenOverlapping {
+    #[facet(flatten)]
+    pub part_a: FlattenPartA,
+    #[facet(flatten)]
+    pub part_b: FlattenPartB,
+}
+
 // ── Error test fixtures ──
 
 /// Fixture for `#[facet(deny_unknown_fields)]` test.
@@ -1543,6 +1708,57 @@ impl From<&Option<i32>> for IntAsString {
         }
     }
 }
+
+/// Enum with proxy on a newtype variant.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[repr(u8)]
+pub enum ProxyEnum {
+    None,
+    #[facet(proxy = IntAsString)]
+    Value(i32),
+}
+
+/// Transparent wrapper with proxy.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(transparent, proxy = IntAsString)]
+pub struct TransparentProxy(pub i32);
+
+/// Convert from proxy for TransparentProxy.
+impl TryFrom<IntAsString> for TransparentProxy {
+    type Error = std::num::ParseIntError;
+    fn try_from(proxy: IntAsString) -> Result<Self, Self::Error> {
+        Ok(TransparentProxy(proxy.0.parse()?))
+    }
+}
+
+/// Convert to proxy for TransparentProxy.
+impl From<&TransparentProxy> for IntAsString {
+    fn from(value: &TransparentProxy) -> Self {
+        IntAsString(value.0.to_string())
+    }
+}
+
+// ── Transparent test fixtures ──
+
+/// Inner transparent wrapper.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(transparent)]
+pub struct InnerTransparent(pub i32);
+
+/// Outer transparent wrapper wrapping another transparent type.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(transparent)]
+pub struct OuterTransparent(pub InnerTransparent);
+
+/// Transparent wrapper around `Option<T>`.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(transparent)]
+pub struct TransparentOption(pub Option<i32>);
+
+/// Transparent wrapper around NonZero type.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(transparent)]
+pub struct TransparentNonZero(pub std::num::NonZeroU32);
 
 // ── Scalar test fixtures ──
 
