@@ -433,8 +433,13 @@ impl Shape {
                             (self.variance)(self)
                         }
                     }
-                    // Other types (Scalar, Undefined, Option) - use declared variance
-                    _ => (self.variance)(self),
+                    // Option and Result use .inner field, handled by the self.inner.is_some() branch above
+                    // Scalar, Undefined, and DynamicValue use their declared variance
+                    Def::Scalar
+                    | Def::Undefined
+                    | Def::Option(_)
+                    | Def::Result(_)
+                    | Def::DynamicValue(_) => (self.variance)(self),
                 }
             }
         }
