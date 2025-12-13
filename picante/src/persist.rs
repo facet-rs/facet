@@ -105,6 +105,13 @@ pub trait PersistableIngredient: Send + Sync {
     fn save_records(&self) -> BoxFuture<'_, PicanteResult<Vec<Vec<u8>>>>;
     /// Load this ingredient from raw record bytes.
     fn load_records(&self, records: Vec<Vec<u8>>) -> PicanteResult<()>;
+    /// Restore any runtime-side state derived from loaded records.
+    fn restore_runtime_state<'a>(
+        &'a self,
+        _runtime: &'a Runtime,
+    ) -> BoxFuture<'a, PicanteResult<()>> {
+        Box::pin(async { Ok(()) })
+    }
 }
 
 /// Save `runtime` and `ingredients` to `path`.
@@ -285,6 +292,8 @@ async fn load_cache_inner(
         by_kind.insert(ingredient.kind().as_u32(), *ingredient);
     }
 
+    runtime.clear_dependency_graph();
+
     // Clear first so we don't blend partial state.
     for ingredient in ingredients {
         ingredient.clear();
@@ -321,6 +330,10 @@ async fn load_cache_inner(
         }
 
         ingredient.load_records(section.records)?;
+    }
+
+    for ingredient in ingredients {
+        ingredient.restore_runtime_state(runtime).await?;
     }
 
     runtime.set_current_revision(Revision(cache.current_revision));

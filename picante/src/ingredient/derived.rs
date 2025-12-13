@@ -560,6 +560,35 @@ where
         }
         Ok(())
     }
+
+    fn restore_runtime_state<'a>(
+        &'a self,
+        runtime: &'a crate::runtime::Runtime,
+    ) -> BoxFuture<'a, PicanteResult<()>> {
+        Box::pin(async move {
+            let snapshot: Vec<(K, Arc<Cell<V>>)> = self
+                .cells
+                .iter()
+                .map(|e| (e.key().clone(), e.value().clone()))
+                .collect();
+
+            for (key, cell) in snapshot {
+                let state = cell.state.lock().await;
+                let State::Ready { deps, .. } = &*state else {
+                    continue;
+                };
+
+                let query = DynKey {
+                    kind: self.kind,
+                    key: Key::encode_facet(&key)?,
+                };
+                runtime.update_query_deps(query, deps.clone());
+            }
+
+            debug!(kind = self.kind.0, "restore_runtime_state (derived)");
+            Ok(())
+        })
+    }
 }
 
 impl<DB, K, V> DynIngredient<DB> for DerivedIngredient<DB, K, V>

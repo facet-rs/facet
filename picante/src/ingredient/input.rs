@@ -7,6 +7,7 @@ use crate::revision::Revision;
 use crate::runtime::HasRuntime;
 use dashmap::DashMap;
 use facet::Facet;
+use facet_assert::check_same_report;
 use futures::future::BoxFuture;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -50,9 +51,23 @@ where
         self.kind_name
     }
 
-    /// Set an input value, bumping the runtime revision.
+    /// Set an input value.
+    ///
+    /// Bumps the runtime revision only if the value actually changed.
     #[tracing::instrument(level = "debug", skip_all, fields(kind = self.kind.0))]
     pub fn set<DB: HasRuntime>(&self, db: &DB, key: K, value: V) -> Revision {
+        if let Some(existing) = self.entries.get(&key)
+            && let Some(existing_value) = existing.value.as_ref()
+            && check_same_report(existing_value, &value).is_same()
+        {
+            trace!(
+                kind = self.kind.0,
+                changed_at = existing.changed_at.0,
+                "input set no-op (same value)"
+            );
+            return existing.changed_at;
+        }
+
         let encoded_key = Key::encode_facet(&key).ok();
         let rev = db.runtime().bump_revision();
         self.entries.insert(
@@ -68,9 +83,27 @@ where
         rev
     }
 
-    /// Remove an input value, bumping the runtime revision.
+    /// Remove an input value.
+    ///
+    /// Bumps the runtime revision only if the value existed.
     #[tracing::instrument(level = "debug", skip_all, fields(kind = self.kind.0))]
     pub fn remove<DB: HasRuntime>(&self, db: &DB, key: &K) -> Revision {
+        match self.entries.get(key) {
+            Some(existing) if existing.value.is_none() => {
+                trace!(
+                    kind = self.kind.0,
+                    changed_at = existing.changed_at.0,
+                    "input remove no-op (already removed)"
+                );
+                return existing.changed_at;
+            }
+            None => {
+                trace!(kind = self.kind.0, "input remove no-op (missing)");
+                return Revision(0);
+            }
+            _ => {}
+        }
+
         let encoded_key = Key::encode_facet(key).ok();
         let rev = db.runtime().bump_revision();
         self.entries.insert(

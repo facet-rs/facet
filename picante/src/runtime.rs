@@ -134,6 +134,12 @@ impl Runtime {
         });
     }
 
+    /// Clear the in-memory dependency graph (used during cache loads).
+    pub fn clear_dependency_graph(&self) {
+        self.deps_by_query.clear();
+        self.reverse_deps.clear();
+    }
+
     fn propagate_invalidation(&self, revision: Revision, source: &DynKey) {
         let mut queue = VecDeque::new();
         let mut seen: HashSet<DynKey> = HashSet::new();
