@@ -1607,6 +1607,7 @@ dependencies = [
  "facet-format",
  "facet-format-suite",
  "facet-reflect",
+ "facet-xml",
  "indoc",
  "libtest-mimic",
  "quick-xml 0.37.5",

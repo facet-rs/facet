@@ -22,6 +22,7 @@ quick-xml = "0.37"
 [dev-dependencies]
 facet = { path = "../facet" }
 facet-format-suite = { path = "../facet-format-suite" }
+facet-xml = { path = "../facet-xml" }
 indoc = "2"
 libtest-mimic = "0.8.1"
 
