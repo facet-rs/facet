@@ -138,7 +138,7 @@ pub struct Guard {
     /// Layout information of the allocated memory.
     pub(crate) layout: Layout,
     /// Whether this guard should deallocate the memory on drop.
-    /// Set to false when the allocation is managed elsewhere (e.g., Arc<[T]> from slice builder).
+    /// Set to false when the allocation is managed elsewhere (e.g., `Arc<[T]>` from slice builder).
     pub(crate) should_dealloc: bool,
 }
 
