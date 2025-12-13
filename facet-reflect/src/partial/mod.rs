@@ -1098,7 +1098,12 @@ impl<'facet, const BORROW: bool> Drop for Partial<'facet, BORROW> {
                 // - Scalar: checks is_init
                 // - Struct/Array/Enum: uses iset to drop individual fields/elements
                 frame.deinit();
-                // Don't deallocate - Field ownership means parent owns the memory
+
+                // Deallocate if this frame owns the allocation
+                // (Field ownership means parent owns the memory, but Owned frames must be deallocated)
+                if let FrameOwnership::Owned = frame.ownership {
+                    frame.dealloc();
+                }
             }
         }
 
