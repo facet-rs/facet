@@ -21,26 +21,26 @@ ci = ["slow-tests"] # CI feature
 axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 
 [dependencies]
-log = "0.4"
+
+# Axum integration (optional)
+axum-core = { version = "0.5", default-features = false, optional = true }
 facet = { path = "../facet", version = "0.32.2" }
 facet-core = { path = "../facet-core", version = "0.32.2" }
 facet-reflect = { path = "../facet-reflect", version = "0.32.2", features = ["miette"] }
 facet-singularize = { path = "../facet-singularize", version = "0.32.2" }
 facet-solver = { path = "../facet-solver", version = "0.32.2" }
-kdl = "6.5.0"
-miette = { version = "7", default-features = false }
-
-# Axum integration (optional)
-axum-core = { version = "0.5", default-features = false, optional = true }
-http = { version = "1", default-features = false, optional = true }
+http = { workspace = true, optional = true } #unified
 http-body-util = { version = "0.1", default-features = false, optional = true }
+kdl = "6.5.0"
+log = { workspace = true } #unified
+miette = { version = "7", default-features = false }
 
 [dev-dependencies]
-facet = { path = "../facet" }
-facet-core = { path = "../facet-core", features = ["camino"] }
+camino = { workspace = true } #unified
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+facet-core = { path = "../facet-core", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
-tempfile = "3"
-camino = "1"
-miette = { version = "7", default-features = false }
-indoc = "2.0.7"
+indoc = { workspace = true } #unified
+miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] } #unified
+tempfile = { workspace = true } #unified

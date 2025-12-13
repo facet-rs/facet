@@ -14,17 +14,17 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 confusables = "0.1"
-facet-core = { path = "../facet-core", version = "0.32.2" }
+facet-core = { path = "../facet-core", version = "0.32.2", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
 facet-pretty = { path = "../facet-pretty", version = "0.32.2" }
-facet-reflect = { path = "../facet-reflect", version = "0.32.2" }
-indextree = "4"
+facet-reflect = { path = "../facet-reflect", version = "0.32.2", features = ["miette"] }
+indextree = { workspace = true } #unified
 owo-colors = "4"
 palette = { version = "0.7", default-features = false, features = ["std"] }
-tracing = { version = "0.1", default-features = false }
+tracing = { workspace = true } #unified
 unicode-width = "0.2"
 
 [dev-dependencies]
-facet = { path = "../facet" }
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
 facet-diff = { path = "../facet-diff" }
 facet-value = { path = "../facet-value" }
-facet-xml = { path = "../facet-xml" }
+facet-xml = { path = "../facet-xml", features = ["axum"] }

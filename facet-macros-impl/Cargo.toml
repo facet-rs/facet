@@ -29,11 +29,11 @@ doc = []
 helpful-derive = ["dep:strsim"]
 
 [dependencies]
-facet-macro-types = { version = "0.32.2", path = "../facet-macro-types" }
 facet-macro-parse = { version = "0.32.2", path = "../facet-macro-parse" }
-unsynn = "0.3.0"
+facet-macro-types = { version = "0.32.2", path = "../facet-macro-types" }
 proc-macro2 = "1.0.95"
-quote = "1.0.40"
-strsim = { version = "0.11", optional = true }
+quote = { workspace = true } #unified
+strsim = { workspace = true, optional = true } #unified
+unsynn = { workspace = true } #unified
 
 [dev-dependencies]

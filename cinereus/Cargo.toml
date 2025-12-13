@@ -13,6 +13,6 @@ categories = ["algorithms", "data-structures"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-indextree = "4"
+indextree = { workspace = true } #unified
 
 [dev-dependencies]

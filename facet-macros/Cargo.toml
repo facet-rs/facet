@@ -22,7 +22,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 proc-macro = true
 
 [features]
-ci = [] # CI feature
 default = ["helpful-derive"]
 function = ["facet-macros-impl/function"]
 # Include doc comments in generated Shape/Field/Variant definitions

@@ -13,23 +13,22 @@ categories = ["development-tools", "data-structures"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-ci = [] # CI feature
 default = []
 
 [dependencies]
 cinereus = { path = "../cinereus", version = "0.32.2" }
-facet = { path = "../facet", version = "0.32.2" }
-facet-core = { path = "../facet-core", version = "0.32.2" }
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+facet-core = { path = "../facet-core", version = "0.32.2", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
 facet-diff-core = { path = "../facet-diff-core", version = "0.32.2" }
 facet-pretty = { path = "../facet-pretty", version = "0.32.2" }
-facet-reflect = { path = "../facet-reflect", version = "0.32.2" }
+facet-reflect = { path = "../facet-reflect", version = "0.32.2", features = ["miette"] }
+log = { workspace = true } #unified
 owo-colors = "4"
-log = "0.4"
 
 [dev-dependencies]
-boxen = "0.1"
-insta = "1.43.1"
-owo-colors = "4"
-facet-value = { path = "../facet-value" }
-facet-testhelpers = { path = "../facet-testhelpers" }
+boxen = { workspace = true } #unified
 facet-showcase = { path = "../facet-showcase", version = "0.32.2" }
+facet-testhelpers = { path = "../facet-testhelpers" }
+facet-value = { path = "../facet-value" }
+insta = { workspace = true } #unified
+owo-colors = "4"

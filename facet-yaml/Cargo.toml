@@ -16,7 +16,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-ci = [] # CI feature
 std = ["alloc", "facet-core/std", "facet-reflect/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 default = ["std"]
@@ -26,25 +25,25 @@ axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"time\"))"] }
 
 [dependencies]
-saphyr-parser = "0.0.6"
-facet = { path = "../facet", version = "0.32.2", default-features = false }
-facet-core = { path = "../facet-core", version = "0.32.2", default-features = false }
-facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false, features = ["miette"] }
-facet-solver = { path = "../facet-solver", version = "0.32.2" }
-miette = { version = "7", default-features = false }
-log = "0.4.27"
 
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }
-http = { version = "1", default-features = false, optional = true }
+facet = { path = "../facet", version = "0.32.2", default-features = false }
+facet-core = { path = "../facet-core", version = "0.32.2", default-features = false, features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false, features = ["miette"] }
+facet-solver = { path = "../facet-solver", version = "0.32.2" }
+http = { workspace = true, optional = true } #unified
 http-body-util = { version = "0.1", default-features = false, optional = true }
+log = { workspace = true } #unified
+miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] } #unified
+saphyr-parser = "0.0.6"
 
 [dev-dependencies]
-facet = { path = "../facet", features = ["net", "nonzero"] }
-eyre = "0.6.12"
-time = { version = "0.3.41", default-features = false, features = ["macros", "parsing", "formatting"] }
-facet-testhelpers = { path = "../facet-testhelpers" }
+eyre = { workspace = true } #unified
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "ordered-float", "time", "ulid", "uuid"] } #unified
 facet-showcase = { path = "../facet-showcase" }
+facet-testhelpers = { path = "../facet-testhelpers" }
+time = { workspace = true } #unified
 
 [[example]]
 name = "yaml_showcase"
