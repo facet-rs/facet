@@ -440,10 +440,22 @@ fn infer_ref_type_from_owned_name(name: &unsynn::Ident) -> crate::grammar::Type 
 }
 
 fn create_field_if_none(fields: &mut crate::grammar::Fields) {
-    // For unsynn, if fields is empty, we don't need to create a default field
-    // The parsing should have already handled this, or we can just leave it empty
-    // This function is kept for compatibility but may not be needed
-    let _ = fields; // Suppress unused warning
+    use crate::grammar::Fields;
+
+    // If it's a unit struct, convert it to an unnamed tuple struct with String
+    if matches!(fields, Fields::Unit) {
+        // Parse a dummy struct to extract the fields structure
+        let dummy_struct: proc_macro2::TokenStream = "struct Dummy(String);".parse().unwrap();
+        let mut iter = dummy_struct.to_token_iter();
+        let parsed = iter
+            .parse::<crate::grammar::ItemStruct>()
+            .expect("failed to parse dummy struct");
+
+        // Extract the fields from the parsed struct
+        if let Fields::Unnamed(ref unnamed) = parsed.fields {
+            *fields = Fields::Unnamed(unnamed.clone());
+        }
+    }
 }
 
 fn create_ref_field_if_none(fields: &mut crate::grammar::Fields) {
