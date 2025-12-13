@@ -856,8 +856,8 @@ impl<'input> XmlDeserializer<'input> {
             return Ok(partial);
         }
 
-        // Handle transparent types (newtype wrappers)
-        if shape.inner.is_some() {
+        // Priority 1: Check for builder_shape (immutable collections like Bytes -> BytesMut)
+        if shape.builder_shape.is_some() {
             partial = partial.begin_inner()?;
             partial =
                 self.deserialize_element(partial, element_name, attributes, span, is_empty)?;
@@ -2120,7 +2120,15 @@ impl<'input> XmlDeserializer<'input> {
         let mut partial = partial;
         let shape = partial.shape();
 
-        // Handle transparent wrappers
+        // Priority 1: Check for builder_shape (immutable collections like Bytes -> BytesMut)
+        if shape.builder_shape.is_some() {
+            partial = partial.begin_inner()?;
+            partial = self.set_scalar_value(partial, value)?;
+            partial = partial.end()?;
+            return Ok(partial);
+        }
+
+        // Priority 3: Check for .inner (transparent wrappers, or types with .inner for variance)
         if shape.inner.is_some() {
             partial = partial.begin_inner()?;
             partial = self.set_scalar_value(partial, value)?;

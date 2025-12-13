@@ -236,6 +236,7 @@ pub mod builtin {
             attributes: &[],
             type_tag: None,
             inner: None,
+            builder_shape: None,
             type_name: None,
             proxy: None,
             variance: crate::Variance::COVARIANT,

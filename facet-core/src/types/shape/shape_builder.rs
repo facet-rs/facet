@@ -35,6 +35,7 @@ const EMPTY_VESSEL: Shape = Shape {
     attributes: &[],
     type_tag: None,
     inner: None,
+    builder_shape: None,
     type_name: None,
     proxy: None,
     variance: Variance::COVARIANT,
@@ -239,6 +240,17 @@ impl ShapeBuilder {
     #[inline]
     pub const fn inner(mut self, inner: &'static Shape) -> Self {
         self.shape.inner = Some(inner);
+        self
+    }
+
+    /// Set the builder shape for immutable collections.
+    ///
+    /// If set, deserializers will build the value using the builder shape,
+    /// then convert to the target type. Used for immutable collections like
+    /// `Bytes` (builds through `BytesMut`) or `Arc<[T]>` (builds through `Vec<T>`).
+    #[inline]
+    pub const fn builder_shape(mut self, builder: &'static Shape) -> Self {
+        self.shape.builder_shape = Some(builder);
         self
     }
 

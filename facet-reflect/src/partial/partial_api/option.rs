@@ -112,9 +112,15 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
     /// Begin building the inner value of a wrapper type
     pub fn begin_inner(mut self) -> Result<Self, ReflectError> {
         // Get the inner shape and check for try_from
+        // Priority: builder_shape (for immutable collections) > inner (for variance/transparent wrappers)
         let (inner_shape, has_try_from, parent_shape, is_option) = {
             let frame = self.frames().last().unwrap();
-            if let Some(inner_shape) = frame.shape.inner {
+            // Check builder_shape first (immutable collections like Bytes, Arc<[T]>)
+            if let Some(builder_shape) = frame.shape.builder_shape {
+                let has_try_from = frame.shape.vtable.has_try_from();
+                let is_option = matches!(frame.shape.def, Def::Option(_));
+                (Some(builder_shape), has_try_from, frame.shape, is_option)
+            } else if let Some(inner_shape) = frame.shape.inner {
                 let has_try_from = frame.shape.vtable.has_try_from();
                 let is_option = matches!(frame.shape.def, Def::Option(_));
                 (Some(inner_shape), has_try_from, frame.shape, is_option)
