@@ -1221,6 +1221,24 @@ where
                     | ScalarType::U128
                     | ScalarType::USize
             ),
+            ScalarValue::I128(_) => matches!(
+                scalar_type,
+                ScalarType::I8
+                    | ScalarType::I16
+                    | ScalarType::I32
+                    | ScalarType::I64
+                    | ScalarType::I128
+                    | ScalarType::ISize
+            ),
+            ScalarValue::U128(_) => matches!(
+                scalar_type,
+                ScalarType::U8
+                    | ScalarType::U16
+                    | ScalarType::U32
+                    | ScalarType::U64
+                    | ScalarType::U128
+                    | ScalarType::USize
+            ),
             ScalarValue::F64(_) => matches!(scalar_type, ScalarType::F32 | ScalarType::F64),
             ScalarValue::Str(_) => matches!(
                 scalar_type,
@@ -1478,6 +1496,82 @@ where
                 } else if shape.type_identifier == "f64" {
                     wip = wip.set(n as f64).map_err(DeserializeError::Reflect)?;
                 // Handle String - stringify the number
+                } else if shape.type_identifier == "String" {
+                    wip = wip
+                        .set(alloc::string::ToString::to_string(&n))
+                        .map_err(DeserializeError::Reflect)?;
+                } else {
+                    wip = wip.set(n).map_err(DeserializeError::Reflect)?;
+                }
+            }
+            ScalarValue::I128(n) => {
+                // Handle 128-bit signed integer
+                if shape.type_identifier == "i128" {
+                    wip = wip.set(n).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "i64" {
+                    wip = wip.set(n as i64).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "i32" {
+                    wip = wip.set(n as i32).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "i16" {
+                    wip = wip.set(n as i16).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "i8" {
+                    wip = wip.set(n as i8).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "isize" {
+                    wip = wip.set(n as isize).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "u128" {
+                    wip = wip.set(n as u128).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "u64" {
+                    wip = wip.set(n as u64).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "u32" {
+                    wip = wip.set(n as u32).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "u16" {
+                    wip = wip.set(n as u16).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "u8" {
+                    wip = wip.set(n as u8).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "usize" {
+                    wip = wip.set(n as usize).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "f64" {
+                    wip = wip.set(n as f64).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "f32" {
+                    wip = wip.set(n as f32).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "String" {
+                    wip = wip
+                        .set(alloc::string::ToString::to_string(&n))
+                        .map_err(DeserializeError::Reflect)?;
+                } else {
+                    wip = wip.set(n).map_err(DeserializeError::Reflect)?;
+                }
+            }
+            ScalarValue::U128(n) => {
+                // Handle 128-bit unsigned integer
+                if shape.type_identifier == "u128" {
+                    wip = wip.set(n).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "u64" {
+                    wip = wip.set(n as u64).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "u32" {
+                    wip = wip.set(n as u32).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "u16" {
+                    wip = wip.set(n as u16).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "u8" {
+                    wip = wip.set(n as u8).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "usize" {
+                    wip = wip.set(n as usize).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "i128" {
+                    wip = wip.set(n as i128).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "i64" {
+                    wip = wip.set(n as i64).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "i32" {
+                    wip = wip.set(n as i32).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "i16" {
+                    wip = wip.set(n as i16).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "i8" {
+                    wip = wip.set(n as i8).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "isize" {
+                    wip = wip.set(n as isize).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "f64" {
+                    wip = wip.set(n as f64).map_err(DeserializeError::Reflect)?;
+                } else if shape.type_identifier == "f32" {
+                    wip = wip.set(n as f32).map_err(DeserializeError::Reflect)?;
                 } else if shape.type_identifier == "String" {
                     wip = wip
                         .set(alloc::string::ToString::to_string(&n))

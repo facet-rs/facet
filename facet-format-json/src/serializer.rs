@@ -163,6 +163,8 @@ impl FormatSerializer for JsonSerializer {
             }
             ScalarValue::I64(v) => self.out.extend_from_slice(v.to_string().as_bytes()),
             ScalarValue::U64(v) => self.out.extend_from_slice(v.to_string().as_bytes()),
+            ScalarValue::I128(v) => self.out.extend_from_slice(v.to_string().as_bytes()),
+            ScalarValue::U128(v) => self.out.extend_from_slice(v.to_string().as_bytes()),
             ScalarValue::F64(v) => self.out.extend_from_slice(v.to_string().as_bytes()),
             ScalarValue::Str(s) => self.write_json_string(&s),
             ScalarValue::Bytes(_) => {

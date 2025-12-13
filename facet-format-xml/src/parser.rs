@@ -322,6 +322,8 @@ enum XmlValue {
     Bool(bool),
     I64(i64),
     U64(u64),
+    I128(i128),
+    U128(u128),
     F64(f64),
     String(String),
     Array(Vec<XmlValue>),
@@ -545,6 +547,13 @@ fn parse_scalar(text: &str) -> XmlValue {
     if let Ok(u) = text.parse::<u64>() {
         return XmlValue::U64(u);
     }
+    // Try 128-bit integers for values outside i64/u64 range
+    if let Ok(i) = text.parse::<i128>() {
+        return XmlValue::I128(i);
+    }
+    if let Ok(u) = text.parse::<u128>() {
+        return XmlValue::U128(u);
+    }
     if let Ok(f) = text.parse::<f64>() {
         return XmlValue::F64(f);
     }
@@ -557,6 +566,8 @@ fn emit_value_events<'de>(value: &XmlValue, events: &mut Vec<ParseEvent<'de>>) {
         XmlValue::Bool(b) => events.push(ParseEvent::Scalar(ScalarValue::Bool(*b))),
         XmlValue::I64(n) => events.push(ParseEvent::Scalar(ScalarValue::I64(*n))),
         XmlValue::U64(n) => events.push(ParseEvent::Scalar(ScalarValue::U64(*n))),
+        XmlValue::I128(n) => events.push(ParseEvent::Scalar(ScalarValue::I128(*n))),
+        XmlValue::U128(n) => events.push(ParseEvent::Scalar(ScalarValue::U128(*n))),
         XmlValue::F64(n) => events.push(ParseEvent::Scalar(ScalarValue::F64(*n))),
         XmlValue::String(s) => {
             events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(s.clone()))))
