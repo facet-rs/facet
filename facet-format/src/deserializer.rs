@@ -247,8 +247,43 @@ where
 
         // Regular smart pointer (Box, Arc, Rc)
         wip = wip.begin_smart_ptr().map_err(DeserializeError::Reflect)?;
-        wip = self.deserialize_into(wip)?;
-        wip = wip.end().map_err(DeserializeError::Reflect)?;
+
+        // Check if begin_smart_ptr set up a slice builder (for Arc<[T]>, Rc<[T]>, Box<[T]>)
+        // In this case, we need to deserialize as a list manually
+        let is_slice_builder = wip.is_building_smart_ptr_slice();
+
+        if is_slice_builder {
+            // Deserialize the list elements into the slice builder
+            // We can't use deserialize_list() because it calls begin_list() which interferes
+            let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+            if !matches!(event, ParseEvent::SequenceStart) {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "sequence start for Arc<[T]>/Rc<[T]>/Box<[T]>",
+                    got: format!("{event:?}"),
+                });
+            }
+
+            loop {
+                let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
+                if matches!(event, ParseEvent::SequenceEnd) {
+                    self.parser.next_event().map_err(DeserializeError::Parser)?;
+                    break;
+                }
+
+                wip = wip.begin_list_item().map_err(DeserializeError::Reflect)?;
+                wip = self.deserialize_into(wip)?;
+                wip = wip.end().map_err(DeserializeError::Reflect)?;
+            }
+
+            // Convert the slice builder to Arc/Rc/Box and mark as initialized
+            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            // DON'T call end() again - the caller (deserialize_struct) will do that
+        } else {
+            // Regular smart pointer with sized pointee
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end().map_err(DeserializeError::Reflect)?;
+        }
+
         Ok(wip)
     }
 

@@ -1,3 +1,4 @@
+use core::alloc::Layout;
 use core::ptr::NonNull;
 
 use alloc::boxed::Box;
@@ -112,8 +113,18 @@ unsafe fn slice_builder_convert<'a, U: Facet<'a>>(builder: PtrMut) -> PtrConst {
     unsafe {
         let vec_box = Box::from_raw(builder.as_ptr::<Vec<U>>() as *mut Vec<U>);
         let arc: Arc<[U]> = (*vec_box).into();
-        let arc_box = Box::new(arc);
-        PtrConst::new(NonNull::new_unchecked(Box::into_raw(arc_box)).as_ptr())
+
+        // Allocate memory for the Arc (which is a fat pointer, 16 bytes on 64-bit)
+        let layout = Layout::new::<Arc<[U]>>();
+        let ptr = alloc::alloc::alloc(layout) as *mut Arc<[U]>;
+        if ptr.is_null() {
+            alloc::alloc::handle_alloc_error(layout);
+        }
+
+        // Write the Arc into the allocation
+        ptr.write(arc);
+
+        PtrConst::new(ptr as *const u8)
     }
 }
 
@@ -201,7 +212,6 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
                 name: "T",
                 shape: T::SHAPE,
             }])
-            .inner(T::SHAPE)
             .build()
     };
 }
@@ -267,7 +277,6 @@ unsafe impl<'a> Facet<'a> for Arc<str> {
                 name: "T",
                 shape: str::SHAPE,
             }])
-            .inner(str::SHAPE)
             .build()
     };
 }
@@ -344,7 +353,6 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Arc<[U]> {
                 name: "T",
                 shape: <[U]>::SHAPE,
             }])
-            .inner(<[U]>::SHAPE)
             .build()
     };
 }
@@ -396,7 +404,6 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
                 name: "T",
                 shape: T::SHAPE,
             }])
-            .inner(T::SHAPE)
             .build()
     };
 }
@@ -466,7 +473,6 @@ unsafe impl<'a> Facet<'a> for Weak<str> {
                 name: "T",
                 shape: str::SHAPE,
             }])
-            .inner(str::SHAPE)
             .build()
     };
 }
@@ -537,7 +543,6 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
                 name: "T",
                 shape: <[U]>::SHAPE,
             }])
-            .inner(<[U]>::SHAPE)
             .build()
     };
 }

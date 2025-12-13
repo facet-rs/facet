@@ -492,8 +492,9 @@ impl FormatSuite for XmlSlice {
     }
 
     fn arc_slice() -> CaseSpec {
-        // Skipped: Arc<[T]> comparison causes stack overflow in assert_same!
-        CaseSpec::skip("Arc<[T]> comparison causes stack overflow")
+        CaseSpec::from_str(
+            r#"<record><inner><item>1</item><item>2</item><item>3</item><item>4</item></inner></record>"#,
+        )
     }
 
     // ── Extended NonZero cases ──

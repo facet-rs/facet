@@ -52,14 +52,20 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 shape: frame.shape,
                 operation: "build (final check for sized layout)",
             }) {
-            Ok(layout) => Ok(HeapValue {
-                guard: Some(Guard {
-                    ptr: unsafe { NonNull::new_unchecked(frame.data.as_mut_byte_ptr()) },
-                    layout,
-                }),
-                shape: frame.shape,
-                phantom: PhantomData,
-            }),
+            Ok(layout) => {
+                // Determine if we should deallocate based on ownership
+                let should_dealloc = !matches!(frame.ownership, FrameOwnership::ManagedElsewhere);
+
+                Ok(HeapValue {
+                    guard: Some(Guard {
+                        ptr: unsafe { NonNull::new_unchecked(frame.data.as_mut_byte_ptr()) },
+                        layout,
+                        should_dealloc,
+                    }),
+                    shape: frame.shape,
+                    phantom: PhantomData,
+                })
+            }
             Err(e) => {
                 // Put the frame back for proper cleanup
                 self.frames_mut().push(frame);

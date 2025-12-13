@@ -120,8 +120,8 @@ impl<const BORROW: bool> Partial<'_, BORROW> {
                     vtable: slice_builder_vtable,
                     building_item: false,
                 };
-                // The slice builder memory is managed by the vtable, not by us
-                frame.ownership = FrameOwnership::ManagedElsewhere;
+                // Keep the original ownership (e.g., Field) so parent tracking works correctly.
+                // The slice builder memory itself is managed by the vtable's convert_fn/free_fn.
             } else {
                 return Err(ReflectError::OperationFailed {
                     shape: frame.shape,

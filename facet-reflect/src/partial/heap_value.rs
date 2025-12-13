@@ -131,17 +131,20 @@ impl<'facet, const BORROW: bool> PartialOrd for HeapValue<'facet, BORROW> {
 ///
 /// This struct holds a raw pointer to the allocated memory and the layout
 /// information used for allocation. It's responsible for deallocating
-/// the memory when dropped.
+/// the memory when dropped, unless the allocation is managed elsewhere.
 pub struct Guard {
     /// Raw pointer to the allocated memory.
     pub(crate) ptr: NonNull<u8>,
     /// Layout information of the allocated memory.
     pub(crate) layout: Layout,
+    /// Whether this guard should deallocate the memory on drop.
+    /// Set to false when the allocation is managed elsewhere (e.g., Arc<[T]> from slice builder).
+    pub(crate) should_dealloc: bool,
 }
 
 impl Drop for Guard {
     fn drop(&mut self) {
-        if self.layout.size() != 0 {
+        if self.should_dealloc && self.layout.size() != 0 {
             trace!(
                 "Deallocating memory at ptr: {:p}, size: {}, align: {}",
                 self.ptr,

@@ -99,7 +99,6 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Rc<T> {
                 name: "T",
                 shape: T::SHAPE,
             }])
-            .inner(T::SHAPE)
             .vtable_indirect(
                 &const {
                     VTableIndirect {
@@ -237,7 +236,6 @@ unsafe impl<'a> Facet<'a> for Rc<str> {
                 name: "T",
                 shape: str::SHAPE,
             }])
-            .inner(str::SHAPE)
             .vtable_indirect(&VTABLE)
             .type_ops_indirect(&TYPE_OPS)
             .build()
@@ -370,7 +368,6 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Rc<[U]> {
                 name: "T",
                 shape: <[U]>::SHAPE,
             }])
-            .inner(<[U]>::SHAPE)
             .vtable_indirect(
                 &const {
                     VTableIndirect {
@@ -485,7 +482,6 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
                 name: "T",
                 shape: T::SHAPE,
             }])
-            .inner(T::SHAPE)
             .vtable_indirect(
                 &const {
                     VTableIndirect {
@@ -603,7 +599,6 @@ unsafe impl<'a> Facet<'a> for Weak<str> {
                 name: "T",
                 shape: str::SHAPE,
             }])
-            .inner(str::SHAPE)
             .vtable_indirect(&VTABLE)
             .type_ops_indirect(&TYPE_OPS)
             .build()
@@ -678,7 +673,6 @@ unsafe impl<'a, U: Facet<'a>> Facet<'a> for Weak<[U]> {
                 name: "T",
                 shape: <[U]>::SHAPE,
             }])
-            .inner(<[U]>::SHAPE)
             .vtable_indirect(
                 &const {
                     VTableIndirect {

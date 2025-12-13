@@ -106,7 +106,6 @@ unsafe impl<'a, T: ?Sized + Facet<'a>> Facet<'a> for Box<T> {
                 name: "T",
                 shape: T::SHAPE,
             }])
-            .inner(T::SHAPE)
             // Box<T> propagates T's variance
             .variance(Shape::computed_variance)
             .build()

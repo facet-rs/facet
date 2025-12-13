@@ -113,7 +113,7 @@ impl<'a> Arbitrary<'a> for SmallString {
 
 /// Applies an operation to the Partial, returning the new Partial on success
 /// or None on error (which means the Partial was consumed).
-fn apply_op(partial: Partial<'_>, op: &PartialOp) -> Option<Partial<'_>> {
+fn apply_op<'a>(partial: Partial<'a>, op: &PartialOp) -> Option<Partial<'a>> {
     match op {
         PartialOp::BeginField(field) => partial.begin_field(field.as_str()).ok(),
         PartialOp::BeginNthField(idx) => partial.begin_nth_field(*idx as usize).ok(),

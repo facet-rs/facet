@@ -461,8 +461,7 @@ impl FormatSuite for JsonSlice {
     }
 
     fn arc_slice() -> CaseSpec {
-        // Skipped: Arc<[T]> comparison causes stack overflow in assert_same!
-        CaseSpec::skip("Arc<[T]> comparison causes stack overflow")
+        CaseSpec::from_str(r#"{"inner":[1,2,3,4]}"#)
     }
 
     // ── Extended NonZero cases ──
