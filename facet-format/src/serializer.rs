@@ -76,7 +76,14 @@ fn shared_serialize<'mem, 'facet, S>(
 where
     S: FormatSerializer,
 {
+    // Dereference pointers (Box, Arc, etc.) to get the underlying value
+    let value = deref_if_pointer(value);
     let value = value.innermost_peek();
+
+    // Check for container-level proxy - serialize through the proxy type
+    if let Some(proxy_def) = value.shape().proxy {
+        return serialize_via_proxy(serializer, value, proxy_def);
+    }
 
     if let Some(scalar) = scalar_from_peek(value)? {
         return serializer.scalar(scalar).map_err(SerializeError::Backend);
@@ -101,15 +108,54 @@ where
         return Ok(());
     }
 
-    if let Ok(struct_) = value.into_struct() {
+    if let Ok(map) = value.into_map() {
         serializer.begin_struct().map_err(SerializeError::Backend)?;
-        for (field_item, field_value) in struct_.fields_for_serialize() {
+        for (key, val) in map.iter() {
+            // Convert the key to a string for the field name
+            let key_str = if let Some(s) = key.as_str() {
+                Cow::Borrowed(s)
+            } else {
+                // For non-string keys, use debug format
+                Cow::Owned(alloc::format!("{:?}", key))
+            };
             serializer
-                .field_key(field_item.name)
+                .field_key(&key_str)
                 .map_err(SerializeError::Backend)?;
-            shared_serialize(serializer, field_value)?;
+            shared_serialize(serializer, val)?;
         }
         serializer.end_struct().map_err(SerializeError::Backend)?;
+        return Ok(());
+    }
+
+    if let Ok(set) = value.into_set() {
+        serializer.begin_seq().map_err(SerializeError::Backend)?;
+        for item in set.iter() {
+            shared_serialize(serializer, item)?;
+        }
+        serializer.end_seq().map_err(SerializeError::Backend)?;
+        return Ok(());
+    }
+
+    if let Ok(struct_) = value.into_struct() {
+        let kind = struct_.ty().kind;
+        if kind == StructKind::Tuple || kind == StructKind::TupleStruct {
+            // Serialize tuples as arrays
+            serializer.begin_seq().map_err(SerializeError::Backend)?;
+            for (_field_item, field_value) in struct_.fields_for_serialize() {
+                shared_serialize(serializer, field_value)?;
+            }
+            serializer.end_seq().map_err(SerializeError::Backend)?;
+        } else {
+            // Regular structs as objects
+            serializer.begin_struct().map_err(SerializeError::Backend)?;
+            for (field_item, field_value) in struct_.fields_for_serialize() {
+                serializer
+                    .field_key(field_item.name)
+                    .map_err(SerializeError::Backend)?;
+                shared_serialize(serializer, field_value)?;
+            }
+            serializer.end_struct().map_err(SerializeError::Backend)?;
+        }
         return Ok(());
     }
 
@@ -354,6 +400,74 @@ where
             Ok(())
         }
     }
+}
+
+/// Dereference a pointer/reference (Box, Arc, etc.) to get the underlying value
+fn deref_if_pointer<'mem, 'facet>(peek: Peek<'mem, 'facet>) -> Peek<'mem, 'facet> {
+    if let Ok(ptr) = peek.into_pointer()
+        && let Some(target) = ptr.borrow_inner()
+    {
+        return deref_if_pointer(target);
+    }
+    peek
+}
+
+/// Serialize a value through its proxy type.
+///
+/// # Safety note
+/// This function requires unsafe code to:
+/// - Allocate memory for the proxy type
+/// - Call the conversion function from target to proxy
+/// - Drop the proxy value after serialization
+#[allow(unsafe_code)]
+fn serialize_via_proxy<'mem, 'facet, S>(
+    serializer: &mut S,
+    value: Peek<'mem, 'facet>,
+    proxy_def: &'static facet_core::ProxyDef,
+) -> Result<(), SerializeError<S::Error>>
+where
+    S: FormatSerializer,
+{
+    use facet_core::PtrUninit;
+
+    let proxy_shape = proxy_def.shape;
+    let proxy_layout = proxy_shape
+        .layout
+        .sized_layout()
+        .map_err(|_| SerializeError::Unsupported("proxy type must be sized for serialization"))?;
+
+    // Allocate memory for the proxy value
+    let proxy_mem = unsafe { alloc::alloc::alloc(proxy_layout) };
+    if proxy_mem.is_null() {
+        return Err(SerializeError::Internal("failed to allocate proxy memory"));
+    }
+
+    // Convert target → proxy
+    let proxy_uninit = PtrUninit::new(proxy_mem);
+    let convert_result = unsafe { (proxy_def.convert_out)(value.data(), proxy_uninit) };
+
+    let proxy_ptr = match convert_result {
+        Ok(ptr) => ptr,
+        Err(msg) => {
+            unsafe { alloc::alloc::dealloc(proxy_mem, proxy_layout) };
+            return Err(SerializeError::Unsupported(
+                // Leak the string since we can't store dynamic errors
+                alloc::boxed::Box::leak(msg.into_boxed_str()),
+            ));
+        }
+    };
+
+    // Create a Peek to the proxy value and serialize it
+    let proxy_peek = unsafe { Peek::unchecked_new(proxy_ptr.as_const(), proxy_shape) };
+    let result = shared_serialize(serializer, proxy_peek);
+
+    // Clean up: drop the proxy value and deallocate
+    unsafe {
+        let _ = proxy_shape.call_drop_in_place(proxy_ptr);
+        alloc::alloc::dealloc(proxy_mem, proxy_layout);
+    }
+
+    result
 }
 
 fn scalar_from_peek<'mem, 'facet, E: Debug>(

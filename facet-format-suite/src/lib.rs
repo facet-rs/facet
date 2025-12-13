@@ -109,6 +109,62 @@ pub trait FormatSuite {
 
     /// Case: container-level `#[facet(proxy = ...)]` for custom serialization.
     fn proxy_container() -> CaseSpec;
+
+    // ── Scalar tests ──
+
+    /// Case: boolean scalar value.
+    fn scalar_bool() -> CaseSpec;
+    /// Case: various integer types.
+    fn scalar_integers() -> CaseSpec;
+    /// Case: floating point types.
+    fn scalar_floats() -> CaseSpec;
+
+    // ── Collection tests ──
+
+    /// Case: `HashMap<String, T>`.
+    fn map_string_keys() -> CaseSpec;
+    /// Case: tuple types.
+    fn tuple_simple() -> CaseSpec;
+
+    // ── Enum variant tests ──
+
+    /// Case: unit enum variant.
+    fn enum_unit_variant() -> CaseSpec;
+    /// Case: untagged enum.
+    fn enum_untagged() -> CaseSpec;
+
+    // ── Smart pointer tests ──
+
+    /// Case: `Box<T>` smart pointer.
+    fn box_wrapper() -> CaseSpec;
+    /// Case: `Arc<T>` smart pointer.
+    fn arc_wrapper() -> CaseSpec;
+    /// Case: `Rc<T>` smart pointer.
+    fn rc_wrapper() -> CaseSpec;
+
+    // ── Set tests ──
+
+    /// Case: `BTreeSet<T>`.
+    fn set_btree() -> CaseSpec;
+
+    // ── Extended numeric tests ──
+
+    /// Case: i16, u16 integers.
+    fn scalar_integers_16() -> CaseSpec;
+    /// Case: i128, u128 integers.
+    fn scalar_integers_128() -> CaseSpec;
+    /// Case: isize, usize integers.
+    fn scalar_integers_size() -> CaseSpec;
+
+    // ── NonZero tests ──
+
+    /// Case: NonZero integer types.
+    fn nonzero_integers() -> CaseSpec;
+
+    // ── Borrowed string tests ──
+
+    /// Case: Cow<'static, str> field.
+    fn cow_str() -> CaseSpec;
 }
 
 /// Execute suite cases; kept for convenience, but formats should register each
@@ -174,6 +230,30 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, WithAlias>(&CASE_ATTR_ALIAS, S::attr_alias),
         // Proxy cases
         SuiteCase::new::<S, ProxyInt>(&CASE_PROXY_CONTAINER, S::proxy_container),
+        // Scalar cases
+        SuiteCase::new::<S, BoolWrapper>(&CASE_SCALAR_BOOL, S::scalar_bool),
+        SuiteCase::new::<S, IntegerTypes>(&CASE_SCALAR_INTEGERS, S::scalar_integers),
+        SuiteCase::new::<S, FloatTypes>(&CASE_SCALAR_FLOATS, S::scalar_floats),
+        // Collection cases
+        SuiteCase::new::<S, MapWrapper>(&CASE_MAP_STRING_KEYS, S::map_string_keys),
+        SuiteCase::new::<S, TupleWrapper>(&CASE_TUPLE_SIMPLE, S::tuple_simple),
+        // Enum variant cases
+        SuiteCase::new::<S, UnitVariantEnum>(&CASE_ENUM_UNIT_VARIANT, S::enum_unit_variant),
+        SuiteCase::new::<S, UntaggedEnum>(&CASE_ENUM_UNTAGGED, S::enum_untagged),
+        // Smart pointer cases
+        SuiteCase::new::<S, BoxWrapper>(&CASE_BOX_WRAPPER, S::box_wrapper),
+        SuiteCase::new::<S, ArcWrapper>(&CASE_ARC_WRAPPER, S::arc_wrapper),
+        SuiteCase::new::<S, RcWrapper>(&CASE_RC_WRAPPER, S::rc_wrapper),
+        // Set cases
+        SuiteCase::new::<S, SetWrapper>(&CASE_SET_BTREE, S::set_btree),
+        // Extended numeric cases
+        SuiteCase::new::<S, IntegerTypes16>(&CASE_SCALAR_INTEGERS_16, S::scalar_integers_16),
+        SuiteCase::new::<S, IntegerTypes128>(&CASE_SCALAR_INTEGERS_128, S::scalar_integers_128),
+        SuiteCase::new::<S, IntegerTypesSize>(&CASE_SCALAR_INTEGERS_SIZE, S::scalar_integers_size),
+        // NonZero cases
+        SuiteCase::new::<S, NonZeroTypes>(&CASE_NONZERO_INTEGERS, S::nonzero_integers),
+        // Borrowed string cases
+        SuiteCase::new::<S, CowStrWrapper>(&CASE_COW_STR, S::cow_str),
     ]
 }
 
@@ -605,6 +685,165 @@ const CASE_PROXY_CONTAINER: CaseDescriptor<ProxyInt> = CaseDescriptor {
     expected: || ProxyInt { value: 42 },
 };
 
+// ── Scalar case descriptors ──
+
+const CASE_SCALAR_BOOL: CaseDescriptor<BoolWrapper> = CaseDescriptor {
+    id: "scalar::bool",
+    description: "boolean scalar values",
+    expected: || BoolWrapper {
+        yes: true,
+        no: false,
+    },
+};
+
+const CASE_SCALAR_INTEGERS: CaseDescriptor<IntegerTypes> = CaseDescriptor {
+    id: "scalar::integers",
+    description: "various integer types (i8, u8, i32, u32, i64, u64)",
+    expected: || IntegerTypes {
+        signed_8: -128,
+        unsigned_8: 255,
+        signed_32: -2_147_483_648,
+        unsigned_32: 4_294_967_295,
+        signed_64: -9_223_372_036_854_775_808,
+        unsigned_64: 18_446_744_073_709_551_615,
+    },
+};
+
+const CASE_SCALAR_FLOATS: CaseDescriptor<FloatTypes> = CaseDescriptor {
+    id: "scalar::floats",
+    description: "floating point types (f32, f64)",
+    expected: || FloatTypes {
+        float_32: 1.5,
+        float_64: 2.25,
+    },
+};
+
+// ── Collection case descriptors ──
+
+const CASE_MAP_STRING_KEYS: CaseDescriptor<MapWrapper> = CaseDescriptor {
+    id: "collection::map",
+    description: "BTreeMap<String, i32> with string keys",
+    expected: || {
+        let mut map = std::collections::BTreeMap::new();
+        map.insert("alpha".into(), 1);
+        map.insert("beta".into(), 2);
+        MapWrapper { data: map }
+    },
+};
+
+const CASE_TUPLE_SIMPLE: CaseDescriptor<TupleWrapper> = CaseDescriptor {
+    id: "collection::tuple",
+    description: "tuple (String, i32, bool)",
+    expected: || TupleWrapper {
+        triple: ("hello".into(), 42, true),
+    },
+};
+
+// ── Enum variant case descriptors ──
+
+const CASE_ENUM_UNIT_VARIANT: CaseDescriptor<UnitVariantEnum> = CaseDescriptor {
+    id: "enum::unit_variant",
+    description: "enum with unit variants",
+    expected: || UnitVariantEnum::Active,
+};
+
+const CASE_ENUM_UNTAGGED: CaseDescriptor<UntaggedEnum> = CaseDescriptor {
+    id: "enum::untagged",
+    description: "#[facet(untagged)] enum matches by structure",
+    expected: || UntaggedEnum::Point { x: 10, y: 20 },
+};
+
+// ── Smart pointer case descriptors ──
+
+const CASE_BOX_WRAPPER: CaseDescriptor<BoxWrapper> = CaseDescriptor {
+    id: "pointer::box",
+    description: "Box<T> smart pointer",
+    expected: || BoxWrapper {
+        inner: Box::new(42),
+    },
+};
+
+const CASE_ARC_WRAPPER: CaseDescriptor<ArcWrapper> = CaseDescriptor {
+    id: "pointer::arc",
+    description: "Arc<T> smart pointer",
+    expected: || ArcWrapper {
+        inner: std::sync::Arc::new(42),
+    },
+};
+
+const CASE_RC_WRAPPER: CaseDescriptor<RcWrapper> = CaseDescriptor {
+    id: "pointer::rc",
+    description: "Rc<T> smart pointer",
+    expected: || RcWrapper {
+        inner: std::rc::Rc::new(42),
+    },
+};
+
+// ── Set case descriptors ──
+
+const CASE_SET_BTREE: CaseDescriptor<SetWrapper> = CaseDescriptor {
+    id: "collection::set",
+    description: "BTreeSet<String>",
+    expected: || {
+        let mut set = std::collections::BTreeSet::new();
+        set.insert("alpha".into());
+        set.insert("beta".into());
+        set.insert("gamma".into());
+        SetWrapper { items: set }
+    },
+};
+
+// ── Extended numeric case descriptors ──
+
+const CASE_SCALAR_INTEGERS_16: CaseDescriptor<IntegerTypes16> = CaseDescriptor {
+    id: "scalar::integers_16",
+    description: "16-bit integer types (i16, u16)",
+    expected: || IntegerTypes16 {
+        signed_16: -32768,
+        unsigned_16: 65535,
+    },
+};
+
+const CASE_SCALAR_INTEGERS_128: CaseDescriptor<IntegerTypes128> = CaseDescriptor {
+    id: "scalar::integers_128",
+    description: "128-bit integer types (i128, u128)",
+    expected: || IntegerTypes128 {
+        signed_128: -170_141_183_460_469_231_731_687_303_715_884_105_728,
+        unsigned_128: 340_282_366_920_938_463_463_374_607_431_768_211_455,
+    },
+};
+
+const CASE_SCALAR_INTEGERS_SIZE: CaseDescriptor<IntegerTypesSize> = CaseDescriptor {
+    id: "scalar::integers_size",
+    description: "pointer-sized integer types (isize, usize)",
+    expected: || IntegerTypesSize {
+        signed_size: -1000,
+        unsigned_size: 2000,
+    },
+};
+
+// ── NonZero case descriptors ──
+
+const CASE_NONZERO_INTEGERS: CaseDescriptor<NonZeroTypes> = CaseDescriptor {
+    id: "scalar::nonzero",
+    description: "NonZero integer types",
+    expected: || NonZeroTypes {
+        nz_u32: std::num::NonZeroU32::new(42).unwrap(),
+        nz_i64: std::num::NonZeroI64::new(-100).unwrap(),
+    },
+};
+
+// ── Borrowed string case descriptors ──
+
+const CASE_COW_STR: CaseDescriptor<CowStrWrapper> = CaseDescriptor {
+    id: "string::cow_str",
+    description: "Cow<'static, str> string fields",
+    expected: || CowStrWrapper {
+        owned: std::borrow::Cow::Owned("hello world".to_string()),
+        message: std::borrow::Cow::Borrowed("borrowed"),
+    },
+};
+
 /// Shared fixture type for the struct case.
 #[derive(Facet, Debug, Clone)]
 pub struct StructSingleField {
@@ -791,6 +1030,136 @@ impl From<&ProxyInt> for IntAsString {
     fn from(v: &ProxyInt) -> Self {
         IntAsString(v.value.to_string())
     }
+}
+
+// ── Scalar test fixtures ──
+
+/// Fixture for boolean scalar test.
+#[derive(Facet, Debug, Clone)]
+pub struct BoolWrapper {
+    pub yes: bool,
+    pub no: bool,
+}
+
+/// Fixture for integer scalar test.
+#[derive(Facet, Debug, Clone)]
+pub struct IntegerTypes {
+    pub signed_8: i8,
+    pub unsigned_8: u8,
+    pub signed_32: i32,
+    pub unsigned_32: u32,
+    pub signed_64: i64,
+    pub unsigned_64: u64,
+}
+
+/// Fixture for float scalar test.
+#[derive(Facet, Debug, Clone)]
+pub struct FloatTypes {
+    pub float_32: f32,
+    pub float_64: f64,
+}
+
+// ── Collection test fixtures ──
+
+/// Fixture for BTreeMap test.
+#[derive(Facet, Debug, Clone)]
+pub struct MapWrapper {
+    pub data: std::collections::BTreeMap<String, i32>,
+}
+
+/// Fixture for tuple test.
+#[derive(Facet, Debug, Clone)]
+pub struct TupleWrapper {
+    pub triple: (String, i32, bool),
+}
+
+// ── Enum variant test fixtures ──
+
+/// Unit variant enum.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[repr(u8)]
+pub enum UnitVariantEnum {
+    Active,
+    Inactive,
+    Pending,
+}
+
+/// Untagged enum that matches by structure.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(untagged)]
+#[repr(u8)]
+pub enum UntaggedEnum {
+    Point { x: i32, y: i32 },
+    Value(i64),
+}
+
+// ── Smart pointer test fixtures ──
+
+/// Fixture for `Box<T>` test.
+#[derive(Facet, Debug, Clone)]
+pub struct BoxWrapper {
+    pub inner: Box<i32>,
+}
+
+/// Fixture for `Arc<T>` test.
+#[derive(Facet, Debug, Clone)]
+pub struct ArcWrapper {
+    pub inner: std::sync::Arc<i32>,
+}
+
+/// Fixture for `Rc<T>` test.
+#[derive(Facet, Debug, Clone)]
+pub struct RcWrapper {
+    pub inner: std::rc::Rc<i32>,
+}
+
+// ── Set test fixtures ──
+
+/// Fixture for BTreeSet test.
+#[derive(Facet, Debug, Clone)]
+pub struct SetWrapper {
+    pub items: std::collections::BTreeSet<String>,
+}
+
+// ── Extended numeric test fixtures ──
+
+/// Fixture for 16-bit integer test.
+#[derive(Facet, Debug, Clone)]
+pub struct IntegerTypes16 {
+    pub signed_16: i16,
+    pub unsigned_16: u16,
+}
+
+/// Fixture for 128-bit integer test.
+#[derive(Facet, Debug, Clone)]
+pub struct IntegerTypes128 {
+    pub signed_128: i128,
+    pub unsigned_128: u128,
+}
+
+/// Fixture for pointer-sized integer test.
+#[derive(Facet, Debug, Clone)]
+pub struct IntegerTypesSize {
+    pub signed_size: isize,
+    pub unsigned_size: usize,
+}
+
+// ── NonZero test fixtures ──
+
+/// Fixture for NonZero integer test.
+#[derive(Facet, Debug, Clone)]
+pub struct NonZeroTypes {
+    pub nz_u32: std::num::NonZeroU32,
+    pub nz_i64: std::num::NonZeroI64,
+}
+
+// ── Borrowed string test fixtures ──
+
+/// Fixture for Cow<'static, str> test.
+#[derive(Facet, Debug, Clone)]
+pub struct CowStrWrapper {
+    pub owned: std::borrow::Cow<'static, str>,
+    pub message: std::borrow::Cow<'static, str>,
 }
 
 fn emit_case_showcase<S, T>(

@@ -37,7 +37,7 @@ use alloc::vec::Vec;
 use alloc::boxed::Box;
 
 use facet_core::{
-    Def, Facet, NumericType, PrimitiveType, Shape, StructKind, Type, UserType, Variant,
+    Def, Facet, NumericType, PrimitiveType, Shape, StructKind, TextualType, Type, UserType, Variant,
 };
 use facet_reflect::{Partial, ReflectError};
 
@@ -617,41 +617,51 @@ fn set_number<'p>(num: &VNumber, partial: Partial<'p>, shape: &Shape) -> Result<
                     message: "value cannot be represented as i64".into(),
                 })
             })?;
-            match size {
-                1 => {
-                    let v = i8::try_from(val).map_err(|_| {
-                        ValueError::new(ValueErrorKind::NumberOutOfRange {
-                            message: format!("{val} out of range for i8"),
-                        })
-                    })?;
-                    partial = partial.set(v)?;
-                }
-                2 => {
-                    let v = i16::try_from(val).map_err(|_| {
-                        ValueError::new(ValueErrorKind::NumberOutOfRange {
-                            message: format!("{val} out of range for i16"),
-                        })
-                    })?;
-                    partial = partial.set(v)?;
-                }
-                4 => {
-                    let v = i32::try_from(val).map_err(|_| {
-                        ValueError::new(ValueErrorKind::NumberOutOfRange {
-                            message: format!("{val} out of range for i32"),
-                        })
-                    })?;
-                    partial = partial.set(v)?;
-                }
-                8 => {
-                    partial = partial.set(val)?;
-                }
-                16 => {
-                    partial = partial.set(val as i128)?;
-                }
-                _ => {
-                    return Err(ValueError::new(ValueErrorKind::Unsupported {
-                        message: format!("unexpected integer size: {size}"),
-                    }));
+            // Check type_identifier to distinguish i64 from isize (both 8 bytes on 64-bit)
+            if shape.type_identifier == "isize" {
+                let v = isize::try_from(val).map_err(|_| {
+                    ValueError::new(ValueErrorKind::NumberOutOfRange {
+                        message: format!("{val} out of range for isize"),
+                    })
+                })?;
+                partial = partial.set(v)?;
+            } else {
+                match size {
+                    1 => {
+                        let v = i8::try_from(val).map_err(|_| {
+                            ValueError::new(ValueErrorKind::NumberOutOfRange {
+                                message: format!("{val} out of range for i8"),
+                            })
+                        })?;
+                        partial = partial.set(v)?;
+                    }
+                    2 => {
+                        let v = i16::try_from(val).map_err(|_| {
+                            ValueError::new(ValueErrorKind::NumberOutOfRange {
+                                message: format!("{val} out of range for i16"),
+                            })
+                        })?;
+                        partial = partial.set(v)?;
+                    }
+                    4 => {
+                        let v = i32::try_from(val).map_err(|_| {
+                            ValueError::new(ValueErrorKind::NumberOutOfRange {
+                                message: format!("{val} out of range for i32"),
+                            })
+                        })?;
+                        partial = partial.set(v)?;
+                    }
+                    8 => {
+                        partial = partial.set(val)?;
+                    }
+                    16 => {
+                        partial = partial.set(val as i128)?;
+                    }
+                    _ => {
+                        return Err(ValueError::new(ValueErrorKind::Unsupported {
+                            message: format!("unexpected integer size: {size}"),
+                        }));
+                    }
                 }
             }
         }
@@ -661,41 +671,51 @@ fn set_number<'p>(num: &VNumber, partial: Partial<'p>, shape: &Shape) -> Result<
                     message: "value cannot be represented as u64".into(),
                 })
             })?;
-            match size {
-                1 => {
-                    let v = u8::try_from(val).map_err(|_| {
-                        ValueError::new(ValueErrorKind::NumberOutOfRange {
-                            message: format!("{val} out of range for u8"),
-                        })
-                    })?;
-                    partial = partial.set(v)?;
-                }
-                2 => {
-                    let v = u16::try_from(val).map_err(|_| {
-                        ValueError::new(ValueErrorKind::NumberOutOfRange {
-                            message: format!("{val} out of range for u16"),
-                        })
-                    })?;
-                    partial = partial.set(v)?;
-                }
-                4 => {
-                    let v = u32::try_from(val).map_err(|_| {
-                        ValueError::new(ValueErrorKind::NumberOutOfRange {
-                            message: format!("{val} out of range for u32"),
-                        })
-                    })?;
-                    partial = partial.set(v)?;
-                }
-                8 => {
-                    partial = partial.set(val)?;
-                }
-                16 => {
-                    partial = partial.set(val as u128)?;
-                }
-                _ => {
-                    return Err(ValueError::new(ValueErrorKind::Unsupported {
-                        message: format!("unexpected integer size: {size}"),
-                    }));
+            // Check type_identifier to distinguish u64 from usize (both 8 bytes on 64-bit)
+            if shape.type_identifier == "usize" {
+                let v = usize::try_from(val).map_err(|_| {
+                    ValueError::new(ValueErrorKind::NumberOutOfRange {
+                        message: format!("{val} out of range for usize"),
+                    })
+                })?;
+                partial = partial.set(v)?;
+            } else {
+                match size {
+                    1 => {
+                        let v = u8::try_from(val).map_err(|_| {
+                            ValueError::new(ValueErrorKind::NumberOutOfRange {
+                                message: format!("{val} out of range for u8"),
+                            })
+                        })?;
+                        partial = partial.set(v)?;
+                    }
+                    2 => {
+                        let v = u16::try_from(val).map_err(|_| {
+                            ValueError::new(ValueErrorKind::NumberOutOfRange {
+                                message: format!("{val} out of range for u16"),
+                            })
+                        })?;
+                        partial = partial.set(v)?;
+                    }
+                    4 => {
+                        let v = u32::try_from(val).map_err(|_| {
+                            ValueError::new(ValueErrorKind::NumberOutOfRange {
+                                message: format!("{val} out of range for u32"),
+                            })
+                        })?;
+                        partial = partial.set(v)?;
+                    }
+                    8 => {
+                        partial = partial.set(val)?;
+                    }
+                    16 => {
+                        partial = partial.set(val as u128)?;
+                    }
+                    _ => {
+                        return Err(ValueError::new(ValueErrorKind::Unsupported {
+                            message: format!("unexpected integer size: {size}"),
+                        }));
+                    }
                 }
             }
         }
@@ -1403,25 +1423,27 @@ fn deserialize_option<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial
     Ok(partial)
 }
 
-/// Deserialize a smart pointer (Box, Arc, Rc) from a Value.
+/// Deserialize a smart pointer (Box, Arc, Rc) or Cow from a Value.
 fn deserialize_pointer<'p>(value: &Value, partial: Partial<'p>) -> Result<Partial<'p>> {
     use facet_core::{KnownPointer, SequenceType};
 
     let mut partial = partial;
-    let (is_slice_pointer, is_reference) = if let Def::Pointer(ptr_def) = partial.shape().def {
-        let is_slice = if let Some(pointee) = ptr_def.pointee() {
-            matches!(pointee.ty, Type::Sequence(SequenceType::Slice(_)))
+    let (is_slice_pointer, is_reference, is_cow) =
+        if let Def::Pointer(ptr_def) = partial.shape().def {
+            let is_slice = if let Some(pointee) = ptr_def.pointee() {
+                matches!(pointee.ty, Type::Sequence(SequenceType::Slice(_)))
+            } else {
+                false
+            };
+            let is_ref = matches!(
+                ptr_def.known,
+                Some(KnownPointer::SharedReference | KnownPointer::ExclusiveReference)
+            );
+            let is_cow = matches!(ptr_def.known, Some(KnownPointer::Cow));
+            (is_slice, is_ref, is_cow)
         } else {
-            false
+            (false, false, false)
         };
-        let is_ref = matches!(
-            ptr_def.known,
-            Some(KnownPointer::SharedReference | KnownPointer::ExclusiveReference)
-        );
-        (is_slice, is_ref)
-    } else {
-        (false, false)
-    };
 
     // References can't be deserialized (need existing data to borrow from)
     if is_reference {
@@ -1431,6 +1453,37 @@ fn deserialize_pointer<'p>(value: &Value, partial: Partial<'p>) -> Result<Partia
                 partial.shape().type_identifier
             ),
         }));
+    }
+
+    // Cow needs special handling
+    if is_cow {
+        // Check if this is Cow<str> - we can set it directly from a string value
+        if let Def::Pointer(ptr_def) = partial.shape().def
+            && let Some(pointee) = ptr_def.pointee()
+            && matches!(
+                pointee.ty,
+                Type::Primitive(PrimitiveType::Textual(TextualType::Str))
+            )
+        {
+            // This is Cow<str> - deserialize from string
+            if let Some(s) = value.as_string() {
+                // Set the owned string value - Cow<str> will store it as Owned
+                partial = partial.set(alloc::borrow::Cow::<'static, str>::Owned(
+                    s.as_str().to_string(),
+                ))?;
+                return Ok(partial);
+            } else {
+                return Err(ValueError::new(ValueErrorKind::TypeMismatch {
+                    expected: "string for Cow<str>",
+                    got: value.value_type(),
+                }));
+            }
+        }
+        // For other Cow types, use begin_inner
+        partial = partial.begin_inner()?;
+        partial = deserialize_value_into(value, partial)?;
+        partial = partial.end()?;
+        return Ok(partial);
     }
 
     partial = partial.begin_smart_ptr()?;

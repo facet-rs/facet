@@ -231,7 +231,89 @@ impl FormatSuite for JsonSlice {
     fn proxy_container() -> CaseSpec {
         // ProxyInt deserializes from a string "42" via IntAsString proxy
         CaseSpec::from_str(r#""42""#)
-            .without_roundtrip("facet-format serializer doesn't support proxy yet")
+    }
+
+    // ── Scalar cases ──
+
+    fn scalar_bool() -> CaseSpec {
+        CaseSpec::from_str(r#"{"yes":true,"no":false}"#)
+    }
+
+    fn scalar_integers() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"{"signed_8":-128,"unsigned_8":255,"signed_32":-2147483648,"unsigned_32":4294967295,"signed_64":-9223372036854775808,"unsigned_64":18446744073709551615}"#,
+        )
+    }
+
+    fn scalar_floats() -> CaseSpec {
+        CaseSpec::from_str(r#"{"float_32":1.5,"float_64":2.25}"#)
+    }
+
+    // ── Collection cases ──
+
+    fn map_string_keys() -> CaseSpec {
+        CaseSpec::from_str(r#"{"data":{"alpha":1,"beta":2}}"#)
+    }
+
+    fn tuple_simple() -> CaseSpec {
+        CaseSpec::from_str(r#"{"triple":["hello",42,true]}"#)
+    }
+
+    // ── Enum variant cases ──
+
+    fn enum_unit_variant() -> CaseSpec {
+        CaseSpec::from_str(r#""Active""#)
+    }
+
+    fn enum_untagged() -> CaseSpec {
+        CaseSpec::from_str(r#"{"x":10,"y":20}"#)
+    }
+
+    // ── Smart pointer cases ──
+
+    fn box_wrapper() -> CaseSpec {
+        CaseSpec::from_str(r#"{"inner":42}"#)
+    }
+
+    fn arc_wrapper() -> CaseSpec {
+        CaseSpec::from_str(r#"{"inner":42}"#)
+    }
+
+    fn rc_wrapper() -> CaseSpec {
+        CaseSpec::from_str(r#"{"inner":42}"#)
+    }
+
+    // ── Set cases ──
+
+    fn set_btree() -> CaseSpec {
+        CaseSpec::from_str(r#"{"items":["alpha","beta","gamma"]}"#)
+    }
+
+    // ── Extended numeric cases ──
+
+    fn scalar_integers_16() -> CaseSpec {
+        CaseSpec::from_str(r#"{"signed_16":-32768,"unsigned_16":65535}"#)
+    }
+
+    fn scalar_integers_128() -> CaseSpec {
+        CaseSpec::from_str(r#"{"signed_128":-170141183460469231731687303715884105728,"unsigned_128":340282366920938463463374607431768211455}"#)
+            .without_roundtrip("i128/u128 serialization not supported yet")
+    }
+
+    fn scalar_integers_size() -> CaseSpec {
+        CaseSpec::from_str(r#"{"signed_size":-1000,"unsigned_size":2000}"#)
+    }
+
+    // ── NonZero cases ──
+
+    fn nonzero_integers() -> CaseSpec {
+        CaseSpec::from_str(r#"{"nz_u32":42,"nz_i64":-100}"#)
+    }
+
+    // ── Borrowed string cases ──
+
+    fn cow_str() -> CaseSpec {
+        CaseSpec::from_str(r#"{"owned":"hello world","message":"borrowed"}"#)
     }
 }
 
