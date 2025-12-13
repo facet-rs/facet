@@ -14,5 +14,5 @@ ci = [] # CI feature
 [dependencies]
 facet = { path = "../facet" }
 facet-json = { path = "../facet-json" }
-ratatui = "0.30.0-beta.0"
-crossterm = "0.29"
+ratatui = { version = "0.30.0-beta.0", default-features = false, features = ["crossterm"] }
+crossterm = { version = "0.29", default-features = false }

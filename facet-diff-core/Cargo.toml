@@ -20,7 +20,7 @@ facet-reflect = { path = "../facet-reflect", version = "0.32.2" }
 indextree = "4"
 owo-colors = "4"
 palette = { version = "0.7", default-features = false, features = ["std"] }
-tracing = "0.1"
+tracing = { version = "0.1", default-features = false }
 unicode-width = "0.2"
 
 [dev-dependencies]
