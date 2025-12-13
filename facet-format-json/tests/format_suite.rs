@@ -310,6 +310,24 @@ impl FormatSuite for JsonSlice {
         CaseSpec::from_str(r#""42""#)
     }
 
+    fn opaque_proxy() -> CaseSpec {
+        // OpaqueType doesn't implement Facet, but OpaqueTypeProxy does
+        // Use PartialEq comparison since reflection can't peek into opaque types
+        // Roundtrip disabled: serialization of opaque types not yet supported
+        CaseSpec::from_str(r#"{"value":{"inner":42}}"#)
+            .with_partial_eq()
+            .without_roundtrip("serialization of opaque types not yet supported")
+    }
+
+    fn opaque_proxy_option() -> CaseSpec {
+        // Optional opaque field with proxy
+        // Use PartialEq comparison since reflection can't peek into opaque types
+        // Roundtrip disabled: serialization of opaque types not yet supported
+        CaseSpec::from_str(r#"{"value":{"inner":99}}"#)
+            .with_partial_eq()
+            .without_roundtrip("serialization of opaque types not yet supported")
+    }
+
     fn transparent_multilevel() -> CaseSpec {
         CaseSpec::from_str(r#"42"#)
     }
@@ -407,6 +425,11 @@ impl FormatSuite for JsonSlice {
 
     fn untagged_as_field() -> CaseSpec {
         CaseSpec::from_str(r#"{"name":"test","value":42}"#)
+    }
+
+    fn untagged_unit_only() -> CaseSpec {
+        // Untagged enum with only unit variants, deserialized from string "Alpha"
+        CaseSpec::from_str(r#""Alpha""#)
     }
 
     // ── Smart pointer cases ──
