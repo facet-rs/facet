@@ -366,6 +366,19 @@ impl FormatSuite for JsonSlice {
         CaseSpec::from_str(r#"{"x":10,"y":20}"#)
     }
 
+    fn untagged_with_null() -> CaseSpec {
+        CaseSpec::from_str(r#"null"#)
+            .without_roundtrip("unit variant serializes to variant name, not null")
+    }
+
+    fn untagged_newtype_variant() -> CaseSpec {
+        CaseSpec::from_str(r#""test""#)
+    }
+
+    fn untagged_as_field() -> CaseSpec {
+        CaseSpec::from_str(r#"{"name":"test","value":42}"#)
+    }
+
     // ── Smart pointer cases ──
 
     fn box_wrapper() -> CaseSpec {

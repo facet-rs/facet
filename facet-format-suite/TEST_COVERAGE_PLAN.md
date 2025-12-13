@@ -64,9 +64,9 @@ to achieve comprehensive coverage of the **format abstraction layer**.
 
 ### Untagged Enum Variations (IMPORTANT)
 
-- [ ] `untagged_with_null` - Untagged enum with unit variant matching null
-- [ ] `untagged_newtype_variant` - Discrimination with newtype variants
-- [ ] `untagged_as_field` - Untagged enum as struct field (nesting)
+- [x] `untagged_with_null` - Untagged enum with unit variant matching null (JSON only, no roundtrip; XML skipped)
+- [x] `untagged_newtype_variant` - Discrimination with newtype variants (works for String variant)
+- [x] `untagged_as_field` - Untagged enum as struct field (JSON only; XML skipped due to numeric type matching)
 
 **Rationale**: Tests variant discrimination logic and Option/null interaction.
 

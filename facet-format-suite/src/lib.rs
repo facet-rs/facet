@@ -177,6 +177,15 @@ pub trait FormatSuite {
     /// Case: untagged enum.
     fn enum_untagged() -> CaseSpec;
 
+    // ── Untagged enum variation tests ──
+
+    /// Case: untagged enum with unit variant matching null.
+    fn untagged_with_null() -> CaseSpec;
+    /// Case: untagged enum with newtype variants (discrimination test).
+    fn untagged_newtype_variant() -> CaseSpec;
+    /// Case: untagged enum as struct field (nesting test).
+    fn untagged_as_field() -> CaseSpec;
+
     // ── Smart pointer tests ──
 
     /// Case: `Box<T>` smart pointer.
@@ -434,6 +443,13 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         // Enum variant cases
         SuiteCase::new::<S, UnitVariantEnum>(&CASE_ENUM_UNIT_VARIANT, S::enum_unit_variant),
         SuiteCase::new::<S, UntaggedEnum>(&CASE_ENUM_UNTAGGED, S::enum_untagged),
+        // Untagged enum variation cases
+        SuiteCase::new::<S, UntaggedWithNull>(&CASE_UNTAGGED_WITH_NULL, S::untagged_with_null),
+        SuiteCase::new::<S, UntaggedNewtype>(
+            &CASE_UNTAGGED_NEWTYPE_VARIANT,
+            S::untagged_newtype_variant,
+        ),
+        SuiteCase::new::<S, UntaggedAsField>(&CASE_UNTAGGED_AS_FIELD, S::untagged_as_field),
         // Smart pointer cases
         SuiteCase::new::<S, BoxWrapper>(&CASE_BOX_WRAPPER, S::box_wrapper),
         SuiteCase::new::<S, ArcWrapper>(&CASE_ARC_WRAPPER, S::arc_wrapper),
@@ -1173,6 +1189,29 @@ const CASE_ENUM_UNTAGGED: CaseDescriptor<UntaggedEnum> = CaseDescriptor {
     expected: || UntaggedEnum::Point { x: 10, y: 20 },
 };
 
+// ── Untagged enum variation case descriptors ──
+
+const CASE_UNTAGGED_WITH_NULL: CaseDescriptor<UntaggedWithNull> = CaseDescriptor {
+    id: "untagged::with_null",
+    description: "untagged enum with unit variant matching null",
+    expected: || UntaggedWithNull::None,
+};
+
+const CASE_UNTAGGED_NEWTYPE_VARIANT: CaseDescriptor<UntaggedNewtype> = CaseDescriptor {
+    id: "untagged::newtype_variant",
+    description: "untagged enum with newtype variants (discrimination)",
+    expected: || UntaggedNewtype::String("test".into()),
+};
+
+const CASE_UNTAGGED_AS_FIELD: CaseDescriptor<UntaggedAsField> = CaseDescriptor {
+    id: "untagged::as_field",
+    description: "untagged enum as struct field (nesting)",
+    expected: || UntaggedAsField {
+        name: "test".into(),
+        value: UntaggedNewtype::Number(42),
+    },
+};
+
 // ── Smart pointer case descriptors ──
 
 const CASE_BOX_WRAPPER: CaseDescriptor<BoxWrapper> = CaseDescriptor {
@@ -1847,6 +1886,32 @@ pub enum UnitVariantEnum {
 pub enum UntaggedEnum {
     Point { x: i32, y: i32 },
     Value(i64),
+}
+
+/// Untagged enum with unit variant that matches null.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(untagged)]
+#[repr(u8)]
+pub enum UntaggedWithNull {
+    None,
+    Some(i32),
+}
+
+/// Untagged enum with newtype variants for discrimination testing.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[facet(untagged)]
+#[repr(u8)]
+pub enum UntaggedNewtype {
+    String(String),
+    Number(u64),
+    Bool(bool),
+}
+
+/// Struct containing an untagged enum field (nesting test).
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct UntaggedAsField {
+    pub name: String,
+    pub value: UntaggedNewtype,
 }
 
 /// Enum with tuple variant (multiple fields).
