@@ -1,39 +1,4 @@
-//! # ur-taking-me-with-you
-//!
-//! Ensure child processes die when their parent dies.
-//!
-//! On Unix systems, child processes normally continue running even after their parent
-//! exits (they get reparented to init/PID 1). This crate provides mechanisms to ensure
-//! child processes are terminated when their parent dies, even if the parent is killed
-//! with SIGKILL.
-//!
-//! ## Platform Support
-//!
-//! - **Linux**: Uses `prctl(PR_SET_PDEATHSIG, SIGKILL)` - the child receives SIGKILL
-//!   when its parent thread dies.
-//! - **macOS**: Uses a pipe-based approach - the child monitors a pipe from the parent
-//!   and exits when the pipe closes (indicating parent death).
-//! - **Windows**: Not yet supported.
-//!
-//! ## Usage
-//!
-//! ### For the child process (call early in main):
-//!
-//! ```no_run
-//! ur_taking_me_with_you::die_with_parent();
-//! ```
-//!
-//! ### For spawning children with std::process::Command:
-//!
-//! ```no_run
-//! use std::process::Command;
-//!
-//! let mut cmd = Command::new("my-plugin");
-//! cmd.arg("--foo");
-//!
-//! let child = ur_taking_me_with_you::spawn_dying_with_parent(cmd)
-//!     .expect("failed to spawn");
-//! ```
+#![doc = include_str!("../README.md")]
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -41,7 +6,10 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(target_os = "windows")]
+mod windows;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 mod unsupported;
 
 use std::io;
@@ -55,8 +23,10 @@ use std::process::{Child, Command};
 ///
 /// - **Linux**: Calls `prctl(PR_SET_PDEATHSIG, SIGKILL)`. The process will receive
 ///   SIGKILL when its parent thread terminates.
-/// - **macOS**: This is a no-op. Use `spawn_dying_with_parent` instead, which sets
-///   up a pipe-based monitoring mechanism.
+/// - **macOS**: Checks for a death-watch pipe passed via environment variable and
+///   starts a watchdog thread if present. Use `spawn_dying_with_parent` to set this up.
+/// - **Windows**: Creates a job object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and
+///   assigns the current process to it.
 /// - **Other platforms**: No-op with a warning.
 ///
 /// # Example
@@ -72,7 +42,10 @@ pub fn die_with_parent() {
     #[cfg(target_os = "macos")]
     macos::die_with_parent();
 
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    windows::die_with_parent();
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     unsupported::die_with_parent();
 }
 
@@ -85,8 +58,10 @@ pub fn die_with_parent() {
 ///
 /// - **Linux**: Uses `pre_exec` to call `prctl(PR_SET_PDEATHSIG, SIGKILL)` in the
 ///   child before exec.
-/// - **macOS**: Creates a pipe and passes the read end to the child. A watchdog
-///   thread in the child monitors the pipe and calls `exit()` when it closes.
+/// - **macOS**: Creates a pipe and passes the read end to the child via environment.
+///   The child must call `die_with_parent()` to start the watchdog thread.
+/// - **Windows**: Creates a job object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` and
+///   assigns the child process to it. Note: small race window between spawn and assignment.
 ///
 /// # Example
 ///
@@ -106,7 +81,10 @@ pub fn spawn_dying_with_parent(command: Command) -> io::Result<Child> {
     #[cfg(target_os = "macos")]
     return macos::spawn_dying_with_parent(command);
 
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    return windows::spawn_dying_with_parent(command);
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     return unsupported::spawn_dying_with_parent(command);
 }
 

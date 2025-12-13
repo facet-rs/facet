@@ -2368,6 +2368,7 @@ name = "ur-taking-me-with-you"
 version = "0.2.0"
 dependencies = [
  "libc",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
