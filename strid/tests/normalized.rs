@@ -80,7 +80,7 @@ mod tests {
     #[test]
     fn owned_rejects_invalid() {
         let x = LowerString::new("".to_owned());
-        assert!(matches!(x, Err(_)));
+        assert!(x.is_err());
     }
 
     #[test]
@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn ref_rejects_invalid() {
         let x = LowerStr::from_str("");
-        assert!(matches!(x, Err(_)));
+        assert!(x.is_err());
     }
 
     #[test]
@@ -153,13 +153,13 @@ mod tests {
     #[test]
     fn ref_norm_rejects_valid_non_normal() {
         let x = LowerStr::from_normalized_str("TestIng");
-        assert!(matches!(x, Err(_)));
+        assert!(x.is_err());
     }
 
     #[test]
     fn ref_norm_rejects_invalid() {
         let x = LowerStr::from_normalized_str("");
-        assert!(matches!(x, Err(_)));
+        assert!(x.is_err());
     }
 
     #[allow(dead_code)]
