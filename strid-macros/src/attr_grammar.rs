@@ -18,12 +18,12 @@ operator! {
 unsynn! {
     /// Represents attribute arguments: name or name = value
     pub enum AttrArg {
-        /// Path-only attribute: `validator`
-        Path(Ident),
         /// Name-value attribute: `debug = "impl"`
         NameValue(Cons<Ident, Eq, Literal>),
         /// List attribute: `ref_attr(...)`
         List(Cons<Ident, ParenthesisGroupContaining<Vec<TokenTree>>>),
+        /// Path-only attribute: `validator`
+        Path(Ident),
     }
 
     /// A comma-delimited list of attribute arguments

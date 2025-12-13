@@ -57,6 +57,7 @@ unsynn! {
     );
 
     /// Represents visibility modifiers for items.
+    #[derive(Clone)]
     pub enum Vis {
         /// `pub(in? crate::foo::bar)`/`pub(in? ::foo::bar)`
         PubIn(Cons<KPub, ParenthesisGroupContaining<Cons<Option<KIn>, ModPath>>>),
@@ -114,6 +115,7 @@ unsynn! {
     }
 
     /// Struct fields - can be named, unnamed, or unit.
+    #[derive(Clone)]
     pub enum Fields {
         /// Named fields: `{ x: i32, y: i32 }`
         Named(BraceGroupContaining<CommaDelimitedVec<NamedField>>),
@@ -125,6 +127,7 @@ unsynn! {
     }
 
     /// A named field in a struct.
+    #[derive(Clone)]
     pub struct NamedField {
         /// Attributes on the field.
         pub attrs: Vec<Attribute>,
@@ -139,6 +142,7 @@ unsynn! {
     }
 
     /// An unnamed field in a tuple struct.
+    #[derive(Clone)]
     pub struct UnnamedField {
         /// Attributes on the field.
         pub attrs: Vec<Attribute>,
