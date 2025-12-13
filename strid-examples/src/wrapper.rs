@@ -15,4 +15,4 @@ use strid::braid;
     serde,
     ref_doc = "A borrowed reference to a basic string slice wrapper"
 )]
-pub struct UsernameBuf;
+pub struct UsernameBuf(String);

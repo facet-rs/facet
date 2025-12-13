@@ -119,6 +119,9 @@ unsynn! {
         Named(BraceGroupContaining<CommaDelimitedVec<NamedField>>),
         /// Unnamed fields: `(i32, i32)`
         Unnamed(ParenthesisGroupContaining<CommaDelimitedVec<UnnamedField>>),
+        /// Unit struct (no fields)
+        #[allow(dead_code)]
+        Unit,
     }
 
     /// A named field in a struct.
@@ -155,15 +158,18 @@ unsynn! {
 
 impl ItemStruct {
     /// Check if the struct has no fields.
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         match &self.fields {
             Fields::Named(f) => f.content.is_empty(),
             Fields::Unnamed(f) => f.content.is_empty(),
+            Fields::Unit => true,
         }
     }
 }
 
 /// A field reference - either named or unnamed.
+#[allow(dead_code)]
 pub enum Field<'a> {
     /// A named field.
     Named(&'a NamedField),
@@ -171,6 +177,7 @@ pub enum Field<'a> {
     Unnamed(&'a UnnamedField),
 }
 
+#[allow(dead_code)]
 impl<'a> Field<'a> {
     /// Get the field attributes.
     pub fn attrs(&self) -> &[Attribute] {
@@ -207,9 +214,8 @@ impl<'a> Field<'a> {
 
 impl Type {
     /// Convert the type tokens to a TokenStream2 for code generation.
-    pub fn to_token_stream(&self) -> proc_macro2::TokenStream {
-        use quote::ToTokens;
-        let mut tokens = proc_macro2::TokenStream::new();
+    pub fn to_token_stream(&self) -> TokenStream {
+        let mut tokens = TokenStream::new();
         for cons in self.tokens.iter() {
             cons.value.to_tokens(&mut tokens);
         }
@@ -218,13 +224,13 @@ impl Type {
 }
 
 impl quote::ToTokens for Type {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
         tokens.extend(self.to_token_stream());
     }
 }
 
 impl quote::ToTokens for Attribute {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
         self._pound.to_tokens(tokens);
         if let Some(ref inner) = self._inner {
             inner.to_tokens(tokens);
@@ -234,7 +240,7 @@ impl quote::ToTokens for Attribute {
 }
 
 impl quote::ToTokens for ItemStruct {
-    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
         // Output attributes
         for attr in &self.attrs {
             quote::ToTokens::to_tokens(attr, tokens);

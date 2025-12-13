@@ -9,4 +9,4 @@ use strid::braid_ref;
 
 /// A basic example of a wrapper around a [`str`]
 #[braid_ref(serde, no_std)]
-pub struct Element;
+pub struct Element(str);

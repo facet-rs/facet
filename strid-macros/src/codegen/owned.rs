@@ -1,4 +1,4 @@
-use quote::{ToTokens, quote};
+use quote::quote;
 use unsynn::Ident;
 
 use super::{AttrList, CheckMode, Field, Impls, StdLib, impls::ToImpl};
@@ -38,7 +38,7 @@ impl<'a> OwnedCodeGen<'a> {
 
         let vis = self
             .expose_inner
-            .then(|| proc_macro2::Ident::new("pub", proc_macro2::Span::call_site()));
+            .then(|| Ident::new("pub", proc_macro2::Span::call_site()));
 
         quote! {
             #[doc = #doc_comment]
@@ -85,7 +85,7 @@ impl<'a> OwnedCodeGen<'a> {
 
         let vis = self
             .expose_inner
-            .then(|| proc_macro2::Ident::new("pub", proc_macro2::Span::call_site()));
+            .then(|| Ident::new("pub", proc_macro2::Span::call_site()));
 
         quote! {
             #[doc = #doc_comment]
@@ -149,7 +149,7 @@ impl<'a> OwnedCodeGen<'a> {
 
         let vis = self
             .expose_inner
-            .then(|| proc_macro2::Ident::new("pub", proc_macro2::Span::call_site()));
+            .then(|| Ident::new("pub", proc_macro2::Span::call_site()));
 
         quote! {
             #[doc = #doc_comment]
@@ -224,7 +224,7 @@ impl<'a> OwnedCodeGen<'a> {
 
         let vis = self
             .expose_inner
-            .then(|| proc_macro2::Ident::new("pub", proc_macro2::Span::call_site()));
+            .then(|| Ident::new("pub", proc_macro2::Span::call_site()));
 
         quote! {
             #[doc = #doc]

@@ -1,4 +1,4 @@
-use quote::{ToTokens, TokenStreamExt, quote};
+use quote::{TokenStreamExt, quote};
 use unsynn::{Ident, ToTokens as UnsynnToTokens};
 
 use super::{AttrList, CheckMode, Field, FieldName, Impls, StdLib, impls::ToImpl};

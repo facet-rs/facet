@@ -1,6 +1,7 @@
+use proc_macro2::Literal;
 use quote::{ToTokens, TokenStreamExt};
 use symbol::{parse_lit_into_string, parse_lit_into_type};
-use unsynn::{IParse, Ident, Literal, Parse, ToTokenIter};
+use unsynn::{IParse, ToTokenIter};
 
 pub use self::{borrowed::RefCodeGen, owned::OwnedCodeGen};
 use self::{
@@ -75,7 +76,7 @@ impl Default for Params {
 }
 
 impl Params {
-    pub fn from_args(args: crate::attr_grammar::AttrArgs) -> std::result::Result<Self, String> {
+    pub fn from_args(args: crate::attr_grammar::AttrArgs) -> Result<Self, String> {
         let mut params = Self::default();
 
         for delim in args.args.iter() {
@@ -181,10 +182,7 @@ impl Params {
 }
 
 impl Params {
-    pub fn build(
-        self,
-        mut body: crate::grammar::ItemStruct,
-    ) -> std::result::Result<CodeGen, String> {
+    pub fn build(self, mut body: crate::grammar::ItemStruct) -> Result<CodeGen, String> {
         let Params {
             ref_ty,
             ref_doc,
@@ -244,7 +242,7 @@ impl Default for ParamsRef {
 }
 
 impl ParamsRef {
-    pub fn from_args(args: crate::attr_grammar::AttrArgs) -> std::result::Result<Self, String> {
+    pub fn from_args(args: crate::attr_grammar::AttrArgs) -> Result<Self, String> {
         let mut params = Self::default();
 
         for delim in args.args.iter() {
@@ -313,7 +311,7 @@ impl ParamsRef {
     pub fn build(
         self,
         body: &mut crate::grammar::ItemStruct,
-    ) -> std::result::Result<proc_macro2::TokenStream, String> {
+    ) -> Result<proc_macro2::TokenStream, String> {
         let ParamsRef {
             std_lib,
             check_mode,
@@ -412,8 +410,8 @@ impl CodeGen {
             ident: {
                 let tokens = self.ref_ty.to_token_stream();
                 let mut iter = tokens.to_token_iter();
-                iter.parse::<Ident>().unwrap_or_else(|_| {
-                    Ident::from(proc_macro2::Ident::new(
+                iter.parse::<unsynn::Ident>().unwrap_or_else(|_| {
+                    unsynn::Ident::from(proc_macro2::Ident::new(
                         "UnknownType",
                         proc_macro2::Span::call_site(),
                     ))
@@ -426,7 +424,7 @@ impl CodeGen {
     }
 }
 
-fn infer_ref_type_from_owned_name(name: &Ident) -> crate::grammar::Type {
+fn infer_ref_type_from_owned_name(name: &unsynn::Ident) -> crate::grammar::Type {
     let name_str = name.to_string();
     let ref_name = if name_str.ends_with("Buf") || name_str.ends_with("String") {
         &name_str[..name_str.len() - 3]
@@ -457,10 +455,10 @@ fn create_ref_field_if_none(fields: &mut crate::grammar::Fields) {
 
 fn get_field_info<'a>(
     fields: &'a crate::grammar::Fields,
-) -> std::result::Result<
+) -> Result<
     (
         &'a crate::grammar::Type,
-        Option<&'a Ident>,
+        Option<&'a unsynn::Ident>,
         &'a [crate::grammar::Attribute],
     ),
     String,
@@ -488,6 +486,9 @@ fn get_field_info<'a>(
             let field = &f.content[0].value;
             Ok((&field.ty, None, &field.attrs))
         }
+        Fields::Unit => {
+            Err("unit structs are not supported - struct must have at least one field".to_string())
+        }
     }
 }
 
@@ -506,7 +507,7 @@ impl Field {
 
 #[derive(Clone)]
 pub enum FieldName {
-    Named(Ident),
+    Named(unsynn::Ident),
     Unnamed,
 }
 
@@ -530,7 +531,7 @@ impl ToTokens for FieldName {
     fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         match self {
             Self::Named(ident) => ident.to_tokens(tokens),
-            Self::Unnamed => tokens.append(proc_macro2::Literal::u8_unsuffixed(0)),
+            Self::Unnamed => tokens.append(Literal::u8_unsuffixed(0)),
         }
     }
 }
