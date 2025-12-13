@@ -12,10 +12,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "bitflags"
-version = "2.10.0"
+name = "autocfg"
+version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
+checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "cc"
@@ -47,9 +47,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "equivalent"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+
+[[package]]
 name = "facet"
-version = "0.31.8"
+version = "0.32.2"
 dependencies = [
+ "autocfg",
  "facet-core",
  "facet-macros",
  "static_assertions",
@@ -57,25 +64,43 @@ dependencies = [
 
 [[package]]
 name = "facet-core"
-version = "0.31.8"
+version = "0.32.2"
 dependencies = [
- "bitflags",
+ "autocfg",
  "impls",
- "paste",
+]
+
+[[package]]
+name = "facet-macro-parse"
+version = "0.32.2"
+dependencies = [
+ "facet-macro-types",
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
+name = "facet-macro-types"
+version = "0.32.2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unsynn",
 ]
 
 [[package]]
 name = "facet-macros"
-version = "0.31.8"
+version = "0.32.2"
 dependencies = [
- "facet-core",
  "facet-macros-impl",
 ]
 
 [[package]]
 name = "facet-macros-impl"
-version = "0.31.8"
+version = "0.32.2"
 dependencies = [
+ "facet-macro-parse",
+ "facet-macro-types",
  "proc-macro2",
  "quote",
  "strsim",
@@ -84,10 +109,9 @@ dependencies = [
 
 [[package]]
 name = "facet-reflect"
-version = "0.31.8"
+version = "0.32.2"
 dependencies = [
  "facet-core",
- "facet-macros",
 ]
 
 [[package]]
@@ -103,10 +127,12 @@ dependencies = [
 
 [[package]]
 name = "facet-value"
-version = "0.1.0"
+version = "0.32.2"
 dependencies = [
  "facet-core",
  "facet-reflect",
+ "indexmap",
+ "static_assertions",
 ]
 
 [[package]]
@@ -128,10 +154,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashbrown"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
+
+[[package]]
 name = "impls"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a46645bbd70538861a90d0f26c31537cdf1e44aae99a794fb75a664b70951bc"
+
+[[package]]
+name = "indexmap"
+version = "2.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ad4bb2b565bca0645f4d68c5c9af97fba094e9791da685bf83cb5f3ce74acf2"
+dependencies = [
+ "equivalent",
+ "hashbrown",
+]
 
 [[package]]
 name = "jobserver"
@@ -164,12 +206,6 @@ name = "mutants"
 version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc0287524726960e07b119cebd01678f852f147742ae0d925e6a520dca956126"
-
-[[package]]
-name = "paste"
-version = "1.0.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "proc-macro2"
