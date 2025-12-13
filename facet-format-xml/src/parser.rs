@@ -366,9 +366,21 @@ fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, XmlError>
                 let mut attributes = Vec::new();
                 for attr in e.attributes() {
                     let attr = attr.map_err(|e| XmlError::ParseError(e.to_string()))?;
-                    let (attr_resolve, _) = reader.resolve_attribute(attr.key);
+
+                    // Skip xmlns declarations (xmlns and xmlns:*)
+                    let key = attr.key;
+                    if key.as_ref() == b"xmlns" {
+                        continue; // Skip default namespace declaration
+                    }
+                    if let Some(prefix) = key.prefix() {
+                        if prefix.as_ref() == b"xmlns" {
+                            continue; // Skip prefixed namespace declarations
+                        }
+                    }
+
+                    let (attr_resolve, _) = reader.resolve_attribute(key);
                     let attr_ns = resolve_namespace(attr_resolve)?;
-                    let attr_local = core::str::from_utf8(attr.key.local_name().as_ref())
+                    let attr_local = core::str::from_utf8(key.local_name().as_ref())
                         .map_err(|_| XmlError::InvalidUtf8)?
                         .to_string();
                     let attr_qname = match attr_ns {
@@ -476,26 +488,28 @@ fn element_to_value(elem: &Element) -> XmlValue {
         });
     }
 
-    let mut grouped: BTreeMap<&str, Vec<(&QName, XmlValue)>> = BTreeMap::new();
+    // Group children by (local_name, namespace) tuple to handle same local name with different namespaces
+    let mut grouped: BTreeMap<(&str, Option<&str>), Vec<XmlValue>> = BTreeMap::new();
     for child in &elem.children {
+        let key = (
+            child.name.local_name.as_str(),
+            child.name.namespace.as_deref(),
+        );
         grouped
-            .entry(child.name.local_name.as_str())
+            .entry(key)
             .or_default()
-            .push((&child.name, element_to_value(child)));
+            .push(element_to_value(child));
     }
 
-    for (local_name, mut values) in grouped {
-        // Get the namespace from the first element with this local name
-        let namespace = values[0].0.namespace.clone();
-
+    for ((local_name, namespace), mut values) in grouped {
         let value = if values.len() == 1 {
-            values.pop().unwrap().1
+            values.pop().unwrap()
         } else {
-            XmlValue::Array(values.into_iter().map(|(_, v)| v).collect())
+            XmlValue::Array(values)
         };
         fields.push(XmlField {
             name: local_name.to_string(),
-            namespace,
+            namespace: namespace.map(String::from),
             location: FieldLocationHint::Child,
             value,
         });
