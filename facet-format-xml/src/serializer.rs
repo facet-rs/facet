@@ -57,15 +57,17 @@ pub struct XmlSerializer {
     out: Vec<u8>,
     stack: Vec<Ctx>,
     pending_field: Option<String>,
+    /// Pending namespace for the next field to be serialized
+    pending_namespace: Option<String>,
+    /// Container-level default namespace (from xml::ns_all) for current struct
+    current_ns_all: Option<String>,
     item_tag: &'static str,
     /// Namespace URI -> prefix mapping for already-declared namespaces.
-    #[allow(dead_code)] // Used in Phase 4 namespace serialization (partial implementation)
     declared_namespaces: HashMap<String, String>,
     /// Counter for auto-generating namespace prefixes (ns0, ns1, ...).
-    #[allow(dead_code)] // Used in Phase 4 namespace serialization (partial implementation)
     next_ns_index: usize,
     /// The currently active default namespace (from xmlns="..." on an ancestor).
-    #[allow(dead_code)] // Used in Phase 4 namespace serialization (partial implementation)
+    #[allow(dead_code)] // Will be used for optimizing namespace declarations
     current_default_ns: Option<String>,
 }
 
@@ -77,6 +79,8 @@ impl XmlSerializer {
             out,
             stack: vec![Ctx::Root { kind: None }],
             pending_field: None,
+            pending_namespace: None,
+            current_ns_all: None,
             item_tag: "item",
             declared_namespaces: HashMap::new(),
             next_ns_index: 0,
@@ -102,7 +106,28 @@ impl XmlSerializer {
 
     fn write_open_tag(&mut self, name: &str) {
         self.out.push(b'<');
-        self.out.extend_from_slice(name.as_bytes());
+
+        // Check if we have a pending namespace for this field
+        if let Some(ns_uri) = self.pending_namespace.take() {
+            // Get or create a prefix for this namespace
+            let prefix = self.get_or_create_prefix(&ns_uri);
+
+            // Write prefixed element name
+            self.out.extend_from_slice(prefix.as_bytes());
+            self.out.push(b':');
+            self.out.extend_from_slice(name.as_bytes());
+
+            // Write xmlns declaration
+            self.out.extend_from_slice(b" xmlns:");
+            self.out.extend_from_slice(prefix.as_bytes());
+            self.out.extend_from_slice(b"=\"");
+            self.out.extend_from_slice(ns_uri.as_bytes());
+            self.out.push(b'"');
+        } else {
+            // No namespace - just write the element name
+            self.out.extend_from_slice(name.as_bytes());
+        }
+
         self.out.push(b'>');
     }
 
@@ -132,8 +157,17 @@ impl XmlSerializer {
                         msg: "value emitted in struct without field key",
                     });
                 };
+
+                // Compute the full tag name (with prefix if namespaced) for closing
+                let full_name = if let Some(ns_uri) = self.pending_namespace.clone() {
+                    let prefix = self.get_or_create_prefix(&ns_uri);
+                    format!("{}:{}", prefix, name)
+                } else {
+                    name.clone()
+                };
+
                 self.write_open_tag(&name);
-                Ok(Some(name))
+                Ok(Some(full_name))
             }
             Some(Ctx::Seq { .. }) => {
                 let name = self.item_tag.to_string();
@@ -162,7 +196,6 @@ impl XmlSerializer {
 
     /// Get or create a prefix for the given namespace URI.
     /// Returns the prefix (without colon).
-    #[allow(dead_code)] // Used in Phase 4 namespace serialization (partial implementation)
     fn get_or_create_prefix(&mut self, namespace_uri: &str) -> String {
         // Check if we've already assigned a prefix to this URI
         if let Some(prefix) = self.declared_namespaces.get(namespace_uri) {
@@ -315,6 +348,36 @@ impl FormatSerializer for XmlSerializer {
             self.write_close_tag(&name);
         }
 
+        Ok(())
+    }
+
+    fn field_metadata(&mut self, field: &facet_reflect::FieldItem) -> Result<(), Self::Error> {
+        // Extract xml::ns attribute from the field
+        if let Some(ns_attr) = field.field.get_attr(Some("xml"), "ns")
+            && let Some(ns_uri) = ns_attr.get_as::<&str>().copied()
+        {
+            self.pending_namespace = Some(ns_uri.to_string());
+            return Ok(());
+        }
+
+        // If field doesn't have explicit xml::ns, check for container-level xml::ns_all
+        // Only apply ns_all to elements, not attributes (per XML spec)
+        let is_attribute = field.field.get_attr(Some("xml"), "attribute").is_some();
+        if !is_attribute && let Some(ns_all) = &self.current_ns_all {
+            self.pending_namespace = Some(ns_all.clone());
+        }
+
+        Ok(())
+    }
+
+    fn struct_metadata(&mut self, shape: &facet_core::Shape) -> Result<(), Self::Error> {
+        // Extract xml::ns_all attribute from the struct
+        self.current_ns_all = shape
+            .attributes
+            .iter()
+            .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
+            .and_then(|attr| attr.get_as::<&str>().copied())
+            .map(String::from);
         Ok(())
     }
 }

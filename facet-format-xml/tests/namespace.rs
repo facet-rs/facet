@@ -378,7 +378,6 @@ fn test_unprefixed_attributes_without_default_xmlns() {
 // NOTE: These will fail until Phase 4 (serialization) is implemented
 
 #[test]
-#[ignore] // Will fail until Phase 4 is complete
 fn test_serialize_namespaced_element() {
     // Serialize a struct with xml::ns on a field
     let value = NamespacedRoot {
@@ -430,7 +429,6 @@ fn test_serialize_namespaced_attribute() {
 }
 
 #[test]
-#[ignore] // Will fail until Phase 4 is complete
 fn test_serialize_ns_all() {
     let value = NsAllContainer {
         first: "one".to_string(),
