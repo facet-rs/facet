@@ -295,12 +295,12 @@ where
             Option<(&'static [facet_core::Field], alloc::vec::Vec<bool>)>,
         > = alloc::vec![None; num_fields];
         for (idx, field) in struct_def.fields.iter().enumerate() {
-            if field.is_flattened() {
-                if let Type::User(UserType::Struct(inner_def)) = &field.shape().ty {
-                    let inner_fields = inner_def.fields;
-                    let inner_set = alloc::vec![false; inner_fields.len()];
-                    flatten_info[idx] = Some((inner_fields, inner_set));
-                }
+            if field.is_flattened()
+                && let Type::User(UserType::Struct(inner_def)) = &field.shape().ty
+            {
+                let inner_fields = inner_def.fields;
+                let inner_set = alloc::vec![false; inner_fields.len()];
+                flatten_info[idx] = Some((inner_fields, inner_set));
             }
         }
 
@@ -654,7 +654,21 @@ where
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         use facet_core::Characteristic;
 
-        // Expect StructStart
+        // Step 1: Probe to find the tag value (handles out-of-order fields)
+        let probe = self
+            .parser
+            .begin_probe()
+            .map_err(DeserializeError::Parser)?;
+        let evidence = Self::collect_evidence(probe).map_err(DeserializeError::Parser)?;
+
+        let variant_name = Self::find_tag_value(&evidence, tag_key)
+            .ok_or_else(|| DeserializeError::TypeMismatch {
+                expected: "tag field in internally tagged enum",
+                got: format!("missing '{tag_key}' field"),
+            })?
+            .to_string();
+
+        // Step 2: Consume StructStart
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
         if !matches!(event, ParseEvent::StructStart) {
             return Err(DeserializeError::TypeMismatch {
@@ -663,38 +677,7 @@ where
             });
         }
 
-        // First, scan for the tag field
-        // For internally tagged enums, the tag should come first (common convention)
-        let first_event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-        let variant_name = match first_event {
-            ParseEvent::FieldKey(name, _) if name.as_ref() == tag_key => {
-                // Tag field found first - get the variant name
-                let value_event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-                if let ParseEvent::Scalar(ScalarValue::Str(vname)) = value_event {
-                    vname.into_owned()
-                } else {
-                    return Err(DeserializeError::TypeMismatch {
-                        expected: "string for tag value",
-                        got: format!("{value_event:?}"),
-                    });
-                }
-            }
-            ParseEvent::StructEnd => {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "tag field in internally tagged enum",
-                    got: "empty struct".into(),
-                });
-            }
-            _ => {
-                // Tag field not first - this is harder to handle
-                // Would need to buffer fields or use probing
-                return Err(DeserializeError::Unsupported(
-                    "internally tagged enum requires tag field to come first".into(),
-                ));
-            }
-        };
-
-        // Select the variant
+        // Step 3: Select the variant
         wip = wip
             .select_variant_named(&variant_name)
             .map_err(DeserializeError::Reflect)?;
@@ -734,13 +717,13 @@ where
         let num_fields = variant_fields.len();
         let mut fields_set = alloc::vec![false; num_fields];
 
-        // Now deserialize the remaining fields into the variant's struct
+        // Step 4: Process all fields (they can come in any order now)
         loop {
             let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
             match event {
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(name, _) => {
-                    // Skip the tag field if it appears again
+                    // Skip the tag field - already used
                     if name.as_ref() == tag_key {
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
                         continue;
@@ -752,7 +735,7 @@ where
                             || f.alias.iter().any(|alias| *alias == name.as_ref())
                     });
 
-                    if let Some((idx, field)) = field_info {
+                    if let Some((idx, _field)) = field_info {
                         wip = wip
                             .begin_nth_field(idx)
                             .map_err(DeserializeError::Reflect)?;
@@ -808,13 +791,52 @@ where
         Ok(wip)
     }
 
+    /// Helper to find a tag value from field evidence.
+    fn find_tag_value<'a>(
+        evidence: &'a [crate::FieldEvidence<'input>],
+        tag_key: &str,
+    ) -> Option<&'a str> {
+        evidence
+            .iter()
+            .find(|e| e.name == tag_key)
+            .and_then(|e| match &e.scalar_value {
+                Some(ScalarValue::Str(s)) => Some(s.as_ref()),
+                _ => None,
+            })
+    }
+
+    /// Helper to collect all evidence from a probe stream.
+    fn collect_evidence<S: crate::ProbeStream<'input, Error = P::Error>>(
+        mut probe: S,
+    ) -> Result<alloc::vec::Vec<crate::FieldEvidence<'input>>, P::Error> {
+        let mut evidence = alloc::vec::Vec::new();
+        while let Some(ev) = probe.next()? {
+            evidence.push(ev);
+        }
+        Ok(evidence)
+    }
+
     fn deserialize_enum_adjacently_tagged(
         &mut self,
         mut wip: Partial<'input, BORROW>,
         tag_key: &str,
         content_key: &str,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        // Expect StructStart
+        // Step 1: Probe to find the tag value (handles out-of-order fields)
+        let probe = self
+            .parser
+            .begin_probe()
+            .map_err(DeserializeError::Parser)?;
+        let evidence = Self::collect_evidence(probe).map_err(DeserializeError::Parser)?;
+
+        let variant_name = Self::find_tag_value(&evidence, tag_key)
+            .ok_or_else(|| DeserializeError::TypeMismatch {
+                expected: "tag field in adjacently tagged enum",
+                got: format!("missing '{tag_key}' field"),
+            })?
+            .to_string();
+
+        // Step 2: Consume StructStart
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
         if !matches!(event, ParseEvent::StructStart) {
             return Err(DeserializeError::TypeMismatch {
@@ -823,40 +845,25 @@ where
             });
         }
 
-        let mut variant_name: Option<String> = None;
-        let mut content_seen = false;
+        // Step 3: Select the variant
+        wip = wip
+            .select_variant_named(&variant_name)
+            .map_err(DeserializeError::Reflect)?;
 
+        // Step 4: Process fields in any order
+        let mut content_seen = false;
         loop {
             let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
             match event {
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(name, _) => {
                     if name.as_ref() == tag_key {
-                        // Tag field
-                        let value_event =
-                            self.parser.next_event().map_err(DeserializeError::Parser)?;
-                        if let ParseEvent::Scalar(ScalarValue::Str(vname)) = value_event {
-                            variant_name = Some(vname.into_owned());
-                        } else {
-                            return Err(DeserializeError::TypeMismatch {
-                                expected: "string for tag value",
-                                got: format!("{value_event:?}"),
-                            });
-                        }
+                        // Skip the tag field - already used
+                        self.parser.skip_value().map_err(DeserializeError::Parser)?;
                     } else if name.as_ref() == content_key {
-                        // Content field - select variant first if we have the name
-                        if let Some(ref vname) = variant_name {
-                            wip = wip
-                                .select_variant_named(vname)
-                                .map_err(DeserializeError::Reflect)?;
-                            wip = self.deserialize_enum_variant_content(wip)?;
-                            content_seen = true;
-                        } else {
-                            // Content comes before tag - need to buffer (not implemented)
-                            return Err(DeserializeError::Unsupported(
-                                "adjacently tagged enum with content before tag".into(),
-                            ));
-                        }
+                        // Deserialize the content
+                        wip = self.deserialize_enum_variant_content(wip)?;
+                        content_seen = true;
                     } else {
                         // Unknown field - skip
                         self.parser.skip_value().map_err(DeserializeError::Parser)?;
@@ -871,16 +878,17 @@ where
             }
         }
 
-        // If we haven't seen content yet but have a variant name, it's a unit variant
+        // If no content field was present, it's a unit variant (already selected above)
         if !content_seen {
-            if let Some(ref vname) = variant_name {
-                wip = wip
-                    .select_variant_named(vname)
-                    .map_err(DeserializeError::Reflect)?;
-            } else {
+            // Check if the variant expects content
+            let variant = wip.selected_variant();
+            if let Some(v) = variant
+                && v.data.kind != StructKind::Unit
+                && !v.data.fields.is_empty()
+            {
                 return Err(DeserializeError::TypeMismatch {
-                    expected: "tag field in adjacently tagged enum",
-                    got: "missing tag field".into(),
+                    expected: "content field for non-unit variant",
+                    got: format!("missing '{content_key}' field"),
                 });
             }
         }
@@ -1042,15 +1050,15 @@ where
         match &event {
             ParseEvent::Scalar(scalar) => {
                 // Try unit variants for null
-                if matches!(scalar, ScalarValue::Null) {
-                    if let Some(variant) = variants_by_format.unit_variants.first() {
-                        wip = wip
-                            .select_variant_named(variant.name)
-                            .map_err(DeserializeError::Reflect)?;
-                        // Consume the null
-                        self.parser.next_event().map_err(DeserializeError::Parser)?;
-                        return Ok(wip);
-                    }
+                if matches!(scalar, ScalarValue::Null)
+                    && let Some(variant) = variants_by_format.unit_variants.first()
+                {
+                    wip = wip
+                        .select_variant_named(variant.name)
+                        .map_err(DeserializeError::Reflect)?;
+                    // Consume the null
+                    self.parser.next_event().map_err(DeserializeError::Parser)?;
+                    return Ok(wip);
                 }
 
                 // Try scalar variants - match by type
@@ -1355,6 +1363,11 @@ where
                     wip = wip.set(n as f32).map_err(DeserializeError::Reflect)?;
                 } else if shape.type_identifier == "f64" {
                     wip = wip.set(n as f64).map_err(DeserializeError::Reflect)?;
+                // Handle String - stringify the number
+                } else if shape.type_identifier == "String" {
+                    wip = wip
+                        .set(alloc::string::ToString::to_string(&n))
+                        .map_err(DeserializeError::Reflect)?;
                 } else {
                     wip = wip.set(n).map_err(DeserializeError::Reflect)?;
                 }
@@ -1391,6 +1404,11 @@ where
                     wip = wip.set(n as f32).map_err(DeserializeError::Reflect)?;
                 } else if shape.type_identifier == "f64" {
                     wip = wip.set(n as f64).map_err(DeserializeError::Reflect)?;
+                // Handle String - stringify the number
+                } else if shape.type_identifier == "String" {
+                    wip = wip
+                        .set(alloc::string::ToString::to_string(&n))
+                        .map_err(DeserializeError::Reflect)?;
                 } else {
                     wip = wip.set(n).map_err(DeserializeError::Reflect)?;
                 }
