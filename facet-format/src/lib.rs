@@ -1,4 +1,4 @@
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
 //! Prototype types for the format codex deserializer.

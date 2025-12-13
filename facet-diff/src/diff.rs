@@ -285,6 +285,88 @@ pub fn diff_new_peek_with_options<'mem, 'facet>(
                 updates,
             }
         }
+        ((Def::Map(_), _), (Def::Map(_), _)) => {
+            let from_map = from.into_map().unwrap();
+            let to_map = to.into_map().unwrap();
+
+            let mut updates = HashMap::new();
+            let mut deletions = HashMap::new();
+            let mut insertions = HashMap::new();
+            let mut unchanged = HashSet::new();
+
+            // Collect entries from `from` map with string keys for comparison
+            let mut from_entries: HashMap<String, Peek<'mem, 'facet>> = HashMap::new();
+            for (key, value) in from_map.iter() {
+                let key_str = format!("{:?}", key);
+                from_entries.insert(key_str, value);
+            }
+
+            // Collect entries from `to` map
+            let mut to_entries: HashMap<String, Peek<'mem, 'facet>> = HashMap::new();
+            for (key, value) in to_map.iter() {
+                let key_str = format!("{:?}", key);
+                to_entries.insert(key_str, value);
+            }
+
+            // Compare entries
+            for (key, from_value) in &from_entries {
+                if let Some(to_value) = to_entries.get(key) {
+                    let diff = diff_new_peek_with_options(*from_value, *to_value, options);
+                    if diff.is_equal() {
+                        unchanged.insert(Cow::Owned(key.clone()));
+                    } else {
+                        updates.insert(Cow::Owned(key.clone()), diff);
+                    }
+                } else {
+                    deletions.insert(Cow::Owned(key.clone()), *from_value);
+                }
+            }
+
+            for (key, to_value) in &to_entries {
+                if !from_entries.contains_key(key) {
+                    insertions.insert(Cow::Owned(key.clone()), *to_value);
+                }
+            }
+
+            let is_empty = updates.is_empty() && deletions.is_empty() && insertions.is_empty();
+            if is_empty {
+                return Diff::Equal { value: Some(from) };
+            }
+
+            Diff::User {
+                from: from.shape(),
+                to: to.shape(),
+                variant: None,
+                value: Value::Struct {
+                    updates,
+                    deletions,
+                    insertions,
+                    unchanged,
+                },
+            }
+        }
+        ((Def::Set(_), _), (Def::Set(_), _)) => {
+            let from_set = from.into_set().unwrap();
+            let to_set = to.into_set().unwrap();
+
+            // Collect items from both sets using debug format for comparison
+            let mut from_items: HashSet<String> = HashSet::new();
+            for item in from_set.iter() {
+                from_items.insert(format!("{:?}", item));
+            }
+
+            let mut to_items: HashSet<String> = HashSet::new();
+            for item in to_set.iter() {
+                to_items.insert(format!("{:?}", item));
+            }
+
+            // Sets are equal if they have the same items
+            if from_items == to_items {
+                return Diff::Equal { value: Some(from) };
+            }
+
+            Diff::Replace { from, to }
+        }
         ((Def::DynamicValue(_), _), (Def::DynamicValue(_), _)) => {
             diff_dynamic_values(from, to, options)
         }

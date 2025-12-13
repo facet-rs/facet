@@ -246,7 +246,99 @@ impl FormatSuite for XmlSlice {
     fn proxy_container() -> CaseSpec {
         // ProxyInt deserializes from a string "42" via IntAsString proxy
         CaseSpec::from_str(r#"<value>42</value>"#)
-            .without_roundtrip("facet-format serializer doesn't support proxy yet")
+    }
+
+    // ── Scalar cases ──
+
+    fn scalar_bool() -> CaseSpec {
+        CaseSpec::from_str(r#"<record><yes>true</yes><no>false</no></record>"#)
+    }
+
+    fn scalar_integers() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"<record><signed_8>-128</signed_8><unsigned_8>255</unsigned_8><signed_32>-2147483648</signed_32><unsigned_32>4294967295</unsigned_32><signed_64>-9223372036854775808</signed_64><unsigned_64>18446744073709551615</unsigned_64></record>"#,
+        )
+    }
+
+    fn scalar_floats() -> CaseSpec {
+        CaseSpec::from_str(r#"<record><float_32>1.5</float_32><float_64>2.25</float_64></record>"#)
+    }
+
+    // ── Collection cases ──
+
+    fn map_string_keys() -> CaseSpec {
+        CaseSpec::from_str(r#"<record><data><alpha>1</alpha><beta>2</beta></data></record>"#)
+    }
+
+    fn tuple_simple() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"<record><triple><item>hello</item><item>42</item><item>true</item></triple></record>"#,
+        )
+    }
+
+    // ── Enum variant cases ──
+
+    fn enum_unit_variant() -> CaseSpec {
+        CaseSpec::from_str(r#"<value>Active</value>"#)
+    }
+
+    fn enum_untagged() -> CaseSpec {
+        CaseSpec::from_str(r#"<value><x>10</x><y>20</y></value>"#)
+    }
+
+    // ── Smart pointer cases ──
+
+    fn box_wrapper() -> CaseSpec {
+        CaseSpec::from_str(r#"<record><inner>42</inner></record>"#)
+    }
+
+    fn arc_wrapper() -> CaseSpec {
+        CaseSpec::from_str(r#"<record><inner>42</inner></record>"#)
+    }
+
+    fn rc_wrapper() -> CaseSpec {
+        CaseSpec::from_str(r#"<record><inner>42</inner></record>"#)
+    }
+
+    // ── Set cases ──
+
+    fn set_btree() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"<record><items><item>alpha</item><item>beta</item><item>gamma</item></items></record>"#,
+        )
+    }
+
+    // ── Extended numeric cases ──
+
+    fn scalar_integers_16() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"<record><signed_16>-32768</signed_16><unsigned_16>65535</unsigned_16></record>"#,
+        )
+    }
+
+    fn scalar_integers_128() -> CaseSpec {
+        // Skip: VNumber can't hold values outside i64/u64 range, so deserialization fails
+        CaseSpec::skip("i128/u128 values exceed VNumber range")
+    }
+
+    fn scalar_integers_size() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"<record><signed_size>-1000</signed_size><unsigned_size>2000</unsigned_size></record>"#,
+        )
+    }
+
+    // ── NonZero cases ──
+
+    fn nonzero_integers() -> CaseSpec {
+        CaseSpec::from_str(r#"<record><nz_u32>42</nz_u32><nz_i64>-100</nz_i64></record>"#)
+    }
+
+    // ── Borrowed string cases ──
+
+    fn cow_str() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"<record><owned>hello world</owned><message>borrowed</message></record>"#,
+        )
     }
 }
 

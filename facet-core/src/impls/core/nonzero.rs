@@ -65,6 +65,17 @@ macro_rules! impl_facet_for_nonzero {
                         }
                         try_from
                     }],
+                    // try_borrow_inner borrows the inner value for serialization
+                    // NonZero<T> has transparent repr, so the inner T is at the same address
+                    [try_borrow_inner = {
+                        /// # Safety
+                        /// `ptr` must point to a valid NonZero<$type>
+                        unsafe fn try_borrow_inner(ptr: *const NonZero<$type>) -> Result<crate::PtrMut, alloc::string::String> {
+                            // NonZero<T> is repr(transparent), so we can just cast the pointer
+                            Ok(crate::PtrMut::new(ptr as *mut ()))
+                        }
+                        try_borrow_inner
+                    }],
                 );
 
                 ShapeBuilder::for_sized::<NonZero<$type>>("NonZero")
