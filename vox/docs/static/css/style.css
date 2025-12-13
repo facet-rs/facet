@@ -36,8 +36,8 @@
     --bg-raised: #111;
     --fg: #d4d4d4;
     --fg-muted: #737373;
-    --accent: #7aba7a;
-    --accent-dim: #5d8a5d;
+    --accent: #ff6b35;
+    --accent-dim: #cc5429;
     --code-bg: #161616;
     --border: #262626;
     --font-sans: 'Public Sans', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -484,16 +484,28 @@ footer a:hover {
     --pagefind-ui-border-width: 1px;
     --pagefind-ui-border-radius: 6px;
     --pagefind-ui-font: inherit;
-    height: 36px;
+    height: 32px;
 }
 
 .pagefind-ui__form {
-    height: 36px !important;
+    height: 32px !important;
+}
+
+.pagefind-ui__form::before {
+    width: 14px !important;
+    height: 14px !important;
+    top: 9px !important;
+    left: 10px !important;
 }
 
 .pagefind-ui__search-input {
     background: var(--code-bg) !important;
     color: var(--fg) !important;
+    height: 32px !important;
+    box-sizing: border-box !important;
+    line-height: 32px !important;
+    font-size: 0.9rem !important;
+    font-weight: 400 !important;
 }
 
 .pagefind-ui__search-input::placeholder {
