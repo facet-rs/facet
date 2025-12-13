@@ -1,0 +1,476 @@
+use crate::struct_item::{StructDecl, StructField};
+use crate::util::{compile_error, pascal_ident, snake_ident};
+use proc_macro::TokenStream;
+use proc_macro2::{Delimiter, Ident, TokenStream as TokenStream2, TokenTree};
+use quote::{format_ident, quote};
+use unsynn::{IParse, ToTokenIter, ToTokens};
+
+#[derive(Default)]
+struct DbArgs {
+    inputs: Vec<ItemPath>,
+    interned: Vec<ItemPath>,
+    tracked: Vec<ItemPath>,
+}
+
+#[derive(Clone)]
+struct ItemPath {
+    prefix: TokenStream2,
+    name: Ident,
+}
+
+impl ItemPath {
+    fn parse(ts: TokenStream2) -> Result<Self, String> {
+        let tokens: Vec<TokenTree> = ts.into_iter().collect();
+        if tokens.is_empty() {
+            return Err("picante: expected an item path".to_string());
+        }
+
+        // Only accept `::`-separated identifiers (no generics).
+        for tt in &tokens {
+            match tt {
+                TokenTree::Ident(_) => {}
+                TokenTree::Punct(p) if p.as_char() == ':' => {}
+                _ => {
+                    return Err(
+                        "picante: expected a path like `foo::Bar` (no generics)".to_string()
+                    );
+                }
+            }
+        }
+
+        let Some(TokenTree::Ident(name)) = tokens.last() else {
+            return Err("picante: expected a path ending in an identifier".to_string());
+        };
+
+        let mut prefix = TokenStream2::new();
+        for tt in tokens[..tokens.len() - 1].iter().cloned() {
+            prefix.extend(::core::iter::once(tt));
+        }
+
+        Ok(Self {
+            prefix,
+            name: name.clone(),
+        })
+    }
+
+    fn qualify(&self, ident: &Ident) -> TokenStream2 {
+        let prefix = &self.prefix;
+        quote! { #prefix #ident }
+    }
+}
+
+pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let attr: TokenStream2 = attr.into();
+    let item: TokenStream2 = item.into();
+
+    let args = match parse_args(attr) {
+        Ok(v) => v,
+        Err(e) => return compile_error(&e),
+    };
+
+    let mut it = item.to_token_iter();
+    let decl: StructDecl = match it.parse() {
+        Ok(v) => v,
+        Err(e) => return compile_error(&format!("picante: failed to parse db struct: {e:?}")),
+    };
+
+    if decl.generics.is_some() {
+        return compile_error("picante: #[picante::db] does not support generics");
+    }
+
+    let struct_attrs: Vec<_> = decl
+        .attributes
+        .as_ref()
+        .map(|m| m.as_slice().iter().map(|a| a.to_token_stream()).collect())
+        .unwrap_or_default();
+
+    let vis = decl
+        .vis
+        .as_ref()
+        .map(|v| v.to_token_stream())
+        .unwrap_or_default();
+
+    let db_name = decl.name;
+
+    let mut custom_fields = Vec::new();
+    let mut custom_field_names = std::collections::HashSet::<String>::new();
+    for delim in decl.fields.content.into_iter() {
+        let f = delim.value;
+
+        let field_vis = f
+            .vis
+            .as_ref()
+            .map(|v| v.to_token_stream())
+            .unwrap_or_default();
+
+        let field_attrs: Vec<_> = f
+            .attributes
+            .as_ref()
+            .map(|m| m.as_slice().iter().map(|a| a.to_token_stream()).collect())
+            .unwrap_or_default();
+
+        let name = f.name;
+        let ty = f.typ.to_token_stream();
+
+        if !custom_field_names.insert(name.to_string()) {
+            return compile_error(&format!("picante: duplicate field `{}` in db struct", name));
+        }
+
+        custom_fields.push(StructField {
+            name,
+            vis: field_vis,
+            ty,
+            attrs: field_attrs,
+            is_key: false,
+        });
+    }
+
+    for reserved in ["runtime", "ingredients"] {
+        if custom_field_names.contains(reserved) {
+            return compile_error(&format!(
+                "picante: db field name conflict: `{}` is reserved",
+                reserved
+            ));
+        }
+    }
+
+    let mut generated_field_names = std::collections::HashSet::<String>::new();
+    generated_field_names.insert("runtime".to_string());
+    generated_field_names.insert("ingredients".to_string());
+
+    let mut generated_fields = Vec::<TokenStream2>::new();
+    let mut ctor_lets = Vec::<TokenStream2>::new();
+    let mut ctor_registers = Vec::<TokenStream2>::new();
+    let mut ctor_inits = Vec::<TokenStream2>::new();
+
+    let mut trait_impls = Vec::<TokenStream2>::new();
+
+    // Inputs: two ingredients per input "entity" (keys + data)
+    for input in &args.inputs {
+        let entity = &input.name;
+        let entity_snake = snake_ident(entity);
+
+        let keys_field = format_ident!("{entity_snake}_keys");
+        let data_field = format_ident!("{entity_snake}_data");
+
+        for name in [&keys_field, &data_field] {
+            let name_s = name.to_string();
+            if custom_field_names.contains(&name_s) {
+                return compile_error(&format!(
+                    "picante: db field name conflict: `{}` is a custom db field and also generated by input `{}`",
+                    name_s, entity,
+                ));
+            }
+            if !generated_field_names.insert(name_s.clone()) {
+                return compile_error(&format!(
+                    "picante: db field name conflict: `{}` is generated multiple times (check for duplicate/overlapping inputs)",
+                    name_s,
+                ));
+            }
+        }
+
+        let keys_ty_ident = format_ident!("{entity}KeysIngredient");
+        let data_ty_ident = format_ident!("{entity}DataIngredient");
+        let has_trait_ident = format_ident!("Has{entity}Ingredient");
+
+        let keys_ty = input.qualify(&keys_ty_ident);
+        let data_ty = input.qualify(&data_ty_ident);
+        let has_trait = input.qualify(&has_trait_ident);
+
+        let make_keys_ident = format_ident!("make_{entity_snake}_keys");
+        let make_data_ident = format_ident!("make_{entity_snake}_data");
+        let make_keys = input.qualify(&make_keys_ident);
+        let make_data = input.qualify(&make_data_ident);
+
+        generated_fields.push(quote! {
+            #keys_field: ::std::sync::Arc<#keys_ty>,
+            #data_field: ::std::sync::Arc<#data_ty>,
+        });
+
+        ctor_lets.push(quote! {
+            let #keys_field = #make_keys();
+            let #data_field = #make_data();
+        });
+        ctor_registers.push(quote! {
+            ingredients.register(#keys_field.clone());
+            ingredients.register(#data_field.clone());
+        });
+        ctor_inits.push(quote! { #keys_field, #data_field });
+
+        let keys_method = keys_field.clone();
+        let data_method = data_field.clone();
+
+        trait_impls.push(quote! {
+            impl #has_trait for #db_name {
+                fn #keys_method(&self) -> &#keys_ty {
+                    &self.#keys_field
+                }
+
+                fn #data_method(&self) -> &#data_ty {
+                    &self.#data_field
+                }
+            }
+        });
+    }
+
+    // Interned: one ingredient per interned "entity"
+    for interned in &args.interned {
+        let entity = &interned.name;
+        let entity_snake = snake_ident(entity);
+
+        let field = entity_snake.clone();
+        let field_s = field.to_string();
+        if custom_field_names.contains(&field_s) {
+            return compile_error(&format!(
+                "picante: db field name conflict: `{}` is a custom db field and also generated by interned `{}`",
+                field_s, entity,
+            ));
+        }
+        if !generated_field_names.insert(field_s.clone()) {
+            return compile_error(&format!(
+                "picante: db field name conflict: `{}` is generated multiple times (check for duplicate/overlapping interned items)",
+                field_s,
+            ));
+        }
+
+        let ingredient_ty_ident = format_ident!("{entity}Ingredient");
+        let has_trait_ident = format_ident!("Has{entity}Ingredient");
+
+        let ingredient_ty = interned.qualify(&ingredient_ty_ident);
+        let has_trait = interned.qualify(&has_trait_ident);
+
+        let accessor = format_ident!("{entity_snake}_ingredient");
+        let make_ident = format_ident!("make_{entity_snake}_ingredient");
+        let make_fn = interned.qualify(&make_ident);
+
+        generated_fields.push(quote! {
+            #field: ::std::sync::Arc<#ingredient_ty>,
+        });
+
+        ctor_lets.push(quote! {
+            let #field = #make_fn();
+        });
+        ctor_registers.push(quote! {
+            ingredients.register(#field.clone());
+        });
+        ctor_inits.push(quote! { #field });
+
+        trait_impls.push(quote! {
+            impl #has_trait for #db_name {
+                fn #accessor(&self) -> &#ingredient_ty {
+                    &self.#field
+                }
+            }
+        });
+    }
+
+    // Tracked: one derived ingredient per query
+    for tracked in &args.tracked {
+        let func = &tracked.name;
+        let func_snake = snake_ident(func);
+        let field = func_snake.clone();
+
+        let field_s = field.to_string();
+        if custom_field_names.contains(&field_s) {
+            return compile_error(&format!(
+                "picante: db field name conflict: `{}` is a custom db field and also generated by tracked `{}`",
+                field_s, func,
+            ));
+        }
+        if !generated_field_names.insert(field_s.clone()) {
+            return compile_error(&format!(
+                "picante: db field name conflict: `{}` is generated multiple times (check for duplicate/overlapping tracked queries)",
+                field_s,
+            ));
+        }
+
+        let pascal = pascal_ident(func);
+        let query_ty_ident = format_ident!("{pascal}Query");
+        let has_trait_ident = format_ident!("Has{pascal}Query");
+
+        let query_ty = tracked.qualify(&query_ty_ident);
+        let has_trait = tracked.qualify(&has_trait_ident);
+
+        let getter = format_ident!("{func_snake}_query");
+        let make_ident = format_ident!("make_{func_snake}_query");
+        let make_fn = tracked.qualify(&make_ident);
+
+        generated_fields.push(quote! {
+            #field: ::std::sync::Arc<#query_ty<#db_name>>,
+        });
+
+        ctor_lets.push(quote! {
+            let #field = #make_fn::<#db_name>();
+        });
+        ctor_registers.push(quote! {
+            ingredients.register(#field.clone());
+        });
+        ctor_inits.push(quote! { #field });
+
+        trait_impls.push(quote! {
+            impl #has_trait for #db_name {
+                fn #getter(&self) -> &#query_ty<Self> {
+                    &self.#field
+                }
+            }
+        });
+    }
+
+    let custom_field_defs = custom_fields.iter().map(|f| {
+        let attrs = &f.attrs;
+        let vis = &f.vis;
+        let name = &f.name;
+        let ty = &f.ty;
+        quote! { #(#attrs)* #vis #name: #ty, }
+    });
+
+    let ctor_params = custom_fields.iter().map(|f| {
+        let name = &f.name;
+        let ty = &f.ty;
+        quote! { #name: #ty }
+    });
+
+    let custom_inits = custom_fields.iter().map(|f| {
+        let name = &f.name;
+        quote! { #name }
+    });
+
+    let expanded = quote! {
+        #(#struct_attrs)*
+        #vis struct #db_name {
+            runtime: picante::Runtime,
+            ingredients: picante::IngredientRegistry<#db_name>,
+            #(#generated_fields)*
+            #(#custom_field_defs)*
+        }
+
+        impl #db_name {
+            #vis fn new(#(#ctor_params),*) -> Self {
+                let runtime = picante::Runtime::new();
+                let mut ingredients = picante::IngredientRegistry::new();
+
+                #(#ctor_lets)*
+                #(#ctor_registers)*
+
+                Self {
+                    runtime,
+                    ingredients,
+                    #(#ctor_inits,)*
+                    #(#custom_inits,)*
+                }
+            }
+
+            /// Access the ingredient registry (for persistence helpers).
+            #vis fn ingredient_registry(&self) -> &picante::IngredientRegistry<Self> {
+                &self.ingredients
+            }
+        }
+
+        impl picante::HasRuntime for #db_name {
+            fn runtime(&self) -> &picante::Runtime {
+                &self.runtime
+            }
+        }
+
+        impl picante::IngredientLookup for #db_name {
+            fn ingredient(&self, kind: picante::QueryKindId) -> Option<&dyn picante::DynIngredient<Self>> {
+                self.ingredients.ingredient(kind)
+            }
+        }
+
+        #(#trait_impls)*
+    };
+
+    expanded.into()
+}
+
+fn parse_args(attr: TokenStream2) -> Result<DbArgs, String> {
+    let mut out = DbArgs::default();
+
+    if attr.is_empty() {
+        return Ok(out);
+    }
+
+    let mut it = attr.into_iter().peekable();
+    while let Some(tt) = it.next() {
+        match tt {
+            TokenTree::Ident(key) => {
+                let Some(TokenTree::Group(group)) = it.next() else {
+                    return Err(
+                        "picante: expected `inputs(...)`, `interned(...)`, or `tracked(...)`"
+                            .to_string(),
+                    );
+                };
+                if group.delimiter() != Delimiter::Parenthesis {
+                    return Err("picante: expected parentheses, e.g. `inputs(...)`".to_string());
+                }
+
+                let key_s = key.to_string();
+                let items = parse_list(group.stream(), &key_s)?;
+
+                match key_s.as_str() {
+                    "inputs" | "input" => out.inputs.extend(items),
+                    "interned" => out.interned.extend(items),
+                    "tracked" => out.tracked.extend(items),
+                    _ => return Err("picante: unknown #[picante::db] key (expected `inputs`, `interned`, `tracked`)".to_string()),
+                }
+
+                if let Some(TokenTree::Punct(p)) = it.peek()
+                    && p.as_char() == ','
+                {
+                    it.next();
+                }
+            }
+            TokenTree::Punct(p) if p.as_char() == ',' => {}
+            _ => {
+                return Err(
+                    "picante: expected `inputs(...)`, `interned(...)`, or `tracked(...)`"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    Ok(out)
+}
+
+fn parse_list(ts: TokenStream2, list_name: &str) -> Result<Vec<ItemPath>, String> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::<String>::new();
+    let mut current = TokenStream2::new();
+
+    for tt in ts {
+        if matches!(&tt, TokenTree::Punct(p) if p.as_char() == ',') {
+            if !current.is_empty() {
+                let normalized = normalize_tokens(&current);
+                if !seen.insert(normalized.clone()) {
+                    return Err(format!(
+                        "picante: duplicate item `{}` in `{}` list",
+                        normalized, list_name
+                    ));
+                }
+                out.push(ItemPath::parse(current)?);
+                current = TokenStream2::new();
+            }
+            continue;
+        }
+        current.extend(::core::iter::once(tt));
+    }
+
+    if !current.is_empty() {
+        let normalized = normalize_tokens(&current);
+        if !seen.insert(normalized.clone()) {
+            return Err(format!(
+                "picante: duplicate item `{}` in `{}` list",
+                normalized, list_name
+            ));
+        }
+        out.push(ItemPath::parse(current)?);
+    }
+
+    Ok(out)
+}
+
+fn normalize_tokens(ts: &TokenStream2) -> String {
+    ts.to_string().split_whitespace().collect::<String>()
+}

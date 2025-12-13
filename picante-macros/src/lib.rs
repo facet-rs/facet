@@ -4,6 +4,7 @@
 
 use proc_macro::TokenStream;
 
+mod db;
 mod input;
 mod interned;
 mod struct_item;
@@ -26,4 +27,10 @@ pub fn input(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn interned(_attr: TokenStream, item: TokenStream) -> TokenStream {
     interned::expand(item)
+}
+
+/// Generate a database struct wiring together ingredients and runtime.
+#[proc_macro_attribute]
+pub fn db(attr: TokenStream, item: TokenStream) -> TokenStream {
+    db::expand(attr, item)
 }

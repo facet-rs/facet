@@ -25,25 +25,32 @@ pub struct SourceFile {
     pub content: String,
 }
 
-// Define a tracked query - automatically async and memoized
+// Define a tracked query — automatically async and memoized
 #[picante::tracked]
-pub async fn line_count<DB: Db>(db: &DB, file: SourceFile) -> PicanteResult<usize> {
-    let content = file.content(db);
+pub async fn line_count<DB: HasSourceFileIngredient>(
+    db: &DB,
+    file: SourceFile,
+) -> PicanteResult<usize> {
+    let content = file.content(db)?;
     Ok(content.lines().count())
 }
+
+// Wire everything together
+#[picante::db(inputs(SourceFile), tracked(line_count))]
+pub struct Database {}
 
 #[tokio::main]
 async fn main() -> PicanteResult<()> {
     let db = Database::new();
 
     // Create an input
-    let file = SourceFile::new(&db, "main.rs".into(), "fn main() {\n}\n".into());
+    let file = SourceFile::new(&db, "main.rs".into(), "fn main() {\n}\n".into())?;
 
     // Query is computed and cached
     assert_eq!(line_count(&db, file).await?, 2);
 
-    // Update the input - dependents automatically invalidated
-    file.set_content(&db, "fn main() {\n    println!(\"hello\");\n}\n".into());
+    // Update the input — dependents automatically invalidated
+    file.set_content(&db, "fn main() {\n    println!(\"hello\");\n}\n".into())?;
 
     // Re-query: only recomputes what changed
     assert_eq!(line_count(&db, file).await?, 3);

@@ -75,4 +75,4 @@ pub use revision::Revision;
 pub use runtime::{HasRuntime, Runtime, RuntimeEvent};
 
 #[cfg(feature = "macros")]
-pub use picante_macros::{input, interned, tracked};
+pub use picante_macros::{db, input, interned, tracked};
