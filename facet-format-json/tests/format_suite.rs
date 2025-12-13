@@ -298,6 +298,15 @@ impl FormatSuite for JsonSlice {
         CaseSpec::from_str(r#"{"outer":[[1,2],["test",true]]}"#)
     }
 
+    fn tuple_empty() -> CaseSpec {
+        CaseSpec::from_str(r#"{"name":"test","empty":[]}"#)
+            .without_roundtrip("empty tuple serialization format mismatch")
+    }
+
+    fn tuple_single_element() -> CaseSpec {
+        CaseSpec::from_str(r#"{"name":"test","single":[42]}"#)
+    }
+
     // ── Enum variant cases ──
 
     fn enum_unit_variant() -> CaseSpec {

@@ -309,6 +309,14 @@ impl FormatSuite for XmlSlice {
         )
     }
 
+    fn tuple_empty() -> CaseSpec {
+        CaseSpec::from_str(r#"<record><name>test</name><empty /></record>"#)
+    }
+
+    fn tuple_single_element() -> CaseSpec {
+        CaseSpec::from_str(r#"<record><name>test</name><single><item>42</item></single></record>"#)
+    }
+
     // ── Enum variant cases ──
 
     fn enum_unit_variant() -> CaseSpec {

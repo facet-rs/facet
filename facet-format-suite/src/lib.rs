@@ -137,6 +137,10 @@ pub trait FormatSuite {
     fn tuple_simple() -> CaseSpec;
     /// Case: nested tuple types.
     fn tuple_nested() -> CaseSpec;
+    /// Case: empty tuple `()` as a field.
+    fn tuple_empty() -> CaseSpec;
+    /// Case: single-element tuple `(T,)` as a field.
+    fn tuple_single_element() -> CaseSpec;
 
     // ── Enum variant tests ──
 
@@ -363,6 +367,11 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, MapWrapper>(&CASE_MAP_STRING_KEYS, S::map_string_keys),
         SuiteCase::new::<S, TupleWrapper>(&CASE_TUPLE_SIMPLE, S::tuple_simple),
         SuiteCase::new::<S, NestedTupleWrapper>(&CASE_TUPLE_NESTED, S::tuple_nested),
+        SuiteCase::new::<S, EmptyTupleWrapper>(&CASE_TUPLE_EMPTY, S::tuple_empty),
+        SuiteCase::new::<S, SingleElementTupleWrapper>(
+            &CASE_TUPLE_SINGLE_ELEMENT,
+            S::tuple_single_element,
+        ),
         // Enum variant cases
         SuiteCase::new::<S, UnitVariantEnum>(&CASE_ENUM_UNIT_VARIANT, S::enum_unit_variant),
         SuiteCase::new::<S, UntaggedEnum>(&CASE_ENUM_UNTAGGED, S::enum_untagged),
@@ -982,6 +991,24 @@ const CASE_TUPLE_NESTED: CaseDescriptor<NestedTupleWrapper> = CaseDescriptor {
     },
 };
 
+const CASE_TUPLE_EMPTY: CaseDescriptor<EmptyTupleWrapper> = CaseDescriptor {
+    id: "collection::tuple_empty",
+    description: "empty tuple () as a field",
+    expected: || EmptyTupleWrapper {
+        name: "test".into(),
+        empty: (),
+    },
+};
+
+const CASE_TUPLE_SINGLE_ELEMENT: CaseDescriptor<SingleElementTupleWrapper> = CaseDescriptor {
+    id: "collection::tuple_single_element",
+    description: "single-element tuple (T,) as a field",
+    expected: || SingleElementTupleWrapper {
+        name: "test".into(),
+        single: (42,),
+    },
+};
+
 // ── Enum variant case descriptors ──
 
 const CASE_ENUM_UNIT_VARIANT: CaseDescriptor<UnitVariantEnum> = CaseDescriptor {
@@ -1507,6 +1534,20 @@ pub struct TupleWrapper {
 #[derive(Facet, Debug, Clone)]
 pub struct NestedTupleWrapper {
     pub outer: ((i32, i32), (String, bool)),
+}
+
+/// Fixture for empty tuple test.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct EmptyTupleWrapper {
+    pub name: String,
+    pub empty: (),
+}
+
+/// Fixture for single-element tuple test.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct SingleElementTupleWrapper {
+    pub name: String,
+    pub single: (i32,),
 }
 
 // ── Enum variant test fixtures ──

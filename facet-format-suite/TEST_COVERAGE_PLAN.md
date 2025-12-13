@@ -38,8 +38,8 @@ to achieve comprehensive coverage of the **format abstraction layer**.
 
 ### Tuple Variations (IMPORTANT)
 
-- [ ] `tuple_empty` - Empty tuple `()` as a field
-- [ ] `tuple_single_element` - 1-element tuple `(T,)` (edge case in construction)
+- [x] `tuple_empty` - Empty tuple `()` as a field
+- [x] `tuple_single_element` - 1-element tuple `(T,)` (edge case in construction)
 - [ ] `tuple_struct_variant` - Enum with tuple variant: `Variant(i32, String)`
 - [ ] `tuple_newtype_variant` - Enum with newtype variant: `Variant(T)`
 
