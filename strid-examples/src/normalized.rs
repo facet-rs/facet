@@ -80,7 +80,7 @@ impl strid::Validator for LowerString {
 }
 
 impl strid::Normalizer for LowerString {
-    fn normalize(s: &str) -> Result<Cow<str>, Self::Error> {
+    fn normalize(s: &str) -> Result<Cow<'_, str>, Self::Error> {
         if s.is_empty() {
             Err(InvalidString::EmptyString)
         } else if s.contains(char::is_uppercase) {
