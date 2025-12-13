@@ -5,8 +5,8 @@
 //! of their values, so every valid UTF-8 string is potentially valid for
 //! these types.
 //!
-//! Note: This example requires facet support for `smartstring::SmartString` and `compact_str::CompactString`.
-//! See: https://github.com/facet-rs/facet/issues/1283 and https://github.com/facet-rs/facet/issues/1282
+//! Note: This example requires facet support for `smartstring::SmartString` and
+//! `compact_str::CompactString`. See: https://github.com/facet-rs/facet/issues/1283 and https://github.com/facet-rs/facet/issues/1282
 
 #![allow(dead_code)]
 
@@ -14,10 +14,9 @@
 use std::{borrow::Cow, error, fmt};
 
 #[cfg(all(feature = "smartstring-facet", feature = "compact_str-facet"))]
-use strid::braid;
-
-#[cfg(all(feature = "smartstring-facet", feature = "compact_str-facet"))]
 use smartstring::alias::String;
+#[cfg(all(feature = "smartstring-facet", feature = "compact_str-facet"))]
+use strid::braid;
 
 /// An example of a wrapper around a [`smartstring::SmartString`] with
 /// small-string optimization

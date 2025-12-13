@@ -12,10 +12,9 @@
 
 #![allow(dead_code)]
 
-use strid::braid;
-
 #[cfg(feature = "bytestring-facet")]
 use bytestring::ByteString;
+use strid::braid;
 
 /// A basic example of a wrapper around a [`Bytes`]
 ///
