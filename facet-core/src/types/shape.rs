@@ -365,7 +365,14 @@ impl Shape {
 
     /// Internal implementation with depth tracking for cycle detection.
     fn computed_variance_impl(&'static self, depth: usize) -> Variance {
-        // Cycle/depth limit detection - return Covariant (identity for combine)
+        // Depth limit prevents infinite recursion for recursive types.
+        // Returning Covariant (the identity for combine()) is safe - it means
+        // "assume covariant at this depth". For legitimately recursive types like
+        // `struct Node { child: Box<Node> }`, this prevents stack overflow.
+        //
+        // If you hit this limit unexpectedly, it may indicate a bug where a
+        // generic type forgot to set .inner() or .variance(), causing infinite
+        // recursion through (self.variance)(self).
         if depth >= MAX_VARIANCE_DEPTH {
             return Variance::Covariant;
         }
@@ -405,26 +412,28 @@ impl Shape {
                     (self.variance)(self)
                 }
             }
-            // For container types (whether opaque or sequence), check the def for element types
+            // Types that don't have .inner set - fall back to Def-based lookup
             _ => {
                 match &self.def {
-                    // List<T> - covariant in T
-                    Def::List(list_def) => list_def.t().computed_variance_impl(depth + 1),
-                    // Array<T, N> - covariant in T
-                    Def::Array(array_def) => array_def.t().computed_variance_impl(depth + 1),
-                    // Set<T> - covariant in T
-                    Def::Set(set_def) => set_def.t().computed_variance_impl(depth + 1),
-                    // Map<K, V> - combine variance of K and V
+                    // Map<K, V> has two type parameters - combine both variances
                     Def::Map(map_def) => {
                         let k_var = map_def.k().computed_variance_impl(depth + 1);
                         let v_var = map_def.v().computed_variance_impl(depth + 1);
                         k_var.combine(v_var)
                     }
-                    // Slice<T> - covariant in T
+                    // Result<T, E> has two type parameters - combine both variances
+                    Def::Result(result_def) => {
+                        let t_var = result_def.t.computed_variance_impl(depth + 1);
+                        let e_var = result_def.e.computed_variance_impl(depth + 1);
+                        t_var.combine(e_var)
+                    }
+                    // Single-parameter containers - variance propagates from element type
+                    // Most of these should set .inner(), but we fall back to Def for compatibility
+                    Def::List(list_def) => list_def.t().computed_variance_impl(depth + 1),
+                    Def::Array(array_def) => array_def.t().computed_variance_impl(depth + 1),
+                    Def::Set(set_def) => set_def.t().computed_variance_impl(depth + 1),
                     Def::Slice(slice_def) => slice_def.t().computed_variance_impl(depth + 1),
-                    // NdArray<T> - covariant in T
                     Def::NdArray(ndarray_def) => ndarray_def.t().computed_variance_impl(depth + 1),
-                    // Pointer types (Box<T>, Arc<T>, etc.) - propagate pointee variance if available
                     Def::Pointer(pointer_def) => {
                         if let Some(pointee) = pointer_def.pointee {
                             pointee.computed_variance_impl(depth + 1)
@@ -433,13 +442,9 @@ impl Shape {
                             (self.variance)(self)
                         }
                     }
-                    // Option and Result use .inner field, handled by the self.inner.is_some() branch above
-                    // Scalar, Undefined, and DynamicValue use their declared variance
-                    Def::Scalar
-                    | Def::Undefined
-                    | Def::Option(_)
-                    | Def::Result(_)
-                    | Def::DynamicValue(_) => (self.variance)(self),
+                    Def::Option(option_def) => option_def.t.computed_variance_impl(depth + 1),
+                    // Leaf types with no type parameters - use declared variance
+                    Def::Scalar | Def::Undefined | Def::DynamicValue(_) => (self.variance)(self),
                 }
             }
         }
