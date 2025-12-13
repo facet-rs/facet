@@ -50,7 +50,10 @@ fn is_same_known_pointer_allocation<V: Facet<'static>>(left: &V, right: &V) -> b
 
 /// A memoized async derived query ingredient.
 ///
-/// Uses `im::HashMap` internally for O(1) snapshot cloning via structural sharing.
+/// Uses `im::HashMap` with `RwLock` internally. This enables O(1) snapshot cloning
+/// via structural sharing, at the cost of requiring explicit locking (compared to
+/// lock-free `DashMap`). The trade-off favors snapshot efficiency for database
+/// state capture and time-travel debugging scenarios.
 pub struct DerivedIngredient<DB, K, V>
 where
     K: Clone + Eq + Hash,
@@ -147,12 +150,15 @@ where
             if let Some(cell) = self.cells.read().get(&key) {
                 cell.clone()
             } else {
-                // Slow path: write lock, double-check
+                // Slow path: write lock, double-check after acquiring lock
                 let mut cells = self.cells.write();
-                cells
-                    .entry(key.clone())
-                    .or_insert_with(|| Arc::new(Cell::new()))
-                    .clone()
+                if let Some(cell) = cells.get(&key) {
+                    cell.clone()
+                } else {
+                    let cell = Arc::new(Cell::new());
+                    cells.insert(key.clone(), cell.clone());
+                    cell
+                }
             }
         };
 
@@ -497,6 +503,11 @@ where
 /// A memoization cell for a single query key.
 ///
 /// Contains the cached state (vacant, running, ready, or poisoned).
+///
+/// Note: Trait bounds (`Clone`, `Facet<'static>`, `Send`, `Sync`) are enforced
+/// on the `DerivedIngredient` impl blocks where `Cell<V>` is used, not on this
+/// struct definition. This follows Rust best practice of placing bounds on impls
+/// rather than type definitions.
 pub struct Cell<V> {
     state: Mutex<State<V>>,
     notify: Notify,

@@ -289,3 +289,143 @@ async fn poisoned_cells_recompute_after_revision_bump() {
     assert_eq!(v, 42);
     assert_eq!(executions.load(Ordering::SeqCst), 2);
 }
+
+#[tokio::test]
+async fn input_snapshot_captures_state_at_creation_time() {
+    init_tracing();
+
+    let db = TestDb::default();
+    let input: Arc<InputIngredient<String, String>> =
+        Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
+
+    // Set initial values
+    input.set(&db, "a".into(), "hello".into());
+    input.set(&db, "b".into(), "world".into());
+
+    // Take snapshot
+    let snapshot = input.snapshot();
+
+    // Snapshot contains the data
+    assert_eq!(snapshot.len(), 2);
+    assert_eq!(
+        snapshot.get(&"a".to_string()).unwrap().value,
+        Some("hello".to_string())
+    );
+    assert_eq!(
+        snapshot.get(&"b".to_string()).unwrap().value,
+        Some("world".to_string())
+    );
+}
+
+#[tokio::test]
+async fn input_snapshot_remains_valid_after_modification() {
+    init_tracing();
+
+    let db = TestDb::default();
+    let input: Arc<InputIngredient<String, String>> =
+        Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
+
+    input.set(&db, "a".into(), "v1".into());
+
+    // Take snapshot
+    let snapshot = input.snapshot();
+
+    // Modify live ingredient
+    input.set(&db, "a".into(), "v2".into());
+    input.set(&db, "b".into(), "new".into());
+
+    // Snapshot still sees original data
+    assert_eq!(snapshot.len(), 1);
+    assert_eq!(
+        snapshot.get(&"a".to_string()).unwrap().value,
+        Some("v1".to_string())
+    );
+    assert!(snapshot.get(&"b".to_string()).is_none());
+
+    // Live ingredient sees new data
+    assert_eq!(input.get(&db, &"a".into()).unwrap(), Some("v2".to_string()));
+    assert_eq!(
+        input.get(&db, &"b".into()).unwrap(),
+        Some("new".to_string())
+    );
+}
+
+#[tokio::test]
+async fn derived_snapshot_captures_cells() {
+    init_tracing();
+
+    let mut db = TestDb::default();
+    let input: Arc<InputIngredient<String, String>> =
+        Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
+    db.register(input.clone());
+
+    input.set(&db, "a".into(), "hello".into());
+
+    let input_for_compute = input.clone();
+    let derived: Arc<DerivedIngredient<TestDb, String, u64>> = Arc::new(DerivedIngredient::new(
+        QueryKindId(2),
+        "Len",
+        move |db, key| {
+            let input = input_for_compute.clone();
+            Box::pin(async move {
+                let text = input.get(db, &key)?.expect("missing input");
+                Ok(text.len() as u64)
+            })
+        },
+    ));
+    db.register(derived.clone());
+
+    // Compute a value
+    let _ = derived.get(&db, "a".into()).await.unwrap();
+
+    // Take snapshot
+    let snapshot = derived.snapshot();
+
+    // Snapshot contains the cell
+    assert_eq!(snapshot.len(), 1);
+    assert!(snapshot.get(&"a".to_string()).is_some());
+}
+
+#[tokio::test]
+async fn derived_snapshot_remains_valid_after_modification() {
+    init_tracing();
+
+    let mut db = TestDb::default();
+    let input: Arc<InputIngredient<String, String>> =
+        Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
+    db.register(input.clone());
+
+    input.set(&db, "a".into(), "hello".into());
+
+    let input_for_compute = input.clone();
+    let derived: Arc<DerivedIngredient<TestDb, String, u64>> = Arc::new(DerivedIngredient::new(
+        QueryKindId(2),
+        "Len",
+        move |db, key| {
+            let input = input_for_compute.clone();
+            Box::pin(async move {
+                let text = input.get(db, &key)?.expect("missing input");
+                Ok(text.len() as u64)
+            })
+        },
+    ));
+    db.register(derived.clone());
+
+    // Compute initial value
+    let _ = derived.get(&db, "a".into()).await.unwrap();
+
+    // Take snapshot
+    let snapshot = derived.snapshot();
+
+    // Compute another value on live ingredient
+    let _ = derived.get(&db, "b".into()).await;
+
+    // Snapshot still has only the original cell
+    assert_eq!(snapshot.len(), 1);
+    assert!(snapshot.get(&"a".to_string()).is_some());
+    assert!(snapshot.get(&"b".to_string()).is_none());
+
+    // Live ingredient has both
+    let live_snapshot = derived.snapshot();
+    assert_eq!(live_snapshot.len(), 2);
+}

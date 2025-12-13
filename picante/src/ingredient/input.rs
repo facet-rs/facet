@@ -14,6 +14,11 @@ use std::sync::Arc;
 use tracing::{debug, trace};
 
 /// Entry in an input ingredient, containing the value and its change revision.
+///
+/// Note: Trait bounds (`Facet<'static>`, `Send`, `Sync`) are enforced on the
+/// `InputIngredient` impl blocks where `InputEntry<V>` is used, not on this
+/// struct definition. This follows Rust best practice of placing bounds on impls
+/// rather than type definitions.
 #[derive(Clone)]
 pub struct InputEntry<V> {
     /// The value, or None if removed.
@@ -25,7 +30,10 @@ pub struct InputEntry<V> {
 /// A key-value input ingredient.
 ///
 /// Reads record dependencies into the current query frame (if one exists).
-/// Uses `im::HashMap` internally for O(1) snapshot cloning via structural sharing.
+/// Uses `im::HashMap` with `RwLock` internally. This enables O(1) snapshot cloning
+/// via structural sharing, at the cost of requiring explicit locking (compared to
+/// lock-free `DashMap`). The trade-off favors snapshot efficiency for database
+/// state capture and time-travel debugging scenarios.
 pub struct InputIngredient<K, V>
 where
     K: Clone + Eq + Hash,
