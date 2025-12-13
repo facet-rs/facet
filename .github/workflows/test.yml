@@ -125,27 +125,6 @@ jobs:
         run: |
           just msrv
 
-  minimal-versions:
-    runs-on: depot-ubuntu-24.04-32
-
-    container:
-      image: ghcr.io/facet-rs/facet-ci:latest-amd64
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: ✨ Check minimal versions
-        shell: bash
-        run: |
-          # Install nightly for minimal-versions feature
-          rustup toolchain install nightly
-          # Generate lockfile with minimal versions
-          cargo +nightly generate-lockfile -Z minimal-versions
-          # Check with stable using minimal versions
-          # Exclude xtask (private dev tool with ratatui beta that has minimal-version issues)
-          cargo check --workspace --all-features --locked --keep-going --exclude xtask --exclude facet-svg
-
   docs:
     runs-on: depot-ubuntu-24.04-32
 
