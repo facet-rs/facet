@@ -72,12 +72,21 @@ unsafe fn zoned_try_from(
     }
 }
 
+unsafe fn zoned_partial_eq(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
+    unsafe {
+        let a = a.get::<Zoned>();
+        let b = b.get::<Zoned>();
+        Some(a == b)
+    }
+}
+
 unsafe impl Facet<'_> for Zoned {
     const SHAPE: &'static Shape = &const {
         const VTABLE: VTableIndirect = VTableIndirect {
             display: Some(zoned_display),
             parse: Some(zoned_parse),
             try_from: Some(zoned_try_from),
+            partial_eq: Some(zoned_partial_eq),
             ..VTableIndirect::EMPTY
         };
 
@@ -151,12 +160,21 @@ unsafe fn timestamp_try_from(
     }
 }
 
+unsafe fn timestamp_partial_eq(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
+    unsafe {
+        let a = a.get::<Timestamp>();
+        let b = b.get::<Timestamp>();
+        Some(a == b)
+    }
+}
+
 unsafe impl Facet<'_> for Timestamp {
     const SHAPE: &'static Shape = &const {
         const VTABLE: VTableIndirect = VTableIndirect {
             display: Some(timestamp_display),
             parse: Some(timestamp_parse),
             try_from: Some(timestamp_try_from),
+            partial_eq: Some(timestamp_partial_eq),
             ..VTableIndirect::EMPTY
         };
 
@@ -230,12 +248,21 @@ unsafe fn datetime_try_from(
     }
 }
 
+unsafe fn datetime_partial_eq(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
+    unsafe {
+        let a = a.get::<DateTime>();
+        let b = b.get::<DateTime>();
+        Some(a == b)
+    }
+}
+
 unsafe impl Facet<'_> for DateTime {
     const SHAPE: &'static Shape = &const {
         const VTABLE: VTableIndirect = VTableIndirect {
             display: Some(datetime_display),
             parse: Some(datetime_parse),
             try_from: Some(datetime_try_from),
+            partial_eq: Some(datetime_partial_eq),
             ..VTableIndirect::EMPTY
         };
 
