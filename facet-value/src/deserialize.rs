@@ -505,7 +505,21 @@ fn deserialize_value_into<'p>(value: &Value, partial: Partial<'p>) -> Result<Par
         return Ok(partial);
     }
 
-    // Check the Type for structs and enums
+    // Priority 2: Check for .inner (transparent wrappers like NonZero)
+    // Collections (List/Map/Set/Array) have .inner for variance but shouldn't use this path
+    if shape.inner.is_some()
+        && !matches!(
+            &shape.def,
+            Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
+        )
+    {
+        partial = partial.begin_inner()?;
+        partial = deserialize_value_into(value, partial)?;
+        partial = partial.end()?;
+        return Ok(partial);
+    }
+
+    // Priority 3: Check the Type for structs and enums
     match &shape.ty {
         Type::User(UserType::Struct(struct_def)) => {
             if struct_def.kind == StructKind::Tuple {
@@ -517,7 +531,7 @@ fn deserialize_value_into<'p>(value: &Value, partial: Partial<'p>) -> Result<Par
         _ => {}
     }
 
-    // Check Def for containers and special types
+    // Priority 4: Check Def for containers and special types
     match &shape.def {
         Def::Scalar => deserialize_scalar(value, partial),
         Def::List(_) => deserialize_list(value, partial),
@@ -529,19 +543,9 @@ fn deserialize_value_into<'p>(value: &Value, partial: Partial<'p>) -> Result<Par
             partial = partial.set(value.clone())?;
             Ok(partial)
         }
-        _ => {
-            // Priority 3: Check for .inner (transparent wrappers, or types with .inner for variance)
-            if shape.inner.is_some() {
-                partial = partial.begin_inner()?;
-                partial = deserialize_value_into(value, partial)?;
-                partial = partial.end()?;
-                Ok(partial)
-            } else {
-                Err(ValueError::new(ValueErrorKind::Unsupported {
-                    message: format!("unsupported shape def: {:?}", shape.def),
-                }))
-            }
-        }
+        _ => Err(ValueError::new(ValueErrorKind::Unsupported {
+            message: format!("unsupported shape def: {:?}", shape.def),
+        })),
     }
 }
 

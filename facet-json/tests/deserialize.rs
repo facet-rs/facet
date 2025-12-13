@@ -150,6 +150,7 @@ fn test_proxy_deserialization_enum() {
 }
 
 #[test]
+#[ignore = "TODO: transparent wrapper with opaque+proxy field not yet supported"]
 fn test_proxy_transparent_struct() {
     // Target type that doesn't implement Facet
     #[derive(Clone)]

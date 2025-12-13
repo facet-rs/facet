@@ -677,7 +677,21 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
             return self.deserialize_pointer(wip);
         }
 
-        // Check the Type - structs and enums are identified by Type, not Def
+        // Priority 3: Check for .inner (transparent wrappers like NonZero)
+        // Collections (List/Map/Set/Array) have .inner for variance but shouldn't use this path
+        if shape.inner.is_some()
+            && !matches!(
+                &shape.def,
+                Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
+            )
+        {
+            wip = wip.begin_inner()?;
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end()?;
+            return Ok(wip);
+        }
+
+        // Priority 4: Check the Type - structs and enums are identified by Type, not Def
         match &shape.ty {
             Type::User(UserType::Struct(struct_def)) => {
                 // Tuples and tuple structs both deserialize from JSON arrays.
@@ -690,7 +704,7 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
             _ => {}
         }
 
-        // Then check Def for containers and special types
+        // Priority 5: Check Def for containers and special types
         match &shape.def {
             Def::Scalar => self.deserialize_scalar(wip),
             Def::List(_) => self.deserialize_list(wip),
@@ -698,19 +712,9 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
             Def::Array(_) => self.deserialize_array(wip),
             Def::Set(_) => self.deserialize_set(wip),
             Def::DynamicValue(_) => self.deserialize_dynamic_value(wip),
-            _ => {
-                // Priority 3: Check for .inner (transparent wrappers, or types with .inner for variance)
-                if shape.inner.is_some() {
-                    wip = wip.begin_inner()?;
-                    wip = self.deserialize_into(wip)?;
-                    wip = wip.end()?;
-                    Ok(wip)
-                } else {
-                    Err(JsonError::without_span(JsonErrorKind::InvalidValue {
-                        message: format!("unsupported shape def: {:?}", shape.def),
-                    }))
-                }
-            }
+            _ => Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                message: format!("unsupported shape def: {:?}", shape.def),
+            })),
         }
     }
 

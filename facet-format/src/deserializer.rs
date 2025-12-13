@@ -149,20 +149,34 @@ where
             return self.deserialize_option(wip);
         }
 
-        // Check for smart pointers (Box, Arc, Rc)
-        if matches!(&shape.def, Def::Pointer(_)) {
-            return self.deserialize_pointer(wip);
-        }
-
-        // Check for transparent/inner wrapper types
-        if shape.inner.is_some() {
+        // Priority 1: Check for builder_shape (immutable collections like Bytes -> BytesMut)
+        if shape.builder_shape.is_some() {
             wip = wip.begin_inner().map_err(DeserializeError::Reflect)?;
             wip = self.deserialize_into(wip)?;
             wip = wip.end().map_err(DeserializeError::Reflect)?;
             return Ok(wip);
         }
 
-        // Check the Type for structs and enums
+        // Priority 2: Check for smart pointers (Box, Arc, Rc)
+        if matches!(&shape.def, Def::Pointer(_)) {
+            return self.deserialize_pointer(wip);
+        }
+
+        // Priority 3: Check for .inner (transparent wrappers like NonZero)
+        // Collections (List/Map/Set/Array) have .inner for variance but shouldn't use this path
+        if shape.inner.is_some()
+            && !matches!(
+                &shape.def,
+                Def::List(_) | Def::Map(_) | Def::Set(_) | Def::Array(_)
+            )
+        {
+            wip = wip.begin_inner().map_err(DeserializeError::Reflect)?;
+            wip = self.deserialize_into(wip)?;
+            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            return Ok(wip);
+        }
+
+        // Priority 4: Check the Type for structs and enums
         match &shape.ty {
             Type::User(UserType::Struct(struct_def)) => {
                 if matches!(struct_def.kind, StructKind::Tuple | StructKind::TupleStruct) {
@@ -174,15 +188,16 @@ where
             _ => {}
         }
 
-        // Check Def for containers and scalars
+        // Priority 5: Check Def for containers and scalars
         match &shape.def {
             Def::Scalar => self.deserialize_scalar(wip),
             Def::List(_) => self.deserialize_list(wip),
             Def::Map(_) => self.deserialize_map(wip),
             Def::Array(_) => self.deserialize_array(wip),
             Def::Set(_) => self.deserialize_set(wip),
-            other => Err(DeserializeError::Unsupported(format!(
-                "unsupported shape def: {other:?}"
+            _ => Err(DeserializeError::Unsupported(format!(
+                "unsupported shape def: {:?}",
+                shape.def
             ))),
         }
     }
