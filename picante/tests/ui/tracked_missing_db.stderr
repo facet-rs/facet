@@ -1,0 +1,7 @@
+error: picante: #[picante::tracked] requires a `db` parameter
+ --> tests/ui/tracked_missing_db.rs:1:1
+  |
+1 | #[picante::tracked]
+  | ^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `picante::tracked` (in Nightly builds, run with -Z macro-backtrace for more info)

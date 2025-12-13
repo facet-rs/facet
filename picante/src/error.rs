@@ -48,6 +48,14 @@ pub enum PicanteError {
         id: u32,
     },
 
+    /// An input value was requested but is not present (missing or removed).
+    MissingInputValue {
+        /// Kind id of the input ingredient.
+        kind: QueryKindId,
+        /// Stable hash of the encoded key bytes (for diagnostics).
+        key_hash: u64,
+    },
+
     /// A query panicked during execution (caught to avoid poisoning the runtime).
     Panic {
         /// Human-readable panic message (best effort).
@@ -69,6 +77,11 @@ impl fmt::Display for PicanteError {
             PicanteError::MissingInternedValue { kind, id } => {
                 write!(f, "missing interned value (kind {}, id {id})", kind.0)
             }
+            PicanteError::MissingInputValue { kind, key_hash } => write!(
+                f,
+                "missing input value (kind {}, key {:016x})",
+                kind.0, key_hash
+            ),
             PicanteError::Panic { message } => write!(f, "query panicked: {message}"),
         }
     }

@@ -24,10 +24,16 @@ futures.workspace = true
 parking_lot.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+picante-macros = { path = "../picante-macros", optional = true }
+
+[features]
+default = ["macros"]
+macros = ["dep:picante-macros"]
 
 [dev-dependencies]
 divan.workspace = true
 tracing-subscriber.workspace = true
+trybuild.workspace = true
 
 [[bench]]
 name = "derived"

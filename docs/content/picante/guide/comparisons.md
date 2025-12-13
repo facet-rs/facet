@@ -1,21 +1,22 @@
 +++
 title = "Comparisons"
+weight = 2
 +++
 
-## Salsa
+## salsa
 
-Salsa is the closest conceptual ancestor:
+[salsa](https://salsa-rs.netlify.app/) is the closest conceptual ancestor:
 
 - incremental recomputation
 - dependency tracking
 - memoization
 
-In Dodeca, Salsa persistence was implemented by serializing the Salsa database with postcard and writing it to disk.
+In [dodeca](https://dodeca.dev), [salsa](https://salsa-rs.netlify.app/) persistence was implemented by serializing the salsa database with [postcard](https://docs.rs/postcard) and writing it to disk.
 
 picante is different in two major ways:
 
-- **Tokio-first / async-first**: derived queries are `async` and single-flight.
-- **Facet-based persistence**: picante avoids serde and uses `facet` + `facet-postcard`.
+- **tokio-first / async-first**: derived queries are `async` and single-flight.
+- **facet-based persistence**: picante avoids serde and uses [facet](https://facets.rs) + [facet-postcard](https://docs.rs/facet-postcard).
 
 ## Plain memoization
 

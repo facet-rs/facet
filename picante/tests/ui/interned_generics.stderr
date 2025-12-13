@@ -1,0 +1,7 @@
+error: picante: #[picante::interned] does not support generics
+ --> tests/ui/interned_generics.rs:1:1
+  |
+1 | #[picante::interned]
+  | ^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `picante::interned` (in Nightly builds, run with -Z macro-backtrace for more info)

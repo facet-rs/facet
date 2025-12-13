@@ -1,5 +1,6 @@
 +++
 title = "Architecture"
+weight = 3
 +++
 
 picante is intentionally layered:

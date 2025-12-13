@@ -15,6 +15,24 @@ impl QueryKindId {
     pub const fn as_u32(self) -> u32 {
         self.0
     }
+
+    /// Create a stable id from a string.
+    ///
+    /// This is intended for macro-generated kind ids, which must remain stable
+    /// across runs for cache persistence.
+    ///
+    /// The hash algorithm is a 32-bit FNV-1a over UTF-8 bytes.
+    pub const fn from_str(s: &str) -> Self {
+        let bytes = s.as_bytes();
+        let mut hash: u32 = 0x811c9dc5;
+        let mut i = 0usize;
+        while i < bytes.len() {
+            hash ^= bytes[i] as u32;
+            hash = hash.wrapping_mul(0x0100_0193);
+            i += 1;
+        }
+        QueryKindId(hash)
+    }
 }
 
 /// Postcard-encoded bytes for a key, plus a deterministic hash for tracing/debugging.

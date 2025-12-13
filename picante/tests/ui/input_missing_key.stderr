@@ -1,0 +1,7 @@
+error: picante: #[picante::input] requires exactly one field marked #[key]
+ --> tests/ui/input_missing_key.rs:1:1
+  |
+1 | #[picante::input]
+  | ^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `picante::input` (in Nightly builds, run with -Z macro-backtrace for more info)

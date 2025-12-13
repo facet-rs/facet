@@ -1,5 +1,6 @@
 +++
-title = "Future work"
+title = "Future Work"
+weight = 4
 +++
 
 Some next steps that are intentionally not in v1:

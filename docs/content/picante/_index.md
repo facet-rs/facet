@@ -1,57 +1,53 @@
 +++
 title = "picante"
 description = "An async incremental query runtime (Tokio-first Salsa alternative)"
+template = "index.html"
 +++
 
-picante is an async incremental query runtime for Rust.
+Add picante to your `Cargo.toml`:
 
-It's motivated by **Dodeca's** main use-case: a large query graph where many nodes want to do async I/O (reading files, calling plugins, spawning work) while still benefiting from memoization, dependency tracking, and persistence across restarts.
+```toml,noexec
+[dependencies]
+picante = "0.1"
+tokio = { version = "1", features = ["full"] }
+```
 
-picante provides:
-
-- **Inputs** (`InputIngredient<K, V>`)
-- **Derived** async queries (`DerivedIngredient<DB, K, V>`)
-- **Dependency tracking** via Tokio task-local frames
-- **Per-task cycle detection**
-- **Persistence** using `facet` + `facet-postcard` (**no serde**)
-- **Notifications** for live reload (`Runtime::subscribe_revisions` / `Runtime::subscribe_events`)
-
-Minimal example (trimmed; see the crate docs for more):
+Then define your database and queries:
 
 ```rust,noexec
-use picante::{DerivedIngredient, HasRuntime, InputIngredient, QueryKindId, Runtime};
-use std::sync::Arc;
+use picante::PicanteResult;
 
-#[derive(Default)]
-struct Db {
-    runtime: Runtime,
+// Define an input with a key field
+#[picante::input]
+pub struct SourceFile {
+    #[key]
+    pub path: String,
+    pub content: String,
 }
 
-impl HasRuntime for Db {
-    fn runtime(&self) -> &Runtime {
-        &self.runtime
-    }
+// Define a tracked query - automatically async and memoized
+#[picante::tracked]
+pub async fn line_count<DB: Db>(db: &DB, file: SourceFile) -> PicanteResult<usize> {
+    let content = file.content(db);
+    Ok(content.lines().count())
 }
 
 #[tokio::main]
-async fn main() -> picante::PicanteResult<()> {
-    let text: Arc<InputIngredient<String, String>> =
-        Arc::new(InputIngredient::new(QueryKindId(1), "Text"));
+async fn main() -> PicanteResult<()> {
+    let db = Database::new();
 
-    let len: Arc<DerivedIngredient<Db, String, u64>> = {
-        let text = text.clone();
-        Arc::new(DerivedIngredient::new(QueryKindId(2), "Len", move |db, key| {
-            let text = text.clone();
-            Box::pin(async move {
-                let s = text.get(db, &key)?.unwrap_or_default();
-                Ok(s.len() as u64)
-            })
-        }))
-    };
+    // Create an input
+    let file = SourceFile::new(&db, "main.rs".into(), "fn main() {\n}\n".into());
 
-    let db = Db::default();
-    text.set(&db, "a".into(), "hello".into());
-    assert_eq!(len.get(&db, "a".into()).await?, 5);
+    // Query is computed and cached
+    assert_eq!(line_count(&db, file).await?, 2);
+
+    // Update the input - dependents automatically invalidated
+    file.set_content(&db, "fn main() {\n    println!(\"hello\");\n}\n".into());
+
+    // Re-query: only recomputes what changed
+    assert_eq!(line_count(&db, file).await?, 3);
+
     Ok(())
 }
 ```
