@@ -1,4 +1,3 @@
-
 facet provides reflection for Rust: it gives types a [`SHAPE`](Facet::SHAPE) associated
 const with details on the layout, fields, doc comments, attributes, etc.
 

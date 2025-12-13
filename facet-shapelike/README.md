@@ -1,10 +1,11 @@
 # facet-shapelike
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-shapelike/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![codecov](https://codecov.io/gh/facet-rs/facet/graph/badge.svg)](https://codecov.io/gh/facet-rs/facet)
 [![crates.io](https://img.shields.io/crates/v/facet-shapelike.svg)](https://crates.io/crates/facet-shapelike)
 [![documentation](https://docs.rs/facet-shapelike/badge.svg)](https://docs.rs/facet-shapelike)
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-shapelike.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+
 
 # facet-shapelike
 

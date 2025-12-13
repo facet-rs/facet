@@ -1,10 +1,11 @@
 # facet-testhelpers-macros
 
-[![Coverage Status](https://coveralls.io/repos/github/facet-rs/facet-testhelpers-macros/badge.svg?branch=main)](https://coveralls.io/github/facet-rs/facet?branch=main)
+[![codecov](https://codecov.io/gh/facet-rs/facet/graph/badge.svg)](https://codecov.io/gh/facet-rs/facet)
 [![crates.io](https://img.shields.io/crates/v/facet-testhelpers-macros.svg)](https://crates.io/crates/facet-testhelpers-macros)
 [![documentation](https://docs.rs/facet-testhelpers-macros/badge.svg)](https://docs.rs/facet-testhelpers-macros)
 [![MIT/Apache-2.0 licensed](https://img.shields.io/crates/l/facet-testhelpers-macros.svg)](./LICENSE)
 [![Discord](https://img.shields.io/discord/1379550208551026748?logo=discord&label=discord)](https://discord.gg/JhD7CwCJ8F)
+
 
 Provides a proc macro attribute named `#[test]` which calls `facet_testhelpers::setup()`
 
