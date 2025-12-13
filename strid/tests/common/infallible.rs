@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeSet, HashSet},
-    convert::TryInto,
-};
+use std::collections::{BTreeSet, HashSet};
 
 use quickcheck_macros::quickcheck;
 use static_assertions::{assert_eq_align, assert_eq_size, assert_eq_size_ptr, assert_eq_size_val};
@@ -83,14 +80,14 @@ pub fn from_owned_pass() {
 
 #[test]
 pub fn try_from_owned_pass() -> Result<(), Box<dyn std::error::Error>> {
-    let x: Orange = "One".try_into()?;
+    let x: Orange = "One".into();
     assert_eq!("One", x.as_str());
     Ok(())
 }
 
 #[test]
 pub fn try_from_borrowed_pass() -> Result<(), Box<dyn std::error::Error>> {
-    let x: &OrangeRef = "One".try_into()?;
+    let x: &OrangeRef = "One".into();
     assert_eq!("One", x.as_str());
     Ok(())
 }
@@ -218,7 +215,7 @@ fn check_reference_size() {
 }
 
 #[test]
-#[allow(clippy::forget_ref, clippy::transmute_ptr_to_ptr)]
+#[allow(forgetting_references, clippy::transmute_ptr_to_ptr)]
 fn check_reference_size_ptr() {
     let s = "source";
     let y: &OrangeRef = OrangeRef::from_str(s);
@@ -226,7 +223,7 @@ fn check_reference_size_ptr() {
 }
 
 #[test]
-#[allow(clippy::forget_ref, clippy::transmute_ptr_to_ptr)]
+#[allow(forgetting_references, clippy::transmute_ptr_to_ptr)]
 fn check_reference_size_val() {
     let s = "source";
     let y: &OrangeRef = OrangeRef::from_str(s);
