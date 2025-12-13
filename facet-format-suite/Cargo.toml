@@ -19,7 +19,26 @@ facet-pretty = { path = "../facet-pretty" }
 arborium = { version = "1.1.5", default-features = false, features = ["lang-json", "lang-xml"] }
 indoc = "2"
 
+# Third-party types (optional)
+uuid = { version = "1.17.0", optional = true }
+ulid = { version = "1.2.1", optional = true }
+camino = { version = "1", optional = true }
+ordered-float = { version = "5.0.0", optional = true, default-features = false }
+time = { version = "0.3", optional = true, features = ["macros"] }
+jiff = { version = "0.2", optional = true }
+chrono = { version = "0.4", optional = true, default-features = false }
+
 [dev-dependencies]
 
 [features]
 ci = []
+# Enable third-party type tests
+uuid = ["dep:uuid", "facet/uuid"]
+ulid = ["dep:ulid", "facet/ulid"]
+camino = ["dep:camino", "facet/camino"]
+ordered-float = ["dep:ordered-float", "facet/ordered-float"]
+time = ["dep:time", "facet/time"]
+jiff02 = ["dep:jiff", "facet/jiff02"]
+chrono = ["dep:chrono", "facet/chrono"]
+# All third-party types
+third-party = ["uuid", "ulid", "camino", "ordered-float", "time", "jiff02", "chrono"]

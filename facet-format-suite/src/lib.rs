@@ -76,6 +76,10 @@ pub trait FormatSuite {
     fn attr_default_field() -> CaseSpec;
     /// Case: `Option<T>` field with `None` value (missing in input).
     fn option_none() -> CaseSpec;
+    /// Case: `Option<T>` field with `Some` value.
+    fn option_some() -> CaseSpec;
+    /// Case: `Option<T>` field with explicit `null` value.
+    fn option_null() -> CaseSpec;
     /// Case: `#[facet(skip_serializing)]` field.
     fn attr_skip_serializing() -> CaseSpec;
     /// Case: `#[facet(skip)]` field (skipped for both ser and de).
@@ -118,6 +122,8 @@ pub trait FormatSuite {
     fn scalar_integers() -> CaseSpec;
     /// Case: floating point types.
     fn scalar_floats() -> CaseSpec;
+    /// Case: floating point with scientific notation.
+    fn scalar_floats_scientific() -> CaseSpec;
 
     // ── Collection tests ──
 
@@ -125,6 +131,8 @@ pub trait FormatSuite {
     fn map_string_keys() -> CaseSpec;
     /// Case: tuple types.
     fn tuple_simple() -> CaseSpec;
+    /// Case: nested tuple types.
+    fn tuple_nested() -> CaseSpec;
 
     // ── Enum variant tests ──
 
@@ -141,6 +149,14 @@ pub trait FormatSuite {
     fn arc_wrapper() -> CaseSpec;
     /// Case: `Rc<T>` smart pointer.
     fn rc_wrapper() -> CaseSpec;
+    /// Case: `Box<str>` unsized smart pointer.
+    fn box_str() -> CaseSpec;
+    /// Case: `Arc<str>` unsized smart pointer.
+    fn arc_str() -> CaseSpec;
+    /// Case: `Rc<str>` unsized smart pointer.
+    fn rc_str() -> CaseSpec;
+    /// Case: `Arc<[T]>` unsized slice smart pointer.
+    fn arc_slice() -> CaseSpec;
 
     // ── Set tests ──
 
@@ -160,11 +176,35 @@ pub trait FormatSuite {
 
     /// Case: NonZero integer types.
     fn nonzero_integers() -> CaseSpec;
+    /// Case: Extended NonZero integer types (8, 16, 128, size).
+    fn nonzero_integers_extended() -> CaseSpec;
 
     // ── Borrowed string tests ──
 
     /// Case: Cow<'static, str> field.
     fn cow_str() -> CaseSpec;
+
+    // ── Newtype tests ──
+
+    /// Case: newtype wrapper around u64.
+    fn newtype_u64() -> CaseSpec;
+    /// Case: newtype wrapper around String.
+    fn newtype_string() -> CaseSpec;
+
+    // ── Char tests ──
+
+    /// Case: char scalar type.
+    fn char_scalar() -> CaseSpec;
+
+    // ── HashSet tests ──
+
+    /// Case: `HashSet<T>`.
+    fn hashset() -> CaseSpec;
+
+    // ── Nested collection tests ──
+
+    /// Case: nested `Vec<Vec<T>>`.
+    fn vec_nested() -> CaseSpec;
 
     // ── Bytes/binary data tests ──
 
@@ -185,11 +225,59 @@ pub trait FormatSuite {
 
     /// Case: string with escape sequences (\n, \t, \", \\).
     fn string_escapes() -> CaseSpec;
+    /// Case: string with extended escape sequences (\b, \f, \r, \u0001).
+    fn string_escapes_extended() -> CaseSpec;
 
     // ── Unit type tests ──
 
     /// Case: unit struct (zero-sized type).
     fn unit_struct() -> CaseSpec;
+
+    // ── Third-party type tests ──
+
+    /// Case: uuid::Uuid type.
+    #[cfg(feature = "uuid")]
+    fn uuid() -> CaseSpec;
+
+    /// Case: ulid::Ulid type.
+    #[cfg(feature = "ulid")]
+    fn ulid() -> CaseSpec;
+
+    /// Case: camino::Utf8PathBuf type.
+    #[cfg(feature = "camino")]
+    fn camino_path() -> CaseSpec;
+
+    /// Case: ordered_float::OrderedFloat type.
+    #[cfg(feature = "ordered-float")]
+    fn ordered_float() -> CaseSpec;
+
+    /// Case: time::OffsetDateTime type.
+    #[cfg(feature = "time")]
+    fn time_offset_datetime() -> CaseSpec;
+
+    /// Case: jiff::Timestamp type.
+    #[cfg(feature = "jiff02")]
+    fn jiff_timestamp() -> CaseSpec;
+
+    /// Case: jiff::civil::DateTime type.
+    #[cfg(feature = "jiff02")]
+    fn jiff_civil_datetime() -> CaseSpec;
+
+    /// Case: `chrono::DateTime<Utc>` type.
+    #[cfg(feature = "chrono")]
+    fn chrono_datetime_utc() -> CaseSpec;
+
+    /// Case: chrono::NaiveDateTime type.
+    #[cfg(feature = "chrono")]
+    fn chrono_naive_datetime() -> CaseSpec;
+
+    /// Case: chrono::NaiveDate type.
+    #[cfg(feature = "chrono")]
+    fn chrono_naive_date() -> CaseSpec;
+
+    /// Case: chrono::NaiveTime type.
+    #[cfg(feature = "chrono")]
+    fn chrono_naive_time() -> CaseSpec;
 }
 
 /// Execute suite cases; kept for convenience, but formats should register each
@@ -232,6 +320,8 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, CamelCaseStruct>(&CASE_ATTR_RENAME_ALL_CAMEL, S::attr_rename_all_camel),
         SuiteCase::new::<S, WithDefault>(&CASE_ATTR_DEFAULT_FIELD, S::attr_default_field),
         SuiteCase::new::<S, WithOption>(&CASE_OPTION_NONE, S::option_none),
+        SuiteCase::new::<S, WithOption>(&CASE_OPTION_SOME, S::option_some),
+        SuiteCase::new::<S, WithOption>(&CASE_OPTION_NULL, S::option_null),
         SuiteCase::new::<S, WithSkipSerializing>(
             &CASE_ATTR_SKIP_SERIALIZING,
             S::attr_skip_serializing,
@@ -259,9 +349,14 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, BoolWrapper>(&CASE_SCALAR_BOOL, S::scalar_bool),
         SuiteCase::new::<S, IntegerTypes>(&CASE_SCALAR_INTEGERS, S::scalar_integers),
         SuiteCase::new::<S, FloatTypes>(&CASE_SCALAR_FLOATS, S::scalar_floats),
+        SuiteCase::new::<S, FloatTypesScientific>(
+            &CASE_SCALAR_FLOATS_SCIENTIFIC,
+            S::scalar_floats_scientific,
+        ),
         // Collection cases
         SuiteCase::new::<S, MapWrapper>(&CASE_MAP_STRING_KEYS, S::map_string_keys),
         SuiteCase::new::<S, TupleWrapper>(&CASE_TUPLE_SIMPLE, S::tuple_simple),
+        SuiteCase::new::<S, NestedTupleWrapper>(&CASE_TUPLE_NESTED, S::tuple_nested),
         // Enum variant cases
         SuiteCase::new::<S, UnitVariantEnum>(&CASE_ENUM_UNIT_VARIANT, S::enum_unit_variant),
         SuiteCase::new::<S, UntaggedEnum>(&CASE_ENUM_UNTAGGED, S::enum_untagged),
@@ -269,6 +364,10 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, BoxWrapper>(&CASE_BOX_WRAPPER, S::box_wrapper),
         SuiteCase::new::<S, ArcWrapper>(&CASE_ARC_WRAPPER, S::arc_wrapper),
         SuiteCase::new::<S, RcWrapper>(&CASE_RC_WRAPPER, S::rc_wrapper),
+        SuiteCase::new::<S, BoxStrWrapper>(&CASE_BOX_STR, S::box_str),
+        SuiteCase::new::<S, ArcStrWrapper>(&CASE_ARC_STR, S::arc_str),
+        SuiteCase::new::<S, RcStrWrapper>(&CASE_RC_STR, S::rc_str),
+        SuiteCase::new::<S, ArcSliceWrapper>(&CASE_ARC_SLICE, S::arc_slice),
         // Set cases
         SuiteCase::new::<S, SetWrapper>(&CASE_SET_BTREE, S::set_btree),
         // Extended numeric cases
@@ -277,6 +376,10 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, IntegerTypesSize>(&CASE_SCALAR_INTEGERS_SIZE, S::scalar_integers_size),
         // NonZero cases
         SuiteCase::new::<S, NonZeroTypes>(&CASE_NONZERO_INTEGERS, S::nonzero_integers),
+        SuiteCase::new::<S, NonZeroTypesExtended>(
+            &CASE_NONZERO_INTEGERS_EXTENDED,
+            S::nonzero_integers_extended,
+        ),
         // Borrowed string cases
         SuiteCase::new::<S, CowStrWrapper>(&CASE_COW_STR, S::cow_str),
         // Bytes/binary data cases
@@ -287,8 +390,56 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, SkipUnknownStruct>(&CASE_SKIP_UNKNOWN_FIELDS, S::skip_unknown_fields),
         // String escape cases
         SuiteCase::new::<S, StringEscapes>(&CASE_STRING_ESCAPES, S::string_escapes),
+        SuiteCase::new::<S, StringEscapesExtended>(
+            &CASE_STRING_ESCAPES_EXTENDED,
+            S::string_escapes_extended,
+        ),
         // Unit type cases
         SuiteCase::new::<S, UnitStruct>(&CASE_UNIT_STRUCT, S::unit_struct),
+        // Newtype cases
+        SuiteCase::new::<S, NewtypeU64Wrapper>(&CASE_NEWTYPE_U64, S::newtype_u64),
+        SuiteCase::new::<S, NewtypeStringWrapper>(&CASE_NEWTYPE_STRING, S::newtype_string),
+        // Char cases
+        SuiteCase::new::<S, CharWrapper>(&CASE_CHAR_SCALAR, S::char_scalar),
+        // HashSet cases
+        SuiteCase::new::<S, HashSetWrapper>(&CASE_HASHSET, S::hashset),
+        // Nested collection cases
+        SuiteCase::new::<S, NestedVecWrapper>(&CASE_VEC_NESTED, S::vec_nested),
+        // Third-party type cases
+        #[cfg(feature = "uuid")]
+        SuiteCase::new::<S, UuidWrapper>(&CASE_UUID, S::uuid),
+        #[cfg(feature = "ulid")]
+        SuiteCase::new::<S, UlidWrapper>(&CASE_ULID, S::ulid),
+        #[cfg(feature = "camino")]
+        SuiteCase::new::<S, CaminoWrapper>(&CASE_CAMINO_PATH, S::camino_path),
+        #[cfg(feature = "ordered-float")]
+        SuiteCase::new::<S, OrderedFloatWrapper>(&CASE_ORDERED_FLOAT, S::ordered_float),
+        #[cfg(feature = "time")]
+        SuiteCase::new::<S, TimeOffsetDateTimeWrapper>(
+            &CASE_TIME_OFFSET_DATETIME,
+            S::time_offset_datetime,
+        ),
+        #[cfg(feature = "jiff02")]
+        SuiteCase::new::<S, JiffTimestampWrapper>(&CASE_JIFF_TIMESTAMP, S::jiff_timestamp),
+        #[cfg(feature = "jiff02")]
+        SuiteCase::new::<S, JiffCivilDateTimeWrapper>(
+            &CASE_JIFF_CIVIL_DATETIME,
+            S::jiff_civil_datetime,
+        ),
+        #[cfg(feature = "chrono")]
+        SuiteCase::new::<S, ChronoDateTimeUtcWrapper>(
+            &CASE_CHRONO_DATETIME_UTC,
+            S::chrono_datetime_utc,
+        ),
+        #[cfg(feature = "chrono")]
+        SuiteCase::new::<S, ChronoNaiveDateTimeWrapper>(
+            &CASE_CHRONO_NAIVE_DATETIME,
+            S::chrono_naive_datetime,
+        ),
+        #[cfg(feature = "chrono")]
+        SuiteCase::new::<S, ChronoNaiveDateWrapper>(&CASE_CHRONO_NAIVE_DATE, S::chrono_naive_date),
+        #[cfg(feature = "chrono")]
+        SuiteCase::new::<S, ChronoNaiveTimeWrapper>(&CASE_CHRONO_NAIVE_TIME, S::chrono_naive_time),
     ]
 }
 
@@ -638,6 +789,24 @@ const CASE_OPTION_NONE: CaseDescriptor<WithOption> = CaseDescriptor {
     },
 };
 
+const CASE_OPTION_SOME: CaseDescriptor<WithOption> = CaseDescriptor {
+    id: "option::some",
+    description: "Option<T> field with Some value",
+    expected: || WithOption {
+        name: "test".into(),
+        nickname: Some("nick".into()),
+    },
+};
+
+const CASE_OPTION_NULL: CaseDescriptor<WithOption> = CaseDescriptor {
+    id: "option::null",
+    description: "Option<T> field with explicit null becomes None",
+    expected: || WithOption {
+        name: "test".into(),
+        nickname: None,
+    },
+};
+
 const CASE_ATTR_SKIP_SERIALIZING: CaseDescriptor<WithSkipSerializing> = CaseDescriptor {
     id: "attr::skip_serializing",
     description: "field with #[facet(skip_serializing)] not in output",
@@ -753,6 +922,16 @@ const CASE_SCALAR_FLOATS: CaseDescriptor<FloatTypes> = CaseDescriptor {
     },
 };
 
+const CASE_SCALAR_FLOATS_SCIENTIFIC: CaseDescriptor<FloatTypesScientific> = CaseDescriptor {
+    id: "scalar::floats_scientific",
+    description: "floating point with scientific notation (1.23e10, -4.56e-7)",
+    expected: || FloatTypesScientific {
+        large: 1.23e10,
+        small: -4.56e-7,
+        positive_exp: 5e3,
+    },
+};
+
 // ── Collection case descriptors ──
 
 const CASE_MAP_STRING_KEYS: CaseDescriptor<MapWrapper> = CaseDescriptor {
@@ -771,6 +950,14 @@ const CASE_TUPLE_SIMPLE: CaseDescriptor<TupleWrapper> = CaseDescriptor {
     description: "tuple (String, i32, bool)",
     expected: || TupleWrapper {
         triple: ("hello".into(), 42, true),
+    },
+};
+
+const CASE_TUPLE_NESTED: CaseDescriptor<NestedTupleWrapper> = CaseDescriptor {
+    id: "collection::tuple_nested",
+    description: "nested tuple ((i32, i32), (String, bool))",
+    expected: || NestedTupleWrapper {
+        outer: ((1, 2), ("test".into(), true)),
     },
 };
 
@@ -811,6 +998,38 @@ const CASE_RC_WRAPPER: CaseDescriptor<RcWrapper> = CaseDescriptor {
     description: "Rc<T> smart pointer",
     expected: || RcWrapper {
         inner: std::rc::Rc::new(42),
+    },
+};
+
+const CASE_BOX_STR: CaseDescriptor<BoxStrWrapper> = CaseDescriptor {
+    id: "pointer::box_str",
+    description: "Box<str> unsized smart pointer",
+    expected: || BoxStrWrapper {
+        inner: Box::from("hello world"),
+    },
+};
+
+const CASE_ARC_STR: CaseDescriptor<ArcStrWrapper> = CaseDescriptor {
+    id: "pointer::arc_str",
+    description: "Arc<str> unsized smart pointer",
+    expected: || ArcStrWrapper {
+        inner: std::sync::Arc::from("hello world"),
+    },
+};
+
+const CASE_RC_STR: CaseDescriptor<RcStrWrapper> = CaseDescriptor {
+    id: "pointer::rc_str",
+    description: "Rc<str> unsized smart pointer",
+    expected: || RcStrWrapper {
+        inner: std::rc::Rc::from("hello world"),
+    },
+};
+
+const CASE_ARC_SLICE: CaseDescriptor<ArcSliceWrapper> = CaseDescriptor {
+    id: "pointer::arc_slice",
+    description: "Arc<[T]> unsized slice smart pointer",
+    expected: || ArcSliceWrapper {
+        inner: std::sync::Arc::from([1i32, 2, 3, 4]),
     },
 };
 
@@ -868,6 +1087,21 @@ const CASE_NONZERO_INTEGERS: CaseDescriptor<NonZeroTypes> = CaseDescriptor {
     },
 };
 
+const CASE_NONZERO_INTEGERS_EXTENDED: CaseDescriptor<NonZeroTypesExtended> = CaseDescriptor {
+    id: "scalar::nonzero_extended",
+    description: "Extended NonZero integer types (8, 16, 128, size)",
+    expected: || NonZeroTypesExtended {
+        nz_u8: std::num::NonZeroU8::new(255).unwrap(),
+        nz_i8: std::num::NonZeroI8::new(-128).unwrap(),
+        nz_u16: std::num::NonZeroU16::new(65535).unwrap(),
+        nz_i16: std::num::NonZeroI16::new(-32768).unwrap(),
+        nz_u128: std::num::NonZeroU128::new(1).unwrap(),
+        nz_i128: std::num::NonZeroI128::new(-1).unwrap(),
+        nz_usize: std::num::NonZeroUsize::new(1000).unwrap(),
+        nz_isize: std::num::NonZeroIsize::new(-500).unwrap(),
+    },
+};
+
 // ── Borrowed string case descriptors ──
 
 const CASE_COW_STR: CaseDescriptor<CowStrWrapper> = CaseDescriptor {
@@ -876,6 +1110,58 @@ const CASE_COW_STR: CaseDescriptor<CowStrWrapper> = CaseDescriptor {
     expected: || CowStrWrapper {
         owned: std::borrow::Cow::Owned("hello world".to_string()),
         message: std::borrow::Cow::Borrowed("borrowed"),
+    },
+};
+
+// ── Newtype case descriptors ──
+
+const CASE_NEWTYPE_U64: CaseDescriptor<NewtypeU64Wrapper> = CaseDescriptor {
+    id: "newtype::u64",
+    description: "newtype wrapper around u64",
+    expected: || NewtypeU64Wrapper {
+        value: NewtypeU64(42),
+    },
+};
+
+const CASE_NEWTYPE_STRING: CaseDescriptor<NewtypeStringWrapper> = CaseDescriptor {
+    id: "newtype::string",
+    description: "newtype wrapper around String",
+    expected: || NewtypeStringWrapper {
+        value: NewtypeString("hello".into()),
+    },
+};
+
+// ── Char case descriptors ──
+
+const CASE_CHAR_SCALAR: CaseDescriptor<CharWrapper> = CaseDescriptor {
+    id: "scalar::char",
+    description: "char scalar type",
+    expected: || CharWrapper {
+        letter: 'A',
+        emoji: '🦀',
+    },
+};
+
+// ── HashSet case descriptors ──
+
+const CASE_HASHSET: CaseDescriptor<HashSetWrapper> = CaseDescriptor {
+    id: "collection::hashset",
+    description: "HashSet<String>",
+    expected: || {
+        let mut set = std::collections::HashSet::new();
+        set.insert("alpha".into());
+        set.insert("beta".into());
+        HashSetWrapper { items: set }
+    },
+};
+
+// ── Nested collection case descriptors ──
+
+const CASE_VEC_NESTED: CaseDescriptor<NestedVecWrapper> = CaseDescriptor {
+    id: "collection::vec_nested",
+    description: "nested Vec<Vec<i32>>",
+    expected: || NestedVecWrapper {
+        matrix: vec![vec![1, 2], vec![3, 4, 5]],
     },
 };
 
@@ -914,6 +1200,17 @@ const CASE_STRING_ESCAPES: CaseDescriptor<StringEscapes> = CaseDescriptor {
     description: "string with escape sequences (\\n, \\t, \\\", \\\\)",
     expected: || StringEscapes {
         text: "line1\nline2\ttab\"quote\\backslash".into(),
+    },
+};
+
+const CASE_STRING_ESCAPES_EXTENDED: CaseDescriptor<StringEscapesExtended> = CaseDescriptor {
+    id: "string::escapes_extended",
+    description: "string with extended escape sequences (\\b, \\f, \\r, \\u0001)",
+    expected: || StringEscapesExtended {
+        backspace: "hello\x08world".into(),
+        formfeed: "page\x0Cbreak".into(),
+        carriage_return: "line\rreturn".into(),
+        control_char: "\x01".into(),
     },
 };
 
@@ -1140,6 +1437,14 @@ pub struct FloatTypes {
     pub float_64: f64,
 }
 
+/// Fixture for scientific notation float test.
+#[derive(Facet, Debug, Clone)]
+pub struct FloatTypesScientific {
+    pub large: f64,
+    pub small: f64,
+    pub positive_exp: f64,
+}
+
 // ── Collection test fixtures ──
 
 /// Fixture for BTreeMap test.
@@ -1152,6 +1457,12 @@ pub struct MapWrapper {
 #[derive(Facet, Debug, Clone)]
 pub struct TupleWrapper {
     pub triple: (String, i32, bool),
+}
+
+/// Fixture for nested tuple test.
+#[derive(Facet, Debug, Clone)]
+pub struct NestedTupleWrapper {
+    pub outer: ((i32, i32), (String, bool)),
 }
 
 // ── Enum variant test fixtures ──
@@ -1194,6 +1505,30 @@ pub struct RcWrapper {
     pub inner: std::rc::Rc<i32>,
 }
 
+/// Fixture for `Box<str>` test.
+#[derive(Facet, Debug, Clone)]
+pub struct BoxStrWrapper {
+    pub inner: Box<str>,
+}
+
+/// Fixture for `Arc<str>` test.
+#[derive(Facet, Debug, Clone)]
+pub struct ArcStrWrapper {
+    pub inner: std::sync::Arc<str>,
+}
+
+/// Fixture for `Rc<str>` test.
+#[derive(Facet, Debug, Clone)]
+pub struct RcStrWrapper {
+    pub inner: std::rc::Rc<str>,
+}
+
+/// Fixture for `Arc<[T]>` test.
+#[derive(Facet, Debug, Clone)]
+pub struct ArcSliceWrapper {
+    pub inner: std::sync::Arc<[i32]>,
+}
+
 // ── Set test fixtures ──
 
 /// Fixture for BTreeSet test.
@@ -1234,6 +1569,19 @@ pub struct NonZeroTypes {
     pub nz_i64: std::num::NonZeroI64,
 }
 
+/// Fixture for extended NonZero integer test.
+#[derive(Facet, Debug, Clone)]
+pub struct NonZeroTypesExtended {
+    pub nz_u8: std::num::NonZeroU8,
+    pub nz_i8: std::num::NonZeroI8,
+    pub nz_u16: std::num::NonZeroU16,
+    pub nz_i16: std::num::NonZeroI16,
+    pub nz_u128: std::num::NonZeroU128,
+    pub nz_i128: std::num::NonZeroI128,
+    pub nz_usize: std::num::NonZeroUsize,
+    pub nz_isize: std::num::NonZeroIsize,
+}
+
 // ── Borrowed string test fixtures ──
 
 /// Fixture for Cow<'static, str> test.
@@ -1243,9 +1591,58 @@ pub struct CowStrWrapper {
     pub message: std::borrow::Cow<'static, str>,
 }
 
+// ── Newtype test fixtures ──
+
+/// Newtype wrapper around u64.
+#[derive(Facet, Debug, Clone)]
+#[facet(transparent)]
+pub struct NewtypeU64(pub u64);
+
+/// Fixture containing newtype u64.
+#[derive(Facet, Debug, Clone)]
+pub struct NewtypeU64Wrapper {
+    pub value: NewtypeU64,
+}
+
+/// Newtype wrapper around String.
+#[derive(Facet, Debug, Clone)]
+#[facet(transparent)]
+pub struct NewtypeString(pub String);
+
+/// Fixture containing newtype String.
+#[derive(Facet, Debug, Clone)]
+pub struct NewtypeStringWrapper {
+    pub value: NewtypeString,
+}
+
+// ── Char test fixtures ──
+
+/// Fixture for char scalar test.
+#[derive(Facet, Debug, Clone)]
+pub struct CharWrapper {
+    pub letter: char,
+    pub emoji: char,
+}
+
+// ── HashSet test fixtures ──
+
+/// Fixture for HashSet test.
+#[derive(Facet, Debug, Clone)]
+pub struct HashSetWrapper {
+    pub items: std::collections::HashSet<String>,
+}
+
+// ── Nested collection test fixtures ──
+
+/// Fixture for nested Vec test.
+#[derive(Facet, Debug, Clone)]
+pub struct NestedVecWrapper {
+    pub matrix: Vec<Vec<i32>>,
+}
+
 // ── Bytes/binary data test fixtures ──
 
-/// Fixture for Vec<u8> binary data test.
+/// Fixture for `Vec<u8>` binary data test.
 #[derive(Facet, Debug, Clone)]
 pub struct BytesWrapper {
     pub data: Vec<u8>,
@@ -1275,11 +1672,207 @@ pub struct StringEscapes {
     pub text: String,
 }
 
+/// Fixture for extended string escape test.
+#[derive(Facet, Debug, Clone)]
+pub struct StringEscapesExtended {
+    pub backspace: String,
+    pub formfeed: String,
+    pub carriage_return: String,
+    pub control_char: String,
+}
+
 // ── Unit type test fixtures ──
 
 /// Fixture for unit struct test (zero-sized type).
 #[derive(Facet, Debug, Clone)]
 pub struct UnitStruct;
+
+// ── Third-party type case descriptors ──
+
+#[cfg(feature = "uuid")]
+const CASE_UUID: CaseDescriptor<UuidWrapper> = CaseDescriptor {
+    id: "third_party::uuid",
+    description: "uuid::Uuid type",
+    expected: || UuidWrapper {
+        id: uuid::Uuid::from_bytes([
+            0x55, 0x0e, 0x84, 0x00, 0xe2, 0x9b, 0x41, 0xd4, 0xa7, 0x16, 0x44, 0x66, 0x55, 0x44,
+            0x00, 0x00,
+        ]),
+    },
+};
+
+#[cfg(feature = "ulid")]
+const CASE_ULID: CaseDescriptor<UlidWrapper> = CaseDescriptor {
+    id: "third_party::ulid",
+    description: "ulid::Ulid type",
+    expected: || UlidWrapper {
+        id: ulid::Ulid::from_string("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap(),
+    },
+};
+
+#[cfg(feature = "camino")]
+const CASE_CAMINO_PATH: CaseDescriptor<CaminoWrapper> = CaseDescriptor {
+    id: "third_party::camino",
+    description: "camino::Utf8PathBuf type",
+    expected: || CaminoWrapper {
+        path: camino::Utf8PathBuf::from("/home/user/documents"),
+    },
+};
+
+#[cfg(feature = "ordered-float")]
+const CASE_ORDERED_FLOAT: CaseDescriptor<OrderedFloatWrapper> = CaseDescriptor {
+    id: "third_party::ordered_float",
+    description: "ordered_float::OrderedFloat type",
+    expected: || OrderedFloatWrapper {
+        value: ordered_float::OrderedFloat(1.23456),
+    },
+};
+
+#[cfg(feature = "time")]
+const CASE_TIME_OFFSET_DATETIME: CaseDescriptor<TimeOffsetDateTimeWrapper> = CaseDescriptor {
+    id: "third_party::time_offset_datetime",
+    description: "time::OffsetDateTime type",
+    expected: || TimeOffsetDateTimeWrapper {
+        created_at: time::macros::datetime!(2023-01-15 12:34:56 UTC),
+    },
+};
+
+#[cfg(feature = "jiff02")]
+const CASE_JIFF_TIMESTAMP: CaseDescriptor<JiffTimestampWrapper> = CaseDescriptor {
+    id: "third_party::jiff_timestamp",
+    description: "jiff::Timestamp type",
+    expected: || JiffTimestampWrapper {
+        created_at: "2023-12-31T11:30:00Z".parse().unwrap(),
+    },
+};
+
+#[cfg(feature = "jiff02")]
+const CASE_JIFF_CIVIL_DATETIME: CaseDescriptor<JiffCivilDateTimeWrapper> = CaseDescriptor {
+    id: "third_party::jiff_civil_datetime",
+    description: "jiff::civil::DateTime type",
+    expected: || JiffCivilDateTimeWrapper {
+        created_at: "2024-06-19T15:22:45".parse().unwrap(),
+    },
+};
+
+#[cfg(feature = "chrono")]
+const CASE_CHRONO_DATETIME_UTC: CaseDescriptor<ChronoDateTimeUtcWrapper> = CaseDescriptor {
+    id: "third_party::chrono_datetime_utc",
+    description: "chrono::DateTime<Utc> type",
+    expected: || ChronoDateTimeUtcWrapper {
+        created_at: chrono::TimeZone::with_ymd_and_hms(&chrono::Utc, 2023, 1, 15, 12, 34, 56)
+            .unwrap(),
+    },
+};
+
+#[cfg(feature = "chrono")]
+const CASE_CHRONO_NAIVE_DATETIME: CaseDescriptor<ChronoNaiveDateTimeWrapper> = CaseDescriptor {
+    id: "third_party::chrono_naive_datetime",
+    description: "chrono::NaiveDateTime type",
+    expected: || ChronoNaiveDateTimeWrapper {
+        created_at: chrono::NaiveDate::from_ymd_opt(2023, 1, 15)
+            .unwrap()
+            .and_hms_opt(12, 34, 56)
+            .unwrap(),
+    },
+};
+
+#[cfg(feature = "chrono")]
+const CASE_CHRONO_NAIVE_DATE: CaseDescriptor<ChronoNaiveDateWrapper> = CaseDescriptor {
+    id: "third_party::chrono_naive_date",
+    description: "chrono::NaiveDate type",
+    expected: || ChronoNaiveDateWrapper {
+        birth_date: chrono::NaiveDate::from_ymd_opt(2023, 1, 15).unwrap(),
+    },
+};
+
+#[cfg(feature = "chrono")]
+const CASE_CHRONO_NAIVE_TIME: CaseDescriptor<ChronoNaiveTimeWrapper> = CaseDescriptor {
+    id: "third_party::chrono_naive_time",
+    description: "chrono::NaiveTime type",
+    expected: || ChronoNaiveTimeWrapper {
+        alarm_time: chrono::NaiveTime::from_hms_opt(12, 34, 56).unwrap(),
+    },
+};
+
+// ── Third-party type test fixtures ──
+
+/// Fixture for uuid::Uuid test.
+#[cfg(feature = "uuid")]
+#[derive(Facet, Debug, Clone)]
+pub struct UuidWrapper {
+    pub id: uuid::Uuid,
+}
+
+/// Fixture for ulid::Ulid test.
+#[cfg(feature = "ulid")]
+#[derive(Facet, Debug, Clone)]
+pub struct UlidWrapper {
+    pub id: ulid::Ulid,
+}
+
+/// Fixture for camino::Utf8PathBuf test.
+#[cfg(feature = "camino")]
+#[derive(Facet, Debug, Clone)]
+pub struct CaminoWrapper {
+    pub path: camino::Utf8PathBuf,
+}
+
+/// Fixture for ordered_float::OrderedFloat test.
+#[cfg(feature = "ordered-float")]
+#[derive(Facet, Debug, Clone)]
+pub struct OrderedFloatWrapper {
+    pub value: ordered_float::OrderedFloat<f64>,
+}
+
+/// Fixture for time::OffsetDateTime test.
+#[cfg(feature = "time")]
+#[derive(Facet, Debug, Clone)]
+pub struct TimeOffsetDateTimeWrapper {
+    pub created_at: time::OffsetDateTime,
+}
+
+/// Fixture for jiff::Timestamp test.
+#[cfg(feature = "jiff02")]
+#[derive(Facet, Debug, Clone)]
+pub struct JiffTimestampWrapper {
+    pub created_at: jiff::Timestamp,
+}
+
+/// Fixture for jiff::civil::DateTime test.
+#[cfg(feature = "jiff02")]
+#[derive(Facet, Debug, Clone)]
+pub struct JiffCivilDateTimeWrapper {
+    pub created_at: jiff::civil::DateTime,
+}
+
+/// Fixture for `chrono::DateTime<Utc>` test.
+#[cfg(feature = "chrono")]
+#[derive(Facet, Debug, Clone)]
+pub struct ChronoDateTimeUtcWrapper {
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Fixture for chrono::NaiveDateTime test.
+#[cfg(feature = "chrono")]
+#[derive(Facet, Debug, Clone)]
+pub struct ChronoNaiveDateTimeWrapper {
+    pub created_at: chrono::NaiveDateTime,
+}
+
+/// Fixture for chrono::NaiveDate test.
+#[cfg(feature = "chrono")]
+#[derive(Facet, Debug, Clone)]
+pub struct ChronoNaiveDateWrapper {
+    pub birth_date: chrono::NaiveDate,
+}
+
+/// Fixture for chrono::NaiveTime test.
+#[cfg(feature = "chrono")]
+#[derive(Facet, Debug, Clone)]
+pub struct ChronoNaiveTimeWrapper {
+    pub alarm_time: chrono::NaiveTime,
+}
 
 fn emit_case_showcase<S, T>(
     desc: &'static CaseDescriptor<T>,

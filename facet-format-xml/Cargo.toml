@@ -20,8 +20,8 @@ facet-reflect = { path = "../facet-reflect" }
 quick-xml = "0.37"
 
 [dev-dependencies]
-facet = { path = "../facet" }
-facet-format-suite = { path = "../facet-format-suite" }
+facet = { path = "../facet", features = ["uuid", "ulid", "camino", "ordered-float", "time", "jiff02", "chrono", "nonzero"] }
+facet-format-suite = { path = "../facet-format-suite", features = ["third-party"] }
 facet-xml = { path = "../facet-xml" }
 indoc = "2"
 libtest-mimic = "0.8.1"

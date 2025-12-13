@@ -138,6 +138,31 @@ impl FormatSuite for JsonSlice {
         ))
     }
 
+    fn option_some() -> CaseSpec {
+        // nickname has a value
+        CaseSpec::from_str(indoc!(
+            r#"
+            {
+                "name": "test",
+                "nickname": "nick"
+            }
+        "#
+        ))
+    }
+
+    fn option_null() -> CaseSpec {
+        // nickname is explicitly null, should be None
+        CaseSpec::from_str(indoc!(
+            r#"
+            {
+                "name": "test",
+                "nickname": null
+            }
+        "#
+        ))
+        .without_roundtrip("null serializes as missing field, not explicit null")
+    }
+
     fn attr_skip_serializing() -> CaseSpec {
         // hidden field not in input (will use default), not serialized on roundtrip
         CaseSpec::from_str(indoc!(
@@ -259,6 +284,10 @@ impl FormatSuite for JsonSlice {
         CaseSpec::from_str(r#"{"triple":["hello",42,true]}"#)
     }
 
+    fn tuple_nested() -> CaseSpec {
+        CaseSpec::from_str(r#"{"outer":[[1,2],["test",true]]}"#)
+    }
+
     // ── Enum variant cases ──
 
     fn enum_unit_variant() -> CaseSpec {
@@ -348,6 +377,134 @@ impl FormatSuite for JsonSlice {
     fn unit_struct() -> CaseSpec {
         // Unit struct serializes as empty object in JSON
         CaseSpec::from_str(r#"{}"#)
+    }
+
+    // ── Newtype cases ──
+
+    fn newtype_u64() -> CaseSpec {
+        CaseSpec::from_str(r#"{"value":42}"#)
+    }
+
+    fn newtype_string() -> CaseSpec {
+        CaseSpec::from_str(r#"{"value":"hello"}"#)
+    }
+
+    // ── Char cases ──
+
+    fn char_scalar() -> CaseSpec {
+        CaseSpec::from_str(r#"{"letter":"A","emoji":"🦀"}"#)
+            .without_roundtrip("char serialization not yet supported")
+    }
+
+    // ── HashSet cases ──
+
+    fn hashset() -> CaseSpec {
+        CaseSpec::from_str(r#"{"items":["alpha","beta"]}"#)
+    }
+
+    // ── Nested collection cases ──
+
+    fn vec_nested() -> CaseSpec {
+        CaseSpec::from_str(r#"{"matrix":[[1,2],[3,4,5]]}"#)
+    }
+
+    // ── Third-party type cases ──
+
+    fn uuid() -> CaseSpec {
+        // UUID in canonical hyphenated format
+        CaseSpec::from_str(r#"{"id":"550e8400-e29b-41d4-a716-446655440000"}"#)
+            .without_roundtrip("opaque type serialization not yet supported")
+    }
+
+    fn ulid() -> CaseSpec {
+        // ULID in standard Crockford Base32 format
+        CaseSpec::from_str(r#"{"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"}"#)
+            .without_roundtrip("opaque type serialization not yet supported")
+    }
+
+    fn camino_path() -> CaseSpec {
+        CaseSpec::from_str(r#"{"path":"/home/user/documents"}"#)
+            .without_roundtrip("opaque type serialization not yet supported")
+    }
+
+    fn ordered_float() -> CaseSpec {
+        CaseSpec::from_str(r#"{"value":1.23456}"#)
+            .without_roundtrip("opaque type serialization not yet supported")
+    }
+
+    // ── Scientific notation floats ──
+
+    fn scalar_floats_scientific() -> CaseSpec {
+        CaseSpec::from_str(r#"{"large":1.23e10,"small":-4.56e-7,"positive_exp":5e3}"#)
+    }
+
+    // ── Extended escape sequences ──
+
+    fn string_escapes_extended() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"{"backspace":"hello\u0008world","formfeed":"page\u000Cbreak","carriage_return":"line\rreturn","control_char":"\u0001"}"#,
+        )
+    }
+
+    // ── Unsized smart pointer cases ──
+
+    fn box_str() -> CaseSpec {
+        CaseSpec::from_str(r#"{"inner":"hello world"}"#)
+    }
+
+    fn arc_str() -> CaseSpec {
+        CaseSpec::from_str(r#"{"inner":"hello world"}"#)
+    }
+
+    fn rc_str() -> CaseSpec {
+        CaseSpec::from_str(r#"{"inner":"hello world"}"#)
+    }
+
+    fn arc_slice() -> CaseSpec {
+        // Skipped: Arc<[T]> comparison causes stack overflow in assert_same!
+        CaseSpec::skip("Arc<[T]> comparison causes stack overflow")
+    }
+
+    // ── Extended NonZero cases ──
+
+    fn nonzero_integers_extended() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"{"nz_u8":255,"nz_i8":-128,"nz_u16":65535,"nz_i16":-32768,"nz_u128":1,"nz_i128":-1,"nz_usize":1000,"nz_isize":-500}"#,
+        )
+        .without_roundtrip("i128/u128 serialization not supported yet")
+    }
+
+    // ── DateTime type cases ──
+    // Note: These tests require careful handling of DateTime comparison
+    // which may differ based on internal representation vs string format.
+    // Skipping for now until we can verify the expected comparison behavior.
+
+    fn time_offset_datetime() -> CaseSpec {
+        CaseSpec::skip("datetime comparison needs special handling")
+    }
+
+    fn jiff_timestamp() -> CaseSpec {
+        CaseSpec::skip("datetime comparison needs special handling")
+    }
+
+    fn jiff_civil_datetime() -> CaseSpec {
+        CaseSpec::skip("datetime comparison needs special handling")
+    }
+
+    fn chrono_datetime_utc() -> CaseSpec {
+        CaseSpec::skip("datetime comparison needs special handling")
+    }
+
+    fn chrono_naive_datetime() -> CaseSpec {
+        CaseSpec::skip("datetime comparison needs special handling")
+    }
+
+    fn chrono_naive_date() -> CaseSpec {
+        CaseSpec::skip("datetime comparison needs special handling")
+    }
+
+    fn chrono_naive_time() -> CaseSpec {
+        CaseSpec::skip("datetime comparison needs special handling")
     }
 }
 

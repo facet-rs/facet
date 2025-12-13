@@ -11,16 +11,6 @@ use crate::{
     VTableIndirect,
 };
 
-unsafe fn display_uuid(
-    source: OxPtrConst,
-    f: &mut core::fmt::Formatter<'_>,
-) -> Option<core::fmt::Result> {
-    unsafe {
-        let uuid = source.get::<Uuid>();
-        Some(write!(f, "{uuid}"))
-    }
-}
-
 unsafe fn try_from_uuid(
     target: OxPtrMut,
     src_shape: &'static Shape,
@@ -70,10 +60,29 @@ unsafe fn parse_uuid(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>
     }
 }
 
+unsafe fn display_uuid(
+    source: OxPtrConst,
+    f: &mut core::fmt::Formatter<'_>,
+) -> Option<core::fmt::Result> {
+    unsafe {
+        let uuid = source.get::<Uuid>();
+        Some(write!(f, "{uuid}"))
+    }
+}
+
+unsafe fn partial_eq_uuid(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
+    unsafe {
+        let a = a.get::<Uuid>();
+        let b = b.get::<Uuid>();
+        Some(a == b)
+    }
+}
+
 const UUID_VTABLE: VTableIndirect = VTableIndirect {
     display: Some(display_uuid),
     try_from: Some(try_from_uuid),
     parse: Some(parse_uuid),
+    partial_eq: Some(partial_eq_uuid),
     ..VTableIndirect::EMPTY
 };
 
@@ -83,6 +92,7 @@ unsafe impl Facet<'_> for Uuid {
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_indirect(&UUID_VTABLE)
+            .eq()
             .build()
     };
 }

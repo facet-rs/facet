@@ -12,16 +12,6 @@ use crate::{
     VTableIndirect,
 };
 
-unsafe fn display_ulid(
-    source: OxPtrConst,
-    f: &mut core::fmt::Formatter<'_>,
-) -> Option<core::fmt::Result> {
-    unsafe {
-        let ulid = source.get::<Ulid>();
-        Some(write!(f, "{ulid}"))
-    }
-}
-
 unsafe fn try_from_ulid(
     target: OxPtrMut,
     src_shape: &'static Shape,
@@ -71,10 +61,29 @@ unsafe fn parse_ulid(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>
     }
 }
 
+unsafe fn display_ulid(
+    source: OxPtrConst,
+    f: &mut core::fmt::Formatter<'_>,
+) -> Option<core::fmt::Result> {
+    unsafe {
+        let ulid = source.get::<Ulid>();
+        Some(write!(f, "{ulid}"))
+    }
+}
+
+unsafe fn partial_eq_ulid(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
+    unsafe {
+        let a = a.get::<Ulid>();
+        let b = b.get::<Ulid>();
+        Some(a == b)
+    }
+}
+
 const ULID_VTABLE: VTableIndirect = VTableIndirect {
     display: Some(display_ulid),
     try_from: Some(try_from_ulid),
     parse: Some(parse_ulid),
+    partial_eq: Some(partial_eq_ulid),
     ..VTableIndirect::EMPTY
 };
 
@@ -84,7 +93,8 @@ unsafe impl Facet<'_> for Ulid {
             .ty(Type::User(UserType::Opaque))
             .def(Def::Scalar)
             .vtable_indirect(&ULID_VTABLE)
-            .inner(<String as Facet>::SHAPE)
+            .inner(<alloc::string::String as Facet>::SHAPE)
+            .eq()
             .build()
     };
 }
