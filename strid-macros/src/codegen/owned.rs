@@ -1,16 +1,17 @@
 use quote::{ToTokens, quote};
+use unsynn::Ident;
 
 use super::{AttrList, CheckMode, Field, Impls, StdLib, impls::ToImpl};
 
 pub struct OwnedCodeGen<'a> {
     #[allow(dead_code)]
-    pub common_attrs: &'a [syn::Attribute],
+    pub common_attrs: &'a [crate::grammar::Attribute],
     pub attrs: &'a AttrList,
-    pub body: &'a syn::ItemStruct,
-    pub ty: &'a syn::Ident,
+    pub body: &'a crate::grammar::ItemStruct,
+    pub ty: &'a Ident,
     pub field: &'a Field,
     pub check_mode: &'a CheckMode,
-    pub ref_ty: &'a syn::Type,
+    pub ref_ty: &'a crate::grammar::Type,
     pub std_lib: &'a StdLib,
     pub expose_inner: bool,
     pub impls: &'a Impls,
@@ -55,7 +56,7 @@ impl<'a> OwnedCodeGen<'a> {
         }
     }
 
-    fn fallible_constructor(&self, validator: &syn::Type) -> proc_macro2::TokenStream {
+    fn fallible_constructor(&self, validator: &crate::grammar::Type) -> proc_macro2::TokenStream {
         let validator_tokens = validator.to_token_stream();
         let doc_comment = format!(
             "Constructs a new {} if it conforms to [`{}`]",
@@ -114,7 +115,10 @@ impl<'a> OwnedCodeGen<'a> {
         }
     }
 
-    fn normalized_constructor(&self, normalizer: &syn::Type) -> proc_macro2::TokenStream {
+    fn normalized_constructor(
+        &self,
+        normalizer: &crate::grammar::Type,
+    ) -> proc_macro2::TokenStream {
         let normalizer_tokens = normalizer.to_token_stream();
         let doc_comment = format!(
             "Constructs a new {} if it conforms to [`{}`] and normalizes the input",
@@ -412,7 +416,7 @@ impl<'a> OwnedCodeGen<'a> {
         }
     }
 
-    fn fallible_conversion(&self, validator: &syn::Type) -> proc_macro2::TokenStream {
+    fn fallible_conversion(&self, validator: &crate::grammar::Type) -> proc_macro2::TokenStream {
         let ty = self.ty;
         let ref_ty = self.ref_ty;
         let field_name = &self.field.name;
@@ -480,7 +484,7 @@ impl<'a> OwnedCodeGen<'a> {
         }
     }
 
-    fn normalized_conversion(&self, normalizer: &syn::Type) -> proc_macro2::TokenStream {
+    fn normalized_conversion(&self, normalizer: &crate::grammar::Type) -> proc_macro2::TokenStream {
         let ty = self.ty;
         let ref_ty = self.ref_ty;
         let field_name = &self.field.name;
