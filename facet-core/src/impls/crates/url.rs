@@ -1,6 +1,9 @@
 #![cfg(feature = "url")]
 
-use alloc::string::String;
+use alloc::{
+    format,
+    string::{String, ToString},
+};
 
 use url::Url;
 
