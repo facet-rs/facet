@@ -361,6 +361,9 @@ where
                 name: "T",
                 shape: T::SHAPE,
             }])
+            .inner(T::SHAPE)
+            // Vec<T> propagates T's variance
+            .variance(Shape::computed_variance)
             .vtable_indirect(&const {
                 VTableIndirect {
                     debug: Some(vec_debug_erased),

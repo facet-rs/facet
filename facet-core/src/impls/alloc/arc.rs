@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 
 use crate::{
     Def, Facet, KnownPointer, OxPtrConst, OxPtrMut, PointerDef, PointerFlags, PointerVTable,
-    PtrConst, PtrMut, PtrUninit, ShapeBuilder, SliceBuilderVTable, Type, TypeNameOpts,
+    PtrConst, PtrMut, PtrUninit, Shape, ShapeBuilder, SliceBuilderVTable, Type, TypeNameOpts,
     TypeOpsIndirect, UserType, VTableIndirect,
 };
 
@@ -212,6 +212,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Arc<T> {
                 name: "T",
                 shape: T::SHAPE,
             }])
+            .inner(T::SHAPE)
+            // Arc<T> propagates T's variance
+            .variance(Shape::computed_variance)
             .build()
     };
 }
@@ -404,6 +407,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
                 name: "T",
                 shape: T::SHAPE,
             }])
+            .inner(T::SHAPE)
+            // Weak<T> propagates T's variance
+            .variance(Shape::computed_variance)
             .build()
     };
 }

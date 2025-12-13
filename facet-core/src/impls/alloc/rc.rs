@@ -99,6 +99,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Rc<T> {
                 name: "T",
                 shape: T::SHAPE,
             }])
+            .inner(T::SHAPE)
+            // Rc<T> propagates T's variance
+            .variance(Shape::computed_variance)
             .vtable_indirect(
                 &const {
                     VTableIndirect {
@@ -482,6 +485,9 @@ unsafe impl<'a, T: Facet<'a>> Facet<'a> for Weak<T> {
                 name: "T",
                 shape: T::SHAPE,
             }])
+            .inner(T::SHAPE)
+            // Weak<T> propagates T's variance
+            .variance(Shape::computed_variance)
             .vtable_indirect(
                 &const {
                     VTableIndirect {
