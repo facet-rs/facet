@@ -25,7 +25,7 @@ impl FormatSuite for XmlSlice {
         T: Facet<'static> + core::fmt::Debug,
     {
         let parser = XmlParser::new(input);
-        let mut de = FormatDeserializer::new(parser);
+        let mut de = FormatDeserializer::new_owned(parser);
         de.deserialize_root::<T>()
     }
 
