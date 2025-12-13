@@ -30,34 +30,13 @@ cranelift = ["std", "dep:cranelift", "dep:cranelift-jit", "dep:cranelift-module"
 ci = ["cranelift"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.32.2", default-features = false }
-facet-core = { path = "../facet-core", version = "0.32.2", default-features = false }
-facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false }
-facet-solver = { path = "../facet-solver", version = "0.32.2" }
-
-miette = { version = "7", default-features = false }
-strsim = "0.11"
-itoa = "1.0.15"
-lexical-parse-float = "1.0.5"
-lexical-parse-integer = "1.0.5"
-log = "0.4.27"
-ryu = "1"
-
-# Profiling binary (optional)
-brotli = { version = "7", optional = true }
 
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }
+
+# Profiling binary (optional)
+brotli = { version = "7", optional = true }
 bytes = { version = "1", default-features = false, optional = true }
-http = { version = "1", default-features = false, optional = true }
-http-body-util = { version = "0.1", default-features = false, optional = true }
-mime = { version = "0.3", default-features = false, optional = true }
-
-# Tokio integration (optional)
-tokio = { version = "1", default-features = false, optional = true, features = ["io-util"] }
-
-# Futures-io integration (optional) - for smol, async-std, etc.
-futures-io = { version = "0.3", optional = true }
 
 # Stackful coroutines for streaming deserialization
 corosensei = { version = "0.3", optional = true }
@@ -67,39 +46,48 @@ cranelift = { version = "0.126", optional = true }
 cranelift-jit = { version = "0.126", optional = true }
 cranelift-module = { version = "0.126", optional = true }
 cranelift-native = { version = "0.126", optional = true }
-parking_lot = { version = "0.12", optional = true }
+facet = { path = "../facet", version = "0.32.2", default-features = false }
+facet-core = { path = "../facet-core", version = "0.32.2", default-features = false, features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false, features = ["miette"] }
+facet-solver = { path = "../facet-solver", version = "0.32.2" }
+
+# Futures-io integration (optional) - for smol, async-std, etc.
+futures-io = { version = "0.3", optional = true }
+http = { workspace = true, optional = true } #unified
+http-body-util = { version = "0.1", default-features = false, optional = true }
+itoa = "1.0.15"
+lexical-parse-float = "1.0.5"
+lexical-parse-integer = "1.0.5"
+log = { workspace = true } #unified
 memchr = { version = "2.7", optional = true }
+miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] } #unified
+mime = { version = "0.3", default-features = false, optional = true }
+parking_lot = { version = "0.12", optional = true }
+ryu = "1"
+strsim = { workspace = true } #unified
+
+# Tokio integration (optional)
+tokio = { version = "1", default-features = false, optional = true, features = ["io-util"] }
 
 [dev-dependencies]
-bolero = "0.13"
-bytes = { version = "1.10.1", default-features = false }
-camino = { version = "1", default-features = false }
-facet-value = { path = "../facet-value" }
-facet = { path = "../facet", features = [
-    "bytes",
-    "camino",
-    "time",
-    "chrono",
-    "ulid",
-    "uuid",
-    "jiff02",
-    "ordered-float",
-    "net",
-    "nonzero",
-] }
+bolero = { workspace = true } #unified
+bytes = { workspace = true } #unified
+camino = { workspace = true } #unified
+chrono = { workspace = true, features = ["clock"] } #unified
+divan = { workspace = true } #unified
+facet = { workspace = true, features = ["doc"] } #unified
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
-insta = "1.43.1"
-time = { version = "0.3.41", default-features = false, features = ["macros"] }
-chrono = { version = "0.4", default-features = false }
-ulid = { version = "1.2.1", default-features = false }
-uuid = { version = "1.17.0", default-features = false }
-jiff = "0.2.15"
+facet-value = { path = "../facet-value" }
+insta = { workspace = true } #unified
+jiff = { workspace = true } #unified
 ordered-float = "5.0.0"
-tokio = { version = "1", default-features = false, features = ["io-util", "rt", "macros"] }
-divan = "0.1"
-serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
-serde_json = { version = "1", default-features = false, features = ["alloc"] }
+serde = { workspace = true, features = ["rc"] } #unified
+serde_json = { workspace = true } #unified
+time = { workspace = true, features = ["formatting", "parsing"] } #unified
+tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] } #unified
+ulid = { workspace = true } #unified
+uuid = { workspace = true } #unified
 
 [[bench]]
 name = "vs_serde"

@@ -13,6 +13,6 @@ categories = ["development-tools"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-unsynn = "0.3.0"
 proc-macro2 = "1"
-quote = "1"
+quote = { workspace = true } #unified
+unsynn = { workspace = true } #unified

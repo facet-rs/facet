@@ -13,7 +13,6 @@ categories = ["web-programming", "encoding"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-ci = [] # CI feature
 default = ["json", "form"]
 json = ["facet-json/axum"]
 form = ["facet-urlencoded/axum"]
@@ -27,16 +26,16 @@ all = ["json", "form", "yaml", "toml", "xml", "kdl", "msgpack", "postcard"]
 
 [dependencies]
 facet-json = { path = "../facet-json", version = "0.32.2", optional = true }
-facet-urlencoded = { path = "../facet-urlencoded", version = "0.32.2", optional = true }
-facet-yaml = { path = "../facet-yaml", version = "0.32.2", optional = true }
-facet-toml = { path = "../facet-toml", version = "0.32.2", optional = true }
-facet-xml = { path = "../facet-xml", version = "0.32.2", optional = true }
 facet-kdl = { path = "../facet-kdl", version = "0.32.2", optional = true }
 facet-msgpack = { path = "../facet-msgpack", version = "0.32.2", optional = true }
 facet-postcard = { path = "../facet-postcard", version = "0.32.2", optional = true }
+facet-toml = { path = "../facet-toml", version = "0.32.2", optional = true }
+facet-urlencoded = { path = "../facet-urlencoded", version = "0.32.2", optional = true }
+facet-xml = { path = "../facet-xml", version = "0.32.2", optional = true }
+facet-yaml = { path = "../facet-yaml", version = "0.32.2", optional = true }
 
 [dev-dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
-facet = { path = "../facet" }
-tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread"] }
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+tokio = { workspace = true, features = ["io-util", "rt", "rt-multi-thread"] } #unified
 tower = { version = "0.5", default-features = false, features = ["util"] }

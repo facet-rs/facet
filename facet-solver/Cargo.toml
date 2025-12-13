@@ -13,25 +13,24 @@ categories = ["development-tools", "rust-patterns"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-ci = [] # CI feature
 default = ["std", "suggestions"]
 std = ["alloc"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 suggestions = ["strsim", "alloc"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.32.2", default-features = false }
-facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false }
-strsim = { version = "0.11", optional = true }
+facet-core = { path = "../facet-core", version = "0.32.2", default-features = false, features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false, features = ["miette"] }
+strsim = { workspace = true, optional = true } #unified
 
 [dev-dependencies]
-facet = { path = "../facet" }
+divan = { workspace = true } #unified
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
 json-event-parser = "0.2"
-tracing = { version = "0.1", default-features = false }
-tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "ansi"] }
-miette = { version = "7", default-features = false, features = ["fancy-no-backtrace", "derive"] }
+miette = { workspace = true } #unified
 thiserror = "2"
-divan = "0.1"
+tracing = { workspace = true } #unified
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt", "ansi"] }
 
 [[bench]]
 name = "solver"

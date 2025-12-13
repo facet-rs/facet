@@ -22,25 +22,23 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-ci = [] # CI feature
 default = []
-serialize = []
 axum = ["dep:axum-core", "dep:http", "dep:http-body-util"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.32.2" }
-facet-reflect = { path = "../facet-reflect", version = "0.32.2" }
-log = "0.4.27"
 
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }
-http = { version = "1", default-features = false, optional = true }
+facet-core = { path = "../facet-core", version = "0.32.2", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-reflect = { path = "../facet-reflect", version = "0.32.2", features = ["miette"] }
+http = { workspace = true, optional = true } #unified
 http-body-util = { version = "0.1", default-features = false, optional = true }
+log = { workspace = true } #unified
 
 [dev-dependencies]
-facet = { path = "../facet" }
+eyre = { workspace = true } #unified
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
 facet-testhelpers = { path = "../facet-testhelpers" }
-eyre = "0.6.12"
-insta = "1.43.1"
+insta = { workspace = true } #unified
 rmp-serde = "1.3"
-serde = { version = "1.0", default-features = false, features = ["derive", "alloc"] }
+serde = { workspace = true, features = ["rc"] } #unified

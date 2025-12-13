@@ -8,14 +8,13 @@ publish = false
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet = { path = "../facet", optional = true }
-facet-macros = { path = "../facet-macros", optional = true }
-facet-json = { path = "../facet-json", optional = true }
-serde = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
-serde_json = { version = "1", default-features = false, features = ["alloc"], optional = true }
+facet = { workspace = true, optional = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+facet-json = { path = "../facet-json", optional = true, features = ["axum"] }
+facet-macros = { path = "../facet-macros", optional = true, features = ["doc", "function", "helpful-derive"] }
+serde = { workspace = true, optional = true, features = ["rc"] } #unified
+serde_json = { workspace = true, optional = true } #unified
 
 [features]
-ci = [] # CI feature
 default = []
 facet = ["dep:facet", "dep:facet-macros", "dep:facet-json"]
 serde = ["dep:serde", "dep:serde_json"]

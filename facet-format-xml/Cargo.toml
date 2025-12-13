@@ -12,18 +12,18 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet-core = { path = "../facet-core" }
+facet-core = { path = "../facet-core", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
 facet-format = { path = "../facet-format" }
-facet-reflect = { path = "../facet-reflect" }
+facet-reflect = { path = "../facet-reflect", features = ["miette"] }
 
 # XML parsing - using quick-xml which is the most mature Rust XML parser
 quick-xml = "0.37"
 
 [dev-dependencies]
-facet = { path = "../facet", features = ["uuid", "ulid", "camino", "ordered-float", "time", "jiff02", "chrono", "nonzero", "bytes"] }
+facet = { workspace = true, features = ["doc", "net"] } #unified
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party"] }
-facet-xml = { path = "../facet-xml" }
-indoc = "2"
+facet-xml = { path = "../facet-xml", features = ["axum"] }
+indoc = { workspace = true } #unified
 libtest-mimic = "0.8.1"
 
 [[test]]
@@ -31,4 +31,3 @@ name = "format_suite"
 harness = false
 
 [features]
-ci = []

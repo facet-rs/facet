@@ -13,7 +13,6 @@ categories = ["encoding", "data-structures"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-ci = [] # CI feature
 default = ["std"]
 std = ["alloc", "dep:indexmap"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc", "dep:facet-reflect"]
@@ -21,28 +20,28 @@ diagnostics = ["alloc", "dep:miette", "dep:facet-pretty", "dep:arborium"]
 bolero-inline-tests = ["alloc"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.32.2", default-features = false }
+arborium = { workspace = true, features = ["lang-kdl", "lang-rust", "lang-xml", "lang-yaml"], optional = true } #unified
+facet-core = { path = "../facet-core", version = "0.32.2", default-features = false, features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
 facet-pretty = { path = "../facet-pretty", version = "0.32.2", optional = true }
 facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false, optional = true }
-miette = { version = "7", optional = true, default-features = false }
-arborium = { version = "1.1.5", optional = true, default-features = false, features = ["lang-json", "lang-rust"] }
 indexmap = { version = "2", optional = true }
-static_assertions = "1.1"
+miette = { version = "7", optional = true, default-features = false }
+static_assertions = { workspace = true } #unified
 
 [dev-dependencies]
+bolero = { workspace = true } #unified
+divan = { workspace = true } #unified
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
 facet-assert = { path = "../facet-assert" }
 facet-diff = { path = "../facet-diff" }
 facet-pretty = { path = "../facet-pretty" }
-facet-reflect = { path = "../facet-reflect" }
+facet-reflect = { path = "../facet-reflect", features = ["miette"] }
 facet-showcase = { path = "../facet-showcase" }
-facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
-miette = { version = "7", default-features = false }
-bolero = "0.13"
-serde_json = "1"
-divan = "0.1"
+indexmap = { workspace = true } #unified
 kstring = "2"
-indexmap = "2"
+miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] } #unified
+serde_json = { workspace = true } #unified
 
 [[example]]
 name = "from_value_showcase"

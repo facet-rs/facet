@@ -13,20 +13,14 @@ categories = ["development-tools"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-# Syntax highlighting (tree-sitter based)
-arborium = { version = "1.1.5", default-features = false, features = ["lang-json", "lang-yaml", "lang-xml", "lang-kdl", "lang-rust"] }
+arborium = { workspace = true, features = ["lang-kdl", "lang-rust", "lang-xml", "lang-yaml"] } #unified
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+facet-pretty = { version = "0.32", path = "../facet-pretty" }
+miette = { workspace = true, features = ["derive"] } #unified
 miette-arborium = "1.1.5"
 
 # Terminal colors
 owo-colors = "4"
 
-# Error diagnostics
-miette = { version = "7", default-features = false, features = ["fancy-no-backtrace"] }
-
-# Facet integration
-facet = { version = "0.32", path = "../facet" }
-facet-pretty = { version = "0.32", path = "../facet-pretty" }
-
 [features]
-ci = [] # CI feature
 default = []

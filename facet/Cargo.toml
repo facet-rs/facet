@@ -17,12 +17,10 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-ci = [] # CI feature
 default = ["std", "helpful-derive"]
 auto-traits = ["facet-core/auto-traits"]
 function = ["facet-macros/function"] # Enable function shape introspection
 reflect = ["dep:facet-reflect"] # Enable reflection via Peek and Poke types
-testfeat = [] # Does nothing, only used for tests
 std = ["facet-core/std", "alloc"] # Enable standard library support
 alloc = ["facet-core/alloc"] # Enable allocation support for no_std environments
 nonzero = ["facet-core/nonzero"] # Provide Facet trait implementations for NonZero<T> types
@@ -75,17 +73,20 @@ doc = ["facet-macros/doc"]
 # Enable typo suggestions for unknown attributes/fields (uses strsim)
 helpful-derive = ["facet-macros/helpful-derive"]
 
+# Does nothing outside of tests; used to ensure cfg_attr handling keeps working.
+testfeat = []
+
 [build-dependencies]
-autocfg = "1.3"
+autocfg = { workspace = true } #unified
 
 [dependencies]
 facet-core = { path = "../facet-core", version = "=0.32.2", default-features = false }
 facet-macros = { path = "../facet-macros", version = "0.32.2", default-features = false }
 facet-reflect = { path = "../facet-reflect", version = "0.32.2", optional = true }
-static_assertions = "1.1.0"
+static_assertions = { workspace = true } #unified
 
 [dev-dependencies]
-facet-reflect = { path = "../facet-reflect" }
+facet-reflect = { path = "../facet-reflect", features = ["miette"] }
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 num-complex = "0.4.6"

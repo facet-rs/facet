@@ -19,19 +19,18 @@ categories = ["development-tools", "visualization", "command-line-utilities"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-ci = [] # CI feature
 alloc = ["facet-core/alloc", "facet-reflect/alloc"] # Enables alloc support
 camino = ["alloc", "facet-core/camino"]
 
 [dependencies]
-facet-core = { path = "../facet-core", version = "0.32.2" }
-facet-reflect = { path = "../facet-reflect", version = "0.32.2" }
+facet-core = { path = "../facet-core", version = "0.32.2", features = ["auto-traits", "bytes", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-reflect = { path = "../facet-reflect", version = "0.32.2", features = ["miette"] }
 owo-colors = "4"
 
 [dev-dependencies]
-camino = "1.1.10"
-facet = { path = "../facet", features = ["doc"] }
+camino = { workspace = true } #unified
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
-insta = "1.43.1"
-miette = { version = "7", default-features = false }
+insta = { workspace = true } #unified
+miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] } #unified

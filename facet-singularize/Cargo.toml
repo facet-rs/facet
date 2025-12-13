@@ -13,7 +13,6 @@ categories = ["text-processing"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-ci = [] # CI feature
 default = ["std"]
 std = ["alloc"]
 alloc = []

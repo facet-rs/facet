@@ -13,8 +13,8 @@ categories = ["encoding", "parsing"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-facet = { path = "../facet", version = "0.32.2", default-features = false }
-facet-xml = { path = "../facet-xml", version = "0.32.2" }
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+facet-xml = { path = "../facet-xml", version = "0.32.2", features = ["axum"] }
 lightningcss = { version = "1.0.0-alpha.68", default-features = false }
 
 [dev-dependencies]

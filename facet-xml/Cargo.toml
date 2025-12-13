@@ -16,7 +16,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-ci = [] # CI feature
 std = ["alloc", "facet-core/std", "facet-reflect/std"]
 alloc = ["facet-core/alloc", "facet-reflect/alloc"]
 default = ["std"]
@@ -24,30 +23,30 @@ axum = ["std", "dep:axum-core", "dep:http", "dep:http-body-util"]
 diff = ["dep:facet-diff-core", "dep:owo-colors"]
 
 [dependencies]
-quick-xml = "0.38"
-facet = { path = "../facet", version = "0.32.2", default-features = false }
-facet-core = { path = "../facet-core", version = "0.32.2", default-features = false }
-facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false, features = ["miette"] }
-facet-solver = { path = "../facet-solver", version = "0.32.2" }
-miette = { version = "7", default-features = false }
-log = "0.4"
-base64 = "0.22"
 
 # Axum integration (optional)
 axum-core = { version = "0.5", default-features = false, optional = true }
-http = { version = "1", default-features = false, optional = true }
-http-body-util = { version = "0.1", default-features = false, optional = true }
+base64 = "0.22"
+facet = { path = "../facet", version = "0.32.2", default-features = false }
+facet-core = { path = "../facet-core", version = "0.32.2", default-features = false }
 
 # Diff rendering (optional)
 facet-diff-core = { path = "../facet-diff-core", version = "0.32.2", optional = true }
+facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false, features = ["miette"] }
+facet-solver = { path = "../facet-solver", version = "0.32.2" }
+http = { workspace = true, optional = true } #unified
+http-body-util = { version = "0.1", default-features = false, optional = true }
+log = { workspace = true } #unified
+miette = { version = "7", default-features = false }
 owo-colors = { version = "4", optional = true }
+quick-xml = "0.38"
 
 [dev-dependencies]
-facet = { path = "../facet" }
-facet-core = { path = "../facet-core" }
-facet-testhelpers = { path = "../facet-testhelpers" }
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+facet-core = { path = "../facet-core", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
 facet-showcase = { path = "../facet-showcase" }
-miette = { version = "7", default-features = false }
+facet-testhelpers = { path = "../facet-testhelpers" }
+miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] } #unified
 
 [[example]]
 name = "xml_showcase"

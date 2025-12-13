@@ -18,21 +18,20 @@ ignored = ["facet-pretty"]
 
 [dependencies]
 facet = { path = "../facet", version = "0.32.2" }
-facet-reflect = { path = "../facet-reflect", version = "0.32.2" }
-facet-core = { path = "../facet-core", version = "0.32.2" }
-tracing = { version = "0.1", default-features = false }
+facet-core = { path = "../facet-core", version = "0.32.2", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-reflect = { path = "../facet-reflect", version = "0.32.2", features = ["miette"] }
 heck = "0.5.0"
 miette = { version = "7.6.0", default-features = false }
+tracing = { workspace = true } #unified
 
 [dev-dependencies]
-facet = { path = "../facet", features = ["net", "nonzero", "doc"] }
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "jiff02", "ordered-float", "time", "ulid", "uuid"] } #unified
 facet-pretty = { path = "../facet-pretty" }
 facet-showcase = { path = "../facet-showcase" }
-insta = "1.44.1"
-miette = { version = "7.6.0", default-features = false }
+insta = { workspace = true } #unified
+miette = { workspace = true, features = ["derive", "fancy-no-backtrace"] } #unified
 
 [features]
-ci = [] # CI feature
 default = ["rich-diagnostics"]
 rich-diagnostics = []
 # Include doc comments in help generation (enables facet/doc)

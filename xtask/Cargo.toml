@@ -9,10 +9,9 @@ publish = false
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-ci = [] # CI feature
 
 [dependencies]
-facet = { path = "../facet" }
-facet-json = { path = "../facet-json" }
-ratatui = { version = "0.30.0-beta.0", default-features = false, features = ["crossterm"] }
 crossterm = { version = "0.29", default-features = false }
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+facet-json = { path = "../facet-json", features = ["axum"] }
+ratatui = { version = "0.30.0-beta.0", default-features = false, features = ["crossterm"] }

@@ -13,18 +13,17 @@ categories = ["encoding", "data-structures"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
-ci = [] # CI feature
 
 [dependencies]
-facet = { path = "../facet", version = "0.32.2", features = ["alloc"] }
-facet-core = { path = "../facet-core", version = "0.32.2", features = ["alloc"] }
-facet-postcard = { path = "../facet-postcard", version = "0.32.2" }
-facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false }
+facet = { workspace = true, features = ["bytes", "camino", "chrono", "doc", "jiff02", "net", "nonzero", "ordered-float", "time", "ulid", "uuid"] } #unified
+facet-core = { path = "../facet-core", version = "0.32.2", features = ["alloc", "auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
+facet-postcard = { path = "../facet-postcard", version = "0.32.2", features = ["axum"] }
+facet-reflect = { path = "../facet-reflect", version = "0.32.2", default-features = false, features = ["miette"] }
 
 [dev-dependencies]
-facet-json = { path = "../facet-json", version = "0.32.2" }
-facet-kdl = { path = "../facet-kdl", version = "0.32.2" }
-facet-assert = { path = "../facet-assert", version = "0.32.2" }
-facet-xml = { path = "../facet-xml", version = "0.32.2" }
 facet-args = { path = "../facet-args", version = "0.32.2" }
+facet-assert = { path = "../facet-assert", version = "0.32.2" }
+facet-json = { path = "../facet-json", version = "0.32.2", features = ["axum"] }
+facet-kdl = { path = "../facet-kdl", version = "0.32.2", features = ["axum"] }
 facet-testhelpers = { path = "../facet-testhelpers" }
+facet-xml = { path = "../facet-xml", version = "0.32.2", features = ["axum"] }
