@@ -243,12 +243,42 @@ impl FormatSuite for JsonSlice {
         CaseSpec::expect_error(r#"{"foo":"abc","bar":42,"baz":true}"#, "unknown field")
     }
 
+    fn error_type_mismatch_string_to_int() -> CaseSpec {
+        // String provided where integer expected
+        CaseSpec::expect_error(r#"{"value":"not_a_number"}"#, "Failed to parse")
+    }
+
+    fn error_type_mismatch_object_to_array() -> CaseSpec {
+        // Object provided where array expected
+        CaseSpec::expect_error(r#"{"items":{"wrong":"structure"}}"#, "opaque type")
+    }
+
+    fn error_missing_required_field() -> CaseSpec {
+        // Missing required field "email"
+        CaseSpec::expect_error(r#"{"name":"Alice","age":30}"#, "missing field")
+    }
+
     // ── Alias cases ──
 
     fn attr_alias() -> CaseSpec {
         // Input uses the alias "old_name" which should map to field "new_name"
         CaseSpec::from_str(r#"{"old_name":"value","count":5}"#)
             .without_roundtrip("alias is only for deserialization, serializes as new_name")
+    }
+
+    // ── Attribute precedence cases ──
+
+    fn attr_rename_vs_alias_precedence() -> CaseSpec {
+        // When both rename and alias are present, rename takes precedence for serialization
+        CaseSpec::from_str(r#"{"officialName":"test","id":1}"#)
+    }
+
+    fn attr_rename_all_kebab() -> CaseSpec {
+        CaseSpec::from_str(r#"{"first-name":"John","last-name":"Doe","user-id":42}"#)
+    }
+
+    fn attr_rename_all_screaming() -> CaseSpec {
+        CaseSpec::from_str(r#"{"API_KEY":"secret-123","MAX_RETRY_COUNT":5}"#)
     }
 
     // ── Proxy cases ──
