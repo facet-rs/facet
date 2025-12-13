@@ -424,7 +424,16 @@ impl Shape {
                     Def::Slice(slice_def) => slice_def.t().computed_variance_impl(depth + 1),
                     // NdArray<T> - covariant in T
                     Def::NdArray(ndarray_def) => ndarray_def.t().computed_variance_impl(depth + 1),
-                    // Other types (Scalar, Undefined, Pointer, Option) - use declared variance
+                    // Pointer types (Box<T>, Arc<T>, etc.) - propagate pointee variance if available
+                    Def::Pointer(pointer_def) => {
+                        if let Some(pointee) = pointer_def.pointee {
+                            pointee.computed_variance_impl(depth + 1)
+                        } else {
+                            // Opaque pointer with no pointee info - use declared variance
+                            (self.variance)(self)
+                        }
+                    }
+                    // Other types (Scalar, Undefined, Option) - use declared variance
                     _ => (self.variance)(self),
                 }
             }
