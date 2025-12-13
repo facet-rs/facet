@@ -117,6 +117,8 @@ pub trait FormatSuite {
     fn proxy_field_level() -> CaseSpec;
     /// Case: proxy conversion error handling (validation failure).
     fn proxy_validation_error() -> CaseSpec;
+    /// Case: proxy wrapping `Option<T>`.
+    fn proxy_with_option() -> CaseSpec;
 
     // ── Scalar tests ──
 
@@ -141,6 +143,10 @@ pub trait FormatSuite {
     fn tuple_empty() -> CaseSpec;
     /// Case: single-element tuple `(T,)` as a field.
     fn tuple_single_element() -> CaseSpec;
+    /// Case: enum with tuple variant `Variant(T, U)`.
+    fn tuple_struct_variant() -> CaseSpec;
+    /// Case: enum with newtype variant `Variant(T)`.
+    fn tuple_newtype_variant() -> CaseSpec;
 
     // ── Enum variant tests ──
 
@@ -355,6 +361,7 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, ProxyInt>(&CASE_PROXY_CONTAINER, S::proxy_container),
         SuiteCase::new::<S, ProxyFieldLevel>(&CASE_PROXY_FIELD_LEVEL, S::proxy_field_level),
         SuiteCase::new::<S, ProxyInt>(&CASE_PROXY_VALIDATION_ERROR, S::proxy_validation_error),
+        SuiteCase::new::<S, ProxyWithOption>(&CASE_PROXY_WITH_OPTION, S::proxy_with_option),
         // Scalar cases
         SuiteCase::new::<S, BoolWrapper>(&CASE_SCALAR_BOOL, S::scalar_bool),
         SuiteCase::new::<S, IntegerTypes>(&CASE_SCALAR_INTEGERS, S::scalar_integers),
@@ -371,6 +378,11 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, SingleElementTupleWrapper>(
             &CASE_TUPLE_SINGLE_ELEMENT,
             S::tuple_single_element,
+        ),
+        SuiteCase::new::<S, TupleVariantEnum>(&CASE_TUPLE_STRUCT_VARIANT, S::tuple_struct_variant),
+        SuiteCase::new::<S, NewtypeVariantEnum>(
+            &CASE_TUPLE_NEWTYPE_VARIANT,
+            S::tuple_newtype_variant,
         ),
         // Enum variant cases
         SuiteCase::new::<S, UnitVariantEnum>(&CASE_ENUM_UNIT_VARIANT, S::enum_unit_variant),
@@ -919,6 +931,15 @@ const CASE_PROXY_VALIDATION_ERROR: CaseDescriptor<ProxyInt> = CaseDescriptor {
     expected: || ProxyInt { value: 0 }, // Not used for error cases
 };
 
+const CASE_PROXY_WITH_OPTION: CaseDescriptor<ProxyWithOption> = CaseDescriptor {
+    id: "proxy::with_option",
+    description: "proxy wrapping Option<T>",
+    expected: || ProxyWithOption {
+        name: "test".into(),
+        count: Some(42),
+    },
+};
+
 // ── Scalar case descriptors ──
 
 const CASE_SCALAR_BOOL: CaseDescriptor<BoolWrapper> = CaseDescriptor {
@@ -1007,6 +1028,18 @@ const CASE_TUPLE_SINGLE_ELEMENT: CaseDescriptor<SingleElementTupleWrapper> = Cas
         name: "test".into(),
         single: (42,),
     },
+};
+
+const CASE_TUPLE_STRUCT_VARIANT: CaseDescriptor<TupleVariantEnum> = CaseDescriptor {
+    id: "collection::tuple_struct_variant",
+    description: "enum with tuple variant Variant(T, U)",
+    expected: || TupleVariantEnum::Pair("test".into(), 42),
+};
+
+const CASE_TUPLE_NEWTYPE_VARIANT: CaseDescriptor<NewtypeVariantEnum> = CaseDescriptor {
+    id: "collection::tuple_newtype_variant",
+    description: "enum with newtype variant Variant(T)",
+    expected: || NewtypeVariantEnum::Some(99),
 };
 
 // ── Enum variant case descriptors ──
@@ -1481,6 +1514,36 @@ impl From<&i32> for IntAsString {
     }
 }
 
+/// Struct with proxy wrapping `Option<T>`.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct ProxyWithOption {
+    pub name: String,
+    #[facet(proxy = IntAsString)]
+    pub count: Option<i32>,
+}
+
+/// Convert from proxy for `Option<i32>`.
+impl TryFrom<IntAsString> for Option<i32> {
+    type Error = std::num::ParseIntError;
+    fn try_from(proxy: IntAsString) -> Result<Self, Self::Error> {
+        if proxy.0.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(proxy.0.parse()?))
+        }
+    }
+}
+
+/// Convert to proxy for `Option<i32>`.
+impl From<&Option<i32>> for IntAsString {
+    fn from(value: &Option<i32>) -> Self {
+        match value {
+            Some(v) => IntAsString(v.to_string()),
+            None => IntAsString(String::new()),
+        }
+    }
+}
+
 // ── Scalar test fixtures ──
 
 /// Fixture for boolean scalar test.
@@ -1568,6 +1631,23 @@ pub enum UnitVariantEnum {
 pub enum UntaggedEnum {
     Point { x: i32, y: i32 },
     Value(i64),
+}
+
+/// Enum with tuple variant (multiple fields).
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[repr(u8)]
+pub enum TupleVariantEnum {
+    Empty,
+    Pair(String, i32),
+    Triple(bool, f64, String),
+}
+
+/// Enum with newtype variant (single field).
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[repr(u8)]
+pub enum NewtypeVariantEnum {
+    None,
+    Some(i32),
 }
 
 // ── Smart pointer test fixtures ──

@@ -268,6 +268,10 @@ impl FormatSuite for JsonSlice {
         CaseSpec::expect_error(r#""not_a_number""#, "invalid digit")
     }
 
+    fn proxy_with_option() -> CaseSpec {
+        CaseSpec::from_str(r#"{"name":"test","count":"42"}"#)
+    }
+
     // ── Scalar cases ──
 
     fn scalar_bool() -> CaseSpec {
@@ -305,6 +309,14 @@ impl FormatSuite for JsonSlice {
 
     fn tuple_single_element() -> CaseSpec {
         CaseSpec::from_str(r#"{"name":"test","single":[42]}"#)
+    }
+
+    fn tuple_struct_variant() -> CaseSpec {
+        CaseSpec::from_str(r#"{"Pair":["test",42]}"#)
+    }
+
+    fn tuple_newtype_variant() -> CaseSpec {
+        CaseSpec::from_str(r#"{"Some":99}"#)
     }
 
     // ── Enum variant cases ──

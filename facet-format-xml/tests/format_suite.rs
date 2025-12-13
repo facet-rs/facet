@@ -275,6 +275,10 @@ impl FormatSuite for XmlSlice {
         CaseSpec::expect_error(r#"<value>not_a_number</value>"#, "invalid digit")
     }
 
+    fn proxy_with_option() -> CaseSpec {
+        CaseSpec::from_str(r#"<record><name>test</name><count>42</count></record>"#)
+    }
+
     // ── Scalar cases ──
 
     fn scalar_bool() -> CaseSpec {
@@ -317,6 +321,14 @@ impl FormatSuite for XmlSlice {
     fn tuple_single_element() -> CaseSpec {
         // TODO: single-element tuple deserialization not yet implemented in XML
         CaseSpec::skip("single-element tuple deserialization not yet supported in XML")
+    }
+
+    fn tuple_struct_variant() -> CaseSpec {
+        CaseSpec::from_str(r#"<value><Pair><item>test</item><item>42</item></Pair></value>"#)
+    }
+
+    fn tuple_newtype_variant() -> CaseSpec {
+        CaseSpec::from_str(r#"<value><Some>99</Some></value>"#)
     }
 
     // ── Enum variant cases ──
