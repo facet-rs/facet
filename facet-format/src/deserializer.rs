@@ -8,7 +8,7 @@ use core::fmt;
 use facet_core::{Def, Facet, StructKind, Type, UserType};
 use facet_reflect::{HeapValue, Partial, ReflectError};
 
-use crate::{FormatParser, ParseEvent, ScalarValue};
+use crate::{FieldLocationHint, FormatParser, ParseEvent, ScalarValue};
 
 /// Generic deserializer that drives a format-specific parser directly into `Partial`.
 ///
@@ -252,6 +252,48 @@ where
         Ok(wip)
     }
 
+    /// Check if a field matches the given name and namespace constraints.
+    ///
+    /// This implements namespace-aware field matching for XML:
+    /// - Attributes: Only match if explicit xml::ns matches (no ns_all inheritance per XML spec)
+    /// - Elements: Match if explicit xml::ns OR ns_all matches
+    /// - No constraint: Backwards compatible - match any namespace by name only
+    fn field_matches_with_namespace(
+        field: &facet_core::Field,
+        name: &str,
+        namespace: Option<&str>,
+        location: FieldLocationHint,
+        ns_all: Option<&str>,
+    ) -> bool {
+        // Check name/alias
+        let name_matches = field.name == name || field.alias.iter().any(|alias| *alias == name);
+
+        if !name_matches {
+            return false;
+        }
+
+        // Check namespace if present
+        if let Some(field_ns) = namespace {
+            let field_xml_ns = field
+                .get_attr(Some("xml"), "ns")
+                .and_then(|attr| attr.get_as::<&str>().copied());
+
+            // CRITICAL: Attributes don't inherit ns_all (per XML spec)
+            let expected_ns = if matches!(location, FieldLocationHint::Attribute) {
+                field_xml_ns // Attributes: only explicit xml::ns
+            } else {
+                field_xml_ns.or(ns_all) // Elements: xml::ns OR ns_all
+            };
+
+            match expected_ns {
+                None => true, // No constraint - backwards compatible
+                Some(ns) => field_ns == ns,
+            }
+        } else {
+            true // No namespace in input - backwards compatible
+        }
+    }
+
     fn deserialize_struct(
         &mut self,
         mut wip: Partial<'input, BORROW>,
@@ -281,6 +323,14 @@ where
 
         let struct_has_default = wip.shape().has_default_attr();
         let deny_unknown_fields = wip.shape().has_deny_unknown_fields_attr();
+
+        // Extract container-level default namespace (xml::ns_all) for namespace-aware matching
+        let ns_all = wip
+            .shape()
+            .attributes
+            .iter()
+            .find(|attr| attr.ns == Some("xml") && attr.key == "ns_all")
+            .and_then(|attr| attr.get_as::<&str>().copied());
 
         // Track which fields have been set
         let num_fields = struct_def.fields.len();
@@ -318,10 +368,16 @@ where
                 ParseEvent::StructEnd => break,
                 ParseEvent::FieldKey(key) => {
                     // First, look up field in direct struct fields (non-flattened)
+                    // Uses namespace-aware matching when namespace is present
                     let direct_field_info = struct_def.fields.iter().enumerate().find(|(_, f)| {
                         !f.is_flattened()
-                            && (f.name == key.name.as_ref()
-                                || f.alias.iter().any(|alias| *alias == key.name.as_ref()))
+                            && Self::field_matches_with_namespace(
+                                f,
+                                key.name.as_ref(),
+                                key.namespace.as_deref(),
+                                key.location,
+                                ns_all,
+                            )
                     });
 
                     if let Some((idx, field)) = direct_field_info {
@@ -344,9 +400,15 @@ where
                         if let Some((inner_fields, inner_set)) = flatten_info[flatten_idx].as_mut()
                         {
                             // Look for the field in the inner struct
+                            // Uses namespace-aware matching when namespace is present
                             let inner_match = inner_fields.iter().enumerate().find(|(_, f)| {
-                                f.name == key.name.as_ref()
-                                    || f.alias.iter().any(|alias| *alias == key.name.as_ref())
+                                Self::field_matches_with_namespace(
+                                    f,
+                                    key.name.as_ref(),
+                                    key.namespace.as_deref(),
+                                    key.location,
+                                    ns_all,
+                                )
                             });
 
                             if let Some((inner_idx, _inner_field)) = inner_match {
@@ -730,9 +792,15 @@ where
                     }
 
                     // Look up field in variant's fields
+                    // Uses namespace-aware matching when namespace is present
                     let field_info = variant_fields.iter().enumerate().find(|(_, f)| {
-                        f.name == key.name.as_ref()
-                            || f.alias.iter().any(|alias| *alias == key.name.as_ref())
+                        Self::field_matches_with_namespace(
+                            f,
+                            key.name.as_ref(),
+                            key.namespace.as_deref(),
+                            key.location,
+                            None, // Enums don't have ns_all
+                        )
                     });
 
                     if let Some((idx, _field)) = field_info {
@@ -971,9 +1039,15 @@ where
                     match event {
                         ParseEvent::StructEnd => break,
                         ParseEvent::FieldKey(key) => {
+                            // Uses namespace-aware matching when namespace is present
                             let field_info = variant_fields.iter().enumerate().find(|(_, f)| {
-                                f.name == key.name.as_ref()
-                                    || f.alias.iter().any(|alias| *alias == key.name.as_ref())
+                                Self::field_matches_with_namespace(
+                                    f,
+                                    key.name.as_ref(),
+                                    key.namespace.as_deref(),
+                                    key.location,
+                                    None, // Enums don't have ns_all
+                                )
                             });
 
                             if let Some((idx, _field)) = field_info {
