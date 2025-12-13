@@ -405,7 +405,6 @@ fn test_serialize_namespaced_element() {
 }
 
 #[test]
-#[ignore] // Will fail until Phase 4 is complete
 fn test_serialize_namespaced_attribute() {
     // Serialize a struct with xml::ns on an attribute
     let value = NamespacedAttr {

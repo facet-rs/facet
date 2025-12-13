@@ -8,6 +8,16 @@ use facet_reflect::{HasFields as _, Peek, ReflectError};
 
 use crate::ScalarValue;
 
+/// Field ordering preference for serialization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FieldOrdering {
+    /// Fields are serialized in declaration order (default for JSON, etc.)
+    #[default]
+    Declaration,
+    /// Attributes first, then elements, then text (for XML)
+    AttributesFirst,
+}
+
 /// Low-level serializer interface implemented by each format backend.
 ///
 /// This is intentionally event-ish: the shared serializer logic owns traversal
@@ -43,6 +53,13 @@ pub trait FormatSerializer {
     /// Default implementation does nothing.
     fn struct_metadata(&mut self, _shape: &facet_core::Shape) -> Result<(), Self::Error> {
         Ok(())
+    }
+
+    /// Preferred field ordering for this format.
+    /// Formats like XML can request attributes-first ordering to avoid buffering.
+    /// Default is declaration order.
+    fn preferred_field_order(&self) -> FieldOrdering {
+        FieldOrdering::Declaration
     }
 }
 
@@ -81,6 +98,31 @@ where
     S: FormatSerializer,
 {
     shared_serialize(serializer, value)
+}
+
+/// Helper to sort fields according to format preference
+fn sort_fields_if_needed<'mem, 'facet, S>(
+    serializer: &S,
+    fields: &mut alloc::vec::Vec<(facet_reflect::FieldItem, Peek<'mem, 'facet>)>,
+) where
+    S: FormatSerializer,
+{
+    if serializer.preferred_field_order() == FieldOrdering::AttributesFirst {
+        fields.sort_by_key(|(field_item, _)| {
+            // Determine field category: 0=attribute, 1=element, 2=text
+            if field_item
+                .field
+                .get_attr(Some("xml"), "attribute")
+                .is_some()
+            {
+                0 // attributes first
+            } else if field_item.field.get_attr(Some("xml"), "text").is_some() {
+                2 // text last
+            } else {
+                1 // elements in the middle
+            }
+        });
+    }
 }
 
 fn shared_serialize<'mem, 'facet, S>(
@@ -165,7 +207,12 @@ where
                 .struct_metadata(value.shape())
                 .map_err(SerializeError::Backend)?;
             serializer.begin_struct().map_err(SerializeError::Backend)?;
-            for (field_item, field_value) in struct_.fields_for_serialize() {
+
+            // Collect fields and sort according to format preference
+            let mut fields: alloc::vec::Vec<_> = struct_.fields_for_serialize().collect();
+            sort_fields_if_needed(serializer, &mut fields);
+
+            for (field_item, field_value) in fields {
                 serializer
                     .field_metadata(&field_item)
                     .map_err(SerializeError::Backend)?;
@@ -206,7 +253,9 @@ where
                 match variant.data.kind {
                     StructKind::Unit => {}
                     StructKind::Struct => {
-                        for (field_item, field_value) in enum_.fields_for_serialize() {
+                        let mut fields: alloc::vec::Vec<_> = enum_.fields_for_serialize().collect();
+                        sort_fields_if_needed(serializer, &mut fields);
+                        for (field_item, field_value) in fields {
                             serializer
                                 .field_metadata(&field_item)
                                 .map_err(SerializeError::Backend)?;
@@ -245,7 +294,9 @@ where
                             .field_key(content_key)
                             .map_err(SerializeError::Backend)?;
                         serializer.begin_struct().map_err(SerializeError::Backend)?;
-                        for (field_item, field_value) in enum_.fields_for_serialize() {
+                        let mut fields: alloc::vec::Vec<_> = enum_.fields_for_serialize().collect();
+                        sort_fields_if_needed(serializer, &mut fields);
+                        for (field_item, field_value) in fields {
                             serializer
                                 .field_metadata(&field_item)
                                 .map_err(SerializeError::Backend)?;
@@ -348,7 +399,9 @@ where
                     .map_err(SerializeError::Backend)?;
 
                 serializer.begin_struct().map_err(SerializeError::Backend)?;
-                for (field_item, field_value) in enum_.fields_for_serialize() {
+                let mut fields: alloc::vec::Vec<_> = enum_.fields_for_serialize().collect();
+                sort_fields_if_needed(serializer, &mut fields);
+                for (field_item, field_value) in fields {
                     serializer
                         .field_metadata(&field_item)
                         .map_err(SerializeError::Backend)?;
@@ -419,7 +472,9 @@ where
         }
         StructKind::Struct => {
             serializer.begin_struct().map_err(SerializeError::Backend)?;
-            for (field_item, field_value) in enum_.fields_for_serialize() {
+            let mut fields: alloc::vec::Vec<_> = enum_.fields_for_serialize().collect();
+            sort_fields_if_needed(serializer, &mut fields);
+            for (field_item, field_value) in fields {
                 serializer
                     .field_metadata(&field_item)
                     .map_err(SerializeError::Backend)?;
