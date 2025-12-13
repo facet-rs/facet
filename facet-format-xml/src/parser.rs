@@ -116,10 +116,75 @@ impl<'de> FormatParser<'de> for XmlParser<'de> {
     }
 
     fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
-        Ok(XmlProbe {
-            evidence: Vec::new(),
-            idx: 0,
-        })
+        // Look ahead in the remaining events to build field evidence
+        let evidence = self.build_probe();
+        Ok(XmlProbe { evidence, idx: 0 })
+    }
+}
+
+impl<'de> XmlParser<'de> {
+    /// Build field evidence by looking ahead at remaining events.
+    fn build_probe(&self) -> Vec<FieldEvidence<'de>> {
+        let mut evidence = Vec::new();
+
+        // Check if we're about to read a struct
+        if self.idx >= self.events.len() {
+            return evidence;
+        }
+
+        if !matches!(self.events.get(self.idx), Some(ParseEvent::StructStart)) {
+            return evidence;
+        }
+
+        // Scan the struct's fields
+        let mut i = self.idx + 1;
+        let mut depth = 0usize;
+
+        while i < self.events.len() {
+            match &self.events[i] {
+                ParseEvent::StructStart | ParseEvent::SequenceStart => {
+                    depth += 1;
+                    i += 1;
+                }
+                ParseEvent::StructEnd | ParseEvent::SequenceEnd => {
+                    if depth == 0 {
+                        // End of the struct we're probing
+                        break;
+                    }
+                    depth -= 1;
+                    i += 1;
+                }
+                ParseEvent::FieldKey(name, location) if depth == 0 => {
+                    // This is a top-level field in the struct we're probing
+                    // Look at the next event to see if it's a scalar
+                    let scalar_value = if let Some(next_event) = self.events.get(i + 1) {
+                        match next_event {
+                            ParseEvent::Scalar(sv) => Some(sv.clone()),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+
+                    if let Some(sv) = scalar_value {
+                        evidence.push(FieldEvidence::with_scalar_value(
+                            name.clone(),
+                            *location,
+                            None,
+                            sv,
+                        ));
+                    } else {
+                        evidence.push(FieldEvidence::new(name.clone(), *location, None));
+                    }
+                    i += 1;
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+
+        evidence
     }
 }
 

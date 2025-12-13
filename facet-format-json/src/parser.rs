@@ -233,6 +233,60 @@ impl<'de> JsonParser<'de> {
         Ok(())
     }
 
+    /// Skip a container in a separate adapter (used during probing).
+    fn skip_container_in_adapter(
+        &self,
+        adapter: &mut SliceAdapter<'de, true>,
+        start_kind: DelimKind,
+    ) -> Result<(), JsonError> {
+        let mut stack = vec![start_kind];
+        while let Some(current) = stack.last().copied() {
+            let token = adapter.next_token().map_err(JsonError::from)?;
+            match token.token {
+                AdapterToken::ObjectStart => stack.push(DelimKind::Object),
+                AdapterToken::ArrayStart => stack.push(DelimKind::Array),
+                AdapterToken::ObjectEnd => {
+                    if current != DelimKind::Object {
+                        return Err(JsonError::new(
+                            JsonErrorKind::UnexpectedToken {
+                                got: format!("{:?}", token.token),
+                                expected: "'}'",
+                            },
+                            token.span,
+                        ));
+                    }
+                    stack.pop();
+                    if stack.is_empty() {
+                        break;
+                    }
+                }
+                AdapterToken::ArrayEnd => {
+                    if current != DelimKind::Array {
+                        return Err(JsonError::new(
+                            JsonErrorKind::UnexpectedToken {
+                                got: format!("{:?}", token.token),
+                                expected: "']'",
+                            },
+                            token.span,
+                        ));
+                    }
+                    stack.pop();
+                    if stack.is_empty() {
+                        break;
+                    }
+                }
+                AdapterToken::Eof => {
+                    return Err(JsonError::new(
+                        JsonErrorKind::UnexpectedEof { expected: "value" },
+                        token.span,
+                    ));
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     fn determine_action(&self) -> NextAction {
         if let Some(context) = self.stack.last() {
             match context {
@@ -401,9 +455,41 @@ impl<'de> JsonParser<'de> {
                         ));
                     }
 
-                    evidence.push(FieldEvidence::new(name, FieldLocationHint::KeyValue, None));
+                    // Capture scalar values, skip complex types (objects/arrays)
+                    let value_token = adapter.next_token().map_err(JsonError::from)?;
+                    let scalar_value = match value_token.token {
+                        AdapterToken::String(s) => Some(ScalarValue::Str(s)),
+                        AdapterToken::True => Some(ScalarValue::Bool(true)),
+                        AdapterToken::False => Some(ScalarValue::Bool(false)),
+                        AdapterToken::Null => Some(ScalarValue::Null),
+                        AdapterToken::I64(n) => Some(ScalarValue::I64(n)),
+                        AdapterToken::U64(n) => Some(ScalarValue::U64(n)),
+                        AdapterToken::I128(n) => Some(ScalarValue::Str(Cow::Owned(n.to_string()))),
+                        AdapterToken::U128(n) => Some(ScalarValue::Str(Cow::Owned(n.to_string()))),
+                        AdapterToken::F64(n) => Some(ScalarValue::F64(n)),
+                        AdapterToken::ObjectStart => {
+                            // Skip the complex object
+                            self.skip_container_in_adapter(&mut adapter, DelimKind::Object)?;
+                            None
+                        }
+                        AdapterToken::ArrayStart => {
+                            // Skip the complex array
+                            self.skip_container_in_adapter(&mut adapter, DelimKind::Array)?;
+                            None
+                        }
+                        _ => None,
+                    };
 
-                    adapter.skip().map_err(JsonError::from)?;
+                    if let Some(sv) = scalar_value {
+                        evidence.push(FieldEvidence::with_scalar_value(
+                            name,
+                            FieldLocationHint::KeyValue,
+                            None,
+                            sv,
+                        ));
+                    } else {
+                        evidence.push(FieldEvidence::new(name, FieldLocationHint::KeyValue, None));
+                    }
 
                     let sep = adapter.next_token().map_err(JsonError::from)?;
                     match sep.token {

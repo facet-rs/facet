@@ -1571,7 +1571,6 @@ dependencies = [
  "facet-core",
  "facet-reflect",
  "facet-solver",
- "facet-value",
 ]
 
 [[package]]
