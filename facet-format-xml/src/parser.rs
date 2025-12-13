@@ -372,10 +372,10 @@ fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, XmlError>
                     if key.as_ref() == b"xmlns" {
                         continue; // Skip default namespace declaration
                     }
-                    if let Some(prefix) = key.prefix() {
-                        if prefix.as_ref() == b"xmlns" {
-                            continue; // Skip prefixed namespace declarations
-                        }
+                    if let Some(prefix) = key.prefix()
+                        && prefix.as_ref() == b"xmlns"
+                    {
+                        continue; // Skip prefixed namespace declarations
                     }
 
                     let (attr_resolve, _) = reader.resolve_attribute(key);
