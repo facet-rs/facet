@@ -1,10 +1,25 @@
 extern crate alloc;
 
-use alloc::{string::String, vec::Vec};
+use alloc::{format, string::String, vec::Vec};
+use std::collections::HashMap;
 
 use facet_core::Facet;
 use facet_format::{FormatSerializer, ScalarValue, SerializeError, serialize_root};
 use facet_reflect::Peek;
+
+/// Well-known XML namespace URIs and their conventional prefixes.
+#[allow(dead_code)] // Used in Phase 4 namespace serialization (partial implementation)
+const WELL_KNOWN_NAMESPACES: &[(&str, &str)] = &[
+    ("http://www.w3.org/2001/XMLSchema-instance", "xsi"),
+    ("http://www.w3.org/2001/XMLSchema", "xs"),
+    ("http://www.w3.org/XML/1998/namespace", "xml"),
+    ("http://www.w3.org/1999/xlink", "xlink"),
+    ("http://www.w3.org/2000/svg", "svg"),
+    ("http://www.w3.org/1999/xhtml", "xhtml"),
+    ("http://schemas.xmlsoap.org/soap/envelope/", "soap"),
+    ("http://www.w3.org/2003/05/soap-envelope", "soap12"),
+    ("http://schemas.android.com/apk/res/android", "android"),
+];
 
 #[derive(Debug)]
 pub struct XmlSerializeError {
@@ -43,6 +58,15 @@ pub struct XmlSerializer {
     stack: Vec<Ctx>,
     pending_field: Option<String>,
     item_tag: &'static str,
+    /// Namespace URI -> prefix mapping for already-declared namespaces.
+    #[allow(dead_code)] // Used in Phase 4 namespace serialization (partial implementation)
+    declared_namespaces: HashMap<String, String>,
+    /// Counter for auto-generating namespace prefixes (ns0, ns1, ...).
+    #[allow(dead_code)] // Used in Phase 4 namespace serialization (partial implementation)
+    next_ns_index: usize,
+    /// The currently active default namespace (from xmlns="..." on an ancestor).
+    #[allow(dead_code)] // Used in Phase 4 namespace serialization (partial implementation)
+    current_default_ns: Option<String>,
 }
 
 impl XmlSerializer {
@@ -54,6 +78,9 @@ impl XmlSerializer {
             stack: vec![Ctx::Root { kind: None }],
             pending_field: None,
             item_tag: "item",
+            declared_namespaces: HashMap::new(),
+            next_ns_index: 0,
+            current_default_ns: None,
         }
     }
 
@@ -131,6 +158,42 @@ impl XmlSerializer {
             *kind = Some(Kind::Seq);
         }
         self.stack.push(Ctx::Seq { close: None });
+    }
+
+    /// Get or create a prefix for the given namespace URI.
+    /// Returns the prefix (without colon).
+    #[allow(dead_code)] // Used in Phase 4 namespace serialization (partial implementation)
+    fn get_or_create_prefix(&mut self, namespace_uri: &str) -> String {
+        // Check if we've already assigned a prefix to this URI
+        if let Some(prefix) = self.declared_namespaces.get(namespace_uri) {
+            return prefix.clone();
+        }
+
+        // Try well-known namespaces
+        let prefix = WELL_KNOWN_NAMESPACES
+            .iter()
+            .find(|(uri, _)| *uri == namespace_uri)
+            .map(|(_, prefix)| (*prefix).to_string())
+            .unwrap_or_else(|| {
+                // Auto-generate a prefix
+                let prefix = format!("ns{}", self.next_ns_index);
+                self.next_ns_index += 1;
+                prefix
+            });
+
+        // Ensure the prefix isn't already in use for a different namespace
+        let final_prefix = if self.declared_namespaces.values().any(|p| p == &prefix) {
+            // Conflict! Generate a new one
+            let prefix = format!("ns{}", self.next_ns_index);
+            self.next_ns_index += 1;
+            prefix
+        } else {
+            prefix
+        };
+
+        self.declared_namespaces
+            .insert(namespace_uri.to_string(), final_prefix.clone());
+        final_prefix
     }
 }
 
