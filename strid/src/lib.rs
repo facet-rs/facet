@@ -954,5 +954,5 @@ macro_rules! from_infallible {
     };
 }
 
-pub use strid_macros::{braid, braid_ref};
 pub use facet;
+pub use strid_macros::{braid, braid_ref};
