@@ -1,0 +1,20 @@
+[package]
+name = "strid-examples"
+description = "Examples demonstrating usage of the `strid` crate"
+keywords = [ "string", "newtype", "validation", "normalization" ]
+categories = [ "data-structures", "rust-patterns" ]
+version = "0.4.0"
+authors.workspace = true
+edition.workspace = true
+readme = "../../README.md"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+strid = { version = "0.4.0", path = "../strid" }
+facet.workspace = true
+bytes = "1"
+bytestring = { version = "1.1", features = [ "serde" ] }
+serde = { version = "1", features = [ "derive" ] }
+smartstring = { version = "1", features = [ "serde" ] }
+compact_str = { version = "0.7", features = [ "serde" ] }
