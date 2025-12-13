@@ -19,7 +19,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.92
 
       - name: Run release-plz (release-pr)
         uses: MarcoIeni/release-plz-action@63ab0c2746bedc448370bad4b0b3d536458398b0
@@ -41,7 +41,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.92
 
       - name: Authenticate to crates.io (OIDC)
         id: crates-io-auth
