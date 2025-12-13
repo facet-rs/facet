@@ -71,6 +71,12 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             });
         }
 
+        // Special case: if this is a ManagedElsewhere frame and it's initialized,
+        // we need to drop the old value before replacing it (same reason as in set_into_dynamic_value)
+        if matches!(fr.ownership, FrameOwnership::ManagedElsewhere) && fr.is_init {
+            unsafe { fr.shape.call_drop_in_place(fr.data.assume_init()) };
+        }
+
         fr.deinit();
 
         // SAFETY: `fr.shape` and `src_shape` are the same, so they have the same size,
@@ -102,6 +108,14 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
     ) -> Result<Self, ReflectError> {
         let fr = self.frames_mut().last_mut().unwrap();
         let vtable = dyn_def.vtable;
+
+        // Special case: if this is a ManagedElsewhere frame (pointing into parent object)
+        // and it's initialized, we need to drop the old value before replacing it.
+        // deinit() normally skips dropping ManagedElsewhere to avoid double-free,
+        // but when we're explicitly replacing via set(), we own that operation.
+        if matches!(fr.ownership, FrameOwnership::ManagedElsewhere) && fr.is_init {
+            unsafe { fr.shape.call_drop_in_place(fr.data.assume_init()) };
+        }
 
         fr.deinit();
 

@@ -190,8 +190,16 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             if let Err(e) = frame.fill_defaults() {
                 // Couldn't fill defaults (e.g., opaque field with #[facet(default)] but no default impl)
                 frame.deinit();
+                // Deallocate if this frame owns the allocation
+                if let FrameOwnership::Owned = frame.ownership {
+                    frame.dealloc();
+                }
                 for (_, mut remaining_frame) in stored_frames {
                     remaining_frame.deinit();
+                    // Deallocate if this frame owns the allocation
+                    if let FrameOwnership::Owned = remaining_frame.ownership {
+                        remaining_frame.dealloc();
+                    }
                 }
                 return Err(e);
             }
@@ -202,6 +210,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // - Parent's iset was cleared when we entered this field
                 // - Parent won't drop it, so we must deinit it ourselves
                 frame.deinit();
+                // Deallocate if this frame owns the allocation
+                if let FrameOwnership::Owned = frame.ownership {
+                    frame.dealloc();
+                }
 
                 // Clean up remaining stored frames before returning error.
                 // All stored frames have their parent's iset cleared, so we must deinit them.
@@ -209,6 +221,10 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
                 // deinit() properly handles partial initialization via the tracker's iset.
                 for (_, mut remaining_frame) in stored_frames {
                     remaining_frame.deinit();
+                    // Deallocate if this frame owns the allocation
+                    if let FrameOwnership::Owned = remaining_frame.ownership {
+                        remaining_frame.dealloc();
+                    }
                 }
 
                 // No need to poison - returning Err consumes self, Drop will handle cleanup
@@ -270,8 +286,13 @@ impl<'facet, const BORROW: bool> Partial<'facet, BORROW> {
             }
 
             // Frame is validated and parent is updated - frame is no longer needed
-            // (The actual data is already in place in memory, pointed to by parent)
-            drop(frame);
+            // For Field ownership, data is in parent's memory - no deallocation needed
+            // For Owned frames (e.g., from begin_object_entry), we must deallocate
+            if let FrameOwnership::Owned = frame.ownership {
+                frame.dealloc(); // Consumes frame
+            } else {
+                drop(frame);
+            }
         }
 
         // Invariant check: we must have at least one frame after finish_deferred
