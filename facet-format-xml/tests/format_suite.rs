@@ -505,36 +505,40 @@ impl FormatSuite for XmlSlice {
     }
 
     // ── DateTime type cases ──
-    // Note: These tests require careful handling of DateTime comparison
-    // which may differ based on internal representation vs string format.
-    // Skipping for now until we can verify the expected comparison behavior.
 
     fn time_offset_datetime() -> CaseSpec {
-        CaseSpec::skip("datetime comparison needs special handling")
+        CaseSpec::from_str(r#"<record><created_at>2023-01-15T12:34:56Z</created_at></record>"#)
+            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn jiff_timestamp() -> CaseSpec {
-        CaseSpec::skip("datetime comparison needs special handling")
+        CaseSpec::from_str(r#"<record><created_at>2023-12-31T11:30:00Z</created_at></record>"#)
+            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn jiff_civil_datetime() -> CaseSpec {
-        CaseSpec::skip("datetime comparison needs special handling")
+        CaseSpec::from_str(r#"<record><created_at>2024-06-19T15:22:45</created_at></record>"#)
+            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn chrono_datetime_utc() -> CaseSpec {
-        CaseSpec::skip("datetime comparison needs special handling")
+        CaseSpec::from_str(r#"<record><created_at>2023-01-15T12:34:56Z</created_at></record>"#)
+            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn chrono_naive_datetime() -> CaseSpec {
-        CaseSpec::skip("datetime comparison needs special handling")
+        CaseSpec::from_str(r#"<record><created_at>2023-01-15T12:34:56</created_at></record>"#)
+            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn chrono_naive_date() -> CaseSpec {
-        CaseSpec::skip("datetime comparison needs special handling")
+        CaseSpec::from_str(r#"<record><birth_date>2023-01-15</birth_date></record>"#)
+            .without_roundtrip("opaque type serialization not yet supported")
     }
 
     fn chrono_naive_time() -> CaseSpec {
-        CaseSpec::skip("datetime comparison needs special handling")
+        CaseSpec::from_str(r#"<record><alarm_time>12:34:56</alarm_time></record>"#)
+            .without_roundtrip("opaque type serialization not yet supported")
     }
 }
 

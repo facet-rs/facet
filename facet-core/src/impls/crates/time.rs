@@ -69,10 +69,19 @@ unsafe fn utc_parse(s: &str, target: OxPtrMut) -> Option<Result<(), ParseError>>
     }
 }
 
+unsafe fn utc_partial_eq(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
+    unsafe {
+        let a = a.get::<UtcDateTime>();
+        let b = b.get::<UtcDateTime>();
+        Some(a == b)
+    }
+}
+
 const UTC_VTABLE: VTableIndirect = VTableIndirect {
     display: Some(utc_display),
     try_from: Some(utc_try_from),
     parse: Some(utc_parse),
+    partial_eq: Some(utc_partial_eq),
     ..VTableIndirect::EMPTY
 };
 
@@ -144,10 +153,19 @@ unsafe fn offset_parse(s: &str, target: OxPtrMut) -> Option<Result<(), ParseErro
     }
 }
 
+unsafe fn offset_partial_eq(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
+    unsafe {
+        let a = a.get::<OffsetDateTime>();
+        let b = b.get::<OffsetDateTime>();
+        Some(a == b)
+    }
+}
+
 const OFFSET_VTABLE: VTableIndirect = VTableIndirect {
     display: Some(offset_display),
     try_from: Some(offset_try_from),
     parse: Some(offset_parse),
+    partial_eq: Some(offset_partial_eq),
     ..VTableIndirect::EMPTY
 };
 

@@ -64,10 +64,19 @@ unsafe fn parse_datetime_utc(s: &str, target: OxPtrMut) -> Option<Result<(), Par
     }
 }
 
+unsafe fn partial_eq_datetime_utc(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
+    unsafe {
+        let a = a.get::<DateTime<Utc>>();
+        let b = b.get::<DateTime<Utc>>();
+        Some(a == b)
+    }
+}
+
 const DATETIME_UTC_VTABLE: VTableIndirect = VTableIndirect {
     display: Some(display_datetime_utc),
     try_from: Some(try_from_datetime_utc),
     parse: Some(parse_datetime_utc),
+    partial_eq: Some(partial_eq_datetime_utc),
     ..VTableIndirect::EMPTY
 };
 
@@ -138,10 +147,19 @@ unsafe fn parse_datetime_fixed_offset(s: &str, target: OxPtrMut) -> Option<Resul
     }
 }
 
+unsafe fn partial_eq_datetime_fixed_offset(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
+    unsafe {
+        let a = a.get::<DateTime<FixedOffset>>();
+        let b = b.get::<DateTime<FixedOffset>>();
+        Some(a == b)
+    }
+}
+
 const DATETIME_FIXED_OFFSET_VTABLE: VTableIndirect = VTableIndirect {
     display: Some(display_datetime_fixed_offset),
     try_from: Some(try_from_datetime_fixed_offset),
     parse: Some(parse_datetime_fixed_offset),
+    partial_eq: Some(partial_eq_datetime_fixed_offset),
     ..VTableIndirect::EMPTY
 };
 
@@ -214,10 +232,19 @@ unsafe fn parse_datetime_local(s: &str, target: OxPtrMut) -> Option<Result<(), P
     }
 }
 
+unsafe fn partial_eq_datetime_local(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
+    unsafe {
+        let a = a.get::<DateTime<Local>>();
+        let b = b.get::<DateTime<Local>>();
+        Some(a == b)
+    }
+}
+
 const DATETIME_LOCAL_VTABLE: VTableIndirect = VTableIndirect {
     display: Some(display_datetime_local),
     try_from: Some(try_from_datetime_local),
     parse: Some(parse_datetime_local),
+    partial_eq: Some(partial_eq_datetime_local),
     ..VTableIndirect::EMPTY
 };
 
@@ -286,10 +313,19 @@ unsafe fn parse_naive_datetime(s: &str, target: OxPtrMut) -> Option<Result<(), P
     }
 }
 
+unsafe fn partial_eq_naive_datetime(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
+    unsafe {
+        let a = a.get::<NaiveDateTime>();
+        let b = b.get::<NaiveDateTime>();
+        Some(a == b)
+    }
+}
+
 const NAIVE_DATETIME_VTABLE: VTableIndirect = VTableIndirect {
     display: Some(display_naive_datetime),
     try_from: Some(try_from_naive_datetime),
     parse: Some(parse_naive_datetime),
+    partial_eq: Some(partial_eq_naive_datetime),
     ..VTableIndirect::EMPTY
 };
 
@@ -356,10 +392,19 @@ unsafe fn parse_naive_date(s: &str, target: OxPtrMut) -> Option<Result<(), Parse
     }
 }
 
+unsafe fn partial_eq_naive_date(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
+    unsafe {
+        let a = a.get::<NaiveDate>();
+        let b = b.get::<NaiveDate>();
+        Some(a == b)
+    }
+}
+
 const NAIVE_DATE_VTABLE: VTableIndirect = VTableIndirect {
     display: Some(display_naive_date),
     try_from: Some(try_from_naive_date),
     parse: Some(parse_naive_date),
+    partial_eq: Some(partial_eq_naive_date),
     ..VTableIndirect::EMPTY
 };
 
@@ -428,10 +473,19 @@ unsafe fn parse_naive_time(s: &str, target: OxPtrMut) -> Option<Result<(), Parse
     }
 }
 
+unsafe fn partial_eq_naive_time(a: OxPtrConst, b: OxPtrConst) -> Option<bool> {
+    unsafe {
+        let a = a.get::<NaiveTime>();
+        let b = b.get::<NaiveTime>();
+        Some(a == b)
+    }
+}
+
 const NAIVE_TIME_VTABLE: VTableIndirect = VTableIndirect {
     display: Some(display_naive_time),
     try_from: Some(try_from_naive_time),
     parse: Some(parse_naive_time),
+    partial_eq: Some(partial_eq_naive_time),
     ..VTableIndirect::EMPTY
 };
 
