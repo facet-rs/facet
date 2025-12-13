@@ -316,26 +316,6 @@ impl Element {
     }
 }
 
-#[derive(Debug, Clone)]
-enum XmlValue {
-    Null,
-    Bool(bool),
-    I64(i64),
-    U64(u64),
-    F64(f64),
-    String(String),
-    Array(Vec<XmlValue>),
-    Object(Vec<XmlField>),
-}
-
-#[derive(Debug, Clone)]
-struct XmlField {
-    name: String,
-    namespace: Option<String>,
-    location: FieldLocationHint,
-    value: XmlValue,
-}
-
 fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, XmlError> {
     let mut reader = NsReader::from_reader(Cursor::new(input));
     reader.config_mut().trim_text(true);
@@ -432,9 +412,8 @@ fn build_events<'de>(input: &'de [u8]) -> Result<Vec<ParseEvent<'de>>, XmlError>
     }
 
     let root = root.ok_or(XmlError::UnexpectedEof)?;
-    let value = element_to_value(&root);
     let mut events = Vec::new();
-    emit_value_events(&value, &mut events);
+    emit_element_events(&root, &mut events);
     Ok(events)
 }
 
@@ -453,132 +432,129 @@ fn attach_element(
     Ok(())
 }
 
-fn element_to_value(elem: &Element) -> XmlValue {
+/// Emit ParseEvents directly from an Element, without intermediate XmlValue.
+fn emit_element_events<'de>(elem: &Element, events: &mut Vec<ParseEvent<'de>>) {
     let text = elem.text.trim();
     let has_attrs = !elem.attributes.is_empty();
     let has_children = !elem.children.is_empty();
 
+    // Case 1: No attributes, no children - emit scalar from text
     if !has_attrs && !has_children {
         if text.is_empty() {
-            // Empty element is an empty object, not null
-            // This allows unit structs to deserialize correctly
-            return XmlValue::Object(vec![]);
+            // Empty element is an empty object (for unit structs)
+            events.push(ParseEvent::StructStart);
+            events.push(ParseEvent::StructEnd);
+        } else {
+            emit_scalar_from_text(text, events);
         }
-        return parse_scalar(text);
+        return;
     }
 
+    // Case 2: No attributes, multiple children with same name - emit as array
     if !has_attrs && has_children && text.is_empty() && elem.children.len() > 1 {
         let first = &elem.children[0].name;
-        // Check if all children have the same name (both local name and namespace)
         if elem.children.iter().all(|child| &child.name == first) {
-            let items = elem
-                .children
-                .iter()
-                .map(element_to_value)
-                .collect::<Vec<_>>();
-            return XmlValue::Array(items);
+            events.push(ParseEvent::SequenceStart);
+            for child in &elem.children {
+                emit_element_events(child, events);
+            }
+            events.push(ParseEvent::SequenceEnd);
+            return;
         }
     }
 
-    let mut fields = Vec::new();
+    // Case 3: Has attributes or mixed children - emit as struct
+    events.push(ParseEvent::StructStart);
+
+    // Emit attributes as fields
     for (qname, value) in &elem.attributes {
-        fields.push(XmlField {
-            name: qname.local_name.clone(),
-            namespace: qname.namespace.clone(),
-            location: FieldLocationHint::Attribute,
-            value: XmlValue::String(value.clone()),
-        });
+        let mut key = FieldKey::new(
+            Cow::Owned(qname.local_name.clone()),
+            FieldLocationHint::Attribute,
+        );
+        if let Some(ns) = &qname.namespace {
+            key = key.with_namespace(Cow::Owned(ns.clone()));
+        }
+        events.push(ParseEvent::FieldKey(key));
+        // Attributes are always strings
+        events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
+            value.clone(),
+        ))));
     }
 
-    // Group children by (local_name, namespace) tuple to handle same local name with different namespaces
-    let mut grouped: BTreeMap<(&str, Option<&str>), Vec<XmlValue>> = BTreeMap::new();
+    // Group children by (local_name, namespace) to detect arrays
+    let mut grouped: BTreeMap<(&str, Option<&str>), Vec<&Element>> = BTreeMap::new();
     for child in &elem.children {
         let key = (
             child.name.local_name.as_str(),
             child.name.namespace.as_deref(),
         );
-        grouped
-            .entry(key)
-            .or_default()
-            .push(element_to_value(child));
+        grouped.entry(key).or_default().push(child);
     }
 
-    for ((local_name, namespace), mut values) in grouped {
-        let value = if values.len() == 1 {
-            values.pop().unwrap()
+    // Emit children as fields
+    for ((local_name, namespace), children) in grouped {
+        let mut key = FieldKey::new(Cow::Owned(local_name.to_string()), FieldLocationHint::Child);
+        if let Some(ns) = namespace {
+            key = key.with_namespace(Cow::Owned(ns.to_string()));
+        }
+        events.push(ParseEvent::FieldKey(key));
+
+        if children.len() == 1 {
+            emit_element_events(children[0], events);
         } else {
-            XmlValue::Array(values)
-        };
-        fields.push(XmlField {
-            name: local_name.to_string(),
-            namespace: namespace.map(String::from),
-            location: FieldLocationHint::Child,
-            value,
-        });
-    }
-
-    if !text.is_empty() {
-        if fields.is_empty() {
-            return parse_scalar(text);
-        }
-        fields.push(XmlField {
-            name: "_text".into(),
-            namespace: None,
-            location: FieldLocationHint::Text,
-            value: XmlValue::String(text.to_string()),
-        });
-    }
-
-    XmlValue::Object(fields)
-}
-
-fn parse_scalar(text: &str) -> XmlValue {
-    if text.eq_ignore_ascii_case("null") {
-        return XmlValue::Null;
-    }
-    if let Ok(b) = text.parse::<bool>() {
-        return XmlValue::Bool(b);
-    }
-    if let Ok(i) = text.parse::<i64>() {
-        return XmlValue::I64(i);
-    }
-    if let Ok(u) = text.parse::<u64>() {
-        return XmlValue::U64(u);
-    }
-    if let Ok(f) = text.parse::<f64>() {
-        return XmlValue::F64(f);
-    }
-    XmlValue::String(text.to_string())
-}
-
-fn emit_value_events<'de>(value: &XmlValue, events: &mut Vec<ParseEvent<'de>>) {
-    match value {
-        XmlValue::Null => events.push(ParseEvent::Scalar(ScalarValue::Null)),
-        XmlValue::Bool(b) => events.push(ParseEvent::Scalar(ScalarValue::Bool(*b))),
-        XmlValue::I64(n) => events.push(ParseEvent::Scalar(ScalarValue::I64(*n))),
-        XmlValue::U64(n) => events.push(ParseEvent::Scalar(ScalarValue::U64(*n))),
-        XmlValue::F64(n) => events.push(ParseEvent::Scalar(ScalarValue::F64(*n))),
-        XmlValue::String(s) => {
-            events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(s.clone()))))
-        }
-        XmlValue::Array(items) => {
+            // Multiple children with same name -> array
             events.push(ParseEvent::SequenceStart);
-            for item in items {
-                emit_value_events(item, events);
+            for child in children {
+                emit_element_events(child, events);
             }
             events.push(ParseEvent::SequenceEnd);
         }
-        XmlValue::Object(fields) => {
-            events.push(ParseEvent::StructStart);
-            for field in fields {
-                let mut key = FieldKey::new(Cow::Owned(field.name.clone()), field.location);
-                if let Some(ns) = &field.namespace {
-                    key = key.with_namespace(Cow::Owned(ns.clone()));
-                }
-                events.push(ParseEvent::FieldKey(key));
-                emit_value_events(&field.value, events);
-            }
-            events.push(ParseEvent::StructEnd);
-        }
     }
+
+    // Emit text content if present (mixed content)
+    if !text.is_empty() {
+        let key = FieldKey::new(Cow::Borrowed("_text"), FieldLocationHint::Text);
+        events.push(ParseEvent::FieldKey(key));
+        events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
+            text.to_string(),
+        ))));
+    }
+
+    events.push(ParseEvent::StructEnd);
+}
+
+/// Parse text and emit appropriate scalar event.
+fn emit_scalar_from_text<'de>(text: &str, events: &mut Vec<ParseEvent<'de>>) {
+    if text.eq_ignore_ascii_case("null") {
+        events.push(ParseEvent::Scalar(ScalarValue::Null));
+        return;
+    }
+    if let Ok(b) = text.parse::<bool>() {
+        events.push(ParseEvent::Scalar(ScalarValue::Bool(b)));
+        return;
+    }
+    if let Ok(i) = text.parse::<i64>() {
+        events.push(ParseEvent::Scalar(ScalarValue::I64(i)));
+        return;
+    }
+    if let Ok(u) = text.parse::<u64>() {
+        events.push(ParseEvent::Scalar(ScalarValue::U64(u)));
+        return;
+    }
+    // Try i128/u128 before f64 to avoid precision loss for large integers.
+    // Emit as string so the deserializer can use parse_from_str.
+    if text.parse::<i128>().is_ok() || text.parse::<u128>().is_ok() {
+        events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
+            text.to_string(),
+        ))));
+        return;
+    }
+    if let Ok(f) = text.parse::<f64>() {
+        events.push(ParseEvent::Scalar(ScalarValue::F64(f)));
+        return;
+    }
+    events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
+        text.to_string(),
+    ))));
 }

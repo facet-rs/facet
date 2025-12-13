@@ -326,7 +326,7 @@ impl FormatSuite for JsonSlice {
 
     fn scalar_integers_128() -> CaseSpec {
         CaseSpec::from_str(r#"{"signed_128":-170141183460469231731687303715884105728,"unsigned_128":340282366920938463463374607431768211455}"#)
-            .without_roundtrip("i128/u128 serialization not supported yet")
+            .without_roundtrip("i128/u128 serialize as strings, not native JSON numbers")
     }
 
     fn scalar_integers_size() -> CaseSpec {
@@ -471,7 +471,7 @@ impl FormatSuite for JsonSlice {
         CaseSpec::from_str(
             r#"{"nz_u8":255,"nz_i8":-128,"nz_u16":65535,"nz_i16":-32768,"nz_u128":1,"nz_i128":-1,"nz_usize":1000,"nz_isize":-500}"#,
         )
-        .without_roundtrip("i128/u128 serialization not supported yet")
+        .without_roundtrip("i128/u128 serialize as strings, not native JSON numbers")
     }
 
     // ── DateTime type cases ──
