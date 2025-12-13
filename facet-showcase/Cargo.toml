@@ -21,7 +21,7 @@ miette-arborium = "1.1.5"
 owo-colors = "4"
 
 # Error diagnostics
-miette = { version = "7", features = ["fancy"] }
+miette = { version = "7", default-features = false, features = ["fancy-no-backtrace"] }
 
 # Facet integration
 facet = { version = "0.32", path = "../facet" }

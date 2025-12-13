@@ -36,7 +36,7 @@ facet-msgpack = { path = "../facet-msgpack", version = "0.32.2", optional = true
 facet-postcard = { path = "../facet-postcard", version = "0.32.2", optional = true }
 
 [dev-dependencies]
-axum = "0.8"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
 facet = { path = "../facet" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-tower = { version = "0.5", features = ["util"] }
+tokio = { version = "1", default-features = false, features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", default-features = false, features = ["util"] }
