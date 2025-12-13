@@ -63,7 +63,7 @@ impl error::Error for InvalidString {}
     ref_name = "LowerStr",
     ref_doc = "A borrowed reference to a non-empty, lowercase string"
 )]
-pub struct LowerString;
+pub struct LowerString(String);
 
 impl strid::Validator for LowerString {
     type Error = InvalidString;
