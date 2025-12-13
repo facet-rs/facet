@@ -377,6 +377,16 @@ impl FormatSuite for XmlSlice {
         )
     }
 
+    fn flatten_multilevel() -> CaseSpec {
+        // TODO: multilevel nested flatten not yet supported in FormatDeserializer
+        CaseSpec::skip("multilevel nested flatten not yet implemented in format layer")
+    }
+
+    fn flatten_multiple_enums() -> CaseSpec {
+        // TODO: multiple flattened enums not yet supported in FormatDeserializer
+        CaseSpec::skip("multiple flattened enums not yet implemented in format layer")
+    }
+
     // ── Scalar cases ──
 
     fn scalar_bool() -> CaseSpec {
@@ -437,6 +447,11 @@ impl FormatSuite for XmlSlice {
 
     fn enum_untagged() -> CaseSpec {
         CaseSpec::from_str(r#"<value><x>10</x><y>20</y></value>"#)
+    }
+
+    fn enum_variant_rename() -> CaseSpec {
+        // Variant "Active" is renamed to "enabled" in the input
+        CaseSpec::from_str(r#"<value>enabled</value>"#)
     }
 
     fn untagged_with_null() -> CaseSpec {
@@ -689,6 +704,13 @@ impl FormatSuite for XmlSlice {
     fn chrono_naive_time() -> CaseSpec {
         CaseSpec::from_str(r#"<record><alarm_time>12:34:56</alarm_time></record>"#)
             .without_roundtrip("opaque type serialization not yet supported")
+    }
+
+    fn chrono_in_vec() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"<record><timestamps><item>2023-01-01T00:00:00Z</item><item>2023-06-15T12:30:00Z</item></timestamps></record>"#,
+        )
+        .without_roundtrip("opaque type serialization not yet supported")
     }
 
     // ── Bytes crate cases ──

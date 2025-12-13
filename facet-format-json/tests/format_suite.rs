@@ -357,6 +357,19 @@ impl FormatSuite for JsonSlice {
         )
     }
 
+    fn flatten_multilevel() -> CaseSpec {
+        // All fields from 3 levels should be flattened to top level
+        CaseSpec::from_str(r#"{"top_field":"top","mid_field":42,"deep_field":100}"#)
+    }
+
+    fn flatten_multiple_enums() -> CaseSpec {
+        // Two different enums (auth + transport) flattened into same struct
+        CaseSpec::from_str(
+            r#"{"name":"service","Password":{"password":"secret"},"Tcp":{"port":8080}}"#,
+        )
+        .without_roundtrip("serialization of flattened enums not yet supported")
+    }
+
     // ── Scalar cases ──
 
     fn scalar_bool() -> CaseSpec {
@@ -412,6 +425,11 @@ impl FormatSuite for JsonSlice {
 
     fn enum_untagged() -> CaseSpec {
         CaseSpec::from_str(r#"{"x":10,"y":20}"#)
+    }
+
+    fn enum_variant_rename() -> CaseSpec {
+        // Variant "Active" is renamed to "enabled" in the input
+        CaseSpec::from_str(r#""enabled""#)
     }
 
     fn untagged_with_null() -> CaseSpec {
@@ -641,6 +659,11 @@ impl FormatSuite for JsonSlice {
 
     fn chrono_naive_time() -> CaseSpec {
         CaseSpec::from_str(r#"{"alarm_time":"12:34:56"}"#)
+            .without_roundtrip("opaque type serialization not yet supported")
+    }
+
+    fn chrono_in_vec() -> CaseSpec {
+        CaseSpec::from_str(r#"{"timestamps":["2023-01-01T00:00:00Z","2023-06-15T12:30:00Z"]}"#)
             .without_roundtrip("opaque type serialization not yet supported")
     }
 

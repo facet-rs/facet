@@ -352,7 +352,10 @@ impl<W: std::io::Write> crate::JsonWrite for &mut StdWriteAdapter<W> {
 pub enum SerializeError {}
 
 fn variant_is_newtype_like(variant: &facet_core::Variant) -> bool {
-    variant.data.kind == StructKind::Tuple && variant.data.fields.len() == 1
+    matches!(
+        variant.data.kind,
+        StructKind::Tuple | StructKind::TupleStruct
+    ) && variant.data.fields.len() == 1
 }
 
 /// Write indentation for pretty printing
