@@ -15,7 +15,7 @@ It provides:
 
 Example service (see the [crate documentation](https://docs.rs/rapace) for more):
 
-```rust
+```rust,noexec
 use rapace::prelude::*;
 
 #[rapace::service]

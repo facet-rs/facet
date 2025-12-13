@@ -25,7 +25,7 @@ The rest of this page walks through each part in a bit more detail.
 
 Service APIs start as Rust traits annotated with [`#[rapace::service]`](https://docs.rs/rapace-macros/latest/rapace_macros/attr.service.html):
 
-```rust
+```rust,noexec
 use rapace::prelude::*;
 
 #[rapace::service]
