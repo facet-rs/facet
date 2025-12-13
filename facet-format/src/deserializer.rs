@@ -379,10 +379,10 @@ where
                             )
                     });
 
-                    if let Some((idx, field)) = direct_field_info {
-                        // Direct field match
+                    if let Some((idx, _field)) = direct_field_info {
+                        // Direct field match - use begin_nth_field to handle renamed fields correctly
                         wip = wip
-                            .begin_field(field.name)
+                            .begin_nth_field(idx)
                             .map_err(DeserializeError::Reflect)?;
                         wip = self.deserialize_into(wip)?;
                         wip = wip.end().map_err(DeserializeError::Reflect)?;
