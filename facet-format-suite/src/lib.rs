@@ -113,6 +113,10 @@ pub trait FormatSuite {
 
     /// Case: container-level `#[facet(proxy = ...)]` for custom serialization.
     fn proxy_container() -> CaseSpec;
+    /// Case: field-level `#[facet(proxy = ...)]` on individual field.
+    fn proxy_field_level() -> CaseSpec;
+    /// Case: proxy conversion error handling (validation failure).
+    fn proxy_validation_error() -> CaseSpec;
 
     // ── Scalar tests ──
 
@@ -345,6 +349,8 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, WithAlias>(&CASE_ATTR_ALIAS, S::attr_alias),
         // Proxy cases
         SuiteCase::new::<S, ProxyInt>(&CASE_PROXY_CONTAINER, S::proxy_container),
+        SuiteCase::new::<S, ProxyFieldLevel>(&CASE_PROXY_FIELD_LEVEL, S::proxy_field_level),
+        SuiteCase::new::<S, ProxyInt>(&CASE_PROXY_VALIDATION_ERROR, S::proxy_validation_error),
         // Scalar cases
         SuiteCase::new::<S, BoolWrapper>(&CASE_SCALAR_BOOL, S::scalar_bool),
         SuiteCase::new::<S, IntegerTypes>(&CASE_SCALAR_INTEGERS, S::scalar_integers),
@@ -889,6 +895,21 @@ const CASE_PROXY_CONTAINER: CaseDescriptor<ProxyInt> = CaseDescriptor {
     expected: || ProxyInt { value: 42 },
 };
 
+const CASE_PROXY_FIELD_LEVEL: CaseDescriptor<ProxyFieldLevel> = CaseDescriptor {
+    id: "proxy::field_level",
+    description: "field-level #[facet(proxy = IntAsString)] on individual field",
+    expected: || ProxyFieldLevel {
+        name: "test".into(),
+        count: 100,
+    },
+};
+
+const CASE_PROXY_VALIDATION_ERROR: CaseDescriptor<ProxyInt> = CaseDescriptor {
+    id: "proxy::validation_error",
+    description: "proxy conversion error when validation fails (expects error)",
+    expected: || ProxyInt { value: 0 }, // Not used for error cases
+};
+
 // ── Scalar case descriptors ──
 
 const CASE_SCALAR_BOOL: CaseDescriptor<BoolWrapper> = CaseDescriptor {
@@ -1407,6 +1428,29 @@ impl TryFrom<IntAsString> for ProxyInt {
 impl From<&ProxyInt> for IntAsString {
     fn from(v: &ProxyInt) -> Self {
         IntAsString(v.value.to_string())
+    }
+}
+
+/// Struct with field-level proxy (tests field-level vs container-level).
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct ProxyFieldLevel {
+    pub name: String,
+    #[facet(proxy = IntAsString)]
+    pub count: i32,
+}
+
+/// Convert from proxy for field-level proxy.
+impl TryFrom<IntAsString> for i32 {
+    type Error = std::num::ParseIntError;
+    fn try_from(proxy: IntAsString) -> Result<Self, Self::Error> {
+        proxy.0.parse()
+    }
+}
+
+/// Convert to proxy for field-level proxy.
+impl From<&i32> for IntAsString {
+    fn from(value: &i32) -> Self {
+        IntAsString(value.to_string())
     }
 }
 

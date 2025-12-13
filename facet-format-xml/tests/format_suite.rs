@@ -265,6 +265,16 @@ impl FormatSuite for XmlSlice {
         CaseSpec::from_str(r#"<value>42</value>"#)
     }
 
+    fn proxy_field_level() -> CaseSpec {
+        // Field-level proxy: "count" field deserializes from string "100" via proxy
+        CaseSpec::from_str(r#"<record><name>test</name><count>100</count></record>"#)
+    }
+
+    fn proxy_validation_error() -> CaseSpec {
+        // Proxy conversion fails with non-numeric string
+        CaseSpec::expect_error(r#"<value>not_a_number</value>"#, "invalid digit")
+    }
+
     // ── Scalar cases ──
 
     fn scalar_bool() -> CaseSpec {

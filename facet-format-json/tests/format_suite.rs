@@ -258,6 +258,16 @@ impl FormatSuite for JsonSlice {
         CaseSpec::from_str(r#""42""#)
     }
 
+    fn proxy_field_level() -> CaseSpec {
+        // Field-level proxy: "count" field deserializes from string "100" via proxy
+        CaseSpec::from_str(r#"{"name":"test","count":"100"}"#)
+    }
+
+    fn proxy_validation_error() -> CaseSpec {
+        // Proxy conversion fails with non-numeric string
+        CaseSpec::expect_error(r#""not_a_number""#, "invalid digit")
+    }
+
     // ── Scalar cases ──
 
     fn scalar_bool() -> CaseSpec {
