@@ -78,13 +78,16 @@ pub(crate) fn expand(item: TokenStream) -> TokenStream {
     let return_ty = parsed.return_type;
     let body = parsed.body;
 
-    let supertraits = if db_bounds.is_empty() {
+    // Has*Query traits use minimal supertraits (no user bounds).
+    // This allows DbTrait to include Has*Query without cycle risk.
+    // User bounds only apply to make_*_query() constructor.
+    let supertraits = quote! { picante::IngredientLookup + Send + Sync + 'static };
+
+    let make_bounds = if db_bounds.is_empty() {
         quote! { picante::IngredientLookup + Send + Sync + 'static }
     } else {
         quote! { #db_bounds + picante::IngredientLookup + Send + Sync + 'static }
     };
-
-    let make_bounds = supertraits.clone();
 
     let impl_where_clause = if db_bounds.is_empty() {
         TokenStream2::new()

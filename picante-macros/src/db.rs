@@ -300,10 +300,10 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
         let query_ty = tracked.qualify(&query_ty_ident);
         let has_trait = tracked.qualify(&has_trait_ident);
 
-        // NOTE: We intentionally do NOT add Has*Query traits to the combined db trait.
-        // Query traits can have user-specified bounds that might reference the combined trait,
-        // which would create a cycle. Instead, query dependencies are expressed through
-        // explicit bounds on tracked functions.
+        // Include Has*Query traits in the combined db trait.
+        // This is safe because Has*Query supertraits no longer include user-specified bounds
+        // (they only require IngredientLookup + Send + Sync + 'static).
+        has_trait_bounds.push(quote! { #has_trait });
 
         let getter = format_ident!("{func_snake}_query");
         let make_ident = format_ident!("make_{func_snake}_query");
