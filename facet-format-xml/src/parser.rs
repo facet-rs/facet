@@ -460,7 +460,9 @@ fn element_to_value(elem: &Element) -> XmlValue {
 
     if !has_attrs && !has_children {
         if text.is_empty() {
-            return XmlValue::Null;
+            // Empty element is an empty object, not null
+            // This allows unit structs to deserialize correctly
+            return XmlValue::Object(vec![]);
         }
         return parse_scalar(text);
     }

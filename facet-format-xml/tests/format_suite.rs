@@ -340,6 +340,46 @@ impl FormatSuite for XmlSlice {
             r#"<record><owned>hello world</owned><message>borrowed</message></record>"#,
         )
     }
+
+    // ── Bytes/binary data cases ──
+
+    fn bytes_vec_u8() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"<record><data><value>0</value><value>128</value><value>255</value><value>42</value></data></record>"#,
+        )
+    }
+
+    // ── Fixed-size array cases ──
+
+    fn array_fixed_size() -> CaseSpec {
+        CaseSpec::from_str(
+            r#"<record><values><value>1</value><value>2</value><value>3</value></values></record>"#,
+        )
+    }
+
+    // ── Unknown field handling cases ──
+
+    fn skip_unknown_fields() -> CaseSpec {
+        // Input has extra "unknown" element which should be silently skipped
+        CaseSpec::from_str(r#"<record><unknown>ignored</unknown><known>value</known></record>"#)
+            .without_roundtrip("unknown field is not preserved")
+    }
+
+    // ── String escape cases ──
+
+    fn string_escapes() -> CaseSpec {
+        // XML escapes: &#10; (newline), &#9; (tab), &quot; ("), backslash is literal
+        CaseSpec::from_str(
+            r#"<record><text>line1&#10;line2&#9;tab&quot;quote\backslash</text></record>"#,
+        )
+    }
+
+    // ── Unit type cases ──
+
+    fn unit_struct() -> CaseSpec {
+        // Unit struct serializes as empty element in XML
+        CaseSpec::from_str(r#"<UnitStruct/>"#)
+    }
 }
 
 fn main() {

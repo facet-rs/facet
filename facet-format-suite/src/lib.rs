@@ -165,6 +165,31 @@ pub trait FormatSuite {
 
     /// Case: Cow<'static, str> field.
     fn cow_str() -> CaseSpec;
+
+    // ── Bytes/binary data tests ──
+
+    /// Case: `Vec<u8>` binary data as array of numbers.
+    fn bytes_vec_u8() -> CaseSpec;
+
+    // ── Fixed-size array tests ──
+
+    /// Case: `[T; N]` fixed-size array.
+    fn array_fixed_size() -> CaseSpec;
+
+    // ── Unknown field handling tests ──
+
+    /// Case: unknown fields are silently skipped by default.
+    fn skip_unknown_fields() -> CaseSpec;
+
+    // ── String escape tests ──
+
+    /// Case: string with escape sequences (\n, \t, \", \\).
+    fn string_escapes() -> CaseSpec;
+
+    // ── Unit type tests ──
+
+    /// Case: unit struct (zero-sized type).
+    fn unit_struct() -> CaseSpec;
 }
 
 /// Execute suite cases; kept for convenience, but formats should register each
@@ -254,6 +279,16 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, NonZeroTypes>(&CASE_NONZERO_INTEGERS, S::nonzero_integers),
         // Borrowed string cases
         SuiteCase::new::<S, CowStrWrapper>(&CASE_COW_STR, S::cow_str),
+        // Bytes/binary data cases
+        SuiteCase::new::<S, BytesWrapper>(&CASE_BYTES_VEC_U8, S::bytes_vec_u8),
+        // Fixed-size array cases
+        SuiteCase::new::<S, ArrayWrapper>(&CASE_ARRAY_FIXED_SIZE, S::array_fixed_size),
+        // Unknown field handling cases
+        SuiteCase::new::<S, SkipUnknownStruct>(&CASE_SKIP_UNKNOWN_FIELDS, S::skip_unknown_fields),
+        // String escape cases
+        SuiteCase::new::<S, StringEscapes>(&CASE_STRING_ESCAPES, S::string_escapes),
+        // Unit type cases
+        SuiteCase::new::<S, UnitStruct>(&CASE_UNIT_STRUCT, S::unit_struct),
     ]
 }
 
@@ -844,6 +879,52 @@ const CASE_COW_STR: CaseDescriptor<CowStrWrapper> = CaseDescriptor {
     },
 };
 
+// ── Bytes/binary data case descriptors ──
+
+const CASE_BYTES_VEC_U8: CaseDescriptor<BytesWrapper> = CaseDescriptor {
+    id: "slice::bytes::vec_u8",
+    description: "Vec<u8> binary data as array of numbers",
+    expected: || BytesWrapper {
+        data: vec![0, 128, 255, 42],
+    },
+};
+
+// ── Fixed-size array case descriptors ──
+
+const CASE_ARRAY_FIXED_SIZE: CaseDescriptor<ArrayWrapper> = CaseDescriptor {
+    id: "array::fixed_size",
+    description: "[T; N] fixed-size array",
+    expected: || ArrayWrapper { values: [1, 2, 3] },
+};
+
+// ── Unknown field handling case descriptors ──
+
+const CASE_SKIP_UNKNOWN_FIELDS: CaseDescriptor<SkipUnknownStruct> = CaseDescriptor {
+    id: "behavior::skip_unknown_fields",
+    description: "unknown fields are silently skipped by default",
+    expected: || SkipUnknownStruct {
+        known: "value".into(),
+    },
+};
+
+// ── String escape case descriptors ──
+
+const CASE_STRING_ESCAPES: CaseDescriptor<StringEscapes> = CaseDescriptor {
+    id: "string::escapes",
+    description: "string with escape sequences (\\n, \\t, \\\", \\\\)",
+    expected: || StringEscapes {
+        text: "line1\nline2\ttab\"quote\\backslash".into(),
+    },
+};
+
+// ── Unit type case descriptors ──
+
+const CASE_UNIT_STRUCT: CaseDescriptor<UnitStruct> = CaseDescriptor {
+    id: "unit::struct",
+    description: "unit struct (zero-sized type)",
+    expected: || UnitStruct,
+};
+
 /// Shared fixture type for the struct case.
 #[derive(Facet, Debug, Clone)]
 pub struct StructSingleField {
@@ -1161,6 +1242,44 @@ pub struct CowStrWrapper {
     pub owned: std::borrow::Cow<'static, str>,
     pub message: std::borrow::Cow<'static, str>,
 }
+
+// ── Bytes/binary data test fixtures ──
+
+/// Fixture for Vec<u8> binary data test.
+#[derive(Facet, Debug, Clone)]
+pub struct BytesWrapper {
+    pub data: Vec<u8>,
+}
+
+// ── Fixed-size array test fixtures ──
+
+/// Fixture for fixed-size array test.
+#[derive(Facet, Debug, Clone)]
+pub struct ArrayWrapper {
+    pub values: [u64; 3],
+}
+
+// ── Unknown field handling test fixtures ──
+
+/// Fixture for skip_unknown_fields test (no deny_unknown_fields attribute).
+#[derive(Facet, Debug, Clone)]
+pub struct SkipUnknownStruct {
+    pub known: String,
+}
+
+// ── String escape test fixtures ──
+
+/// Fixture for string escape test.
+#[derive(Facet, Debug, Clone)]
+pub struct StringEscapes {
+    pub text: String,
+}
+
+// ── Unit type test fixtures ──
+
+/// Fixture for unit struct test (zero-sized type).
+#[derive(Facet, Debug, Clone)]
+pub struct UnitStruct;
 
 fn emit_case_showcase<S, T>(
     desc: &'static CaseDescriptor<T>,

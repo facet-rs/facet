@@ -315,6 +315,40 @@ impl FormatSuite for JsonSlice {
     fn cow_str() -> CaseSpec {
         CaseSpec::from_str(r#"{"owned":"hello world","message":"borrowed"}"#)
     }
+
+    // ── Bytes/binary data cases ──
+
+    fn bytes_vec_u8() -> CaseSpec {
+        CaseSpec::from_str(r#"{"data":[0,128,255,42]}"#)
+    }
+
+    // ── Fixed-size array cases ──
+
+    fn array_fixed_size() -> CaseSpec {
+        CaseSpec::from_str(r#"{"values":[1,2,3]}"#)
+    }
+
+    // ── Unknown field handling cases ──
+
+    fn skip_unknown_fields() -> CaseSpec {
+        // Input has extra "unknown" field which should be silently skipped
+        CaseSpec::from_str(r#"{"unknown":"ignored","known":"value"}"#)
+            .without_roundtrip("unknown field is not preserved")
+    }
+
+    // ── String escape cases ──
+
+    fn string_escapes() -> CaseSpec {
+        // JSON escape sequences: \n, \t, \", \\
+        CaseSpec::from_str(r#"{"text":"line1\nline2\ttab\"quote\\backslash"}"#)
+    }
+
+    // ── Unit type cases ──
+
+    fn unit_struct() -> CaseSpec {
+        // Unit struct serializes as empty object in JSON
+        CaseSpec::from_str(r#"{}"#)
+    }
 }
 
 fn main() {
