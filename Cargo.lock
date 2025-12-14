@@ -1405,6 +1405,7 @@ dependencies = [
  "indoc",
  "libtest-mimic",
  "quick-xml 0.37.5",
+ "tokio",
 ]
 
 [[package]]

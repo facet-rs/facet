@@ -6,6 +6,7 @@ use facet_format_suite::{CaseOutcome, CaseSpec, FormatSuite, all_cases};
 use facet_format_xml::{XmlError, XmlParser, to_vec};
 use indoc::indoc;
 use libtest_mimic::{Arguments, Failed, Trial};
+use std::sync::Arc;
 
 struct XmlSlice;
 
@@ -35,6 +36,23 @@ impl FormatSuite for XmlSlice {
         T: core::fmt::Debug,
     {
         Some(to_vec(value).map_err(|e| e.to_string()))
+    }
+
+    #[cfg(feature = "tokio")]
+    fn deserialize_async<T>(
+        input: &[u8],
+    ) -> impl std::future::Future<Output = Option<Result<T, Self::Error>>>
+    where
+        for<'facet> T: Facet<'facet>,
+        T: core::fmt::Debug,
+    {
+        use facet_format_xml::from_async_reader_tokio;
+        use std::io::Cursor;
+        let input = input.to_vec();
+        async move {
+            let reader = Cursor::new(input);
+            Some(from_async_reader_tokio(reader).await)
+        }
     }
 
     fn struct_single_field() -> CaseSpec {
@@ -806,12 +824,16 @@ impl FormatSuite for XmlSlice {
 
 fn main() {
     let args = Arguments::from_args();
-    let trials: Vec<Trial> = all_cases::<XmlSlice>()
+
+    // Sync tests
+    let sync_trials: Vec<Trial> = all_cases::<XmlSlice>()
         .into_iter()
         .map(|case| {
+            let case = Arc::new(case);
             let name = format!("{}::{}", XmlSlice::format_name(), case.id);
             let skip_reason = case.skip_reason();
-            let mut trial = Trial::test(name, move || match case.run() {
+            let case_clone = Arc::clone(&case);
+            let mut trial = Trial::test(name, move || match case_clone.run() {
                 CaseOutcome::Passed => Ok(()),
                 CaseOutcome::Skipped(_) => Ok(()),
                 CaseOutcome::Failed(msg) => Err(Failed::from(msg)),
@@ -822,6 +844,33 @@ fn main() {
             trial
         })
         .collect();
+
+    // Async tests (tokio)
+    #[cfg(feature = "tokio")]
+    let async_trials: Vec<Trial> = all_cases::<XmlSlice>()
+        .into_iter()
+        .map(|case| {
+            let case = Arc::new(case);
+            let name = format!("{}::{}/async", XmlSlice::format_name(), case.id);
+            let skip_reason = case.skip_reason();
+            let case_clone = Arc::clone(&case);
+            let mut trial = Trial::test(name, move || match case_clone.run_async() {
+                CaseOutcome::Passed => Ok(()),
+                CaseOutcome::Skipped(_) => Ok(()),
+                CaseOutcome::Failed(msg) => Err(Failed::from(msg)),
+            });
+            if skip_reason.is_some() {
+                trial = trial.with_ignored_flag(true);
+            }
+            trial
+        })
+        .collect();
+
+    #[cfg(feature = "tokio")]
+    let trials: Vec<Trial> = sync_trials.into_iter().chain(async_trials).collect();
+
+    #[cfg(not(feature = "tokio"))]
+    let trials = sync_trials;
 
     libtest_mimic::run(&args, trials).exit()
 }
