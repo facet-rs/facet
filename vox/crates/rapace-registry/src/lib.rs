@@ -42,6 +42,8 @@
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
+pub mod introspection;
+
 use facet_core::Shape;
 use std::collections::HashMap;
 use std::sync::LazyLock;

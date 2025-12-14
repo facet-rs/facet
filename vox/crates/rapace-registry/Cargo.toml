@@ -14,7 +14,5 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 facet-core.workspace = true
-parking_lot.workspace = true
-
-[dev-dependencies]
 facet.workspace = true
+parking_lot.workspace = true

@@ -1,0 +1,19 @@
+[package]
+name = "rapace-introspection"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Service introspection RPC service for rapace"
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[dependencies]
+rapace.workspace = true
+rapace-registry.workspace = true
+facet.workspace = true
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

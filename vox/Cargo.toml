@@ -6,6 +6,7 @@ members = [
     "crates/rapace-http",
     "crates/rapace-macros",
     "crates/rapace-cell",
+    "crates/rapace-introspection",
     "crates/rapace-registry",
     "crates/rapace-tracing",
     "crates/rapace-transport-mem",

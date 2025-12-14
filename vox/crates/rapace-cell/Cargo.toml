@@ -13,5 +13,10 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 rapace = { workspace = true, features = ["shm"] }
+rapace-registry.workspace = true
+rapace-introspection = { path = "../rapace-introspection", version = "0.4.0", optional = true }
 tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true }
+
+[features]
+introspection = ["dep:rapace-introspection"]

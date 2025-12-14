@@ -221,6 +221,50 @@ impl DispatcherBuilder {
         self
     }
 
+    /// Add service introspection to this cell.
+    ///
+    /// This exposes the `ServiceIntrospection` service, allowing callers to
+    /// query what services and methods this cell provides at runtime.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use rapace_cell::run_multi;
+    ///
+    /// run_multi(|builder| {
+    ///     builder
+    ///         .add_service(MyServiceServer::new(my_impl))
+    ///         .with_introspection() // ← Add introspection!
+    /// }).await?;
+    /// ```
+    #[cfg(feature = "introspection")]
+    pub fn with_introspection(self) -> Self {
+        use rapace_introspection::{DefaultServiceIntrospection, ServiceIntrospectionServer};
+
+        let introspection = DefaultServiceIntrospection::new();
+        let server = Arc::new(ServiceIntrospectionServer::new(introspection));
+
+        // Wrap the generated server to implement ServiceDispatch
+        struct IntrospectionDispatcher(Arc<ServiceIntrospectionServer<DefaultServiceIntrospection>>);
+
+        impl ServiceDispatch for IntrospectionDispatcher {
+            fn dispatch(
+                &self,
+                method_id: u32,
+                payload: &[u8],
+            ) -> Pin<Box<dyn Future<Output = Result<Frame, RpcError>> + Send + 'static>> {
+                // Clone payload and capture server Arc for the future
+                let payload_owned = payload.to_vec();
+                let server = self.0.clone();
+                Box::pin(async move {
+                    server.dispatch(method_id, &payload_owned).await
+                })
+            }
+        }
+
+        self.add_service(IntrospectionDispatcher(server))
+    }
+
     /// Build the dispatcher function
     #[allow(clippy::type_complexity)]
     pub fn build(
@@ -249,10 +293,24 @@ impl DispatcherBuilder {
                     }
                 }
 
-                // No service handled this method
+                // No service handled this method - use registry for better error message
+                let error_msg = rapace_registry::ServiceRegistry::with_global(|reg| {
+                    if let Some(method) = reg.method_by_id(rapace_registry::MethodId(method_id)) {
+                        format!(
+                            "Method '{}' (id={}) exists in registry but is not implemented by any service in this cell",
+                            method.full_name, method_id
+                        )
+                    } else {
+                        format!(
+                            "Unknown method_id: {} (not registered in global registry)",
+                            method_id
+                        )
+                    }
+                });
+
                 Err(RpcError::Status {
                     code: rapace::ErrorCode::Unimplemented,
-                    message: format!("Unknown method_id: {}", method_id),
+                    message: error_msg,
                 })
             })
         }
