@@ -530,7 +530,7 @@ impl<T: Transport + Send + Sync> Session<T> {
 
 /// Get current monotonic time in nanoseconds.
 fn now_ns() -> u64 {
-    use std::time::Instant;
+    use web_time::Instant;
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     let start = START.get_or_init(Instant::now);
     start.elapsed().as_nanos() as u64

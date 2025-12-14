@@ -569,31 +569,34 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
             .await
             .map_err(RpcError::Transport)?;
 
-        // Wait for response with timeout
+        // Wait for response with timeout (cross-platform: works on native and WASM)
         let timeout_ms = std::env::var("RAPACE_CALL_TIMEOUT_MS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(30_000); // Default 30 seconds
 
-        let received =
-            match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), rx).await {
-                Ok(Ok(frame)) => frame,
-                Ok(Err(_)) => {
-                    return Err(RpcError::Status {
-                        code: ErrorCode::Internal,
-                        message: "response channel closed".into(),
-                    });
-                }
-                Err(_elapsed) => {
-                    tracing::error!(
-                        channel_id,
-                        method_id,
-                        timeout_ms,
-                        "RPC call timed out waiting for response"
-                    );
-                    return Err(RpcError::DeadlineExceeded);
-                }
-            };
+        use futures_timeout::TimeoutExt;
+        let received = match rx
+            .timeout(std::time::Duration::from_millis(timeout_ms))
+            .await
+        {
+            Ok(Ok(frame)) => frame,
+            Ok(Err(_)) => {
+                return Err(RpcError::Status {
+                    code: ErrorCode::Internal,
+                    message: "response channel closed".into(),
+                });
+            }
+            Err(_elapsed) => {
+                tracing::error!(
+                    channel_id,
+                    method_id,
+                    timeout_ms,
+                    "RPC call timed out waiting for response"
+                );
+                return Err(RpcError::DeadlineExceeded);
+            }
+        };
 
         guard.disarm();
         Ok(received)

@@ -184,8 +184,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("\nTo test in browser:");
             println!("  1. cargo run --package rapace-browser-tests-server");
             println!("  2. cd demos/browser-tests-client && wasm-pack build --target web");
-            println!("  3. python3 -m http.server 8080");
-            println!("  4. Open http://localhost:8080");
+            println!("  3. python3 -m http.server 8088");
+            println!("  4. Open http://localhost:8088");
             println!("\nOr run: cargo xtask browser-test");
         }
         Commands::BrowserTest { headed } => {
@@ -379,7 +379,7 @@ fn run_browser_test(
     // Step 4: Start static file server
     println!("\n=== Starting static file server ===");
     let mut http_server = std::process::Command::new("python3")
-        .args(["-m", "http.server", "8080"])
+        .args(["-m", "http.server", "8088"])
         .current_dir(&browser_client_dir)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -387,7 +387,7 @@ fn run_browser_test(
 
     // Give it a moment to start
     std::thread::sleep(std::time::Duration::from_millis(500));
-    println!("Static file server started on http://127.0.0.1:8080");
+    println!("Static file server started on http://127.0.0.1:8088");
 
     // Step 5: Run Playwright tests
     println!("\n=== Running Playwright tests ===");

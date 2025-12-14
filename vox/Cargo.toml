@@ -83,6 +83,8 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = ["console", "WebSocket", "MessageEvent", "BinaryType", "ErrorEvent", "CloseEvent"] }
 gloo-timers = { version = "0.3", features = ["futures"] }
+web-time = "1"
+futures-timeout = "0.1"
 
 [profile.release]
 debug = 1

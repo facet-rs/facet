@@ -17,6 +17,7 @@ async-stream.workspace = true
 bitflags.workspace = true
 facet.workspace = true
 futures.workspace = true
+futures-timeout.workspace = true
 parking_lot.workspace = true
 tokio.workspace = true
 tracing.workspace = true
