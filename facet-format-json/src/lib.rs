@@ -8,15 +8,23 @@ mod parser;
 mod serializer;
 
 pub use parser::{JsonError, JsonParser};
-pub use serializer::{JsonSerializeError, JsonSerializer, to_string, to_vec};
+pub use serializer::{
+    JsonSerializeError, JsonSerializer, SerializeOptions, to_string, to_string_pretty,
+    to_string_with_options, to_vec, to_vec_pretty, to_vec_with_options,
+};
 
 // Re-export DeserializeError for convenience
 pub use facet_format::DeserializeError;
 
-/// Deserialize a value from a JSON string.
+/// Deserialize a value from a JSON string into an owned type.
 ///
-/// This is a convenience wrapper around `FormatDeserializer` that handles
-/// the common case of deserializing from a complete JSON string.
+/// This is the recommended default for most use cases. The input does not need
+/// to outlive the result, making it suitable for deserializing from temporary
+/// buffers (e.g., HTTP request bodies).
+///
+/// Types containing `&str` fields cannot be deserialized with this function;
+/// use `String` or `Cow<str>` instead. For zero-copy deserialization into
+/// borrowed types, use [`from_str_borrowed`].
 ///
 /// # Example
 ///
@@ -35,17 +43,22 @@ pub use facet_format::DeserializeError;
 /// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
-pub fn from_str<'de, T>(input: &'de str) -> Result<T, DeserializeError<JsonError>>
+pub fn from_str<T>(input: &str) -> Result<T, DeserializeError<JsonError>>
 where
-    T: facet_core::Facet<'de>,
+    T: facet_core::Facet<'static>,
 {
     from_slice(input.as_bytes())
 }
 
-/// Deserialize a value from JSON bytes.
+/// Deserialize a value from JSON bytes into an owned type.
 ///
-/// This is a convenience wrapper around `FormatDeserializer` that handles
-/// the common case of deserializing from a complete JSON byte slice.
+/// This is the recommended default for most use cases. The input does not need
+/// to outlive the result, making it suitable for deserializing from temporary
+/// buffers (e.g., HTTP request bodies).
+///
+/// Types containing `&str` fields cannot be deserialized with this function;
+/// use `String` or `Cow<str>` instead. For zero-copy deserialization into
+/// borrowed types, use [`from_slice_borrowed`].
 ///
 /// # Example
 ///
@@ -64,9 +77,86 @@ where
 /// assert_eq!(point.x, 10);
 /// assert_eq!(point.y, 20);
 /// ```
-pub fn from_slice<'de, T>(input: &'de [u8]) -> Result<T, DeserializeError<JsonError>>
+pub fn from_slice<T>(input: &[u8]) -> Result<T, DeserializeError<JsonError>>
 where
-    T: facet_core::Facet<'de>,
+    T: facet_core::Facet<'static>,
+{
+    use facet_format::FormatDeserializer;
+    let parser = JsonParser::new(input);
+    let mut de = FormatDeserializer::new_owned(parser);
+    de.deserialize_root()
+}
+
+/// Deserialize a value from a JSON string, allowing zero-copy borrowing.
+///
+/// This variant requires the input to outlive the result (`'input: 'facet`),
+/// enabling zero-copy deserialization of string fields as `Cow<str>`.
+///
+/// Use this when you need maximum performance and can guarantee the input
+/// buffer outlives the deserialized value. For most use cases, prefer
+/// [`from_str`] which doesn't have lifetime requirements.
+///
+/// # Example
+///
+/// ```
+/// use std::borrow::Cow;
+/// use facet::Facet;
+/// use facet_format_json::from_str_borrowed;
+///
+/// #[derive(Facet, Debug)]
+/// struct Person<'a> {
+///     name: Cow<'a, str>,
+///     age: u32,
+/// }
+///
+/// let json = r#"{"name": "Alice", "age": 30}"#;
+/// let person: Person = from_str_borrowed(json).unwrap();
+/// assert_eq!(&*person.name, "Alice");
+/// assert_eq!(person.age, 30);
+/// ```
+pub fn from_str_borrowed<'input, 'facet, T>(
+    input: &'input str,
+) -> Result<T, DeserializeError<JsonError>>
+where
+    T: facet_core::Facet<'facet>,
+    'input: 'facet,
+{
+    from_slice_borrowed(input.as_bytes())
+}
+
+/// Deserialize a value from JSON bytes, allowing zero-copy borrowing.
+///
+/// This variant requires the input to outlive the result (`'input: 'facet`),
+/// enabling zero-copy deserialization of string fields as `Cow<str>`.
+///
+/// Use this when you need maximum performance and can guarantee the input
+/// buffer outlives the deserialized value. For most use cases, prefer
+/// [`from_slice`] which doesn't have lifetime requirements.
+///
+/// # Example
+///
+/// ```
+/// use std::borrow::Cow;
+/// use facet::Facet;
+/// use facet_format_json::from_slice_borrowed;
+///
+/// #[derive(Facet, Debug)]
+/// struct Point<'a> {
+///     label: Cow<'a, str>,
+///     x: i32,
+///     y: i32,
+/// }
+///
+/// let json = br#"{"label": "origin", "x": 0, "y": 0}"#;
+/// let point: Point = from_slice_borrowed(json).unwrap();
+/// assert_eq!(&*point.label, "origin");
+/// ```
+pub fn from_slice_borrowed<'input, 'facet, T>(
+    input: &'input [u8],
+) -> Result<T, DeserializeError<JsonError>>
+where
+    T: facet_core::Facet<'facet>,
+    'input: 'facet,
 {
     use facet_format::FormatDeserializer;
     let parser = JsonParser::new(input);
