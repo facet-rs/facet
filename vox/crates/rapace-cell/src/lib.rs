@@ -1,13 +1,21 @@
 //! High-level cell runtime for rapace
 //!
-//! This crate provides boilerplate-free APIs for building rapace cells that communicate
-//! via SHM transport. It handles all the common setup that every cell needs:
+//! This crate provides boilerplate-free APIs for building rapace cells (plugins) that
+//! communicate with a host via shared memory (SHM) transport. It handles all the common
+//! setup that every cell needs:
 //!
-//! - CLI argument parsing (--shm-path or positional args)
+//! - CLI argument parsing (`--shm-path` or positional args)
 //! - Waiting for the host to create the SHM file
-//! - SHM session setup with standard configuration
-//! - RPC session creation with correct channel ID conventions
-//! - Service dispatcher setup
+//! - SHM session setup and transport initialization
+//! - RPC session creation with correct channel ID conventions (cells use even IDs)
+//! - Service dispatcher setup for handling incoming requests
+//!
+//! # Architecture Note
+//!
+//! Currently supports **two-peer SHM sessions** only (one host ↔ one cell). For details on
+//! the SHM architecture, see [`rapace-transport-shm/ARCHITECTURE.md`](../rapace_transport_shm/ARCHITECTURE.md).
+//!
+//! **Future**: Hub architecture support for multi-cell scenarios is planned (one host ↔ many cells).
 //!
 //! # Single-service cells
 //!
@@ -88,13 +96,32 @@
 //!
 //! # Configuration
 //!
-//! By default, the cell uses a standard SHM configuration that should match most hosts:
-//! - ring_capacity: 256 descriptors
-//! - slot_size: 64KB
-//! - slot_count: 128 slots (8MB total)
+//! ## Default SHM Configuration
 //!
-//! The cell always uses even channel IDs starting from 2 (following rapace convention
-//! where cells use even IDs and hosts use odd IDs).
+//! The default configuration is designed for typical host-cell communication with moderate
+//! payload sizes:
+//!
+//! ```text
+//! ring_capacity: 256 descriptors  (256 in-flight requests per direction)
+//! slot_size: 64KB                 (maximum payload size without fragmentation)
+//! slot_count: 128 slots           (8MB total data segment)
+//! ```
+//!
+//! This allocates approximately **~8.5MB per SHM session** (2 rings + data segment).
+//!
+//! ## When to Customize
+//!
+//! Use `run_with_config()` or `run_multi_with_config()` to override defaults:
+//!
+//! - **Large payloads** (images, video): Increase `slot_size` to 256KB or more
+//! - **High throughput**: Increase `slot_count` for more concurrent transfers
+//! - **Low latency**: Increase `ring_capacity` to reduce descriptor exhaustion
+//! - **Memory constrained**: Decrease `slot_count` or `slot_size`
+//!
+//! ## Channel ID Convention
+//!
+//! Cells always use **even channel IDs** starting from 2 (following rapace convention where
+//! cells use even IDs and hosts use odd IDs). This prevents collisions in bidirectional RPC.
 
 use std::error::Error as StdError;
 use std::future::Future;
@@ -105,11 +132,16 @@ use std::sync::Arc;
 use rapace::transport::shm::{ShmSession, ShmSessionConfig, ShmTransport};
 use rapace::{Frame, RpcError, RpcSession, TransportError};
 
-/// Standard SHM configuration that should match most hosts
+/// Default SHM configuration for two-peer sessions.
+///
+/// Designed for typical host-cell communication with moderate payloads.
+/// Total memory per session: ~8.5MB (2 × 17KB rings + 8MB data segment).
+///
+/// See module documentation for customization guidelines.
 pub const DEFAULT_SHM_CONFIG: ShmSessionConfig = ShmSessionConfig {
-    ring_capacity: 256, // 256 descriptors in flight
-    slot_size: 65536,   // 64KB per slot
-    slot_count: 128,    // 128 slots = 8MB total
+    ring_capacity: 256, // 256 in-flight descriptors per direction
+    slot_size: 65536,   // 64KB max payload per slot
+    slot_count: 128,    // 128 slots = 8MB total data segment
 };
 
 /// Channel ID start for cells (even IDs: 2, 4, 6, ...)
