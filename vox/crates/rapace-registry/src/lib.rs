@@ -6,26 +6,45 @@
 //! - Request/response schemas (via facet shapes)
 //! - Supported encodings per method
 //!
-//! # Example
+//! # Global Registry
+//!
+//! Services automatically register themselves in the global registry when their
+//! server is created (via `#[rapace::service]` macro). Access the global registry:
 //!
 //! ```ignore
-//! use rapace_registry::{ServiceRegistry, ServiceEntry, MethodEntry, Encoding};
+//! use rapace_registry::ServiceRegistry;
+//!
+//! // Read-only access
+//! ServiceRegistry::with_global(|registry| {
+//!     for service in registry.services() {
+//!         println!("Service: {}", service.name);
+//!     }
+//! });
+//!
+//! // Mutable access (for manual registration)
+//! ServiceRegistry::with_global_mut(|registry| {
+//!     let mut builder = registry.register_service("MyService", "docs");
+//!     // ...
+//!     builder.finish();
+//! });
+//! ```
+//!
+//! # Manual Registry
+//!
+//! For testing or custom scenarios, you can create isolated registries:
+//!
+//! ```ignore
+//! use rapace_registry::ServiceRegistry;
 //!
 //! let mut registry = ServiceRegistry::new();
-//!
-//! // Register services (usually done via macro-generated code)
-//! Adder::register(&mut registry);
-//!
-//! // Lookup methods by name
-//! if let Some(method) = registry.lookup_method("Adder", "add") {
-//!     println!("method_id: {}", method.id.0);
-//! }
+//! // ... register services ...
 //! ```
 
 #![forbid(unsafe_op_in_unsafe_fn)]
 
 use facet_core::Shape;
 use std::collections::HashMap;
+use std::sync::LazyLock;
 
 /// A unique identifier for a service within a registry.
 ///
@@ -225,7 +244,63 @@ impl ServiceRegistry {
     pub fn method_count(&self) -> usize {
         self.methods_by_id.len()
     }
+
+    /// Get a reference to the global service registry.
+    ///
+    /// Use this when you need direct access to the RwLock for complex operations.
+    /// For simple read/write access, prefer `with_global` or `with_global_mut`.
+    pub fn global() -> &'static parking_lot::RwLock<ServiceRegistry> {
+        &GLOBAL_REGISTRY
+    }
+
+    /// Access the global registry with a read lock.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use rapace_registry::ServiceRegistry;
+    ///
+    /// ServiceRegistry::with_global(|registry| {
+    ///     for service in registry.services() {
+    ///         println!("Service: {}", service.name);
+    ///     }
+    /// });
+    /// ```
+    pub fn with_global<F, R>(f: F) -> R
+    where
+        F: FnOnce(&ServiceRegistry) -> R,
+    {
+        f(&GLOBAL_REGISTRY.read())
+    }
+
+    /// Modify the global registry with a write lock.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use rapace_registry::ServiceRegistry;
+    ///
+    /// ServiceRegistry::with_global_mut(|registry| {
+    ///     let mut builder = registry.register_service("MyService", "docs");
+    ///     // ... add methods ...
+    ///     builder.finish();
+    /// });
+    /// ```
+    pub fn with_global_mut<F, R>(f: F) -> R
+    where
+        F: FnOnce(&mut ServiceRegistry) -> R,
+    {
+        f(&mut GLOBAL_REGISTRY.write())
+    }
 }
+
+/// Global process-level service registry.
+///
+/// All services automatically register here when their server is created
+/// (via the `#[rapace::service]` macro). This enables runtime service discovery
+/// and introspection.
+static GLOBAL_REGISTRY: LazyLock<parking_lot::RwLock<ServiceRegistry>> =
+    LazyLock::new(|| parking_lot::RwLock::new(ServiceRegistry::new()));
 
 /// Builder for registering methods on a service.
 pub struct ServiceBuilder<'a> {
@@ -579,5 +654,54 @@ mod tests {
 
         let method = service.method("add").unwrap();
         assert_eq!(method.doc, method_doc);
+    }
+
+    #[test]
+    fn test_global_registry() {
+        // Register a service in the global registry
+        ServiceRegistry::with_global_mut(|registry| {
+            let mut builder = registry.register_service("GlobalTestService", "Test service");
+            builder.add_method(
+                "test_method",
+                "Test method",
+                vec![],
+                <AddRequest as Facet>::SHAPE,
+                <AddResponse as Facet>::SHAPE,
+            );
+            builder.finish();
+        });
+
+        // Verify it's accessible
+        ServiceRegistry::with_global(|registry| {
+            let service = registry.service("GlobalTestService").unwrap();
+            assert_eq!(service.name, "GlobalTestService");
+            assert_eq!(service.doc, "Test service");
+
+            let method = service.method("test_method").unwrap();
+            assert_eq!(method.name, "test_method");
+        });
+    }
+
+    #[test]
+    fn test_global_registry_method_by_id() {
+        // Register and get method ID
+        let method_id = ServiceRegistry::with_global_mut(|registry| {
+            let mut builder = registry.register_service("MethodIdTest", "");
+            let id = builder.add_method(
+                "lookup_test",
+                "",
+                vec![],
+                <AddRequest as Facet>::SHAPE,
+                <AddResponse as Facet>::SHAPE,
+            );
+            builder.finish();
+            id
+        });
+
+        // Look up by ID
+        ServiceRegistry::with_global(|registry| {
+            let method = registry.method_by_id(method_id).unwrap();
+            assert_eq!(method.full_name, "MethodIdTest.lookup_test");
+        });
     }
 }

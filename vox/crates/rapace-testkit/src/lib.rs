@@ -2266,4 +2266,42 @@ mod registry_tests {
             range_method.doc
         );
     }
+
+    #[test]
+    fn test_auto_registration() {
+        // Creating a server should auto-register in the global registry
+        let _server = AdderServer::new(AdderImpl);
+
+        // Verify it's registered globally
+        ServiceRegistry::with_global(|registry| {
+            let service = registry
+                .service("Adder")
+                .expect("Adder should be auto-registered");
+            assert_eq!(service.name, "Adder");
+
+            let method = service.method("add").expect("add method should exist");
+            assert_eq!(method.name, "add");
+        });
+    }
+
+    #[test]
+    fn test_auto_registration_once() {
+        // Creating multiple servers should only register once
+        // Note: Adder might already be registered from other tests (global registry is shared)
+        let count_before = ServiceRegistry::with_global(|reg| reg.service_count());
+
+        let _server1 = AdderServer::new(AdderImpl);
+        let _server2 = AdderServer::new(AdderImpl);
+        let _server3 = AdderServer::new(AdderImpl);
+
+        let count_after = ServiceRegistry::with_global(|reg| reg.service_count());
+
+        // Should not add any new services (already registered) OR add exactly one (if first time)
+        assert!(
+            count_after == count_before || count_after == count_before + 1,
+            "Expected count to stay same or increase by 1, got before={} after={}",
+            count_before,
+            count_after
+        );
+    }
 }

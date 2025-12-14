@@ -315,8 +315,27 @@ fn generate_service(
         }
 
         impl<S: #trait_name + Send + Sync + 'static> #server_name<S> {
+            /// Auto-register this service in the global registry.
+            ///
+            /// Called automatically from `new()`. Uses `OnceCell` to ensure registration
+            /// happens exactly once, even if multiple server instances are created.
+            fn __auto_register() {
+                use ::std::sync::OnceLock;
+                static REGISTERED: OnceLock<()> = OnceLock::new();
+
+                REGISTERED.get_or_init(|| {
+                    ::#rapace_crate::registry::ServiceRegistry::with_global_mut(|registry| {
+                        #register_fn_name(registry);
+                    });
+                });
+            }
+
             /// Create a new server with the given service implementation.
+            ///
+            /// This automatically registers the service in the global registry
+            /// on first invocation (subsequent calls are no-ops).
             pub fn new(service: S) -> Self {
+                Self::__auto_register();
                 Self { service }
             }
 
