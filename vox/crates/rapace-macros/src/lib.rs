@@ -148,14 +148,14 @@ fn generate_service(
     // Generate client methods with hashed method IDs
     let client_methods_hardcoded = methods.iter().map(|m| {
         let method_id = compute_method_id(&trait_name_str, &m.name.to_string());
-        generate_client_method(m, method_id, &rapace_crate)
+        generate_client_method(m, method_id, &trait_name_str, &rapace_crate)
     });
 
     // Generate client methods that use stored method IDs from registry
     let client_methods_registry = methods
         .iter()
         .enumerate()
-        .map(|(idx, m)| generate_client_method_registry(m, idx, &rapace_crate));
+        .map(|(idx, m)| generate_client_method_registry(m, idx, &trait_name_str, &rapace_crate));
 
     // Generate server dispatch arms (for unary and error fallback)
     let dispatch_arms = methods.iter().map(|m| {
@@ -522,12 +522,13 @@ impl MethodInfo {
 fn generate_client_method(
     method: &MethodInfo,
     method_id: u32,
+    service_name: &str,
     rapace_crate: &TokenStream2,
 ) -> TokenStream2 {
     match &method.kind {
-        MethodKind::Unary => generate_client_method_unary(method, method_id, rapace_crate),
+        MethodKind::Unary => generate_client_method_unary(method, method_id, service_name, rapace_crate),
         MethodKind::ServerStreaming { item_type } => {
-            generate_client_method_server_streaming(method, method_id, item_type, rapace_crate)
+            generate_client_method_server_streaming(method, method_id, service_name, item_type, rapace_crate)
         }
     }
 }
@@ -535,16 +536,18 @@ fn generate_client_method(
 fn generate_client_method_registry(
     method: &MethodInfo,
     method_index: usize,
+    service_name: &str,
     rapace_crate: &TokenStream2,
 ) -> TokenStream2 {
     match &method.kind {
         MethodKind::Unary => {
-            generate_client_method_unary_registry(method, method_index, rapace_crate)
+            generate_client_method_unary_registry(method, method_index, service_name, rapace_crate)
         }
         MethodKind::ServerStreaming { item_type } => {
             generate_client_method_server_streaming_registry(
                 method,
                 method_index,
+                service_name,
                 item_type,
                 rapace_crate,
             )
@@ -555,9 +558,11 @@ fn generate_client_method_registry(
 fn generate_client_method_unary(
     method: &MethodInfo,
     method_id: u32,
+    service_name: &str,
     rapace_crate: &TokenStream2,
 ) -> TokenStream2 {
     let name = &method.name;
+    let method_name_str = name.to_string();
     let return_type = &method.return_type;
 
     let arg_names: Vec<_> = method.args.iter().map(|(name, _)| name).collect();
@@ -588,7 +593,21 @@ fn generate_client_method_unary(
 
             // Call via session
             let channel_id = self.session.next_channel_id();
+            #rapace_crate::tracing::debug!(
+                service = #service_name,
+                method = #method_name_str,
+                method_id = #method_id,
+                channel_id,
+                "RPC call start"
+            );
             let response = self.session.call(channel_id, #method_id, request_bytes).await?;
+            #rapace_crate::tracing::debug!(
+                service = #service_name,
+                method = #method_name_str,
+                method_id = #method_id,
+                channel_id,
+                "RPC call complete"
+            );
 
             // Check for error flag
             if response.flags.contains(FrameFlags::ERROR) {
@@ -712,10 +731,12 @@ fn split_top_level(tokens: TokenStream2, delimiter: char) -> Vec<TokenStream2> {
 fn generate_client_method_server_streaming(
     method: &MethodInfo,
     method_id: u32,
+    service_name: &str,
     item_type: &TokenStream2,
     rapace_crate: &TokenStream2,
 ) -> TokenStream2 {
     let name = &method.name;
+    let method_name_str = name.to_string();
 
     let arg_names: Vec<_> = method.args.iter().map(|(name, _)| name).collect();
     let arg_types: Vec<_> = method.args.iter().map(|(_, ty)| ty).collect();
@@ -743,6 +764,13 @@ fn generate_client_method_server_streaming(
         /// the server sends an ERROR frame.
         pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<#rapace_crate::rapace_core::Streaming<#item_type>, #rapace_crate::rapace_core::RpcError> {
             use #rapace_crate::rapace_core::{ErrorCode, RpcError};
+
+            #rapace_crate::tracing::debug!(
+                service = #service_name,
+                method = #method_name_str,
+                method_id = #method_id,
+                "RPC streaming call start"
+            );
 
             let request_bytes: ::std::vec::Vec<u8> = #encode_expr;
 
@@ -1164,9 +1192,11 @@ fn generate_register_fn(
 fn generate_client_method_unary_registry(
     method: &MethodInfo,
     _method_index: usize,
+    service_name: &str,
     rapace_crate: &TokenStream2,
 ) -> TokenStream2 {
     let name = &method.name;
+    let method_name_str = name.to_string();
     let return_type = &method.return_type;
     let method_id_field = format_ident!("{}_method_id", name);
 
@@ -1195,7 +1225,21 @@ fn generate_client_method_unary_registry(
 
             // Call via session with registry-assigned method ID
             let channel_id = self.session.next_channel_id();
+            #rapace_crate::tracing::debug!(
+                service = #service_name,
+                method = #method_name_str,
+                method_id = self.#method_id_field,
+                channel_id,
+                "RPC call start"
+            );
             let response = self.session.call(channel_id, self.#method_id_field, request_bytes).await?;
+            #rapace_crate::tracing::debug!(
+                service = #service_name,
+                method = #method_name_str,
+                method_id = self.#method_id_field,
+                channel_id,
+                "RPC call complete"
+            );
 
             if response.flags.contains(FrameFlags::ERROR) {
                 return Err(#rapace_crate::rapace_core::parse_error_payload(&response.payload));
@@ -1216,10 +1260,12 @@ fn generate_client_method_unary_registry(
 fn generate_client_method_server_streaming_registry(
     method: &MethodInfo,
     _method_index: usize,
+    service_name: &str,
     item_type: &TokenStream2,
     rapace_crate: &TokenStream2,
 ) -> TokenStream2 {
     let name = &method.name;
+    let method_name_str = name.to_string();
     let method_id_field = format_ident!("{}_method_id", name);
 
     let arg_names: Vec<_> = method.args.iter().map(|(name, _)| name).collect();
@@ -1247,6 +1293,13 @@ fn generate_client_method_server_streaming_registry(
         /// the server sends an ERROR frame.
         pub async fn #name(&self, #(#fn_args),*) -> ::std::result::Result<#rapace_crate::rapace_core::Streaming<#item_type>, #rapace_crate::rapace_core::RpcError> {
             use #rapace_crate::rapace_core::{ErrorCode, RpcError};
+
+            #rapace_crate::tracing::debug!(
+                service = #service_name,
+                method = #method_name_str,
+                method_id = self.#method_id_field,
+                "RPC streaming call start"
+            );
 
             let request_bytes: ::std::vec::Vec<u8> = #encode_expr;
 

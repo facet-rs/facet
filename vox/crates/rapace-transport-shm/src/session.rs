@@ -428,6 +428,58 @@ impl ShmSession {
             PeerRole::B => header.peer_a_epoch.load(Ordering::Acquire),
         }
     }
+
+    // =========================================================================
+    // Futex-based signaling for async notification
+    // =========================================================================
+
+    /// Get the futex to signal after enqueuing to our send ring.
+    ///
+    /// The peer waits on this when their recv ring is empty.
+    #[inline]
+    pub fn send_data_futex(&self) -> &std::sync::atomic::AtomicU32 {
+        let header = self.header();
+        match self.role {
+            PeerRole::A => &header.a_to_b_data_futex,
+            PeerRole::B => &header.b_to_a_data_futex,
+        }
+    }
+
+    /// Get the futex to wait on when our send ring is full.
+    ///
+    /// The peer signals this after dequeuing from their recv ring.
+    #[inline]
+    pub fn send_space_futex(&self) -> &std::sync::atomic::AtomicU32 {
+        let header = self.header();
+        match self.role {
+            PeerRole::A => &header.a_to_b_space_futex,
+            PeerRole::B => &header.b_to_a_space_futex,
+        }
+    }
+
+    /// Get the futex to wait on when our recv ring is empty.
+    ///
+    /// The peer signals this after enqueuing to their send ring.
+    #[inline]
+    pub fn recv_data_futex(&self) -> &std::sync::atomic::AtomicU32 {
+        let header = self.header();
+        match self.role {
+            PeerRole::A => &header.b_to_a_data_futex,
+            PeerRole::B => &header.a_to_b_data_futex,
+        }
+    }
+
+    /// Get the futex to signal after dequeuing from our recv ring.
+    ///
+    /// The peer waits on this when their send ring is full.
+    #[inline]
+    pub fn recv_space_futex(&self) -> &std::sync::atomic::AtomicU32 {
+        let header = self.header();
+        match self.role {
+            PeerRole::A => &header.b_to_a_space_futex,
+            PeerRole::B => &header.a_to_b_space_futex,
+        }
+    }
 }
 
 impl ShmSession {
@@ -562,6 +614,114 @@ impl ShmSession {
         // Validate the segment header.
         let header = unsafe { &*(mapping.base_ptr().add(offsets.header) as *const SegmentHeader) };
         header.validate()?;
+
+        Ok(Arc::new(Self {
+            role: PeerRole::B,
+            mapping,
+            offsets,
+            config,
+            local_send_head: std::sync::atomic::AtomicU64::new(0),
+        }))
+    }
+
+    /// Open an existing file-backed SHM session, reading config from the header.
+    ///
+    /// This opens an existing SHM segment and reads the configuration from the
+    /// segment header. This eliminates the need for the opener to know the
+    /// creator's configuration ahead of time.
+    ///
+    /// The caller takes the role of Peer B (connector/client).
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the SHM file
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Plugin side: just open, config is read from the file
+    /// let session = ShmSession::open_file_auto("/tmp/rapace.shm")?;
+    /// ```
+    #[tracing::instrument(level = "debug", skip(path), fields(path = %path.as_ref().display()))]
+    pub fn open_file_auto(path: impl AsRef<Path>) -> Result<Arc<Self>, SessionError> {
+        use std::fs::OpenOptions;
+        use std::os::unix::io::AsRawFd;
+
+        let path = path.as_ref();
+        let path_buf = path.to_path_buf();
+
+        // First, open the file and read just the header to get the config.
+        let file = OpenOptions::new().read(true).write(true).open(path)?;
+        let file_size = file.metadata()?.len() as usize;
+
+        // Minimum size check: at least the header must fit
+        let header_size = core::mem::size_of::<SegmentHeader>();
+        if file_size < header_size {
+            return Err(SessionError::InvalidConfig(
+                "SHM file too small to contain header",
+            ));
+        }
+
+        // Map the file
+        let fd = file.as_raw_fd();
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                file_size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                fd,
+                0,
+            )
+        };
+        std::mem::drop(file);
+
+        if ptr == libc::MAP_FAILED {
+            return Err(SessionError::System(std::io::Error::last_os_error()));
+        }
+
+        let mapping = Arc::new(ShmMapping {
+            base_addr: ptr as usize,
+            size: file_size,
+            kind: ShmMappingKind::File { path: path_buf },
+        });
+
+        // Read and validate the header
+        let header = unsafe { &*(mapping.base_ptr() as *const SegmentHeader) };
+        header.validate()?;
+
+        // Extract config from header
+        let (ring_capacity, slot_size, slot_count) = header.config();
+        let config = ShmSessionConfig {
+            ring_capacity,
+            slot_size,
+            slot_count,
+        };
+
+        tracing::info!(
+            path = %path.display(),
+            ring_capacity,
+            slot_size,
+            slot_count,
+            file_size,
+            "opened file-backed SHM session (config from header)"
+        );
+
+        // Calculate expected size and offsets
+        let expected_size = calculate_segment_size_checked_with_max(
+            config.ring_capacity,
+            config.slot_size,
+            config.slot_count,
+        )?;
+
+        if file_size < expected_size {
+            return Err(SessionError::InvalidConfig(
+                "SHM file smaller than config indicates",
+            ));
+        }
+
+        let offsets = SegmentOffsets::calculate_checked(config.ring_capacity, config.slot_count)
+            .map_err(SessionError::InvalidConfig)?;
 
         Ok(Arc::new(Self {
             role: PeerRole::B,
@@ -752,9 +912,9 @@ unsafe fn initialize_segment(
     config: &ShmSessionConfig,
     offsets: &SegmentOffsets,
 ) -> Result<(), SessionError> {
-    // Initialize segment header.
+    // Initialize segment header with config.
     let header = unsafe { &mut *(base.add(offsets.header) as *mut SegmentHeader) };
-    header.init();
+    header.init(config.ring_capacity, config.slot_size, config.slot_count);
 
     // Initialize A→B ring.
     let ring_a_to_b =
@@ -775,6 +935,16 @@ unsafe fn initialize_segment(
         let meta = unsafe { &mut *(base.add(offsets.slot_meta) as *mut SlotMeta).add(i as usize) };
         meta.init();
     }
+
+    // Initialize the lock-free free list (links all slots together).
+    let data_segment = unsafe {
+        DataSegment::from_raw(
+            base.add(offsets.data_header) as *mut DataSegmentHeader,
+            base.add(offsets.slot_meta) as *mut SlotMeta,
+            base.add(offsets.slot_data),
+        )
+    };
+    unsafe { data_segment.init_free_list() };
 
     Ok(())
 }

@@ -45,6 +45,7 @@
 
 #[cfg(any(feature = "allocator", test))]
 mod alloc;
+pub mod futex;
 pub mod layout;
 mod session;
 mod transport;

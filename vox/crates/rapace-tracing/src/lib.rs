@@ -382,6 +382,16 @@ where
     T: Transport + Send + Sync + 'static,
 {
     fn enabled(&self, metadata: &tracing::Metadata<'_>, _ctx: Context<'_, S>) -> bool {
+        // Avoid infinite recursion: don't forward events about rapace_tracing itself
+        // or rapace_core (which handles the RPC session internals)
+        let target = metadata.target();
+        if target.starts_with("rapace_tracing")
+            || target.starts_with("rapace_core")
+            || target.starts_with("rapace_transport_shm")
+        {
+            return false;
+        }
+
         // Check against the host-controlled filter
         let level = match *metadata.level() {
             tracing::Level::ERROR => tracing::level_filters::LevelFilter::ERROR,

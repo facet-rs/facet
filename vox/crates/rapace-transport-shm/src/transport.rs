@@ -2,13 +2,16 @@
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use rapace_core::{
     DecodeError, EncodeCtx, EncodeError, Frame, FrameView, INLINE_PAYLOAD_SIZE,
     INLINE_PAYLOAD_SLOT, MsgDescHot, Transport, TransportError, ValidationError,
 };
+use tokio::sync::Notify;
 
+use crate::futex::futex_signal;
 use crate::layout::{RingError, SlotError};
 use crate::session::ShmSession;
 
@@ -30,17 +33,12 @@ fn slot_error_to_transport(e: SlotError, context: &str) -> TransportError {
             "{}: invalid state",
             context
         ))),
-        SlotError::PayloadTooLarge => {
-            TransportError::Validation(ValidationError::PayloadTooLarge { len: 0, max: 0 })
+        SlotError::PayloadTooLarge { len, max } => {
+            TransportError::Validation(ValidationError::PayloadTooLarge { len: len as u32, max: max as u32 })
         }
     }
 }
 
-fn ring_error_to_transport(e: RingError) -> TransportError {
-    match e {
-        RingError::Full => TransportError::Encode(EncodeError::EncodeFailed("ring full".into())),
-    }
-}
 
 /// SHM transport implementation.
 ///
@@ -55,14 +53,19 @@ pub struct ShmTransport {
     closed: std::sync::atomic::AtomicBool,
     /// Optional metrics for tracking zero-copy performance.
     metrics: Option<Arc<ShmMetrics>>,
+    /// Optional name for tracing/debugging purposes.
+    name: Option<String>,
+    /// Notify waiters when a slot is freed (in-process notification).
+    /// This complements the futex for faster in-process wakeups.
+    slot_freed_notify: Notify,
 }
 
-/// A frame received from SHM, with its slot info for later freeing.
+/// A frame received from SHM.
+/// The payload is always copied (either from inline or slot), so the slot
+/// is freed immediately after reading and doesn't need to be tracked.
 struct ReceivedFrame {
     desc: MsgDescHot,
-    /// If payload was in a slot, this holds the slot info for freeing.
-    slot_info: Option<(u32, u32)>, // (slot_index, generation)
-    /// Payload data (either copied from inline or referencing slot).
+    /// Payload data (copied from inline or slot).
     payload: Vec<u8>,
 }
 
@@ -74,6 +77,20 @@ impl ShmTransport {
             last_frame: Mutex::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
             metrics: None,
+            name: None,
+            slot_freed_notify: Notify::new(),
+        }
+    }
+
+    /// Create a new SHM transport with a name for tracing.
+    pub fn with_name(session: Arc<ShmSession>, name: impl Into<String>) -> Self {
+        Self {
+            session,
+            last_frame: Mutex::new(None),
+            closed: std::sync::atomic::AtomicBool::new(false),
+            metrics: None,
+            name: Some(name.into()),
+            slot_freed_notify: Notify::new(),
         }
     }
 
@@ -84,6 +101,24 @@ impl ShmTransport {
             last_frame: Mutex::new(None),
             closed: std::sync::atomic::AtomicBool::new(false),
             metrics: Some(metrics),
+            name: None,
+            slot_freed_notify: Notify::new(),
+        }
+    }
+
+    /// Create a new SHM transport with name and metrics.
+    pub fn with_name_and_metrics(
+        session: Arc<ShmSession>,
+        name: impl Into<String>,
+        metrics: Arc<ShmMetrics>,
+    ) -> Self {
+        Self {
+            session,
+            last_frame: Mutex::new(None),
+            closed: std::sync::atomic::AtomicBool::new(false),
+            metrics: Some(metrics),
+            name: Some(name.into()),
+            slot_freed_notify: Notify::new(),
         }
     }
 
@@ -163,26 +198,113 @@ impl Transport for ShmTransport {
                 metrics.record_inline_send();
             }
         } else {
-            // Need to allocate a slot.
-            let (slot_idx, generation) = match data_segment.alloc() {
-                Ok(result) => {
-                    if let Some(ref metrics) = self.metrics {
-                        metrics.record_alloc_success();
+            // Need to allocate a slot, waiting if none available.
+            const SLOT_FUTEX_TIMEOUT: Duration = Duration::from_millis(100);
+            const SLOT_PEER_TIMEOUT_NANOS: u64 = 3_000_000_000; // 3 seconds
+            const DEADLOCK_WARN_INTERVAL: Duration = Duration::from_secs(1);
+
+            let wait_start = std::time::Instant::now();
+            let mut last_warn = wait_start;
+            let mut wait_count = 0u32;
+
+            let (slot_idx, generation) = loop {
+                match data_segment.alloc() {
+                    Ok(result) => {
+                        if let Some(ref metrics) = self.metrics {
+                            metrics.record_alloc_success();
+                        }
+                        // Log if we waited a long time
+                        if wait_count > 10 {
+                            let waited = wait_start.elapsed();
+                            tracing::info!(
+                                transport = ?self.name,
+                                waited_ms = waited.as_millis() as u64,
+                                wait_count,
+                                "Slot allocation succeeded after waiting"
+                            );
+                        }
+                        break result;
                     }
-                    result
-                }
-                Err(e) => {
-                    if let Some(ref metrics) = self.metrics {
-                        metrics.record_alloc_failure();
+                    Err(SlotError::NoFreeSlots) => {
+                        wait_count += 1;
+                        if let Some(ref metrics) = self.metrics {
+                            metrics.record_alloc_failure();
+                        }
+
+                        // Check if peer is still alive
+                        if !self.session.is_peer_alive(SLOT_PEER_TIMEOUT_NANOS) {
+                            tracing::warn!(transport = ?self.name, "SHM peer died while waiting for slot");
+                            return Err(TransportError::Closed);
+                        }
+
+                        if self.is_closed() {
+                            return Err(TransportError::Closed);
+                        }
+
+                        // Deadlock detection: warn periodically while waiting
+                        // Use BOTH tracing AND eprintln to ensure visibility
+                        // (tracing from transport may be filtered to prevent feedback loops)
+                        let now = std::time::Instant::now();
+                        if now.duration_since(last_warn) >= DEADLOCK_WARN_INTERVAL {
+                            let slot_status = data_segment.slot_status();
+                            let waited_ms = wait_start.elapsed().as_millis() as u64;
+
+                            // Direct stderr output - bypasses tracing filter
+                            eprintln!(
+                                "[DEADLOCK?] transport={:?} waited={}ms retries={} payload={}B {}",
+                                self.name, waited_ms, wait_count, payload.len(), slot_status
+                            );
+
+                            tracing::warn!(
+                                transport = ?self.name,
+                                waited_ms,
+                                wait_count,
+                                payload_len = payload.len(),
+                                %slot_status,
+                                "Potential deadlock: waiting for slot allocation"
+                            );
+                            last_warn = now;
+                        }
+
+                        // Wait for a slot to become available.
+                        // Use select! to wake on EITHER:
+                        // 1. Futex signal from peer (cross-process) via spawn_blocking
+                        // 2. In-process Notify from our own recv_frame freeing a slot
+                        let futex = data_segment.slot_available_futex();
+                        let current = futex.load(Ordering::Acquire);
+
+                        let futex_ptr = futex as *const _ as usize;
+                        let futex_wait = tokio::task::spawn_blocking(move || {
+                            let futex = unsafe { &*(futex_ptr as *const std::sync::atomic::AtomicU32) };
+                            crate::futex::futex_wait(futex, current, Some(SLOT_FUTEX_TIMEOUT))
+                        });
+
+                        // Wait for either futex or in-process notify
+                        tokio::select! {
+                            biased;
+                            // Prefer in-process notify (faster path)
+                            _ = self.slot_freed_notify.notified() => {
+                                // Slot freed in-process, retry immediately
+                            }
+                            _ = futex_wait => {
+                                // Futex wait completed (timeout or signal)
+                            }
+                        }
+
+                        // Update heartbeat while waiting
+                        self.session.update_heartbeat();
                     }
-                    tracing::debug!(
-                        error = %e,
-                        slot_count = data_segment.slot_count(),
-                        slot_size = data_segment.slot_size(),
-                        payload_len = payload.len(),
-                        "SHM slot allocation failed"
-                    );
-                    return Err(slot_error_to_transport(e, "alloc"));
+                    Err(e) => {
+                        tracing::debug!(
+                            transport = ?self.name,
+                            error = %e,
+                            slot_count = data_segment.slot_count(),
+                            slot_size = data_segment.slot_size(),
+                            payload_len = payload.len(),
+                            "SHM slot allocation failed"
+                        );
+                        return Err(slot_error_to_transport(e, "alloc"));
+                    }
                 }
             };
 
@@ -209,27 +331,94 @@ impl Transport for ShmTransport {
             desc.payload_len = payload.len() as u32;
         }
 
-        // Enqueue the descriptor.
+        // Enqueue the descriptor, waiting if ring is full.
         let mut local_head = self.session.local_send_head().load(Ordering::Relaxed);
-        match send_ring.enqueue(&mut local_head, &desc) {
-            Ok(()) => {
-                if let Some(ref metrics) = self.metrics {
-                    metrics.record_ring_enqueue();
+
+        // Timeout for futex wait (check peer liveness periodically)
+        const FUTEX_TIMEOUT: Duration = Duration::from_millis(100);
+        const PEER_TIMEOUT_NANOS: u64 = 3_000_000_000; // 3 seconds
+        const RING_DEADLOCK_WARN_INTERVAL: Duration = Duration::from_secs(1);
+
+        let ring_wait_start = std::time::Instant::now();
+        let mut ring_last_warn = ring_wait_start;
+        let mut ring_wait_count = 0u32;
+
+        loop {
+            match send_ring.enqueue(&mut local_head, &desc) {
+                Ok(()) => {
+                    if let Some(ref metrics) = self.metrics {
+                        metrics.record_ring_enqueue();
+                    }
+                    if ring_wait_count > 10 {
+                        let waited = ring_wait_start.elapsed();
+                        tracing::info!(
+                            transport = ?self.name,
+                            waited_ms = waited.as_millis() as u64,
+                            ring_wait_count,
+                            "Ring enqueue succeeded after waiting"
+                        );
+                    }
+                    break;
                 }
-            }
-            Err(e) => {
-                if let Some(ref metrics) = self.metrics {
-                    metrics.record_ring_full();
+                Err(RingError::Full) => {
+                    ring_wait_count += 1;
+                    if let Some(ref metrics) = self.metrics {
+                        metrics.record_ring_full();
+                    }
+
+                    // Check if peer is still alive
+                    if !self.session.is_peer_alive(PEER_TIMEOUT_NANOS) {
+                        tracing::warn!(transport = ?self.name, "SHM peer died while waiting for ring space");
+                        return Err(TransportError::Closed);
+                    }
+
+                    if self.is_closed() {
+                        return Err(TransportError::Closed);
+                    }
+
+                    // Deadlock detection for ring full
+                    let now = std::time::Instant::now();
+                    if now.duration_since(ring_last_warn) >= RING_DEADLOCK_WARN_INTERVAL {
+                        let waited_ms = ring_wait_start.elapsed().as_millis() as u64;
+                        eprintln!(
+                            "[DEADLOCK?] transport={:?} ring full waited={}ms retries={} capacity={}",
+                            self.name, waited_ms, ring_wait_count, send_ring.capacity()
+                        );
+                        tracing::warn!(
+                            transport = ?self.name,
+                            waited_ms,
+                            ring_wait_count,
+                            ring_capacity = send_ring.capacity(),
+                            "Potential deadlock: waiting for ring space"
+                        );
+                        ring_last_warn = now;
+                    }
+
+                    // Wait for space to become available.
+                    // The peer will signal this futex after dequeuing.
+                    let futex = self.session.send_space_futex();
+                    let current = futex.load(Ordering::Acquire);
+
+                    // Use spawn_blocking for the futex wait to avoid blocking tokio
+                    let futex_ptr = futex as *const _ as usize;
+                    let _ = tokio::task::spawn_blocking(move || {
+                        // SAFETY: The futex is in shared memory and lives for the session lifetime
+                        let futex = unsafe { &*(futex_ptr as *const std::sync::atomic::AtomicU32) };
+                        crate::futex::futex_wait(futex, current, Some(FUTEX_TIMEOUT))
+                    }).await;
+
+                    // Update heartbeat while waiting
+                    self.session.update_heartbeat();
                 }
-                tracing::debug!(error = %e, "SHM ring enqueue failed");
-                return Err(ring_error_to_transport(e));
             }
         }
+
         self.session
             .local_send_head()
             .store(local_head, Ordering::Release);
 
-        // TODO: Signal peer via eventfd doorbell.
+        // Signal peer that data is available
+        futex_signal(self.session.send_data_futex());
 
         Ok(())
     }
@@ -242,21 +431,6 @@ impl Transport for ShmTransport {
         let recv_ring = self.session.recv_ring();
         let data_segment = self.session.data_segment();
 
-        // Free any previous frame's slot.
-        {
-            let mut last = self.last_frame.lock();
-            if let Some(prev) = last.take()
-                && let Some((slot_idx, generation)) = prev.slot_info
-            {
-                // Ignore errors on free (slot may have been freed already).
-                if data_segment.free(slot_idx, generation).is_ok()
-                    && let Some(ref metrics) = self.metrics
-                {
-                    metrics.record_slot_free();
-                }
-            }
-        }
-
         // Update our heartbeat at the start to signal we're alive
         self.session.update_heartbeat();
 
@@ -267,36 +441,49 @@ impl Transport for ShmTransport {
         let mut last_heartbeat_update = std::time::Instant::now();
         const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
-        // Poll for a descriptor.
-        // TODO: Use eventfd for proper async notification instead of polling.
+        // Timeout for futex wait (check peer liveness periodically)
+        const FUTEX_TIMEOUT: Duration = Duration::from_millis(100);
+
+        // Wait for a descriptor, using futex for efficient blocking.
         loop {
             if let Some(desc) = recv_ring.dequeue() {
                 if let Some(ref metrics) = self.metrics {
                     metrics.record_ring_dequeue();
                 }
 
+                // Signal peer that space is available (they may be blocked on full ring)
+                futex_signal(self.session.recv_space_futex());
+
                 // Got a descriptor. Extract payload.
-                let (payload, slot_info) = if desc.is_inline() {
+                let payload = if desc.is_inline() {
                     // Inline payload - copy from descriptor.
-                    let payload = desc.inline_payload[..desc.payload_len as usize].to_vec();
-                    (payload, None)
+                    desc.inline_payload[..desc.payload_len as usize].to_vec()
                 } else {
-                    // Payload in slot - read it.
+                    // Payload in slot - read and copy it immediately.
                     let payload_data = unsafe {
                         data_segment
                             .read_slot(desc.payload_slot, desc.payload_offset, desc.payload_len)
                             .map_err(|e| slot_error_to_transport(e, "read_slot"))?
                     };
-                    (
-                        payload_data.to_vec(),
-                        Some((desc.payload_slot, desc.payload_generation)),
-                    )
+                    let payload = payload_data.to_vec();
+
+                    // Free the slot IMMEDIATELY after copying, not lazily.
+                    // This prevents deadlock where slots accumulate while waiting for next recv.
+                    if data_segment.free(desc.payload_slot, desc.payload_generation).is_ok() {
+                        if let Some(ref metrics) = self.metrics {
+                            metrics.record_slot_free();
+                        }
+                        // Notify any in-process waiters that a slot is available.
+                        // This complements the futex signal for faster in-process wakeups.
+                        self.slot_freed_notify.notify_waiters();
+                    }
+
+                    payload
                 };
 
                 // Store for FrameView lifetime.
                 let received = ReceivedFrame {
                     desc,
-                    slot_info,
                     payload,
                 };
 
@@ -323,26 +510,35 @@ impl Transport for ShmTransport {
                 return Ok(FrameView::new(desc, payload));
             }
 
-            // No descriptor available. Check peer liveness before yielding.
+            // No descriptor available. Check peer liveness.
             if !self.session.is_peer_alive(PEER_TIMEOUT_NANOS) {
-                tracing::warn!("SHM peer appears to have died (no heartbeat for 3s)");
+                tracing::warn!(transport = ?self.name, "SHM peer appears to have died (no heartbeat for 3s)");
                 return Err(TransportError::Closed);
             }
 
-            // Update our heartbeat periodically while polling
+            if self.is_closed() {
+                return Err(TransportError::Closed);
+            }
+
+            // Update our heartbeat periodically while waiting
             let now = std::time::Instant::now();
             if now.duration_since(last_heartbeat_update) >= HEARTBEAT_INTERVAL {
                 self.session.update_heartbeat();
                 last_heartbeat_update = now;
             }
 
-            // Yield and try again.
-            // TODO: Wait on eventfd instead of polling.
-            tokio::task::yield_now().await;
+            // Wait for data to become available.
+            // The peer will signal this futex after enqueuing.
+            let futex = self.session.recv_data_futex();
+            let current = futex.load(Ordering::Acquire);
 
-            if self.is_closed() {
-                return Err(TransportError::Closed);
-            }
+            // Use spawn_blocking for the futex wait to avoid blocking tokio
+            let futex_ptr = futex as *const _ as usize;
+            let _ = tokio::task::spawn_blocking(move || {
+                // SAFETY: The futex is in shared memory and lives for the session lifetime
+                let futex = unsafe { &*(futex_ptr as *const std::sync::atomic::AtomicU32) };
+                crate::futex::futex_wait(futex, current, Some(FUTEX_TIMEOUT))
+            }).await;
         }
     }
 
@@ -358,16 +554,7 @@ impl Transport for ShmTransport {
 
     async fn close(&self) -> Result<(), TransportError> {
         self.closed.store(true, Ordering::Release);
-
-        // Free any held slot.
-        let mut last = self.last_frame.lock();
-        if let Some(prev) = last.take()
-            && let Some((slot_idx, generation)) = prev.slot_info
-        {
-            let data_segment = self.session.data_segment();
-            let _ = data_segment.free(slot_idx, generation);
-        }
-
+        // No slot cleanup needed - slots are freed immediately after copying in recv_frame
         Ok(())
     }
 }
