@@ -9,6 +9,7 @@ extern crate alloc;
 mod adapter;
 mod error;
 mod parser;
+mod raw_json;
 mod scan_buffer;
 mod scanner;
 mod serializer;
@@ -17,10 +18,13 @@ mod serializer;
 mod streaming_adapter;
 
 pub use parser::{JsonError, JsonParser};
+pub use raw_json::RawJson;
 pub use serializer::{
     JsonSerializeError, JsonSerializer, SerializeOptions, peek_to_string, peek_to_string_pretty,
-    peek_to_string_with_options, to_string, to_string_pretty, to_string_with_options, to_vec,
-    to_vec_pretty, to_vec_with_options,
+    peek_to_string_with_options, peek_to_writer_std, peek_to_writer_std_pretty,
+    peek_to_writer_std_with_options, to_string, to_string_pretty, to_string_with_options, to_vec,
+    to_vec_pretty, to_vec_with_options, to_writer_std, to_writer_std_pretty,
+    to_writer_std_with_options,
 };
 
 // Re-export DeserializeError for convenience

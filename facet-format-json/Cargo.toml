@@ -14,6 +14,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
 corosensei = { version = "0.3", optional = true }
+facet = { path = "../facet", default-features = false }
 facet-core = { path = "../facet-core", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
 facet-format = { path = "../facet-format" }
 facet-reflect = { path = "../facet-reflect", features = ["miette"] }

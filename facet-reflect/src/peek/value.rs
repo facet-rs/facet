@@ -552,6 +552,10 @@ impl<'mem, 'facet> Peek<'mem, 'facet> {
         if let Some(ScalarType::String) = peek.scalar_type() {
             return unsafe { Some(peek.data.get::<alloc::string::String>().as_str()) };
         }
+        #[cfg(feature = "alloc")]
+        if let Some(ScalarType::CowStr) = peek.scalar_type() {
+            return unsafe { Some(peek.data.get::<alloc::borrow::Cow<'mem, str>>().as_ref()) };
+        }
 
         // Handle references, including nested references like &&str
         if let Type::Pointer(PointerType::Reference(vpt)) = peek.shape.ty {

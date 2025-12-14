@@ -248,6 +248,17 @@ impl FormatSerializer for JsonSerializer {
         }
         Ok(())
     }
+
+    fn raw_serialize_shape(&self) -> Option<&'static facet_core::Shape> {
+        Some(crate::RawJson::SHAPE)
+    }
+
+    fn raw_scalar(&mut self, content: &str) -> Result<(), Self::Error> {
+        // For RawJson, output the content directly without escaping
+        self.before_value()?;
+        self.out.extend_from_slice(content.as_bytes());
+        Ok(())
+    }
 }
 
 /// Serialize a value to JSON bytes.
@@ -484,4 +495,137 @@ pub fn peek_to_string_with_options<'input, 'facet>(
     serialize_root(&mut serializer, peek)?;
     let bytes = serializer.finish();
     Ok(String::from_utf8(bytes).expect("JSON output should always be valid UTF-8"))
+}
+
+// ── Writer-based serialization (std::io::Write) ──
+
+/// Serialize a value to JSON and write it to a `std::io::Write` writer.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_json::to_writer_std;
+///
+/// #[derive(Facet)]
+/// struct Person {
+///     name: String,
+///     age: u32,
+/// }
+///
+/// let person = Person { name: "Alice".into(), age: 30 };
+/// let mut buffer = Vec::new();
+/// to_writer_std(&mut buffer, &person).unwrap();
+/// assert_eq!(buffer, br#"{"name":"Alice","age":30}"#);
+/// ```
+pub fn to_writer_std<'facet, W, T>(writer: W, value: &T) -> std::io::Result<()>
+where
+    W: std::io::Write,
+    T: Facet<'facet> + ?Sized,
+{
+    peek_to_writer_std(writer, Peek::new(value))
+}
+
+/// Serialize a value to pretty-printed JSON and write it to a `std::io::Write` writer.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_json::to_writer_std_pretty;
+///
+/// #[derive(Facet)]
+/// struct Person {
+///     name: String,
+///     age: u32,
+/// }
+///
+/// let person = Person { name: "Alice".into(), age: 30 };
+/// let mut buffer = Vec::new();
+/// to_writer_std_pretty(&mut buffer, &person).unwrap();
+/// assert!(String::from_utf8_lossy(&buffer).contains('\n'));
+/// ```
+pub fn to_writer_std_pretty<'facet, W, T>(writer: W, value: &T) -> std::io::Result<()>
+where
+    W: std::io::Write,
+    T: Facet<'facet> + ?Sized,
+{
+    peek_to_writer_std_pretty(writer, Peek::new(value))
+}
+
+/// Serialize a value to JSON with custom options and write it to a `std::io::Write` writer.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_json::{to_writer_std_with_options, SerializeOptions};
+///
+/// #[derive(Facet)]
+/// struct Person {
+///     name: String,
+///     age: u32,
+/// }
+///
+/// let person = Person { name: "Alice".into(), age: 30 };
+///
+/// // Compact output
+/// let mut buffer = Vec::new();
+/// to_writer_std_with_options(&mut buffer, &person, &SerializeOptions::default()).unwrap();
+/// assert_eq!(buffer, br#"{"name":"Alice","age":30}"#);
+///
+/// // Pretty output with tabs
+/// let mut buffer = Vec::new();
+/// to_writer_std_with_options(&mut buffer, &person, &SerializeOptions::default().indent("\t")).unwrap();
+/// assert!(String::from_utf8_lossy(&buffer).contains('\n'));
+/// ```
+pub fn to_writer_std_with_options<'facet, W, T>(
+    writer: W,
+    value: &T,
+    options: &SerializeOptions,
+) -> std::io::Result<()>
+where
+    W: std::io::Write,
+    T: Facet<'facet> + ?Sized,
+{
+    peek_to_writer_std_with_options(writer, Peek::new(value), options)
+}
+
+/// Serialize a `Peek` instance to JSON and write it to a `std::io::Write` writer.
+pub fn peek_to_writer_std<'input, 'facet, W>(
+    writer: W,
+    peek: Peek<'input, 'facet>,
+) -> std::io::Result<()>
+where
+    W: std::io::Write,
+{
+    peek_to_writer_std_with_options(writer, peek, &SerializeOptions::default())
+}
+
+/// Serialize a `Peek` instance to pretty-printed JSON and write it to a `std::io::Write` writer.
+pub fn peek_to_writer_std_pretty<'input, 'facet, W>(
+    writer: W,
+    peek: Peek<'input, 'facet>,
+) -> std::io::Result<()>
+where
+    W: std::io::Write,
+{
+    peek_to_writer_std_with_options(writer, peek, &SerializeOptions::default().pretty())
+}
+
+/// Serialize a `Peek` instance to JSON with custom options and write it to a `std::io::Write` writer.
+pub fn peek_to_writer_std_with_options<'input, 'facet, W>(
+    mut writer: W,
+    peek: Peek<'input, 'facet>,
+    options: &SerializeOptions,
+) -> std::io::Result<()>
+where
+    W: std::io::Write,
+{
+    // Serialize to bytes first, then write
+    // This is simpler and avoids the complexity of incremental writes
+    let mut serializer = JsonSerializer::with_options(options.clone());
+    serialize_root(&mut serializer, peek)
+        .map_err(|e| std::io::Error::other(alloc::format!("{:?}", e)))?;
+    writer.write_all(&serializer.finish())
 }

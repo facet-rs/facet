@@ -61,6 +61,24 @@ pub trait FormatSerializer {
     fn preferred_field_order(&self) -> FieldOrdering {
         FieldOrdering::Declaration
     }
+
+    /// Returns the shape of the format's raw capture type for serialization.
+    ///
+    /// When serializing a value whose shape matches this, the serializer will
+    /// extract the inner string and call [`FormatSerializer::raw_scalar`] instead of normal
+    /// serialization.
+    fn raw_serialize_shape(&self) -> Option<&'static facet_core::Shape> {
+        None
+    }
+
+    /// Emit a raw scalar value (for RawJson, etc.) without any encoding/escaping.
+    ///
+    /// The content is the format-specific raw representation that should be
+    /// output directly.
+    fn raw_scalar(&mut self, content: &str) -> Result<(), Self::Error> {
+        // Default: treat as a regular string (formats should override this)
+        self.scalar(ScalarValue::Str(Cow::Borrowed(content)))
+    }
 }
 
 /// Error produced by the shared serializer.
@@ -134,6 +152,25 @@ where
 {
     // Dereference pointers (Box, Arc, etc.) to get the underlying value
     let value = deref_if_pointer(value);
+
+    // Check for raw serialization type (e.g., RawJson) BEFORE innermost_peek
+    // because innermost_peek might unwrap the type if it has .inner set
+    if serializer.raw_serialize_shape() == Some(value.shape()) {
+        // RawJson is a tuple struct with a single Cow<str> field
+        // Get the inner Cow<str> value via as_str on the inner
+        if let Ok(struct_) = value.into_struct()
+            && let Some((_field_item, inner_value)) = struct_.fields_for_serialize().next()
+            && let Some(s) = inner_value.as_str()
+        {
+            return serializer.raw_scalar(s).map_err(SerializeError::Backend);
+        }
+        // If we get here, the raw shape matched but extraction failed
+        // This shouldn't happen for properly implemented raw types
+        return Err(SerializeError::Unsupported(
+            "raw capture type matched but could not extract inner string",
+        ));
+    }
+
     let value = value.innermost_peek();
 
     // Check for container-level proxy - serialize through the proxy type
