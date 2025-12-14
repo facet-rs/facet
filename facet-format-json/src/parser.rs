@@ -2,6 +2,7 @@ extern crate alloc;
 
 use alloc::{borrow::Cow, vec::Vec};
 
+use facet_core::Facet as _;
 use facet_format::{
     ContainerKind, FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent,
     ProbeStream, ScalarValue,
@@ -557,6 +558,10 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
     where
         Self: 'a;
 
+    fn raw_capture_shape(&self) -> Option<&'static facet_core::Shape> {
+        Some(crate::RawJson::SHAPE)
+    }
+
     fn next_event(&mut self) -> Result<ParseEvent<'de>, Self::Error> {
         if let Some(event) = self.event_peek.take() {
             return Ok(event);
@@ -594,11 +599,28 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
             "capture_raw called while an event is buffered"
         );
 
-        // Record start position
-        let start_offset = self.current_offset;
+        // Get the first token to find the actual start offset (excludes whitespace)
+        let first = self.consume_token()?;
+        let start_offset = first.span.offset;
 
-        // Skip the value
-        self.consume_value_tokens()?;
+        // Skip the rest of the value if it's a container
+        match first.token {
+            AdapterToken::ObjectStart => self.skip_container(DelimKind::Object)?,
+            AdapterToken::ArrayStart => self.skip_container(DelimKind::Array)?,
+            AdapterToken::ObjectEnd
+            | AdapterToken::ArrayEnd
+            | AdapterToken::Comma
+            | AdapterToken::Colon => return Err(self.unexpected(&first, "value")),
+            AdapterToken::Eof => {
+                return Err(JsonError::new(
+                    JsonErrorKind::UnexpectedEof { expected: "value" },
+                    first.span,
+                ));
+            }
+            _ => {
+                // Simple value - already consumed
+            }
+        }
 
         // Get end position
         let end_offset = self.current_offset;

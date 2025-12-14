@@ -46,4 +46,15 @@ pub trait FormatParser<'de> {
         self.skip_value()?;
         Ok(None)
     }
+
+    /// Returns the shape of the format's raw capture type (e.g., `RawJson::SHAPE`).
+    ///
+    /// When the deserializer encounters a shape that matches this, it will use
+    /// `capture_raw` to capture the raw representation and store it in a
+    /// `Cow<str>` (the raw type must be a newtype over `Cow<str>`).
+    ///
+    /// Returns `None` if this format doesn't support raw capture types.
+    fn raw_capture_shape(&self) -> Option<&'static facet_core::Shape> {
+        None
+    }
 }

@@ -134,6 +134,24 @@ where
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let shape = wip.shape();
 
+        // Check for raw capture type (e.g., RawJson)
+        // Raw capture types are tuple structs with a single Cow<str> field
+        // If capture_raw returns None (e.g., streaming mode), fall through
+        // and try normal deserialization (which will likely fail with a helpful error)
+        if self.parser.raw_capture_shape() == Some(shape)
+            && let Some(raw) = self
+                .parser
+                .capture_raw()
+                .map_err(DeserializeError::Parser)?
+        {
+            // The raw type is a tuple struct like RawJson(Cow<str>)
+            // Access field 0 (the Cow<str>) and set it
+            wip = wip.begin_nth_field(0).map_err(DeserializeError::Reflect)?;
+            wip = self.set_string_value(wip, Cow::Borrowed(raw))?;
+            wip = wip.end().map_err(DeserializeError::Reflect)?;
+            return Ok(wip);
+        }
+
         // Check for container-level proxy
         let (wip_returned, has_proxy) = wip
             .begin_custom_deserialization_from_shape()
