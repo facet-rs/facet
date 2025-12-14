@@ -30,7 +30,7 @@ members = [
 exclude = ["fuzz"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.91"
 license = "MIT OR Apache-2.0"
@@ -38,17 +38,17 @@ repository = "https://github.com/bearcove/rapace"
 
 [workspace.dependencies]
 # Internal crates
-rapace = { path = "crates/rapace", version = "0.3.0" }
-rapace-core = { path = "crates/rapace-core", version = "0.3.0" }
+rapace = { path = "crates/rapace", version = "0.4.0" }
+rapace-core = { path = "crates/rapace-core", version = "0.4.0" }
 rapace-http = { path = "crates/rapace-http", version = "0.3.0" }
-rapace-macros = { path = "crates/rapace-macros", version = "0.3.0" }
-rapace-registry = { path = "crates/rapace-registry", version = "0.3.0" }
-rapace-tracing = { path = "crates/rapace-tracing", version = "0.3.0" }
-rapace-transport-mem = { path = "crates/rapace-transport-mem", version = "0.3.0" }
-rapace-transport-shm = { path = "crates/rapace-transport-shm", version = "0.3.0" }
-rapace-transport-stream = { path = "crates/rapace-transport-stream", version = "0.3.0" }
-rapace-transport-websocket = { path = "crates/rapace-transport-websocket", version = "0.3.0" }
-rapace-testkit = { path = "crates/rapace-testkit", version = "0.3.0" }
+rapace-macros = { path = "crates/rapace-macros", version = "0.4.0" }
+rapace-registry = { path = "crates/rapace-registry", version = "0.4.0" }
+rapace-tracing = { path = "crates/rapace-tracing", version = "0.4.0" }
+rapace-transport-mem = { path = "crates/rapace-transport-mem", version = "0.4.0" }
+rapace-transport-shm = { path = "crates/rapace-transport-shm", version = "0.4.0" }
+rapace-transport-stream = { path = "crates/rapace-transport-stream", version = "0.4.0" }
+rapace-transport-websocket = { path = "crates/rapace-transport-websocket", version = "0.4.0" }
+rapace-testkit = { path = "crates/rapace-testkit", version = "0.4.0" }
 
 # External dependencies
 async-stream = "0.3"
