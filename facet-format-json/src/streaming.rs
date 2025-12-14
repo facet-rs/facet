@@ -16,10 +16,11 @@ use facet_format::{
     ContainerKind, DeserializeError, FieldEvidence, FieldKey, FieldLocationHint,
     FormatDeserializer, FormatParser, ParseEvent, ProbeStream, ScalarValue,
 };
-use facet_json::{
-    AdapterToken, JsonError, JsonErrorKind, ScanBuffer, SpannedAdapterToken, StreamingAdapter,
-    TokenSource,
-};
+
+use crate::adapter::{SpannedAdapterToken, Token as AdapterToken, TokenSource};
+use crate::error::{JsonError, JsonErrorKind};
+use crate::scan_buffer::ScanBuffer;
+use crate::streaming_adapter::StreamingAdapter;
 
 /// Deserialize JSON from a synchronous reader.
 ///

@@ -6,8 +6,10 @@ use facet_format::{
     ContainerKind, FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent,
     ProbeStream, ScalarValue,
 };
-pub use facet_json::JsonError;
-use facet_json::{AdapterToken, JsonErrorKind, SliceAdapter, SpannedAdapterToken};
+
+use crate::adapter::{SliceAdapter, SpannedAdapterToken, Token as AdapterToken};
+pub use crate::error::JsonError;
+use crate::error::JsonErrorKind;
 
 /// Streaming JSON parser backed by `facet-json`'s `SliceAdapter`.
 pub struct JsonParser<'de> {

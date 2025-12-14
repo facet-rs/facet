@@ -1363,11 +1363,13 @@ dependencies = [
  "facet-core",
  "facet-format",
  "facet-format-suite",
- "facet-json",
  "facet-reflect",
  "futures-io",
  "indoc",
+ "lexical-parse-float",
+ "lexical-parse-integer",
  "libtest-mimic",
+ "miette",
  "tokio",
 ]
 
