@@ -3,7 +3,8 @@ extern crate alloc;
 use alloc::{borrow::Cow, vec::Vec};
 
 use facet_format::{
-    FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent, ProbeStream, ScalarValue,
+    ContainerKind, FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent,
+    ProbeStream, ScalarValue,
 };
 pub use facet_json::JsonError;
 use facet_json::{AdapterToken, JsonErrorKind, SliceAdapter, SpannedAdapterToken};
@@ -100,11 +101,11 @@ impl<'de> JsonParser<'de> {
         match token.token {
             AdapterToken::ObjectStart => {
                 self.stack.push(ContextState::Object(ObjectState::KeyOrEnd));
-                Ok(ParseEvent::StructStart)
+                Ok(ParseEvent::StructStart(ContainerKind::Object))
             }
             AdapterToken::ArrayStart => {
                 self.stack.push(ContextState::Array(ArrayState::ValueOrEnd));
-                Ok(ParseEvent::SequenceStart)
+                Ok(ParseEvent::SequenceStart(ContainerKind::Array))
             }
             AdapterToken::String(s) => {
                 let event = ParseEvent::Scalar(ScalarValue::Str(s));

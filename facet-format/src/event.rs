@@ -48,6 +48,40 @@ impl<'de> FieldKey<'de> {
     }
 }
 
+/// The kind of container being parsed.
+///
+/// This distinguishes between format-specific container types to enable
+/// better error messages and type checking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContainerKind {
+    /// JSON/YAML/TOML object: definitely struct-like with key-value pairs.
+    /// Type mismatches (e.g., object where array expected) should produce errors.
+    Object,
+    /// JSON/YAML array: definitely sequence-like.
+    /// Type mismatches (e.g., array where object expected) should produce errors.
+    Array,
+    /// XML/KDL element: semantically ambiguous.
+    /// Could be interpreted as struct, sequence, or scalar wrapper depending on target type.
+    /// The deserializer decides based on what type it's deserializing into.
+    Element,
+}
+
+impl ContainerKind {
+    /// Returns true if this container kind is ambiguous (can be struct or sequence).
+    pub fn is_ambiguous(self) -> bool {
+        matches!(self, ContainerKind::Element)
+    }
+
+    /// Human-readable name for error messages.
+    pub fn name(self) -> &'static str {
+        match self {
+            ContainerKind::Object => "object",
+            ContainerKind::Array => "array",
+            ContainerKind::Element => "element",
+        }
+    }
+}
+
 /// Value classification hint for evidence gathering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueTypeHint {
@@ -90,13 +124,13 @@ pub enum ScalarValue<'de> {
 #[derive(Clone, PartialEq)]
 pub enum ParseEvent<'de> {
     /// Beginning of a struct/object/node.
-    StructStart,
+    StructStart(ContainerKind),
     /// End of a struct/object/node.
     StructEnd,
     /// Encountered a field key.
     FieldKey(FieldKey<'de>),
     /// Beginning of a sequence/array/tuple.
-    SequenceStart,
+    SequenceStart(ContainerKind),
     /// End of a sequence/array/tuple.
     SequenceEnd,
     /// Scalar literal.
@@ -108,10 +142,10 @@ pub enum ParseEvent<'de> {
 impl<'de> fmt::Debug for ParseEvent<'de> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ParseEvent::StructStart => f.write_str("StructStart"),
+            ParseEvent::StructStart(kind) => f.debug_tuple("StructStart").field(kind).finish(),
             ParseEvent::StructEnd => f.write_str("StructEnd"),
             ParseEvent::FieldKey(key) => f.debug_tuple("FieldKey").field(key).finish(),
-            ParseEvent::SequenceStart => f.write_str("SequenceStart"),
+            ParseEvent::SequenceStart(kind) => f.debug_tuple("SequenceStart").field(kind).finish(),
             ParseEvent::SequenceEnd => f.write_str("SequenceEnd"),
             ParseEvent::Scalar(value) => f.debug_tuple("Scalar").field(value).finish(),
             ParseEvent::VariantTag(tag) => f.debug_tuple("VariantTag").field(tag).finish(),

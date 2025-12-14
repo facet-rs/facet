@@ -7,7 +7,8 @@ use alloc::vec::Vec;
 use core::fmt;
 
 use facet_format::{
-    FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent, ProbeStream, ScalarValue,
+    ContainerKind, FieldEvidence, FieldKey, FieldLocationHint, FormatParser, ParseEvent,
+    ProbeStream, ScalarValue,
 };
 use quick_xml::NsReader;
 use quick_xml::events::Event;
@@ -153,7 +154,7 @@ impl<'de> FormatParser<'de> for XmlParser<'de> {
         loop {
             let event = self.next_event()?;
             match event {
-                ParseEvent::StructStart | ParseEvent::SequenceStart => {
+                ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_) => {
                     depth += 1;
                 }
                 ParseEvent::StructEnd | ParseEvent::SequenceEnd => {
@@ -182,12 +183,6 @@ impl<'de> FormatParser<'de> for XmlParser<'de> {
         let evidence = self.build_probe();
         Ok(XmlProbe { evidence, idx: 0 })
     }
-
-    fn elements_as_sequences(&self) -> bool {
-        // XML elements are semantically ambiguous - the deserializer uses target type
-        // to decide if an element should be treated as a struct or sequence
-        true
-    }
 }
 
 impl<'de> XmlParser<'de> {
@@ -200,7 +195,10 @@ impl<'de> XmlParser<'de> {
             return evidence;
         }
 
-        if !matches!(self.events.get(self.idx), Some(ParseEvent::StructStart)) {
+        if !matches!(
+            self.events.get(self.idx),
+            Some(ParseEvent::StructStart(ContainerKind::Element))
+        ) {
             return evidence;
         }
 
@@ -210,7 +208,7 @@ impl<'de> XmlParser<'de> {
 
         while i < self.events.len() {
             match &self.events[i] {
-                ParseEvent::StructStart | ParseEvent::SequenceStart => {
+                ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_) => {
                     depth += 1;
                     i += 1;
                 }
@@ -448,7 +446,7 @@ fn emit_element_events<'de>(elem: &Element, events: &mut Vec<ParseEvent<'de>>) {
     if !has_attrs && !has_children {
         if text.is_empty() {
             // Empty element is an empty object (for unit structs)
-            events.push(ParseEvent::StructStart);
+            events.push(ParseEvent::StructStart(ContainerKind::Element));
             events.push(ParseEvent::StructEnd);
         } else {
             emit_scalar_from_text(text, events);
@@ -460,7 +458,7 @@ fn emit_element_events<'de>(elem: &Element, events: &mut Vec<ParseEvent<'de>>) {
     if !has_attrs && has_children && text.is_empty() && elem.children.len() > 1 {
         let first = &elem.children[0].name;
         if elem.children.iter().all(|child| &child.name == first) {
-            events.push(ParseEvent::SequenceStart);
+            events.push(ParseEvent::SequenceStart(ContainerKind::Element));
             for child in &elem.children {
                 emit_element_events(child, events);
             }
@@ -470,7 +468,7 @@ fn emit_element_events<'de>(elem: &Element, events: &mut Vec<ParseEvent<'de>>) {
     }
 
     // Case 3: Has attributes or mixed children - emit as struct
-    events.push(ParseEvent::StructStart);
+    events.push(ParseEvent::StructStart(ContainerKind::Element));
 
     // Emit attributes as fields
     for (qname, value) in &elem.attributes {
@@ -510,7 +508,7 @@ fn emit_element_events<'de>(elem: &Element, events: &mut Vec<ParseEvent<'de>>) {
             emit_element_events(children[0], events);
         } else {
             // Multiple children with same name -> array
-            events.push(ParseEvent::SequenceStart);
+            events.push(ParseEvent::SequenceStart(ContainerKind::Element));
             for child in children {
                 emit_element_events(child, events);
             }

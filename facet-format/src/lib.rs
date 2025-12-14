@@ -12,7 +12,9 @@ mod solver;
 mod visitor;
 
 pub use deserializer::{DeserializeError, FormatDeserializer};
-pub use event::{FieldKey, FieldLocationHint, ParseEvent, ScalarValue, ValueTypeHint};
+pub use event::{
+    ContainerKind, FieldKey, FieldLocationHint, ParseEvent, ScalarValue, ValueTypeHint,
+};
 pub use evidence::FieldEvidence;
 pub use parser::{FormatParser, ProbeStream};
 pub use serializer::{FieldOrdering, FormatSerializer, SerializeError, serialize_root};

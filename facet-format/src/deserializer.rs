@@ -287,10 +287,16 @@ where
             let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
 
             // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
-            // Only accept StructStart if the format supports elements-as-sequences (e.g., XML)
+            // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
             let struct_mode = match event {
-                ParseEvent::SequenceStart => false,
-                ParseEvent::StructStart if self.parser.elements_as_sequences() => true,
+                ParseEvent::SequenceStart(_) => false,
+                ParseEvent::StructStart(kind) if kind.is_ambiguous() => true,
+                ParseEvent::StructStart(kind) => {
+                    return Err(DeserializeError::TypeMismatch {
+                        expected: "array",
+                        got: kind.name().into(),
+                    });
+                }
                 _ => {
                     return Err(DeserializeError::TypeMismatch {
                         expected: "sequence start for Arc<[T]>/Rc<[T]>/Box<[T]>",
@@ -434,7 +440,7 @@ where
 
         // Expect StructStart
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-        if !matches!(event, ParseEvent::StructStart) {
+        if !matches!(event, ParseEvent::StructStart(_)) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct start",
                 got: format!("{event:?}"),
@@ -556,7 +562,7 @@ where
 
         // Expect StructStart
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-        if !matches!(event, ParseEvent::StructStart) {
+        if !matches!(event, ParseEvent::StructStart(_)) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct start",
                 got: format!("{event:?}"),
@@ -920,7 +926,7 @@ where
         // ========== PASS 2: Parse the struct with resolved paths ==========
         // Expect StructStart
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-        if !matches!(event, ParseEvent::StructStart) {
+        if !matches!(event, ParseEvent::StructStart(_)) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct start",
                 got: format!("{event:?}"),
@@ -1182,7 +1188,7 @@ where
         // Struct variant: deserialize as a struct with named fields
         // Expect StructStart for the variant content
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-        if !matches!(event, ParseEvent::StructStart) {
+        if !matches!(event, ParseEvent::StructStart(_)) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct start for variant content",
                 got: format!("{event:?}"),
@@ -1273,10 +1279,16 @@ where
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
 
         // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
-        // Only accept StructStart if the format supports elements-as-sequences (e.g., XML)
+        // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
         let struct_mode = match event {
-            ParseEvent::SequenceStart => false,
-            ParseEvent::StructStart if self.parser.elements_as_sequences() => true,
+            ParseEvent::SequenceStart(_) => false,
+            ParseEvent::StructStart(kind) if kind.is_ambiguous() => true,
+            ParseEvent::StructStart(kind) => {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "array",
+                    got: kind.name().into(),
+                });
+            }
             _ => {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "sequence start for tuple",
@@ -1360,7 +1372,7 @@ where
         }
 
         // Otherwise expect a struct { VariantName: ... }
-        if !matches!(event, ParseEvent::StructStart) {
+        if !matches!(event, ParseEvent::StructStart(_)) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "string or struct for enum",
                 got: format!("{event:?}"),
@@ -1423,7 +1435,7 @@ where
 
         // Step 2: Consume StructStart
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-        if !matches!(event, ParseEvent::StructStart) {
+        if !matches!(event, ParseEvent::StructStart(_)) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct for internally tagged enum",
                 got: format!("{event:?}"),
@@ -1597,7 +1609,7 @@ where
 
         // Step 2: Consume StructStart
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-        if !matches!(event, ParseEvent::StructStart) {
+        if !matches!(event, ParseEvent::StructStart(_)) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct for adjacently tagged enum",
                 got: format!("{event:?}"),
@@ -1688,10 +1700,16 @@ where
                     // Multi-field tuple variant - expect array or struct (for XML)
                     let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
 
-                    // Only accept StructStart if the format supports elements-as-sequences (e.g., XML)
+                    // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
                     let struct_mode = match event {
-                        ParseEvent::SequenceStart => false,
-                        ParseEvent::StructStart if self.parser.elements_as_sequences() => true,
+                        ParseEvent::SequenceStart(_) => false,
+                        ParseEvent::StructStart(kind) if kind.is_ambiguous() => true,
+                        ParseEvent::StructStart(kind) => {
+                            return Err(DeserializeError::TypeMismatch {
+                                expected: "array",
+                                got: kind.name().into(),
+                            });
+                        }
                         _ => {
                             return Err(DeserializeError::TypeMismatch {
                                 expected: "sequence for tuple variant",
@@ -1733,7 +1751,7 @@ where
             StructKind::Struct => {
                 // Struct variant - expect object with fields
                 let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-                if !matches!(event, ParseEvent::StructStart) {
+                if !matches!(event, ParseEvent::StructStart(_)) {
                     return Err(DeserializeError::TypeMismatch {
                         expected: "struct for struct variant",
                         got: format!("{event:?}"),
@@ -1882,7 +1900,7 @@ where
                     got: format!("{:?}", scalar),
                 })
             }
-            ParseEvent::StructStart => {
+            ParseEvent::StructStart(_) => {
                 // For struct input, use first struct variant
                 // TODO: Use solve_variant for proper field-based matching
                 if let Some(variant) = variants_by_format.struct_variants.first() {
@@ -1897,7 +1915,7 @@ where
                     "no struct variant found for untagged enum with struct input".into(),
                 ))
             }
-            ParseEvent::SequenceStart => {
+            ParseEvent::SequenceStart(_) => {
                 // For sequence input, use first tuple variant
                 if let Some((variant, _arity)) = variants_by_format.tuple_variants.first() {
                     wip = wip
@@ -1977,10 +1995,16 @@ where
 
         // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
         // In struct mode, we skip FieldKey events and treat values as sequence items
-        // Only accept StructStart if the format supports elements-as-sequences (e.g., XML)
+        // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
         let struct_mode = match event {
-            ParseEvent::SequenceStart => false,
-            ParseEvent::StructStart if self.parser.elements_as_sequences() => true,
+            ParseEvent::SequenceStart(_) => false,
+            ParseEvent::StructStart(kind) if kind.is_ambiguous() => true,
+            ParseEvent::StructStart(kind) => {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "array",
+                    got: kind.name().into(),
+                });
+            }
             _ => {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "sequence start",
@@ -2022,10 +2046,16 @@ where
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
 
         // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
-        // Only accept StructStart if the format supports elements-as-sequences (e.g., XML)
+        // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
         let struct_mode = match event {
-            ParseEvent::SequenceStart => false,
-            ParseEvent::StructStart if self.parser.elements_as_sequences() => true,
+            ParseEvent::SequenceStart(_) => false,
+            ParseEvent::StructStart(kind) if kind.is_ambiguous() => true,
+            ParseEvent::StructStart(kind) => {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "array",
+                    got: kind.name().into(),
+                });
+            }
             _ => {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "sequence start for array",
@@ -2068,10 +2098,16 @@ where
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
 
         // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
-        // Only accept StructStart if the format supports elements-as-sequences (e.g., XML)
+        // Only accept StructStart if the container kind is ambiguous (e.g., XML Element)
         let struct_mode = match event {
-            ParseEvent::SequenceStart => false,
-            ParseEvent::StructStart if self.parser.elements_as_sequences() => true,
+            ParseEvent::SequenceStart(_) => false,
+            ParseEvent::StructStart(kind) if kind.is_ambiguous() => true,
+            ParseEvent::StructStart(kind) => {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "array",
+                    got: kind.name().into(),
+                });
+            }
             _ => {
                 return Err(DeserializeError::TypeMismatch {
                     expected: "sequence start for set",
@@ -2111,7 +2147,7 @@ where
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-        if !matches!(event, ParseEvent::StructStart) {
+        if !matches!(event, ParseEvent::StructStart(_)) {
             return Err(DeserializeError::TypeMismatch {
                 expected: "struct start for map",
                 got: format!("{event:?}"),

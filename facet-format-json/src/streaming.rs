@@ -13,8 +13,8 @@ use core::cell::RefCell;
 use corosensei::{Coroutine, CoroutineResult};
 use facet_core::Facet;
 use facet_format::{
-    DeserializeError, FieldEvidence, FieldKey, FieldLocationHint, FormatDeserializer, FormatParser,
-    ParseEvent, ProbeStream, ScalarValue,
+    ContainerKind, DeserializeError, FieldEvidence, FieldKey, FieldLocationHint,
+    FormatDeserializer, FormatParser, ParseEvent, ProbeStream, ScalarValue,
 };
 use facet_json::{
     AdapterToken, JsonError, JsonErrorKind, ScanBuffer, SpannedAdapterToken, StreamingAdapter,
@@ -310,11 +310,11 @@ impl<A: TokenSource<'static>> StreamingJsonParser<A> {
         match token.token {
             AdapterToken::ObjectStart => {
                 self.stack.push(ContextState::Object(ObjectState::KeyOrEnd));
-                Ok(ParseEvent::StructStart)
+                Ok(ParseEvent::StructStart(ContainerKind::Object))
             }
             AdapterToken::ArrayStart => {
                 self.stack.push(ContextState::Array(ArrayState::ValueOrEnd));
-                Ok(ParseEvent::SequenceStart)
+                Ok(ParseEvent::SequenceStart(ContainerKind::Array))
             }
             AdapterToken::String(s) => {
                 let event = ParseEvent::Scalar(ScalarValue::Str(s));
