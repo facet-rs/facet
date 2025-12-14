@@ -38,5 +38,6 @@ Today rapace ships with:
 ## Related projects
 
 - [dodeca](https://dodeca.bearcove.eu/) – static site generator that motivated rapace
+- [`rapace-plugin`](https://docs.rs/rapace-plugin) – high-level plugin runtime for building SHM-based plugins (see [Plugins guide](/guide/plugins/))
 - [`rapace-tracing`](https://docs.rs/rapace-tracing) – forwards tracing data over rapace
 - [`rapace-registry`](https://docs.rs/rapace-registry) – local service/metadata registry used by codegen and explorer
