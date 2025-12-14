@@ -25,12 +25,16 @@ indoc = { workspace = true } #unified
 jiff = { workspace = true, optional = true } #unified
 ordered-float = { version = "5.0.0", optional = true, default-features = false }
 time = { workspace = true, optional = true, features = ["formatting", "parsing"] } #unified
+tokio = { version = "1", features = ["rt"], optional = true }
 ulid = { workspace = true, optional = true } #unified
 uuid = { workspace = true, optional = true } #unified
 
 [dev-dependencies]
 
 [features]
+# Async testing support
+tokio = ["dep:tokio"]
+
 # Enable third-party type tests
 uuid = ["dep:uuid", "facet/uuid"]
 ulid = ["dep:ulid", "facet/ulid"]

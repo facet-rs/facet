@@ -6,7 +6,7 @@ It is intended to replace the split drafts:
 - `drafts/facet-format-codex-serialize.md`
 - `drafts/facet-format-codex-deserialize.md`
 
-Those files still contain useful long-form rationale and “end-state” sketches, but they may not match the code in this branch.
+Those files still contain useful long-form rationale and "end-state" sketches, but they may not match the code in this branch.
 
 ## Goals
 
@@ -17,16 +17,32 @@ Those files still contain useful long-form rationale and “end-state” sketche
 ## What exists today (code status)
 
 Crates in this branch:
-- `facet-format`: shared core (currently contains both deserialization and serialization traversal).
-- `facet-format-suite`: canonical cross-format fixtures + harness (now supports optional round-trip).
-- `facet-format-json`: JSON parser adapter + minimal JSON serializer for round-trip.
-- `facet-format-xml`: XML parser adapter + minimal XML serializer for round-trip.
+- `facet-format`: shared core (deserialization and serialization traversal).
+- `facet-format-suite`: canonical cross-format fixtures + harness (supports optional round-trip).
+- `facet-format-json`: JSON parser adapter + JSON serializer for round-trip.
+- `facet-format-xml`: XML parser adapter + XML serializer for round-trip.
 
-Current limitations (important for reviewers):
-- Deserialization in `facet-format` currently builds an intermediate `facet_value::Value` from `ParseEvent`s and then uses `facet_value::from_value`.
-  - This is **not** yet the “evidence + solver + Partial” end-state described in older drafts.
-- Parser “probing” (`begin_probe`) is not yet implemented for XML and is limited for JSON.
-- The serializer core supports common enum tagging modes (external/internal/adjacent/untagged), but it is **not** yet the “SynthesizedStruct/FieldLocation” API described in older drafts.
+### Feature status
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Direct Partial deserialization | ✅ | `ParseEvent` → `Partial<T>` → `HeapValue<T>` → `T` (no intermediate Value) |
+| Parser probing (JSON slice) | ✅ | `begin_probe` returns real `FieldEvidence` |
+| Parser probing (JSON streaming) | ❌ | Returns empty by design (can't rewind a stream) |
+| Parser probing (XML) | ✅ | Scans ahead through pre-parsed events |
+| `FieldLocationHint` | ✅ | Full enum: KeyValue, Attribute, Text, Child, Property, Argument |
+| `BORROW` const generic | ✅ | `from_str`/`from_slice` borrow via `Facet<'de>` |
+| `capture_raw` in parser trait | ✅ | JSON implements it |
+| RawJson end-to-end | ❌ | Deserializer doesn't call `capture_raw` yet |
+| Streaming (std/tokio/futures-io) | ✅ | Full support in facet-format-json |
+| Enum tagging modes | ✅ | external/internal/adjacent/untagged |
+| Flatten with defaults | ✅ | Fixed in issue 1297 |
+
+### Not in scope (facet-json specific)
+
+- Cranelift JIT compilation
+- Axum integration
+- These remain in `facet-json` as format-specific optimizations
 
 ## Conformance suite
 
@@ -47,8 +63,8 @@ Formats can opt out per-case via `CaseSpec::without_roundtrip(reason)` (useful w
 ### Deserialization
 
 `facet-format` defines:
-- `FormatParser<'de>`: produces a format-agnostic `ParseEvent<'de>` stream and supports `skip_value` and `begin_probe` (WIP).
-- `FormatDeserializer<P>`: consumes `ParseEvent`s and produces a typed value via `facet_value::Value`.
+- `FormatParser<'de>`: produces a format-agnostic `ParseEvent<'de>` stream, supports `skip_value`, `begin_probe`, and `capture_raw`.
+- `FormatDeserializer<'input, BORROW, P>`: consumes `ParseEvent`s and deserializes directly into `Partial<T>`.
 
 See:
 - `facet-format/src/parser.rs`
@@ -58,13 +74,13 @@ See:
 ### Serialization
 
 `facet-format` defines:
-- `FormatSerializer`: a low-level “writer” interface (`begin_struct`, `field_key`, `begin_seq`, `scalar`, …).
+- `FormatSerializer`: a low-level "writer" interface (`begin_struct`, `field_key`, `begin_seq`, `scalar`, …).
 - `serialize_root`: shared traversal from `facet_reflect::Peek` into `FormatSerializer`.
 
 See:
 - `facet-format/src/serializer.rs`
 
-This interface is intentionally minimal to unblock round-trip tests across multiple formats; the older “SynthesizedStruct” plan remains a potential next iteration.
+This interface is intentionally minimal to unblock round-trip tests across multiple formats; the older "SynthesizedStruct" plan remains a potential next iteration.
 
 ## XML mapping (current)
 
@@ -80,9 +96,17 @@ The current XML serializer is designed specifically to **round-trip through the 
 - sequences become repeated `<item>…</item>`
 - scalars are emitted as text; null uses literal `null` (so it round-trips through `parse_scalar`)
 
+## Remaining work for production readiness
+
+1. **Wire up RawJson**: Deserializer needs to call `capture_raw` for types that want raw JSON capture
+
+### Future polish (not blocking)
+
+- **SynthesizedStruct API**: Refactor serializer from event-based to declarative struct layout. Current event-based API works fine, and field reordering (attributes before elements) is already handled via `FieldOrdering::AttributesFirst` + `sort_fields_if_needed`.
+
 ## Recommended doc layout for merge review
 
-If we want to move out of `drafts/`, the “merge-ready” version of this document should probably live under `docs/` and contain:
-- a short “Status / Not yet implemented” section (to prevent reviewers expecting the full end-state)
+If we want to move out of `drafts/`, the "merge-ready" version of this document should probably live under `docs/` and contain:
+- a short "Status / Not yet implemented" section (to prevent reviewers expecting the full end-state)
 - pointers to the old long-form drafts for rationale
 - links to the suite and the current core traits

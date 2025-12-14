@@ -37,6 +37,24 @@ impl FormatSuite for JsonSlice {
         Some(to_vec(value).map_err(|e| e.to_string()))
     }
 
+    #[cfg(feature = "tokio")]
+    fn deserialize_async<T>(
+        input: &[u8],
+    ) -> impl std::future::Future<Output = Option<Result<T, Self::Error>>>
+    where
+        for<'facet> T: Facet<'facet>,
+        T: core::fmt::Debug,
+    {
+        use facet_format_json::from_async_reader_tokio;
+        use std::io::Cursor;
+
+        let input = input.to_vec();
+        async move {
+            let reader = Cursor::new(input);
+            Some(from_async_reader_tokio(reader).await)
+        }
+    }
+
     fn struct_single_field() -> CaseSpec {
         CaseSpec::from_str(indoc!(
             r#"
@@ -752,23 +770,45 @@ impl FormatSuite for JsonSlice {
 }
 
 fn main() {
+    use std::sync::Arc;
+
     let args = Arguments::from_args();
-    let trials: Vec<Trial> = all_cases::<JsonSlice>()
-        .into_iter()
-        .map(|case| {
-            let name = format!("{}::{}", JsonSlice::format_name(), case.id);
-            let skip_reason = case.skip_reason();
-            let mut trial = Trial::test(name, move || match case.run() {
-                CaseOutcome::Passed => Ok(()),
-                CaseOutcome::Skipped(_) => Ok(()),
-                CaseOutcome::Failed(msg) => Err(Failed::from(msg)),
-            });
-            if skip_reason.is_some() {
-                trial = trial.with_ignored_flag(true);
-            }
-            trial
-        })
-        .collect();
+    let cases: Vec<Arc<_>> = all_cases::<JsonSlice>().into_iter().map(Arc::new).collect();
+
+    let mut trials: Vec<Trial> = Vec::new();
+
+    // Sync tests
+    for case in &cases {
+        let name = format!("{}::{}", JsonSlice::format_name(), case.id);
+        let skip_reason = case.skip_reason();
+        let case = Arc::clone(case);
+        let mut trial = Trial::test(name, move || match case.run() {
+            CaseOutcome::Passed => Ok(()),
+            CaseOutcome::Skipped(_) => Ok(()),
+            CaseOutcome::Failed(msg) => Err(Failed::from(msg)),
+        });
+        if skip_reason.is_some() {
+            trial = trial.with_ignored_flag(true);
+        }
+        trials.push(trial);
+    }
+
+    // Async tests (only when tokio feature is enabled)
+    #[cfg(feature = "tokio")]
+    for case in &cases {
+        let name = format!("{}/async::{}", JsonSlice::format_name(), case.id);
+        let skip_reason = case.skip_reason();
+        let case = Arc::clone(case);
+        let mut trial = Trial::test(name, move || match case.run_async() {
+            CaseOutcome::Passed => Ok(()),
+            CaseOutcome::Skipped(_) => Ok(()),
+            CaseOutcome::Failed(msg) => Err(Failed::from(msg)),
+        });
+        if skip_reason.is_some() {
+            trial = trial.with_ignored_flag(true);
+        }
+        trials.push(trial);
+    }
 
     libtest_mimic::run(&args, trials).exit()
 }

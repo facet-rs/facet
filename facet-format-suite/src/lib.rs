@@ -55,6 +55,24 @@ pub trait FormatSuite {
         None
     }
 
+    /// Optional async deserialization hook for streaming formats.
+    ///
+    /// If implemented (returns `Some`), the suite will run async variants
+    /// of each test case using this method.
+    ///
+    /// Returning `None` indicates the format doesn't support async deserialization.
+    #[cfg(feature = "tokio")]
+    fn deserialize_async<T>(
+        input: &[u8],
+    ) -> impl std::future::Future<Output = Option<Result<T, Self::Error>>>
+    where
+        for<'facet> T: Facet<'facet>,
+        T: Debug,
+    {
+        let _ = input;
+        async { None }
+    }
+
     /// Case: simple object with a single string field.
     fn struct_single_field() -> CaseSpec;
     /// Case: homogeneous sequence of unsigned integers.
@@ -411,7 +429,7 @@ pub trait FormatSuite {
 
 /// Execute suite cases; kept for convenience, but formats should register each
 /// case individually via [`all_cases`].
-pub fn run_suite<S: FormatSuite>() {
+pub fn run_suite<S: FormatSuite + 'static>() {
     for case in all_cases::<S>() {
         match case.run() {
             CaseOutcome::Passed => {}
@@ -433,7 +451,7 @@ pub fn run_suite<S: FormatSuite>() {
 }
 
 /// Enumerate every canonical case with its typed descriptor.
-pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
+pub fn all_cases<S: FormatSuite + 'static>() -> Vec<SuiteCase> {
     vec![
         // Core cases
         SuiteCase::new::<S, StructSingleField>(&CASE_STRUCT_SINGLE_FIELD, S::struct_single_field),
@@ -805,9 +823,12 @@ pub struct SuiteCase {
     pub description: &'static str,
     skip_reason: Option<&'static str>,
     runner: Box<dyn Fn() -> CaseOutcome + Send + Sync + 'static>,
+    #[cfg(feature = "tokio")]
+    async_runner: Box<dyn Fn() -> CaseOutcome + Send + Sync + 'static>,
 }
 
 impl SuiteCase {
+    #[cfg(not(feature = "tokio"))]
     fn new<S, T>(desc: &'static CaseDescriptor<T>, provider: fn() -> CaseSpec) -> Self
     where
         S: FormatSuite,
@@ -821,6 +842,7 @@ impl SuiteCase {
         };
         let runner_spec = spec.clone();
         let runner = move || execute_case::<S, T>(desc, runner_spec.clone());
+
         Self {
             id: desc.id,
             description: desc.description,
@@ -829,8 +851,54 @@ impl SuiteCase {
         }
     }
 
+    #[cfg(feature = "tokio")]
+    fn new<S, T>(desc: &'static CaseDescriptor<T>, provider: fn() -> CaseSpec) -> Self
+    where
+        S: FormatSuite + 'static,
+        for<'facet> T: Facet<'facet>,
+        T: Debug + PartialEq + 'static,
+    {
+        let spec = provider();
+        let skip_reason = match spec.payload {
+            CasePayload::Skip { reason } => Some(reason),
+            _ => None,
+        };
+        let runner_spec = spec.clone();
+        let runner = move || execute_case::<S, T>(desc, runner_spec.clone());
+
+        #[cfg(feature = "tokio")]
+        let async_runner = {
+            let async_spec = spec.clone();
+            Box::new(move || {
+                let spec = async_spec.clone();
+                // Use current_thread runtime to avoid Send requirements
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to create tokio runtime");
+                rt.block_on(execute_case_async::<S, T>(desc, spec))
+            }) as Box<dyn Fn() -> CaseOutcome + Send + Sync + 'static>
+        };
+
+        Self {
+            id: desc.id,
+            description: desc.description,
+            skip_reason,
+            runner: Box::new(runner),
+            #[cfg(feature = "tokio")]
+            async_runner,
+        }
+    }
+
     pub fn run(&self) -> CaseOutcome {
         (self.runner)()
+    }
+
+    /// Run the async version of this test case.
+    /// Uses a current-thread tokio runtime internally.
+    #[cfg(feature = "tokio")]
+    pub fn run_async(&self) -> CaseOutcome {
+        (self.async_runner)()
     }
 
     pub fn skip_reason(&self) -> Option<&'static str> {
@@ -984,6 +1052,83 @@ fn format_panic(payload: Box<dyn Any + Send>) -> String {
         msg.clone()
     } else {
         "panic with non-string payload".into()
+    }
+}
+
+#[cfg(feature = "tokio")]
+async fn execute_case_async<S, T>(desc: &'static CaseDescriptor<T>, spec: CaseSpec) -> CaseOutcome
+where
+    S: FormatSuite,
+    for<'facet> T: Facet<'facet>,
+    T: Debug + PartialEq,
+{
+    let compare_mode = spec.compare_mode;
+    match spec.payload {
+        CasePayload::Skip { reason } => CaseOutcome::Skipped(reason),
+        CasePayload::Input(input) => {
+            // Try async deserialization
+            let result = S::deserialize_async::<T>(input).await;
+            let actual = match result {
+                None => {
+                    // Format doesn't support async - skip this test
+                    return CaseOutcome::Skipped("async deserialization not supported");
+                }
+                Some(Ok(value)) => value,
+                Some(Err(err)) => return CaseOutcome::Failed(err.to_string()),
+            };
+
+            let expected = (desc.expected)();
+
+            // Compare deserialized value against expected
+            let first_assert = panic::catch_unwind(AssertUnwindSafe(|| match compare_mode {
+                CompareMode::Reflection => {
+                    assert_same!(
+                        actual,
+                        expected,
+                        "facet-format-suite {} ({}) async produced unexpected value",
+                        desc.id,
+                        desc.description
+                    );
+                }
+                CompareMode::PartialEq => {
+                    assert_eq!(
+                        actual, expected,
+                        "facet-format-suite {} ({}) async produced unexpected value",
+                        desc.id, desc.description
+                    );
+                }
+            }));
+            if let Err(payload) = first_assert {
+                return CaseOutcome::Failed(format_panic(payload));
+            }
+
+            // Note: We skip round-trip testing for async - it's tested by sync version
+            CaseOutcome::Passed
+        }
+        CasePayload::ExpectError {
+            input,
+            error_contains,
+        } => {
+            let result = S::deserialize_async::<T>(input).await;
+            match result {
+                None => CaseOutcome::Skipped("async deserialization not supported"),
+                Some(Ok(_)) => CaseOutcome::Failed(format!(
+                    "facet-format-suite {} ({}) async expected error containing '{}' but deserialization succeeded",
+                    desc.id, desc.description, error_contains
+                )),
+                Some(Err(err)) => {
+                    let err_str = err.to_string();
+                    if err_str.contains(error_contains) {
+                        CaseOutcome::Passed
+                    } else {
+                        CaseOutcome::Failed(format!(
+                            "facet-format-suite {} ({}) async expected error containing '{}' but got: {}",
+                            desc.id, desc.description, error_contains, err_str
+                        ))
+                    }
+                }
+            }
+        }
     }
 }
 
