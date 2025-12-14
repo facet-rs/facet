@@ -1,7 +1,7 @@
 use picante::db::{DynIngredient, IngredientLookup, IngredientRegistry};
 use picante::error::PicanteError;
 use picante::ingredient::{DerivedIngredient, InputIngredient};
-use picante::key::QueryKindId;
+use picante::key::{DynKey, Key, QueryKindId};
 use picante::persist::{load_cache, save_cache};
 use picante::runtime::{HasRuntime, Runtime};
 use std::sync::Arc;
@@ -383,7 +383,11 @@ async fn derived_snapshot_captures_cells() {
 
     // Snapshot contains the cell
     assert_eq!(snapshot.len(), 1);
-    assert!(snapshot.get(&"a".to_string()).is_some());
+    let a_key = DynKey {
+        kind: derived.kind(),
+        key: Key::encode_facet(&"a".to_string()).unwrap(),
+    };
+    assert!(snapshot.get(&a_key).is_some());
 }
 
 #[tokio::test]
@@ -422,10 +426,87 @@ async fn derived_snapshot_remains_valid_after_modification() {
 
     // Snapshot still has only the original cell
     assert_eq!(snapshot.len(), 1);
-    assert!(snapshot.get(&"a".to_string()).is_some());
-    assert!(snapshot.get(&"b".to_string()).is_none());
+    let a_key = DynKey {
+        kind: derived.kind(),
+        key: Key::encode_facet(&"a".to_string()).unwrap(),
+    };
+    let b_key = DynKey {
+        kind: derived.kind(),
+        key: Key::encode_facet(&"b".to_string()).unwrap(),
+    };
+    assert!(snapshot.get(&a_key).is_some());
+    assert!(snapshot.get(&b_key).is_none());
 
     // Live ingredient has both
     let live_snapshot = derived.snapshot();
     assert_eq!(live_snapshot.len(), 2);
+}
+
+#[tokio::test]
+async fn changed_at_stable_when_value_unchanged() {
+    init_tracing();
+
+    let mut db = TestDb::default();
+    let input: Arc<InputIngredient<String, u64>> =
+        Arc::new(InputIngredient::new(QueryKindId(1), "Number"));
+    db.register(input.clone());
+
+    // Set up a derived query that returns input % 10 (last digit)
+    let executions = Arc::new(AtomicUsize::new(0));
+    let input_for_compute = input.clone();
+    let executions_for_compute = executions.clone();
+
+    let derived: Arc<DerivedIngredient<TestDb, String, u64>> = Arc::new(DerivedIngredient::new(
+        QueryKindId(2),
+        "LastDigit",
+        move |db, key| {
+            let input = input_for_compute.clone();
+            let executions = executions_for_compute.clone();
+            Box::pin(async move {
+                executions.fetch_add(1, Ordering::SeqCst);
+                let value = input.get(db, &key)?.expect("missing input");
+                Ok(value % 10) // Only last digit matters
+            })
+        },
+    ));
+    db.register(derived.clone());
+
+    // Initial computation: 42 % 10 = 2
+    input.set(&db, "x".into(), 42);
+    let v1 = derived.get(&db, "x".into()).await.unwrap();
+    assert_eq!(v1, 2);
+    assert_eq!(executions.load(Ordering::SeqCst), 1);
+
+    // Get the changed_at revision after first computation
+    let changed_at_1 = derived.touch(&db, "x".into()).await.unwrap();
+
+    // Change input to 52 - this forces recompute, but output is still 2
+    input.set(&db, "x".into(), 52);
+    let v2 = derived.get(&db, "x".into()).await.unwrap();
+    assert_eq!(v2, 2); // Same value!
+    assert_eq!(executions.load(Ordering::SeqCst), 2); // But we did recompute
+
+    // Get the changed_at revision after recompute
+    let changed_at_2 = derived.touch(&db, "x".into()).await.unwrap();
+
+    // CRITICAL: changed_at should NOT have bumped since value is the same
+    assert_eq!(
+        changed_at_1, changed_at_2,
+        "changed_at should remain stable when value unchanged (was {:?}, now {:?})",
+        changed_at_1, changed_at_2
+    );
+
+    // Now change to a different value
+    input.set(&db, "x".into(), 47);
+    let v3 = derived.get(&db, "x".into()).await.unwrap();
+    assert_eq!(v3, 7); // Different value
+    assert_eq!(executions.load(Ordering::SeqCst), 3);
+
+    let changed_at_3 = derived.touch(&db, "x".into()).await.unwrap();
+
+    // This time changed_at SHOULD bump
+    assert_ne!(
+        changed_at_2, changed_at_3,
+        "changed_at should bump when value actually changes"
+    );
 }
