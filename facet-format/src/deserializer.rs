@@ -5,7 +5,7 @@ use alloc::format;
 use alloc::string::String;
 use core::fmt;
 
-use facet_core::{Def, Facet, StructKind, Type, UserType};
+use facet_core::{Def, Facet, KnownPointer, StructKind, Type, UserType};
 use facet_reflect::{HeapValue, Partial, ReflectError};
 
 use crate::{FieldLocationHint, FormatParser, ParseEvent, ScalarValue};
@@ -250,15 +250,15 @@ where
         };
 
         if is_cow {
-            // Cow<str> - handle specially
+            // Cow<str> - handle specially to preserve borrowing
             if let Def::Pointer(ptr_def) = shape.def
                 && let Some(pointee) = ptr_def.pointee()
                 && pointee.type_identifier == "str"
             {
                 let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
                 if let ParseEvent::Scalar(ScalarValue::Str(s)) = event {
-                    let cow: Cow<'static, str> = Cow::Owned(s.into_owned());
-                    wip = wip.set(cow).map_err(DeserializeError::Reflect)?;
+                    // Pass through the Cow as-is to preserve borrowing
+                    wip = wip.set(s).map_err(DeserializeError::Reflect)?;
                     return Ok(wip);
                 } else {
                     return Err(DeserializeError::TypeMismatch {
@@ -272,6 +272,24 @@ where
             wip = self.deserialize_into(wip)?;
             wip = wip.end().map_err(DeserializeError::Reflect)?;
             return Ok(wip);
+        }
+
+        // &str - handle specially for zero-copy borrowing
+        if let Def::Pointer(ptr_def) = shape.def
+            && matches!(ptr_def.known, Some(KnownPointer::SharedReference))
+            && ptr_def
+                .pointee()
+                .is_some_and(|p| p.type_identifier == "str")
+        {
+            let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
+            if let ParseEvent::Scalar(ScalarValue::Str(s)) = event {
+                return self.set_string_value(wip, s);
+            } else {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "string for &str",
+                    got: format!("{event:?}"),
+                });
+            }
         }
 
         // Regular smart pointer (Box, Arc, Rc)
@@ -2314,7 +2332,7 @@ where
                         .parse_from_str(s.as_ref())
                         .map_err(DeserializeError::Reflect)?;
                 } else {
-                    wip = wip.set(s.into_owned()).map_err(DeserializeError::Reflect)?;
+                    wip = self.set_string_value(wip, s)?;
                 }
             }
             ScalarValue::Bytes(b) => {
@@ -2322,6 +2340,56 @@ where
             }
         }
 
+        Ok(wip)
+    }
+
+    /// Set a string value, handling `&str`, `Cow<str>`, and `String` appropriately.
+    fn set_string_value(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        s: Cow<'input, str>,
+    ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
+        let shape = wip.shape();
+
+        // Check if target is &str (shared reference to str)
+        if let Def::Pointer(ptr_def) = shape.def
+            && matches!(ptr_def.known, Some(KnownPointer::SharedReference))
+            && ptr_def
+                .pointee()
+                .is_some_and(|p| p.type_identifier == "str")
+        {
+            // In owned mode, we cannot borrow from input at all
+            if !BORROW {
+                return Err(DeserializeError::CannotBorrow {
+                    message: "cannot deserialize into &str when borrowing is disabled - use String or Cow<str> instead".into(),
+                });
+            }
+            match s {
+                Cow::Borrowed(borrowed) => {
+                    wip = wip.set(borrowed).map_err(DeserializeError::Reflect)?;
+                    return Ok(wip);
+                }
+                Cow::Owned(_) => {
+                    return Err(DeserializeError::CannotBorrow {
+                        message: "cannot borrow &str from string containing escape sequences - use String or Cow<str> instead".into(),
+                    });
+                }
+            }
+        }
+
+        // Check if target is Cow<str>
+        if let Def::Pointer(ptr_def) = shape.def
+            && matches!(ptr_def.known, Some(KnownPointer::Cow))
+            && ptr_def
+                .pointee()
+                .is_some_and(|p| p.type_identifier == "str")
+        {
+            wip = wip.set(s).map_err(DeserializeError::Reflect)?;
+            return Ok(wip);
+        }
+
+        // Default: convert to owned String
+        wip = wip.set(s.into_owned()).map_err(DeserializeError::Reflect)?;
         Ok(wip)
     }
 }
@@ -2344,6 +2412,11 @@ pub enum DeserializeError<E> {
     Unsupported(String),
     /// Unknown field encountered when deny_unknown_fields is set.
     UnknownField(String),
+    /// Cannot borrow string from input (e.g., escaped string into &str).
+    CannotBorrow {
+        /// Description of why borrowing failed.
+        message: String,
+    },
 }
 
 impl<E: fmt::Display> fmt::Display for DeserializeError<E> {
@@ -2356,6 +2429,7 @@ impl<E: fmt::Display> fmt::Display for DeserializeError<E> {
             }
             DeserializeError::Unsupported(msg) => write!(f, "unsupported: {msg}"),
             DeserializeError::UnknownField(field) => write!(f, "unknown field: {field}"),
+            DeserializeError::CannotBorrow { message } => write!(f, "{message}"),
         }
     }
 }

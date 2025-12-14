@@ -90,7 +90,7 @@ where
 /// Deserialize a value from a JSON string, allowing zero-copy borrowing.
 ///
 /// This variant requires the input to outlive the result (`'input: 'facet`),
-/// enabling zero-copy deserialization of string fields as `Cow<str>`.
+/// enabling zero-copy deserialization of string fields as `&str` or `Cow<str>`.
 ///
 /// Use this when you need maximum performance and can guarantee the input
 /// buffer outlives the deserialized value. For most use cases, prefer
@@ -99,19 +99,18 @@ where
 /// # Example
 ///
 /// ```
-/// use std::borrow::Cow;
 /// use facet::Facet;
 /// use facet_format_json::from_str_borrowed;
 ///
-/// #[derive(Facet, Debug)]
+/// #[derive(Facet, Debug, PartialEq)]
 /// struct Person<'a> {
-///     name: Cow<'a, str>,
+///     name: &'a str,
 ///     age: u32,
 /// }
 ///
 /// let json = r#"{"name": "Alice", "age": 30}"#;
 /// let person: Person = from_str_borrowed(json).unwrap();
-/// assert_eq!(&*person.name, "Alice");
+/// assert_eq!(person.name, "Alice");
 /// assert_eq!(person.age, 30);
 /// ```
 pub fn from_str_borrowed<'input, 'facet, T>(
@@ -127,7 +126,7 @@ where
 /// Deserialize a value from JSON bytes, allowing zero-copy borrowing.
 ///
 /// This variant requires the input to outlive the result (`'input: 'facet`),
-/// enabling zero-copy deserialization of string fields as `Cow<str>`.
+/// enabling zero-copy deserialization of string fields as `&str` or `Cow<str>`.
 ///
 /// Use this when you need maximum performance and can guarantee the input
 /// buffer outlives the deserialized value. For most use cases, prefer
@@ -136,20 +135,19 @@ where
 /// # Example
 ///
 /// ```
-/// use std::borrow::Cow;
 /// use facet::Facet;
 /// use facet_format_json::from_slice_borrowed;
 ///
-/// #[derive(Facet, Debug)]
+/// #[derive(Facet, Debug, PartialEq)]
 /// struct Point<'a> {
-///     label: Cow<'a, str>,
+///     label: &'a str,
 ///     x: i32,
 ///     y: i32,
 /// }
 ///
 /// let json = br#"{"label": "origin", "x": 0, "y": 0}"#;
 /// let point: Point = from_slice_borrowed(json).unwrap();
-/// assert_eq!(&*point.label, "origin");
+/// assert_eq!(point.label, "origin");
 /// ```
 pub fn from_slice_borrowed<'input, 'facet, T>(
     input: &'input [u8],
