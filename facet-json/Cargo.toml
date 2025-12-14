@@ -35,7 +35,7 @@ ci = ["cranelift"]
 axum-core = { version = "0.5", default-features = false, optional = true }
 
 # Profiling binary (optional)
-brotli = { version = "7", optional = true }
+brotli = { version = "8", optional = true }
 bytes = { version = "1", default-features = false, optional = true }
 
 # Stackful coroutines for streaming deserialization
