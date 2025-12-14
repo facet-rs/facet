@@ -9,8 +9,9 @@ mod serializer;
 
 pub use parser::{JsonError, JsonParser};
 pub use serializer::{
-    JsonSerializeError, JsonSerializer, SerializeOptions, to_string, to_string_pretty,
-    to_string_with_options, to_vec, to_vec_pretty, to_vec_with_options,
+    JsonSerializeError, JsonSerializer, SerializeOptions, peek_to_string, peek_to_string_pretty,
+    peek_to_string_with_options, to_string, to_string_pretty, to_string_with_options, to_vec,
+    to_vec_pretty, to_vec_with_options,
 };
 
 // Re-export DeserializeError for convenience

@@ -407,3 +407,81 @@ where
     let bytes = to_vec_with_options(value, options)?;
     Ok(String::from_utf8(bytes).expect("JSON output should always be valid UTF-8"))
 }
+
+// ── Peek-based serialization ──
+
+/// Serialize a `Peek` instance to a JSON string.
+///
+/// This allows serializing values without requiring ownership, useful when
+/// you already have a `Peek` from reflection operations.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_reflect::Peek;
+/// use facet_format_json::peek_to_string;
+///
+/// #[derive(Facet)]
+/// struct Point { x: i32, y: i32 }
+///
+/// let point = Point { x: 10, y: 20 };
+/// let json = peek_to_string(Peek::new(&point)).unwrap();
+/// assert_eq!(json, r#"{"x":10,"y":20}"#);
+/// ```
+pub fn peek_to_string<'input, 'facet>(
+    peek: Peek<'input, 'facet>,
+) -> Result<String, SerializeError<JsonSerializeError>> {
+    peek_to_string_with_options(peek, &SerializeOptions::default())
+}
+
+/// Serialize a `Peek` instance to a pretty-printed JSON string.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_reflect::Peek;
+/// use facet_format_json::peek_to_string_pretty;
+///
+/// #[derive(Facet)]
+/// struct Point { x: i32, y: i32 }
+///
+/// let point = Point { x: 10, y: 20 };
+/// let json = peek_to_string_pretty(Peek::new(&point)).unwrap();
+/// assert!(json.contains('\n'));
+/// ```
+pub fn peek_to_string_pretty<'input, 'facet>(
+    peek: Peek<'input, 'facet>,
+) -> Result<String, SerializeError<JsonSerializeError>> {
+    peek_to_string_with_options(peek, &SerializeOptions::default().pretty())
+}
+
+/// Serialize a `Peek` instance to a JSON string with custom options.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_reflect::Peek;
+/// use facet_format_json::{peek_to_string_with_options, SerializeOptions};
+///
+/// #[derive(Facet)]
+/// struct Point { x: i32, y: i32 }
+///
+/// let point = Point { x: 10, y: 20 };
+/// let json = peek_to_string_with_options(
+///     Peek::new(&point),
+///     &SerializeOptions::default().indent("\t"),
+/// ).unwrap();
+/// assert!(json.contains('\n'));
+/// ```
+pub fn peek_to_string_with_options<'input, 'facet>(
+    peek: Peek<'input, 'facet>,
+    options: &SerializeOptions,
+) -> Result<String, SerializeError<JsonSerializeError>> {
+    let mut serializer = JsonSerializer::with_options(options.clone());
+    serialize_root(&mut serializer, peek)?;
+    let bytes = serializer.finish();
+    Ok(String::from_utf8(bytes).expect("JSON output should always be valid UTF-8"))
+}
