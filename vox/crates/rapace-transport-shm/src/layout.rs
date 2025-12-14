@@ -1212,10 +1212,10 @@ mod tests {
             calculate_segment_size(DEFAULT_RING_CAPACITY, DEFAULT_SLOT_SIZE, DEFAULT_SLOT_COUNT);
         // Rough sanity check
         assert!(size > 0);
-        // Header (64) + 2 rings (2 * (192 + 256*64)) + data header (64) + meta (64*8) + data (64*4096)
-        // = 64 + 2*(192 + 16384) + 64 + 512 + 262144
-        // = 64 + 33152 + 64 + 512 + 262144 = 295936
-        assert_eq!(size, 295936);
+        // Header (128) + 2 rings (2 * (192 + 256*64)) + data header (64) + meta (64*8) + data (64*4096)
+        // = 128 + 2*(192 + 16384) + 64 + 512 + 262144
+        // = 128 + 33152 + 64 + 512 + 262144 = 296000
+        assert_eq!(size, 296000);
     }
 
     #[test]
@@ -1223,10 +1223,11 @@ mod tests {
         let offsets = SegmentOffsets::calculate(DEFAULT_RING_CAPACITY, DEFAULT_SLOT_COUNT);
 
         assert_eq!(offsets.header, 0);
-        assert_eq!(offsets.ring_a_to_b_header, 64);
-        assert_eq!(offsets.ring_a_to_b_descs, 64 + 192);
-        // ring_a_to_b_descs + 256*64 = 256 + 16384 = 16640
-        assert_eq!(offsets.ring_b_to_a_header, 256 + 16384);
+        // Header is 128 bytes (includes config for auto-discovery)
+        assert_eq!(offsets.ring_a_to_b_header, 128);
+        assert_eq!(offsets.ring_a_to_b_descs, 128 + 192);
+        // ring_a_to_b_descs + 256*64 = 320 + 16384 = 16704
+        assert_eq!(offsets.ring_b_to_a_header, 320 + 16384);
         // etc.
     }
 
