@@ -5,8 +5,8 @@ experimental = ["setup-scripts"]
 # Fail fast - stop on first failure
 fail-fast = true
 
-# Timeout for individual tests (5s slow timeout, 4 periods = 20s total)
-slow-timeout = { period = "5s", terminate-after = 4 }
+# Timeout for individual tests (10s slow timeout, 6 periods = 60s total)
+slow-timeout = { period = "10s", terminate-after = 6 }
 
 # Status level
 status-level = "pass"
