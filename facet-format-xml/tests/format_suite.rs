@@ -312,10 +312,12 @@ impl FormatSuite for XmlSlice {
 
     fn error_type_mismatch_object_to_array() -> CaseSpec {
         // Object (nested struct) provided where array expected
-        // Skip: XML elements are semantically ambiguous (could be struct or sequence),
-        // so we can't give a "type mismatch: expected array, got object" error.
-        // See: https://github.com/facet-rs/facet/issues/1301 for improved ParseEvent types
-        CaseSpec::skip("XML elements are ambiguous - error messages need ParseEvent enrichment")
+        // Skip: XML elements are semantically ambiguous (ContainerKind::Element),
+        // so they're accepted as potential sequences. JSON gives "type mismatch"
+        // errors because it uses unambiguous ContainerKind::Object.
+        CaseSpec::skip(
+            "XML elements are ambiguous (ContainerKind::Element) - no type mismatch possible",
+        )
     }
 
     fn error_missing_required_field() -> CaseSpec {

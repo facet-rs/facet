@@ -20,8 +20,8 @@ use std::io::BufRead;
 use corosensei::{Coroutine, CoroutineResult};
 use facet_core::Facet;
 use facet_format::{
-    DeserializeError, FieldEvidence, FieldKey, FieldLocationHint, FormatDeserializer, FormatParser,
-    ParseEvent, ProbeStream, ScalarValue,
+    ContainerKind, DeserializeError, FieldEvidence, FieldKey, FieldLocationHint,
+    FormatDeserializer, FormatParser, ParseEvent, ProbeStream, ScalarValue,
 };
 use quick_xml::NsReader;
 use quick_xml::events::Event;
@@ -193,7 +193,8 @@ impl<'y> StreamingXmlParser<'y> {
             && !parent.started
         {
             // Parent needs to become a struct now
-            self.event_buffer.push(ParseEvent::StructStart);
+            self.event_buffer
+                .push(ParseEvent::StructStart(ContainerKind::Element));
             for (name, value) in parent.pending_attrs.drain(..) {
                 let key = FieldKey::new(Cow::Owned(name), FieldLocationHint::Attribute);
                 self.event_buffer.push(ParseEvent::FieldKey(key));
@@ -332,7 +333,8 @@ impl<'y> StreamingXmlParser<'y> {
 
                     // Empty element with attrs: emit as struct
                     // Empty element without attrs: emit as empty struct (or could be unit)
-                    self.event_buffer.push(ParseEvent::StructStart);
+                    self.event_buffer
+                        .push(ParseEvent::StructStart(ContainerKind::Element));
                     for (name, value) in attrs {
                         let key = FieldKey::new(Cow::Owned(name), FieldLocationHint::Attribute);
                         self.event_buffer.push(ParseEvent::FieldKey(key));
@@ -401,7 +403,8 @@ impl<'y> StreamingXmlParser<'y> {
                         self.event_buffer.push(ParseEvent::StructEnd);
                     } else if !state.pending_attrs.is_empty() {
                         // Element has attributes but no children - emit as struct
-                        self.event_buffer.push(ParseEvent::StructStart);
+                        self.event_buffer
+                            .push(ParseEvent::StructStart(ContainerKind::Element));
                         for (name, value) in state.pending_attrs {
                             let key = FieldKey::new(Cow::Owned(name), FieldLocationHint::Attribute);
                             self.event_buffer.push(ParseEvent::FieldKey(key));
@@ -421,7 +424,8 @@ impl<'y> StreamingXmlParser<'y> {
                         if !state.text.is_empty() {
                             self.event_buffer.push(emit_scalar_from_text(&state.text));
                         } else {
-                            self.event_buffer.push(ParseEvent::StructStart);
+                            self.event_buffer
+                                .push(ParseEvent::StructStart(ContainerKind::Element));
                             self.event_buffer.push(ParseEvent::StructEnd);
                         }
                     }
@@ -504,7 +508,7 @@ impl<'y> FormatParser<'static> for StreamingXmlParser<'y> {
         loop {
             let event = self.next_event()?;
             match event {
-                ParseEvent::StructStart | ParseEvent::SequenceStart => depth += 1,
+                ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_) => depth += 1,
                 ParseEvent::StructEnd | ParseEvent::SequenceEnd => {
                     if depth == 0 {
                         break;
@@ -532,12 +536,6 @@ impl<'y> FormatParser<'static> for StreamingXmlParser<'y> {
         let evidence = self.build_probe();
         Ok(StreamingXmlProbe { evidence, idx: 0 })
     }
-
-    fn elements_as_sequences(&self) -> bool {
-        // XML elements are semantically ambiguous - the deserializer uses target type
-        // to decide if an element should be treated as a struct or sequence
-        true
-    }
 }
 
 impl<'y> StreamingXmlParser<'y> {
@@ -563,7 +561,7 @@ impl<'y> StreamingXmlParser<'y> {
         let mut depth = 0i32;
         for event in &probe_events {
             match event {
-                ParseEvent::StructStart | ParseEvent::SequenceStart => depth += 1,
+                ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_) => depth += 1,
                 ParseEvent::StructEnd | ParseEvent::SequenceEnd => {
                     depth -= 1;
                     if depth < 0 {
@@ -591,7 +589,7 @@ impl<'y> StreamingXmlParser<'y> {
             // Track if we started from StructStart (probing before consuming root)
             if first_event {
                 first_event = false;
-                if matches!(event, ParseEvent::StructStart) {
+                if matches!(event, ParseEvent::StructStart(ContainerKind::Element)) {
                     started_from_struct_start = true;
                 }
             }
@@ -599,7 +597,7 @@ impl<'y> StreamingXmlParser<'y> {
             let is_end = matches!(event, ParseEvent::StructEnd | ParseEvent::SequenceEnd);
 
             match &event {
-                ParseEvent::StructStart | ParseEvent::SequenceStart => depth += 1,
+                ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_) => depth += 1,
                 ParseEvent::StructEnd | ParseEvent::SequenceEnd => depth -= 1,
                 _ => {}
             }
@@ -640,7 +638,10 @@ impl<'y> StreamingXmlParser<'y> {
         // Determine the target depth for finding top-level fields:
         // - If first event is StructStart, find fields at depth 1 (inside the struct)
         // - Otherwise, we're already inside a struct, find fields at depth 0
-        let target_depth = if matches!(events.first(), Some(ParseEvent::StructStart)) {
+        let target_depth = if matches!(
+            events.first(),
+            Some(ParseEvent::StructStart(ContainerKind::Element))
+        ) {
             1
         } else {
             0
@@ -651,7 +652,7 @@ impl<'y> StreamingXmlParser<'y> {
 
         while i < events.len() {
             match events[i] {
-                ParseEvent::StructStart | ParseEvent::SequenceStart => {
+                ParseEvent::StructStart(_) | ParseEvent::SequenceStart(_) => {
                     depth += 1;
                     i += 1;
                 }

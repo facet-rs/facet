@@ -46,17 +46,4 @@ pub trait FormatParser<'de> {
         self.skip_value()?;
         Ok(None)
     }
-
-    /// Whether this format treats struct-like containers as potentially being sequences.
-    ///
-    /// XML elements are semantically ambiguous - `<items><item>1</item></items>` could be
-    /// a struct with one field or a sequence of items. The deserializer uses the target
-    /// type to decide. For XML, this returns `true` so `StructStart` is accepted when
-    /// deserializing sequences.
-    ///
-    /// JSON objects are unambiguous - `{}` is always struct-like, `[]` is always a sequence.
-    /// For JSON-like formats, this returns `false` (the default).
-    fn elements_as_sequences(&self) -> bool {
-        false
-    }
 }
