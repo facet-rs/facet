@@ -22,6 +22,11 @@ bitflags! {
         const CREDITS       = 0b0100_0000;
         /// Headers/trailers only, no body.
         const METADATA_ONLY = 0b1000_0000;
+        /// Don't send a reply frame for this request.
+        ///
+        /// This is intended for fire-and-forget notifications where the caller
+        /// does not want to register a pending waiter or receive an error response.
+        const NO_REPLY      = 0b0001_0000_0000;
     }
 }
 

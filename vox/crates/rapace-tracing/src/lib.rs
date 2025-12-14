@@ -325,11 +325,14 @@ impl<T: Transport + Send + Sync + 'static> RapaceTracingLayer<T> {
 
     /// Call TracingSink.new_span via RPC (fire-and-forget from sync context).
     fn call_new_span(&self, meta: SpanMeta) -> u64 {
-        let client = TracingSinkClient::new(self.session.clone());
         let local_id = self.next_span_id.fetch_add(1, Ordering::Relaxed);
+        let session = self.session.clone();
 
         self.rt.spawn(async move {
-            let _ = client.new_span(meta).await;
+            let request_bytes: Vec<u8> = rapace::facet_postcard::to_vec(&meta).unwrap();
+            let _ = session
+                .notify(TRACING_SINK_METHOD_ID_NEW_SPAN, request_bytes)
+                .await;
         });
 
         local_id
@@ -337,41 +340,56 @@ impl<T: Transport + Send + Sync + 'static> RapaceTracingLayer<T> {
 
     /// Call TracingSink.record via RPC.
     fn call_record(&self, span_id: u64, fields: Vec<Field>) {
-        let client = TracingSinkClient::new(self.session.clone());
+        let session = self.session.clone();
         self.rt.spawn(async move {
-            let _ = client.record(span_id, fields).await;
+            let request_bytes: Vec<u8> = rapace::facet_postcard::to_vec(&(span_id, fields)).unwrap();
+            let _ = session
+                .notify(TRACING_SINK_METHOD_ID_RECORD, request_bytes)
+                .await;
         });
     }
 
     /// Call TracingSink.event via RPC.
     fn call_event(&self, event: EventMeta) {
-        let client = TracingSinkClient::new(self.session.clone());
+        let session = self.session.clone();
         self.rt.spawn(async move {
-            let _ = client.event(event).await;
+            let request_bytes: Vec<u8> = rapace::facet_postcard::to_vec(&event).unwrap();
+            let _ = session
+                .notify(TRACING_SINK_METHOD_ID_EVENT, request_bytes)
+                .await;
         });
     }
 
     /// Call TracingSink.enter via RPC.
     fn call_enter(&self, span_id: u64) {
-        let client = TracingSinkClient::new(self.session.clone());
+        let session = self.session.clone();
         self.rt.spawn(async move {
-            let _ = client.enter(span_id).await;
+            let request_bytes: Vec<u8> = rapace::facet_postcard::to_vec(&span_id).unwrap();
+            let _ = session
+                .notify(TRACING_SINK_METHOD_ID_ENTER, request_bytes)
+                .await;
         });
     }
 
     /// Call TracingSink.exit via RPC.
     fn call_exit(&self, span_id: u64) {
-        let client = TracingSinkClient::new(self.session.clone());
+        let session = self.session.clone();
         self.rt.spawn(async move {
-            let _ = client.exit(span_id).await;
+            let request_bytes: Vec<u8> = rapace::facet_postcard::to_vec(&span_id).unwrap();
+            let _ = session
+                .notify(TRACING_SINK_METHOD_ID_EXIT, request_bytes)
+                .await;
         });
     }
 
     /// Call TracingSink.drop_span via RPC.
     fn call_drop_span(&self, span_id: u64) {
-        let client = TracingSinkClient::new(self.session.clone());
+        let session = self.session.clone();
         self.rt.spawn(async move {
-            let _ = client.drop_span(span_id).await;
+            let request_bytes: Vec<u8> = rapace::facet_postcard::to_vec(&span_id).unwrap();
+            let _ = session
+                .notify(TRACING_SINK_METHOD_ID_DROP_SPAN, request_bytes)
+                .await;
         });
     }
 }

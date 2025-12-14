@@ -40,7 +40,7 @@ repository = "https://github.com/bearcove/rapace"
 # Internal crates
 rapace = { path = "crates/rapace", version = "0.4.0" }
 rapace-core = { path = "crates/rapace-core", version = "0.4.0" }
-rapace-http = { path = "crates/rapace-http", version = "0.3.0" }
+rapace-http = { path = "crates/rapace-http", version = "0.4.0" }
 rapace-macros = { path = "crates/rapace-macros", version = "0.4.0" }
 rapace-registry = { path = "crates/rapace-registry", version = "0.4.0" }
 rapace-tracing = { path = "crates/rapace-tracing", version = "0.4.0" }

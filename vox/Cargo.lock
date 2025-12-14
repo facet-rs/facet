@@ -1535,7 +1535,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-dashboard"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "facet",
@@ -1550,7 +1550,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-diagnostics-over-rapace"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-send-fd",
  "facet",
@@ -1581,7 +1581,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-http-over-rapace"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-send-fd",
  "axum",
@@ -1602,7 +1602,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-http-tunnel"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "bytes",
@@ -1638,7 +1638,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-shm-image"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "image",
  "rapace",
@@ -1648,7 +1648,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-template-engine"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-send-fd",
  "libc",
@@ -1685,7 +1685,7 @@ dependencies = [
 
 [[package]]
 name = "rapace-tracing-over-rapace"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-send-fd",
  "libc",
@@ -2426,7 +2426,7 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "ur-taking-me-with-you"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "libc",
  "tokio",
@@ -2786,7 +2786,7 @@ checksum = "32ac00cd3f8ec9c1d33fb3e7958a82df6989c42d747bd326c822b1d625283547"
 
 [[package]]
 name = "xtask"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "clap",
  "serde",

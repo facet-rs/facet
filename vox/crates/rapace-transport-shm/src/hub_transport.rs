@@ -900,11 +900,9 @@ mod tests {
         let peer_transport = HubPeerTransport::new(peer, peer_doorbell, "test-peer");
 
         // Send from peer to host
-        let desc = MsgDescHot {
-            msg_id: 42,
-            channel_id: 1,
-            ..Default::default()
-        };
+        let mut desc = MsgDescHot::default();
+        desc.msg_id = 42;
+        desc.channel_id = 1;
 
         let payload = b"hello from peer";
         peer_transport.send_frame(&desc, payload).await.unwrap();
@@ -916,11 +914,9 @@ mod tests {
         assert_eq!(recv_payload, payload);
 
         // Send from host to peer
-        let desc2 = MsgDescHot {
-            msg_id: 100,
-            channel_id: 2,
-            ..Default::default()
-        };
+        let mut desc2 = MsgDescHot::default();
+        desc2.msg_id = 100;
+        desc2.channel_id = 2;
 
         let payload2 = b"hello from host";
         host_transport
@@ -959,10 +955,8 @@ mod tests {
         let peer_transport = HubPeerTransport::new(peer, peer_doorbell, "test-peer");
 
         // Send a large payload (larger than inline size)
-        let desc = MsgDescHot {
-            msg_id: 1,
-            ..Default::default()
-        };
+        let mut desc = MsgDescHot::default();
+        desc.msg_id = 1;
 
         let payload = vec![42u8; 1000]; // 1KB payload
         peer_transport.send_frame(&desc, &payload).await.unwrap();

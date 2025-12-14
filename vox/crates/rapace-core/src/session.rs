@@ -602,6 +602,34 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
         Ok(received)
     }
 
+    /// Send a request frame without registering a waiter or waiting for a reply.
+    ///
+    /// This is useful for fire-and-forget notifications (e.g. tracing events).
+    ///
+    /// The request is sent on channel 0 (the "no channel" channel). The receiver
+    /// may still dispatch it like a normal unary RPC request, but if it honors
+    /// [`FrameFlags::NO_REPLY`] it will not send a response frame.
+    pub async fn notify(&self, method_id: u32, payload: Vec<u8>) -> Result<(), RpcError> {
+        let channel_id = 0;
+
+        let mut desc = MsgDescHot::new();
+        desc.msg_id = self.next_msg_id();
+        desc.channel_id = channel_id;
+        desc.method_id = method_id;
+        desc.flags = FrameFlags::DATA | FrameFlags::EOS | FrameFlags::NO_REPLY;
+
+        let frame = if payload.len() <= INLINE_PAYLOAD_SIZE {
+            Frame::with_inline_payload(desc, &payload).expect("inline payload should fit")
+        } else {
+            Frame::with_payload(desc, payload)
+        };
+
+        self.transport
+            .send_frame(&frame)
+            .await
+            .map_err(RpcError::Transport)
+    }
+
     /// Send a response frame.
     pub async fn send_response(&self, frame: &Frame) -> Result<(), RpcError> {
         self.transport
@@ -674,6 +702,8 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
                 continue;
             }
 
+            let no_reply = received.flags.contains(FrameFlags::NO_REPLY);
+
             // Dispatch to handler
             // We need to call the dispatcher while holding the lock, then spawn the future
             let response_future = {
@@ -709,6 +739,17 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
                             })
                         }
                     };
+
+                    if no_reply {
+                        if let Err(e) = response_result {
+                            tracing::debug!(
+                                channel_id,
+                                error = ?e,
+                                "RpcSession::run: no-reply request failed"
+                            );
+                        }
+                        return;
+                    }
 
                     match response_result {
                         Ok(mut response) => {
@@ -761,11 +802,13 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
                     };
                 });
             } else {
-                tracing::warn!(
-                    channel_id,
-                    method_id,
-                    "RpcSession::run: no dispatcher registered; dropping request (client may hang)"
-                );
+                if !no_reply {
+                    tracing::warn!(
+                        channel_id,
+                        method_id,
+                        "RpcSession::run: no dispatcher registered; dropping request (client may hang)"
+                    );
+                }
             }
         }
     }
