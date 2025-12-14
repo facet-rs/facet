@@ -1168,7 +1168,7 @@ mod tests {
     #[test]
     fn test_segment_header_validate() {
         let mut header = unsafe { std::mem::zeroed::<SegmentHeader>() };
-        header.init();
+        header.init(DEFAULT_RING_CAPACITY, DEFAULT_SLOT_SIZE, DEFAULT_SLOT_COUNT);
         assert!(header.validate().is_ok());
 
         header.magic[0] = b'X';

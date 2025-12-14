@@ -20,7 +20,7 @@ allocator = ["allocator-api2"]
 
 [dependencies]
 rapace-core.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["net"] }
 libc.workspace = true
 parking_lot.workspace = true
 tracing = { workspace = true }

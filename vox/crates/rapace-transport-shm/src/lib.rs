@@ -45,7 +45,12 @@
 
 #[cfg(any(feature = "allocator", test))]
 mod alloc;
+pub mod doorbell;
 pub mod futex;
+pub mod hub_alloc;
+pub mod hub_layout;
+pub mod hub_session;
+pub mod hub_transport;
 pub mod layout;
 mod session;
 mod transport;
@@ -59,6 +64,19 @@ pub use layout::{
 };
 pub use session::{ShmSession, ShmSessionConfig};
 pub use transport::{ShmMetrics, ShmTransport};
+
+// Hub architecture re-exports
+pub use doorbell::{Doorbell, close_peer_fd};
+pub use hub_alloc::HubAllocator;
+pub use hub_layout::{
+    ExtentHeader, HubHeader, HubOffsets, HubSlotError, HubSlotMeta, PeerEntry, SizeClassHeader,
+    HUB_SIZE_CLASSES, decode_slot_ref, encode_slot_ref,
+};
+pub use hub_session::{HubConfig, HubHost, HubPeer, PeerInfo};
+pub use hub_transport::{
+    HostPeerHandle, HubHostPeerTransport, HubHostTransport, HubPeerTransport, HubTransportError,
+    INLINE_PAYLOAD_SIZE, INLINE_PAYLOAD_SLOT,
+};
 
 // Re-export allocator-api2 types for convenience when the feature is enabled.
 #[cfg(feature = "allocator")]
