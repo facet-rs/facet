@@ -8,6 +8,44 @@ use facet_core::Facet;
 use facet_format::{FormatSerializer, ScalarValue, SerializeError, serialize_root};
 use facet_reflect::Peek;
 
+/// Options for JSON serialization.
+#[derive(Debug, Clone)]
+pub struct SerializeOptions {
+    /// Whether to pretty-print with indentation (default: false)
+    pub pretty: bool,
+    /// Indentation string for pretty-printing (default: "  ")
+    pub indent: &'static str,
+}
+
+impl Default for SerializeOptions {
+    fn default() -> Self {
+        Self {
+            pretty: false,
+            indent: "  ",
+        }
+    }
+}
+
+impl SerializeOptions {
+    /// Create new default options (compact output).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Enable pretty-printing with default indentation.
+    pub fn pretty(mut self) -> Self {
+        self.pretty = true;
+        self
+    }
+
+    /// Set a custom indentation string (implies pretty-printing).
+    pub fn indent(mut self, indent: &'static str) -> Self {
+        self.indent = indent;
+        self.pretty = true;
+        self
+    }
+}
+
 #[derive(Debug)]
 pub struct JsonSerializeError {
     msg: &'static str,
@@ -27,22 +65,46 @@ enum Ctx {
     Seq { first: bool },
 }
 
-/// Minimal JSON serializer for the codex prototype.
+/// JSON serializer with configurable formatting options.
 pub struct JsonSerializer {
     out: Vec<u8>,
     stack: Vec<Ctx>,
+    options: SerializeOptions,
 }
 
 impl JsonSerializer {
+    /// Create a new JSON serializer with default (compact) options.
     pub fn new() -> Self {
+        Self::with_options(SerializeOptions::default())
+    }
+
+    /// Create a new JSON serializer with the given options.
+    pub fn with_options(options: SerializeOptions) -> Self {
         Self {
             out: Vec::new(),
             stack: Vec::new(),
+            options,
         }
     }
 
+    /// Consume the serializer and return the output bytes.
     pub fn finish(self) -> Vec<u8> {
         self.out
+    }
+
+    /// Current nesting depth (for indentation).
+    fn depth(&self) -> usize {
+        self.stack.len()
+    }
+
+    /// Write a newline and indentation if in pretty mode.
+    fn write_indent(&mut self) {
+        if self.options.pretty {
+            self.out.push(b'\n');
+            for _ in 0..self.depth() {
+                self.out.extend_from_slice(self.options.indent.as_bytes());
+            }
+        }
     }
 
     fn before_value(&mut self) -> Result<(), JsonSerializeError> {
@@ -52,6 +114,7 @@ impl JsonSerializer {
                     self.out.push(b',');
                 }
                 *first = false;
+                self.write_indent();
             }
             Some(Ctx::Struct { .. }) => {
                 // struct values are separated by `field_key`
@@ -109,8 +172,12 @@ impl FormatSerializer for JsonSerializer {
                     self.out.push(b',');
                 }
                 *first = false;
+                self.write_indent();
                 self.write_json_string(key);
                 self.out.push(b':');
+                if self.options.pretty {
+                    self.out.push(b' ');
+                }
                 Ok(())
             }
             _ => Err(JsonSerializeError {
@@ -121,7 +188,11 @@ impl FormatSerializer for JsonSerializer {
 
     fn end_struct(&mut self) -> Result<(), Self::Error> {
         match self.stack.pop() {
-            Some(Ctx::Struct { .. }) => {
+            Some(Ctx::Struct { first }) => {
+                // Only add newline/indent before closing brace if struct was non-empty
+                if !first {
+                    self.write_indent();
+                }
                 self.out.push(b'}');
                 Ok(())
             }
@@ -140,7 +211,11 @@ impl FormatSerializer for JsonSerializer {
 
     fn end_seq(&mut self) -> Result<(), Self::Error> {
         match self.stack.pop() {
-            Some(Ctx::Seq { .. }) => {
+            Some(Ctx::Seq { first }) => {
+                // Only add newline/indent before closing bracket if seq was non-empty
+                if !first {
+                    self.write_indent();
+                }
                 self.out.push(b']');
                 Ok(())
             }
@@ -194,7 +269,60 @@ pub fn to_vec<'facet, T>(value: &'_ T) -> Result<Vec<u8>, SerializeError<JsonSer
 where
     T: Facet<'facet> + ?Sized,
 {
-    let mut serializer = JsonSerializer::new();
+    to_vec_with_options(value, &SerializeOptions::default())
+}
+
+/// Serialize a value to pretty-printed JSON bytes.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_json::to_vec_pretty;
+///
+/// #[derive(Facet)]
+/// struct Point { x: i32, y: i32 }
+///
+/// let point = Point { x: 10, y: 20 };
+/// let bytes = to_vec_pretty(&point).unwrap();
+/// assert!(bytes.contains(&b'\n'));
+/// ```
+pub fn to_vec_pretty<'facet, T>(value: &'_ T) -> Result<Vec<u8>, SerializeError<JsonSerializeError>>
+where
+    T: Facet<'facet> + ?Sized,
+{
+    to_vec_with_options(value, &SerializeOptions::default().pretty())
+}
+
+/// Serialize a value to JSON bytes with custom options.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_json::{to_vec_with_options, SerializeOptions};
+///
+/// #[derive(Facet)]
+/// struct Point { x: i32, y: i32 }
+///
+/// let point = Point { x: 10, y: 20 };
+///
+/// // Compact output
+/// let bytes = to_vec_with_options(&point, &SerializeOptions::default()).unwrap();
+/// assert_eq!(bytes, br#"{"x":10,"y":20}"#);
+///
+/// // Pretty output with tabs
+/// let bytes = to_vec_with_options(&point, &SerializeOptions::default().indent("\t")).unwrap();
+/// assert!(bytes.contains(&b'\n'));
+/// ```
+pub fn to_vec_with_options<'facet, T>(
+    value: &'_ T,
+    options: &SerializeOptions,
+) -> Result<Vec<u8>, SerializeError<JsonSerializeError>>
+where
+    T: Facet<'facet> + ?Sized,
+{
+    let mut serializer = JsonSerializer::with_options(options.clone());
     serialize_root(&mut serializer, Peek::new(value))?;
     Ok(serializer.finish())
 }
@@ -220,5 +348,62 @@ where
 {
     let bytes = to_vec(value)?;
     // JSON output is always valid UTF-8, so this unwrap is safe
+    Ok(String::from_utf8(bytes).expect("JSON output should always be valid UTF-8"))
+}
+
+/// Serialize a value to a pretty-printed JSON string.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_json::to_string_pretty;
+///
+/// #[derive(Facet)]
+/// struct Person { name: String, age: u32 }
+///
+/// let person = Person { name: "Alice".into(), age: 30 };
+/// let json = to_string_pretty(&person).unwrap();
+/// assert!(json.contains('\n'));
+/// ```
+pub fn to_string_pretty<'facet, T>(
+    value: &'_ T,
+) -> Result<String, SerializeError<JsonSerializeError>>
+where
+    T: Facet<'facet> + ?Sized,
+{
+    let bytes = to_vec_pretty(value)?;
+    Ok(String::from_utf8(bytes).expect("JSON output should always be valid UTF-8"))
+}
+
+/// Serialize a value to a JSON string with custom options.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_json::{to_string_with_options, SerializeOptions};
+///
+/// #[derive(Facet)]
+/// struct Person { name: String, age: u32 }
+///
+/// let person = Person { name: "Alice".into(), age: 30 };
+///
+/// // Compact output
+/// let json = to_string_with_options(&person, &SerializeOptions::default()).unwrap();
+/// assert_eq!(json, r#"{"name":"Alice","age":30}"#);
+///
+/// // Pretty output with tabs
+/// let json = to_string_with_options(&person, &SerializeOptions::default().indent("\t")).unwrap();
+/// assert!(json.contains('\n'));
+/// ```
+pub fn to_string_with_options<'facet, T>(
+    value: &'_ T,
+    options: &SerializeOptions,
+) -> Result<String, SerializeError<JsonSerializeError>>
+where
+    T: Facet<'facet> + ?Sized,
+{
+    let bytes = to_vec_with_options(value, options)?;
     Ok(String::from_utf8(bytes).expect("JSON output should always be valid UTF-8"))
 }
