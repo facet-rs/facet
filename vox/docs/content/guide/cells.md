@@ -1,13 +1,13 @@
 +++
-title = "Plugins"
-description = "Building plugins with rapace-plugin"
+title = "Cells"
+description = "Building cells with rapace-cell"
 +++
 
-This page describes `rapace-plugin`, a helper crate that eliminates boilerplate when building plugins that communicate with a host process via shared memory.
+This page describes `rapace-cell`, a helper crate that eliminates boilerplate when building cells that communicate with a host process via shared memory.
 
 ## Overview
 
-When building a plugin process that talks to a host over SHM, there is a fair amount of common setup:
+When building a cell process that talks to a host over SHM, there is a fair amount of common setup:
 
 - Parse command-line arguments to find the SHM path
 - Wait for the host to create the SHM file
@@ -16,7 +16,7 @@ When building a plugin process that talks to a host over SHM, there is a fair am
 - Set up a service dispatcher
 - Run the session loop
 
-The `rapace-plugin` crate wraps all of this into a few simple functions.
+The `rapace-cell` crate wraps all of this into a few simple functions.
 
 ### Before (95+ lines)
 
@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
 ### After (3 lines)
 
 ```rust,noexec
-use rapace_plugin::run;
+use rapace_cell::run;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -74,12 +74,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-## Single-service plugins
+## Single-service cells
 
-Most plugins expose a single service. Use the `run()` function:
+Most cells expose a single service. Use the `run()` function:
 
 ```rust,noexec
-use rapace_plugin::run;
+use rapace_cell::run;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -97,16 +97,16 @@ The `run()` function:
 1. Parses CLI arguments to find `--shm-path=PATH` or the first positional argument
 2. Waits up to 5 seconds for the host to create the SHM file
 3. Opens the SHM session with [default configuration](#default-configuration)
-4. Creates an RPC session using even channel IDs (plugin convention)
+4. Creates an RPC session using even channel IDs (cell convention)
 5. Sets up the service dispatcher
 6. Runs the session loop until the connection closes
 
-## Multi-service plugins
+## Multi-service cells
 
-For plugins that expose multiple services, use `run_multi()`:
+For cells that expose multiple services, use `run_multi()`:
 
 ```rust,noexec
-use rapace_plugin::run_multi;
+use rapace_cell::run_multi;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -126,14 +126,14 @@ When a method is called, the dispatcher tries each service in order until one ha
 
 ## CLI arguments
 
-The plugin runtime accepts the SHM path in two formats:
+The cell runtime accepts the SHM path in two formats:
 
 ```bash
 # Flag format (recommended)
-./my-plugin --shm-path=/tmp/my-app.shm
+./my-cell --shm-path=/tmp/my-app.shm
 
 # Positional format
-./my-plugin /tmp/my-app.shm
+./my-cell /tmp/my-app.shm
 ```
 
 ## Default configuration
@@ -151,7 +151,7 @@ pub const DEFAULT_SHM_CONFIG: ShmSessionConfig = ShmSessionConfig {
 This should match most hosts. If you need different settings, use `run_with_config()` or `run_multi_with_config()`:
 
 ```rust,noexec
-use rapace_plugin::run_with_config;
+use rapace_cell::run_with_config;
 use rapace::transport::shm::ShmSessionConfig;
 
 let custom_config = ShmSessionConfig {
@@ -168,28 +168,28 @@ run_with_config(server, custom_config).await?;
 rapace uses a convention to avoid channel ID collisions:
 
 - **Hosts** use odd channel IDs starting from 1 (1, 3, 5, ...)
-- **Plugins** use even channel IDs starting from 2 (2, 4, 6, ...)
+- **Cells** use even channel IDs starting from 2 (2, 4, 6, ...)
 
-The plugin runtime handles this automatically. You do not need to configure it.
+The cell runtime handles this automatically. You do not need to configure it.
 
 ## Error handling
 
-The plugin runtime returns `PluginError` for common failure modes:
+The cell runtime returns `CellError` for common failure modes:
 
 | Variant | Meaning |
 |---------|---------|
-| `PluginError::Args` | Invalid command-line arguments (missing SHM path) |
-| `PluginError::ShmTimeout` | SHM file was not created by host within 5 seconds |
-| `PluginError::ShmOpen` | Failed to open SHM session |
-| `PluginError::Rpc` | RPC session error |
-| `PluginError::Transport` | Transport-level error |
+| `CellError::Args` | Invalid command-line arguments (missing SHM path) |
+| `CellError::ShmTimeout` | SHM file was not created by host within 5 seconds |
+| `CellError::ShmOpen` | Failed to open SHM session |
+| `CellError::Rpc` | RPC session error |
+| `CellError::Transport` | Transport-level error |
 
 ## Custom setup with RpcSessionExt
 
 If you need more control but still want simplified service setup, use the `RpcSessionExt` trait:
 
 ```rust,noexec
-use rapace_plugin::{RpcSessionExt, DEFAULT_SHM_CONFIG};
+use rapace_cell::{RpcSessionExt, DEFAULT_SHM_CONFIG};
 use rapace::transport::shm::{ShmSession, ShmTransport};
 use rapace::RpcSession;
 use std::sync::Arc;
@@ -211,7 +211,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Tracing
 
-The plugin runtime does not configure tracing. Set it up yourself:
+The cell runtime does not configure tracing. Set it up yourself:
 
 ```rust,noexec
 #[tokio::main]
@@ -229,11 +229,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Where this fits in the stack
 
-The plugin runtime sits above the layers described in [Architecture](architecture.md):
+The cell runtime sits above the layers described in [Architecture](architecture.md):
 
 ```text
 ┌─────────────────────────────────────────┐
-│  Plugin runtime (rapace-plugin)         │  ← This crate
+│  Cell runtime (rapace-cell)             │  ← This crate
 ├─────────────────────────────────────────┤
 │  Service layer (#[rapace::service])     │
 ├─────────────────────────────────────────┤

@@ -1,10 +1,10 @@
 [package]
-name = "rapace-plugin"
+name = "rapace-cell"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "High-level plugin runtime for rapace that eliminates boilerplate"
+description = "High-level cell runtime for rapace that eliminates boilerplate"
 
 [package.metadata]
 

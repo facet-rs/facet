@@ -5,7 +5,7 @@ members = [
     "crates/rapace-core",
     "crates/rapace-http",
     "crates/rapace-macros",
-    "crates/rapace-plugin",
+    "crates/rapace-cell",
     "crates/rapace-registry",
     "crates/rapace-tracing",
     "crates/rapace-transport-mem",

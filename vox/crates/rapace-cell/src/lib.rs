@@ -1,7 +1,7 @@
-//! High-level plugin runtime for rapace
+//! High-level cell runtime for rapace
 //!
-//! This crate provides boilerplate-free APIs for building rapace plugins that communicate
-//! via SHM transport. It handles all the common setup that every plugin needs:
+//! This crate provides boilerplate-free APIs for building rapace cells that communicate
+//! via SHM transport. It handles all the common setup that every cell needs:
 //!
 //! - CLI argument parsing (--shm-path or positional args)
 //! - Waiting for the host to create the SHM file
@@ -9,12 +9,12 @@
 //! - RPC session creation with correct channel ID conventions
 //! - Service dispatcher setup
 //!
-//! # Single-service plugins
+//! # Single-service cells
 //!
-//! For simple plugins that expose a single service:
+//! For simple cells that expose a single service:
 //!
 //! ```rust,ignore
-//! use rapace_plugin::{run, ServiceDispatch};
+//! use rapace_cell::{run, ServiceDispatch};
 //! use rapace::{Frame, RpcError};
 //! use std::future::Future;
 //! use std::pin::Pin;
@@ -40,12 +40,12 @@
 //! }
 //! ```
 //!
-//! # Multi-service plugins
+//! # Multi-service cells
 //!
-//! For plugins that expose multiple services:
+//! For cells that expose multiple services:
 //!
 //! ```rust,ignore
-//! use rapace_plugin::{run_multi, DispatcherBuilder, ServiceDispatch};
+//! use rapace_cell::{run_multi, DispatcherBuilder, ServiceDispatch};
 //! use rapace::{Frame, RpcError};
 //! use std::future::Future;
 //! use std::pin::Pin;
@@ -88,13 +88,13 @@
 //!
 //! # Configuration
 //!
-//! By default, the plugin uses a standard SHM configuration that should match most hosts:
+//! By default, the cell uses a standard SHM configuration that should match most hosts:
 //! - ring_capacity: 256 descriptors
 //! - slot_size: 64KB
 //! - slot_count: 128 slots (8MB total)
 //!
-//! The plugin always uses even channel IDs starting from 2 (following rapace convention
-//! where plugins use even IDs and hosts use odd IDs).
+//! The cell always uses even channel IDs starting from 2 (following rapace convention
+//! where cells use even IDs and hosts use odd IDs).
 
 use std::error::Error as StdError;
 use std::future::Future;
@@ -112,13 +112,13 @@ pub const DEFAULT_SHM_CONFIG: ShmSessionConfig = ShmSessionConfig {
     slot_count: 128,    // 128 slots = 8MB total
 };
 
-/// Channel ID start for plugins (even IDs: 2, 4, 6, ...)
+/// Channel ID start for cells (even IDs: 2, 4, 6, ...)
 /// Hosts use odd IDs (1, 3, 5, ...)
-const PLUGIN_CHANNEL_START: u32 = 2;
+const CELL_CHANNEL_START: u32 = 2;
 
-/// Error type for plugin runtime operations
+/// Error type for cell runtime operations
 #[derive(Debug)]
-pub enum PluginError {
+pub enum CellError {
     /// Failed to parse command line arguments
     Args(String),
     /// SHM file was not created by host within timeout
@@ -131,7 +131,7 @@ pub enum PluginError {
     Transport(TransportError),
 }
 
-impl std::fmt::Display for PluginError {
+impl std::fmt::Display for CellError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Args(msg) => write!(f, "Argument error: {}", msg),
@@ -143,15 +143,15 @@ impl std::fmt::Display for PluginError {
     }
 }
 
-impl StdError for PluginError {}
+impl StdError for CellError {}
 
-impl From<RpcError> for PluginError {
+impl From<RpcError> for CellError {
     fn from(e: RpcError) -> Self {
         Self::Rpc(e)
     }
 }
 
-impl From<TransportError> for PluginError {
+impl From<TransportError> for CellError {
     fn from(e: TransportError) -> Self {
         Self::Transport(e)
     }
@@ -234,7 +234,7 @@ impl Default for DispatcherBuilder {
 }
 
 /// Parse CLI arguments to extract SHM path
-fn parse_args() -> Result<PathBuf, PluginError> {
+fn parse_args() -> Result<PathBuf, CellError> {
     for arg in std::env::args().skip(1) {
         if let Some(value) = arg.strip_prefix("--shm-path=") {
             return Ok(PathBuf::from(value));
@@ -243,13 +243,13 @@ fn parse_args() -> Result<PathBuf, PluginError> {
             return Ok(PathBuf::from(arg));
         }
     }
-    Err(PluginError::Args(
+    Err(CellError::Args(
         "Missing SHM path (use --shm-path=PATH or provide as first argument)".to_string(),
     ))
 }
 
 /// Wait for the host to create the SHM file
-async fn wait_for_shm(path: &std::path::Path, timeout_ms: u64) -> Result<(), PluginError> {
+async fn wait_for_shm(path: &std::path::Path, timeout_ms: u64) -> Result<(), CellError> {
     let attempts = timeout_ms / 100;
     for i in 0..attempts {
         if path.exists() {
@@ -259,13 +259,13 @@ async fn wait_for_shm(path: &std::path::Path, timeout_ms: u64) -> Result<(), Plu
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
-    Err(PluginError::ShmTimeout(path.to_path_buf()))
+    Err(CellError::ShmTimeout(path.to_path_buf()))
 }
 
-/// Setup common plugin infrastructure
-async fn setup_plugin(
+/// Setup common cell infrastructure
+async fn setup_cell(
     config: ShmSessionConfig,
-) -> Result<(Arc<RpcSession<ShmTransport>>, PathBuf), PluginError> {
+) -> Result<(Arc<RpcSession<ShmTransport>>, PathBuf), CellError> {
     // Parse CLI args
     let shm_path = parse_args()?;
 
@@ -274,23 +274,23 @@ async fn setup_plugin(
 
     // Open the SHM session
     let shm_session = ShmSession::open_file(&shm_path, config)
-        .map_err(|e| PluginError::ShmOpen(format!("{:?}", e)))?;
+        .map_err(|e| CellError::ShmOpen(format!("{:?}", e)))?;
 
     // Create SHM transport
     let transport = Arc::new(ShmTransport::new(shm_session));
 
-    // Create RPC session with plugin channel start (even IDs)
+    // Create RPC session with cell channel start (even IDs)
     let session = Arc::new(RpcSession::with_channel_start(
         transport,
-        PLUGIN_CHANNEL_START,
+        CELL_CHANNEL_START,
     ));
 
     Ok((session, shm_path))
 }
 
-/// Run a single-service plugin
+/// Run a single-service cell
 ///
-/// This function handles all the boilerplate for a simple plugin:
+/// This function handles all the boilerplate for a simple cell:
 /// - Parses CLI arguments
 /// - Waits for SHM file creation
 /// - Sets up SHM transport and RPC session
@@ -300,7 +300,7 @@ async fn setup_plugin(
 /// # Example
 ///
 /// ```rust,ignore
-/// use rapace_plugin::{run, ServiceDispatch};
+/// use rapace_cell::{run, ServiceDispatch};
 /// use rapace::{Frame, RpcError};
 /// use std::future::Future;
 /// use std::pin::Pin;
@@ -325,19 +325,19 @@ async fn setup_plugin(
 ///     Ok(())
 /// }
 /// ```
-pub async fn run<S>(service: S) -> Result<(), PluginError>
+pub async fn run<S>(service: S) -> Result<(), CellError>
 where
     S: ServiceDispatch,
 {
     run_with_config(service, DEFAULT_SHM_CONFIG).await
 }
 
-/// Run a single-service plugin with custom SHM configuration
-pub async fn run_with_config<S>(service: S, config: ShmSessionConfig) -> Result<(), PluginError>
+/// Run a single-service cell with custom SHM configuration
+pub async fn run_with_config<S>(service: S, config: ShmSessionConfig) -> Result<(), CellError>
 where
     S: ServiceDispatch,
 {
-    let (session, shm_path) = setup_plugin(config).await?;
+    let (session, shm_path) = setup_cell(config).await?;
 
     tracing::info!("Connected to host via SHM: {}", shm_path.display());
 
@@ -359,16 +359,16 @@ where
     Ok(())
 }
 
-/// Run a multi-service plugin
+/// Run a multi-service cell
 ///
-/// This function handles all the boilerplate for a multi-service plugin.
+/// This function handles all the boilerplate for a multi-service cell.
 /// The builder function receives a `DispatcherBuilder` to configure which
-/// services the plugin exposes.
+/// services the cell exposes.
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// use rapace_plugin::{run_multi, DispatcherBuilder, ServiceDispatch};
+/// use rapace_cell::{run_multi, DispatcherBuilder, ServiceDispatch};
 /// use rapace::{Frame, RpcError};
 /// use std::future::Future;
 /// use std::pin::Pin;
@@ -408,22 +408,22 @@ where
 ///     Ok(())
 /// }
 /// ```
-pub async fn run_multi<F>(builder_fn: F) -> Result<(), PluginError>
+pub async fn run_multi<F>(builder_fn: F) -> Result<(), CellError>
 where
     F: FnOnce(DispatcherBuilder) -> DispatcherBuilder,
 {
     run_multi_with_config(builder_fn, DEFAULT_SHM_CONFIG).await
 }
 
-/// Run a multi-service plugin with custom SHM configuration
+/// Run a multi-service cell with custom SHM configuration
 pub async fn run_multi_with_config<F>(
     builder_fn: F,
     config: ShmSessionConfig,
-) -> Result<(), PluginError>
+) -> Result<(), CellError>
 where
     F: FnOnce(DispatcherBuilder) -> DispatcherBuilder,
 {
-    let (session, shm_path) = setup_plugin(config).await?;
+    let (session, shm_path) = setup_cell(config).await?;
 
     tracing::info!("Connected to host via SHM: {}", shm_path.display());
 
@@ -444,8 +444,8 @@ where
 pub trait RpcSessionExt<T> {
     /// Set a single service as the dispatcher for this session
     ///
-    /// This is a convenience method for plugins that only expose one service.
-    /// For multi-service plugins, use `set_dispatcher` with a `DispatcherBuilder`.
+    /// This is a convenience method for cells that only expose one service.
+    /// For multi-service cells, use `set_dispatcher` with a `DispatcherBuilder`.
     fn set_service<S>(&self, service: S)
     where
         S: ServiceDispatch;
