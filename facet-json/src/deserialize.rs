@@ -5,15 +5,16 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt::{self, Display};
+use core::ptr;
 
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use facet_core::{
     Characteristic, Def, Facet, KnownPointer, NumericType, PrimitiveType, ScalarType, SequenceType,
     Shape, ShapeLayout, StructKind, Type, UserType,
 };
 use facet_reflect::{Partial, ReflectError, is_spanned_shape};
-use facet_solver::{PathSegment, Schema, Solver, VariantsByFormat, specificity_score};
+use facet_solver::{FieldInfo, PathSegment, Schema, Solver, VariantsByFormat, specificity_score};
 
 use crate::RawJson;
 use crate::adapter::{AdapterError, AdapterErrorKind, SliceAdapter, SpannedAdapterToken, Token};
@@ -1790,6 +1791,47 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
         // We want to process in an order that allows proper begin/end management
         fields_to_process.sort_by(|(a, _), (b, _)| a.path.segments().cmp(b.path.segments()));
 
+        // Determine which optional fields are missing before PASS 2
+        let missing_optional_fields: Vec<&FieldInfo> =
+            config.missing_optional_fields(&seen_keys).collect();
+
+        let mut defaults_by_first_segment: BTreeMap<&str, Vec<&FieldInfo>> = BTreeMap::new();
+        for info in &missing_optional_fields {
+            if let Some(PathSegment::Field(name)) = info.path.segments().first() {
+                defaults_by_first_segment
+                    .entry(name)
+                    .or_default()
+                    .push(*info);
+            }
+        }
+
+        let processed_first_segments: BTreeSet<&str> = fields_to_process
+            .iter()
+            .filter_map(|(info, _)| {
+                if let Some(PathSegment::Field(name)) = info.path.segments().first() {
+                    Some(*name)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let missing_first_segments: BTreeSet<&str> =
+            defaults_by_first_segment.keys().copied().collect();
+
+        for first_field in &missing_first_segments {
+            if processed_first_segments.contains(first_field) {
+                continue;
+            }
+
+            wip = wip.begin_field(first_field)?;
+            if matches!(wip.shape().def, Def::Option(_)) {
+                wip = wip.set_default()?;
+                defaults_by_first_segment.remove(first_field);
+            }
+            wip = wip.end()?;
+        }
+
         // Track currently open path segments: (field_name, is_option)
         let mut open_segments: Vec<(&str, bool)> = Vec::new();
 
@@ -1815,7 +1857,12 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
 
             // Close segments that are no longer needed (in reverse order)
             while open_segments.len() > common_len {
-                let (_, is_option) = open_segments.pop().unwrap();
+                let (segment_name, is_option) = open_segments.pop().unwrap();
+                wip = self.apply_defaults_for_segment(
+                    wip,
+                    segment_name,
+                    &mut defaults_by_first_segment,
+                )?;
                 if is_option {
                     wip = wip.end()?; // End the inner Some value
                 }
@@ -1860,7 +1907,12 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
                 // Pop the last segment since we're about to deserialize into it
                 // The deserialize_into will set the value directly
                 if !open_segments.is_empty() {
-                    let (_, is_option) = open_segments.pop().unwrap();
+                    let (segment_name, is_option) = open_segments.pop().unwrap();
+                    wip = self.apply_defaults_for_segment(
+                        wip,
+                        segment_name,
+                        &mut defaults_by_first_segment,
+                    )?;
                     wip = sub.deserialize_into(wip)?;
                     wip = wip.end()?;
                     if is_option {
@@ -1873,55 +1925,18 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
         }
 
         // Close any remaining open segments
-        while let Some((_, is_option)) = open_segments.pop() {
+        while let Some((segment_name, is_option)) = open_segments.pop() {
+            wip =
+                self.apply_defaults_for_segment(wip, segment_name, &mut defaults_by_first_segment)?;
             if is_option {
                 wip = wip.end()?; // End the inner Some value
             }
             wip = wip.end()?; // End the field
         }
-
-        // Handle missing optional fields - for flattened Option<T> fields,
-        // we need to set the Option to None when all inner fields are missing.
-        //
-        // Collect first field segments from fields we DID process
-        let processed_first_segments: BTreeSet<&str> = fields_to_process
-            .iter()
-            .filter_map(|(info, _)| {
-                if let Some(PathSegment::Field(name)) = info.path.segments().first() {
-                    Some(*name)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // Collect first field segments from MISSING optional fields
-        let missing_first_segments: BTreeSet<&str> = config
-            .missing_optional_fields(&seen_keys)
-            .filter_map(|info| {
-                if let Some(PathSegment::Field(name)) = info.path.segments().first() {
-                    Some(*name)
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // For each missing first segment that we didn't process, check if it's Option
-        for first_field in missing_first_segments {
-            if processed_first_segments.contains(first_field) {
-                // We processed some fields under this, so the field was already handled
-                continue;
+        for infos in defaults_by_first_segment.into_values() {
+            for info in infos {
+                wip = self.set_missing_field_default(wip, info, false)?;
             }
-
-            log::trace!("setting default for flattened Option field: {first_field}");
-
-            wip = wip.begin_field(first_field)?;
-            if matches!(wip.shape().def, Def::Option(_)) {
-                // This is a flattened Option field with ALL inner fields missing, set to None
-                wip = wip.set_default()?;
-            }
-            wip = wip.end()?;
         }
 
         Ok(wip)
@@ -3220,6 +3235,132 @@ impl<'input, const BORROW: bool, A: TokenSource<'input>> JsonDeserializer<'input
 
         Ok(wip)
     }
+
+    fn set_missing_field_default(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        field_info: &FieldInfo,
+        skip_first_segment: bool,
+    ) -> Result<Partial<'input, BORROW>> {
+        log::trace!(
+            "Initializing missing optional field '{}' via solver path {:?}",
+            field_info.serialized_name,
+            field_info.path
+        );
+        let segments = field_info.path.segments();
+        if segments.is_empty() {
+            return Self::apply_default_for_field(wip, field_info.field);
+        }
+
+        #[allow(unused_mut, unused_variables)]
+        let mut guards: Vec<PathGuard> = Vec::new();
+
+        for (idx, segment) in segments
+            .iter()
+            .take(segments.len().saturating_sub(1))
+            .enumerate()
+        {
+            if skip_first_segment && idx == 0 {
+                continue;
+            }
+            match segment {
+                PathSegment::Field(name) => {
+                    wip = wip.begin_field(name)?;
+                    let is_option = matches!(wip.shape().def, Def::Option(_));
+                    if is_option {
+                        wip = wip.begin_some()?;
+                    }
+                    guards.push(PathGuard::Field {
+                        had_option: is_option,
+                    });
+                }
+                PathSegment::Variant(_, variant_name) => {
+                    wip = wip.select_variant_named(variant_name)?;
+                    guards.push(PathGuard::Variant);
+                }
+            }
+        }
+
+        wip = Self::apply_default_for_field(wip, field_info.field)?;
+
+        while let Some(guard) = guards.pop() {
+            match guard {
+                PathGuard::Field { had_option } => {
+                    if had_option {
+                        wip = wip.end()?; // Close the inner Some value
+                    }
+                    wip = wip.end()?; // Close the field itself
+                }
+                PathGuard::Variant => {}
+            }
+        }
+
+        Ok(wip)
+    }
+
+    fn apply_defaults_for_segment(
+        &mut self,
+        mut wip: Partial<'input, BORROW>,
+        segment_name: &str,
+        defaults_by_first_segment: &mut BTreeMap<&str, Vec<&FieldInfo>>,
+    ) -> Result<Partial<'input, BORROW>> {
+        if let Some(entries) = defaults_by_first_segment.remove(segment_name) {
+            for info in entries {
+                wip = self.set_missing_field_default(wip, info, true)?;
+            }
+        }
+        Ok(wip)
+    }
+
+    fn apply_default_for_field(
+        mut wip: Partial<'input, BORROW>,
+        target_field: &'static facet_core::Field,
+    ) -> Result<Partial<'input, BORROW>> {
+        let struct_def = match &wip.shape().ty {
+            Type::User(UserType::Struct(def)) => def,
+            _ => {
+                return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                    message: format!(
+                        "expected struct while setting default for field '{}'",
+                        target_field.name
+                    ),
+                }));
+            }
+        };
+
+        let Some(idx) = struct_def
+            .fields
+            .iter()
+            .position(|field| ptr::eq(field, target_field))
+        else {
+            return Err(JsonError::without_span(JsonErrorKind::InvalidValue {
+                message: format!(
+                    "could not find field '{}' while applying default",
+                    target_field.name
+                ),
+            }));
+        };
+
+        if target_field.has_default() {
+            wip = wip.set_nth_field_to_default(idx)?;
+        } else if matches!(target_field.shape().def, Def::Option(_)) {
+            // Option<T> fields can always default to None.
+            wip = wip.begin_nth_field(idx)?;
+            wip = wip.set_default()?;
+            wip = wip.end()?;
+        } else {
+            // Fall back to the field type's Default (this will error if unavailable).
+            wip = wip.set_nth_field_to_default(idx)?;
+        }
+
+        Ok(wip)
+    }
+}
+
+#[derive(Debug)]
+enum PathGuard {
+    Field { had_option: bool },
+    Variant,
 }
 
 // ============================================================================
