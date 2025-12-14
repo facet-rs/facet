@@ -285,18 +285,33 @@ where
             // Deserialize the list elements into the slice builder
             // We can't use deserialize_list() because it calls begin_list() which interferes
             let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-            if !matches!(event, ParseEvent::SequenceStart) {
-                return Err(DeserializeError::TypeMismatch {
-                    expected: "sequence start for Arc<[T]>/Rc<[T]>/Box<[T]>",
-                    got: format!("{event:?}"),
-                });
-            }
+
+            // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
+            // Only accept StructStart if the format supports elements-as-sequences (e.g., XML)
+            let struct_mode = match event {
+                ParseEvent::SequenceStart => false,
+                ParseEvent::StructStart if self.parser.elements_as_sequences() => true,
+                _ => {
+                    return Err(DeserializeError::TypeMismatch {
+                        expected: "sequence start for Arc<[T]>/Rc<[T]>/Box<[T]>",
+                        got: format!("{event:?}"),
+                    });
+                }
+            };
 
             loop {
                 let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
-                if matches!(event, ParseEvent::SequenceEnd) {
+
+                // Check for end of container
+                if matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
                     self.parser.next_event().map_err(DeserializeError::Parser)?;
                     break;
+                }
+
+                // In struct mode, skip FieldKey events
+                if struct_mode && matches!(event, ParseEvent::FieldKey(_)) {
+                    self.parser.next_event().map_err(DeserializeError::Parser)?;
+                    continue;
                 }
 
                 wip = wip.begin_list_item().map_err(DeserializeError::Reflect)?;
@@ -1255,21 +1270,35 @@ where
         &mut self,
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
-        // Expect SequenceStart
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-        if !matches!(event, ParseEvent::SequenceStart) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "sequence start for tuple",
-                got: format!("{event:?}"),
-            });
-        }
+
+        // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
+        // Only accept StructStart if the format supports elements-as-sequences (e.g., XML)
+        let struct_mode = match event {
+            ParseEvent::SequenceStart => false,
+            ParseEvent::StructStart if self.parser.elements_as_sequences() => true,
+            _ => {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "sequence start for tuple",
+                    got: format!("{event:?}"),
+                });
+            }
+        };
 
         let mut index = 0usize;
         loop {
             let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
-            if matches!(event, ParseEvent::SequenceEnd) {
+
+            // Check for end of container
+            if matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
                 self.parser.next_event().map_err(DeserializeError::Parser)?;
                 break;
+            }
+
+            // In struct mode, skip FieldKey events
+            if struct_mode && matches!(event, ParseEvent::FieldKey(_)) {
+                self.parser.next_event().map_err(DeserializeError::Parser)?;
+                continue;
             }
 
             // Select field by index
@@ -1656,25 +1685,43 @@ where
                     wip = self.deserialize_into(wip)?;
                     wip = wip.end().map_err(DeserializeError::Reflect)?;
                 } else {
-                    // Multi-field tuple variant - expect array
+                    // Multi-field tuple variant - expect array or struct (for XML)
                     let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-                    if !matches!(event, ParseEvent::SequenceStart) {
-                        return Err(DeserializeError::TypeMismatch {
-                            expected: "sequence for tuple variant",
-                            got: format!("{event:?}"),
-                        });
-                    }
 
-                    for idx in 0..variant_fields.len() {
+                    // Only accept StructStart if the format supports elements-as-sequences (e.g., XML)
+                    let struct_mode = match event {
+                        ParseEvent::SequenceStart => false,
+                        ParseEvent::StructStart if self.parser.elements_as_sequences() => true,
+                        _ => {
+                            return Err(DeserializeError::TypeMismatch {
+                                expected: "sequence for tuple variant",
+                                got: format!("{event:?}"),
+                            });
+                        }
+                    };
+
+                    let mut idx = 0;
+                    while idx < variant_fields.len() {
+                        // In struct mode, skip FieldKey events
+                        if struct_mode {
+                            let event =
+                                self.parser.peek_event().map_err(DeserializeError::Parser)?;
+                            if matches!(event, ParseEvent::FieldKey(_)) {
+                                self.parser.next_event().map_err(DeserializeError::Parser)?;
+                                continue;
+                            }
+                        }
+
                         wip = wip
                             .begin_nth_field(idx)
                             .map_err(DeserializeError::Reflect)?;
                         wip = self.deserialize_into(wip)?;
                         wip = wip.end().map_err(DeserializeError::Reflect)?;
+                        idx += 1;
                     }
 
                     let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-                    if !matches!(event, ParseEvent::SequenceEnd) {
+                    if !matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
                         return Err(DeserializeError::TypeMismatch {
                             expected: "sequence end for tuple variant",
                             got: format!("{event:?}"),
@@ -1927,21 +1974,37 @@ where
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-        if !matches!(event, ParseEvent::SequenceStart) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "sequence start",
-                got: format!("{event:?}"),
-            });
-        }
+
+        // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
+        // In struct mode, we skip FieldKey events and treat values as sequence items
+        // Only accept StructStart if the format supports elements-as-sequences (e.g., XML)
+        let struct_mode = match event {
+            ParseEvent::SequenceStart => false,
+            ParseEvent::StructStart if self.parser.elements_as_sequences() => true,
+            _ => {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "sequence start",
+                    got: format!("{event:?}"),
+                });
+            }
+        };
 
         // Initialize the list
         wip = wip.begin_list().map_err(DeserializeError::Reflect)?;
 
         loop {
             let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
-            if matches!(event, ParseEvent::SequenceEnd) {
+
+            // Check for end of container
+            if matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
                 self.parser.next_event().map_err(DeserializeError::Parser)?;
                 break;
+            }
+
+            // In struct mode, skip FieldKey events (they're just labels for items)
+            if struct_mode && matches!(event, ParseEvent::FieldKey(_)) {
+                self.parser.next_event().map_err(DeserializeError::Parser)?;
+                continue;
             }
 
             wip = wip.begin_list_item().map_err(DeserializeError::Reflect)?;
@@ -1957,19 +2020,34 @@ where
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-        if !matches!(event, ParseEvent::SequenceStart) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "sequence start for array",
-                got: format!("{event:?}"),
-            });
-        }
+
+        // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
+        // Only accept StructStart if the format supports elements-as-sequences (e.g., XML)
+        let struct_mode = match event {
+            ParseEvent::SequenceStart => false,
+            ParseEvent::StructStart if self.parser.elements_as_sequences() => true,
+            _ => {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "sequence start for array",
+                    got: format!("{event:?}"),
+                });
+            }
+        };
 
         let mut index = 0usize;
         loop {
             let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
-            if matches!(event, ParseEvent::SequenceEnd) {
+
+            // Check for end of container
+            if matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
                 self.parser.next_event().map_err(DeserializeError::Parser)?;
                 break;
+            }
+
+            // In struct mode, skip FieldKey events
+            if struct_mode && matches!(event, ParseEvent::FieldKey(_)) {
+                self.parser.next_event().map_err(DeserializeError::Parser)?;
+                continue;
             }
 
             wip = wip
@@ -1988,21 +2066,36 @@ where
         mut wip: Partial<'input, BORROW>,
     ) -> Result<Partial<'input, BORROW>, DeserializeError<P::Error>> {
         let event = self.parser.next_event().map_err(DeserializeError::Parser)?;
-        if !matches!(event, ParseEvent::SequenceStart) {
-            return Err(DeserializeError::TypeMismatch {
-                expected: "sequence start for set",
-                got: format!("{event:?}"),
-            });
-        }
+
+        // Accept either SequenceStart (JSON arrays) or StructStart (XML elements)
+        // Only accept StructStart if the format supports elements-as-sequences (e.g., XML)
+        let struct_mode = match event {
+            ParseEvent::SequenceStart => false,
+            ParseEvent::StructStart if self.parser.elements_as_sequences() => true,
+            _ => {
+                return Err(DeserializeError::TypeMismatch {
+                    expected: "sequence start for set",
+                    got: format!("{event:?}"),
+                });
+            }
+        };
 
         // Initialize the set
         wip = wip.begin_set().map_err(DeserializeError::Reflect)?;
 
         loop {
             let event = self.parser.peek_event().map_err(DeserializeError::Parser)?;
-            if matches!(event, ParseEvent::SequenceEnd) {
+
+            // Check for end of container
+            if matches!(event, ParseEvent::SequenceEnd | ParseEvent::StructEnd) {
                 self.parser.next_event().map_err(DeserializeError::Parser)?;
                 break;
+            }
+
+            // In struct mode, skip FieldKey events
+            if struct_mode && matches!(event, ParseEvent::FieldKey(_)) {
+                self.parser.next_event().map_err(DeserializeError::Parser)?;
+                continue;
             }
 
             wip = wip.begin_set_item().map_err(DeserializeError::Reflect)?;
