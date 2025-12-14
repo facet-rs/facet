@@ -1396,6 +1396,7 @@ dependencies = [
 name = "facet-format-xml"
 version = "0.32.2"
 dependencies = [
+ "corosensei",
  "facet",
  "facet-core",
  "facet-format",
