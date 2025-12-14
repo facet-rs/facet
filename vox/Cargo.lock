@@ -1511,6 +1511,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rapace-cell"
+version = "0.3.0"
+dependencies = [
+ "rapace",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "rapace-core"
 version = "0.3.0"
 dependencies = [
@@ -1617,15 +1626,6 @@ dependencies = [
  "quote",
  "rapace-core",
  "unsynn",
-]
-
-[[package]]
-name = "rapace-plugin"
-version = "0.3.0"
-dependencies = [
- "rapace",
- "tokio",
- "tracing",
 ]
 
 [[package]]

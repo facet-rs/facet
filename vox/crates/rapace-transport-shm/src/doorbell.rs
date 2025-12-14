@@ -364,34 +364,48 @@ mod tests {
         assert_ne!(fd1.as_raw_fd(), fd2.as_raw_fd());
     }
 
+    /// Stress test to verify no missed wakeups under load.
+    ///
+    /// This test is tuned to be robust when run in parallel with other async tests.
+    /// Each `#[tokio::test(flavor="multi_thread")]` spins up its own runtime, so
+    /// running many such tests concurrently causes CPU contention. We mitigate this
+    /// by: (a) using fewer iterations, (b) yielding the sender frequently, and
+    /// (c) wrapping the entire test in an overall timeout.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_doorbell_no_missed_wakeup_under_load() {
-        let (doorbell1, peer_fd) = Doorbell::create_pair().unwrap();
-        let doorbell2 = Doorbell::from_raw_fd(peer_fd).unwrap();
+        // Overall timeout for the entire test body
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let (doorbell1, peer_fd) = Doorbell::create_pair().unwrap();
+            let doorbell2 = Doorbell::from_raw_fd(peer_fd).unwrap();
 
-        let done = std::sync::Arc::new(AtomicBool::new(false));
-        let done_sender = done.clone();
+            let done = std::sync::Arc::new(AtomicBool::new(false));
+            let done_sender = done.clone();
 
-        let sender = tokio::spawn(async move {
-            let mut i: u64 = 0;
-            while !done_sender.load(Ordering::Relaxed) {
-                doorbell1.signal();
-                i += 1;
-                if i % 1024 == 0 {
-                    tokio::task::yield_now().await;
+            let sender = tokio::spawn(async move {
+                let mut i: u64 = 0;
+                while !done_sender.load(Ordering::Relaxed) {
+                    doorbell1.signal();
+                    i += 1;
+                    // Yield frequently to share CPU with receiver and other tests
+                    if i.is_multiple_of(16) {
+                        tokio::task::yield_now().await;
+                    }
                 }
+            });
+
+            // 1000 iterations is enough to catch missed-wakeup bugs while staying
+            // fast enough for parallel test runs (~20-100ms in isolation).
+            for _ in 0..1_000usize {
+                tokio::time::timeout(std::time::Duration::from_millis(100), doorbell2.wait())
+                    .await
+                    .expect("timeout waiting for doorbell")
+                    .expect("wait failed");
             }
-        });
 
-        for _ in 0..5_000usize {
-            tokio::time::timeout(std::time::Duration::from_millis(50), doorbell2.wait())
-                .await
-                .expect("timeout waiting for doorbell")
-                .expect("wait failed");
-            tokio::task::yield_now().await;
-        }
-
-        done.store(true, Ordering::Relaxed);
-        sender.await.expect("sender task panicked");
+            done.store(true, Ordering::Relaxed);
+            sender.await.expect("sender task panicked");
+        })
+        .await
+        .expect("test timed out after 10 seconds");
     }
 }

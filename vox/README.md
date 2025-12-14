@@ -60,7 +60,6 @@ See the [crate documentation](https://docs.rs/rapace) and [examples](https://git
 - **rapace-core**: Core types and protocols
 - **rapace-macros**: Service macro
 - **rapace-registry**: Service metadata
-- **rapace-cell**: High-level cell runtime for SHM-based cells
 - **Transports**:
   - rapace-transport-mem
   - rapace-transport-stream (TCP/Unix)

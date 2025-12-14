@@ -162,7 +162,11 @@ pub fn futex_wake(_futex: &AtomicU32, _count: u32) -> std::io::Result<u32> {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn futex_signal(_futex: &AtomicU32) {}
+pub fn futex_signal(futex: &AtomicU32) {
+    // Still increment the value for consistency with Linux behavior,
+    // even though we can't actually wake waiters via futex syscall.
+    futex.fetch_add(1, Ordering::Release);
+}
 
 #[cfg(not(target_os = "linux"))]
 pub async fn futex_wait_async(
@@ -176,7 +180,9 @@ pub async fn futex_wait_async(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
     use std::sync::Arc;
+    #[cfg(target_os = "linux")]
     use std::thread;
 
     #[test]
@@ -195,6 +201,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn test_futex_signal_and_wait() {
         let futex = Arc::new(AtomicU32::new(0));
         let futex_clone = futex.clone();
