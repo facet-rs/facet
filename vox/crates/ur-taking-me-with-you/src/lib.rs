@@ -91,3 +91,24 @@ pub fn spawn_dying_with_parent(command: Command) -> io::Result<Child> {
 /// Environment variable name used on macOS to pass the death-watch pipe FD.
 #[cfg(target_os = "macos")]
 pub const DEATH_PIPE_ENV: &str = "UR_TAKING_ME_WITH_YOU_FD";
+
+/// Spawn a child process (async) that will die when this (parent) process dies.
+///
+/// Same as `spawn_dying_with_parent` but takes a `tokio::process::Command` and
+/// returns a `tokio::process::Child` with async `wait()`.
+#[cfg(feature = "tokio")]
+pub fn spawn_dying_with_parent_async(
+    command: tokio::process::Command,
+) -> io::Result<tokio::process::Child> {
+    #[cfg(target_os = "linux")]
+    return linux::spawn_dying_with_parent_async(command);
+
+    #[cfg(target_os = "macos")]
+    return macos::spawn_dying_with_parent_async(command);
+
+    #[cfg(target_os = "windows")]
+    return windows::spawn_dying_with_parent_async(command);
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    return unsupported::spawn_dying_with_parent_async(command);
+}

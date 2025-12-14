@@ -138,7 +138,9 @@ impl SegmentHeader {
         }
         // Validate config fields
         if !self.ring_capacity.is_power_of_two() || self.ring_capacity == 0 {
-            return Err(LayoutError::InvalidConfig("ring_capacity must be non-zero power of 2"));
+            return Err(LayoutError::InvalidConfig(
+                "ring_capacity must be non-zero power of 2",
+            ));
         }
         if self.slot_size == 0 {
             return Err(LayoutError::InvalidConfig("slot_size must be > 0"));
@@ -333,6 +335,55 @@ impl DescRing {
     #[inline]
     pub fn capacity(&self) -> u32 {
         self.header().capacity
+    }
+
+    /// Get the ring status (for diagnostics).
+    ///
+    /// Returns a snapshot of the ring's head/tail pointers and derived metrics.
+    pub fn ring_status(&self) -> RingStatus {
+        let header = self.header();
+        let visible_head = header.visible_head.load(Ordering::Acquire);
+        let tail = header.tail.load(Ordering::Acquire);
+        let capacity = header.capacity;
+        let len = visible_head.saturating_sub(tail) as u32;
+
+        RingStatus {
+            visible_head,
+            tail,
+            capacity,
+            len,
+        }
+    }
+}
+
+/// Status snapshot of a descriptor ring.
+#[derive(Debug, Clone, Copy)]
+pub struct RingStatus {
+    /// Producer's published head (items 0..visible_head have been enqueued).
+    pub visible_head: u64,
+    /// Consumer's tail (items 0..tail have been dequeued).
+    pub tail: u64,
+    /// Ring capacity.
+    pub capacity: u32,
+    /// Current length (visible_head - tail).
+    pub len: u32,
+}
+
+impl std::fmt::Display for RingStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "head={} tail={} len={}/{} ({}%)",
+            self.visible_head,
+            self.tail,
+            self.len,
+            self.capacity,
+            if self.capacity > 0 {
+                self.len * 100 / self.capacity
+            } else {
+                0
+            }
+        )
     }
 }
 
@@ -575,7 +626,9 @@ impl DataSegment {
 
         // Set free_head to slot 0 with tag 0
         let header = unsafe { &mut *self.header };
-        header.free_head.store(pack_free_head(0, 0), Ordering::Release);
+        header
+            .free_head
+            .store(pack_free_head(0, 0), Ordering::Release);
     }
 
     /// Allocate a slot using lock-free pop from free list.
@@ -775,7 +828,10 @@ impl DataSegment {
         }
 
         if data.len() > header.slot_size as usize {
-            return Err(SlotError::PayloadTooLarge { len: data.len(), max: header.slot_size as usize });
+            return Err(SlotError::PayloadTooLarge {
+                len: data.len(),
+                max: header.slot_size as usize,
+            });
         }
 
         // SAFETY: index < slot_count, data.len() <= slot_size.
@@ -801,7 +857,10 @@ impl DataSegment {
 
         let end = offset.saturating_add(len);
         if end > header.slot_size {
-            return Err(SlotError::PayloadTooLarge { len: end as usize, max: header.slot_size as usize });
+            return Err(SlotError::PayloadTooLarge {
+                len: end as usize,
+                max: header.slot_size as usize,
+            });
         }
 
         // SAFETY: bounds checked above.
@@ -898,7 +957,11 @@ impl std::fmt::Display for SlotStatus {
             write!(f, ", {} UNKNOWN", self.unknown)?;
         }
         if self.free != self.free_list_len {
-            write!(f, " [MISMATCH: free={} != free_list={}]", self.free, self.free_list_len)?;
+            write!(
+                f,
+                " [MISMATCH: free={} != free_list={}]",
+                self.free, self.free_list_len
+            )?;
         }
         Ok(())
     }
@@ -988,7 +1051,9 @@ impl std::fmt::Display for SlotError {
             Self::InvalidIndex => write!(f, "invalid slot index"),
             Self::StaleGeneration => write!(f, "stale generation"),
             Self::InvalidState => write!(f, "invalid slot state"),
-            Self::PayloadTooLarge { len, max } => write!(f, "payload too large for slot: {} bytes, max {}", len, max),
+            Self::PayloadTooLarge { len, max } => {
+                write!(f, "payload too large for slot: {} bytes, max {}", len, max)
+            }
         }
     }
 }

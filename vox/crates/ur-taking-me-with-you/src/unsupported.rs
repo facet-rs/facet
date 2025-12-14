@@ -14,3 +14,14 @@ pub fn spawn_dying_with_parent(mut command: Command) -> io::Result<Child> {
     );
     command.spawn()
 }
+
+#[cfg(feature = "tokio")]
+pub fn spawn_dying_with_parent_async(
+    mut command: tokio::process::Command,
+) -> io::Result<tokio::process::Child> {
+    eprintln!(
+        "ur-taking-me-with-you: spawn_dying_with_parent_async() not supported on this platform, \
+         child may outlive parent"
+    );
+    command.spawn()
+}

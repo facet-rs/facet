@@ -21,9 +21,9 @@
 use std::sync::atomic::Ordering;
 
 use crate::hub_layout::{
-    decode_global_index, encode_global_index, pack_free_head, unpack_free_head,
-    ExtentHeader, HubSlotMeta, HubSlotError, SizeClassHeader, SlotState,
-    FREE_LIST_END, HUB_SIZE_CLASSES, NO_OWNER, NUM_SIZE_CLASSES,
+    ExtentHeader, FREE_LIST_END, HUB_SIZE_CLASSES, HubSlotError, HubSlotMeta, NO_OWNER,
+    NUM_SIZE_CLASSES, SizeClassHeader, SlotState, decode_global_index, encode_global_index,
+    pack_free_head, unpack_free_head,
 };
 
 /// A view into the hub's allocator state.
@@ -68,14 +68,6 @@ impl HubAllocator {
         unsafe { &*self.size_classes[class] }
     }
 
-    /// Get a mutable size class header.
-    #[inline]
-    fn class_header_mut(&self, class: usize) -> &mut SizeClassHeader {
-        debug_assert!(class < NUM_SIZE_CLASSES);
-        // SAFETY: Caller guaranteed valid pointers in from_raw.
-        unsafe { &mut *self.size_classes[class] }
-    }
-
     /// Get the extent header at a given offset.
     ///
     /// # Safety
@@ -99,13 +91,17 @@ impl HubAllocator {
 
         let extent_offset = header.extent_offsets[extent_id as usize].load(Ordering::Acquire);
         if extent_offset == 0 {
-            panic!("Invalid extent offset for class {} extent {}", class, extent_id);
+            panic!(
+                "Invalid extent offset for class {} extent {}",
+                class, extent_id
+            );
         }
 
         let extent_header = unsafe { self.extent_header(extent_offset) };
         let meta_offset = extent_header.meta_offset as usize;
         let meta_base = unsafe { self.base_addr.add(extent_offset as usize + meta_offset) };
-        let meta_ptr = unsafe { meta_base.add(slot_in_extent as usize * std::mem::size_of::<HubSlotMeta>()) };
+        let meta_ptr =
+            unsafe { meta_base.add(slot_in_extent as usize * std::mem::size_of::<HubSlotMeta>()) };
 
         unsafe { &*(meta_ptr as *const HubSlotMeta) }
     }
@@ -426,6 +422,114 @@ impl HubAllocator {
     /// Get the slot_available futex for a size class.
     pub fn slot_available_futex(&self, class: usize) -> &std::sync::atomic::AtomicU32 {
         &self.class_header(class).slot_available
+    }
+
+    /// Get slot status for all size classes (for diagnostics).
+    ///
+    /// Returns a summary of slot states across all classes.
+    pub fn slot_status(&self) -> HubSlotStatus {
+        let mut status = HubSlotStatus::default();
+
+        for (class, class_out) in status.classes.iter_mut().enumerate() {
+            let header = self.class_header(class);
+            let extent_slot_shift = header.extent_slot_shift;
+            let extent_count = header.extent_count as usize;
+            let slot_size = header.slot_size;
+
+            let mut class_status = SizeClassStatus {
+                slot_size,
+                total: 0,
+                free: 0,
+                allocated: 0,
+                in_flight: 0,
+            };
+
+            for extent_id in 0..extent_count {
+                let extent_offset = header.extent_offsets[extent_id].load(Ordering::Acquire);
+                if extent_offset == 0 {
+                    continue;
+                }
+
+                // SAFETY: extent_offset is valid (we're iterating known extents)
+                let extent_header = unsafe { self.extent_header(extent_offset) };
+                let slot_count = extent_header.slot_count;
+                class_status.total += slot_count;
+
+                for slot_in_extent in 0..slot_count {
+                    let global_index =
+                        encode_global_index(extent_id as u32, slot_in_extent, extent_slot_shift);
+
+                    // SAFETY: we're iterating valid indices
+                    let meta = unsafe { self.slot_meta(class, global_index) };
+                    let state = meta.state.load(Ordering::Acquire);
+
+                    match SlotState::from_u32(state) {
+                        Some(SlotState::Free) => class_status.free += 1,
+                        Some(SlotState::Allocated) => class_status.allocated += 1,
+                        Some(SlotState::InFlight) => class_status.in_flight += 1,
+                        None => {} // Unknown state
+                    }
+                }
+            }
+
+            *class_out = class_status;
+            status.total += class_status.total;
+            status.free += class_status.free;
+            status.allocated += class_status.allocated;
+            status.in_flight += class_status.in_flight;
+        }
+
+        status
+    }
+}
+
+/// Status of a single size class.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SizeClassStatus {
+    /// Slot size in bytes.
+    pub slot_size: u32,
+    /// Total slots in this class.
+    pub total: u32,
+    /// Free slots.
+    pub free: u32,
+    /// Allocated (being written).
+    pub allocated: u32,
+    /// In-flight (enqueued, waiting for receiver).
+    pub in_flight: u32,
+}
+
+/// Status of all slots in the hub allocator.
+#[derive(Debug, Clone, Default)]
+pub struct HubSlotStatus {
+    /// Per-class status.
+    pub classes: [SizeClassStatus; NUM_SIZE_CLASSES],
+    /// Total slots across all classes.
+    pub total: u32,
+    /// Total free slots.
+    pub free: u32,
+    /// Total allocated slots.
+    pub allocated: u32,
+    /// Total in-flight slots.
+    pub in_flight: u32,
+}
+
+impl std::fmt::Display for HubSlotStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "HubAllocator slots: {} total, {} free, {} allocated, {} in_flight",
+            self.total, self.free, self.allocated, self.in_flight
+        )?;
+        for (i, class) in self.classes.iter().enumerate() {
+            if class.total > 0 {
+                writeln!(
+                    f,
+                    "  class[{}] ({:>7}B): {:>3} total, {:>3} free, {:>3} alloc, {:>3} in_flight",
+                    i, class.slot_size, class.total, class.free, class.allocated, class.in_flight
+                )?;
+            }
+        }
+        Ok(())
     }
 }
 

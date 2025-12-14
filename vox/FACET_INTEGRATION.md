@@ -28,7 +28,7 @@ reflection, and tooling layer that sits at the "body" level and above.
 
 **facet starts to matter at layer 3, and is heavily used at layers 4–5.**
 
-The transport layer (rings, slots, eventfds) only sees `payload_len` as "opaque byte length".
+The transport layer (rings, slots, doorbells) only sees `payload_len` as "opaque byte length".
 It doesn't know or care that facet exists.
 
 ---
@@ -418,7 +418,7 @@ Keep these facet-free:
 | `DataSegment`, `SlotMeta` | Low-level allocator |
 | `SegmentHeader` | Protocol primitive |
 | `MsgHeader` | Framing, manual packing |
-| Doorbells / eventfd | OS primitives |
+| Doorbells (FD-based wakeups) | OS primitives |
 
 These are enforced by:
 - Newtype wrappers and typestates (see IMPLEMENTATION.md)

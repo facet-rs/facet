@@ -50,9 +50,14 @@ fn start_watchdog(fd: OwnedFd) {
     });
 }
 
-/// Spawn a child that will die when this process dies.
-pub fn spawn_dying_with_parent(mut command: Command) -> io::Result<Child> {
-    // Create pipe: [0] = read end (for child), [1] = write end (for parent)
+/// Death pipe file descriptors.
+struct DeathPipe {
+    read_fd: RawFd,
+    write_fd: RawFd,
+}
+
+/// Create a death pipe and configure FD flags.
+fn create_death_pipe() -> io::Result<DeathPipe> {
     let mut fds = [0 as libc::c_int; 2];
     let result = unsafe { libc::pipe(fds.as_mut_ptr()) };
     if result != 0 {
@@ -78,19 +83,36 @@ pub fn spawn_dying_with_parent(mut command: Command) -> io::Result<Child> {
         }
     }
 
-    // Pass the read FD to the child via environment variable
-    command.env(DEATH_PIPE_ENV, read_fd.to_string());
+    Ok(DeathPipe { read_fd, write_fd })
+}
 
-    let child = command.spawn()?;
-
+/// Finalize the death pipe after spawning the child.
+fn finalize_death_pipe(pipe: DeathPipe) {
     // Close read end in parent - child has its own copy
-    unsafe {
-        libc::close(read_fd);
-    }
+    unsafe { libc::close(pipe.read_fd) };
 
     // Keep write_fd open in parent - it will close when parent exits
     // Leak it intentionally so it stays open for the lifetime of the parent
-    std::mem::forget(unsafe { OwnedFd::from_raw_fd(write_fd) });
+    std::mem::forget(unsafe { OwnedFd::from_raw_fd(pipe.write_fd) });
+}
 
+/// Spawn a child that will die when this process dies.
+pub fn spawn_dying_with_parent(mut command: Command) -> io::Result<Child> {
+    let pipe = create_death_pipe()?;
+    command.env(DEATH_PIPE_ENV, pipe.read_fd.to_string());
+    let child = command.spawn()?;
+    finalize_death_pipe(pipe);
+    Ok(child)
+}
+
+/// Spawn a child (async) that will die when this process dies.
+#[cfg(feature = "tokio")]
+pub fn spawn_dying_with_parent_async(
+    mut command: tokio::process::Command,
+) -> io::Result<tokio::process::Child> {
+    let pipe = create_death_pipe()?;
+    command.env(DEATH_PIPE_ENV, pipe.read_fd.to_string());
+    let child = command.spawn()?;
+    finalize_death_pipe(pipe);
     Ok(child)
 }

@@ -24,8 +24,8 @@
 use std::io::{self, ErrorKind};
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 
-use tokio::io::unix::AsyncFd;
 use tokio::io::Interest;
+use tokio::io::unix::AsyncFd;
 
 /// A doorbell for cross-process wakeup.
 ///
@@ -34,6 +34,41 @@ use tokio::io::Interest;
 pub struct Doorbell {
     /// The async-ready file descriptor.
     async_fd: AsyncFd<OwnedFd>,
+}
+
+fn drain_fd(fd: RawFd, would_block_is_error: bool) -> io::Result<bool> {
+    let mut buf = [0u8; 64];
+    let mut drained = false;
+
+    loop {
+        // SAFETY: fd is valid, buf is valid
+        let ret = unsafe { libc::recv(fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0) };
+
+        if ret > 0 {
+            drained = true;
+            continue;
+        }
+
+        if ret == 0 {
+            // For SOCK_DGRAM this generally shouldn't happen (we always send 1 byte),
+            // but treat it as "nothing to drain".
+            return Ok(drained);
+        }
+
+        let err = io::Error::last_os_error();
+        if err.kind() == ErrorKind::WouldBlock {
+            if drained {
+                return Ok(true);
+            }
+            return if would_block_is_error {
+                Err(err)
+            } else {
+                Ok(false)
+            };
+        }
+
+        Err(err)?;
+    }
 }
 
 impl Doorbell {
@@ -70,14 +105,21 @@ impl Doorbell {
     ///
     /// The fd must be a valid, open file descriptor from a socketpair.
     pub fn from_raw_fd(fd: RawFd) -> io::Result<Self> {
+        tracing::debug!(fd = fd, "Doorbell::from_raw_fd: wrapping inherited FD");
+
         // SAFETY: Caller guarantees fd is valid
         let owned = unsafe { OwnedFd::from_raw_fd(fd) };
 
         // Ensure non-blocking
         set_nonblocking(fd)?;
+        tracing::debug!(fd = fd, "Doorbell::from_raw_fd: set non-blocking");
 
         // Wrap in AsyncFd
         let async_fd = AsyncFd::new(owned)?;
+        tracing::debug!(
+            fd = fd,
+            "Doorbell::from_raw_fd: registered with AsyncFd (tokio epoll)"
+        );
 
         Ok(Self { async_fd })
     }
@@ -104,8 +146,12 @@ impl Doorbell {
             let err = io::Error::last_os_error();
             // EAGAIN/EWOULDBLOCK means buffer is full - that's fine, already signaled
             if err.kind() != ErrorKind::WouldBlock {
-                tracing::warn!("doorbell signal failed: {}", err);
+                tracing::warn!(fd = fd, error = %err, "doorbell signal failed");
+            } else {
+                tracing::trace!(fd = fd, "doorbell signal: buffer full (already signaled)");
             }
+        } else {
+            tracing::trace!(fd = fd, "doorbell signal: sent 1 byte");
         }
     }
 
@@ -113,16 +159,43 @@ impl Doorbell {
     ///
     /// Returns when the doorbell becomes readable.
     pub async fn wait(&self) -> io::Result<()> {
+        let fd = self.async_fd.get_ref().as_raw_fd();
+        tracing::trace!(fd = fd, "doorbell wait: entering wait loop");
+
+        // CRITICAL: Check for pending data BEFORE the first await!
+        // If a signal was sent before we started waiting, it's already in the buffer.
+        // The epoll might not notify us for data that arrived before registration.
+        if self.try_drain() {
+            tracing::trace!(
+                fd = fd,
+                "doorbell wait: found pending data, returning immediately"
+            );
+            return Ok(());
+        }
+
         loop {
+            tracing::trace!(fd = fd, "doorbell wait: awaiting readiness");
             let mut guard = self.async_fd.ready(Interest::READABLE).await?;
+            tracing::trace!(fd = fd, "doorbell wait: ready, trying to drain");
 
-            // Try to drain the socket
-            if self.try_drain() {
-                return Ok(());
+            // Drain using AsyncFd's `try_io` to avoid the classic readiness race:
+            // if a byte arrives between a nonblocking read observing EWOULDBLOCK and
+            // `clear_ready()`, we can accidentally clear readiness for the new byte.
+            match guard.try_io(|inner| drain_fd(inner.as_raw_fd(), true)) {
+                Ok(Ok(true)) => {
+                    tracing::trace!(fd = fd, "doorbell wait: drained, returning");
+                    return Ok(());
+                }
+                Ok(Ok(false)) => {
+                    // No bytes read, but also not WouldBlock. Loop and await again.
+                    continue;
+                }
+                Ok(Err(e)) => return Err(e),
+                Err(_would_block) => {
+                    // Readiness was a false-positive; loop to await again.
+                    continue;
+                }
             }
-
-            // Nothing to read yet, clear readiness and wait again
-            guard.clear_ready();
         }
     }
 
@@ -131,39 +204,13 @@ impl Doorbell {
     /// Returns true if at least one byte was read.
     fn try_drain(&self) -> bool {
         let fd = self.async_fd.get_ref().as_raw_fd();
-        let mut buf = [0u8; 64];
-        let mut drained = false;
-
-        loop {
-            // SAFETY: fd is valid, buf is valid
-            let ret = unsafe {
-                libc::recv(
-                    fd,
-                    buf.as_mut_ptr() as *mut libc::c_void,
-                    buf.len(),
-                    libc::MSG_DONTWAIT,
-                )
-            };
-
-            if ret > 0 {
-                drained = true;
-                // Keep draining
-            } else if ret == 0 {
-                // Connection closed
-                break;
-            } else {
-                let err = io::Error::last_os_error();
-                if err.kind() == ErrorKind::WouldBlock {
-                    // No more data
-                    break;
-                }
-                // Other error
-                tracing::warn!("doorbell drain failed: {}", err);
-                break;
+        match drain_fd(fd, false) {
+            Ok(drained) => drained,
+            Err(err) => {
+                tracing::warn!(fd = fd, error = %err, "doorbell drain failed");
+                false
             }
         }
-
-        drained
     }
 
     /// Drain any pending signals without blocking.
@@ -176,6 +223,25 @@ impl Doorbell {
     /// Get the raw file descriptor.
     pub fn as_raw_fd(&self) -> RawFd {
         self.async_fd.get_ref().as_raw_fd()
+    }
+
+    /// Get the number of bytes pending in the socket buffer (for diagnostics).
+    ///
+    /// Uses ioctl(FIONREAD) to query the receive buffer.
+    /// Returns 0 if the ioctl fails.
+    pub fn pending_bytes(&self) -> usize {
+        let fd = self.async_fd.get_ref().as_raw_fd();
+        let mut pending: libc::c_int = 0;
+
+        // SAFETY: fd is valid, pending is valid pointer
+        let ret = unsafe { libc::ioctl(fd, libc::FIONREAD, &mut pending) };
+
+        if ret < 0 {
+            tracing::warn!(fd = fd, error = %io::Error::last_os_error(), "FIONREAD failed");
+            0
+        } else {
+            pending as usize
+        }
     }
 }
 
@@ -235,6 +301,7 @@ pub fn close_peer_fd(fd: RawFd) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     #[tokio::test]
     async fn test_doorbell_signal_and_wait() {
@@ -288,5 +355,36 @@ mod tests {
         assert!(fd1.as_raw_fd() >= 0);
         assert!(fd2.as_raw_fd() >= 0);
         assert_ne!(fd1.as_raw_fd(), fd2.as_raw_fd());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_doorbell_no_missed_wakeup_under_load() {
+        let (doorbell1, peer_fd) = Doorbell::create_pair().unwrap();
+        let doorbell2 = Doorbell::from_raw_fd(peer_fd).unwrap();
+
+        let done = std::sync::Arc::new(AtomicBool::new(false));
+        let done_sender = done.clone();
+
+        let sender = tokio::spawn(async move {
+            let mut i: u64 = 0;
+            while !done_sender.load(Ordering::Relaxed) {
+                doorbell1.signal();
+                i += 1;
+                if i % 1024 == 0 {
+                    tokio::task::yield_now().await;
+                }
+            }
+        });
+
+        for _ in 0..5_000usize {
+            tokio::time::timeout(std::time::Duration::from_millis(50), doorbell2.wait())
+                .await
+                .expect("timeout waiting for doorbell")
+                .expect("wait failed");
+            tokio::task::yield_now().await;
+        }
+
+        done.store(true, Ordering::Relaxed);
+        sender.await.expect("sender task panicked");
     }
 }

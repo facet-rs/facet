@@ -34,11 +34,13 @@ fn slot_error_to_transport(e: SlotError, context: &str) -> TransportError {
             context
         ))),
         SlotError::PayloadTooLarge { len, max } => {
-            TransportError::Validation(ValidationError::PayloadTooLarge { len: len as u32, max: max as u32 })
+            TransportError::Validation(ValidationError::PayloadTooLarge {
+                len: len as u32,
+                max: max as u32,
+            })
         }
     }
 }
-
 
 /// SHM transport implementation.
 ///
@@ -252,7 +254,11 @@ impl Transport for ShmTransport {
                             // Direct stderr output - bypasses tracing filter
                             eprintln!(
                                 "[DEADLOCK?] transport={:?} waited={}ms retries={} payload={}B {}",
-                                self.name, waited_ms, wait_count, payload.len(), slot_status
+                                self.name,
+                                waited_ms,
+                                wait_count,
+                                payload.len(),
+                                slot_status
                             );
 
                             tracing::warn!(
@@ -275,7 +281,8 @@ impl Transport for ShmTransport {
 
                         let futex_ptr = futex as *const _ as usize;
                         let futex_wait = tokio::task::spawn_blocking(move || {
-                            let futex = unsafe { &*(futex_ptr as *const std::sync::atomic::AtomicU32) };
+                            let futex =
+                                unsafe { &*(futex_ptr as *const std::sync::atomic::AtomicU32) };
                             crate::futex::futex_wait(futex, current, Some(SLOT_FUTEX_TIMEOUT))
                         });
 
@@ -382,7 +389,10 @@ impl Transport for ShmTransport {
                         let waited_ms = ring_wait_start.elapsed().as_millis() as u64;
                         eprintln!(
                             "[DEADLOCK?] transport={:?} ring full waited={}ms retries={} capacity={}",
-                            self.name, waited_ms, ring_wait_count, send_ring.capacity()
+                            self.name,
+                            waited_ms,
+                            ring_wait_count,
+                            send_ring.capacity()
                         );
                         tracing::warn!(
                             transport = ?self.name,
@@ -405,7 +415,8 @@ impl Transport for ShmTransport {
                         // SAFETY: The futex is in shared memory and lives for the session lifetime
                         let futex = unsafe { &*(futex_ptr as *const std::sync::atomic::AtomicU32) };
                         crate::futex::futex_wait(futex, current, Some(FUTEX_TIMEOUT))
-                    }).await;
+                    })
+                    .await;
 
                     // Update heartbeat while waiting
                     self.session.update_heartbeat();
@@ -469,7 +480,10 @@ impl Transport for ShmTransport {
 
                     // Free the slot IMMEDIATELY after copying, not lazily.
                     // This prevents deadlock where slots accumulate while waiting for next recv.
-                    if data_segment.free(desc.payload_slot, desc.payload_generation).is_ok() {
+                    if data_segment
+                        .free(desc.payload_slot, desc.payload_generation)
+                        .is_ok()
+                    {
                         if let Some(ref metrics) = self.metrics {
                             metrics.record_slot_free();
                         }
@@ -482,10 +496,7 @@ impl Transport for ShmTransport {
                 };
 
                 // Store for FrameView lifetime.
-                let received = ReceivedFrame {
-                    desc,
-                    payload,
-                };
+                let received = ReceivedFrame { desc, payload };
 
                 {
                     let mut last = self.last_frame.lock();
@@ -538,7 +549,8 @@ impl Transport for ShmTransport {
                 // SAFETY: The futex is in shared memory and lives for the session lifetime
                 let futex = unsafe { &*(futex_ptr as *const std::sync::atomic::AtomicU32) };
                 crate::futex::futex_wait(futex, current, Some(FUTEX_TIMEOUT))
-            }).await;
+            })
+            .await;
         }
     }
 

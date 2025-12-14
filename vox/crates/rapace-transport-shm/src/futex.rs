@@ -15,7 +15,11 @@ use std::time::Duration;
 /// - `Ok(false)` if the value changed (spurious wakeup or value mismatch)
 /// - `Err` on syscall error
 #[cfg(target_os = "linux")]
-pub fn futex_wait(futex: &AtomicU32, expected: u32, timeout: Option<Duration>) -> std::io::Result<bool> {
+pub fn futex_wait(
+    futex: &AtomicU32,
+    expected: u32,
+    timeout: Option<Duration>,
+) -> std::io::Result<bool> {
     use std::ptr;
 
     let futex_ptr = futex as *const AtomicU32 as *const u32;
@@ -49,9 +53,9 @@ pub fn futex_wait(futex: &AtomicU32, expected: u32, timeout: Option<Duration>) -
     } else {
         let err = std::io::Error::last_os_error();
         match err.raw_os_error() {
-            Some(libc::EAGAIN) => Ok(false), // Value changed
+            Some(libc::EAGAIN) => Ok(false),    // Value changed
             Some(libc::ETIMEDOUT) => Ok(false), // Timeout
-            Some(libc::EINTR) => Ok(false), // Interrupted
+            Some(libc::EINTR) => Ok(false),     // Interrupted
             _ => Err(err),
         }
     }
@@ -106,9 +110,48 @@ pub async fn futex_wait_async(
     tokio::task::spawn_blocking(move || futex_wait(futex, current, timeout)).await?
 }
 
+/// Wait on a futex asynchronously, safe for SHM pointers.
+///
+/// Uses `spawn_blocking` to avoid blocking the tokio runtime.
+/// The futex pointer is passed as usize to satisfy Send bounds.
+///
+/// # Safety
+///
+/// The caller must ensure the futex pointer remains valid for the duration
+/// of this call (i.e., the SHM mapping must not be unmapped).
+#[cfg(target_os = "linux")]
+pub async fn futex_wait_async_ptr(
+    futex: &AtomicU32,
+    timeout: Option<Duration>,
+) -> std::io::Result<bool> {
+    let current = futex.load(Ordering::Acquire);
+    let ptr_val = futex as *const AtomicU32 as usize;
+
+    tokio::task::spawn_blocking(move || {
+        // SAFETY: Caller guarantees the SHM mapping outlives this call.
+        // We convert back from usize to reconstruct the pointer.
+        let futex = unsafe { &*(ptr_val as *const AtomicU32) };
+        futex_wait(futex, current, timeout)
+    })
+    .await?
+}
+
+#[cfg(not(target_os = "linux"))]
+pub async fn futex_wait_async_ptr(
+    _futex: &AtomicU32,
+    _timeout: Option<Duration>,
+) -> std::io::Result<bool> {
+    tokio::task::yield_now().await;
+    Ok(false)
+}
+
 // Fallback for non-Linux platforms (just yields)
 #[cfg(not(target_os = "linux"))]
-pub fn futex_wait(_futex: &AtomicU32, _expected: u32, _timeout: Option<Duration>) -> std::io::Result<bool> {
+pub fn futex_wait(
+    _futex: &AtomicU32,
+    _expected: u32,
+    _timeout: Option<Duration>,
+) -> std::io::Result<bool> {
     std::thread::yield_now();
     Ok(false)
 }

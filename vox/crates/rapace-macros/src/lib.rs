@@ -526,10 +526,16 @@ fn generate_client_method(
     rapace_crate: &TokenStream2,
 ) -> TokenStream2 {
     match &method.kind {
-        MethodKind::Unary => generate_client_method_unary(method, method_id, service_name, rapace_crate),
-        MethodKind::ServerStreaming { item_type } => {
-            generate_client_method_server_streaming(method, method_id, service_name, item_type, rapace_crate)
+        MethodKind::Unary => {
+            generate_client_method_unary(method, method_id, service_name, rapace_crate)
         }
+        MethodKind::ServerStreaming { item_type } => generate_client_method_server_streaming(
+            method,
+            method_id,
+            service_name,
+            item_type,
+            rapace_crate,
+        ),
     }
 }
 

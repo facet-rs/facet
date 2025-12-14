@@ -84,7 +84,7 @@ implementation; other transports implement the same abstract interface.
    - Introspection APIs
    - Future: diff/patch for `&mut T` across transports
 
-4. **Async-native** — eventfd doorbells, tokio integration, no polling
+4. **Async-native** — FD-based doorbells (socketpair on Unix), tokio integration, no polling
 
 5. **Full observability** — trace_id, span_id, timestamps, telemetry rings
 
@@ -207,7 +207,8 @@ struct SegmentHeader {
     peer_a_last_seen: AtomicU64,   // Timestamp (nanos since epoch)
     peer_b_last_seen: AtomicU64,   // Timestamp
 
-    // Doorbell eventfds (exchanged out-of-band via Unix socket)
+    // Doorbell FDs (exchanged out-of-band; current Unix impl uses a SOCK_DGRAM socketpair,
+    // wrapped in tokio AsyncFd and drained via try_io to avoid readiness races)
 }
 ```
 
@@ -961,7 +962,9 @@ The macro generates:
        let server = CalculatorServer::new(CalculatorImpl);
        Box::pin(async move { server.dispatch(method_id, &payload).await })
    });
-   ```
+```
+
+**Failure semantics:** if a service handler panics, production code should convert it into an error response rather than leaving the caller hanging. The current `RpcSession` implementation catches panics in the dispatcher task and responds with an `INTERNAL` error.
 
 For server-streaming RPCs, call `server.dispatch_streaming(method_id, channel_id, &payload, transport)` instead; most real code wraps this pattern in a helper such as `create_template_engine_dispatcher()` so it can borrow the transport from the shared session before awaiting.
 
@@ -1443,12 +1446,12 @@ Feature flags in `SegmentHeader.flags`:
 # Appendix B: Session Handshake (SHM)
 
 ```
-1. Peer A creates SHM segment + eventfds
+1. Peer A creates SHM segment + doorbell FDs
 2. Peer A listens on Unix socket
 3. Peer B connects
 4. Peer A sends via SCM_RIGHTS:
    - SHM fd
-   - Doorbell eventfds (A→B and B→A)
+   - Doorbell FDs (A→B and B→A)
    - Session metadata
 5. Peer B maps SHM, sets up rings
 6. Peer B sends ACK with capabilities

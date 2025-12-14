@@ -86,7 +86,14 @@ Transports themselves do not know about methods, only frames. All method awarene
 
 ## Shared memory transport layout
 
-The `rapace-transport-shm` crate provides a shared‑memory transport with an explicit memory layout for a segment:
+The `rapace-transport-shm` crate provides shared‑memory transports with explicit memory layouts.
+
+There are currently two SHM modes used in the wild:
+
+1. **`ShmSession` (pair transport)**: a single SHM segment shared by exactly two peers (A↔B).
+2. **Hub transport (`HubHost` / `HubPeer`)**: one SHM "hub" shared by a host and many peers, with per‑peer rings.
+
+Both use **FD-based doorbells** for wakeups (current Unix implementation uses a `socketpair(SOCK_DGRAM)` wrapped in `tokio::io::unix::AsyncFd`).
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -106,6 +113,15 @@ Each segment represents a session between exactly two peers (A and B). For each 
 - a **data segment** that holds the actual payload bytes, managed by a slab‑style allocator.
 
 The descriptor ring points into the data segment and also carries flags, generation counters, and other metadata.
+
+### Doorbells and wakeups
+
+Wakeups are delivered via a doorbell FD. The doorbell abstraction is intentionally small:
+
+- `signal()` sends a 1‑byte datagram (nonblocking); if the buffer is full, the signal may be dropped.
+- `wait()` awaits readability and drains bytes.
+
+Implementation detail: draining is done through `AsyncFd::try_io(...)` to avoid readiness races that can occur when clearing readiness manually.
 
 ## SHM allocator and zero‑copy
 

@@ -74,10 +74,12 @@
 
 use std::collections::HashMap;
 use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
+use futures::FutureExt;
 use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
 
@@ -207,6 +209,26 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
     /// This prevents collisions in bidirectional RPC scenarios.
     pub fn next_channel_id(&self) -> u32 {
         self.next_channel_id.fetch_add(2, Ordering::Relaxed)
+    }
+
+    /// Get the channel IDs of pending RPC calls (for diagnostics).
+    ///
+    /// Returns a sorted list of channel IDs that are waiting for responses.
+    pub fn pending_channel_ids(&self) -> Vec<u32> {
+        let pending = self.pending.lock();
+        let mut ids: Vec<u32> = pending.keys().copied().collect();
+        ids.sort_unstable();
+        ids
+    }
+
+    /// Get the channel IDs of active tunnels (for diagnostics).
+    ///
+    /// Returns a sorted list of channel IDs with registered tunnels.
+    pub fn tunnel_channel_ids(&self) -> Vec<u32> {
+        let tunnels = self.tunnels.lock();
+        let mut ids: Vec<u32> = tunnels.keys().copied().collect();
+        ids.sort_unstable();
+        ids
     }
 
     /// Register a dispatcher for incoming requests.
@@ -547,11 +569,31 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
             .await
             .map_err(RpcError::Transport)?;
 
-        // Wait for response
-        let received = rx.await.map_err(|_| RpcError::Status {
-            code: ErrorCode::Internal,
-            message: "response channel closed".into(),
-        })?;
+        // Wait for response with timeout
+        let timeout_ms = std::env::var("RAPACE_CALL_TIMEOUT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(30_000); // Default 30 seconds
+
+        let received =
+            match tokio::time::timeout(std::time::Duration::from_millis(timeout_ms), rx).await {
+                Ok(Ok(frame)) => frame,
+                Ok(Err(_)) => {
+                    return Err(RpcError::Status {
+                        code: ErrorCode::Internal,
+                        message: "response channel closed".into(),
+                    });
+                }
+                Err(_elapsed) => {
+                    tracing::error!(
+                        channel_id,
+                        method_id,
+                        timeout_ms,
+                        "RPC call timed out waiting for response"
+                    );
+                    return Err(RpcError::DeadlineExceeded);
+                }
+            };
 
         guard.disarm();
         Ok(received)
@@ -644,11 +686,38 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
                 // Spawn the dispatch to avoid blocking the demux loop
                 let transport = self.transport.clone();
                 tokio::spawn(async move {
-                    match response_future.await {
+                    // If a service handler panics, without this the client can hang forever
+                    // waiting for a response on this channel.
+                    let result = AssertUnwindSafe(response_future).catch_unwind().await;
+
+                    let response_result: Result<Frame, RpcError> = match result {
+                        Ok(r) => r,
+                        Err(panic) => {
+                            let message = if let Some(s) = panic.downcast_ref::<&str>() {
+                                format!("panic in dispatcher: {s}")
+                            } else if let Some(s) = panic.downcast_ref::<String>() {
+                                format!("panic in dispatcher: {s}")
+                            } else {
+                                "panic in dispatcher".to_string()
+                            };
+                            Err(RpcError::Status {
+                                code: ErrorCode::Internal,
+                                message,
+                            })
+                        }
+                    };
+
+                    match response_result {
                         Ok(mut response) => {
                             // Set the channel_id on the response
                             response.desc.channel_id = channel_id;
-                            let _ = transport.send_frame(&response).await;
+                            if let Err(e) = transport.send_frame(&response).await {
+                                tracing::warn!(
+                                    channel_id,
+                                    error = ?e,
+                                    "RpcSession::run: failed to send response frame"
+                                );
+                            }
                         }
                         Err(e) => {
                             // Send error response
@@ -678,10 +747,22 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
                             err_bytes.extend_from_slice(message.as_bytes());
 
                             let frame = Frame::with_payload(desc, err_bytes);
-                            let _ = transport.send_frame(&frame).await;
+                            if let Err(e) = transport.send_frame(&frame).await {
+                                tracing::warn!(
+                                    channel_id,
+                                    error = ?e,
+                                    "RpcSession::run: failed to send error frame"
+                                );
+                            }
                         }
-                    }
+                    };
                 });
+            } else {
+                tracing::warn!(
+                    channel_id,
+                    method_id,
+                    "RpcSession::run: no dispatcher registered; dropping request (client may hang)"
+                );
             }
         }
     }

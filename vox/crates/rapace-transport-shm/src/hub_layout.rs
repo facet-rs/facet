@@ -63,11 +63,11 @@ pub const NO_OWNER: u32 = u32::MAX;
 
 /// Size class configuration: (slot_size, initial_slot_count).
 pub const HUB_SIZE_CLASSES: [(u32, u32); NUM_SIZE_CLASSES] = [
-    (1024, 1024),      // 1KB * 1024 = 1MB (small RPC args)
-    (16384, 256),      // 16KB * 256 = 4MB (typical payloads)
-    (262144, 32),      // 256KB * 32 = 8MB (images, CSS)
-    (4194304, 8),      // 4MB * 8 = 32MB (compressed fonts)
-    (16777216, 4),     // 16MB * 4 = 64MB (decompressed fonts)
+    (1024, 1024),  // 1KB * 1024 = 1MB (small RPC args)
+    (16384, 256),  // 16KB * 256 = 4MB (typical payloads)
+    (262144, 32),  // 256KB * 32 = 8MB (images, CSS)
+    (4194304, 8),  // 4MB * 8 = 32MB (compressed fonts)
+    (16777216, 4), // 16MB * 4 = 64MB (decompressed fonts)
 ];
 
 // =============================================================================
@@ -238,8 +238,10 @@ impl PeerEntry {
     /// Mark this peer as active.
     pub fn mark_active(&self) {
         self.flags.fetch_or(PEER_FLAG_ACTIVE, Ordering::Release);
-        self.flags
-            .fetch_and(!(PEER_FLAG_DYING | PEER_FLAG_DEAD | PEER_FLAG_RESERVED), Ordering::Release);
+        self.flags.fetch_and(
+            !(PEER_FLAG_DYING | PEER_FLAG_DEAD | PEER_FLAG_RESERVED),
+            Ordering::Release,
+        );
     }
 
     /// Mark this peer as dead.
@@ -429,7 +431,7 @@ impl SlotState {
 
 /// Encode a slot reference into payload_slot field.
 ///
-/// Format: bits[31:29] = class (0-7), bits[28:0] = global_index
+/// Format: `bits[31:29]` = class (0-7), `bits[28:0]` = global_index
 #[inline]
 pub fn encode_slot_ref(class: u8, global_index: u32) -> u32 {
     debug_assert!(class < 8, "class must fit in 3 bits");
@@ -741,7 +743,11 @@ mod tests {
         // Should be around 109MB + overhead
         assert!(size > 100_000_000, "expected > 100MB, got {}", size);
         assert!(size < 150_000_000, "expected < 150MB, got {}", size);
-        println!("Initial hub size: {} bytes ({:.1} MB)", size, size as f64 / 1_000_000.0);
+        println!(
+            "Initial hub size: {} bytes ({:.1} MB)",
+            size,
+            size as f64 / 1_000_000.0
+        );
     }
 
     #[test]

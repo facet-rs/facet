@@ -13,7 +13,11 @@ categories = ["os", "development-tools"]
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
+[features]
+tokio = ["dep:tokio"]
+
 [dependencies]
+tokio = { version = "1", features = ["process"], optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2.176"
