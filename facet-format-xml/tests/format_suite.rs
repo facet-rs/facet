@@ -139,6 +139,29 @@ impl FormatSuite for XmlSlice {
         ))
     }
 
+    fn attr_default_struct() -> CaseSpec {
+        // message is missing, should use String::default() (empty string)
+        CaseSpec::from_str(indoc!(
+            r#"
+            <record>
+                <count>123</count>
+            </record>
+        "#
+        ))
+        .without_roundtrip("empty string serializes as empty element, which XML parses as struct")
+    }
+
+    fn attr_default_function() -> CaseSpec {
+        // magic_number is missing, should use custom_default_value() = 42
+        CaseSpec::from_str(indoc!(
+            r#"
+            <record>
+                <name>hello</name>
+            </record>
+        "#
+        ))
+    }
+
     fn option_none() -> CaseSpec {
         // nickname is missing, should be None
         CaseSpec::from_str(indoc!(
@@ -173,6 +196,17 @@ impl FormatSuite for XmlSlice {
             r#"
             <record>
                 <visible>shown</visible>
+            </record>
+        "#
+        ))
+    }
+
+    fn attr_skip_serializing_if() -> CaseSpec {
+        // optional_data is None, skip_serializing_if = Option::is_none makes it absent in output
+        CaseSpec::from_str(indoc!(
+            r#"
+            <record>
+                <name>test</name>
             </record>
         "#
         ))
@@ -299,6 +333,16 @@ impl FormatSuite for XmlSlice {
         CaseSpec::from_str(
             r#"<record><API_KEY>secret-123</API_KEY><MAX_RETRY_COUNT>5</MAX_RETRY_COUNT></record>"#,
         )
+    }
+
+    fn attr_rename_unicode() -> CaseSpec {
+        // Emoji is not a valid XML element name character
+        CaseSpec::skip("Emoji not valid in XML element names")
+    }
+
+    fn attr_rename_special_chars() -> CaseSpec {
+        // @ is not a valid XML element name character
+        CaseSpec::skip("@ not valid in XML element names")
     }
 
     // ── Proxy cases ──

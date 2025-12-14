@@ -584,6 +584,33 @@ impl<'de> FormatParser<'de> for JsonParser<'de> {
         let evidence = self.build_probe()?;
         Ok(JsonProbe { evidence, idx: 0 })
     }
+
+    fn capture_raw(&mut self) -> Result<Option<&'de str>, Self::Error> {
+        debug_assert!(
+            self.event_peek.is_none(),
+            "capture_raw called while an event is buffered"
+        );
+
+        // Record start position
+        let start_offset = self.current_offset;
+
+        // Skip the value
+        self.consume_value_tokens()?;
+
+        // Get end position
+        let end_offset = self.current_offset;
+
+        // Extract the raw slice and convert to str
+        let raw_bytes = &self.input[start_offset..end_offset];
+        let raw_str = core::str::from_utf8(raw_bytes).map_err(|e| {
+            JsonError::without_span(JsonErrorKind::InvalidValue {
+                message: alloc::format!("invalid UTF-8 in raw JSON: {}", e),
+            })
+        })?;
+
+        self.finish_value_in_parent();
+        Ok(Some(raw_str))
+    }
 }
 
 pub struct JsonProbe<'de> {

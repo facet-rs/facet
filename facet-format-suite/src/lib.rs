@@ -74,6 +74,10 @@ pub trait FormatSuite {
     fn attr_rename_all_camel() -> CaseSpec;
     /// Case: field with `#[facet(default)]` attribute.
     fn attr_default_field() -> CaseSpec;
+    /// Case: struct-level `#[facet(default)]` allowing all fields to be missing.
+    fn attr_default_struct() -> CaseSpec;
+    /// Case: field with `#[facet(default = expr)]` using a custom default expression.
+    fn attr_default_function() -> CaseSpec;
     /// Case: `Option<T>` field with `None` value (missing in input).
     fn option_none() -> CaseSpec;
     /// Case: `Option<T>` field with `Some` value.
@@ -82,6 +86,8 @@ pub trait FormatSuite {
     fn option_null() -> CaseSpec;
     /// Case: `#[facet(skip_serializing)]` field.
     fn attr_skip_serializing() -> CaseSpec;
+    /// Case: `#[facet(skip_serializing_if = predicate)]` field.
+    fn attr_skip_serializing_if() -> CaseSpec;
     /// Case: `#[facet(skip)]` field (skipped for both ser and de).
     fn attr_skip() -> CaseSpec;
 
@@ -136,6 +142,10 @@ pub trait FormatSuite {
     fn attr_rename_all_kebab() -> CaseSpec;
     /// Case: struct with `#[facet(rename_all = "SCREAMING_SNAKE_CASE")]`.
     fn attr_rename_all_screaming() -> CaseSpec;
+    /// Case: field with unicode (emoji) rename `#[facet(rename = "🎉")]`.
+    fn attr_rename_unicode() -> CaseSpec;
+    /// Case: field with special symbol chars in rename `#[facet(rename = "@type")]`.
+    fn attr_rename_special_chars() -> CaseSpec;
 
     // ── Proxy tests ──
 
@@ -438,12 +448,21 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, RenamedField>(&CASE_ATTR_RENAME_FIELD, S::attr_rename_field),
         SuiteCase::new::<S, CamelCaseStruct>(&CASE_ATTR_RENAME_ALL_CAMEL, S::attr_rename_all_camel),
         SuiteCase::new::<S, WithDefault>(&CASE_ATTR_DEFAULT_FIELD, S::attr_default_field),
+        SuiteCase::new::<S, StructLevelDefault>(&CASE_ATTR_DEFAULT_STRUCT, S::attr_default_struct),
+        SuiteCase::new::<S, WithDefaultFunction>(
+            &CASE_ATTR_DEFAULT_FUNCTION,
+            S::attr_default_function,
+        ),
         SuiteCase::new::<S, WithOption>(&CASE_OPTION_NONE, S::option_none),
         SuiteCase::new::<S, WithOption>(&CASE_OPTION_SOME, S::option_some),
         SuiteCase::new::<S, WithOption>(&CASE_OPTION_NULL, S::option_null),
         SuiteCase::new::<S, WithSkipSerializing>(
             &CASE_ATTR_SKIP_SERIALIZING,
             S::attr_skip_serializing,
+        ),
+        SuiteCase::new::<S, WithSkipSerializingIf>(
+            &CASE_ATTR_SKIP_SERIALIZING_IF,
+            S::attr_skip_serializing_if,
         ),
         SuiteCase::new::<S, WithSkip>(&CASE_ATTR_SKIP, S::attr_skip),
         // Enum tagging cases
@@ -501,6 +520,11 @@ pub fn all_cases<S: FormatSuite>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, RenameAllScreaming>(
             &CASE_ATTR_RENAME_ALL_SCREAMING,
             S::attr_rename_all_screaming,
+        ),
+        SuiteCase::new::<S, RenameUnicode>(&CASE_ATTR_RENAME_UNICODE, S::attr_rename_unicode),
+        SuiteCase::new::<S, RenameSpecialChars>(
+            &CASE_ATTR_RENAME_SPECIAL_CHARS,
+            S::attr_rename_special_chars,
         ),
         // Proxy cases
         SuiteCase::new::<S, ProxyInt>(&CASE_PROXY_CONTAINER, S::proxy_container),
@@ -1042,6 +1066,24 @@ const CASE_ATTR_DEFAULT_FIELD: CaseDescriptor<WithDefault> = CaseDescriptor {
     },
 };
 
+const CASE_ATTR_DEFAULT_STRUCT: CaseDescriptor<StructLevelDefault> = CaseDescriptor {
+    id: "attr::default_struct",
+    description: "struct-level #[facet(default)] with missing field uses Default",
+    expected: || StructLevelDefault {
+        count: 123,
+        message: String::new(), // Default::default() for String
+    },
+};
+
+const CASE_ATTR_DEFAULT_FUNCTION: CaseDescriptor<WithDefaultFunction> = CaseDescriptor {
+    id: "attr::default_function",
+    description: "field with #[facet(default = expr)] uses custom default",
+    expected: || WithDefaultFunction {
+        magic_number: 42, // from custom_default_value()
+        name: "hello".into(),
+    },
+};
+
 const CASE_OPTION_NONE: CaseDescriptor<WithOption> = CaseDescriptor {
     id: "option::none",
     description: "Option<T> field missing from input becomes None",
@@ -1075,6 +1117,15 @@ const CASE_ATTR_SKIP_SERIALIZING: CaseDescriptor<WithSkipSerializing> = CaseDesc
     expected: || WithSkipSerializing {
         visible: "shown".into(),
         hidden: String::new(), // default, not in input
+    },
+};
+
+const CASE_ATTR_SKIP_SERIALIZING_IF: CaseDescriptor<WithSkipSerializingIf> = CaseDescriptor {
+    id: "attr::skip_serializing_if",
+    description: "field with #[facet(skip_serializing_if = pred)] skipped when pred is true",
+    expected: || WithSkipSerializingIf {
+        name: "test".into(),
+        optional_data: None, // is_none returns true, so field is skipped on serialize
     },
 };
 
@@ -1256,6 +1307,22 @@ const CASE_ATTR_RENAME_ALL_SCREAMING: CaseDescriptor<RenameAllScreaming> = CaseD
     expected: || RenameAllScreaming {
         api_key: "secret-123".into(),
         max_retry_count: 5,
+    },
+};
+
+const CASE_ATTR_RENAME_UNICODE: CaseDescriptor<RenameUnicode> = CaseDescriptor {
+    id: "attr::rename_unicode",
+    description: "field with unicode (emoji) rename #[facet(rename = \"🎉\")]",
+    expected: || RenameUnicode {
+        celebration: "party".into(),
+    },
+};
+
+const CASE_ATTR_RENAME_SPECIAL_CHARS: CaseDescriptor<RenameSpecialChars> = CaseDescriptor {
+    id: "attr::rename_special_chars",
+    description: "field with special chars rename #[facet(rename = \"@type\")]",
+    expected: || RenameSpecialChars {
+        type_field: "node".into(),
     },
 };
 
@@ -1802,6 +1869,27 @@ pub struct WithDefault {
     pub optional_count: u32,
 }
 
+/// Fixture for struct-level `#[facet(default)]` test.
+#[derive(Facet, Default, Debug, Clone, PartialEq)]
+#[facet(default)]
+pub struct StructLevelDefault {
+    pub count: i32,
+    pub message: String,
+}
+
+/// Default value function for `WithDefaultFunction`.
+pub fn custom_default_value() -> i32 {
+    42
+}
+
+/// Fixture for `#[facet(default = expr)]` test.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct WithDefaultFunction {
+    #[facet(default = custom_default_value())]
+    pub magic_number: i32,
+    pub name: String,
+}
+
 /// Fixture for `Option<T>` with `None`.
 #[derive(Facet, Debug, Clone, PartialEq)]
 pub struct WithOption {
@@ -1816,6 +1904,14 @@ pub struct WithSkipSerializing {
     #[facet(skip_serializing)]
     #[facet(default)]
     pub hidden: String,
+}
+
+/// Fixture for `#[facet(skip_serializing_if = predicate)]` test.
+#[derive(Facet, Debug, Clone, PartialEq)]
+pub struct WithSkipSerializingIf {
+    pub name: String,
+    #[facet(skip_serializing_if = Option::is_none)]
+    pub optional_data: Option<String>,
 }
 
 /// Fixture for `#[facet(skip)]` test (skipped for both ser and de).
@@ -2062,6 +2158,20 @@ pub struct RenameAllKebab {
 pub struct RenameAllScreaming {
     pub api_key: String,
     pub max_retry_count: u32,
+}
+
+/// Struct with unicode (emoji) field name via rename.
+#[derive(Facet, Clone, Debug, PartialEq)]
+pub struct RenameUnicode {
+    #[facet(rename = "🎉")]
+    pub celebration: String,
+}
+
+/// Struct with special characters in field name via rename.
+#[derive(Facet, Clone, Debug, PartialEq)]
+pub struct RenameSpecialChars {
+    #[facet(rename = "@type")]
+    pub type_field: String,
 }
 
 // ── Proxy test fixtures ──
