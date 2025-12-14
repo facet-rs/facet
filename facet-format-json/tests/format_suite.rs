@@ -127,6 +127,28 @@ impl FormatSuite for JsonSlice {
         ))
     }
 
+    fn attr_default_struct() -> CaseSpec {
+        // message is missing, should use String::default() (empty string)
+        CaseSpec::from_str(indoc!(
+            r#"
+            {
+                "count": 123
+            }
+        "#
+        ))
+    }
+
+    fn attr_default_function() -> CaseSpec {
+        // magic_number is missing, should use custom_default_value() = 42
+        CaseSpec::from_str(indoc!(
+            r#"
+            {
+                "name": "hello"
+            }
+        "#
+        ))
+    }
+
     fn option_none() -> CaseSpec {
         // nickname is missing, should be None
         CaseSpec::from_str(indoc!(
@@ -169,6 +191,17 @@ impl FormatSuite for JsonSlice {
             r#"
             {
                 "visible": "shown"
+            }
+        "#
+        ))
+    }
+
+    fn attr_skip_serializing_if() -> CaseSpec {
+        // optional_data is None, skip_serializing_if = Option::is_none makes it absent in output
+        CaseSpec::from_str(indoc!(
+            r#"
+            {
+                "name": "test"
             }
         "#
         ))
@@ -279,6 +312,14 @@ impl FormatSuite for JsonSlice {
 
     fn attr_rename_all_screaming() -> CaseSpec {
         CaseSpec::from_str(r#"{"API_KEY":"secret-123","MAX_RETRY_COUNT":5}"#)
+    }
+
+    fn attr_rename_unicode() -> CaseSpec {
+        CaseSpec::from_str(r#"{"🎉":"party"}"#)
+    }
+
+    fn attr_rename_special_chars() -> CaseSpec {
+        CaseSpec::from_str(r#"{"@type":"node"}"#)
     }
 
     // ── Proxy cases ──

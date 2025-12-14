@@ -32,4 +32,18 @@ pub trait FormatParser<'de> {
 
     /// Begin evidence collection for untagged-enum resolution.
     fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error>;
+
+    /// Capture the raw representation of the current value without parsing it.
+    ///
+    /// This is used for types like `RawJson` that want to defer parsing.
+    /// The parser should skip the value and return the raw bytes/string
+    /// from the input.
+    ///
+    /// Returns `Ok(None)` if raw capture is not supported (e.g., streaming mode
+    /// or formats where raw capture doesn't make sense).
+    fn capture_raw(&mut self) -> Result<Option<&'de str>, Self::Error> {
+        // Default: not supported
+        self.skip_value()?;
+        Ok(None)
+    }
 }

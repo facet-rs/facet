@@ -1358,14 +1358,17 @@ dependencies = [
 name = "facet-format-json"
 version = "0.32.2"
 dependencies = [
+ "corosensei",
  "facet",
  "facet-core",
  "facet-format",
  "facet-format-suite",
  "facet-json",
  "facet-reflect",
+ "futures-io",
  "indoc",
  "libtest-mimic",
+ "tokio",
 ]
 
 [[package]]

@@ -175,6 +175,21 @@ impl FormatSerializer for JsonSerializer {
     }
 }
 
+/// Serialize a value to JSON bytes.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_json::to_vec;
+///
+/// #[derive(Facet)]
+/// struct Point { x: i32, y: i32 }
+///
+/// let point = Point { x: 10, y: 20 };
+/// let bytes = to_vec(&point).unwrap();
+/// assert_eq!(bytes, br#"{"x":10,"y":20}"#);
+/// ```
 pub fn to_vec<'facet, T>(value: &'_ T) -> Result<Vec<u8>, SerializeError<JsonSerializeError>>
 where
     T: Facet<'facet> + ?Sized,
@@ -182,4 +197,28 @@ where
     let mut serializer = JsonSerializer::new();
     serialize_root(&mut serializer, Peek::new(value))?;
     Ok(serializer.finish())
+}
+
+/// Serialize a value to a JSON string.
+///
+/// # Example
+///
+/// ```
+/// use facet::Facet;
+/// use facet_format_json::to_string;
+///
+/// #[derive(Facet)]
+/// struct Person { name: String, age: u32 }
+///
+/// let person = Person { name: "Alice".into(), age: 30 };
+/// let json = to_string(&person).unwrap();
+/// assert_eq!(json, r#"{"name":"Alice","age":30}"#);
+/// ```
+pub fn to_string<'facet, T>(value: &'_ T) -> Result<String, SerializeError<JsonSerializeError>>
+where
+    T: Facet<'facet> + ?Sized,
+{
+    let bytes = to_vec(value)?;
+    // JSON output is always valid UTF-8, so this unwrap is safe
+    Ok(String::from_utf8(bytes).expect("JSON output should always be valid UTF-8"))
 }
