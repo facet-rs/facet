@@ -3,16 +3,14 @@
 //! This module provides `from_reader` that can deserialize XML from any `Read`
 //! source without requiring the entire input to be in memory.
 //!
-//! Note: XML structure requires buffering sibling elements to detect sequences
-//! (when all children have the same name). This provides streaming I/O but
-//! buffers at each element level for structure detection.
+//! The parser emits events incrementally as XML is parsed. Sequence detection
+//! (multiple children with same name) is handled by the deserializer, not the parser.
 
 #![allow(unsafe_code)]
 
 extern crate alloc;
 
 use alloc::borrow::Cow;
-use alloc::collections::BTreeMap;
 use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -148,33 +146,32 @@ impl<'y> std::io::BufRead for YieldingReader<'y> {
     }
 }
 
-/// Qualified name with optional namespace.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct QName {
-    local_name: String,
-    namespace: Option<String>,
-}
-
-/// Parsed XML element with all its content.
-#[derive(Debug, Clone)]
-struct Element {
-    name: QName,
-    attributes: Vec<(QName, String)>,
-    children: Vec<Element>,
+/// State for an element being parsed.
+struct ElementState {
+    /// Accumulated text content
     text: String,
+    /// Whether we've emitted StructStart for this element
+    started: bool,
+    /// Pending attributes (held until we decide if this is a struct)
+    pending_attrs: Vec<(String, String)>,
 }
 
 /// Streaming XML parser that implements `FormatParser<'static>`.
+///
+/// Events are emitted incrementally as XML is parsed:
+/// - `<element>` → StructStart, then attribute FieldKeys
+/// - `<child>` → FieldKey(child_name), then child's StructStart...
+/// - `</element>` → _text field if text, then StructEnd
 pub struct StreamingXmlParser<'y> {
     reader: NsReader<YieldingReader<'y>>,
     xml_buf: Vec<u8>,
+    /// Stack of element states
+    element_stack: Vec<ElementState>,
     /// Buffered events for replay
     event_buffer: Vec<ParseEvent<'static>>,
     buffer_idx: usize,
     /// Peeked event
     peeked: Option<ParseEvent<'static>>,
-    /// Whether we've parsed the root element
-    root_parsed: bool,
 }
 
 impl<'y> StreamingXmlParser<'y> {
@@ -182,15 +179,92 @@ impl<'y> StreamingXmlParser<'y> {
         Self {
             reader,
             xml_buf: Vec::new(),
+            element_stack: Vec::new(),
             event_buffer: Vec::new(),
             buffer_idx: 0,
             peeked: None,
-            root_parsed: false,
         }
     }
 
-    /// Parse an element and all its children into an Element structure.
-    fn parse_element(&mut self) -> Result<Option<Element>, XmlError> {
+    /// Ensure the parent element (if any) has been started as a struct.
+    /// Called when we're about to emit a child element.
+    fn ensure_parent_started(&mut self) {
+        if let Some(parent) = self.element_stack.last_mut()
+            && !parent.started
+        {
+            // Parent needs to become a struct now
+            self.event_buffer.push(ParseEvent::StructStart);
+            for (name, value) in parent.pending_attrs.drain(..) {
+                let key = FieldKey::new(Cow::Owned(name), FieldLocationHint::Attribute);
+                self.event_buffer.push(ParseEvent::FieldKey(key));
+                self.event_buffer
+                    .push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(value))));
+            }
+            parent.started = true;
+        }
+    }
+
+    /// Push a new element state (deferred - doesn't emit StructStart yet).
+    fn push_element(&mut self, attrs: Vec<(String, String)>) {
+        self.element_stack.push(ElementState {
+            text: String::new(),
+            started: false,
+            pending_attrs: attrs,
+        });
+    }
+
+    /// Collect attributes from a quick-xml element, skipping xmlns declarations.
+    /// Note: Does not resolve namespaces for attributes (would require separate borrow).
+    fn collect_attrs_simple(
+        e: &quick_xml::events::BytesStart<'_>,
+    ) -> Result<Vec<(String, String)>, XmlError> {
+        let mut attrs = Vec::new();
+        for attr in e.attributes() {
+            let attr = attr.map_err(|e| XmlError::ParseError(e.to_string()))?;
+            let key = attr.key;
+
+            // Skip xmlns declarations
+            if key.as_ref() == b"xmlns" {
+                continue;
+            }
+            if let Some(prefix) = key.prefix()
+                && prefix.as_ref() == b"xmlns"
+            {
+                continue;
+            }
+
+            let name = core::str::from_utf8(key.local_name().as_ref())
+                .map_err(|_| XmlError::InvalidUtf8)?
+                .to_string();
+
+            let value = attr
+                .unescape_value()
+                .map_err(|e| XmlError::ParseError(e.to_string()))?
+                .into_owned();
+
+            attrs.push((name, value));
+        }
+        Ok(attrs)
+    }
+
+    fn produce_event(&mut self) -> Result<ParseEvent<'static>, XmlError> {
+        // First check buffered events
+        if self.buffer_idx < self.event_buffer.len() {
+            let event = self.event_buffer[self.buffer_idx].clone();
+            self.buffer_idx += 1;
+            if self.buffer_idx >= self.event_buffer.len() {
+                self.event_buffer.clear();
+                self.buffer_idx = 0;
+            }
+            return Ok(event);
+        }
+
+        self.produce_event_from_xml()
+    }
+
+    /// Read events directly from XML, bypassing the buffer.
+    /// Used for buffering ahead when probing.
+    fn produce_event_from_xml(&mut self) -> Result<ParseEvent<'static>, XmlError> {
         loop {
             self.xml_buf.clear();
             let (resolve, event) = self
@@ -209,457 +283,174 @@ impl<'y> StreamingXmlParser<'y> {
                         .map_err(|_| XmlError::InvalidUtf8)?
                         .to_string();
 
-                    // Collect attributes
-                    let mut attributes = Vec::new();
-                    for attr in e.attributes() {
-                        let attr = attr.map_err(|e| XmlError::ParseError(e.to_string()))?;
-                        let key = attr.key;
-                        // Skip xmlns declarations
-                        if key.as_ref() == b"xmlns" {
-                            continue;
+                    let attrs = Self::collect_attrs_simple(e)?;
+
+                    // If we're inside an element, that parent must become a struct
+                    if !self.element_stack.is_empty() {
+                        self.ensure_parent_started();
+                        let mut key =
+                            FieldKey::new(Cow::Owned(local.clone()), FieldLocationHint::Child);
+                        if let Some(ref ns) = ns {
+                            key = key.with_namespace(Cow::Owned(ns.clone()));
                         }
-                        if let Some(prefix) = key.prefix()
-                            && prefix.as_ref() == b"xmlns"
-                        {
-                            continue;
-                        }
-                        let attr_local = core::str::from_utf8(key.local_name().as_ref())
-                            .map_err(|_| XmlError::InvalidUtf8)?
-                            .to_string();
-
-                        // Get attribute namespace
-                        let attr_ns = if let Some(_prefix) = key.prefix() {
-                            // Look up namespace for prefixed attribute
-                            match self.reader.resolve(key, true) {
-                                (ResolveResult::Bound(ns), _) => {
-                                    Some(String::from_utf8_lossy(ns.as_ref()).into_owned())
-                                }
-                                _ => None,
-                            }
-                        } else {
-                            None // Unprefixed attributes have no namespace
-                        };
-
-                        let value = attr
-                            .unescape_value()
-                            .map_err(|e| XmlError::ParseError(e.to_string()))?
-                            .into_owned();
-
-                        attributes.push((
-                            QName {
-                                local_name: attr_local,
-                                namespace: attr_ns,
-                            },
-                            value,
-                        ));
+                        self.event_buffer.push(ParseEvent::FieldKey(key));
                     }
 
-                    // Parse children until we hit the end tag
-                    let mut children = Vec::new();
-                    let mut text = String::new();
+                    // Push this element (deferred - don't emit StructStart yet)
+                    self.push_element(attrs);
 
-                    loop {
-                        // Peek at next event
-                        self.xml_buf.clear();
-                        let (child_resolve, child_event) = self
-                            .reader
-                            .read_resolved_event_into(&mut self.xml_buf)
-                            .map_err(|e| XmlError::ParseError(e.to_string()))?;
-
-                        match child_event {
-                            Event::End(_) => break,
-                            Event::Text(ref t) => {
-                                let s = t
-                                    .unescape()
-                                    .map_err(|e| XmlError::ParseError(e.to_string()))?;
-                                let trimmed = s.trim();
-                                if !trimmed.is_empty() {
-                                    if !text.is_empty() {
-                                        text.push(' ');
-                                    }
-                                    text.push_str(trimmed);
-                                }
-                            }
-                            Event::CData(ref c) => {
-                                let s = core::str::from_utf8(c.as_ref())
-                                    .map_err(|_| XmlError::InvalidUtf8)?;
-                                let trimmed = s.trim();
-                                if !trimmed.is_empty() {
-                                    if !text.is_empty() {
-                                        text.push(' ');
-                                    }
-                                    text.push_str(trimmed);
-                                }
-                            }
-                            Event::Start(ref child_e) => {
-                                // Recursively parse child element
-                                let child_local =
-                                    core::str::from_utf8(child_e.local_name().as_ref())
-                                        .map_err(|_| XmlError::InvalidUtf8)?
-                                        .to_string();
-
-                                let child_ns: Option<String> = match child_resolve {
-                                    ResolveResult::Bound(ns) => {
-                                        Some(String::from_utf8_lossy(ns.as_ref()).into_owned())
-                                    }
-                                    ResolveResult::Unbound | ResolveResult::Unknown(_) => None,
-                                };
-
-                                // Collect child attributes
-                                let mut child_attrs = Vec::new();
-                                for attr in child_e.attributes() {
-                                    let attr =
-                                        attr.map_err(|e| XmlError::ParseError(e.to_string()))?;
-                                    let key = attr.key;
-                                    if key.as_ref() == b"xmlns" {
-                                        continue;
-                                    }
-                                    if let Some(prefix) = key.prefix()
-                                        && prefix.as_ref() == b"xmlns"
-                                    {
-                                        continue;
-                                    }
-                                    let attr_local =
-                                        core::str::from_utf8(key.local_name().as_ref())
-                                            .map_err(|_| XmlError::InvalidUtf8)?
-                                            .to_string();
-                                    let value = attr
-                                        .unescape_value()
-                                        .map_err(|e| XmlError::ParseError(e.to_string()))?
-                                        .into_owned();
-                                    child_attrs.push((
-                                        QName {
-                                            local_name: attr_local,
-                                            namespace: None,
-                                        },
-                                        value,
-                                    ));
-                                }
-
-                                // Parse child's content recursively
-                                let mut child_children = Vec::new();
-                                let mut child_text = String::new();
-                                self.parse_element_content(&mut child_children, &mut child_text)?;
-
-                                children.push(Element {
-                                    name: QName {
-                                        local_name: child_local,
-                                        namespace: child_ns,
-                                    },
-                                    attributes: child_attrs,
-                                    children: child_children,
-                                    text: child_text,
-                                });
-                            }
-                            Event::Empty(ref child_e) => {
-                                let child_local =
-                                    core::str::from_utf8(child_e.local_name().as_ref())
-                                        .map_err(|_| XmlError::InvalidUtf8)?
-                                        .to_string();
-
-                                let child_ns: Option<String> = match child_resolve {
-                                    ResolveResult::Bound(ns) => {
-                                        Some(String::from_utf8_lossy(ns.as_ref()).into_owned())
-                                    }
-                                    ResolveResult::Unbound | ResolveResult::Unknown(_) => None,
-                                };
-
-                                let mut child_attrs = Vec::new();
-                                for attr in child_e.attributes() {
-                                    let attr =
-                                        attr.map_err(|e| XmlError::ParseError(e.to_string()))?;
-                                    let key = attr.key;
-                                    if key.as_ref() == b"xmlns" {
-                                        continue;
-                                    }
-                                    if let Some(prefix) = key.prefix()
-                                        && prefix.as_ref() == b"xmlns"
-                                    {
-                                        continue;
-                                    }
-                                    let attr_local =
-                                        core::str::from_utf8(key.local_name().as_ref())
-                                            .map_err(|_| XmlError::InvalidUtf8)?
-                                            .to_string();
-                                    let value = attr
-                                        .unescape_value()
-                                        .map_err(|e| XmlError::ParseError(e.to_string()))?
-                                        .into_owned();
-                                    child_attrs.push((
-                                        QName {
-                                            local_name: attr_local,
-                                            namespace: None,
-                                        },
-                                        value,
-                                    ));
-                                }
-
-                                children.push(Element {
-                                    name: QName {
-                                        local_name: child_local,
-                                        namespace: child_ns,
-                                    },
-                                    attributes: child_attrs,
-                                    children: Vec::new(),
-                                    text: String::new(),
-                                });
-                            }
-                            Event::Eof => return Err(XmlError::UnbalancedTags),
-                            Event::Comment(_)
-                            | Event::PI(_)
-                            | Event::Decl(_)
-                            | Event::DocType(_) => {
-                                continue;
-                            }
+                    // Return first buffered event if any
+                    if !self.event_buffer.is_empty() {
+                        let ev = self.event_buffer[0].clone();
+                        self.buffer_idx = 1;
+                        if self.buffer_idx >= self.event_buffer.len() {
+                            self.event_buffer.clear();
+                            self.buffer_idx = 0;
                         }
+                        return Ok(ev);
                     }
-
-                    return Ok(Some(Element {
-                        name: QName {
-                            local_name: local,
-                            namespace: ns,
-                        },
-                        attributes,
-                        children,
-                        text,
-                    }));
-                }
-
-                Event::Empty(ref e) => {
-                    let local = core::str::from_utf8(e.local_name().as_ref())
-                        .map_err(|_| XmlError::InvalidUtf8)?
-                        .to_string();
-
-                    let mut attributes = Vec::new();
-                    for attr in e.attributes() {
-                        let attr = attr.map_err(|e| XmlError::ParseError(e.to_string()))?;
-                        let key = attr.key;
-                        if key.as_ref() == b"xmlns" {
-                            continue;
-                        }
-                        if let Some(prefix) = key.prefix()
-                            && prefix.as_ref() == b"xmlns"
-                        {
-                            continue;
-                        }
-                        let attr_local = core::str::from_utf8(key.local_name().as_ref())
-                            .map_err(|_| XmlError::InvalidUtf8)?
-                            .to_string();
-                        let value = attr
-                            .unescape_value()
-                            .map_err(|e| XmlError::ParseError(e.to_string()))?
-                            .into_owned();
-                        attributes.push((
-                            QName {
-                                local_name: attr_local,
-                                namespace: None,
-                            },
-                            value,
-                        ));
-                    }
-
-                    return Ok(Some(Element {
-                        name: QName {
-                            local_name: local,
-                            namespace: ns,
-                        },
-                        attributes,
-                        children: Vec::new(),
-                        text: String::new(),
-                    }));
-                }
-
-                Event::Eof => return Ok(None),
-                Event::Comment(_)
-                | Event::PI(_)
-                | Event::Decl(_)
-                | Event::DocType(_)
-                | Event::Text(_)
-                | Event::CData(_) => {
                     continue;
                 }
-                Event::End(_) => return Err(XmlError::UnbalancedTags),
-            }
-        }
-    }
 
-    /// Parse element content (children and text) until end tag.
-    fn parse_element_content(
-        &mut self,
-        children: &mut Vec<Element>,
-        text: &mut String,
-    ) -> Result<(), XmlError> {
-        loop {
-            self.xml_buf.clear();
-            let (resolve, event) = self
-                .reader
-                .read_resolved_event_into(&mut self.xml_buf)
-                .map_err(|e| XmlError::ParseError(e.to_string()))?;
-
-            match event {
-                Event::End(_) => return Ok(()),
-                Event::Text(ref t) => {
-                    let s = t
-                        .unescape()
-                        .map_err(|e| XmlError::ParseError(e.to_string()))?;
-                    let trimmed = s.trim();
-                    if !trimmed.is_empty() {
-                        if !text.is_empty() {
-                            text.push(' ');
-                        }
-                        text.push_str(trimmed);
-                    }
-                }
-                Event::CData(ref c) => {
-                    let s = core::str::from_utf8(c.as_ref()).map_err(|_| XmlError::InvalidUtf8)?;
-                    let trimmed = s.trim();
-                    if !trimmed.is_empty() {
-                        if !text.is_empty() {
-                            text.push(' ');
-                        }
-                        text.push_str(trimmed);
-                    }
-                }
-                Event::Start(ref e) => {
-                    let local = core::str::from_utf8(e.local_name().as_ref())
-                        .map_err(|_| XmlError::InvalidUtf8)?
-                        .to_string();
-
-                    let ns: Option<String> = match resolve {
-                        ResolveResult::Bound(ns) => {
-                            Some(String::from_utf8_lossy(ns.as_ref()).into_owned())
-                        }
-                        ResolveResult::Unbound | ResolveResult::Unknown(_) => None,
-                    };
-
-                    let mut attrs = Vec::new();
-                    for attr in e.attributes() {
-                        let attr = attr.map_err(|e| XmlError::ParseError(e.to_string()))?;
-                        let key = attr.key;
-                        if key.as_ref() == b"xmlns" {
-                            continue;
-                        }
-                        if let Some(prefix) = key.prefix()
-                            && prefix.as_ref() == b"xmlns"
-                        {
-                            continue;
-                        }
-                        let attr_local = core::str::from_utf8(key.local_name().as_ref())
-                            .map_err(|_| XmlError::InvalidUtf8)?
-                            .to_string();
-                        let value = attr
-                            .unescape_value()
-                            .map_err(|e| XmlError::ParseError(e.to_string()))?
-                            .into_owned();
-                        attrs.push((
-                            QName {
-                                local_name: attr_local,
-                                namespace: None,
-                            },
-                            value,
-                        ));
-                    }
-
-                    let mut child_children = Vec::new();
-                    let mut child_text = String::new();
-                    self.parse_element_content(&mut child_children, &mut child_text)?;
-
-                    children.push(Element {
-                        name: QName {
-                            local_name: local,
-                            namespace: ns,
-                        },
-                        attributes: attrs,
-                        children: child_children,
-                        text: child_text,
-                    });
-                }
                 Event::Empty(ref e) => {
                     let local = core::str::from_utf8(e.local_name().as_ref())
                         .map_err(|_| XmlError::InvalidUtf8)?
                         .to_string();
 
-                    let ns: Option<String> = match resolve {
-                        ResolveResult::Bound(ns) => {
-                            Some(String::from_utf8_lossy(ns.as_ref()).into_owned())
-                        }
-                        ResolveResult::Unbound | ResolveResult::Unknown(_) => None,
-                    };
+                    let attrs = Self::collect_attrs_simple(e)?;
 
-                    let mut attrs = Vec::new();
-                    for attr in e.attributes() {
-                        let attr = attr.map_err(|e| XmlError::ParseError(e.to_string()))?;
-                        let key = attr.key;
-                        if key.as_ref() == b"xmlns" {
-                            continue;
+                    // If we're inside an element, that parent must become a struct
+                    if !self.element_stack.is_empty() {
+                        self.ensure_parent_started();
+                        let mut key =
+                            FieldKey::new(Cow::Owned(local.clone()), FieldLocationHint::Child);
+                        if let Some(ref ns) = ns {
+                            key = key.with_namespace(Cow::Owned(ns.clone()));
                         }
-                        if let Some(prefix) = key.prefix()
-                            && prefix.as_ref() == b"xmlns"
-                        {
-                            continue;
-                        }
-                        let attr_local = core::str::from_utf8(key.local_name().as_ref())
-                            .map_err(|_| XmlError::InvalidUtf8)?
-                            .to_string();
-                        let value = attr
-                            .unescape_value()
-                            .map_err(|e| XmlError::ParseError(e.to_string()))?
-                            .into_owned();
-                        attrs.push((
-                            QName {
-                                local_name: attr_local,
-                                namespace: None,
-                            },
-                            value,
-                        ));
+                        self.event_buffer.push(ParseEvent::FieldKey(key));
                     }
 
-                    children.push(Element {
-                        name: QName {
-                            local_name: local,
-                            namespace: ns,
-                        },
-                        attributes: attrs,
-                        children: Vec::new(),
-                        text: String::new(),
-                    });
-                }
-                Event::Eof => return Err(XmlError::UnbalancedTags),
-                Event::Comment(_) | Event::PI(_) | Event::Decl(_) | Event::DocType(_) => continue,
-            }
-        }
-    }
-
-    fn produce_event(&mut self) -> Result<ParseEvent<'static>, XmlError> {
-        // First check buffered events
-        if self.buffer_idx < self.event_buffer.len() {
-            let event = self.event_buffer[self.buffer_idx].clone();
-            self.buffer_idx += 1;
-            if self.buffer_idx >= self.event_buffer.len() {
-                self.event_buffer.clear();
-                self.buffer_idx = 0;
-            }
-            return Ok(event);
-        }
-
-        // Parse root element if not done yet
-        if !self.root_parsed {
-            self.root_parsed = true;
-            if let Some(elem) = self.parse_element()? {
-                emit_element_events(&elem, &mut self.event_buffer);
-                if !self.event_buffer.is_empty() {
-                    let event = self.event_buffer[0].clone();
-                    self.buffer_idx = 1;
-                    if self.buffer_idx >= self.event_buffer.len() {
-                        self.event_buffer.clear();
-                        self.buffer_idx = 0;
+                    // Empty element with attrs: emit as struct
+                    // Empty element without attrs: emit as empty struct (or could be unit)
+                    self.event_buffer.push(ParseEvent::StructStart);
+                    for (name, value) in attrs {
+                        let key = FieldKey::new(Cow::Owned(name), FieldLocationHint::Attribute);
+                        self.event_buffer.push(ParseEvent::FieldKey(key));
+                        self.event_buffer
+                            .push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(value))));
                     }
-                    return Ok(event);
+                    self.event_buffer.push(ParseEvent::StructEnd);
+
+                    // Return first buffered event
+                    if !self.event_buffer.is_empty() {
+                        let ev = self.event_buffer[0].clone();
+                        self.buffer_idx = 1;
+                        if self.buffer_idx >= self.event_buffer.len() {
+                            self.event_buffer.clear();
+                            self.buffer_idx = 0;
+                        }
+                        return Ok(ev);
+                    }
+                    continue;
+                }
+
+                Event::Text(ref e) => {
+                    let text = e
+                        .unescape()
+                        .map_err(|e| XmlError::ParseError(e.to_string()))?;
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty()
+                        && let Some(state) = self.element_stack.last_mut()
+                    {
+                        if !state.text.is_empty() {
+                            state.text.push(' ');
+                        }
+                        state.text.push_str(trimmed);
+                    }
+                    continue;
+                }
+
+                Event::CData(ref e) => {
+                    let text =
+                        core::str::from_utf8(e.as_ref()).map_err(|_| XmlError::InvalidUtf8)?;
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty()
+                        && let Some(state) = self.element_stack.last_mut()
+                    {
+                        if !state.text.is_empty() {
+                            state.text.push(' ');
+                        }
+                        state.text.push_str(trimmed);
+                    }
+                    continue;
+                }
+
+                Event::End(_) => {
+                    let state = self.element_stack.pop().ok_or(XmlError::UnbalancedTags)?;
+
+                    if state.started {
+                        // Element was started as struct (had children)
+                        // Emit text as _text field if present
+                        if !state.text.is_empty() {
+                            self.event_buffer.push(ParseEvent::FieldKey(FieldKey::new(
+                                Cow::Borrowed("_text"),
+                                FieldLocationHint::Text,
+                            )));
+                            self.event_buffer.push(emit_scalar_from_text(&state.text));
+                        }
+                        self.event_buffer.push(ParseEvent::StructEnd);
+                    } else if !state.pending_attrs.is_empty() {
+                        // Element has attributes but no children - emit as struct
+                        self.event_buffer.push(ParseEvent::StructStart);
+                        for (name, value) in state.pending_attrs {
+                            let key = FieldKey::new(Cow::Owned(name), FieldLocationHint::Attribute);
+                            self.event_buffer.push(ParseEvent::FieldKey(key));
+                            self.event_buffer
+                                .push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(value))));
+                        }
+                        if !state.text.is_empty() {
+                            self.event_buffer.push(ParseEvent::FieldKey(FieldKey::new(
+                                Cow::Borrowed("_text"),
+                                FieldLocationHint::Text,
+                            )));
+                            self.event_buffer.push(emit_scalar_from_text(&state.text));
+                        }
+                        self.event_buffer.push(ParseEvent::StructEnd);
+                    } else {
+                        // Element had no children and no attributes - emit as scalar or empty struct
+                        if !state.text.is_empty() {
+                            self.event_buffer.push(emit_scalar_from_text(&state.text));
+                        } else {
+                            self.event_buffer.push(ParseEvent::StructStart);
+                            self.event_buffer.push(ParseEvent::StructEnd);
+                        }
+                    }
+
+                    // Return first buffered event
+                    if !self.event_buffer.is_empty() {
+                        let ev = self.event_buffer[0].clone();
+                        self.buffer_idx = 1;
+                        if self.buffer_idx >= self.event_buffer.len() {
+                            self.event_buffer.clear();
+                            self.buffer_idx = 0;
+                        }
+                        return Ok(ev);
+                    }
+                    continue;
+                }
+
+                Event::Eof => {
+                    if !self.element_stack.is_empty() {
+                        return Err(XmlError::UnbalancedTags);
+                    }
+                    return Err(XmlError::UnexpectedEof);
+                }
+
+                Event::Decl(_) | Event::Comment(_) | Event::PI(_) | Event::DocType(_) => {
+                    continue;
                 }
             }
         }
-
-        Err(XmlError::UnexpectedEof)
     }
 }
 
@@ -683,98 +474,6 @@ fn emit_scalar_from_text(text: &str) -> ParseEvent<'static> {
         return ParseEvent::Scalar(ScalarValue::F64(f));
     }
     ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(text.to_string())))
-}
-
-/// Emit parse events for an element (mirrors parser.rs logic).
-fn emit_element_events(elem: &Element, events: &mut Vec<ParseEvent<'static>>) {
-    let has_attrs = !elem.attributes.is_empty();
-    let has_children = !elem.children.is_empty();
-    let text = elem.text.as_str();
-
-    // Case 1: No attributes, no children - emit scalar from text
-    if !has_attrs && !has_children {
-        if text.is_empty() {
-            // Empty element is an empty object (for unit structs)
-            events.push(ParseEvent::StructStart);
-            events.push(ParseEvent::StructEnd);
-        } else {
-            events.push(emit_scalar_from_text(text));
-        }
-        return;
-    }
-
-    // Case 2: No attributes, multiple children with same name - emit as array
-    if !has_attrs && has_children && text.is_empty() && elem.children.len() > 1 {
-        let first = &elem.children[0].name;
-        if elem.children.iter().all(|child| &child.name == first) {
-            events.push(ParseEvent::SequenceStart);
-            for child in &elem.children {
-                emit_element_events(child, events);
-            }
-            events.push(ParseEvent::SequenceEnd);
-            return;
-        }
-    }
-
-    // Case 3: Has attributes or mixed children - emit as struct
-    events.push(ParseEvent::StructStart);
-
-    // Emit attributes as fields
-    for (qname, value) in &elem.attributes {
-        let mut key = FieldKey::new(
-            Cow::Owned(qname.local_name.clone()),
-            FieldLocationHint::Attribute,
-        );
-        if let Some(ns) = &qname.namespace {
-            key = key.with_namespace(Cow::Owned(ns.clone()));
-        }
-        events.push(ParseEvent::FieldKey(key));
-        // Attributes are always strings
-        events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
-            value.clone(),
-        ))));
-    }
-
-    // Group children by (local_name, namespace) to detect arrays
-    let mut grouped: BTreeMap<(&str, Option<&str>), Vec<&Element>> = BTreeMap::new();
-    for child in &elem.children {
-        let key = (
-            child.name.local_name.as_str(),
-            child.name.namespace.as_deref(),
-        );
-        grouped.entry(key).or_default().push(child);
-    }
-
-    // Emit children as fields
-    for ((local_name, namespace), children) in grouped {
-        let mut key = FieldKey::new(Cow::Owned(local_name.to_string()), FieldLocationHint::Child);
-        if let Some(ns) = namespace {
-            key = key.with_namespace(Cow::Owned(ns.to_string()));
-        }
-        events.push(ParseEvent::FieldKey(key));
-
-        if children.len() == 1 {
-            emit_element_events(children[0], events);
-        } else {
-            // Multiple children with same name -> array
-            events.push(ParseEvent::SequenceStart);
-            for child in children {
-                emit_element_events(child, events);
-            }
-            events.push(ParseEvent::SequenceEnd);
-        }
-    }
-
-    // Emit text content if present (mixed content)
-    if !text.is_empty() {
-        let key = FieldKey::new(Cow::Borrowed("_text"), FieldLocationHint::Text);
-        events.push(ParseEvent::FieldKey(key));
-        events.push(ParseEvent::Scalar(ScalarValue::Str(Cow::Owned(
-            text.to_string(),
-        ))));
-    }
-
-    events.push(ParseEvent::StructEnd);
 }
 
 impl<'y> FormatParser<'static> for StreamingXmlParser<'y> {
@@ -818,7 +517,7 @@ impl<'y> FormatParser<'static> for StreamingXmlParser<'y> {
                     }
                 }
                 ParseEvent::FieldKey(_) => {
-                    depth += 1;
+                    // Don't increment depth for FieldKey - it doesn't start a new value
                 }
             }
         }
@@ -826,28 +525,107 @@ impl<'y> FormatParser<'static> for StreamingXmlParser<'y> {
     }
 
     fn begin_probe(&mut self) -> Result<Self::Probe<'_>, Self::Error> {
-        // Ensure we have parsed and buffered events
-        if !self.root_parsed {
-            self.root_parsed = true;
-            if let Some(elem) = self.parse_element()? {
-                emit_element_events(&elem, &mut self.event_buffer);
-            }
-        }
+        // Buffer events until we have the full struct (including StructEnd at depth 0)
+        self.buffer_until_struct_end()?;
 
-        // Build field evidence by looking ahead in the buffer
+        // Build field evidence from buffered events
         let evidence = self.build_probe();
         Ok(StreamingXmlProbe { evidence, idx: 0 })
+    }
+
+    fn elements_as_sequences(&self) -> bool {
+        // XML elements are semantically ambiguous - the deserializer uses target type
+        // to decide if an element should be treated as a struct or sequence
+        true
     }
 }
 
 impl<'y> StreamingXmlParser<'y> {
+    /// Buffer events until we see StructEnd at depth 0.
+    /// This is called when probing needs to see all fields of the current struct.
+    fn buffer_until_struct_end(&mut self) -> Result<(), XmlError> {
+        // We need to collect events from current position until we see the closing StructEnd.
+        // The tricky part is that produce_event() consumes from the buffer, so we need to
+        // re-buffer the events we consume.
+        let mut probe_events: Vec<ParseEvent<'static>> = Vec::new();
+
+        // First, move any existing buffered events (including peeked) to probe_events
+        if let Some(peeked) = self.peeked.take() {
+            probe_events.push(peeked);
+        }
+        for event in self.event_buffer.drain(self.buffer_idx..) {
+            probe_events.push(event);
+        }
+        self.buffer_idx = 0;
+        self.event_buffer.clear();
+
+        // Count depth in what we already have
+        let mut depth = 0i32;
+        for event in &probe_events {
+            match event {
+                ParseEvent::StructStart | ParseEvent::SequenceStart => depth += 1,
+                ParseEvent::StructEnd | ParseEvent::SequenceEnd => {
+                    depth -= 1;
+                    if depth < 0 {
+                        // We already have the closing StructEnd - put events back and return
+                        self.event_buffer = probe_events;
+                        self.buffer_idx = 0;
+                        return Ok(());
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Determine the target depth for stopping:
+        // - If we start from scratch (depth=0 and first event is StructStart), stop when depth returns to 0
+        // - If we're inside a struct (depth=0 but StructStart already consumed), stop when depth goes to -1
+        let mut first_event = true;
+        let mut started_from_struct_start = false;
+
+        // Need to read more events from XML until we see the closing StructEnd
+        loop {
+            // Use produce_event which handles the XML parsing properly
+            let event = self.produce_event()?;
+
+            // Track if we started from StructStart (probing before consuming root)
+            if first_event {
+                first_event = false;
+                if matches!(event, ParseEvent::StructStart) {
+                    started_from_struct_start = true;
+                }
+            }
+
+            let is_end = matches!(event, ParseEvent::StructEnd | ParseEvent::SequenceEnd);
+
+            match &event {
+                ParseEvent::StructStart | ParseEvent::SequenceStart => depth += 1,
+                ParseEvent::StructEnd | ParseEvent::SequenceEnd => depth -= 1,
+                _ => {}
+            }
+
+            probe_events.push(event);
+
+            // Exit condition depends on how we started:
+            // - If started from StructStart: exit when depth returns to 0
+            // - Otherwise: exit when depth goes to -1
+            let target_depth = if started_from_struct_start { 0 } else { -1 };
+            if is_end && depth <= target_depth {
+                // We've collected up to and including the closing StructEnd
+                // Put all events back into the buffer for normal consumption
+                self.event_buffer = probe_events;
+                self.buffer_idx = 0;
+                return Ok(());
+            }
+        }
+    }
+
     /// Build field evidence by looking ahead at remaining events.
     fn build_probe(&self) -> Vec<FieldEvidence<'static>> {
         let mut evidence = Vec::new();
 
-        // Get the events we're looking at
+        // Get the events we're looking at (peeked + remaining buffer)
         let events: Vec<&ParseEvent<'static>> = if let Some(ref peeked) = self.peeked {
-            // Include the peeked event plus remaining buffer
             core::iter::once(peeked)
                 .chain(self.event_buffer[self.buffer_idx..].iter())
                 .collect()
@@ -859,13 +637,16 @@ impl<'y> StreamingXmlParser<'y> {
             return evidence;
         }
 
-        // Check if we're about to read a struct
-        if !matches!(events.first(), Some(ParseEvent::StructStart)) {
-            return evidence;
-        }
+        // Determine the target depth for finding top-level fields:
+        // - If first event is StructStart, find fields at depth 1 (inside the struct)
+        // - Otherwise, we're already inside a struct, find fields at depth 0
+        let target_depth = if matches!(events.first(), Some(ParseEvent::StructStart)) {
+            1
+        } else {
+            0
+        };
 
-        // Scan the struct's fields
-        let mut i = 1;
+        let mut i = 0;
         let mut depth = 0usize;
 
         while i < events.len() {
@@ -875,16 +656,14 @@ impl<'y> StreamingXmlParser<'y> {
                     i += 1;
                 }
                 ParseEvent::StructEnd | ParseEvent::SequenceEnd => {
-                    if depth == 0 {
-                        // End of the struct we're probing
+                    if depth == 0 || (target_depth == 1 && depth == 1) {
                         break;
                     }
                     depth -= 1;
                     i += 1;
                 }
-                ParseEvent::FieldKey(key) if depth == 0 => {
+                ParseEvent::FieldKey(key) if depth == target_depth => {
                     // This is a top-level field in the struct we're probing
-                    // Look at the next event to see if it's a scalar
                     let scalar_value = if let Some(next_event) = events.get(i + 1) {
                         match next_event {
                             ParseEvent::Scalar(sv) => Some(sv.clone()),
@@ -1074,5 +853,31 @@ mod tests {
         let result: Outer = from_reader(reader).unwrap();
 
         assert_eq!(result.inner.value, 42);
+    }
+
+    #[test]
+    fn test_from_reader_list() {
+        let xml = b"<numbers><value>1</value><value>2</value><value>3</value></numbers>";
+        let reader = Cursor::new(&xml[..]);
+        let result: Vec<u64> = from_reader(reader).unwrap();
+
+        assert_eq!(result, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn test_from_reader_internally_tagged_enum() {
+        #[derive(Facet, Debug, PartialEq)]
+        #[facet(tag = "type")]
+        #[repr(C)]
+        enum Shape {
+            Circle { radius: f64 },
+            Rectangle { width: f64, height: f64 },
+        }
+
+        let xml = b"<shape><type>Circle</type><radius>5.0</radius></shape>";
+        let reader = Cursor::new(&xml[..]);
+        let result: Shape = from_reader(reader).unwrap();
+
+        assert_eq!(result, Shape::Circle { radius: 5.0 });
     }
 }

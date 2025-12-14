@@ -182,6 +182,12 @@ impl<'de> FormatParser<'de> for XmlParser<'de> {
         let evidence = self.build_probe();
         Ok(XmlProbe { evidence, idx: 0 })
     }
+
+    fn elements_as_sequences(&self) -> bool {
+        // XML elements are semantically ambiguous - the deserializer uses target type
+        // to decide if an element should be treated as a struct or sequence
+        true
+    }
 }
 
 impl<'de> XmlParser<'de> {
