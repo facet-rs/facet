@@ -4,8 +4,17 @@
 //!
 //! This crate provides JSON support via the `FormatParser` trait.
 
+extern crate alloc;
+
+mod adapter;
+mod error;
 mod parser;
+mod scan_buffer;
+mod scanner;
 mod serializer;
+
+#[cfg(feature = "streaming")]
+mod streaming_adapter;
 
 pub use parser::{JsonError, JsonParser};
 pub use serializer::{

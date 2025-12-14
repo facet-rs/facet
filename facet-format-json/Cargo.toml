@@ -16,9 +16,11 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 corosensei = { version = "0.3", optional = true }
 facet-core = { path = "../facet-core", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
 facet-format = { path = "../facet-format" }
-facet-json = { path = "../facet-json", features = ["axum"] }
 facet-reflect = { path = "../facet-reflect", features = ["miette"] }
 futures-io = { version = "0.3", optional = true }
+lexical-parse-float = { version = "1.0.5", optional = true }
+lexical-parse-integer = { version = "1.0.5", optional = true }
+miette = { workspace = true }
 tokio = { version = "1", default-features = false, optional = true, features = ["io-util"] }
 
 [dev-dependencies]
@@ -34,7 +36,9 @@ harness = false
 
 [features]
 default = []
-streaming = ["dep:corosensei", "facet-json/streaming", "std"]
-std = ["facet-json/std"]
-tokio = ["streaming", "facet-json/tokio", "dep:tokio"]
-futures-io = ["streaming", "facet-json/futures-io", "dep:futures-io"]
+fast = ["lexical-parse"]
+lexical-parse = ["dep:lexical-parse-float", "dep:lexical-parse-integer"]
+streaming = ["dep:corosensei", "std"]
+std = []
+tokio = ["streaming", "dep:tokio"]
+futures-io = ["streaming", "dep:futures-io"]
