@@ -250,16 +250,16 @@ fn create_socketpair() -> io::Result<(OwnedFd, OwnedFd)> {
     let mut fds = [0i32; 2];
 
     // SOCK_DGRAM for datagram semantics (each send is a discrete message)
-    // SOCK_NONBLOCK for non-blocking I/O
     // Note: SOCK_CLOEXEC is NOT set so fds can be inherited
-    let ret = unsafe {
-        libc::socketpair(
-            libc::AF_UNIX,
-            libc::SOCK_DGRAM | libc::SOCK_NONBLOCK,
-            0,
-            fds.as_mut_ptr(),
-        )
-    };
+    //
+    // On Linux, we can use SOCK_NONBLOCK directly. On macOS/BSD, this flag
+    // doesn't exist, so we set non-blocking mode separately with fcntl.
+    #[cfg(target_os = "linux")]
+    let sock_type = libc::SOCK_DGRAM | libc::SOCK_NONBLOCK;
+    #[cfg(not(target_os = "linux"))]
+    let sock_type = libc::SOCK_DGRAM;
+
+    let ret = unsafe { libc::socketpair(libc::AF_UNIX, sock_type, 0, fds.as_mut_ptr()) };
 
     if ret < 0 {
         return Err(io::Error::last_os_error());
@@ -268,6 +268,13 @@ fn create_socketpair() -> io::Result<(OwnedFd, OwnedFd)> {
     // SAFETY: socketpair succeeded, fds are valid
     let fd0 = unsafe { OwnedFd::from_raw_fd(fds[0]) };
     let fd1 = unsafe { OwnedFd::from_raw_fd(fds[1]) };
+
+    // On non-Linux platforms, set non-blocking mode explicitly
+    #[cfg(not(target_os = "linux"))]
+    {
+        set_nonblocking(fd0.as_raw_fd())?;
+        set_nonblocking(fd1.as_raw_fd())?;
+    }
 
     Ok((fd0, fd1))
 }

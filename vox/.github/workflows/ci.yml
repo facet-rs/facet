@@ -13,8 +13,13 @@ env:
 
 jobs:
   test:
-    name: Test
-    runs-on: depot-ubuntu-24.04-16
+    name: Test (${{ matrix.os }})
+    strategy:
+      matrix:
+        include:
+          - os: depot-ubuntu-24.04-16
+          - os: depot-macos-14
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
