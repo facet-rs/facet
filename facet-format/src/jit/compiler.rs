@@ -10,7 +10,7 @@ use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module};
 
-use facet_core::{Facet, Field, Shape, Type as FacetType, UserType};
+use facet_core::{Def, Facet, Field, Shape, Type as FacetType, UserType};
 
 use super::helpers::{self, JitContext, ParserVTable};
 use crate::{DeserializeError, FormatParser};
@@ -690,6 +690,12 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
                         WriteKind::NestedStruct(_) => {
                             unreachable!("Nested struct should be handled in outer match");
                         }
+                        WriteKind::Option(_) => {
+                            unreachable!("Option should be handled in outer match");
+                        }
+                        WriteKind::Vec(_) => {
+                            unreachable!("Vec should be handled in outer match");
+                        }
                     }
 
                     builder.ins().jump(after_field, &[]);
@@ -765,6 +771,10 @@ enum WriteKind {
     String,
     /// Nested struct that needs to be deserialized via a separate compiled function
     NestedStruct(&'static Shape),
+    /// Option<T> - shape is the Option shape (includes inner type)
+    Option(&'static Shape),
+    /// Vec<T> - shape is the Vec shape (includes element type)
+    Vec(&'static Shape),
 }
 
 #[allow(dead_code)]
@@ -785,6 +795,21 @@ impl WriteKind {
             "f64" => Some(WriteKind::F64),
             "String" | "alloc::string::String" => Some(WriteKind::String),
             _ => {
+                // Check by Def first (Option, Vec, nested structs)
+                match &shape.def {
+                    Def::Option(_option_def) => {
+                        // For now, support Option<T> where T is JIT-compatible
+                        // TODO: Could recursively check inner type compatibility
+                        return Some(WriteKind::Option(shape));
+                    }
+                    Def::List(_list_def) => {
+                        // For now, support Vec<T> where T is JIT-compatible
+                        // TODO: Could recursively check element type compatibility
+                        return Some(WriteKind::Vec(shape));
+                    }
+                    _ => {}
+                }
+
                 // Check for nested struct
                 if let FacetType::User(UserType::Struct(_)) = &shape.ty {
                     // Recursively check if the nested struct is JIT-compatible
