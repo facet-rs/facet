@@ -86,8 +86,8 @@ uv pip install -e .
 ```bash
 # Get some benchmark data
 cd ../facet-json
-cargo bench --bench vs_format_json simple_struct --features cranelift > /tmp/divan.txt 2>&1
-cargo bench --bench gungraun_jit --features cranelift > /tmp/gungraun.txt 2>&1
+cargo bench --bench unified_benchmarks_divan --features cranelift --features jit > /tmp/divan.txt 2>&1
+cargo bench --bench unified_benchmarks_gungraun --features cranelift --features jit > /tmp/gungraun.txt 2>&1
 
 # Test the parser
 cd ../scripts
@@ -129,7 +129,7 @@ Make sure all variables used in f-strings are defined before use. Common issue: 
 
 Check the regex patterns in `parse_bench.py`:
 - Divan: looks for `├─ benchmark_name` and `│  ├─ target_name  123.45 µs`
-- Gungraun: looks for `gungraun_jit::module::benchmark_name` and `  Instructions: 12345`
+- Gungraun: looks for `unified_benchmarks_gungraun::module::benchmark_name` (legacy `gungraun_jit::...` still supported) and `  Instructions: 12345`
 
 If divan/gungraun output format changes, update the regex.
 

@@ -119,7 +119,7 @@ Reference in KDL, xtask reads and embeds.
 
 ## Next Steps
 
-1. Create `gen_bench_data.rs` example that generates all JSON
+1. Create `src/bin/gen_bench_data.rs` helper that generates all JSON
 2. Run it once, commit JSON files to `facet-json/benches/data/`
 3. Add all benchmarks to `benchmarks.kdl` referencing data files
 4. Modify `gen_benchmarks.rs` to support reading JSON from files

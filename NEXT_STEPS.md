@@ -7,8 +7,8 @@
 - ✅ cargo xtask gen-benchmarks works
 
 ## Issue
-bench-report.sh runs old benchmarks (vs_format_json, gungraun_jit).
-Should run unified_benchmarks instead.
+(Resolved in this branch) `bench-report.sh` ran legacy `vs_format_json`/`gungraun_jit` benches.
+It should run the unified harnesses generated from KDL.
 
 ## Problem
 unified_benchmarks.rs has BOTH divan and gungraun in one file.
@@ -59,8 +59,8 @@ cargo bench --bench vs_format_json --features cranelift
 cargo bench --bench gungraun_jit --features cranelift
 
 # NEW:
-cargo bench --bench unified_benchmarks_divan --features cranelift
-cargo bench --bench unified_benchmarks_gungraun --features cranelift
+cargo bench --bench unified_benchmarks_divan --features cranelift --features jit
+cargo bench --bench unified_benchmarks_gungraun --features cranelift --features jit
 ```
 
 ### 5. Update parse_bench.py:
@@ -76,6 +76,6 @@ No changes needed if file names match expected patterns.
 ## Current Workaround
 Can run manually:
 ```bash
-cargo bench --bench unified_benchmarks --features cranelift  # Runs gungraun only
+cargo bench --bench unified_benchmarks --features cranelift --features jit  # Runs gungraun only
 # Divan benchmarks exist but don't run (harness = false)
 ```

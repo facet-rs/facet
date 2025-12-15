@@ -605,8 +605,11 @@ def parse_gungraun_output(text: str) -> Dict[str, Dict[str, int]]:
 
     lines = text.split('\n')
     for line in lines:
-        # Match benchmark names like "gungraun_jit::jit_benchmarks::simple_struct_facet_format_jit"
-        name_match = re.match(r'gungraun_jit::[\w_]+::([\w_]+)', line)
+        # Match benchmark names like "unified_benchmarks_gungraun::simple_struct::facet_format_jit"
+        name_match = re.match(
+            r'(?:gungraun_jit|unified_benchmarks_gungraun)::[\w_]+::([\w_]+)',
+            line,
+        )
         if name_match:
             current_bench = name_match.group(1)
             results[current_bench] = {}

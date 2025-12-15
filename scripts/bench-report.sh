@@ -39,7 +39,7 @@ cd "${REPO_ROOT}/facet-json"
 echo ""
 show_progress "${REPORT_DIR}/divan-${TIMESTAMP}.txt" "📊 Running divan (wall-clock)" &
 PROGRESS_PID=$!
-cargo bench --bench vs_format_json --features cranelift > "${REPORT_DIR}/divan-${TIMESTAMP}.txt" 2>&1 || true
+cargo bench --bench unified_benchmarks_divan --features cranelift --features jit > "${REPORT_DIR}/divan-${TIMESTAMP}.txt" 2>&1 || true
 kill $PROGRESS_PID 2>/dev/null || true
 wait $PROGRESS_PID 2>/dev/null || true
 DIVAN_LINES=$(wc -l < "${REPORT_DIR}/divan-${TIMESTAMP}.txt" 2>/dev/null || echo "0")
@@ -48,7 +48,7 @@ printf "\r  📊 Running divan (wall-clock) ... ✓ %d lines\n" "$DIVAN_LINES"
 # Run gungraun benchmarks with progress
 show_progress "${REPORT_DIR}/gungraun-${TIMESTAMP}.txt" "🔬 Running gungraun (instruction counts)" &
 PROGRESS_PID=$!
-cargo bench --bench gungraun_jit --features cranelift > "${REPORT_DIR}/gungraun-${TIMESTAMP}.txt" 2>&1 || true
+cargo bench --bench unified_benchmarks_gungraun --features cranelift --features jit > "${REPORT_DIR}/gungraun-${TIMESTAMP}.txt" 2>&1 || true
 kill $PROGRESS_PID 2>/dev/null || true
 wait $PROGRESS_PID 2>/dev/null || true
 GUNGRAUN_LINES=$(wc -l < "${REPORT_DIR}/gungraun-${TIMESTAMP}.txt" 2>/dev/null || echo "0")

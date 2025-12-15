@@ -26,6 +26,8 @@ streaming = ["std", "dep:corosensei"]
 bolero-inline-tests = ["std"]
 # JIT-compiled JSON deserialization using Cranelift
 cranelift = ["std", "dep:cranelift", "dep:cranelift-jit", "dep:cranelift-module", "dep:cranelift-native", "dep:parking_lot", "dep:memchr"]
+# Alias used by tooling/scripts that expect `--features jit`
+jit = ["cranelift"]
 # CI feature: enables cranelift for comprehensive testing
 ci = ["cranelift"]
 
@@ -106,7 +108,11 @@ name = "gungraun_jit"
 harness = false
 
 [[bench]]
-name = "unified_benchmarks"
+name = "unified_benchmarks_divan"
+harness = false
+
+[[bench]]
+name = "unified_benchmarks_gungraun"
 harness = false
 
 [[bin]]
@@ -115,7 +121,7 @@ required-features = ["brotli"]
 
 [[bin]]
 name = "gen_bench_data"
-path = "benches/gen_bench_data.rs"
+path = "src/bin/gen_bench_data.rs"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"jiff\"))"] }
