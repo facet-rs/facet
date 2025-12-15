@@ -529,12 +529,18 @@ pub(crate) fn expand(attr: TokenStream, item: TokenStream) -> TokenStream {
             /// This captures the current state of all inputs and cached query results.
             /// Input data uses O(1) structural sharing via `im::HashMap`.
             /// Cached query results are deep-cloned to ensure snapshot independence.
+            ///
+            /// The snapshot shares its `RuntimeId` with the parent database, enabling
+            /// in-flight query deduplication across concurrent snapshots.
             #vis async fn from_database(db: &#db_name) -> Self {
-                let runtime = picante::Runtime::new();
+                let parent_runtime = picante::HasRuntime::runtime(db);
+                // Create a snapshot runtime that shares the parent's RuntimeId.
+                // This allows in-flight query deduplication to work across snapshots.
+                let runtime = picante::Runtime::new_for_snapshot(parent_runtime.id());
                 // Set the snapshot's revision to match the database's current revision.
                 // This ensures cached query results (which have verified_at from the db's revision)
                 // are considered valid in the snapshot.
-                runtime.set_current_revision(picante::HasRuntime::runtime(db).current_revision());
+                runtime.set_current_revision(parent_runtime.current_revision());
                 let ingredients = picante::IngredientRegistry::new();
 
                 let snapshot = Self {

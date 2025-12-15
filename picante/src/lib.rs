@@ -61,6 +61,7 @@
 pub mod db;
 pub mod error;
 pub mod frame;
+pub(crate) mod inflight;
 pub mod ingredient;
 pub mod key;
 pub mod persist;
@@ -72,7 +73,7 @@ pub use error::{PicanteError, PicanteResult};
 pub use ingredient::{DerivedIngredient, InputIngredient, InternId, InternedIngredient};
 pub use key::{Dep, DynKey, Key, QueryKindId};
 pub use revision::Revision;
-pub use runtime::{HasRuntime, Runtime, RuntimeEvent};
+pub use runtime::{HasRuntime, Runtime, RuntimeEvent, RuntimeId};
 
 #[cfg(feature = "macros")]
 pub use picante_macros::{db, input, interned, tracked};

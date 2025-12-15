@@ -8,9 +8,30 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{broadcast, watch};
 
+/// Global counter for assigning unique runtime IDs.
+static RUNTIME_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// Unique identifier for a database runtime.
+///
+/// This ID is used to distinguish between different database instances for
+/// in-flight query deduplication. Snapshots created from a database share
+/// the same `RuntimeId` as their parent, allowing concurrent queries across
+/// snapshots to coalesce.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RuntimeId(pub(crate) u64);
+
+impl RuntimeId {
+    /// Create a new unique runtime ID.
+    fn new_unique() -> Self {
+        Self(RUNTIME_ID_COUNTER.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
 /// Shared runtime state for a Picante database: primarily the current revision.
 #[derive(Debug)]
 pub struct Runtime {
+    /// Unique identifier for this runtime family (shared with snapshots).
+    id: RuntimeId,
     current_revision: AtomicU64,
     revision_tx: watch::Sender<Revision>,
     events_tx: broadcast::Sender<RuntimeEvent>,
@@ -22,6 +43,32 @@ impl Runtime {
     /// Create a new runtime starting at revision 0.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create a new runtime that shares the same identity as a parent.
+    ///
+    /// This is used for database snapshots. The snapshot runtime has an independent
+    /// revision counter, event channels, and dependency graph, but shares the same
+    /// `RuntimeId` as the parent. This allows in-flight query deduplication to work
+    /// across the parent database and all its snapshots.
+    pub fn new_for_snapshot(parent_id: RuntimeId) -> Self {
+        let (revision_tx, _) = watch::channel(Revision(0));
+        let (events_tx, _) = broadcast::channel(1024);
+        Self {
+            id: parent_id,
+            current_revision: AtomicU64::new(0),
+            revision_tx,
+            events_tx,
+            deps_by_query: DashMap::new(),
+            reverse_deps: DashMap::new(),
+        }
+    }
+
+    /// Get this runtime's unique identifier.
+    ///
+    /// This ID is shared between a database and all snapshots created from it.
+    pub fn id(&self) -> RuntimeId {
+        self.id
     }
 
     /// Read the current revision.
@@ -179,6 +226,7 @@ impl Default for Runtime {
         let (revision_tx, _) = watch::channel(Revision(0));
         let (events_tx, _) = broadcast::channel(1024);
         Self {
+            id: RuntimeId::new_unique(),
             current_revision: AtomicU64::new(0),
             revision_tx,
             events_tx,
