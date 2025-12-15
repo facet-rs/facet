@@ -420,3 +420,49 @@ python3 scripts/parse-bench.py divan.txt gungraun.txt test.html
 - **Divan docs:** https://github.com/nvzqz/divan
 - **Gungraun docs:** https://gungraun.github.io/gungraun/
 - **Nextest wrapper scripts:** https://nexte.st/docs/configuration/wrapper-scripts/
+
+## Report Features
+
+The generated HTML reports include:
+
+### Visual Design
+- **Emojis**: Each target has an emoji for quick identification
+  * ⚡ facet_format_jit (Format JIT) - Gold/Yellow
+  * 🚀 facet_json_cranelift (JSON JIT) - Light Teal
+  * 📦 facet_format_json (Format Interp) - Red
+  * 🔧 facet_json (JSON Interp) - Teal
+  * 🎯 serde_json (Baseline) - Purple
+
+- **Color Coding** (consistent across ALL tables and charts):
+  * Fastest: Green background
+  * facet_format_jit: Yellow background (our star!)
+  * serde_json: Purple background (the baseline)
+
+### Interactive Features
+- **Hover table row** → highlights corresponding bar in chart
+- **Visual feedback** - dimmed bars, thicker border on highlighted
+- **Smooth transitions** - no laggy animations
+
+### Data Organization
+- **Separate serialize/deserialize** - each operation gets own table+chart
+- **Categorized benchmarks**:
+  * 🔬 Micro (simple_struct, nested, options)
+  * 🌍 Realistic (twitter, canada, hashmaps)
+  * 📊 Arrays (Vec<T> benchmarks)
+- **One table + one chart per benchmark** - easy to scan
+
+### Speedup Calculations
+- **vs Fastest** - absolute performance (1.0x = fastest)
+- **vs serde_json** - our goal (how close are we?)
+- **Color coded:**
+  * Green: ≤1.0x (beating or matching baseline!)
+  * Orange: 1.0-1.5x (close)
+  * Red: >1.5x (work to do)
+
+### Chart Details
+- **Horizontal bars** - easier to read labels
+- **Sorted by speed** - fastest at top
+- **Consistent colors** - same target always same color
+- **Tooltips** - hover bar for exact time
+- **No legend clutter** - labels are on bars
+
