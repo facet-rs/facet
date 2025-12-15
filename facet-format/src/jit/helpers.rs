@@ -19,6 +19,7 @@ thread_local! {
 /// This is a simplified representation of `ParseEvent` that can be passed
 /// across the FFI boundary.
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub struct RawEvent {
     /// Event type tag
     pub tag: EventTag,
@@ -50,6 +51,7 @@ pub enum EventTag {
 
 /// Event payload union for FFI
 #[repr(C)]
+#[derive(Copy, Clone)]
 pub union EventPayload {
     /// For FieldKey: pointer to field name string
     pub field_name: FieldNamePayload,
@@ -175,6 +177,50 @@ pub fn make_vtable<'de, P: FormatParser<'de>>() -> ParserVTable {
     }
 }
 
+/// Peek at the next event without consuming it (uses JitContext buffer).
+///
+/// # Safety
+/// - `ctx` must be a valid JitContext pointer
+/// - `out` must be a valid pointer to a RawEvent to write the peeked event
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_peek_event(ctx: *mut JitContext, out: *mut RawEvent) -> i32 {
+    let ctx = unsafe { &mut *ctx };
+
+    // If we already have a peeked event, return it
+    if let Some(peeked) = ctx.peeked_event {
+        unsafe { *out = peeked };
+        return OK;
+    }
+
+    // Otherwise, call next_event and buffer it
+    let result = unsafe { jit_next_event(ctx, out) };
+    if result == OK {
+        ctx.peeked_event = Some(unsafe { *out });
+    }
+    result
+}
+
+/// Get the next event, either from buffer or by calling parser.
+///
+/// # Safety
+/// - `ctx` must be a valid JitContext pointer
+/// - `out` must be a valid pointer to a RawEvent
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_next_event(ctx: *mut JitContext, out: *mut RawEvent) -> i32 {
+    let ctx_ref = unsafe { &mut *ctx };
+
+    // If we have a peeked event, return it and clear the buffer
+    if let Some(peeked) = ctx_ref.peeked_event.take() {
+        unsafe { *out = peeked };
+        return OK;
+    }
+
+    // Call the vtable's next_event function
+    let vtable = unsafe { &*ctx_ref.vtable };
+    let next_event_fn = vtable.next_event;
+    unsafe { next_event_fn(ctx_ref.parser, out) }
+}
+
 /// Wrapper for `parser.next_event()` that converts to RawEvent.
 unsafe extern "C" fn next_event_wrapper<'de, P: FormatParser<'de>>(
     parser: *mut (),
@@ -261,6 +307,8 @@ pub struct JitContext {
     pub parser: *mut (),
     /// Vtable for parser operations
     pub vtable: *const ParserVTable,
+    /// Peeked event buffer (for implementing peek without vtable changes)
+    pub peeked_event: Option<RawEvent>,
 }
 
 /// Convert a ParseEvent to a RawEvent for FFI.
