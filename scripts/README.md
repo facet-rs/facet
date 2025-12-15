@@ -9,17 +9,30 @@ Main entry point for generating benchmark reports.
 
 **Usage:**
 ```bash
-./bench-report.sh
+./bench-report.sh          # Generate report
+./bench-report.sh --serve  # Generate and auto-serve on http://localhost:1999
 ```
 
 **What it does:**
 1. Sets up Python venv with uv (first run only)
 2. Runs divan benchmarks (wall-clock)
+   - **Live progress indicator**: Shows line count updating every 0.5s
 3. Runs gungraun benchmarks (instruction counts)
+   - **Live progress indicator**: Shows line count updating every 0.5s
 4. Calls Python parser to generate HTML report
-5. Falls back to simple text embedding if Python fails
+5. Creates `report.html` symlink to latest
+6. **If `--serve`**: Starts HTTP server on port 1999
+7. Falls back to simple text embedding if Python fails
 
-**Output:** `../bench-reports/report-TIMESTAMP.html`
+**Output:** `../bench-reports/report-TIMESTAMP.html` + `report.html` symlink
+
+**Progress indicator:**
+Shows real-time feedback while benchmarks run:
+```
+📊 Running divan (wall-clock) ... 342 lines
+```
+
+This proves the benchmark isn't frozen and gives a sense of progress.
 
 ### `parse_bench.py`
 Python script that parses benchmark output and generates HTML with tables and graphs.

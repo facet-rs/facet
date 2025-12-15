@@ -3,6 +3,12 @@
 
 set -euo pipefail
 
+# Parse arguments
+SERVE=false
+if [[ "${1:-}" == "--serve" ]]; then
+    SERVE=true
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPORT_DIR="${REPO_ROOT}/bench-reports"
@@ -11,17 +17,42 @@ REPORT_FILE="${REPORT_DIR}/report-${TIMESTAMP}.html"
 
 mkdir -p "${REPORT_DIR}"
 
+# Function to show progress with line count
+show_progress() {
+    local file="$1"
+    local label="$2"
+
+    while true; do
+        if [[ -f "$file" ]]; then
+            local lines=$(wc -l < "$file" 2>/dev/null || echo "0")
+            printf "\r  %s ... %d lines" "$label" "$lines"
+        fi
+        sleep 0.5
+    done
+}
+
 echo "🏃 Running benchmarks..."
 
 cd "${REPO_ROOT}/facet-json"
 
-# Run divan benchmarks
-echo "  📊 Running divan (wall-clock)..."
+# Run divan benchmarks with progress
+echo ""
+show_progress "${REPORT_DIR}/divan-${TIMESTAMP}.txt" "📊 Running divan (wall-clock)" &
+PROGRESS_PID=$!
 cargo bench --bench vs_format_json --features cranelift > "${REPORT_DIR}/divan-${TIMESTAMP}.txt" 2>&1 || true
+kill $PROGRESS_PID 2>/dev/null || true
+wait $PROGRESS_PID 2>/dev/null || true
+DIVAN_LINES=$(wc -l < "${REPORT_DIR}/divan-${TIMESTAMP}.txt" 2>/dev/null || echo "0")
+printf "\r  📊 Running divan (wall-clock) ... ✓ %d lines\n" "$DIVAN_LINES"
 
-# Run gungraun benchmarks
-echo "  🔬 Running gungraun (instruction counts)..."
+# Run gungraun benchmarks with progress
+show_progress "${REPORT_DIR}/gungraun-${TIMESTAMP}.txt" "🔬 Running gungraun (instruction counts)" &
+PROGRESS_PID=$!
 cargo bench --bench gungraun_jit --features cranelift > "${REPORT_DIR}/gungraun-${TIMESTAMP}.txt" 2>&1 || true
+kill $PROGRESS_PID 2>/dev/null || true
+wait $PROGRESS_PID 2>/dev/null || true
+GUNGRAUN_LINES=$(wc -l < "${REPORT_DIR}/gungraun-${TIMESTAMP}.txt" 2>/dev/null || echo "0")
+printf "\r  🔬 Running gungraun (instruction counts) ... ✓ %d lines\n" "$GUNGRAUN_LINES"
 
 echo "📝 Parsing benchmark data and generating HTML report..."
 
@@ -240,12 +271,21 @@ fi
 # Create symlink to latest report
 ln -sf "report-${TIMESTAMP}.html" "${REPORT_DIR}/report.html"
 
+echo ""
 echo "✅ Report generated: ${REPORT_FILE}"
 echo "   Latest: ${REPORT_DIR}/report.html"
 echo ""
-echo "To view:"
-echo "  open bench-reports/report.html"
-echo ""
-echo "Or start HTTP server:"
-echo "  python3 -m http.server -b 0.0.0.0 -d bench-reports 1999"
-echo "  Then open: http://localhost:1999/report.html"
+
+if [[ "$SERVE" == "true" ]]; then
+    echo "🌐 Starting HTTP server on http://localhost:1999/report.html"
+    echo "   Press Ctrl+C to stop"
+    echo ""
+    cd "${REPO_ROOT}"
+    python3 -m http.server -b 0.0.0.0 -d bench-reports 1999
+else
+    echo "To view:"
+    echo "  open bench-reports/report.html"
+    echo ""
+    echo "Or auto-serve:"
+    echo "  ./scripts/bench-report.sh --serve"
+fi
