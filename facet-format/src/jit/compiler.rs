@@ -554,107 +554,13 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         for (i, field) in fields.iter().enumerate() {
             builder.switch_to_block(field_blocks[i]);
 
-            // Call next_event to get the scalar value
-            let call_result = builder.ins().call_indirect(
-                sig_next_event_ref,
-                next_event_fn,
-                &[parser_ptr, raw_event_ptr],
-            );
-            let result = builder.inst_results(call_result)[0];
-
-            // Check for error
-            let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
-            let write_value_block = builder.create_block();
-            builder
-                .ins()
-                .brif(is_error, error_block, &[], write_value_block, &[]);
-
-            builder.switch_to_block(write_value_block);
-
-            // Get the payload pointer
-            let payload_ptr = builder
-                .ins()
-                .iadd_imm(raw_event_ptr, helpers::RAW_EVENT_PAYLOAD_OFFSET as i64);
-
             let offset_val = builder.ins().iconst(pointer_type, field.offset as i64);
 
-            // Write the value based on field type
+            // Handle field based on type
             match field.write_kind {
-                WriteKind::I64 | WriteKind::I32 | WriteKind::I16 | WriteKind::I8 => {
-                    // Load i64 value from scalar payload (offset 0 in ScalarPayload)
-                    let value = builder
-                        .ins()
-                        .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
-                    builder
-                        .ins()
-                        .call(write_i64_ref, &[out_ptr, offset_val, value]);
-                }
-                WriteKind::U64 | WriteKind::U32 | WriteKind::U16 | WriteKind::U8 => {
-                    // Load u64 value from scalar payload
-                    let value = builder
-                        .ins()
-                        .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
-                    builder
-                        .ins()
-                        .call(write_u64_ref, &[out_ptr, offset_val, value]);
-                }
-                WriteKind::F64 | WriteKind::F32 => {
-                    // Load f64 value from scalar payload
-                    let value = builder
-                        .ins()
-                        .load(types::F64, MemFlags::trusted(), payload_ptr, 0);
-                    builder
-                        .ins()
-                        .call(write_f64_ref, &[out_ptr, offset_val, value]);
-                }
-                WriteKind::Bool => {
-                    // Load bool value from scalar payload (as u8)
-                    let value = builder
-                        .ins()
-                        .load(types::I8, MemFlags::trusted(), payload_ptr, 0);
-                    builder
-                        .ins()
-                        .call(write_bool_ref, &[out_ptr, offset_val, value]);
-                }
-                WriteKind::String => {
-                    // Load string payload: ptr, len, capacity, owned
-                    // StringPayload layout: ptr (0), len (8), capacity (16), owned (24)
-                    let str_ptr =
-                        builder
-                            .ins()
-                            .load(pointer_type, MemFlags::trusted(), payload_ptr, 0);
-                    let str_len = builder.ins().load(
-                        pointer_type,
-                        MemFlags::trusted(),
-                        payload_ptr,
-                        8, // offset to len field
-                    );
-                    let str_capacity = builder.ins().load(
-                        pointer_type,
-                        MemFlags::trusted(),
-                        payload_ptr,
-                        16, // offset to capacity field
-                    );
-                    let str_owned = builder.ins().load(
-                        types::I8,
-                        MemFlags::trusted(),
-                        payload_ptr,
-                        24, // offset to owned field
-                    );
-                    builder.ins().call(
-                        write_string_ref,
-                        &[
-                            out_ptr,
-                            offset_val,
-                            str_ptr,
-                            str_len,
-                            str_capacity,
-                            str_owned,
-                        ],
-                    );
-                }
                 WriteKind::NestedStruct(nested_shape) => {
-                    // Get the pre-compiled function pointer for this nested struct
+                    // For nested structs, DON'T call next_event first!
+                    // The nested deserializer will consume the StructStart itself.
                     let func_ptr = nested_func_ptrs[&(nested_shape as *const Shape)];
                     let func_ptr_val = builder.ins().iconst(pointer_type, func_ptr as i64);
 
@@ -673,18 +579,123 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
                         builder
                             .ins()
                             .icmp_imm(IntCC::SignedLessThan, nested_result, 0);
-                    let nested_success = builder.create_block();
                     builder
                         .ins()
-                        .brif(nested_is_error, error_block, &[], nested_success, &[]);
+                        .brif(nested_is_error, error_block, &[], after_field, &[]);
+                }
+                _ => {
+                    // For scalars/strings, call next_event to get the value
+                    let call_result = builder.ins().call_indirect(
+                        sig_next_event_ref,
+                        next_event_fn,
+                        &[parser_ptr, raw_event_ptr],
+                    );
+                    let result = builder.inst_results(call_result)[0];
 
-                    builder.switch_to_block(nested_success);
-                    builder.seal_block(nested_success);
+                    // Check for error
+                    let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+                    let write_value_block = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(is_error, error_block, &[], write_value_block, &[]);
+
+                    builder.switch_to_block(write_value_block);
+
+                    // Get the payload pointer
+                    let payload_ptr = builder
+                        .ins()
+                        .iadd_imm(raw_event_ptr, helpers::RAW_EVENT_PAYLOAD_OFFSET as i64);
+
+                    // Write the value based on field type
+                    match field.write_kind {
+                        WriteKind::I64 | WriteKind::I32 | WriteKind::I16 | WriteKind::I8 => {
+                            // Load i64 value from scalar payload (offset 0 in ScalarPayload)
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .call(write_i64_ref, &[out_ptr, offset_val, value]);
+                        }
+                        WriteKind::U64 | WriteKind::U32 | WriteKind::U16 | WriteKind::U8 => {
+                            // Load u64 value from scalar payload
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .call(write_u64_ref, &[out_ptr, offset_val, value]);
+                        }
+                        WriteKind::F64 | WriteKind::F32 => {
+                            // Load f64 value from scalar payload
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::F64, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .call(write_f64_ref, &[out_ptr, offset_val, value]);
+                        }
+                        WriteKind::Bool => {
+                            // Load bool value from scalar payload (as u8)
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I8, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .call(write_bool_ref, &[out_ptr, offset_val, value]);
+                        }
+                        WriteKind::String => {
+                            // Load string payload: ptr, len, capacity, owned
+                            // StringPayload layout: ptr (0), len (8), capacity (16), owned (24)
+                            let str_ptr = builder.ins().load(
+                                pointer_type,
+                                MemFlags::trusted(),
+                                payload_ptr,
+                                0,
+                            );
+                            let str_len = builder.ins().load(
+                                pointer_type,
+                                MemFlags::trusted(),
+                                payload_ptr,
+                                8, // offset to len field
+                            );
+                            let str_capacity = builder.ins().load(
+                                pointer_type,
+                                MemFlags::trusted(),
+                                payload_ptr,
+                                16, // offset to capacity field
+                            );
+                            let str_owned = builder.ins().load(
+                                types::I8,
+                                MemFlags::trusted(),
+                                payload_ptr,
+                                24, // offset to owned field
+                            );
+                            builder.ins().call(
+                                write_string_ref,
+                                &[
+                                    out_ptr,
+                                    offset_val,
+                                    str_ptr,
+                                    str_len,
+                                    str_capacity,
+                                    str_owned,
+                                ],
+                            );
+                        }
+                        WriteKind::NestedStruct(_) => {
+                            unreachable!("Nested struct should be handled in outer match");
+                        }
+                    }
+
+                    builder.ins().jump(after_field, &[]);
+                    builder.seal_block(write_value_block);
                 }
             }
-
-            builder.ins().jump(after_field, &[]);
-            builder.seal_block(write_value_block);
         }
 
         // After field: loop back
