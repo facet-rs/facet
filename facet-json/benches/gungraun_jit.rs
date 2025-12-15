@@ -100,15 +100,29 @@ fn nested_struct_facet_json() -> Outer {
     black_box(facet_json::from_slice::<Outer>(black_box(json)).unwrap())
 }
 
+#[library_benchmark]
+fn simple_struct_serde_json() -> serde_json::Value {
+    let json = br#"{"id": 42, "name": "test", "active": true}"#;
+    black_box(serde_json::from_slice::<serde_json::Value>(black_box(json)).unwrap())
+}
+
+#[library_benchmark]
+fn nested_struct_serde_json() -> serde_json::Value {
+    let json = br#"{"id": 42, "inner": {"x": 10, "y": 20}, "name": "test"}"#;
+    black_box(serde_json::from_slice::<serde_json::Value>(black_box(json)).unwrap())
+}
+
 library_benchmark_group!(
     name = jit_benchmarks;
     benchmarks =
         simple_struct_facet_format_jit,
         simple_struct_facet_format_json,
         simple_struct_facet_json,
+        simple_struct_serde_json,
         nested_struct_facet_format_jit,
         nested_struct_facet_format_json,
-        nested_struct_facet_json
+        nested_struct_facet_json,
+        nested_struct_serde_json
 );
 
 #[cfg(feature = "cranelift")]
