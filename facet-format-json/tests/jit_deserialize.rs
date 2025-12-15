@@ -187,7 +187,6 @@ fn test_jit_option_none() {
 }
 
 #[test]
-#[ignore = "WIP: SIGSEGV in option_replace_with - pointer corruption issue"]
 fn test_jit_option_some() {
     // Test with Some values
     let json = br#"{"id": 42, "maybe_count": 123, "maybe_flag": true}"#;
