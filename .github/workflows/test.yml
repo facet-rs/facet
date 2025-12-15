@@ -95,6 +95,25 @@ jobs:
         run: |
           just valgrind-facet-json
 
+  gungraun:
+    runs-on: depot-ubuntu-24.04-32
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install valgrind (required by gungraun)
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install gungraun-runner
+        run: cargo install gungraun-runner@0.17.0
+
+      - name: ✨ Run gungraun JIT benchmarks
+        shell: bash
+        run: |
+          cargo bench --bench gungraun_jit --features cranelift -p facet-json
+
   nightly:
     runs-on: depot-ubuntu-24.04-32
 
