@@ -113,5 +113,9 @@ harness = false
 name = "profile_canada"
 required-features = ["brotli"]
 
+[[bin]]
+name = "gen_bench_data"
+path = "benches/gen_bench_data.rs"
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(feature, values(\"jiff\"))"] }
