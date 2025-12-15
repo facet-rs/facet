@@ -58,7 +58,8 @@ struct CodeBlock {
 
 pub fn generate_benchmarks(
     kdl_path: &Path,
-    output_path: &Path,
+    divan_output_path: &Path,
+    gungraun_output_path: &Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "📖 Reading benchmark definitions from {}",
@@ -81,6 +82,35 @@ pub fn generate_benchmarks(
     println!("   Found {} benchmarks", benchmarks.len());
     println!("   Found {} type definitions", type_defs.len());
 
+    // Generate DIVAN benchmarks
+    let divan_output = generate_divan_benchmarks(&benchmarks, &type_defs)?;
+    println!(
+        "✍️  Writing divan benchmarks to {}",
+        divan_output_path.display()
+    );
+    fs::write(divan_output_path, divan_output)?;
+
+    // Generate GUNGRAUN benchmarks
+    let gungraun_output = generate_gungraun_benchmarks(&benchmarks, &type_defs)?;
+    println!(
+        "✍️  Writing gungraun benchmarks to {}",
+        gungraun_output_path.display()
+    );
+    fs::write(gungraun_output_path, gungraun_output)?;
+
+    println!(
+        "✅ Generated {} benchmarks × 5 targets × 2 harnesses = {} total benchmark functions!",
+        benchmarks.len(),
+        benchmarks.len() * 5 * 2
+    );
+
+    Ok(())
+}
+
+fn generate_divan_benchmarks(
+    benchmarks: &[BenchmarkDef],
+    type_defs: &[TypeDef],
+) -> Result<String, Box<dyn std::error::Error>> {
     let mut output = String::new();
 
     // File header
