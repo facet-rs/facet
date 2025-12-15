@@ -184,20 +184,9 @@ impl<'de> JsonParser<'de> {
     }
 
     fn consume_value_tokens(&mut self) -> Result<(), JsonError> {
-        let first = self.consume_token()?;
-        match first.token {
-            AdapterToken::ObjectStart => self.skip_container(DelimKind::Object),
-            AdapterToken::ArrayStart => self.skip_container(DelimKind::Array),
-            AdapterToken::ObjectEnd
-            | AdapterToken::ArrayEnd
-            | AdapterToken::Comma
-            | AdapterToken::Colon => Err(self.unexpected(&first, "value")),
-            AdapterToken::Eof => Err(JsonError::new(
-                JsonErrorKind::UnexpectedEof { expected: "value" },
-                first.span,
-            )),
-            _ => Ok(()),
-        }
+        let span = self.adapter.skip().map_err(JsonError::from)?;
+        self.current_offset = span.offset + span.len;
+        Ok(())
     }
 
     fn skip_container(&mut self, start_kind: DelimKind) -> Result<(), JsonError> {
