@@ -28,6 +28,7 @@ tokio = { version = "1", default-features = false, optional = true, features = [
 
 [dev-dependencies]
 facet = { workspace = true, features = ["doc", "net"] } #unified
+facet-format = { path = "../facet-format", features = ["jit"] }
 facet-format-suite = { path = "../facet-format-suite", features = ["third-party", "tokio"] }
 indoc = { workspace = true } #unified
 libtest-mimic = "0.8.1"
