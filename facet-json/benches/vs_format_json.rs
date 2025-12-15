@@ -753,6 +753,67 @@ mod single_nested_struct {
     }
 }
 
+/// Simple struct with Options - for JIT testing Option support
+mod simple_with_options {
+    use super::*;
+
+    #[derive(Facet, Serialize, Deserialize, Clone, Debug)]
+    struct WithOptions {
+        id: u64,
+        maybe_count: Option<i64>,
+        maybe_flag: Option<bool>,
+        maybe_value: Option<f64>,
+    }
+
+    static DATA: LazyLock<WithOptions> = LazyLock::new(|| WithOptions {
+        id: 42,
+        maybe_count: Some(123),
+        maybe_flag: None,
+        maybe_value: Some(2.5),
+    });
+    static JSON: LazyLock<String> = LazyLock::new(|| facet_json::to_string(&*DATA));
+
+    #[divan::bench]
+    fn facet_format_jit_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(format_jit::deserialize_with_fallback::<WithOptions, _>(
+                facet_format_json::JsonParser::new(black_box(JSON.as_bytes())),
+            ))
+        });
+    }
+
+    #[divan::bench]
+    fn facet_format_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_format_json::from_str::<WithOptions>(black_box(
+                &*JSON,
+            )))
+        });
+    }
+
+    #[divan::bench]
+    fn facet_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| black_box(facet_json::from_str::<WithOptions>(black_box(&*JSON))));
+    }
+
+    #[cfg(feature = "cranelift")]
+    #[divan::bench]
+    fn facet_json_cranelift_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(
+                facet_json::cranelift::from_str_with_fallback::<WithOptions>(black_box(&*JSON))
+                    .unwrap(),
+            )
+        });
+    }
+
+    #[divan::bench]
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher
+            .bench(|| black_box(serde_json::from_str::<WithOptions>(black_box(&*JSON)).unwrap()));
+    }
+}
+
 /// HashMaps - tests map serialization
 mod hashmaps {
     use super::*;
