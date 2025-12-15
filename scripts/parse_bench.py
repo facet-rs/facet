@@ -382,6 +382,11 @@ def generate_html_report(divan_data: Dict, git_info: Dict) -> str:
             transition: background 0.15s;
         }}
 
+        tr.dimmed {{
+            opacity: 0.3;
+            transition: opacity 0.15s;
+        }}
+
         .fastest {{
             background: #c8e6c9;
             border-left: 4px solid #2e7d32;
@@ -541,6 +546,9 @@ def generate_interactive_js() -> str:
             rows.forEach((row, idx) => {
                 if (row.getAttribute('data-target') === targetName) {
                     targetIndex = idx;
+                    row.classList.remove('dimmed');
+                } else {
+                    row.classList.add('dimmed');
                 }
             });
 
@@ -549,7 +557,7 @@ def generate_interactive_js() -> str:
             // Dim all bars except the highlighted one
             const original = window.chartOriginalConfigs[benchId];
             const newBg = chart.data.datasets[0].backgroundColor.map((color, idx) => {
-                return idx === targetIndex ? color : color.replace('CC', '40');  // More transparent
+                return idx === targetIndex ? color : color.replace('CC', '30');  // More transparent
             });
             const newBorder = chart.data.datasets[0].borderColor.map((color, idx) => {
                 return color;
@@ -564,6 +572,15 @@ def generate_interactive_js() -> str:
 
         function unhighlightChart(benchId) {
             const chart = window.charts[benchId];
+            const table = document.getElementById('table-' + benchId);
+
+            // Remove dimming from all table rows
+            if (table) {
+                const rows = table.querySelectorAll('tbody tr');
+                rows.forEach(row => row.classList.remove('dimmed'));
+            }
+
+            // Restore chart
             if (!chart || !window.chartOriginalConfigs[benchId]) return;
 
             const original = window.chartOriginalConfigs[benchId];
