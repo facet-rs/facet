@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Parse divan and gungraun benchmark outputs and generate HTML report with tables and graphs.
+Each benchmark gets its own table and interactive chart.
 """
 
 import re
@@ -8,31 +9,66 @@ import sys
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional
 import subprocess
 
-def parse_divan_output(text: str) -> Dict[str, Dict[str, float]]:
+# Target configuration
+TARGETS = {
+    'facet_format_jit': {
+        'emoji': '⚡',
+        'name': 'facet_format_jit',
+        'label': 'Format JIT',
+        'color': '#FFD700',  # Yellow/Gold - our star!
+    },
+    'facet_format_json': {
+        'emoji': '📦',
+        'name': 'facet_format_json',
+        'label': 'Format Interp',
+        'color': '#FF6B6B',  # Red
+    },
+    'facet_json': {
+        'emoji': '🔧',
+        'name': 'facet_json',
+        'label': 'JSON Interp',
+        'color': '#4ECDC4',  # Teal
+    },
+    'facet_json_cranelift': {
+        'emoji': '🚀',
+        'name': 'facet_json_cranelift',
+        'label': 'JSON JIT',
+        'color': '#95E1D3',  # Light teal
+    },
+    'serde_json': {
+        'emoji': '🎯',
+        'name': 'serde_json',
+        'label': 'serde_json',
+        'color': '#9B59B6',  # Purple - the baseline
+    },
+}
+
+def parse_divan_output(text: str) -> Dict[str, Dict[str, Dict[str, float]]]:
     """
     Parse divan output into structured data.
-    Returns: {benchmark_name: {target_name: median_ns}}
+    Returns: {benchmark_name: {operation: {target_name: median_ns}}}
+    where operation is 'deserialize' or 'serialize'
     """
     results = {}
     current_benchmark = None
 
     lines = text.split('\n')
     for line in lines:
-        # Match benchmark module names like "├─ simple_struct" or "╰─ twitter"
+        # Match benchmark module names
         module_match = re.match(r'[├╰]─ (\w+)\s', line)
         if module_match:
             current_benchmark = module_match.group(1)
-            results[current_benchmark] = {}
+            results[current_benchmark] = {'deserialize': {}, 'serialize': {}}
             continue
 
         # Match result lines like "│  ├─ facet_format_jit_deserialize  1.046 µs  ..."
         if current_benchmark:
-            result_match = re.match(r'│?\s*[├╰]─\s+(\w+)\s+([\d.]+)\s+(ns|µs|ms)', line)
+            result_match = re.match(r'│?\s*[├╰]─\s+([\w_]+)\s+([\d.]+)\s+(ns|µs|ms)', line)
             if result_match:
-                target = result_match.group(1)
+                target_full = result_match.group(1)
                 value = float(result_match.group(2))
                 unit = result_match.group(3)
 
@@ -42,39 +78,18 @@ def parse_divan_output(text: str) -> Dict[str, Dict[str, float]]:
                 elif unit == 'ms':
                     value *= 1_000_000
 
-                results[current_benchmark][target] = value
+                # Determine operation (deserialize or serialize)
+                operation = 'deserialize' if 'deserialize' in target_full else 'serialize'
 
-    return results
+                # Extract target name (remove _deserialize/_serialize suffix)
+                target_base = target_full.replace('_deserialize', '').replace('_serialize', '')
 
-def parse_gungraun_output(text: str) -> Dict[str, Dict[str, int]]:
-    """
-    Parse gungraun output into structured data.
-    Returns: {benchmark_name: {metric: value}}
-    """
-    results = {}
-    current_bench = None
-
-    lines = text.split('\n')
-    for line in lines:
-        # Match benchmark names
-        name_match = re.match(r'gungraun_jit::[\w_]+::([\w_]+)', line)
-        if name_match:
-            current_bench = name_match.group(1)
-            results[current_bench] = {}
-            continue
-
-        # Match metrics like "  Instructions:  6549|N/A"
-        if current_bench:
-            metric_match = re.match(r'\s+(\w+(?:\s+\w+)*):\s+([\d,]+)', line)
-            if metric_match:
-                metric = metric_match.group(1).strip()
-                value = int(metric_match.group(2).replace(',', ''))
-                results[current_bench][metric] = value
+                results[current_benchmark][operation][target_base] = value
 
     return results
 
 def format_time(ns: float) -> str:
-    """Format nanoseconds into readable string"""
+    """Format nanoseconds into readable string with proper precision"""
     if ns < 1000:
         return f"{ns:.1f} ns"
     elif ns < 1_000_000:
@@ -82,337 +97,156 @@ def format_time(ns: float) -> str:
     else:
         return f"{ns/1_000_000:.2f} ms"
 
-def format_number(n: int) -> str:
-    """Format large numbers with commas"""
-    return f"{n:,}"
+def generate_benchmark_section(bench_name: str, operation: str, data: Dict[str, float], bench_id: str) -> str:
+    """
+    Generate HTML for one benchmark: table + interactive chart.
+    bench_id is used for unique element IDs.
+    """
+    if not data:
+        return ""
 
-def generate_html_report(divan_data: Dict, gungraun_data: Dict, git_info: Dict) -> str:
-    """Generate HTML report with tables and graphs"""
+    # Find serde_json baseline and fastest
+    serde_time = data.get('serde_json')
+    fastest_time = min(data.values()) if data.values() else 0
 
-    # Group benchmarks by type
-    micro_benchmarks = ['simple_struct', 'single_nested_struct', 'simple_with_options']
-    realistic_benchmarks = ['twitter', 'canada', 'hashmaps', 'nested_structs']
+    # Sort: fastest first, but keep serde_json as visual baseline in middle of slower entries
+    sorted_targets = sorted(data.items(), key=lambda x: x[1])
 
     html = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Facet JIT Benchmark Report</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            max-width: 1600px;
-            margin: 0 auto;
-            padding: 40px 20px;
-            background: #f8f9fa;
-            color: #212529;
-        }}
-        header {{
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            padding: 40px;
-            border-radius: 12px;
-            margin-bottom: 30px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }}
-        h1 {{ margin: 0 0 10px 0; font-size: 2.5em; }}
-        .meta {{ opacity: 0.9; font-size: 0.95em; }}
-        .meta-item {{ margin: 5px 0; }}
+    <div class="benchmark-item" id="bench-{bench_id}">
+        <h3>{bench_name.replace('_', ' ').title()} - {operation.title()}</h3>
 
-        .legend {{
-            background: #e7f5ff;
-            border-left: 4px solid #1971c2;
-            padding: 20px;
-            margin: 30px 0;
-            border-radius: 8px;
-        }}
-        .legend h2 {{ margin-top: 0; color: #1864ab; }}
-        .legend-item {{
-            margin: 8px 0;
-            padding-left: 20px;
-        }}
-
-        .section {{
-            background: white;
-            padding: 30px;
-            margin: 30px 0;
-            border-radius: 12px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-        }}
-        h2 {{
-            color: #495057;
-            border-bottom: 3px solid #dee2e6;
-            padding-bottom: 12px;
-            margin-top: 0;
-        }}
-        h3 {{
-            color: #6c757d;
-            margin: 25px 0 15px 0;
-        }}
-
-        table {{
-            width: 100%;
-            border-collapse: collapse;
-            margin: 20px 0;
-            font-size: 0.95em;
-        }}
-        th {{
-            background: linear-gradient(to bottom, #4CAF50, #45a049);
-            color: white;
-            padding: 14px 12px;
-            text-align: left;
-            font-weight: 600;
-            position: sticky;
-            top: 0;
-        }}
-        td {{
-            padding: 12px;
-            border-bottom: 1px solid #e9ecef;
-        }}
-        tr:nth-child(even) {{
-            background: #f8f9fa;
-        }}
-        tr:hover {{
-            background: #e3f2fd;
-            transition: background 0.2s;
-        }}
-
-        .fastest {{
-            background: #c8e6c9 !important;
-            font-weight: 700;
-            color: #2e7d32;
-        }}
-        .jit-highlight {{
-            background: #fff3cd !important;
-            font-weight: 600;
-        }}
-        .baseline {{
-            background: #f0f4f8;
-            font-style: italic;
-        }}
-
-        .metric {{
-            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
-            color: #1976d2;
-            font-size: 0.9em;
-        }}
-        .speedup {{
-            color: #2e7d32;
-            font-weight: 600;
-        }}
-        .slowdown {{
-            color: #d32f2f;
-        }}
-
-        .chart-container {{
-            position: relative;
-            height: 400px;
-            margin: 30px 0;
-        }}
-
-        .note {{
-            background: #fff9db;
-            border-left: 4px solid #ffd93d;
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 4px;
-            font-size: 0.9em;
-        }}
-
-        footer {{
-            text-align: center;
-            margin-top: 60px;
-            padding-top: 20px;
-            border-top: 2px solid #dee2e6;
-            color: #6c757d;
-            font-size: 0.9em;
-        }}
-    </style>
-</head>
-<body>
-    <header>
-        <h1>🚀 Facet JIT Benchmark Report</h1>
-        <div class="meta">
-            <div class="meta-item"><strong>Generated:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
-            <div class="meta-item"><strong>Git Commit:</strong> {git_info['commit']}</div>
-            <div class="meta-item"><strong>Branch:</strong> {git_info['branch']}</div>
-        </div>
-    </header>
-
-    <div class="legend">
-        <h2>The 5 Targets Compared</h2>
-        <div class="legend-item">1. <strong>facet_json</strong> - Legacy interpreter-based JSON deserializer</div>
-        <div class="legend-item">2. <strong>facet_json_cranelift</strong> - JSON-specific JIT compiler (specialized, fast)</div>
-        <div class="legend-item">3. <strong>facet_format_json</strong> - Format-agnostic event-based interpreter</div>
-        <div class="legend-item">4. <strong>facet_format_jit</strong> - Format-agnostic JIT compiler ⭐ <em>(our work!)</em></div>
-        <div class="legend-item">5. <strong>serde_json</strong> - Industry standard baseline 🎯 <em>(the one to beat)</em></div>
-    </div>
-
-    <div class="section">
-        <h2>📊 Wall-Clock Performance (Median Times)</h2>
+        <div class="table-chart-container">
+            <div class="table-wrapper">
+                <table id="table-{bench_id}">
+                    <thead>
+                        <tr>
+                            <th>Target</th>
+                            <th>Median Time</th>
+                            <th>vs Fastest</th>
+                            <th>vs serde_json 🎯</th>
+                        </tr>
+                    </thead>
+                    <tbody>
 """
 
-    # Generate tables for each benchmark category
-    for category, benchmarks in [("Micro Benchmarks", micro_benchmarks), ("Realistic Benchmarks", realistic_benchmarks)]:
-        html += f"<h3>{category}</h3>\n"
-
-        for bench in benchmarks:
-            if bench not in divan_data:
-                continue
-
-            data = divan_data[bench]
-            if not data:
-                continue
-
-            # Find fastest
-            fastest = min(data.values())
-
-            html += f"<h4>{bench.replace('_', ' ').title()}</h4>\n"
-            html += "<table>\n<thead>\n<tr>\n"
-            html += "<th>Target</th><th>Median Time</th><th>vs Fastest</th><th>vs serde_json</th>\n"
-            html += "</tr>\n</thead>\n<tbody>\n"
-
-            # Sort by speed (fastest first)
-            sorted_targets = sorted(data.items(), key=lambda x: x[1])
-
-            serde_time = data.get('serde_json_deserialize', data.get('serde_json_serialize', None))
-
-            for target, time_ns in sorted_targets:
-                row_class = ""
-                if time_ns == fastest:
-                    row_class = "fastest"
-                elif 'format_jit' in target:
-                    row_class = "jit-highlight"
-                elif 'serde' in target:
-                    row_class = "baseline"
-
-                vs_fastest = f"{time_ns / fastest:.2f}x" if fastest > 0 else "-"
-                vs_serde = f"{time_ns / serde_time:.2f}x" if serde_time and serde_time > 0 else "-"
-
-                speedup_class = "speedup" if time_ns <= fastest * 1.1 else ("slowdown" if time_ns > fastest * 2 else "")
-
-                html += f'<tr class="{row_class}">\n'
-                html += f'  <td>{target.replace("_", " ")}</td>\n'
-                html += f'  <td class="metric">{format_time(time_ns)}</td>\n'
-                html += f'  <td class="{speedup_class}">{vs_fastest}</td>\n'
-                html += f'  <td class="{speedup_class}">{vs_serde}</td>\n'
-                html += '</tr>\n'
-
-            html += "</tbody>\n</table>\n"
-
-    html += "</div>\n"
-
-    # Gungraun section
-    html += """
-    <div class="section">
-        <h2>🔬 Instruction Counts (Gungraun - Deterministic)</h2>
-        <div class="note">
-            These measurements are deterministic and reproducible across different machines.
-            Lower instruction counts = better performance.
-        </div>
-"""
-
-    for bench_name, metrics in gungraun_data.items():
-        if not metrics:
+    for target, time_ns in sorted_targets:
+        if target not in TARGETS:
             continue
 
-        html += f"<h3>{bench_name.replace('_', ' ').title()}</h3>\n"
+        config = TARGETS[target]
 
-        # Show key metrics
-        if 'Instructions' in metrics:
-            html += f"<p><strong>Instructions:</strong> <span class='metric'>{format_number(metrics['Instructions'])}</span></p>\n"
-        if 'Estimated Cycles' in metrics:
-            html += f"<p><strong>Estimated Cycles:</strong> <span class='metric'>{format_number(metrics['Estimated Cycles'])}</span></p>\n"
+        # Calculate ratios
+        vs_fastest = time_ns / fastest_time if fastest_time > 0 else 0
+        vs_serde = time_ns / serde_time if serde_time and serde_time > 0 else 0
 
-    html += "</div>\n"
+        # Determine row class
+        row_class = ""
+        if time_ns == fastest_time:
+            row_class = "fastest"
+        elif target == 'serde_json':
+            row_class = "baseline"
+        elif target == 'facet_format_jit':
+            row_class = "jit-highlight"
 
-    # Chart section
+        # Format speedup/slowdown
+        vs_fastest_str = f"{vs_fastest:.2f}x" if vs_fastest > 0 else "-"
+        vs_serde_str = f"{vs_serde:.2f}x" if vs_serde > 0 else "-"
+
+        speedup_class_fastest = "speedup" if vs_fastest <= 1.1 else "slowdown"
+        speedup_class_serde = "speedup" if vs_serde <= 1.0 else ("neutral" if vs_serde <= 1.5 else "slowdown")
+
+        html += f"""
+                        <tr class="{row_class}" data-target="{target}"
+                            onmouseenter="highlightChart('{bench_id}', '{target}')"
+                            onmouseleave="unhighlightChart('{bench_id}')">
+                            <td><span class="emoji">{config['emoji']}</span> {config['label']}</td>
+                            <td class="metric">{format_time(time_ns)}</td>
+                            <td class="{speedup_class_fastest}">{vs_fastest_str}</td>
+                            <td class="{speedup_class_serde}">{vs_serde_str}</td>
+                        </tr>
+"""
+
     html += """
-    <div class="section">
-        <h2>📈 Performance Comparison Charts</h2>
-        <div class="chart-container">
-            <canvas id="microBenchChart"></canvas>
-        </div>
-        <div class="chart-container">
-            <canvas id="realisticBenchChart"></canvas>
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="chart-wrapper">
+                <canvas id="chart-""" + bench_id + """"></canvas>
+            </div>
         </div>
     </div>
 
     <script>
-        // Chart.js configuration
-        const chartColors = {
-            facet_json: '#FF6384',
-            facet_json_cranelift: '#36A2EB',
-            facet_format_json: '#FFCE56',
-            facet_format_jit: '#4BC0C0',
-            serde_json: '#9966FF'
+    (function() {
+        const ctx = document.getElementById('chart-""" + bench_id + """').getContext('2d');
+
+        const chartData = {
+            labels: [
+"""
+
+    # Generate chart labels and data
+    for target, time_ns in sorted_targets:
+        if target not in TARGETS:
+            continue
+        config = TARGETS[target]
+        html += f"                '{config['emoji']} {config['label']}',\n"
+
+    html += """            ],
+            datasets: [{
+                label: 'Time (µs)',
+                data: [
+"""
+
+    for target, time_ns in sorted_targets:
+        if target in TARGETS:
+            html += f"                    {time_ns / 1000:.3f},\n"  # Convert to microseconds
+
+    html += """                ],
+                backgroundColor: [
+"""
+
+    for target, _ in sorted_targets:
+        if target in TARGETS:
+            config = TARGETS[target]
+            html += f"                    '{config['color']}CC',\n"  # CC for alpha
+
+    html += """                ],
+                borderColor: [
+"""
+
+    for target, _ in sorted_targets:
+        if target in TARGETS:
+            config = TARGETS[target]
+            html += f"                    '{config['color']}',\n"
+
+    html += """                ],
+                borderWidth: 2
+            }]
         };
 
-        // Micro benchmarks chart
-        const microCtx = document.getElementById('microBenchChart').getContext('2d');
-        new Chart(microCtx, {
+        const config = {
             type: 'bar',
-            data: {
-                labels: """ + json.dumps([b.replace('_', ' ').title() for b in micro_benchmarks if b in divan_data]) + """,
-                datasets: [
-"""
-
-    # Generate dataset for each target
-    targets = ['facet_format_jit_deserialize', 'facet_format_json_deserialize', 'facet_json_deserialize',
-               'facet_json_cranelift_deserialize', 'serde_json_deserialize']
-    target_labels = ['Format JIT ⭐', 'Format Interp', 'JSON Interp', 'JSON JIT', 'serde_json 🎯']
-
-    # Color mapping for charts
-    chart_colors = {
-        'facet_format_jit': '#4BC0C0',
-        'facet_format_json': '#FFCE56',
-        'facet_json': '#FF6384',
-        'facet_json_cranelift': '#36A2EB',
-        'serde_json': '#9966FF'
-    }
-
-    for target, label in zip(targets, target_labels):
-        data_points = []
-        for bench in micro_benchmarks:
-            if bench in divan_data and target in divan_data[bench]:
-                # Convert to microseconds for chart
-                data_points.append(divan_data[bench][target] / 1000)
-            else:
-                data_points.append(None)
-
-        # Extract color key from target name
-        color_key = '_'.join(target.split('_')[:2])  # e.g., "facet_format" from "facet_format_jit_deserialize"
-        color = chart_colors.get(color_key, '#999999')
-
-        html += f"""                    {{
-                        label: '{label}',
-                        data: {json.dumps(data_points)},
-                        backgroundColor: '{color}88',
-                        borderColor: '{color}',
-                        borderWidth: 2
-                    }},
-"""
-
-    html += """                ]
-            },
+            data: chartData,
             options: {
                 responsive: true,
-                maintainAspectRatio: false,
+                maintainAspectRatio: true,
+                indexAxis: 'y',  // Horizontal bars
                 plugins: {
-                    title: {
-                        display: true,
-                        text: 'Micro Benchmarks (Lower is Better)',
-                        font: { size: 18 }
-                    },
                     legend: {
-                        display: true,
-                        position: 'bottom'
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return context.parsed.x.toFixed(3) + ' µs';
+                            }
+                        }
                     }
                 },
                 scales: {
-                    y: {
+                    x: {
                         beginAtZero: true,
                         title: {
                             display: true,
@@ -421,22 +255,325 @@ def generate_html_report(divan_data: Dict, gungraun_data: Dict, git_info: Dict) 
                     }
                 }
             }
-        });
-    </script>
+        };
 
-    <footer>
-        <p>Generated by scripts/parse-bench.py</p>
-        <p>Benchmark data: divan (wall-clock) + gungraun (instruction counts)</p>
-    </footer>
-</body>
-</html>
+        window.charts = window.charts || {};
+        window.charts['""" + bench_id + """'] = new Chart(ctx, config);
+    })();
+    </script>
 """
 
     return html
 
+def generate_html_report(divan_data: Dict, git_info: Dict) -> str:
+    """Generate complete HTML report"""
+
+    html_head = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Facet JIT Benchmark Report</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f8f9fa;
+            color: #212529;
+            line-height: 1.6;
+        }}
+
+        .container {{
+            max-width: 1800px;
+            margin: 0 auto;
+            padding: 20px;
+        }}
+
+        header {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 12px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }}
+
+        h1 {{ font-size: 2.5em; margin-bottom: 10px; }}
+        h2 {{
+            color: #495057;
+            margin: 40px 0 20px 0;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #dee2e6;
+        }}
+        h3 {{
+            color: #6c757d;
+            margin: 25px 0 15px 0;
+            font-size: 1.3em;
+        }}
+
+        .meta {{ opacity: 0.95; font-size: 0.95em; margin-top: 10px; }}
+        .meta-item {{ display: inline-block; margin-right: 30px; }}
+
+        .legend {{
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            margin: 20px 0;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }}
+        .legend h3 {{ margin-top: 0; color: #495057; }}
+        .legend-item {{
+            display: inline-block;
+            margin: 10px 20px 10px 0;
+            padding: 8px 15px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border-left: 4px solid;
+        }}
+
+        .benchmark-item {{
+            background: white;
+            padding: 30px;
+            margin: 30px 0;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }}
+
+        .table-chart-container {{
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-top: 20px;
+        }}
+
+        @media (max-width: 1200px) {{
+            .table-chart-container {{
+                grid-template-columns: 1fr;
+            }}
+        }}
+
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+        }}
+
+        th {{
+            background: linear-gradient(to bottom, #4CAF50, #45a049);
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+        }}
+
+        td {{
+            padding: 12px;
+            border-bottom: 1px solid #e9ecef;
+        }}
+
+        tr:hover {{
+            background: #e3f2fd !important;
+            cursor: pointer;
+            transition: background 0.15s;
+        }}
+
+        .fastest {{
+            background: #c8e6c9;
+            border-left: 4px solid #2e7d32;
+        }}
+
+        .jit-highlight {{
+            background: #fff9c4;
+            border-left: 4px solid #f57f17;
+            font-weight: 600;
+        }}
+
+        .baseline {{
+            background: #e1bee7;
+            border-left: 4px solid #7b1fa2;
+            font-weight: 600;
+        }}
+
+        .emoji {{
+            font-size: 1.2em;
+            margin-right: 5px;
+        }}
+
+        .metric {{
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 0.95em;
+        }}
+
+        .speedup {{ color: #2e7d32; font-weight: 600; }}
+        .neutral {{ color: #f57f17; }}
+        .slowdown {{ color: #c62828; }}
+
+        .chart-wrapper {{
+            position: relative;
+            height: 300px;
+        }}
+
+        canvas {{
+            max-height: 300px;
+        }}
+
+        .section-header {{
+            background: #e3f2fd;
+            padding: 15px 25px;
+            border-radius: 8px;
+            margin: 30px 0 15px 0;
+            border-left: 5px solid #1976d2;
+        }}
+
+        footer {{
+            text-align: center;
+            margin-top: 60px;
+            padding: 30px;
+            color: #6c757d;
+            font-size: 0.9em;
+            border-top: 2px solid #dee2e6;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 Facet JIT Benchmark Report</h1>
+            <div class="meta">
+                <span class="meta-item"><strong>Generated:</strong> {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</span>
+                <span class="meta-item"><strong>Commit:</strong> {git_info.get('commit', 'unknown')}</span>
+                <span class="meta-item"><strong>Branch:</strong> {git_info.get('branch', 'unknown')}</span>
+            </div>
+        </header>
+
+        <div class="legend">
+            <h3>The 5 Targets</h3>
+            <div>
+"""
+
+    for target_key in ['facet_format_jit', 'facet_json_cranelift', 'facet_format_json', 'facet_json', 'serde_json']:
+        config = TARGETS[target_key]
+        html_head += f'                <span class="legend-item" style="border-color: {config["color"]};">'
+        html_head += f'<span class="emoji">{config["emoji"]}</span> <strong>{config["label"]}</strong>'
+        if target_key == 'facet_format_jit':
+            html_head += ' - Format-agnostic JIT (our work!)'
+        elif target_key == 'serde_json':
+            html_head += ' - The baseline to beat'
+        html_head += '</span>\n'
+
+    html_head += """
+            </div>
+        </div>
+"""
+
+    return html_head
+
+def generate_sections_html(divan_data: Dict) -> str:
+    """Generate sections for deserialize and serialize benchmarks"""
+    html = ""
+
+    # Separate benchmarks by type
+    micro_benches = [b for b in divan_data.keys() if b in ['simple_struct', 'single_nested_struct', 'simple_with_options', 'nested_struct']]
+    realistic_benches = [b for b in divan_data.keys() if b in ['twitter', 'canada', 'hashmaps', 'nested_structs']]
+    array_benches = [b for b in divan_data.keys() if b in ['floats', 'integers', 'booleans', 'short_strings', 'long_strings', 'escaped_strings']]
+    other_benches = [b for b in divan_data.keys() if b not in micro_benches + realistic_benches + array_benches]
+
+    for category_name, benchmarks in [
+        ("🔬 Micro Benchmarks (JIT Testing)", micro_benches),
+        ("🌍 Realistic Benchmarks (Real-World Data)", realistic_benches),
+        ("📊 Array Benchmarks (Vec&lt;T&gt;)", array_benches),
+        ("📦 Other Benchmarks", other_benches)
+    ]:
+        if not benchmarks:
+            continue
+
+        html += f'<div class="section-header"><h2>{category_name}</h2></div>\n'
+
+        for bench_name in benchmarks:
+            bench_data = divan_data[bench_name]
+
+            # Deserialize section
+            if bench_data.get('deserialize'):
+                bench_id = f"{bench_name}_deser"
+                html += generate_benchmark_section(bench_name, 'deserialize', bench_data['deserialize'], bench_id)
+
+            # Serialize section
+            if bench_data.get('serialize'):
+                bench_id = f"{bench_name}_ser"
+                html += generate_benchmark_section(bench_name, 'serialize', bench_data['serialize'], bench_id)
+
+    return html
+
+def generate_interactive_js() -> str:
+    """Generate JavaScript for interactive table/chart highlighting"""
+    return """
+    <script>
+        // Store original chart configurations
+        window.chartOriginalConfigs = {};
+
+        function highlightChart(benchId, targetName) {
+            const chart = window.charts[benchId];
+            if (!chart) return;
+
+            // Store original if not already stored
+            if (!window.chartOriginalConfigs[benchId]) {
+                window.chartOriginalConfigs[benchId] = {
+                    borderWidth: chart.data.datasets[0].borderWidth,
+                    backgroundColor: [...chart.data.datasets[0].backgroundColor],
+                    borderColor: [...chart.data.datasets[0].borderColor]
+                };
+            }
+
+            // Find index of target
+            const table = document.getElementById('table-' + benchId);
+            const rows = table.querySelectorAll('tbody tr');
+            let targetIndex = -1;
+
+            rows.forEach((row, idx) => {
+                if (row.getAttribute('data-target') === targetName) {
+                    targetIndex = idx;
+                }
+            });
+
+            if (targetIndex === -1) return;
+
+            // Dim all bars except the highlighted one
+            const original = window.chartOriginalConfigs[benchId];
+            const newBg = chart.data.datasets[0].backgroundColor.map((color, idx) => {
+                return idx === targetIndex ? color : color.replace('CC', '40');  // More transparent
+            });
+            const newBorder = chart.data.datasets[0].borderColor.map((color, idx) => {
+                return color;
+            });
+            const newWidth = Array(chart.data.datasets[0].borderColor.length).fill(2);
+            newWidth[targetIndex] = 4;  // Thicker border for highlighted
+
+            chart.data.datasets[0].backgroundColor = newBg;
+            chart.data.datasets[0].borderWidth = newWidth;
+            chart.update('none');  // No animation
+        }
+
+        function unhighlightChart(benchId) {
+            const chart = window.charts[benchId];
+            if (!chart || !window.chartOriginalConfigs[benchId]) return;
+
+            const original = window.chartOriginalConfigs[benchId];
+            chart.data.datasets[0].backgroundColor = original.backgroundColor;
+            chart.data.datasets[0].borderColor = original.borderColor;
+            chart.data.datasets[0].borderWidth = original.borderWidth;
+            chart.update('none');
+        }
+
+        window.highlightChart = highlightChart;
+        window.unhighlightChart = unhighlightChart;
+    </script>
+"""
+
 def main():
     if len(sys.argv) < 3:
-        print("Usage: parse-bench.py <divan_output.txt> <gungraun_output.txt> [output.html]")
+        print("Usage: parse_bench.py <divan_output.txt> <gungraun_output.txt> [output.html]")
         sys.exit(1)
 
     divan_file = Path(sys.argv[1])
@@ -445,26 +582,42 @@ def main():
 
     # Parse benchmark outputs
     divan_text = divan_file.read_text() if divan_file.exists() else ""
-    gungraun_text = gungraun_file.read_text() if gungraun_file.exists() else ""
-
     divan_data = parse_divan_output(divan_text)
-    gungraun_data = parse_gungraun_output(gungraun_text)
 
     # Get git info
-    git_info = {
-        'commit': subprocess.run(['git', 'rev-parse', '--short', 'HEAD'],
-                                capture_output=True, text=True).stdout.strip(),
-        'branch': subprocess.run(['git', 'branch', '--show-current'],
-                                capture_output=True, text=True).stdout.strip(),
-    }
+    try:
+        git_info = {
+            'commit': subprocess.run(['git', 'rev-parse', '--short', 'HEAD'],
+                                    capture_output=True, text=True, check=True).stdout.strip(),
+            'branch': subprocess.run(['git', 'branch', '--show-current'],
+                                    capture_output=True, text=True, check=True).stdout.strip(),
+        }
+    except:
+        git_info = {'commit': 'unknown', 'branch': 'unknown'}
 
     # Generate HTML
-    html = generate_html_report(divan_data, gungraun_data, git_info)
+    html = generate_html_report(divan_data, git_info)
+    html += generate_sections_html(divan_data)
+    html += generate_interactive_js()
+    html += """
+        <footer>
+            <p><strong>Generated by</strong> scripts/parse_bench.py</p>
+            <p>Benchmark tools: divan (wall-clock) + gungraun (instruction counts)</p>
+        </footer>
+    </div>
+</body>
+</html>
+"""
 
     # Write output
     output_file.write_text(html)
+
+    # Count benchmarks
+    deser_count = sum(1 for b in divan_data.values() if b.get('deserialize'))
+    ser_count = sum(1 for b in divan_data.values() if b.get('serialize'))
+
     print(f"✅ Report generated: {output_file}")
-    print(f"   Benchmarks parsed: {len(divan_data)} from divan, {len(gungraun_data)} from gungraun")
+    print(f"   Benchmarks: {deser_count} deserialize, {ser_count} serialize")
 
 if __name__ == '__main__':
     main()
