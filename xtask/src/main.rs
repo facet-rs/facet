@@ -12,6 +12,7 @@ use std::{
 use facet::Facet;
 use facet_json::to_string;
 
+mod gen_benchmarks;
 mod metrics_tui_impl;
 
 fn main() {
@@ -23,11 +24,35 @@ fn main() {
         Some("schema") => generate_schema(),
         Some("measure") => measure(&args[1..]),
         Some("metrics") => metrics_tui_impl::run().expect("TUI failed"),
+        Some("gen-benchmarks") => gen_benchmarks(),
         Some("help") | None => print_help(),
         Some(cmd) => {
             eprintln!("Unknown command: {cmd}");
             eprintln!();
             print_help();
+            std::process::exit(1);
+        }
+    }
+}
+
+fn gen_benchmarks() {
+    use std::path::PathBuf;
+
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf();
+    let kdl_path = workspace_root.join("facet-json/benches/benchmarks.kdl");
+    let output_path = workspace_root.join("facet-json/benches/unified_benchmarks.rs");
+
+    match gen_benchmarks::generate_benchmarks(&kdl_path, &output_path) {
+        Ok(()) => {
+            println!("\n🎉 Success! Run benchmarks with:");
+            println!("   cargo bench --bench unified_benchmarks");
+            println!("   cargo bench --bench unified_benchmarks --features cranelift");
+        }
+        Err(e) => {
+            eprintln!("❌ Error generating benchmarks: {}", e);
             std::process::exit(1);
         }
     }
@@ -48,6 +73,9 @@ fn print_help() {
     eprintln!("                         Generates a report in reports/YYYY-MM-DD-<sha>-<name>.txt");
     eprintln!(
         "  metrics                Interactive TUI to explore metrics from reports/metrics.jsonl"
+    );
+    eprintln!(
+        "  gen-benchmarks         Generate unified benchmark code from facet-json/benches/benchmarks.toml"
     );
     eprintln!("  help                   Show this help message");
 }

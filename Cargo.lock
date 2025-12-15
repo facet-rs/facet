@@ -4505,6 +4505,7 @@ dependencies = [
  "crossterm",
  "facet",
  "facet-json",
+ "facet-kdl",
  "ratatui",
 ]
 

@@ -1,0 +1,61 @@
+# Benchmark definitions
+# Each benchmark automatically gets divan + gungraun versions for all 5 targets
+
+[[benchmark]]
+name = "simple_struct"
+type = "SimpleRecord"
+json = '{"id": 42, "name": "test", "active": true}'
+category = "micro"
+
+[[benchmark]]
+name = "single_nested_struct"
+type = "Outer"
+json = '{"id": 42, "inner": {"x": 10, "y": 20}, "name": "test"}'
+category = "micro"
+
+[[benchmark]]
+name = "simple_with_options"
+type = "WithOptions"
+json = '{"id": 42, "maybe_count": 123, "maybe_flag": null, "maybe_value": 2.5}'
+category = "micro"
+
+# Type definitions (referenced by benchmarks)
+[types.SimpleRecord]
+code = '''
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct SimpleRecord {
+    id: u64,
+    name: String,
+    active: bool,
+}
+'''
+
+[types.Inner]
+code = '''
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Inner {
+    x: i64,
+    y: i64,
+}
+'''
+
+[types.Outer]
+code = '''
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct Outer {
+    id: u64,
+    inner: Inner,
+    name: String,
+}
+'''
+
+[types.WithOptions]
+code = '''
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct WithOptions {
+    id: u64,
+    maybe_count: Option<i64>,
+    maybe_flag: Option<bool>,
+    maybe_value: Option<f64>,
+}
+'''
