@@ -1366,10 +1366,12 @@ dependencies = [
  "facet-reflect",
  "futures-io",
  "indoc",
+ "itoa",
  "lexical-parse-float",
  "lexical-parse-integer",
  "libtest-mimic",
  "miette",
+ "ryu",
  "tokio",
 ]
 
