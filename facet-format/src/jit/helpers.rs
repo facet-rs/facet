@@ -577,6 +577,107 @@ pub unsafe extern "C" fn jit_deserialize_nested(
     unsafe { func(ctx, out) }
 }
 
+/// Initialize an Option field to None.
+///
+/// # Safety
+/// - `out` must be a valid pointer to uninitialized memory for the Option
+/// - `init_none_fn` must be a valid OptionInitNoneFn from the Option's vtable
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_option_init_none(out: *mut u8, init_none_fn: *const u8) {
+    type InitNoneFn = unsafe extern "C" fn(*mut u8) -> *mut u8;
+    let func: InitNoneFn = unsafe { std::mem::transmute(init_none_fn) };
+    unsafe { func(out) };
+}
+
+/// Initialize an Option field to Some(value) by deserializing the inner value.
+///
+/// # Safety
+/// - `ctx` must be a valid JitContext pointer
+/// - `out` must be a valid pointer to uninitialized memory for the Option
+/// - `init_some_fn` must be a valid OptionInitSomeFn from the Option's vtable
+/// - `inner_deserializer` must be a valid compiled deserializer for the inner type
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_option_init_some(
+    ctx: *mut JitContext,
+    out: *mut u8,
+    init_some_fn: *const u8,
+    inner_deserializer: *const u8,
+) -> i32 {
+    // Allocate stack space for the inner value
+    // This is tricky - we don't know the size at compile time
+    // For now, use a large buffer (TODO: pass size as parameter)
+    let mut inner_buf: [u8; 256] = [0; 256];
+    let inner_ptr = inner_buf.as_mut_ptr();
+
+    // Deserialize the inner value
+    type DeserializeFn = unsafe extern "C" fn(*mut JitContext, *mut u8) -> i32;
+    let deserialize: DeserializeFn = unsafe { std::mem::transmute(inner_deserializer) };
+    let result = unsafe { deserialize(ctx, inner_ptr) };
+
+    if result != 0 {
+        return result;
+    }
+
+    // Initialize Option with Some(inner_value)
+    type InitSomeFn = unsafe extern "C" fn(*mut u8, *const u8) -> *mut u8;
+    let init_some: InitSomeFn = unsafe { std::mem::transmute(init_some_fn) };
+    unsafe { init_some(out, inner_ptr) };
+
+    0
+}
+
+/// Initialize a Vec field with the given capacity.
+///
+/// # Safety
+/// - `out` must be a valid pointer to uninitialized memory for the Vec
+/// - `init_fn` must be a valid ListInitInPlaceWithCapacityFn from the Vec's vtable
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_vec_init_with_capacity(
+    out: *mut u8,
+    capacity: usize,
+    init_fn: *const u8,
+) {
+    type InitFn = unsafe extern "C" fn(*mut u8, usize) -> *mut u8;
+    let func: InitFn = unsafe { std::mem::transmute(init_fn) };
+    unsafe { func(out, capacity) };
+}
+
+/// Push an item to a Vec by deserializing it.
+///
+/// # Safety
+/// - `ctx` must be a valid JitContext pointer
+/// - `vec_ptr` must be a valid pointer to an initialized Vec
+/// - `push_fn` must be a valid ListPushFn from the Vec's vtable
+/// - `item_deserializer` must be a valid compiled deserializer for the element type
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_vec_push(
+    ctx: *mut JitContext,
+    vec_ptr: *mut u8,
+    push_fn: *const u8,
+    item_deserializer: *const u8,
+) -> i32 {
+    // Allocate stack space for the item
+    // TODO: pass size as parameter or use alloca
+    let mut item_buf: [u8; 256] = [0; 256];
+    let item_ptr = item_buf.as_mut_ptr();
+
+    // Deserialize the item
+    type DeserializeFn = unsafe extern "C" fn(*mut JitContext, *mut u8) -> i32;
+    let deserialize: DeserializeFn = unsafe { std::mem::transmute(item_deserializer) };
+    let result = unsafe { deserialize(ctx, item_ptr) };
+
+    if result != 0 {
+        return result;
+    }
+
+    // Push the item to the Vec
+    type PushFn = unsafe extern "C" fn(*mut u8, *mut u8);
+    let push: PushFn = unsafe { std::mem::transmute(push_fn) };
+    unsafe { push(vec_ptr, item_ptr) };
+
+    0
+}
+
 // =============================================================================
 // Layout constants for JIT code generation
 // =============================================================================

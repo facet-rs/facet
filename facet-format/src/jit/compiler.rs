@@ -164,6 +164,19 @@ fn register_helpers(builder: &mut JITBuilder) {
         "jit_deserialize_nested",
         helpers::jit_deserialize_nested as *const u8,
     );
+    builder.symbol(
+        "jit_option_init_none",
+        helpers::jit_option_init_none as *const u8,
+    );
+    builder.symbol(
+        "jit_option_init_some",
+        helpers::jit_option_init_some as *const u8,
+    );
+    builder.symbol(
+        "jit_vec_init_with_capacity",
+        helpers::jit_vec_init_with_capacity as *const u8,
+    );
+    builder.symbol("jit_vec_push", helpers::jit_vec_push as *const u8);
 }
 
 /// Compile a deserializer function for a struct.
