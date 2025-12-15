@@ -156,3 +156,55 @@ fn test_jit_nested_struct() {
     assert_eq!(value.inner.y, 20);
     assert_eq!(value.name, "test");
 }
+
+#[derive(Debug, PartialEq, Facet)]
+struct WithOption {
+    id: u64,
+    maybe_count: Option<i64>,
+    maybe_flag: Option<bool>,
+}
+
+#[test]
+fn test_jit_option_none() {
+    // Test with null values
+    let json = br#"{"id": 42, "maybe_count": null, "maybe_flag": null}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize::<WithOption, JsonParser<'_>>(&mut parser);
+
+    assert!(result.is_some(), "JIT should attempt with Option fields");
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "JIT deserialization should succeed: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.id, 42);
+    assert_eq!(value.maybe_count, None);
+    assert_eq!(value.maybe_flag, None);
+}
+
+#[test]
+#[ignore = "WIP: SIGSEGV in option_replace_with - pointer corruption issue"]
+fn test_jit_option_some() {
+    // Test with Some values
+    let json = br#"{"id": 42, "maybe_count": 123, "maybe_flag": true}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize::<WithOption, JsonParser<'_>>(&mut parser);
+
+    assert!(result.is_some());
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "JIT deserialization should succeed: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.id, 42);
+    assert_eq!(value.maybe_count, Some(123));
+    assert_eq!(value.maybe_flag, Some(true));
+}

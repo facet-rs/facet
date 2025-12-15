@@ -169,8 +169,8 @@ fn register_helpers(builder: &mut JITBuilder) {
         helpers::jit_option_init_none as *const u8,
     );
     builder.symbol(
-        "jit_option_init_some",
-        helpers::jit_option_init_some as *const u8,
+        "jit_option_replace_with_some",
+        helpers::jit_option_replace_with_some as *const u8,
     );
     builder.symbol(
         "jit_vec_init_with_capacity",
@@ -199,27 +199,58 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         })
         .collect();
 
-    // Pre-compile all nested structs to get their function pointers.
+    // Pre-compile nested types (structs, Option inner types, Vec element types).
     // We do this before building the parent to avoid any potential issues.
-    // Each nested struct gets compiled once and cached.
+    // Each type gets compiled once and cached.
     let mut nested_func_ptrs: std::collections::HashMap<*const Shape, *const u8> =
         std::collections::HashMap::new();
+
+    // Helper to compile a shape and cache it
+    let mut compile_and_cache = |shape: &'static Shape| -> Option<*const u8> {
+        let ptr = shape as *const Shape;
+        if let std::collections::hash_map::Entry::Vacant(e) = nested_func_ptrs.entry(ptr) {
+            let mut nested_builder =
+                JITBuilder::new(cranelift_module::default_libcall_names()).ok()?;
+            register_helpers(&mut nested_builder);
+            let mut nested_module = JITModule::new(nested_builder);
+            let nested_func_id = compile_deserializer(&mut nested_module, shape)?;
+            nested_module.finalize_definitions().ok()?;
+            let fn_ptr = nested_module.get_finalized_function(nested_func_id);
+            e.insert(fn_ptr);
+            Some(fn_ptr)
+        } else {
+            Some(nested_func_ptrs[&ptr])
+        }
+    };
+
     for field in &fields {
-        if let WriteKind::NestedStruct(nested_shape) = field.write_kind {
-            let ptr = nested_shape as *const Shape;
-            if let std::collections::hash_map::Entry::Vacant(e) = nested_func_ptrs.entry(ptr) {
-                // Compile the nested struct (or get from cache)
-                // This creates a temporary module just to get the function pointer
-                let mut nested_builder =
-                    JITBuilder::new(cranelift_module::default_libcall_names()).ok()?;
-                register_helpers(&mut nested_builder);
-                let mut nested_module = JITModule::new(nested_builder);
-                let nested_func_id = compile_deserializer(&mut nested_module, nested_shape)?;
-                nested_module.finalize_definitions().ok()?;
-                let fn_ptr = nested_module.get_finalized_function(nested_func_id);
-                e.insert(fn_ptr);
-                // Note: nested_module is dropped here but the JIT code remains valid
+        match field.write_kind {
+            WriteKind::NestedStruct(nested_shape) => {
+                compile_and_cache(nested_shape);
             }
+            WriteKind::Option(option_shape) => {
+                // Pre-compile the inner type if it's a struct
+                if let Def::Option(option_def) = &option_shape.def {
+                    let inner_shape = option_def.t;
+                    if let FacetType::User(UserType::Struct(_)) = &inner_shape.ty
+                        && is_jit_compatible(inner_shape)
+                    {
+                        compile_and_cache(inner_shape);
+                    }
+                }
+            }
+            WriteKind::Vec(vec_shape) => {
+                // Pre-compile the element type if it's a struct
+                if let Def::List(list_def) = &vec_shape.def {
+                    let elem_shape = list_def.t;
+                    if let FacetType::User(UserType::Struct(_)) = &elem_shape.ty
+                        && is_jit_compatible(elem_shape)
+                    {
+                        compile_and_cache(elem_shape);
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -321,13 +352,11 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         s
     };
 
-    let sig_option_init_some = {
+    let sig_option_replace_with_some = {
         let mut s = module.make_signature();
-        s.params.push(AbiParam::new(pointer_type)); // ctx: *mut JitContext
         s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
-        s.params.push(AbiParam::new(pointer_type)); // init_some_fn: *const u8
-        s.params.push(AbiParam::new(pointer_type)); // inner_deserializer: *const u8
-        s.returns.push(AbiParam::new(types::I32)); // result
+        s.params.push(AbiParam::new(pointer_type)); // value_ptr: *const u8
+        s.params.push(AbiParam::new(pointer_type)); // replace_with_fn: *const u8
         s
     };
 
@@ -382,11 +411,11 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
             &sig_option_init_none,
         )
         .ok()?;
-    let option_init_some_id = module
+    let option_replace_with_some_id = module
         .declare_function(
-            "jit_option_init_some",
+            "jit_option_replace_with_some",
             Linkage::Import,
-            &sig_option_init_some,
+            &sig_option_replace_with_some,
         )
         .ok()?;
     let vec_init_with_capacity_id = module
@@ -418,7 +447,8 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         let deserialize_nested_ref =
             module.declare_func_in_func(deserialize_nested_id, builder.func);
         let option_init_none_ref = module.declare_func_in_func(option_init_none_id, builder.func);
-        let _option_init_some_ref = module.declare_func_in_func(option_init_some_id, builder.func);
+        let option_replace_with_some_ref =
+            module.declare_func_in_func(option_replace_with_some_id, builder.func);
         let _vec_init_with_capacity_ref =
             module.declare_func_in_func(vec_init_with_capacity_id, builder.func);
         let _vec_push_ref = module.declare_func_in_func(vec_push_id, builder.func);
@@ -686,6 +716,133 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
                     builder
                         .ins()
                         .brif(nested_is_error, error_block, &[], after_field, &[]);
+                }
+                WriteKind::Option(option_shape) => {
+                    // Option field: call next_event, check if Null, else init Some
+                    let call_result = builder.ins().call_indirect(
+                        sig_next_event_ref,
+                        next_event_fn,
+                        &[parser_ptr, raw_event_ptr],
+                    );
+                    let result = builder.inst_results(call_result)[0];
+
+                    // Check for error
+                    let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+                    let check_null_block = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(is_error, error_block, &[], check_null_block, &[]);
+
+                    builder.switch_to_block(check_null_block);
+
+                    // Check if value is Null (scalar_tag == ScalarTag::Null = 1)
+                    let scalar_tag = builder.ins().load(
+                        types::I8,
+                        MemFlags::trusted(),
+                        raw_event_ptr,
+                        1, // RAW_EVENT_SCALAR_TAG_OFFSET
+                    );
+                    let is_null = builder.ins().icmp_imm(IntCC::Equal, scalar_tag, 1);
+
+                    let handle_some_block = builder.create_block();
+                    // If Null, skip to after_field (already initialized to None)
+                    // If not Null, handle Some case
+                    builder
+                        .ins()
+                        .brif(is_null, after_field, &[], handle_some_block, &[]);
+
+                    builder.switch_to_block(handle_some_block);
+
+                    // Get Option info
+                    let Def::Option(option_def) = &option_shape.def else {
+                        unreachable!();
+                    };
+                    let inner_shape = option_def.t;
+
+                    // Allocate stack slot for the inner value (max 256 bytes for now)
+                    let value_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot,
+                        256,
+                        8,
+                    ));
+                    let value_ptr = builder.ins().stack_addr(pointer_type, value_slot, 0);
+
+                    // Get payload pointer
+                    let payload_ptr = builder
+                        .ins()
+                        .iadd_imm(raw_event_ptr, helpers::RAW_EVENT_PAYLOAD_OFFSET as i64);
+
+                    // Load the scalar value from payload and write to stack slot
+                    // Need to handle different inner types properly
+                    // First, zero out the stack slot to avoid uninitialized data
+                    let zero_i64 = builder.ins().iconst(types::I64, 0);
+                    for offset in (0..256).step_by(8) {
+                        builder
+                            .ins()
+                            .store(MemFlags::trusted(), zero_i64, value_ptr, offset);
+                    }
+
+                    let type_name = inner_shape.type_identifier;
+                    match type_name {
+                        "bool" => {
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I8, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .store(MemFlags::trusted(), value, value_ptr, 0);
+                        }
+                        "i64" | "u64" | "i32" | "u32" | "i16" | "u16" | "i8" | "u8" => {
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .store(MemFlags::trusted(), value, value_ptr, 0);
+                        }
+                        "f64" | "f32" => {
+                            let value =
+                                builder
+                                    .ins()
+                                    .load(types::F64, MemFlags::trusted(), payload_ptr, 0);
+                            builder
+                                .ins()
+                                .store(MemFlags::trusted(), value, value_ptr, 0);
+                        }
+                        _ => {
+                            // Unsupported for now - TODO: String, nested structs
+                            builder.ins().jump(error_block, &[]);
+                            builder.seal_block(check_null_block);
+                            builder.seal_block(handle_some_block);
+                            continue;
+                        }
+                    }
+
+                    // Get replace_with function
+                    let replace_with_fn_ptr = option_def.vtable.replace_with as *const u8;
+                    let replace_with_fn_val = builder
+                        .ins()
+                        .iconst(pointer_type, replace_with_fn_ptr as i64);
+
+                    // Calculate field pointer
+                    let field_ptr = builder.ins().iadd(out_ptr, offset_val);
+
+                    // Call jit_option_replace_with_some(field_ptr, value_ptr, replace_with_fn)
+                    builder.ins().call(
+                        option_replace_with_some_ref,
+                        &[field_ptr, value_ptr, replace_with_fn_val],
+                    );
+
+                    builder.ins().jump(after_field, &[]);
+                    builder.seal_block(check_null_block);
+                    builder.seal_block(handle_some_block);
+                }
+                WriteKind::Vec(_vec_shape) => {
+                    // TODO: Implement Vec deserialization
+                    // For now, just error
+                    builder.ins().jump(error_block, &[]);
                 }
                 _ => {
                     // For scalars/strings, call next_event to get the value
