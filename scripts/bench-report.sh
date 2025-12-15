@@ -25,8 +25,17 @@ cargo bench --bench gungraun_jit --features cranelift > "${REPORT_DIR}/gungraun-
 
 echo "📝 Parsing benchmark data and generating HTML report..."
 
+# Set up Python virtual environment with uv if not already present
+VENV_DIR="${SCRIPT_DIR}/.venv"
+if [ ! -d "${VENV_DIR}" ]; then
+    echo "  🔧 Creating Python virtual environment with uv..."
+    cd "${SCRIPT_DIR}"
+    uv venv
+    uv pip install -e .
+fi
+
 # Use Python parser to generate proper HTML with tables and graphs
-python3 "${SCRIPT_DIR}/parse-bench.py" \
+"${VENV_DIR}/bin/python" "${SCRIPT_DIR}/parse_bench.py" \
     "${REPORT_DIR}/divan-${TIMESTAMP}.txt" \
     "${REPORT_DIR}/gungraun-${TIMESTAMP}.txt" \
     "${REPORT_FILE}"

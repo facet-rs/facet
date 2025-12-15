@@ -1,0 +1,2 @@
+[console_scripts]
+parse-bench = parse_bench:main
