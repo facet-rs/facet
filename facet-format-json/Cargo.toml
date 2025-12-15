@@ -15,8 +15,8 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 corosensei = { version = "0.3", optional = true }
 facet = { path = "../facet", default-features = false }
-itoa = "1"
-ryu = "1"
+itoa = { version = "1", optional = true }
+ryu = { version = "1", optional = true }
 facet-core = { path = "../facet-core", features = ["auto-traits", "bytes", "camino", "chrono", "fn-ptr", "indexmap", "jiff02", "net", "nonzero", "num-complex", "ordered-float", "ruint", "simd", "time", "tuples-12", "ulid", "url", "uuid"] }
 facet-format = { path = "../facet-format" }
 facet-reflect = { path = "../facet-reflect", features = ["miette"] }
@@ -39,7 +39,7 @@ harness = false
 
 [features]
 default = []
-fast = ["lexical-parse"]
+fast = ["lexical-parse", "dep:itoa", "dep:ryu"]
 lexical-parse = ["dep:lexical-parse-float", "dep:lexical-parse-integer"]
 streaming = ["dep:corosensei", "std"]
 std = []

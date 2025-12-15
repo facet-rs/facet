@@ -248,15 +248,27 @@ impl FormatSerializer for JsonSerializer {
                     self.out.extend_from_slice(b"false")
                 }
             }
-            ScalarValue::I64(v) => self
-                .out
-                .extend_from_slice(itoa::Buffer::new().format(v).as_bytes()),
-            ScalarValue::U64(v) => self
-                .out
-                .extend_from_slice(itoa::Buffer::new().format(v).as_bytes()),
-            ScalarValue::F64(v) => self
-                .out
-                .extend_from_slice(ryu::Buffer::new().format(v).as_bytes()),
+            ScalarValue::I64(v) => {
+                #[cfg(feature = "fast")]
+                self.out
+                    .extend_from_slice(itoa::Buffer::new().format(v).as_bytes());
+                #[cfg(not(feature = "fast"))]
+                self.out.extend_from_slice(v.to_string().as_bytes());
+            }
+            ScalarValue::U64(v) => {
+                #[cfg(feature = "fast")]
+                self.out
+                    .extend_from_slice(itoa::Buffer::new().format(v).as_bytes());
+                #[cfg(not(feature = "fast"))]
+                self.out.extend_from_slice(v.to_string().as_bytes());
+            }
+            ScalarValue::F64(v) => {
+                #[cfg(feature = "fast")]
+                self.out
+                    .extend_from_slice(ryu::Buffer::new().format(v).as_bytes());
+                #[cfg(not(feature = "fast"))]
+                self.out.extend_from_slice(v.to_string().as_bytes());
+            }
             ScalarValue::Str(s) => self.write_json_string(&s),
             ScalarValue::Bytes(_) => {
                 return Err(JsonSerializeError {
