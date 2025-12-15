@@ -10,7 +10,7 @@ use cranelift::prelude::*;
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Linkage, Module};
 
-use facet_core::{Def, Facet, Field, Shape, Type as FacetType, UserType};
+use facet_core::{Facet, Field, Shape, Type as FacetType, UserType};
 
 use super::helpers::{self, JitContext, ParserVTable};
 use crate::{DeserializeError, FormatParser};
@@ -106,32 +106,8 @@ pub fn is_jit_compatible(shape: &'static Shape) -> bool {
 
 /// Check if a field type is supported for JIT compilation.
 fn is_field_type_supported(field: &Field) -> bool {
-    let shape = field.shape();
-    match &shape.def {
-        // Primitive types (scalars)
-        Def::Scalar => true,
-        // TODO: Add more types (Vec, Option, nested structs)
-        _ => {
-            // Check for common types by name
-            let type_name = shape.type_identifier;
-            matches!(
-                type_name,
-                "bool"
-                    | "u8"
-                    | "u16"
-                    | "u32"
-                    | "u64"
-                    | "i8"
-                    | "i16"
-                    | "i32"
-                    | "i64"
-                    | "f32"
-                    | "f64"
-                    | "String"
-                    | "&str"
-            )
-        }
-    }
+    // Just check if WriteKind::from_shape can handle this type
+    WriteKind::from_shape(field.shape()).is_some()
 }
 
 /// Try to compile a deserializer for the given type and parser.
@@ -184,6 +160,10 @@ fn register_helpers(builder: &mut JITBuilder) {
     builder.symbol("jit_write_bool", helpers::jit_write_bool as *const u8);
     builder.symbol("jit_write_string", helpers::jit_write_string as *const u8);
     builder.symbol("jit_field_matches", helpers::jit_field_matches as *const u8);
+    builder.symbol(
+        "jit_deserialize_nested",
+        helpers::jit_deserialize_nested as *const u8,
+    );
 }
 
 /// Compile a deserializer function for a struct.
@@ -205,6 +185,30 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
             })
         })
         .collect();
+
+    // Pre-compile all nested structs to get their function pointers.
+    // We do this before building the parent to avoid any potential issues.
+    // Each nested struct gets compiled once and cached.
+    let mut nested_func_ptrs: std::collections::HashMap<*const Shape, *const u8> =
+        std::collections::HashMap::new();
+    for field in &fields {
+        if let WriteKind::NestedStruct(nested_shape) = field.write_kind {
+            let ptr = nested_shape as *const Shape;
+            if let std::collections::hash_map::Entry::Vacant(e) = nested_func_ptrs.entry(ptr) {
+                // Compile the nested struct (or get from cache)
+                // This creates a temporary module just to get the function pointer
+                let mut nested_builder =
+                    JITBuilder::new(cranelift_module::default_libcall_names()).ok()?;
+                register_helpers(&mut nested_builder);
+                let mut nested_module = JITModule::new(nested_builder);
+                let nested_func_id = compile_deserializer(&mut nested_module, nested_shape)?;
+                nested_module.finalize_definitions().ok()?;
+                let fn_ptr = nested_module.get_finalized_function(nested_func_id);
+                e.insert(fn_ptr);
+                // Note: nested_module is dropped here but the JIT code remains valid
+            }
+        }
+    }
 
     let pointer_type = module.target_config().pointer_type();
 
@@ -288,6 +292,15 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         s
     };
 
+    let sig_deserialize_nested = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // ctx: *mut JitContext
+        s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
+        s.params.push(AbiParam::new(pointer_type)); // func_ptr: *const u8
+        s.returns.push(AbiParam::new(types::I32)); // result
+        s
+    };
+
     // Declare all helper functions
     let field_matches_id = module
         .declare_function("jit_field_matches", Linkage::Import, &sig_field_matches)
@@ -307,6 +320,13 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
     let write_string_id = module
         .declare_function("jit_write_string", Linkage::Import, &sig_write_string)
         .ok()?;
+    let deserialize_nested_id = module
+        .declare_function(
+            "jit_deserialize_nested",
+            Linkage::Import,
+            &sig_deserialize_nested,
+        )
+        .ok()?;
 
     let mut ctx = module.make_context();
     ctx.func.signature = sig;
@@ -323,6 +343,8 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         let write_f64_ref = module.declare_func_in_func(write_f64_id, builder.func);
         let write_bool_ref = module.declare_func_in_func(write_bool_id, builder.func);
         let write_string_ref = module.declare_func_in_func(write_string_id, builder.func);
+        let deserialize_nested_ref =
+            module.declare_func_in_func(deserialize_nested_id, builder.func);
 
         // Create entry block
         let entry_block = builder.create_block();
@@ -631,6 +653,34 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
                         ],
                     );
                 }
+                WriteKind::NestedStruct(nested_shape) => {
+                    // Get the pre-compiled function pointer for this nested struct
+                    let func_ptr = nested_func_ptrs[&(nested_shape as *const Shape)];
+                    let func_ptr_val = builder.ins().iconst(pointer_type, func_ptr as i64);
+
+                    // Calculate the nested struct's output pointer
+                    let nested_out_ptr = builder.ins().iadd(out_ptr, offset_val);
+
+                    // Call jit_deserialize_nested(ctx_ptr, nested_out_ptr, func_ptr)
+                    let call_result = builder.ins().call(
+                        deserialize_nested_ref,
+                        &[ctx_ptr, nested_out_ptr, func_ptr_val],
+                    );
+                    let nested_result = builder.inst_results(call_result)[0];
+
+                    // Check if nested deserialization failed
+                    let nested_is_error =
+                        builder
+                            .ins()
+                            .icmp_imm(IntCC::SignedLessThan, nested_result, 0);
+                    let nested_success = builder.create_block();
+                    builder
+                        .ins()
+                        .brif(nested_is_error, error_block, &[], nested_success, &[]);
+
+                    builder.switch_to_block(nested_success);
+                    builder.seal_block(nested_success);
+                }
             }
 
             builder.ins().jump(after_field, &[]);
@@ -702,11 +752,13 @@ enum WriteKind {
     F64,
     Bool,
     String,
+    /// Nested struct that needs to be deserialized via a separate compiled function
+    NestedStruct(&'static Shape),
 }
 
 #[allow(dead_code)]
 impl WriteKind {
-    fn from_shape(shape: &Shape) -> Option<Self> {
+    fn from_shape(shape: &'static Shape) -> Option<Self> {
         let type_name = shape.type_identifier;
         match type_name {
             "bool" => Some(WriteKind::Bool),
@@ -721,7 +773,16 @@ impl WriteKind {
             "f32" => Some(WriteKind::F32),
             "f64" => Some(WriteKind::F64),
             "String" | "alloc::string::String" => Some(WriteKind::String),
-            _ => None,
+            _ => {
+                // Check for nested struct
+                if let FacetType::User(UserType::Struct(_)) = &shape.ty {
+                    // Recursively check if the nested struct is JIT-compatible
+                    if is_jit_compatible(shape) {
+                        return Some(WriteKind::NestedStruct(shape));
+                    }
+                }
+                None
+            }
         }
     }
 }

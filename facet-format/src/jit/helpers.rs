@@ -556,6 +556,27 @@ pub unsafe extern "C" fn jit_field_matches(
     if name == expected { 1 } else { 0 }
 }
 
+/// Call a nested struct deserializer function.
+///
+/// # Safety
+/// - `ctx` must be a valid JitContext pointer
+/// - `out` must be a valid pointer to uninitialized memory for the nested struct
+/// - `func_ptr` must be a valid compiled deserializer function pointer
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jit_deserialize_nested(
+    ctx: *mut JitContext,
+    out: *mut u8,
+    func_ptr: *const u8,
+) -> i32 {
+    // Cast the function pointer to the correct type
+    // Signature: fn(ctx: *mut JitContext, out: *mut T) -> i32
+    type NestedFn = unsafe extern "C" fn(*mut JitContext, *mut u8) -> i32;
+    let func: NestedFn = unsafe { std::mem::transmute(func_ptr) };
+
+    // Call the nested deserializer
+    unsafe { func(ctx, out) }
+}
+
 // =============================================================================
 // Layout constants for JIT code generation
 // =============================================================================
