@@ -206,6 +206,33 @@ fn parse_methods(body: TokenStream2) -> Result<Vec<ParsedMethod>> {
 
         let return_type = parse_return_type(&mut iter)?;
 
+        // Consume an optional `where` clause that may appear after the return
+        // type and before the terminating semicolon. We stop consuming once the
+        // semicolon is next so that the subsequent Semicolon::parse call will
+        // successfully consume it.
+        if let Some(next_tt) = iter.clone().next() {
+            if let TokenTree::Ident(ident) = &next_tt {
+                if ident == "where" {
+                    // Consume tokens until the semicolon remains as the next token.
+                    loop {
+                        if let Some(peek) = iter.clone().next() {
+                            if let TokenTree::Punct(p) = &peek {
+                                if p.as_char() == ';' {
+                                    break;
+                                }
+                            }
+                            // consume this token (part of the where-clause)
+                            iter.next();
+                        } else {
+                            // Reached end unexpectedly; break out and let the
+                            // normal Semicolon::parse report an error below.
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         Semicolon::parse(&mut iter).map_err(Error::from)?;
 
         let doc_lines = collect_doc_lines(&attrs);
@@ -255,16 +282,85 @@ fn parse_method_params(tokens: TokenStream, error_span: Span) -> Result<Vec<Meth
 }
 
 fn parse_return_type(iter: &mut TokenIter) -> Result<TokenStream2> {
+    // Look ahead for an arrow; if none, method returns ()
     let mut lookahead = iter.clone();
     if lookahead.parse::<RArrow>().is_err() {
         return Ok(quote! { () });
     }
 
+    // Consume the arrow token now that we've confirmed it exists
     RArrow::parse(iter).map_err(Error::from)?;
-    let ty_tokens = VerbatimUntil::<Semicolon>::parse(iter).map_err(Error::from)?;
-    Ok(ty_tokens.to_token_stream())
+
+    // Collect tokens that make up the return type, stopping at either the
+    // terminating semicolon or a `where` token that introduces a where-clause.
+    // We intentionally do not consume the semicolon here (it's parsed later),
+    // and we also stop before the `where` so that the where-clause can be
+    // handled separately by the caller.
+    let mut ty_tokens = TokenStream2::new();
+    loop {
+        let next = iter.clone().next();
+        match next {
+            Some(TokenTree::Punct(p)) if p.as_char() == ';' => break,
+            Some(TokenTree::Ident(ident)) if ident == "where" => break,
+            Some(_) => {
+                // consume and append
+                let tt = iter.next().expect("we just saw a next token");
+                ty_tokens.extend(std::iter::once(tt));
+            }
+            None => break,
+        }
+    }
+
+    Ok(ty_tokens)
 }
 
 pub fn join_doc_lines(lines: &[String]) -> String {
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proc_macro2::TokenStream as TokenStream2;
+
+    #[test]
+    fn parse_trait_with_where_clause_after_return() {
+        let src = r#"
+            #[allow(async_fn_in_trait)]
+            #[rapace::service]
+            pub trait MyPlugin {
+                async fn transform(&self, input: String) -> Result<String, String>
+                where
+                    Self: Sized;
+            }
+        "#;
+
+        let ts: TokenStream2 = src.parse().expect("tokenize trait");
+        let parsed = parse_trait(&ts).expect("parse_trait should succeed");
+
+        assert_eq!(parsed.methods.len(), 1);
+        let method = &parsed.methods[0];
+        // Ensure method name parsed correctly
+        assert_eq!(method.name.to_string(), "transform");
+        // Ensure return type was parsed and does not include the where-clause
+        let rt = method.return_type.to_string();
+        assert!(rt.contains("Result"));
+        assert!(!rt.contains("where"));
+    }
+
+    #[test]
+    fn parse_trait_without_return_type() {
+        let src = r#"
+            #[rapace::service]
+            pub trait T {
+                async fn foo(&self);
+            }
+        "#;
+        let ts: TokenStream2 = src.parse().expect("tokenize");
+        let parsed = parse_trait(&ts).expect("parse_trait");
+        assert_eq!(parsed.methods.len(), 1);
+        let method = &parsed.methods[0];
+        // No explicit return type => should be ()
+        assert_eq!(method.return_type.to_string(), "()");
+    }
 }
