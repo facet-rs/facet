@@ -110,7 +110,7 @@ fn string_into_raw_parts(s: String) -> (*mut u8, usize, usize) {
     (s.as_mut_ptr(), s.len(), s.capacity())
 }
 
-/// Decompose a Vec<u8> into raw parts for FFI transfer.
+/// Decompose a `Vec<u8>` into raw parts for FFI transfer.
 fn vec_into_raw_parts(v: Vec<u8>) -> (*mut u8, usize, usize) {
     let mut v = std::mem::ManuallyDrop::new(v);
     (v.as_mut_ptr(), v.len(), v.capacity())
