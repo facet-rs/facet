@@ -78,7 +78,7 @@ divan = { workspace = true } #unified
 facet = { workspace = true, features = ["doc"] } #unified
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
-facet-format-json = { path = "../facet-format-json" }
+facet-format-json = { path = "../facet-format-json", features = ["fast"] }
 facet-value = { path = "../facet-value" }
 insta = { workspace = true } #unified
 jiff = { workspace = true } #unified
