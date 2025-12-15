@@ -1,4 +1,4 @@
-#![deny(unsafe_code)]
+#![cfg_attr(not(feature = "jit"), deny(unsafe_code))]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
 //! Prototype types for the format codex deserializer.
@@ -10,6 +10,9 @@ mod parser;
 mod serializer;
 mod solver;
 mod visitor;
+
+#[cfg(feature = "jit")]
+pub mod jit;
 
 pub use deserializer::{DeserializeError, FormatDeserializer};
 pub use event::{
