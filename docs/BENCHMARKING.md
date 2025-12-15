@@ -30,16 +30,33 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ### Generate a Complete Benchmark Report
 
 ```bash
+# Generate report
 ./scripts/bench-report.sh
+
+# Generate report and auto-serve on http://localhost:1999
+./scripts/bench-report.sh --serve
 ```
 
-This will:
+**What it does:**
 1. Set up Python virtual environment with uv (first run only)
 2. Run all divan benchmarks (wall-clock times)
+   - **Live progress**: Shows line count updating in real-time
 3. Run all gungraun benchmarks (instruction counts)
+   - **Live progress**: Shows line count updating in real-time
 4. Parse the output with `parse_bench.py` (tables, graphs, speedup calculations)
 5. Generate HTML report with Chart.js visualizations
 6. Save to `bench-reports/report-TIMESTAMP.html`
+7. Create `report.html` symlink to latest
+8. **If `--serve`**: Automatically start HTTP server on port 1999
+
+**Progress indicator:**
+While benchmarks run, you'll see live updates:
+```
+📊 Running divan (wall-clock) ... 342 lines
+🔬 Running gungraun (instruction counts) ... 89 lines
+```
+
+This shows the benchmarks are still running (not frozen).
 
 **First run setup:**
 - Creates `scripts/.venv` using uv
@@ -48,18 +65,16 @@ This will:
 
 **View the report:**
 ```bash
-# Latest report (symlink created automatically)
+# Auto-serve (easiest!)
+./scripts/bench-report.sh --serve
+# Opens http://localhost:1999/report.html
+
+# Or manually
 open bench-reports/report.html
 
 # Or specific timestamped report
 open bench-reports/report-20251215-152959.html
-
-# Or via HTTP server (from repo root)
-python3 -m http.server -b 0.0.0.0 -d bench-reports 1999
-# Then visit http://localhost:1999/report.html
 ```
-
-**Note:** The script creates a `report.html` symlink pointing to the latest report for convenience.
 
 ## Benchmark Types
 
