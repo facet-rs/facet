@@ -314,6 +314,41 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         s
     };
 
+    let sig_option_init_none = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
+        s.params.push(AbiParam::new(pointer_type)); // init_none_fn: *const u8
+        s
+    };
+
+    let sig_option_init_some = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // ctx: *mut JitContext
+        s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
+        s.params.push(AbiParam::new(pointer_type)); // init_some_fn: *const u8
+        s.params.push(AbiParam::new(pointer_type)); // inner_deserializer: *const u8
+        s.returns.push(AbiParam::new(types::I32)); // result
+        s
+    };
+
+    let sig_vec_init_with_capacity = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
+        s.params.push(AbiParam::new(pointer_type)); // capacity: usize
+        s.params.push(AbiParam::new(pointer_type)); // init_fn: *const u8
+        s
+    };
+
+    let sig_vec_push = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // ctx: *mut JitContext
+        s.params.push(AbiParam::new(pointer_type)); // vec_ptr: *mut u8
+        s.params.push(AbiParam::new(pointer_type)); // push_fn: *const u8
+        s.params.push(AbiParam::new(pointer_type)); // item_deserializer: *const u8
+        s.returns.push(AbiParam::new(types::I32)); // result
+        s
+    };
+
     // Declare all helper functions
     let field_matches_id = module
         .declare_function("jit_field_matches", Linkage::Import, &sig_field_matches)
@@ -340,6 +375,30 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
             &sig_deserialize_nested,
         )
         .ok()?;
+    let option_init_none_id = module
+        .declare_function(
+            "jit_option_init_none",
+            Linkage::Import,
+            &sig_option_init_none,
+        )
+        .ok()?;
+    let option_init_some_id = module
+        .declare_function(
+            "jit_option_init_some",
+            Linkage::Import,
+            &sig_option_init_some,
+        )
+        .ok()?;
+    let vec_init_with_capacity_id = module
+        .declare_function(
+            "jit_vec_init_with_capacity",
+            Linkage::Import,
+            &sig_vec_init_with_capacity,
+        )
+        .ok()?;
+    let vec_push_id = module
+        .declare_function("jit_vec_push", Linkage::Import, &sig_vec_push)
+        .ok()?;
 
     let mut ctx = module.make_context();
     ctx.func.signature = sig;
@@ -358,6 +417,11 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         let write_string_ref = module.declare_func_in_func(write_string_id, builder.func);
         let deserialize_nested_ref =
             module.declare_func_in_func(deserialize_nested_id, builder.func);
+        let option_init_none_ref = module.declare_func_in_func(option_init_none_id, builder.func);
+        let _option_init_some_ref = module.declare_func_in_func(option_init_some_id, builder.func);
+        let _vec_init_with_capacity_ref =
+            module.declare_func_in_func(vec_init_with_capacity_id, builder.func);
+        let _vec_push_ref = module.declare_func_in_func(vec_push_id, builder.func);
 
         // Create entry block
         let entry_block = builder.create_block();
@@ -442,9 +506,36 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
             helpers::RAW_EVENT_TAG_OFFSET as i32,
         );
         let is_struct_start = builder.ins().icmp_imm(IntCC::Equal, tag, 0); // EventTag::StructStart = 0
+        let init_options_block = builder.create_block();
         builder
             .ins()
-            .brif(is_struct_start, field_loop, &[], error_block, &[]);
+            .brif(is_struct_start, init_options_block, &[], error_block, &[]);
+
+        // Initialize all Option fields to None before field loop
+        builder.switch_to_block(init_options_block);
+        for field in &fields {
+            if let WriteKind::Option(option_shape) = field.write_kind {
+                let Def::Option(option_def) = &option_shape.def else {
+                    continue;
+                };
+
+                // Get the init_none function pointer from the Option's vtable
+                let option_vtable = option_def.vtable;
+                let init_none_fn_ptr = option_vtable.init_none as *const u8;
+                let init_none_fn_val = builder.ins().iconst(pointer_type, init_none_fn_ptr as i64);
+
+                // Calculate field pointer
+                let field_offset = builder.ins().iconst(pointer_type, field.offset as i64);
+                let field_ptr = builder.ins().iadd(out_ptr, field_offset);
+
+                // Call jit_option_init_none(field_ptr, init_none_fn)
+                builder
+                    .ins()
+                    .call(option_init_none_ref, &[field_ptr, init_none_fn_val]);
+            }
+        }
+        builder.ins().jump(field_loop, &[]);
+        builder.seal_block(init_options_block);
 
         // Field loop
         builder.switch_to_block(field_loop);
