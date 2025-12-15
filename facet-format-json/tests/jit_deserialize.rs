@@ -116,3 +116,44 @@ fn test_jit_unknown_fields_skipped() {
     assert_eq!(value.age, 25);
     assert!(!value.active);
 }
+
+#[derive(Debug, PartialEq, Facet)]
+struct Inner {
+    x: i64,
+    y: i64,
+}
+
+#[derive(Debug, PartialEq, Facet)]
+struct Outer {
+    id: u64,
+    inner: Inner,
+    name: String,
+}
+
+#[test]
+#[ignore = "WIP: Event consumption needs fixing - nested deserializer expects StructStart but parent already consumed it"]
+fn test_jit_nested_struct() {
+    // Check compatibility
+    assert!(jit::is_jit_compatible::<Outer>());
+    assert!(jit::is_jit_compatible::<Inner>());
+
+    // Parse with JIT
+    let json = br#"{"id": 42, "inner": {"x": 10, "y": 20}, "name": "test"}"#;
+    let mut parser = JsonParser::new(json);
+
+    let result = jit::try_deserialize::<Outer, JsonParser<'_>>(&mut parser);
+
+    assert!(result.is_some(), "JIT deserialization should be attempted");
+    let result = result.unwrap();
+    assert!(
+        result.is_ok(),
+        "JIT deserialization should succeed: {:?}",
+        result
+    );
+
+    let value = result.unwrap();
+    assert_eq!(value.id, 42);
+    assert_eq!(value.inner.x, 10);
+    assert_eq!(value.inner.y, 20);
+    assert_eq!(value.name, "test");
+}
