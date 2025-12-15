@@ -105,6 +105,10 @@ harness = false
 name = "gungraun_jit"
 harness = false
 
+[[bench]]
+name = "unified_benchmarks"
+harness = false
+
 [[bin]]
 name = "profile_canada"
 required-features = ["brotli"]
