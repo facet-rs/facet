@@ -237,11 +237,15 @@ if [ -f "${REPORT_DIR}/gungraun-${TIMESTAMP}.txt" ]; then
     mv "${REPORT_FILE}.tmp" "${REPORT_FILE}"
 fi
 
+# Create symlink to latest report
+ln -sf "report-${TIMESTAMP}.html" "${REPORT_DIR}/report.html"
+
 echo "✅ Report generated: ${REPORT_FILE}"
+echo "   Latest: ${REPORT_DIR}/report.html"
 echo ""
 echo "To view:"
-echo "  open ${REPORT_FILE}"
+echo "  open bench-reports/report.html"
 echo ""
-echo "Or start a simple HTTP server:"
-echo "  cd ${REPORT_DIR} && python3 -m http.server 8000"
-echo "  Then open: http://localhost:8000/report-${TIMESTAMP}.html"
+echo "Or start HTTP server:"
+echo "  python3 -m http.server -b 0.0.0.0 -d bench-reports 1999"
+echo "  Then open: http://localhost:1999/report.html"

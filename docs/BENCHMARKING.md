@@ -48,14 +48,18 @@ This will:
 
 **View the report:**
 ```bash
-# macOS/Linux with GUI
-open bench-reports/report-TIMESTAMP.html
+# Latest report (symlink created automatically)
+open bench-reports/report.html
 
-# Or via HTTP server
-cd bench-reports
-python3 -m http.server 8000
-# Then visit http://localhost:8000/report-TIMESTAMP.html
+# Or specific timestamped report
+open bench-reports/report-20251215-152959.html
+
+# Or via HTTP server (from repo root)
+python3 -m http.server -b 0.0.0.0 -d bench-reports 1999
+# Then visit http://localhost:1999/report.html
 ```
+
+**Note:** The script creates a `report.html` symlink pointing to the latest report for convenience.
 
 ## Benchmark Types
 
