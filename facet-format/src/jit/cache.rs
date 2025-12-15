@@ -73,6 +73,7 @@ where
 
 /// Clear the cache. Useful for testing.
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn clear_cache() {
     if let Some(cache) = CACHE.get() {
         cache.write().clear();

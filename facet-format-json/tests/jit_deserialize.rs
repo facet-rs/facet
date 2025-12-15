@@ -47,7 +47,7 @@ struct MixedTypes {
 fn test_jit_mixed_types() {
     assert!(jit::is_jit_compatible::<MixedTypes>());
 
-    let json = br#"{"count": 42, "ratio": 3.14, "flag": false}"#;
+    let json = br#"{"count": 42, "ratio": 2.5, "flag": false}"#;
     let mut parser = JsonParser::new(json);
 
     let result = jit::try_deserialize::<MixedTypes, JsonParser<'_>>(&mut parser);
@@ -62,7 +62,7 @@ fn test_jit_mixed_types() {
 
     let value = result.unwrap();
     assert_eq!(value.count, 42);
-    assert!((value.ratio - 3.14).abs() < 0.001);
+    assert!((value.ratio - 2.5).abs() < 0.001);
     assert!(!value.flag);
 }
 
