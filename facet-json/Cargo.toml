@@ -71,6 +71,7 @@ tokio = { version = "1", default-features = false, optional = true, features = [
 
 [dev-dependencies]
 bolero = { workspace = true } #unified
+brotli = "7"
 bytes = { workspace = true } #unified
 camino = { workspace = true } #unified
 chrono = { workspace = true, features = ["clock"] } #unified
