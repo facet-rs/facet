@@ -148,13 +148,7 @@ struct OptionsMaybeData {
 // Realistic Benchmarks (Large Real-World Data)
 // ============================================================================
 
-benchmark name="twitter" type="TwitterResponseSparse" category="realistic" {
-    json_file "corpus/twitter.json.br"
-}
 
-benchmark name="canada" type="Canada" category="realistic" {
-    json_file "corpus/canada.json.br"
-}
 
 // Note: flatten benchmarks (flatten_2enums, flatten_4enums) have complex
 // flattened enum types that need special handling. To be added in follow-up.

@@ -43,13 +43,14 @@ fn gen_benchmarks() {
         .unwrap()
         .to_path_buf();
     let kdl_path = workspace_root.join("facet-json/benches/benchmarks.kdl");
-    let output_path = workspace_root.join("facet-json/benches/unified_benchmarks.rs");
+    let divan_path = workspace_root.join("facet-json/benches/unified_benchmarks_divan.rs");
+    let gungraun_path = workspace_root.join("facet-json/benches/unified_benchmarks_gungraun.rs");
 
-    match gen_benchmarks::generate_benchmarks(&kdl_path, &output_path) {
+    match gen_benchmarks::generate_benchmarks(&kdl_path, &divan_path, &gungraun_path) {
         Ok(()) => {
             println!("\n🎉 Success! Run benchmarks with:");
-            println!("   cargo bench --bench unified_benchmarks");
-            println!("   cargo bench --bench unified_benchmarks --features cranelift");
+            println!("   cargo bench --bench unified_benchmarks_divan --features cranelift");
+            println!("   cargo bench --bench unified_benchmarks_gungraun --features cranelift");
         }
         Err(e) => {
             eprintln!("❌ Error generating benchmarks: {}", e);
