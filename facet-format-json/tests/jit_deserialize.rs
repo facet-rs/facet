@@ -131,7 +131,6 @@ struct Outer {
 }
 
 #[test]
-#[ignore = "WIP: Event consumption needs fixing - nested deserializer expects StructStart but parent already consumed it"]
 fn test_jit_nested_struct() {
     // Check compatibility
     assert!(jit::is_jit_compatible::<Outer>());

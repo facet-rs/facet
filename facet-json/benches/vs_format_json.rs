@@ -704,6 +704,55 @@ mod nested_structs {
     }
 }
 
+/// Single nested struct - for JIT testing (no Vec)
+mod single_nested_struct {
+    use super::*;
+
+    #[derive(Facet, Serialize, Deserialize, Clone, Debug)]
+    struct Outer {
+        id: u64,
+        inner: Inner,
+        name: String,
+    }
+
+    #[derive(Facet, Serialize, Deserialize, Clone, Debug)]
+    struct Inner {
+        x: i64,
+        y: i64,
+    }
+
+    static DATA: LazyLock<Outer> = LazyLock::new(|| Outer {
+        id: 42,
+        inner: Inner { x: 10, y: 20 },
+        name: "test".to_string(),
+    });
+    static JSON: LazyLock<String> = LazyLock::new(|| facet_json::to_string(&*DATA));
+
+    #[divan::bench]
+    fn facet_format_jit_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(format_jit::deserialize_with_fallback::<Outer, _>(
+                facet_format_json::JsonParser::new(black_box(JSON.as_bytes())),
+            ))
+        });
+    }
+
+    #[divan::bench]
+    fn facet_format_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| black_box(facet_format_json::from_str::<Outer>(black_box(&*JSON))));
+    }
+
+    #[divan::bench]
+    fn facet_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| black_box(facet_json::from_str::<Outer>(black_box(&*JSON))));
+    }
+
+    #[divan::bench]
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::from_str::<Outer>(black_box(&*JSON)).unwrap()));
+    }
+}
+
 /// HashMaps - tests map serialization
 mod hashmaps {
     use super::*;
