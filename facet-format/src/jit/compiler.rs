@@ -101,7 +101,7 @@ pub fn is_jit_compatible(shape: &'static Shape) -> bool {
     }
 
     // Check that all field types are supported
-    struct_def.fields.iter().all(|f| is_field_type_supported(f))
+    struct_def.fields.iter().all(is_field_type_supported)
 }
 
 /// Check if a field type is supported for JIT compilation.
@@ -152,7 +152,7 @@ pub fn try_compile<'de, T: Facet<'de>, P: FormatParser<'de>>() -> Option<Compile
     let mut module = JITModule::new(builder);
 
     // Compile the deserializer
-    let func_id = compile_deserializer::<T, P>(&mut module, shape)?;
+    let func_id = compile_deserializer(&mut module, shape)?;
 
     // Finalize and get the function pointer
     module.finalize_definitions().ok()?;
@@ -162,7 +162,7 @@ pub fn try_compile<'de, T: Facet<'de>, P: FormatParser<'de>>() -> Option<Compile
     let vtable = helpers::make_vtable::<P>();
 
     Some(CompiledDeserializer {
-        fn_ptr: fn_ptr as *const u8,
+        fn_ptr,
         vtable,
         _phantom: PhantomData,
     })
@@ -187,10 +187,7 @@ fn register_helpers(builder: &mut JITBuilder) {
 }
 
 /// Compile a deserializer function for a struct.
-fn compile_deserializer<'de, T, P: FormatParser<'de>>(
-    module: &mut JITModule,
-    shape: &'static Shape,
-) -> Option<FuncId> {
+fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option<FuncId> {
     let FacetType::User(UserType::Struct(struct_def)) = &shape.ty else {
         return None;
     };
@@ -370,7 +367,7 @@ fn compile_deserializer<'de, T, P: FormatParser<'de>>(
         );
 
         // Load skip_value function pointer from vtable
-        let skip_value_fn = builder.ins().load(
+        let _skip_value_fn = builder.ins().load(
             pointer_type,
             MemFlags::trusted(),
             vtable_ptr,

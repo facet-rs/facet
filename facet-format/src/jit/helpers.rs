@@ -131,10 +131,13 @@ pub enum ScalarTag {
 /// Success
 pub const OK: i32 = 0;
 /// Expected struct start
+#[allow(dead_code)]
 pub const ERR_EXPECTED_STRUCT: i32 = -1;
 /// Expected field key or struct end
+#[allow(dead_code)]
 pub const ERR_EXPECTED_FIELD_OR_END: i32 = -2;
 /// Expected scalar value
+#[allow(dead_code)]
 pub const ERR_EXPECTED_SCALAR: i32 = -3;
 /// Parser error
 pub const ERR_PARSER: i32 = -4;
