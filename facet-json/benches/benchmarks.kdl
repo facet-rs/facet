@@ -57,3 +57,31 @@ struct WithOptions {
 }
 """
 }
+
+// ============================================================================
+// Array Benchmarks (Vec<T>)
+// ============================================================================
+
+benchmark name="booleans" type="Vec<bool>" category="array" {
+    json_file "data/booleans.json"
+}
+
+benchmark name="integers" type="Vec<u64>" category="array" {
+    json_file "data/integers.json"
+}
+
+benchmark name="floats" type="Vec<f64>" category="array" {
+    json_file "data/floats.json"
+}
+
+benchmark name="short_strings" type="Vec<String>" category="array" {
+    json_file "data/short_strings.json"
+}
+
+benchmark name="long_strings" type="Vec<String>" category="array" {
+    json_file "data/long_strings.json"
+}
+
+benchmark name="escaped_strings" type="Vec<String>" category="array" {
+    json_file "data/escaped_strings.json"
+}
