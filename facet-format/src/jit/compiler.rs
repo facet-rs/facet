@@ -73,6 +73,14 @@ impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
         let result = unsafe { func(&mut ctx, output.as_mut_ptr()) };
 
         if result == 0 {
+            // TODO: Missing field validation
+            // We currently assume_init without verifying all non-Option fields were set.
+            // This is technically UB if required fields are missing, but matches facet-json's
+            // cranelift implementation behavior. Proper fix would be to:
+            // 1. Track which fields were set (bitmask)
+            // 2. Before success, verify all required fields present
+            // 3. Return error if any missing
+            // For now, we rely on input being well-formed.
             Ok(unsafe { output.assume_init() })
         } else {
             Err(DeserializeError::Unsupported(format!(
@@ -496,7 +504,7 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         );
 
         // Load skip_value function pointer from vtable
-        let _skip_value_fn = builder.ins().load(
+        let skip_value_fn = builder.ins().load(
             pointer_type,
             MemFlags::trusted(),
             vtable_ptr,
@@ -510,7 +518,7 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
 
         // Import the signature for indirect calls
         let sig_next_event_ref = builder.import_signature(sig_next_event.clone());
-        let _sig_skip_value_ref = builder.import_signature(sig_skip_value.clone());
+        let sig_skip_value_ref = builder.import_signature(sig_skip_value.clone());
 
         // Call next_event to get StructStart
         let call_result = builder.ins().call_indirect(
@@ -670,14 +678,13 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
             }
         }
 
-        // Skip field block: call next_event (to skip the value) and then skip_value
+        // Skip field block: skip unknown field value
         builder.switch_to_block(skip_field_block);
-        // First get the value event
-        let call_result = builder.ins().call_indirect(
-            sig_next_event_ref,
-            next_event_fn,
-            &[parser_ptr, raw_event_ptr],
-        );
+        // Call skip_value to properly skip the entire value (including nested objects/arrays)
+        let call_result =
+            builder
+                .ins()
+                .call_indirect(sig_skip_value_ref, skip_value_fn, &[parser_ptr]);
         let result = builder.inst_results(call_result)[0];
         let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
         builder
