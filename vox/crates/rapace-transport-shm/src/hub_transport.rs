@@ -811,6 +811,10 @@ impl From<std::io::Error> for HubTransportError {
     }
 }
 
+// Static assertions: Hub transports must be Send + Sync
+static_assertions::assert_impl_all!(HubPeerTransport: Send, Sync);
+static_assertions::assert_impl_all!(HubHostPeerTransport: Send, Sync);
+
 #[cfg(test)]
 mod tests {
     use super::*;

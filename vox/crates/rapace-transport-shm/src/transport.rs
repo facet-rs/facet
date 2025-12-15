@@ -838,6 +838,9 @@ impl<'a> rapace_core::DecodeCtx<'a> for ShmDecoder<'a> {
     }
 }
 
+// Static assertions: ShmTransport must be Send + Sync
+static_assertions::assert_impl_all!(ShmTransport: Send, Sync);
+
 #[cfg(test)]
 mod tests {
     use super::*;

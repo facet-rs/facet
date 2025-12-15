@@ -360,6 +360,9 @@ mod tungstenite_impl {
     pub type TungsteniteTransport<S> =
         native::WebSocketTransport<tokio_tungstenite::WebSocketStream<S>, Message>;
 
+    // Static assertions: TungsteniteTransport must be Send + Sync
+    static_assertions::assert_impl_all!(TungsteniteTransport<tokio::io::DuplexStream>: Send, Sync);
+
     impl TungsteniteTransport<tokio::io::DuplexStream> {
         /// Create a connected pair of WebSocket transports for testing.
         ///
@@ -642,6 +645,11 @@ mod axum_impl {
     ///
     /// Use this when building WebSocket handlers with the axum web framework.
     pub type AxumTransport = native::WebSocketTransport<axum::extract::ws::WebSocket, Message>;
+
+    // Static assertions: AxumTransport must be Send + Sync
+    // Note: axum::extract::ws::WebSocket itself is NOT Sync (contains Box<dyn Io + Send>),
+    // but our WebSocketTransport wrapper is Sync because AsyncMutex<T> is Sync when T: Send.
+    static_assertions::assert_impl_all!(AxumTransport: Send, Sync);
 }
 
 // Re-exports for native targets

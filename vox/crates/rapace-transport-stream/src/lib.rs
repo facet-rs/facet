@@ -294,6 +294,12 @@ impl<'a> rapace_core::DecodeCtx<'a> for StreamDecoder<'a> {
     }
 }
 
+// Static assertions: StreamTransport must be Send + Sync
+static_assertions::assert_impl_all!(
+    StreamTransport<tokio::io::ReadHalf<tokio::io::DuplexStream>, tokio::io::WriteHalf<tokio::io::DuplexStream>>:
+    Send, Sync
+);
+
 #[cfg(test)]
 mod tests {
     use super::*;

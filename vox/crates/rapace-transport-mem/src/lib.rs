@@ -183,6 +183,9 @@ impl<'a> rapace_core::DecodeCtx<'a> for InProcDecoder<'a> {
     }
 }
 
+// Static assertions: InProcTransport must be Send + Sync
+static_assertions::assert_impl_all!(InProcTransport: Send, Sync);
+
 #[cfg(test)]
 mod tests {
     use super::*;
