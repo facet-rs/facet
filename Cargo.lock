@@ -1349,9 +1349,14 @@ dependencies = [
 name = "facet-format"
 version = "0.32.2"
 dependencies = [
+ "cranelift",
+ "cranelift-jit",
+ "cranelift-module",
+ "cranelift-native",
  "facet-core",
  "facet-reflect",
  "facet-solver",
+ "parking_lot",
 ]
 
 [[package]]

@@ -91,6 +91,113 @@ struct Geometry {
 }
 
 // =============================================================================
+// Flatten benchmark types (defined at top level due to derive macro limitations)
+// =============================================================================
+
+// Auth variants for flatten benchmarks
+#[derive(Facet, Serialize, Deserialize, Debug, Clone, PartialEq)]
+struct AuthPassword {
+    password: String,
+}
+
+#[derive(Facet, Serialize, Deserialize, Debug, Clone, PartialEq)]
+struct AuthToken {
+    token: String,
+    token_expiry: u64,
+}
+
+#[derive(Facet, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[repr(C)]
+enum AuthMethod {
+    Password(AuthPassword),
+    Token(AuthToken),
+}
+
+// Transport variants
+#[derive(Facet, Serialize, Deserialize, Debug, Clone, PartialEq)]
+struct TransportTcp {
+    tcp_port: u16,
+}
+
+#[derive(Facet, Serialize, Deserialize, Debug, Clone, PartialEq)]
+struct TransportUnix {
+    socket_path: String,
+}
+
+#[derive(Facet, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[repr(C)]
+enum Transport {
+    Tcp(TransportTcp),
+    Unix(TransportUnix),
+}
+
+// Storage variants
+#[derive(Facet, Serialize, Deserialize, Debug, Clone, PartialEq)]
+struct StorageLocal {
+    local_path: String,
+}
+
+#[derive(Facet, Serialize, Deserialize, Debug, Clone, PartialEq)]
+struct StorageRemote {
+    remote_url: String,
+}
+
+#[derive(Facet, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[repr(C)]
+enum Storage {
+    Local(StorageLocal),
+    Remote(StorageRemote),
+}
+
+// Logging variants
+#[derive(Facet, Serialize, Deserialize, Debug, Clone, PartialEq)]
+struct LogFile {
+    log_path: String,
+}
+
+#[derive(Facet, Serialize, Deserialize, Debug, Clone, PartialEq)]
+struct LogStdout {
+    log_color: bool,
+}
+
+#[derive(Facet, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[repr(C)]
+enum Logging {
+    File(LogFile),
+    Stdout(LogStdout),
+}
+
+// 2-enum config (2×2 = 4 configurations)
+#[derive(Facet, Serialize, Deserialize, Debug, Clone, PartialEq)]
+struct Config2Enums {
+    name: String,
+    #[facet(flatten)]
+    #[serde(flatten)]
+    auth: AuthMethod,
+    #[facet(flatten)]
+    #[serde(flatten)]
+    transport: Transport,
+}
+
+// 4-enum config (2^4 = 16 configurations)
+#[derive(Facet, Serialize, Deserialize, Debug, Clone, PartialEq)]
+struct Config4Enums {
+    name: String,
+    #[facet(flatten)]
+    #[serde(flatten)]
+    auth: AuthMethod,
+    #[facet(flatten)]
+    #[serde(flatten)]
+    transport: Transport,
+    #[facet(flatten)]
+    #[serde(flatten)]
+    storage: Storage,
+    #[facet(flatten)]
+    #[serde(flatten)]
+    logging: Logging,
+}
+
+// =============================================================================
 // Twitter benchmarks
 // =============================================================================
 
@@ -772,5 +879,386 @@ mod booleans {
     #[divan::bench]
     fn serde_json_deserialize(bencher: Bencher) {
         bencher.bench(|| black_box(serde_json::from_str::<Vec<bool>>(black_box(&*JSON)).unwrap()));
+    }
+}
+
+// =============================================================================
+// Flatten benchmarks - measures solver overhead for ambiguous configurations
+// =============================================================================
+
+/// 2 flattened enums = 4 possible configurations
+/// Tests the solver's ability to disambiguate based on field presence
+mod flatten_2enums {
+    use super::*;
+
+    fn make_data() -> Vec<Config2Enums> {
+        // Mix of all 4 configurations
+        (0..250)
+            .flat_map(|i| {
+                vec![
+                    Config2Enums {
+                        name: format!("service_{}", i * 4),
+                        auth: AuthMethod::Password(AuthPassword {
+                            password: "secret".into(),
+                        }),
+                        transport: Transport::Tcp(TransportTcp { tcp_port: 8080 }),
+                    },
+                    Config2Enums {
+                        name: format!("service_{}", i * 4 + 1),
+                        auth: AuthMethod::Password(AuthPassword {
+                            password: "secret".into(),
+                        }),
+                        transport: Transport::Unix(TransportUnix {
+                            socket_path: "/tmp/sock".into(),
+                        }),
+                    },
+                    Config2Enums {
+                        name: format!("service_{}", i * 4 + 2),
+                        auth: AuthMethod::Token(AuthToken {
+                            token: "abc123".into(),
+                            token_expiry: 3600,
+                        }),
+                        transport: Transport::Tcp(TransportTcp { tcp_port: 9090 }),
+                    },
+                    Config2Enums {
+                        name: format!("service_{}", i * 4 + 3),
+                        auth: AuthMethod::Token(AuthToken {
+                            token: "xyz789".into(),
+                            token_expiry: 7200,
+                        }),
+                        transport: Transport::Unix(TransportUnix {
+                            socket_path: "/var/run/app.sock".into(),
+                        }),
+                    },
+                ]
+            })
+            .collect()
+    }
+
+    static DATA: LazyLock<Vec<Config2Enums>> = LazyLock::new(make_data);
+    static JSON: LazyLock<String> = LazyLock::new(|| facet_json::to_string(&*DATA));
+
+    #[divan::bench]
+    fn facet_json_serialize(bencher: Bencher) {
+        bencher.bench(|| black_box(facet_json::to_string(black_box(&*DATA))));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(&*DATA))));
+    }
+
+    #[divan::bench]
+    fn serde_json_serialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::to_string(black_box(&*DATA)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| black_box(facet_json::from_str::<Vec<Config2Enums>>(black_box(&*JSON))));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_format_json::from_str::<Vec<Config2Enums>>(black_box(
+                &*JSON,
+            )))
+        });
+    }
+
+    #[divan::bench]
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(serde_json::from_str::<Vec<Config2Enums>>(black_box(&*JSON)).unwrap())
+        });
+    }
+}
+
+/// 4 flattened enums = 16 possible configurations
+/// Tests solver scaling with more configuration combinations
+mod flatten_4enums {
+    use super::*;
+
+    fn make_data() -> Vec<Config4Enums> {
+        // Generate all 16 combinations, repeated to get ~1000 items
+        (0..64)
+            .flat_map(|i| {
+                // All 16 combinations for this batch
+                vec![
+                    // Password + Tcp + Local + File
+                    Config4Enums {
+                        name: format!("svc_{}_{}", i, 0),
+                        auth: AuthMethod::Password(AuthPassword {
+                            password: "secret".into(),
+                        }),
+                        transport: Transport::Tcp(TransportTcp { tcp_port: 8080 }),
+                        storage: Storage::Local(StorageLocal {
+                            local_path: "/data".into(),
+                        }),
+                        logging: Logging::File(LogFile {
+                            log_path: "/var/log/app.log".into(),
+                        }),
+                    },
+                    // Password + Tcp + Local + Stdout
+                    Config4Enums {
+                        name: format!("svc_{}_{}", i, 1),
+                        auth: AuthMethod::Password(AuthPassword {
+                            password: "secret".into(),
+                        }),
+                        transport: Transport::Tcp(TransportTcp { tcp_port: 8080 }),
+                        storage: Storage::Local(StorageLocal {
+                            local_path: "/data".into(),
+                        }),
+                        logging: Logging::Stdout(LogStdout { log_color: true }),
+                    },
+                    // Password + Tcp + Remote + File
+                    Config4Enums {
+                        name: format!("svc_{}_{}", i, 2),
+                        auth: AuthMethod::Password(AuthPassword {
+                            password: "secret".into(),
+                        }),
+                        transport: Transport::Tcp(TransportTcp { tcp_port: 8080 }),
+                        storage: Storage::Remote(StorageRemote {
+                            remote_url: "s3://bucket".into(),
+                        }),
+                        logging: Logging::File(LogFile {
+                            log_path: "/var/log/app.log".into(),
+                        }),
+                    },
+                    // Password + Tcp + Remote + Stdout
+                    Config4Enums {
+                        name: format!("svc_{}_{}", i, 3),
+                        auth: AuthMethod::Password(AuthPassword {
+                            password: "secret".into(),
+                        }),
+                        transport: Transport::Tcp(TransportTcp { tcp_port: 8080 }),
+                        storage: Storage::Remote(StorageRemote {
+                            remote_url: "s3://bucket".into(),
+                        }),
+                        logging: Logging::Stdout(LogStdout { log_color: true }),
+                    },
+                    // Password + Unix + Local + File
+                    Config4Enums {
+                        name: format!("svc_{}_{}", i, 4),
+                        auth: AuthMethod::Password(AuthPassword {
+                            password: "secret".into(),
+                        }),
+                        transport: Transport::Unix(TransportUnix {
+                            socket_path: "/tmp/sock".into(),
+                        }),
+                        storage: Storage::Local(StorageLocal {
+                            local_path: "/data".into(),
+                        }),
+                        logging: Logging::File(LogFile {
+                            log_path: "/var/log/app.log".into(),
+                        }),
+                    },
+                    // Password + Unix + Local + Stdout
+                    Config4Enums {
+                        name: format!("svc_{}_{}", i, 5),
+                        auth: AuthMethod::Password(AuthPassword {
+                            password: "secret".into(),
+                        }),
+                        transport: Transport::Unix(TransportUnix {
+                            socket_path: "/tmp/sock".into(),
+                        }),
+                        storage: Storage::Local(StorageLocal {
+                            local_path: "/data".into(),
+                        }),
+                        logging: Logging::Stdout(LogStdout { log_color: true }),
+                    },
+                    // Password + Unix + Remote + File
+                    Config4Enums {
+                        name: format!("svc_{}_{}", i, 6),
+                        auth: AuthMethod::Password(AuthPassword {
+                            password: "secret".into(),
+                        }),
+                        transport: Transport::Unix(TransportUnix {
+                            socket_path: "/tmp/sock".into(),
+                        }),
+                        storage: Storage::Remote(StorageRemote {
+                            remote_url: "s3://bucket".into(),
+                        }),
+                        logging: Logging::File(LogFile {
+                            log_path: "/var/log/app.log".into(),
+                        }),
+                    },
+                    // Password + Unix + Remote + Stdout
+                    Config4Enums {
+                        name: format!("svc_{}_{}", i, 7),
+                        auth: AuthMethod::Password(AuthPassword {
+                            password: "secret".into(),
+                        }),
+                        transport: Transport::Unix(TransportUnix {
+                            socket_path: "/tmp/sock".into(),
+                        }),
+                        storage: Storage::Remote(StorageRemote {
+                            remote_url: "s3://bucket".into(),
+                        }),
+                        logging: Logging::Stdout(LogStdout { log_color: true }),
+                    },
+                    // Token + Tcp + Local + File
+                    Config4Enums {
+                        name: format!("svc_{}_{}", i, 8),
+                        auth: AuthMethod::Token(AuthToken {
+                            token: "token123".into(),
+                            token_expiry: 3600,
+                        }),
+                        transport: Transport::Tcp(TransportTcp { tcp_port: 8080 }),
+                        storage: Storage::Local(StorageLocal {
+                            local_path: "/data".into(),
+                        }),
+                        logging: Logging::File(LogFile {
+                            log_path: "/var/log/app.log".into(),
+                        }),
+                    },
+                    // Token + Tcp + Local + Stdout
+                    Config4Enums {
+                        name: format!("svc_{}_{}", i, 9),
+                        auth: AuthMethod::Token(AuthToken {
+                            token: "token123".into(),
+                            token_expiry: 3600,
+                        }),
+                        transport: Transport::Tcp(TransportTcp { tcp_port: 8080 }),
+                        storage: Storage::Local(StorageLocal {
+                            local_path: "/data".into(),
+                        }),
+                        logging: Logging::Stdout(LogStdout { log_color: true }),
+                    },
+                    // Token + Tcp + Remote + File
+                    Config4Enums {
+                        name: format!("svc_{}_{}", i, 10),
+                        auth: AuthMethod::Token(AuthToken {
+                            token: "token123".into(),
+                            token_expiry: 3600,
+                        }),
+                        transport: Transport::Tcp(TransportTcp { tcp_port: 8080 }),
+                        storage: Storage::Remote(StorageRemote {
+                            remote_url: "s3://bucket".into(),
+                        }),
+                        logging: Logging::File(LogFile {
+                            log_path: "/var/log/app.log".into(),
+                        }),
+                    },
+                    // Token + Tcp + Remote + Stdout
+                    Config4Enums {
+                        name: format!("svc_{}_{}", i, 11),
+                        auth: AuthMethod::Token(AuthToken {
+                            token: "token123".into(),
+                            token_expiry: 3600,
+                        }),
+                        transport: Transport::Tcp(TransportTcp { tcp_port: 8080 }),
+                        storage: Storage::Remote(StorageRemote {
+                            remote_url: "s3://bucket".into(),
+                        }),
+                        logging: Logging::Stdout(LogStdout { log_color: true }),
+                    },
+                    // Token + Unix + Local + File
+                    Config4Enums {
+                        name: format!("svc_{}_{}", i, 12),
+                        auth: AuthMethod::Token(AuthToken {
+                            token: "token123".into(),
+                            token_expiry: 3600,
+                        }),
+                        transport: Transport::Unix(TransportUnix {
+                            socket_path: "/tmp/sock".into(),
+                        }),
+                        storage: Storage::Local(StorageLocal {
+                            local_path: "/data".into(),
+                        }),
+                        logging: Logging::File(LogFile {
+                            log_path: "/var/log/app.log".into(),
+                        }),
+                    },
+                    // Token + Unix + Local + Stdout
+                    Config4Enums {
+                        name: format!("svc_{}_{}", i, 13),
+                        auth: AuthMethod::Token(AuthToken {
+                            token: "token123".into(),
+                            token_expiry: 3600,
+                        }),
+                        transport: Transport::Unix(TransportUnix {
+                            socket_path: "/tmp/sock".into(),
+                        }),
+                        storage: Storage::Local(StorageLocal {
+                            local_path: "/data".into(),
+                        }),
+                        logging: Logging::Stdout(LogStdout { log_color: true }),
+                    },
+                    // Token + Unix + Remote + File
+                    Config4Enums {
+                        name: format!("svc_{}_{}", i, 14),
+                        auth: AuthMethod::Token(AuthToken {
+                            token: "token123".into(),
+                            token_expiry: 3600,
+                        }),
+                        transport: Transport::Unix(TransportUnix {
+                            socket_path: "/tmp/sock".into(),
+                        }),
+                        storage: Storage::Remote(StorageRemote {
+                            remote_url: "s3://bucket".into(),
+                        }),
+                        logging: Logging::File(LogFile {
+                            log_path: "/var/log/app.log".into(),
+                        }),
+                    },
+                    // Token + Unix + Remote + Stdout
+                    Config4Enums {
+                        name: format!("svc_{}_{}", i, 15),
+                        auth: AuthMethod::Token(AuthToken {
+                            token: "token123".into(),
+                            token_expiry: 3600,
+                        }),
+                        transport: Transport::Unix(TransportUnix {
+                            socket_path: "/tmp/sock".into(),
+                        }),
+                        storage: Storage::Remote(StorageRemote {
+                            remote_url: "s3://bucket".into(),
+                        }),
+                        logging: Logging::Stdout(LogStdout { log_color: true }),
+                    },
+                ]
+            })
+            .collect()
+    }
+
+    static DATA: LazyLock<Vec<Config4Enums>> = LazyLock::new(make_data);
+    static JSON: LazyLock<String> = LazyLock::new(|| facet_json::to_string(&*DATA));
+
+    #[divan::bench]
+    fn facet_json_serialize(bencher: Bencher) {
+        bencher.bench(|| black_box(facet_json::to_string(black_box(&*DATA))));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_serialize(bencher: Bencher) {
+        bencher.bench(|| black_box(facet_format_json::to_string(black_box(&*DATA))));
+    }
+
+    #[divan::bench]
+    fn serde_json_serialize(bencher: Bencher) {
+        bencher.bench(|| black_box(serde_json::to_string(black_box(&*DATA)).unwrap()));
+    }
+
+    #[divan::bench]
+    fn facet_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| black_box(facet_json::from_str::<Vec<Config4Enums>>(black_box(&*JSON))));
+    }
+
+    #[divan::bench]
+    fn facet_format_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(facet_format_json::from_str::<Vec<Config4Enums>>(black_box(
+                &*JSON,
+            )))
+        });
+    }
+
+    #[divan::bench]
+    fn serde_json_deserialize(bencher: Bencher) {
+        bencher.bench(|| {
+            black_box(serde_json::from_str::<Vec<Config4Enums>>(black_box(&*JSON)).unwrap())
+        });
     }
 }
