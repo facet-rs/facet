@@ -23,7 +23,16 @@ cargo bench --bench vs_format_json --features cranelift > "${REPORT_DIR}/divan-$
 echo "  🔬 Running gungraun (instruction counts)..."
 cargo bench --bench gungraun_jit --features cranelift > "${REPORT_DIR}/gungraun-${TIMESTAMP}.txt" 2>&1 || true
 
-echo "📝 Generating HTML report..."
+echo "📝 Parsing benchmark data and generating HTML report..."
+
+# Use Python parser to generate proper HTML with tables and graphs
+python3 "${SCRIPT_DIR}/parse-bench.py" \
+    "${REPORT_DIR}/divan-${TIMESTAMP}.txt" \
+    "${REPORT_DIR}/gungraun-${TIMESTAMP}.txt" \
+    "${REPORT_FILE}"
+
+if [ $? -ne 0 ]; then
+    echo "⚠️  Python parser failed, generating simple HTML fallback..."
 
 cat > "${REPORT_FILE}" << 'EOF'
 <!DOCTYPE html>
@@ -180,6 +189,24 @@ cat > "${REPORT_FILE}" << 'EOF'
 </body>
 </html>
 EOF
+
+fi # End of fallback HTML generation
+
+# If Python parser succeeded, we're done
+if [ -f "${REPORT_FILE}" ] && grep -q "Chart.js" "${REPORT_FILE}"; then
+    echo "✅ Report generated with tables and graphs: ${REPORT_FILE}"
+    echo ""
+    echo "To view:"
+    echo "  open ${REPORT_FILE}"
+    echo ""
+    echo "Or start HTTP server:"
+    echo "  cd ${REPORT_DIR} && python3 -m http.server 8000"
+    echo "  Then open: http://localhost:8000/$(basename ${REPORT_FILE})"
+    exit 0
+fi
+
+# Otherwise, insert data into fallback template
+echo "Using fallback template (Python parser not available)..."
 
 # Insert actual data
 sed -i "s/TIMESTAMP_PLACEHOLDER/$(date)/" "${REPORT_FILE}"
