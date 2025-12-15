@@ -77,6 +77,7 @@ camino = { workspace = true } #unified
 chrono = { workspace = true, features = ["clock"] } #unified
 divan = { workspace = true } #unified
 facet = { workspace = true, features = ["doc"] } #unified
+gungraun = "0.17"
 facet-showcase = { path = "../facet-showcase" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 facet-format-json = { path = "../facet-format-json", features = ["fast"] }
@@ -98,6 +99,10 @@ harness = false
 
 [[bench]]
 name = "vs_format_json"
+harness = false
+
+[[bench]]
+name = "gungraun_jit"
 harness = false
 
 [[bin]]
