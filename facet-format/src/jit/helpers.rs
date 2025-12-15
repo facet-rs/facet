@@ -589,41 +589,43 @@ pub unsafe extern "C" fn jit_option_init_none(out: *mut u8, init_none_fn: *const
     unsafe { func(out) };
 }
 
-/// Initialize an Option field to Some(value) by deserializing the inner value.
+/// Replace an Option field's value (already initialized to None) with Some(value).
 ///
 /// # Safety
-/// - `ctx` must be a valid JitContext pointer
-/// - `out` must be a valid pointer to uninitialized memory for the Option
-/// - `init_some_fn` must be a valid OptionInitSomeFn from the Option's vtable
-/// - `inner_deserializer` must be a valid compiled deserializer for the inner type
+/// - `out` must be a valid pointer to initialized Option memory
+/// - `value_ptr` must be a valid pointer to the inner value (non-null for Some)
+/// - `replace_with_fn` must be a valid OptionReplaceWithFn from the Option's vtable
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn jit_option_init_some(
-    ctx: *mut JitContext,
+#[expect(
+    improper_ctypes_definitions,
+    reason = "Option<PtrConst> is not repr(C) but this is fine: the JIT code, this helper, \
+              and the Option vtable functions are all compiled by the same rustc in the same \
+              build, so Option's layout is consistent. We're not crossing FFI boundaries \
+              between different compilers or language runtimes."
+)]
+pub unsafe extern "C" fn jit_option_replace_with_some(
     out: *mut u8,
-    init_some_fn: *const u8,
-    inner_deserializer: *const u8,
-) -> i32 {
-    // Allocate stack space for the inner value
-    // This is tricky - we don't know the size at compile time
-    // For now, use a large buffer (TODO: pass size as parameter)
-    let mut inner_buf: [u8; 256] = [0; 256];
-    let inner_ptr = inner_buf.as_mut_ptr();
-
-    // Deserialize the inner value
-    type DeserializeFn = unsafe extern "C" fn(*mut JitContext, *mut u8) -> i32;
-    let deserialize: DeserializeFn = unsafe { std::mem::transmute(inner_deserializer) };
-    let result = unsafe { deserialize(ctx, inner_ptr) };
-
-    if result != 0 {
-        return result;
+    value_ptr: *const u8,
+    replace_with_fn: *const u8,
+) {
+    #[cfg(debug_assertions)]
+    {
+        // Debug: check what value we're replacing with
+        let value_as_i64 = unsafe { *(value_ptr as *const i64) };
+        eprintln!(
+            "[JIT] option_replace_with_some: value_ptr={:p}, value={}, out={:p}",
+            value_ptr, value_as_i64, out
+        );
     }
 
-    // Initialize Option with Some(inner_value)
-    type InitSomeFn = unsafe extern "C" fn(*mut u8, *const u8) -> *mut u8;
-    let init_some: InitSomeFn = unsafe { std::mem::transmute(init_some_fn) };
-    unsafe { init_some(out, inner_ptr) };
-
-    0
+    // Call replace_with(option, Some(value_ptr))
+    // We can't pass Option<*const u8> through FFI, so we pass the pointer directly
+    // and construct the Option here.
+    // Signature: fn(option: PtrMut, value: Option<PtrConst>)
+    use facet_core::PtrMut;
+    type ReplaceWithFn = unsafe extern "C" fn(PtrMut, Option<facet_core::PtrConst>);
+    let replace: ReplaceWithFn = unsafe { std::mem::transmute(replace_with_fn) };
+    unsafe { replace(PtrMut::new(out), Some(facet_core::PtrConst::new(value_ptr))) };
 }
 
 /// Initialize a Vec field with the given capacity.
