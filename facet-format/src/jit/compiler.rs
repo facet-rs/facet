@@ -63,6 +63,7 @@ impl<'de, T: Facet<'de>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
         let mut ctx = JitContext {
             parser: parser as *mut P as *mut (),
             vtable: &self.vtable,
+            peeked_event: None,
         };
 
         // Call the compiled function
@@ -172,6 +173,8 @@ fn register_helpers(builder: &mut JITBuilder) {
         "jit_deserialize_nested",
         helpers::jit_deserialize_nested as *const u8,
     );
+    builder.symbol("jit_peek_event", helpers::jit_peek_event as *const u8);
+    builder.symbol("jit_next_event", helpers::jit_next_event as *const u8);
     builder.symbol(
         "jit_option_init_none",
         helpers::jit_option_init_none as *const u8,
