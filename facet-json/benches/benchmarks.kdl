@@ -85,3 +85,76 @@ benchmark name="long_strings" type="Vec<String>" category="array" {
 benchmark name="escaped_strings" type="Vec<String>" category="array" {
     json_file "data/escaped_strings.json"
 }
+
+// ============================================================================
+// Complex Benchmarks
+// ============================================================================
+
+benchmark name="hashmaps" type="std::collections::HashMap<String, u64>" category="complex" {
+    json_file "data/hashmaps.json"
+}
+
+benchmark name="nested_structs" type="Vec<NestedOuter>" category="complex" {
+    json_file "data/nested_structs.json"
+}
+
+benchmark name="options" type="Vec<OptionsMaybeData>" category="complex" {
+    json_file "data/options.json"
+}
+
+type_def name="NestedOuter" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct NestedOuter {
+    id: u64,
+    inner: NestedInner,
+}
+"""
+}
+
+type_def name="NestedInner" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct NestedInner {
+    name: String,
+    value: f64,
+    deep: NestedDeep,
+}
+"""
+}
+
+type_def name="NestedDeep" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct NestedDeep {
+    flag: bool,
+    count: u32,
+}
+"""
+}
+
+type_def name="OptionsMaybeData" {
+    code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct OptionsMaybeData {
+    required: u64,
+    optional_string: Option<String>,
+    optional_number: Option<f64>,
+}
+"""
+}
+
+// ============================================================================
+// Realistic Benchmarks (Large Real-World Data)
+// ============================================================================
+
+benchmark name="twitter" type="TwitterResponseSparse" category="realistic" {
+    json_file "corpus/twitter.json.br"
+}
+
+benchmark name="canada" type="Canada" category="realistic" {
+    json_file "corpus/canada.json.br"
+}
+
+// Note: flatten benchmarks (flatten_2enums, flatten_4enums) have complex
+// flattened enum types that need special handling. To be added in follow-up.

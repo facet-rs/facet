@@ -1,7 +1,9 @@
-//! Generate JSON data files for array benchmarks
+//! Generate JSON data files for benchmarks
 //!
 //! Run with: cargo run --bin gen_bench_data -p facet-json
 
+use facet::Facet;
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
@@ -58,6 +60,75 @@ fn main() {
         escaped_strings.len()
     );
 
-    println!("\n🎉 All array benchmark data generated!");
-    println!("   Data dir: {}", data_dir.display());
+    // Hashmaps - 1,000 entries
+    let hashmaps: HashMap<String, u64> = (0..1000).map(|i| (format!("key_{}", i), i * 2)).collect();
+    let json = facet_json::to_string(&hashmaps);
+    fs::write(data_dir.join("hashmaps.json"), json);
+    println!("✅ Generated hashmaps.json ({} entries)", hashmaps.len());
+
+    // Nested structs - Vec<Outer> with 3-level deep nesting (500 items)
+    #[derive(Facet)]
+    struct NestedOuter {
+        id: u64,
+        inner: NestedInner,
+    }
+
+    #[derive(Facet)]
+    struct NestedInner {
+        name: String,
+        value: f64,
+        deep: NestedDeep,
+    }
+
+    #[derive(Facet)]
+    struct NestedDeep {
+        flag: bool,
+        count: u32,
+    }
+
+    let nested_data: Vec<NestedOuter> = (0..500)
+        .map(|i| NestedOuter {
+            id: i,
+            inner: NestedInner {
+                name: format!("name_{}", i),
+                value: i as f64 * 1.5,
+                deep: NestedDeep {
+                    flag: i % 2 == 0,
+                    count: i as u32 * 10,
+                },
+            },
+        })
+        .collect();
+    let json = facet_json::to_string(&nested_data);
+    fs::write(data_dir.join("nested_structs.json"), json);
+    println!(
+        "✅ Generated nested_structs.json ({} items)",
+        nested_data.len()
+    );
+
+    // Options - Vec<MaybeData> with Option fields (500 items)
+    #[derive(Facet)]
+    struct OptionsMaybeData {
+        required: u64,
+        optional_string: Option<String>,
+        optional_number: Option<f64>,
+    }
+
+    let options_data: Vec<OptionsMaybeData> = (0..500)
+        .map(|i| OptionsMaybeData {
+            required: i,
+            optional_string: if i % 2 == 0 {
+                Some(format!("str_{}", i))
+            } else {
+                None
+            },
+            optional_number: if i % 3 == 0 { Some(i as f64) } else { None },
+        })
+        .collect();
+    let json = facet_json::to_string(&options_data);
+    fs::write(data_dir.join("options.json"), json);
+    println!("✅ Generated options.json ({} items)", options_data.len());
+
+    println!("\n🎉 All benchmark data generated!");
+    println!("   Total: 9 data files");
 }
