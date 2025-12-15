@@ -1,5 +1,0 @@
-Metadata-Version: 2.4
-Name: facet-bench-tools
-Version: 0.1.0
-Summary: Benchmark parsing and reporting tools for facet
-Requires-Python: >=3.10

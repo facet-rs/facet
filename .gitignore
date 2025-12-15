@@ -37,3 +37,4 @@ chrome_profiler.json*
 .cache
 bench-reports/
 scripts/.venv/
+*.egg-info/
