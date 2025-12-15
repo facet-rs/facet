@@ -1,13 +1,28 @@
 # TODO: Port All Benchmarks to Meta-Harness
 
-## Current Status
+## Current Status: 12/16 COMPLETE! (75%)
 
-**Ported (3/16):**
+**Ported (12/16):**
+
+**Micro (3/3):**
 - ✅ simple_struct
 - ✅ single_nested_struct
 - ✅ simple_with_options
 
-**To Port (13/16):**
+**Arrays (6/6):**
+- ✅ booleans
+- ✅ integers
+- ✅ floats
+- ✅ short_strings
+- ✅ long_strings
+- ✅ escaped_strings
+
+**Complex (3/3):**
+- ✅ nested_structs
+- ✅ hashmaps
+- ✅ options
+
+**Remaining (4/16):**
 
 ### Realistic Benchmarks (2)
 - [ ] **twitter** - Uses `corpus/twitter.json.br` (brotli compressed)
