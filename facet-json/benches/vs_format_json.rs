@@ -4,9 +4,12 @@
 //! benchmarks that exercise specific code paths.
 //!
 //! Also includes facet_json::cranelift (JIT-compiled) for deserialization.
+//! Also includes facet_format::jit (format-agnostic JIT) for deserialization.
 
 use divan::{Bencher, black_box};
 use facet::Facet;
+use facet_format::jit as format_jit;
+use facet_format_json::JsonParser;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -250,6 +253,17 @@ mod twitter {
         bencher.bench(|| {
             let result: TwitterResponseSparse =
                 facet_format_json::from_str(black_box(json)).unwrap();
+            black_box(result)
+        });
+    }
+
+    #[divan::bench]
+    fn facet_format_jit_deserialize(bencher: Bencher) {
+        let json = TWITTER_JSON.as_bytes();
+        bencher.bench(|| {
+            let parser = JsonParser::new(black_box(json));
+            let result: TwitterResponseSparse =
+                format_jit::deserialize_with_fallback(parser).unwrap();
             black_box(result)
         });
     }
@@ -879,6 +893,73 @@ mod booleans {
     #[divan::bench]
     fn serde_json_deserialize(bencher: Bencher) {
         bencher.bench(|| black_box(serde_json::from_str::<Vec<bool>>(black_box(&*JSON)).unwrap()));
+    }
+}
+
+// =============================================================================
+// Simple struct benchmark - exercises the JIT path
+// =============================================================================
+
+/// A simple flat struct that IS JIT-compatible (no Vec, no nested structs)
+#[derive(Facet, Serialize, Deserialize, Debug, Clone)]
+struct SimpleRecord {
+    id: u64,
+    score: f64,
+    count: i64,
+    active: bool,
+    name: String,
+}
+
+mod simple_struct {
+    use super::*;
+
+    // Single struct - this IS JIT-compatible
+    static DATA: LazyLock<SimpleRecord> = LazyLock::new(|| SimpleRecord {
+        id: 12345,
+        score: 98.6,
+        count: -42,
+        active: true,
+        name: "test_record".into(),
+    });
+    static JSON: LazyLock<String> = LazyLock::new(|| facet_json::to_string(&*DATA));
+
+    #[divan::bench]
+    fn facet_json_deserialize(bencher: Bencher) {
+        let json = &*JSON;
+        bencher.bench(|| black_box(facet_json::from_str::<SimpleRecord>(black_box(json))));
+    }
+
+    #[divan::bench]
+    fn facet_json_cranelift_deserialize(bencher: Bencher) {
+        let json = &*JSON;
+        bencher.bench(|| {
+            black_box(
+                facet_json::cranelift::from_str_with_fallback::<SimpleRecord>(black_box(json)),
+            )
+        });
+    }
+
+    #[divan::bench]
+    fn facet_format_json_deserialize(bencher: Bencher) {
+        let json = &*JSON;
+        bencher.bench(|| black_box(facet_format_json::from_str::<SimpleRecord>(black_box(json))));
+    }
+
+    #[divan::bench]
+    fn facet_format_jit_deserialize(bencher: Bencher) {
+        let json = JSON.as_bytes();
+        bencher.bench(|| {
+            let parser = JsonParser::new(black_box(json));
+            black_box(format_jit::deserialize_with_fallback::<SimpleRecord, _>(
+                parser,
+            ))
+        });
+    }
+
+    #[divan::bench]
+    fn serde_json_deserialize(bencher: Bencher) {
+        let json = &*JSON;
+        bencher.bench(|| black_box(serde_json::from_str::<SimpleRecord>(black_box(json)).unwrap()));
     }
 }
 

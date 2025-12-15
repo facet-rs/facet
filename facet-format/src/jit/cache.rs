@@ -1,21 +1,20 @@
 //! Cache for compiled deserializers.
 //!
-//! Compiled functions are cached by (TypeId, ParserTypeId) to avoid
+//! Compiled functions are cached by (ConstTypeId, ConstTypeId) to avoid
 //! recompilation on every deserialization call.
 
-use std::any::TypeId;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use facet_core::Facet;
+use facet_core::{ConstTypeId, Facet};
 use parking_lot::RwLock;
 
 use super::compiler::{self, CompiledDeserializer};
 use super::helpers;
 use crate::FormatParser;
 
-/// Cache key: (target type, parser type)
-type CacheKey = (TypeId, TypeId);
+/// Cache key: (target type's ConstTypeId, parser's ConstTypeId)
+type CacheKey = (ConstTypeId, ConstTypeId);
 
 /// Global cache of compiled deserializers.
 ///
@@ -45,7 +44,7 @@ fn cache() -> &'static RwLock<HashMap<CacheKey, CachedDeserializer>> {
 /// Returns `None` if compilation fails (type not JIT-compatible).
 pub fn get_or_compile<'de, T, P>(key: CacheKey) -> Option<CompiledDeserializer<T, P>>
 where
-    T: Facet<'static>,
+    T: Facet<'de>,
     P: FormatParser<'de>,
 {
     // Fast path: check read lock first

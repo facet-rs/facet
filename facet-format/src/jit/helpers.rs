@@ -90,8 +90,23 @@ pub struct StringPayload {
     pub ptr: *const u8,
     /// Length in bytes
     pub len: usize,
+    /// Capacity in bytes (only valid if owned)
+    pub capacity: usize,
     /// Whether the string is owned (needs to be freed)
     pub owned: bool,
+}
+
+/// Decompose a String into raw parts for FFI transfer.
+/// This is equivalent to the nightly-only `String::into_raw_parts()`.
+fn string_into_raw_parts(s: String) -> (*mut u8, usize, usize) {
+    let mut s = std::mem::ManuallyDrop::new(s);
+    (s.as_mut_ptr(), s.len(), s.capacity())
+}
+
+/// Decompose a Vec<u8> into raw parts for FFI transfer.
+fn vec_into_raw_parts(v: Vec<u8>) -> (*mut u8, usize, usize) {
+    let mut v = std::mem::ManuallyDrop::new(v);
+    (v.as_mut_ptr(), v.len(), v.capacity())
 }
 
 /// Scalar type tag
@@ -159,7 +174,32 @@ unsafe extern "C" fn next_event_wrapper<'de, P: FormatParser<'de>>(
 
     match parser.next_event() {
         Ok(event) => {
-            unsafe { *out = convert_event_to_raw(event) };
+            let raw = convert_event_to_raw(event);
+            #[cfg(debug_assertions)]
+            {
+                if raw.tag == EventTag::Scalar && raw.scalar_tag == ScalarTag::I64 {
+                    eprintln!(
+                        "[JIT] next_event: Scalar(I64({})) -> writing to {:p}",
+                        unsafe { raw.payload.scalar.i64_val },
+                        out
+                    );
+                } else if raw.tag == EventTag::Scalar && raw.scalar_tag == ScalarTag::Str {
+                    let payload = unsafe { raw.payload.scalar.string_val };
+                    let s = unsafe {
+                        std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                            payload.ptr,
+                            payload.len,
+                        ))
+                    };
+                    eprintln!(
+                        "[JIT] next_event: Scalar(Str(\"{}\")) -> writing to {:p}",
+                        s, out
+                    );
+                } else {
+                    eprintln!("[JIT] next_event: tag={:?}", raw.tag);
+                }
+            }
+            unsafe { *out = raw };
             OK
         }
         Err(_) => {
@@ -280,29 +320,45 @@ fn convert_event_to_raw(event: ParseEvent<'_>) -> RawEvent {
                     },
                 ),
                 ScalarValue::Str(s) => {
-                    let (ptr, len, owned) = match &s {
-                        Cow::Borrowed(s) => (s.as_ptr(), s.len(), false),
-                        Cow::Owned(s) => (s.as_ptr(), s.len(), true),
+                    let (ptr, len, capacity, owned) = match s {
+                        Cow::Borrowed(s) => (s.as_ptr(), s.len(), 0, false),
+                        Cow::Owned(s) => {
+                            let (ptr, len, cap) = string_into_raw_parts(s);
+                            (ptr as *const u8, len, cap, true)
+                        }
                     };
                     (
                         ScalarTag::Str,
                         EventPayload {
                             scalar: ScalarPayload {
-                                string_val: StringPayload { ptr, len, owned },
+                                string_val: StringPayload {
+                                    ptr,
+                                    len,
+                                    capacity,
+                                    owned,
+                                },
                             },
                         },
                     )
                 }
                 ScalarValue::Bytes(b) => {
-                    let (ptr, len, owned) = match &b {
-                        Cow::Borrowed(b) => (b.as_ptr(), b.len(), false),
-                        Cow::Owned(b) => (b.as_ptr(), b.len(), true),
+                    let (ptr, len, capacity, owned) = match b {
+                        Cow::Borrowed(b) => (b.as_ptr(), b.len(), 0, false),
+                        Cow::Owned(b) => {
+                            let (ptr, len, cap) = vec_into_raw_parts(b);
+                            (ptr as *const u8, len, cap, true)
+                        }
                     };
                     (
                         ScalarTag::Bytes,
                         EventPayload {
                             scalar: ScalarPayload {
-                                string_val: StringPayload { ptr, len, owned },
+                                string_val: StringPayload {
+                                    ptr,
+                                    len,
+                                    capacity,
+                                    owned,
+                                },
                             },
                         },
                     )
@@ -350,6 +406,8 @@ pub unsafe extern "C" fn jit_write_u32(out: *mut u8, offset: usize, value: u32) 
 /// Write a u64 value to a struct field.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jit_write_u64(out: *mut u8, offset: usize, value: u64) {
+    #[cfg(debug_assertions)]
+    eprintln!("[JIT] write_u64: value={} to {:p}+{}", value, out, offset);
     unsafe {
         let ptr = out.add(offset) as *mut u64;
         *ptr = value;
@@ -428,12 +486,13 @@ pub unsafe extern "C" fn jit_write_string(
     offset: usize,
     ptr: *const u8,
     len: usize,
+    capacity: usize,
     owned: bool,
 ) {
     let string = if owned {
         // Take ownership - reconstruct the String
-        // Safety: The caller guarantees this was allocated as a String
-        unsafe { String::from_raw_parts(ptr as *mut u8, len, len) }
+        // Safety: The caller guarantees this was allocated as a String via string_into_raw_parts
+        unsafe { String::from_raw_parts(ptr as *mut u8, len, capacity) }
     } else {
         // Clone from borrowed data
         let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
@@ -502,3 +561,99 @@ pub const FIELD_NAME_PTR_OFFSET: usize = std::mem::offset_of!(FieldNamePayload, 
 
 /// Offset of `len` in FieldNamePayload.
 pub const FIELD_NAME_LEN_OFFSET: usize = std::mem::offset_of!(FieldNamePayload, len);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_memory_layout() {
+        eprintln!("RawEvent size: {}", std::mem::size_of::<RawEvent>());
+        eprintln!("RawEvent align: {}", std::mem::align_of::<RawEvent>());
+        eprintln!("EventPayload size: {}", std::mem::size_of::<EventPayload>());
+        eprintln!(
+            "ScalarPayload size: {}",
+            std::mem::size_of::<ScalarPayload>()
+        );
+        eprintln!(
+            "StringPayload size: {}",
+            std::mem::size_of::<StringPayload>()
+        );
+        eprintln!("RAW_EVENT_TAG_OFFSET: {}", RAW_EVENT_TAG_OFFSET);
+        eprintln!(
+            "RAW_EVENT_SCALAR_TAG_OFFSET: {}",
+            RAW_EVENT_SCALAR_TAG_OFFSET
+        );
+        eprintln!("RAW_EVENT_PAYLOAD_OFFSET: {}", RAW_EVENT_PAYLOAD_OFFSET);
+
+        // Test that i64 values are stored correctly
+        let raw = RawEvent {
+            tag: EventTag::Scalar,
+            scalar_tag: ScalarTag::I64,
+            payload: EventPayload {
+                scalar: ScalarPayload { i64_val: 42 },
+            },
+        };
+
+        let ptr = &raw as *const RawEvent as *const u8;
+        unsafe {
+            let payload_ptr = ptr.add(RAW_EVENT_PAYLOAD_OFFSET);
+            let value = *(payload_ptr as *const i64);
+            eprintln!("Expected 42, got {}", value);
+            assert_eq!(value, 42, "i64 value should be at offset 0 of payload");
+        }
+    }
+
+    #[test]
+    fn test_string_payload_layout() {
+        // Verify the StringPayload layout matches what the JIT expects
+        assert_eq!(
+            std::mem::offset_of!(StringPayload, ptr),
+            0,
+            "ptr should be at offset 0"
+        );
+        assert_eq!(
+            std::mem::offset_of!(StringPayload, len),
+            8,
+            "len should be at offset 8"
+        );
+        assert_eq!(
+            std::mem::offset_of!(StringPayload, capacity),
+            16,
+            "capacity should be at offset 16"
+        );
+        assert_eq!(
+            std::mem::offset_of!(StringPayload, owned),
+            24,
+            "owned should be at offset 24"
+        );
+
+        eprintln!("StringPayload offsets verified:");
+        eprintln!("  ptr: {}", std::mem::offset_of!(StringPayload, ptr));
+        eprintln!("  len: {}", std::mem::offset_of!(StringPayload, len));
+        eprintln!(
+            "  capacity: {}",
+            std::mem::offset_of!(StringPayload, capacity)
+        );
+        eprintln!("  owned: {}", std::mem::offset_of!(StringPayload, owned));
+    }
+
+    #[test]
+    fn test_string_into_raw_parts() {
+        let s = String::from("hello world");
+        let original_ptr = s.as_ptr();
+        let original_len = s.len();
+        let original_cap = s.capacity();
+
+        let (ptr, len, cap) = string_into_raw_parts(s);
+
+        assert_eq!(ptr as *const u8, original_ptr);
+        assert_eq!(len, original_len);
+        assert_eq!(cap, original_cap);
+
+        // Reconstruct and drop to avoid leak
+        unsafe {
+            let _ = String::from_raw_parts(ptr, len, cap);
+        }
+    }
+}

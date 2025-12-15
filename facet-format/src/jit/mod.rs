@@ -14,11 +14,9 @@ mod cache;
 mod compiler;
 mod helpers;
 
-use std::any::TypeId;
+use facet_core::{ConstTypeId, Facet};
 
-use facet_core::Facet;
-
-use crate::{DeserializeError, FormatParser};
+use crate::{DeserializeError, FormatDeserializer, FormatParser};
 
 pub use compiler::CompiledDeserializer;
 
@@ -29,8 +27,8 @@ pub use compiler::CompiledDeserializer;
 /// in which case the caller should fall back to reflection-based deserialization.
 pub fn try_deserialize<'de, T, P>(parser: &mut P) -> Option<Result<T, DeserializeError<P::Error>>>
 where
-    T: Facet<'static>,
-    P: FormatParser<'de> + 'static,
+    T: Facet<'de>,
+    P: FormatParser<'de>,
 {
     // Check if this type is JIT-compatible
     if !compiler::is_jit_compatible(T::SHAPE) {
@@ -38,7 +36,8 @@ where
     }
 
     // Get or compile the deserializer
-    let key = (TypeId::of::<T>(), TypeId::of::<P>());
+    // Use ConstTypeId for both T and P to erase lifetimes
+    let key = (T::SHAPE.id, ConstTypeId::of::<P>());
     let compiled = cache::get_or_compile::<T, P>(key)?;
 
     // Execute the compiled deserializer
@@ -48,6 +47,26 @@ where
 /// Check if a type can be JIT-compiled.
 ///
 /// Returns `true` for simple structs without flatten or untagged enums.
-pub fn is_jit_compatible<T: Facet<'static>>() -> bool {
+pub fn is_jit_compatible<'a, T: Facet<'a>>() -> bool {
     compiler::is_jit_compatible(T::SHAPE)
+}
+
+/// Deserialize with automatic fallback to reflection-based deserialization.
+///
+/// Tries JIT-compiled deserialization first. If the type is not JIT-compatible,
+/// falls back to the standard `FormatDeserializer`.
+///
+/// This is the recommended entry point for production use.
+pub fn deserialize_with_fallback<'de, T, P>(mut parser: P) -> Result<T, DeserializeError<P::Error>>
+where
+    T: Facet<'de>,
+    P: FormatParser<'de>,
+{
+    // Try JIT first
+    if let Some(result) = try_deserialize::<T, P>(&mut parser) {
+        return result;
+    }
+
+    // Fall back to reflection-based deserialization
+    FormatDeserializer::new(parser).deserialize()
 }
