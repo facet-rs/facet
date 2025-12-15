@@ -24,14 +24,22 @@ struct BenchmarkDef {
     type_name: String,
     #[facet(kdl::property)]
     category: String,
-    #[facet(kdl::child)]
-    json: JsonData,
+    #[facet(kdl::child, default)]
+    json: Option<JsonData>,
+    #[facet(kdl::child, default)]
+    json_file: Option<JsonFile>,
 }
 
 #[derive(Debug, Facet, Clone)]
 struct JsonData {
     #[facet(kdl::argument)]
     content: String,
+}
+
+#[derive(Debug, Facet, Clone)]
+struct JsonFile {
+    #[facet(kdl::argument)]
+    path: String,
 }
 
 #[derive(Debug, Facet, Clone)]
@@ -221,10 +229,21 @@ fn generate_benchmark_module(
     output.push_str(&format!("mod {} {{\n", bench_def.name));
     output.push_str("    use super::*;\n\n");
 
-    // JSON data
+    // JSON data - either inline or from file
+    let json_content = if let Some(ref json_data) = bench_def.json {
+        json_data.content.clone()
+    } else if let Some(ref json_file) = bench_def.json_file {
+        // Read JSON from file (relative to facet-json/benches/)
+        let file_path = Path::new("facet-json/benches").join(&json_file.path);
+        fs::read_to_string(&file_path)
+            .map_err(|e| format!("Failed to read {}: {}", file_path.display(), e))?
+    } else {
+        return Err("Benchmark must have either 'json' or 'json_file'".into());
+    };
+
     output.push_str(&format!(
         "    static JSON: &[u8] = br#\"{}\"#;\n\n",
-        bench_def.json.content
+        json_content
     ));
 
     // Divan benchmarks
