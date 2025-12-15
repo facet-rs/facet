@@ -2,8 +2,6 @@ extern crate alloc;
 
 use alloc::{string::String, vec::Vec};
 
-use core::fmt::Write as _;
-
 use facet_core::Facet;
 use facet_format::{FormatSerializer, ScalarValue, SerializeError, serialize_root};
 use facet_reflect::Peek;
@@ -134,9 +132,23 @@ impl JsonSerializer {
                 '\r' => self.out.extend_from_slice(b"\\r"),
                 '\t' => self.out.extend_from_slice(b"\\t"),
                 c if c <= '\u{1F}' => {
-                    let mut buf = String::new();
-                    let _ = write!(&mut buf, "\\u{:04X}", c as u32);
-                    self.out.extend_from_slice(buf.as_bytes());
+                    let code_point = c as u32;
+                    let to_hex = |d: u32| {
+                        if d < 10 {
+                            b'0' + d as u8
+                        } else {
+                            b'a' + (d - 10) as u8
+                        }
+                    };
+                    let buf = [
+                        b'\\',
+                        b'u',
+                        to_hex((code_point >> 12) & 0xF),
+                        to_hex((code_point >> 8) & 0xF),
+                        to_hex((code_point >> 4) & 0xF),
+                        to_hex(code_point & 0xF),
+                    ];
+                    self.out.extend_from_slice(&buf);
                 }
                 c => {
                     let mut buf = [0u8; 4];
@@ -236,9 +248,15 @@ impl FormatSerializer for JsonSerializer {
                     self.out.extend_from_slice(b"false")
                 }
             }
-            ScalarValue::I64(v) => self.out.extend_from_slice(v.to_string().as_bytes()),
-            ScalarValue::U64(v) => self.out.extend_from_slice(v.to_string().as_bytes()),
-            ScalarValue::F64(v) => self.out.extend_from_slice(v.to_string().as_bytes()),
+            ScalarValue::I64(v) => self
+                .out
+                .extend_from_slice(itoa::Buffer::new().format(v).as_bytes()),
+            ScalarValue::U64(v) => self
+                .out
+                .extend_from_slice(itoa::Buffer::new().format(v).as_bytes()),
+            ScalarValue::F64(v) => self
+                .out
+                .extend_from_slice(ryu::Buffer::new().format(v).as_bytes()),
             ScalarValue::Str(s) => self.write_json_string(&s),
             ScalarValue::Bytes(_) => {
                 return Err(JsonSerializeError {
