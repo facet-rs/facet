@@ -11,6 +11,7 @@ use facet_core::Facet;
 use parking_lot::RwLock;
 
 use super::compiler::{self, CompiledDeserializer};
+use super::helpers;
 use crate::FormatParser;
 
 /// Cache key: (target type, parser type)
@@ -51,8 +52,10 @@ where
     {
         let cache = cache().read();
         if let Some(cached) = cache.get(&key) {
+            // Create vtable for this parser type (same for all instances of P)
+            let vtable = helpers::make_vtable::<P>();
             // Safety: We only store function pointers that match the (T, P) signature
-            return Some(unsafe { CompiledDeserializer::from_ptr(cached.fn_ptr) });
+            return Some(unsafe { CompiledDeserializer::from_ptr(cached.fn_ptr, vtable) });
         }
     }
 

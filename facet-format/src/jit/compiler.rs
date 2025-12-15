@@ -12,13 +12,15 @@ use cranelift_module::{FuncId, Linkage, Module};
 
 use facet_core::{Def, Facet, Field, Shape, Type as FacetType, UserType};
 
-use super::helpers::{self, JitContext};
+use super::helpers::{self, JitContext, ParserVTable};
 use crate::{DeserializeError, FormatParser};
 
 /// A compiled deserializer for a specific type and parser.
 pub struct CompiledDeserializer<T, P> {
     /// Pointer to the compiled function
     fn_ptr: *const u8,
+    /// VTable for calling parser methods from JIT code
+    vtable: ParserVTable,
     /// Phantom data for type safety
     _phantom: PhantomData<fn(&mut P) -> T>,
 }
@@ -28,13 +30,14 @@ unsafe impl<T, P> Send for CompiledDeserializer<T, P> {}
 unsafe impl<T, P> Sync for CompiledDeserializer<T, P> {}
 
 impl<T, P> CompiledDeserializer<T, P> {
-    /// Create from a raw function pointer.
+    /// Create from a raw function pointer and vtable.
     ///
     /// # Safety
     /// The pointer must point to a valid compiled function with the correct signature.
-    pub unsafe fn from_ptr(fn_ptr: *const u8) -> Self {
+    pub unsafe fn from_ptr(fn_ptr: *const u8, vtable: ParserVTable) -> Self {
         Self {
             fn_ptr,
+            vtable,
             _phantom: PhantomData,
         }
     }
@@ -42,6 +45,11 @@ impl<T, P> CompiledDeserializer<T, P> {
     /// Get the raw function pointer.
     pub fn as_ptr(&self) -> *const u8 {
         self.fn_ptr
+    }
+
+    /// Get the vtable.
+    pub fn vtable(&self) -> &ParserVTable {
+        &self.vtable
     }
 }
 
@@ -51,16 +59,16 @@ impl<'de, T: Facet<'static>, P: FormatParser<'de>> CompiledDeserializer<T, P> {
         // Create output storage
         let mut output: MaybeUninit<T> = MaybeUninit::uninit();
 
-        // Create JIT context
+        // Create JIT context with parser pointer and vtable
         let mut ctx = JitContext {
-            parser: parser as *mut P,
-            current_event: None,
+            parser: parser as *mut P as *mut (),
+            vtable: &self.vtable,
         };
 
         // Call the compiled function
-        // Signature: fn(ctx: *mut JitContext<P>, out: *mut T) -> i32
-        type CompiledFn<P, T> = unsafe extern "C" fn(*mut JitContext<P>, *mut T) -> i32;
-        let func: CompiledFn<P, T> = unsafe { std::mem::transmute(self.fn_ptr) };
+        // Signature: fn(ctx: *mut JitContext, out: *mut T) -> i32
+        type CompiledFn<T> = unsafe extern "C" fn(*mut JitContext, *mut T) -> i32;
+        let func: CompiledFn<T> = unsafe { std::mem::transmute(self.fn_ptr) };
 
         let result = unsafe { func(&mut ctx, output.as_mut_ptr()) };
 
@@ -150,8 +158,12 @@ pub fn try_compile<'de, T: Facet<'static>, P: FormatParser<'de>>()
     module.finalize_definitions().ok()?;
     let fn_ptr = module.get_finalized_function(func_id);
 
+    // Create vtable for calling parser methods
+    let vtable = helpers::make_vtable::<P>();
+
     Some(CompiledDeserializer {
         fn_ptr: fn_ptr as *const u8,
+        vtable,
         _phantom: PhantomData,
     })
 }
@@ -171,6 +183,7 @@ fn register_helpers(builder: &mut JITBuilder) {
     builder.symbol("jit_write_f64", helpers::jit_write_f64 as *const u8);
     builder.symbol("jit_write_bool", helpers::jit_write_bool as *const u8);
     builder.symbol("jit_write_string", helpers::jit_write_string as *const u8);
+    builder.symbol("jit_field_matches", helpers::jit_field_matches as *const u8);
 }
 
 /// Compile a deserializer function for a struct.
@@ -178,9 +191,23 @@ fn compile_deserializer<'de, T, P: FormatParser<'de>>(
     module: &mut JITModule,
     shape: &'static Shape,
 ) -> Option<FuncId> {
-    let FacetType::User(UserType::Struct(_struct_def)) = &shape.ty else {
+    let FacetType::User(UserType::Struct(struct_def)) = &shape.ty else {
         return None;
     };
+
+    // Extract field info for code generation
+    let fields: Vec<FieldCodegenInfo> = struct_def
+        .fields
+        .iter()
+        .filter_map(|f| {
+            let write_kind = WriteKind::from_shape(f.shape())?;
+            Some(FieldCodegenInfo {
+                name: f.name,
+                offset: f.offset,
+                write_kind,
+            })
+        })
+        .collect();
 
     let pointer_type = module.target_config().pointer_type();
 
@@ -190,8 +217,97 @@ fn compile_deserializer<'de, T, P: FormatParser<'de>>(
     sig.params.push(AbiParam::new(pointer_type)); // out
     sig.returns.push(AbiParam::new(types::I32)); // result
 
+    // Create unique function name
+    static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let func_name = format!(
+        "jit_deserialize_{}",
+        COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    );
+
     let func_id = module
-        .declare_function("jit_deserialize", Linkage::Local, &sig)
+        .declare_function(&func_name, Linkage::Local, &sig)
+        .ok()?;
+
+    // Declare helper function signatures
+    let sig_next_event = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // parser
+        s.params.push(AbiParam::new(pointer_type)); // out: *mut RawEvent
+        s.returns.push(AbiParam::new(types::I32)); // result
+        s
+    };
+
+    let sig_skip_value = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // parser
+        s.returns.push(AbiParam::new(types::I32)); // result
+        s
+    };
+
+    let sig_field_matches = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // name_ptr
+        s.params.push(AbiParam::new(pointer_type)); // name_len
+        s.params.push(AbiParam::new(pointer_type)); // expected_ptr
+        s.params.push(AbiParam::new(pointer_type)); // expected_len
+        s.returns.push(AbiParam::new(types::I32)); // 1 if match, 0 otherwise
+        s
+    };
+
+    let sig_write_i64 = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // out
+        s.params.push(AbiParam::new(pointer_type)); // offset
+        s.params.push(AbiParam::new(types::I64)); // value
+        s
+    };
+
+    let sig_write_u64 = sig_write_i64.clone();
+
+    let sig_write_f64 = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // out
+        s.params.push(AbiParam::new(pointer_type)); // offset
+        s.params.push(AbiParam::new(types::F64)); // value
+        s
+    };
+
+    let sig_write_bool = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // out
+        s.params.push(AbiParam::new(pointer_type)); // offset
+        s.params.push(AbiParam::new(types::I8)); // value (bool as i8)
+        s
+    };
+
+    let sig_write_string = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // out
+        s.params.push(AbiParam::new(pointer_type)); // offset
+        s.params.push(AbiParam::new(pointer_type)); // ptr
+        s.params.push(AbiParam::new(pointer_type)); // len
+        s.params.push(AbiParam::new(types::I8)); // owned (bool as i8)
+        s
+    };
+
+    // Declare all helper functions
+    let field_matches_id = module
+        .declare_function("jit_field_matches", Linkage::Import, &sig_field_matches)
+        .ok()?;
+    let write_i64_id = module
+        .declare_function("jit_write_i64", Linkage::Import, &sig_write_i64)
+        .ok()?;
+    let write_u64_id = module
+        .declare_function("jit_write_u64", Linkage::Import, &sig_write_u64)
+        .ok()?;
+    let write_f64_id = module
+        .declare_function("jit_write_f64", Linkage::Import, &sig_write_f64)
+        .ok()?;
+    let write_bool_id = module
+        .declare_function("jit_write_bool", Linkage::Import, &sig_write_bool)
+        .ok()?;
+    let write_string_id = module
+        .declare_function("jit_write_string", Linkage::Import, &sig_write_string)
         .ok()?;
 
     let mut ctx = module.make_context();
@@ -202,6 +318,14 @@ fn compile_deserializer<'de, T, P: FormatParser<'de>>(
     {
         let mut builder = FunctionBuilder::new(&mut ctx.func, &mut builder_ctx);
 
+        // Import helper functions
+        let field_matches_ref = module.declare_func_in_func(field_matches_id, builder.func);
+        let write_i64_ref = module.declare_func_in_func(write_i64_id, builder.func);
+        let write_u64_ref = module.declare_func_in_func(write_u64_id, builder.func);
+        let write_f64_ref = module.declare_func_in_func(write_f64_id, builder.func);
+        let write_bool_ref = module.declare_func_in_func(write_bool_id, builder.func);
+        let write_string_ref = module.declare_func_in_func(write_string_id, builder.func);
+
         // Create entry block
         let entry_block = builder.create_block();
         builder.append_block_params_for_function_params(entry_block);
@@ -209,13 +333,328 @@ fn compile_deserializer<'de, T, P: FormatParser<'de>>(
         builder.seal_block(entry_block);
 
         // Get parameters
-        let _ctx_ptr = builder.block_params(entry_block)[0];
-        let _out_ptr = builder.block_params(entry_block)[1];
+        let ctx_ptr = builder.block_params(entry_block)[0];
+        let out_ptr = builder.block_params(entry_block)[1];
 
-        // For now, just return success (placeholder)
-        // TODO: Generate actual parsing code
+        // Allocate stack slot for RawEvent
+        let raw_event_slot = builder.create_sized_stack_slot(StackSlotData::new(
+            StackSlotKind::ExplicitSlot,
+            helpers::RAW_EVENT_SIZE as u32,
+            8, // alignment
+        ));
+        let raw_event_ptr = builder.ins().stack_addr(pointer_type, raw_event_slot, 0);
+
+        // Load parser pointer from ctx
+        let parser_ptr = builder.ins().load(
+            pointer_type,
+            MemFlags::trusted(),
+            ctx_ptr,
+            helpers::JIT_CONTEXT_PARSER_OFFSET as i32,
+        );
+
+        // Load vtable pointer from ctx
+        let vtable_ptr = builder.ins().load(
+            pointer_type,
+            MemFlags::trusted(),
+            ctx_ptr,
+            helpers::JIT_CONTEXT_VTABLE_OFFSET as i32,
+        );
+
+        // Load next_event function pointer from vtable
+        let next_event_fn = builder.ins().load(
+            pointer_type,
+            MemFlags::trusted(),
+            vtable_ptr,
+            helpers::VTABLE_NEXT_EVENT_OFFSET as i32,
+        );
+
+        // Load skip_value function pointer from vtable
+        let skip_value_fn = builder.ins().load(
+            pointer_type,
+            MemFlags::trusted(),
+            vtable_ptr,
+            helpers::VTABLE_SKIP_VALUE_OFFSET as i32,
+        );
+
+        // Create blocks
+        let error_block = builder.create_block();
+        let success_block = builder.create_block();
+        let field_loop = builder.create_block();
+
+        // Import the signature for indirect calls
+        let sig_next_event_ref = builder.import_signature(sig_next_event.clone());
+        let _sig_skip_value_ref = builder.import_signature(sig_skip_value.clone());
+
+        // Call next_event to get StructStart
+        let call_result = builder.ins().call_indirect(
+            sig_next_event_ref,
+            next_event_fn,
+            &[parser_ptr, raw_event_ptr],
+        );
+        let result = builder.inst_results(call_result)[0];
+
+        // Check for error
+        let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+        let check_struct_start = builder.create_block();
+        builder
+            .ins()
+            .brif(is_error, error_block, &[], check_struct_start, &[]);
+
+        builder.switch_to_block(check_struct_start);
+        // Load tag and check it's StructStart (0)
+        let tag = builder.ins().load(
+            types::I8,
+            MemFlags::trusted(),
+            raw_event_ptr,
+            helpers::RAW_EVENT_TAG_OFFSET as i32,
+        );
+        let is_struct_start = builder.ins().icmp_imm(IntCC::Equal, tag, 0); // EventTag::StructStart = 0
+        builder
+            .ins()
+            .brif(is_struct_start, field_loop, &[], error_block, &[]);
+
+        // Field loop
+        builder.switch_to_block(field_loop);
+
+        // Call next_event
+        let call_result = builder.ins().call_indirect(
+            sig_next_event_ref,
+            next_event_fn,
+            &[parser_ptr, raw_event_ptr],
+        );
+        let result = builder.inst_results(call_result)[0];
+
+        // Check for error
+        let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+        let check_event_tag = builder.create_block();
+        builder
+            .ins()
+            .brif(is_error, error_block, &[], check_event_tag, &[]);
+
+        builder.switch_to_block(check_event_tag);
+        // Load tag
+        let tag = builder.ins().load(
+            types::I8,
+            MemFlags::trusted(),
+            raw_event_ptr,
+            helpers::RAW_EVENT_TAG_OFFSET as i32,
+        );
+
+        // Check for StructEnd (1)
+        let is_struct_end = builder.ins().icmp_imm(IntCC::Equal, tag, 1); // EventTag::StructEnd = 1
+        let check_field_key = builder.create_block();
+        builder
+            .ins()
+            .brif(is_struct_end, success_block, &[], check_field_key, &[]);
+
+        builder.switch_to_block(check_field_key);
+        // Check for FieldKey (4)
+        let is_field_key = builder.ins().icmp_imm(IntCC::Equal, tag, 4); // EventTag::FieldKey = 4
+        let process_field = builder.create_block();
+        builder
+            .ins()
+            .brif(is_field_key, process_field, &[], error_block, &[]);
+
+        builder.switch_to_block(process_field);
+
+        // Load field name ptr and len from payload
+        let payload_ptr = builder
+            .ins()
+            .iadd_imm(raw_event_ptr, helpers::RAW_EVENT_PAYLOAD_OFFSET as i64);
+        let name_ptr = builder.ins().load(
+            pointer_type,
+            MemFlags::trusted(),
+            payload_ptr,
+            helpers::FIELD_NAME_PTR_OFFSET as i32,
+        );
+        let name_len = builder.ins().load(
+            pointer_type,
+            MemFlags::trusted(),
+            payload_ptr,
+            helpers::FIELD_NAME_LEN_OFFSET as i32,
+        );
+
+        // Create blocks for each field and a default (skip) block
+        let field_blocks: Vec<Block> = fields.iter().map(|_| builder.create_block()).collect();
+        let skip_field_block = builder.create_block();
+        let after_field = builder.create_block();
+
+        // Track compare blocks for sealing
+        let mut compare_blocks: Vec<Block> = Vec::new();
+
+        // Linear scan: compare field name against each expected field
+        for (i, field) in fields.iter().enumerate() {
+            let next_compare = if i + 1 < fields.len() {
+                let block = builder.create_block();
+                compare_blocks.push(block);
+                block
+            } else {
+                skip_field_block
+            };
+
+            // Embed field name pointer as a constant (the string is 'static)
+            let expected_ptr = builder
+                .ins()
+                .iconst(pointer_type, field.name.as_ptr() as i64);
+            let expected_len = builder.ins().iconst(pointer_type, field.name.len() as i64);
+
+            // Call jit_field_matches
+            let call_result = builder.ins().call(
+                field_matches_ref,
+                &[name_ptr, name_len, expected_ptr, expected_len],
+            );
+            let matches = builder.inst_results(call_result)[0];
+
+            // If matches, jump to field block; otherwise continue to next compare
+            let is_match = builder.ins().icmp_imm(IntCC::NotEqual, matches, 0);
+            builder
+                .ins()
+                .brif(is_match, field_blocks[i], &[], next_compare, &[]);
+
+            if i + 1 < fields.len() {
+                builder.switch_to_block(next_compare);
+            }
+        }
+
+        // Skip field block: call next_event (to skip the value) and then skip_value
+        builder.switch_to_block(skip_field_block);
+        // First get the value event
+        let call_result = builder.ins().call_indirect(
+            sig_next_event_ref,
+            next_event_fn,
+            &[parser_ptr, raw_event_ptr],
+        );
+        let result = builder.inst_results(call_result)[0];
+        let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+        builder
+            .ins()
+            .brif(is_error, error_block, &[], after_field, &[]);
+
+        // Generate field parsing blocks
+        for (i, field) in fields.iter().enumerate() {
+            builder.switch_to_block(field_blocks[i]);
+
+            // Call next_event to get the scalar value
+            let call_result = builder.ins().call_indirect(
+                sig_next_event_ref,
+                next_event_fn,
+                &[parser_ptr, raw_event_ptr],
+            );
+            let result = builder.inst_results(call_result)[0];
+
+            // Check for error
+            let is_error = builder.ins().icmp_imm(IntCC::SignedLessThan, result, 0);
+            let write_value_block = builder.create_block();
+            builder
+                .ins()
+                .brif(is_error, error_block, &[], write_value_block, &[]);
+
+            builder.switch_to_block(write_value_block);
+
+            // Get the payload pointer
+            let payload_ptr = builder
+                .ins()
+                .iadd_imm(raw_event_ptr, helpers::RAW_EVENT_PAYLOAD_OFFSET as i64);
+
+            let offset_val = builder.ins().iconst(pointer_type, field.offset as i64);
+
+            // Write the value based on field type
+            match field.write_kind {
+                WriteKind::I64 | WriteKind::I32 | WriteKind::I16 | WriteKind::I8 => {
+                    // Load i64 value from scalar payload (offset 0 in ScalarPayload)
+                    let value = builder
+                        .ins()
+                        .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                    builder
+                        .ins()
+                        .call(write_i64_ref, &[out_ptr, offset_val, value]);
+                }
+                WriteKind::U64 | WriteKind::U32 | WriteKind::U16 | WriteKind::U8 => {
+                    // Load u64 value from scalar payload
+                    let value = builder
+                        .ins()
+                        .load(types::I64, MemFlags::trusted(), payload_ptr, 0);
+                    builder
+                        .ins()
+                        .call(write_u64_ref, &[out_ptr, offset_val, value]);
+                }
+                WriteKind::F64 | WriteKind::F32 => {
+                    // Load f64 value from scalar payload
+                    let value = builder
+                        .ins()
+                        .load(types::F64, MemFlags::trusted(), payload_ptr, 0);
+                    builder
+                        .ins()
+                        .call(write_f64_ref, &[out_ptr, offset_val, value]);
+                }
+                WriteKind::Bool => {
+                    // Load bool value from scalar payload (as u8)
+                    let value = builder
+                        .ins()
+                        .load(types::I8, MemFlags::trusted(), payload_ptr, 0);
+                    builder
+                        .ins()
+                        .call(write_bool_ref, &[out_ptr, offset_val, value]);
+                }
+                WriteKind::String => {
+                    // Load string payload: ptr, len, owned
+                    let str_ptr =
+                        builder
+                            .ins()
+                            .load(pointer_type, MemFlags::trusted(), payload_ptr, 0);
+                    let str_len = builder.ins().load(
+                        pointer_type,
+                        MemFlags::trusted(),
+                        payload_ptr,
+                        8, // offset to len field
+                    );
+                    let str_owned = builder.ins().load(
+                        types::I8,
+                        MemFlags::trusted(),
+                        payload_ptr,
+                        16, // offset to owned field
+                    );
+                    builder.ins().call(
+                        write_string_ref,
+                        &[out_ptr, offset_val, str_ptr, str_len, str_owned],
+                    );
+                }
+            }
+
+            builder.ins().jump(after_field, &[]);
+            builder.seal_block(write_value_block);
+        }
+
+        // After field: loop back
+        builder.switch_to_block(after_field);
+        builder.ins().jump(field_loop, &[]);
+
+        // Success block
+        builder.switch_to_block(success_block);
         let zero = builder.ins().iconst(types::I32, 0);
         builder.ins().return_(&[zero]);
+
+        // Error block
+        builder.switch_to_block(error_block);
+        let err = builder.ins().iconst(types::I32, -1);
+        builder.ins().return_(&[err]);
+
+        // Seal all blocks
+        builder.seal_block(check_struct_start);
+        builder.seal_block(field_loop);
+        builder.seal_block(check_event_tag);
+        builder.seal_block(check_field_key);
+        builder.seal_block(process_field);
+        builder.seal_block(skip_field_block);
+        builder.seal_block(after_field);
+        builder.seal_block(success_block);
+        builder.seal_block(error_block);
+        for block in &field_blocks {
+            builder.seal_block(*block);
+        }
+        for block in &compare_blocks {
+            builder.seal_block(*block);
+        }
 
         builder.finalize();
     }
@@ -272,5 +711,18 @@ impl WriteKind {
             "String" | "alloc::string::String" => Some(WriteKind::String),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_jit_compatibility_primitives() {
+        // Test that primitive types are not JIT-compatible (they're not structs)
+        assert!(!is_jit_compatible(i64::SHAPE));
+        assert!(!is_jit_compatible(String::SHAPE));
+        assert!(!is_jit_compatible(bool::SHAPE));
     }
 }
