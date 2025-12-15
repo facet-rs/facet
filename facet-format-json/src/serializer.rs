@@ -122,43 +122,118 @@ impl JsonSerializer {
         Ok(())
     }
 
+    /// Optimized JSON string writing with SIMD-like 16-byte fast path.
+    ///
+    /// For ASCII strings without special characters, processes 16 bytes at a time.
+    /// Falls back to character-by-character escaping when needed.
     fn write_json_string(&mut self, s: &str) {
+        const STEP_SIZE: usize = 16; // u128 = 16 bytes
+        type Chunk = [u8; STEP_SIZE];
+
         self.out.push(b'"');
-        for ch in s.chars() {
-            match ch {
-                '"' => self.out.extend_from_slice(b"\\\""),
-                '\\' => self.out.extend_from_slice(b"\\\\"),
-                '\n' => self.out.extend_from_slice(b"\\n"),
-                '\r' => self.out.extend_from_slice(b"\\r"),
-                '\t' => self.out.extend_from_slice(b"\\t"),
-                c if c <= '\u{1F}' => {
-                    let code_point = c as u32;
-                    let to_hex = |d: u32| {
-                        if d < 10 {
-                            b'0' + d as u8
-                        } else {
-                            b'a' + (d - 10) as u8
-                        }
-                    };
-                    let buf = [
-                        b'\\',
-                        b'u',
-                        to_hex((code_point >> 12) & 0xF),
-                        to_hex((code_point >> 8) & 0xF),
-                        to_hex((code_point >> 4) & 0xF),
-                        to_hex(code_point & 0xF),
-                    ];
-                    self.out.extend_from_slice(&buf);
+
+        let mut s = s;
+        while let Some(Ok(chunk)) = s.as_bytes().get(..STEP_SIZE).map(Chunk::try_from) {
+            let window = u128::from_ne_bytes(chunk);
+            // Check all 16 bytes at once:
+            // 1. All ASCII (high bit clear): window & 0x80...80 == 0
+            // 2. No quotes (0x22): !contains_byte(window, 0x22)
+            // 3. No backslashes (0x5c): !contains_byte(window, 0x5c)
+            // 4. No control chars (< 0x20): top 3 bits set for all bytes
+            let completely_ascii = window & 0x80808080808080808080808080808080 == 0;
+            let quote_free = !contains_byte(window, 0x22);
+            let backslash_free = !contains_byte(window, 0x5c);
+            let control_char_free = no_control_chars(window);
+
+            if completely_ascii && quote_free && backslash_free && control_char_free {
+                // Fast path: copy 16 bytes directly
+                self.out.extend_from_slice(&chunk);
+                s = &s[STEP_SIZE..];
+            } else {
+                // Slow path: escape character by character for this chunk
+                let mut chars = s.chars();
+                let mut count = STEP_SIZE;
+                for c in &mut chars {
+                    self.write_json_escaped_char(c);
+                    count = count.saturating_sub(c.len_utf8());
+                    if count == 0 {
+                        break;
+                    }
                 }
-                c => {
-                    let mut buf = [0u8; 4];
-                    self.out
-                        .extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
-                }
+                s = chars.as_str();
             }
         }
+
+        // Handle remaining bytes (< 16)
+        for c in s.chars() {
+            self.write_json_escaped_char(c);
+        }
+
         self.out.push(b'"');
     }
+
+    #[inline]
+    fn write_json_escaped_char(&mut self, c: char) {
+        match c {
+            '"' => self.out.extend_from_slice(b"\\\""),
+            '\\' => self.out.extend_from_slice(b"\\\\"),
+            '\n' => self.out.extend_from_slice(b"\\n"),
+            '\r' => self.out.extend_from_slice(b"\\r"),
+            '\t' => self.out.extend_from_slice(b"\\t"),
+            '\u{08}' => self.out.extend_from_slice(b"\\b"),
+            '\u{0C}' => self.out.extend_from_slice(b"\\f"),
+            c if c.is_ascii_control() => {
+                let code_point = c as u32;
+                let to_hex = |d: u32| {
+                    if d < 10 {
+                        b'0' + d as u8
+                    } else {
+                        b'a' + (d - 10) as u8
+                    }
+                };
+                let buf = [
+                    b'\\',
+                    b'u',
+                    to_hex((code_point >> 12) & 0xF),
+                    to_hex((code_point >> 8) & 0xF),
+                    to_hex((code_point >> 4) & 0xF),
+                    to_hex(code_point & 0xF),
+                ];
+                self.out.extend_from_slice(&buf);
+            }
+            c if c.is_ascii() => {
+                self.out.push(c as u8);
+            }
+            c => {
+                let mut buf = [0u8; 4];
+                let len = c.encode_utf8(&mut buf).len();
+                self.out.extend_from_slice(&buf[..len]);
+            }
+        }
+    }
+}
+
+/// Check if any byte in the u128 equals the target byte.
+/// Uses the SWAR (SIMD Within A Register) technique.
+#[inline]
+fn contains_byte(val: u128, byte: u8) -> bool {
+    let mask = 0x01010101010101010101010101010101u128 * (byte as u128);
+    let xor_result = val ^ mask;
+    let has_zero = (xor_result.wrapping_sub(0x01010101010101010101010101010101))
+        & !xor_result
+        & 0x80808080808080808080808080808080;
+    has_zero != 0
+}
+
+/// Check that all bytes have at least one of the top 3 bits set (i.e., >= 0x20).
+/// This means no control characters (0x00-0x1F).
+#[inline]
+fn no_control_chars(value: u128) -> bool {
+    let masked = value & 0xe0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0;
+    let has_zero = (masked.wrapping_sub(0x01010101010101010101010101010101))
+        & !masked
+        & 0x80808080808080808080808080808080;
+    has_zero == 0
 }
 
 impl Default for JsonSerializer {
