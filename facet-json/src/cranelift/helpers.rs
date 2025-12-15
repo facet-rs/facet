@@ -915,6 +915,135 @@ pub unsafe extern "C" fn jitson_parse_vec_u64(
     }
 }
 
+/// Parse `Vec<bool>`, write to *out, return new position or error.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jitson_parse_vec_bool(
+    input: *const u8,
+    len: usize,
+    pos: usize,
+    out: *mut Vec<bool>,
+) -> ParseResult {
+    unsafe {
+        let bytes = slice(input, len, pos);
+        let mut i = 0;
+
+        if bytes.is_empty() || bytes[0] != b'[' {
+            return ERR_EXPECTED_ARRAY_START;
+        }
+        i += 1;
+        skip_ws_inline(bytes, &mut i);
+
+        let mut vec = Vec::with_capacity(16);
+
+        if i < bytes.len() && bytes[i] == b']' {
+            std::ptr::write(out, vec);
+            return (pos + i + 1) as isize;
+        }
+
+        loop {
+            // Parse boolean
+            if i + 4 <= bytes.len() && &bytes[i..i + 4] == b"true" {
+                vec.push(true);
+                i += 4;
+            } else if i + 5 <= bytes.len() && &bytes[i..i + 5] == b"false" {
+                vec.push(false);
+                i += 5;
+            } else {
+                return ERR_INVALID_BOOL;
+            }
+
+            skip_ws_inline(bytes, &mut i);
+            if i >= bytes.len() {
+                return ERR_EXPECTED_COMMA_OR_END;
+            }
+            match bytes[i] {
+                b',' => {
+                    i += 1;
+                    skip_ws_inline(bytes, &mut i);
+                }
+                b']' => {
+                    std::ptr::write(out, vec);
+                    return (pos + i + 1) as isize;
+                }
+                _ => return ERR_EXPECTED_COMMA_OR_END,
+            }
+        }
+    }
+}
+
+/// Parse `Vec<String>`, write to *out, return new position or error.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn jitson_parse_vec_string(
+    input: *const u8,
+    len: usize,
+    pos: usize,
+    out: *mut Vec<String>,
+) -> ParseResult {
+    unsafe {
+        let bytes = slice(input, len, pos);
+        let mut i = 0;
+
+        if bytes.is_empty() || bytes[0] != b'[' {
+            return ERR_EXPECTED_ARRAY_START;
+        }
+        i += 1;
+        skip_ws_inline(bytes, &mut i);
+
+        let mut vec = Vec::with_capacity(16);
+
+        if i < bytes.len() && bytes[i] == b']' {
+            std::ptr::write(out, vec);
+            return (pos + i + 1) as isize;
+        }
+
+        loop {
+            // Parse string
+            if i >= bytes.len() || bytes[i] != b'"' {
+                return ERR_INVALID_STRING;
+            }
+            i += 1;
+
+            let content = &bytes[i..];
+            match memchr::memchr2(b'"', b'\\', content) {
+                Some(offset) => {
+                    if content[offset] == b'"' {
+                        // No escapes
+                        let s = std::str::from_utf8_unchecked(&content[..offset]);
+                        vec.push(s.to_owned());
+                        i += offset + 1;
+                    } else {
+                        // Has escapes - use slow path
+                        match find_string_end_with_escapes(content, offset) {
+                            Some(end) => {
+                                vec.push(decode_escaped_string(&content[..end]));
+                                i += end + 1;
+                            }
+                            None => return ERR_UNEXPECTED_EOF,
+                        }
+                    }
+                }
+                None => return ERR_UNEXPECTED_EOF,
+            }
+
+            skip_ws_inline(bytes, &mut i);
+            if i >= bytes.len() {
+                return ERR_EXPECTED_COMMA_OR_END;
+            }
+            match bytes[i] {
+                b',' => {
+                    i += 1;
+                    skip_ws_inline(bytes, &mut i);
+                }
+                b']' => {
+                    std::ptr::write(out, vec);
+                    return (pos + i + 1) as isize;
+                }
+                _ => return ERR_EXPECTED_COMMA_OR_END,
+            }
+        }
+    }
+}
+
 /// Parse `Vec<Vec<f64>>`, write to *out, return new position or error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn jitson_parse_vec_vec_f64(
@@ -1691,6 +1820,11 @@ pub fn register_helpers(builder: &mut cranelift_jit::JITBuilder) {
     builder.symbol("jitson_parse_vec_f64", jitson_parse_vec_f64 as *const u8);
     builder.symbol("jitson_parse_vec_i64", jitson_parse_vec_i64 as *const u8);
     builder.symbol("jitson_parse_vec_u64", jitson_parse_vec_u64 as *const u8);
+    builder.symbol("jitson_parse_vec_bool", jitson_parse_vec_bool as *const u8);
+    builder.symbol(
+        "jitson_parse_vec_string",
+        jitson_parse_vec_string as *const u8,
+    );
     builder.symbol(
         "jitson_parse_vec_vec_f64",
         jitson_parse_vec_vec_f64 as *const u8,
