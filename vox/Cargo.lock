@@ -1634,7 +1634,6 @@ name = "rapace-introspection"
 version = "0.4.0"
 dependencies = [
  "async-trait",
- "facet",
  "rapace",
  "rapace-registry",
  "tokio",

@@ -2,7 +2,7 @@
 //!
 //! Uses Linux futex syscalls for efficient waiting on shared memory.
 
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::AtomicU32;
 use std::time::Duration;
 
 /// Futex wait operation.
@@ -176,7 +176,11 @@ pub async fn futex_wait_async(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
     use std::sync::Arc;
+    #[cfg(target_os = "linux")]
+    use std::sync::atomic::Ordering;
+    #[cfg(target_os = "linux")]
     use std::thread;
 
     #[test]
@@ -195,6 +199,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn test_futex_signal_and_wait() {
         let futex = Arc::new(AtomicU32::new(0));
         let futex_clone = futex.clone();

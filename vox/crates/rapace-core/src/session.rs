@@ -801,14 +801,12 @@ impl<T: Transport + Send + Sync + 'static> RpcSession<T> {
                         }
                     };
                 });
-            } else {
-                if !no_reply {
-                    tracing::warn!(
-                        channel_id,
-                        method_id,
-                        "RpcSession::run: no dispatcher registered; dropping request (client may hang)"
-                    );
-                }
+            } else if !no_reply {
+                tracing::warn!(
+                    channel_id,
+                    method_id,
+                    "RpcSession::run: no dispatcher registered; dropping request (client may hang)"
+                );
             }
         }
     }

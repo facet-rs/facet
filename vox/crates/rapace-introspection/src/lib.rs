@@ -21,7 +21,9 @@
 //! ```
 
 // Re-export types from rapace-registry for convenience
-pub use rapace_registry::introspection::{ArgInfo, DefaultServiceIntrospection, MethodInfo, ServiceInfo};
+pub use rapace_registry::introspection::{
+    ArgInfo, DefaultServiceIntrospection, MethodInfo, ServiceInfo,
+};
 
 /// Service introspection RPC interface.
 ///
@@ -69,9 +71,9 @@ mod tests {
     async fn test_introspection_impl() {
         let introspection = DefaultServiceIntrospection::new();
 
-        // Should work without errors
-        let _services = introspection.list_services().await;
-        let _has_zero = introspection.has_method(0).await;
-        let _describe = introspection.describe_service("NonExistent".to_string()).await;
+        // Should work without errors (calling inherent methods, not async trait methods)
+        let _services = introspection.list_services();
+        let _has_zero = introspection.has_method(0);
+        let _describe = introspection.describe_service("NonExistent");
     }
 }

@@ -377,7 +377,7 @@ mod tests {
             while !done_sender.load(Ordering::Relaxed) {
                 doorbell1.signal();
                 i += 1;
-                if i % 1024 == 0 {
+                if i.is_multiple_of(1024) {
                     tokio::task::yield_now().await;
                 }
             }
