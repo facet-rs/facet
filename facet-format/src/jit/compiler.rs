@@ -180,8 +180,8 @@ fn register_helpers(builder: &mut JITBuilder) {
         helpers::jit_option_init_none as *const u8,
     );
     builder.symbol(
-        "jit_option_replace_with_some",
-        helpers::jit_option_replace_with_some as *const u8,
+        "jit_option_init_some_from_value",
+        helpers::jit_option_init_some_from_value as *const u8,
     );
     builder.symbol(
         "jit_vec_init_with_capacity",
@@ -287,7 +287,15 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
     // Declare helper function signatures
     let sig_next_event = {
         let mut s = module.make_signature();
-        s.params.push(AbiParam::new(pointer_type)); // parser
+        s.params.push(AbiParam::new(pointer_type)); // ctx: *mut JitContext
+        s.params.push(AbiParam::new(pointer_type)); // out: *mut RawEvent
+        s.returns.push(AbiParam::new(types::I32)); // result
+        s
+    };
+
+    let sig_peek_event = {
+        let mut s = module.make_signature();
+        s.params.push(AbiParam::new(pointer_type)); // ctx: *mut JitContext
         s.params.push(AbiParam::new(pointer_type)); // out: *mut RawEvent
         s.returns.push(AbiParam::new(types::I32)); // result
         s
@@ -363,11 +371,11 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         s
     };
 
-    let sig_option_replace_with_some = {
+    let sig_option_init_some_from_value = {
         let mut s = module.make_signature();
         s.params.push(AbiParam::new(pointer_type)); // out: *mut u8
         s.params.push(AbiParam::new(pointer_type)); // value_ptr: *const u8
-        s.params.push(AbiParam::new(pointer_type)); // replace_with_fn: *const u8
+        s.params.push(AbiParam::new(pointer_type)); // init_some_fn: *const u8
         s
     };
 
@@ -415,6 +423,12 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
             &sig_deserialize_nested,
         )
         .ok()?;
+    let peek_event_id = module
+        .declare_function("jit_peek_event", Linkage::Import, &sig_peek_event)
+        .ok()?;
+    let next_event_id = module
+        .declare_function("jit_next_event", Linkage::Import, &sig_next_event)
+        .ok()?;
     let option_init_none_id = module
         .declare_function(
             "jit_option_init_none",
@@ -422,11 +436,11 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
             &sig_option_init_none,
         )
         .ok()?;
-    let option_replace_with_some_id = module
+    let option_init_some_from_value_id = module
         .declare_function(
-            "jit_option_replace_with_some",
+            "jit_option_init_some_from_value",
             Linkage::Import,
-            &sig_option_replace_with_some,
+            &sig_option_init_some_from_value,
         )
         .ok()?;
     let vec_init_with_capacity_id = module
@@ -457,9 +471,11 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
         let write_string_ref = module.declare_func_in_func(write_string_id, builder.func);
         let deserialize_nested_ref =
             module.declare_func_in_func(deserialize_nested_id, builder.func);
+        let peek_event_ref = module.declare_func_in_func(peek_event_id, builder.func);
+        let next_event_ref = module.declare_func_in_func(next_event_id, builder.func);
         let option_init_none_ref = module.declare_func_in_func(option_init_none_id, builder.func);
-        let option_replace_with_some_ref =
-            module.declare_func_in_func(option_replace_with_some_id, builder.func);
+        let option_init_some_from_value_ref =
+            module.declare_func_in_func(option_init_some_from_value_id, builder.func);
         let _vec_init_with_capacity_ref =
             module.declare_func_in_func(vec_init_with_capacity_id, builder.func);
         let _vec_push_ref = module.declare_func_in_func(vec_push_id, builder.func);
@@ -547,36 +563,9 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
             helpers::RAW_EVENT_TAG_OFFSET as i32,
         );
         let is_struct_start = builder.ins().icmp_imm(IntCC::Equal, tag, 0); // EventTag::StructStart = 0
-        let init_options_block = builder.create_block();
         builder
             .ins()
-            .brif(is_struct_start, init_options_block, &[], error_block, &[]);
-
-        // Initialize all Option fields to None before field loop
-        builder.switch_to_block(init_options_block);
-        for field in &fields {
-            if let WriteKind::Option(option_shape) = field.write_kind {
-                let Def::Option(option_def) = &option_shape.def else {
-                    continue;
-                };
-
-                // Get the init_none function pointer from the Option's vtable
-                let option_vtable = option_def.vtable;
-                let init_none_fn_ptr = option_vtable.init_none as *const u8;
-                let init_none_fn_val = builder.ins().iconst(pointer_type, init_none_fn_ptr as i64);
-
-                // Calculate field pointer
-                let field_offset = builder.ins().iconst(pointer_type, field.offset as i64);
-                let field_ptr = builder.ins().iadd(out_ptr, field_offset);
-
-                // Call jit_option_init_none(field_ptr, init_none_fn)
-                builder
-                    .ins()
-                    .call(option_init_none_ref, &[field_ptr, init_none_fn_val]);
-            }
-        }
-        builder.ins().jump(field_loop, &[]);
-        builder.seal_block(init_options_block);
+            .brif(is_struct_start, field_loop, &[], error_block, &[]);
 
         // Field loop
         builder.switch_to_block(field_loop);
@@ -728,12 +717,11 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
                         .brif(nested_is_error, error_block, &[], after_field, &[]);
                 }
                 WriteKind::Option(option_shape) => {
-                    // Option field: call next_event, check if Null, else init Some
-                    let call_result = builder.ins().call_indirect(
-                        sig_next_event_ref,
-                        next_event_fn,
-                        &[parser_ptr, raw_event_ptr],
-                    );
+                    // Option field: peek to check for Null, then consume and handle
+                    // Call jit_peek_event(ctx, raw_event_ptr)
+                    let call_result = builder
+                        .ins()
+                        .call(peek_event_ref, &[ctx_ptr, raw_event_ptr]);
                     let result = builder.inst_results(call_result)[0];
 
                     // Check for error
@@ -745,23 +733,52 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
 
                     builder.switch_to_block(check_null_block);
 
-                    // Check if value is Null (scalar_tag == ScalarTag::Null = 1)
+                    // Check if peeked value is Null (scalar_tag == ScalarTag::Null = 1)
                     let scalar_tag = builder.ins().load(
                         types::I8,
                         MemFlags::trusted(),
                         raw_event_ptr,
-                        1, // RAW_EVENT_SCALAR_TAG_OFFSET
+                        1, // scalar_tag offset
                     );
                     let is_null = builder.ins().icmp_imm(IntCC::Equal, scalar_tag, 1);
 
+                    let handle_none_block = builder.create_block();
                     let handle_some_block = builder.create_block();
-                    // If Null, skip to after_field (already initialized to None)
-                    // If not Null, handle Some case
                     builder
                         .ins()
-                        .brif(is_null, after_field, &[], handle_some_block, &[]);
+                        .brif(is_null, handle_none_block, &[], handle_some_block, &[]);
 
+                    // Handle None case: consume Null event and init to None
+                    builder.switch_to_block(handle_none_block);
+                    // Consume the peeked Null event
+                    let _consume_result = builder
+                        .ins()
+                        .call(next_event_ref, &[ctx_ptr, raw_event_ptr]);
+
+                    // Get Option vtable
+                    let Def::Option(option_def) = &option_shape.def else {
+                        unreachable!();
+                    };
+                    let init_none_fn_ptr = option_def.vtable.init_none as *const u8;
+                    let init_none_fn_val =
+                        builder.ins().iconst(pointer_type, init_none_fn_ptr as i64);
+
+                    // Calculate field pointer
+                    let field_ptr = builder.ins().iadd(out_ptr, offset_val);
+
+                    // Call jit_option_init_none(field_ptr, init_none_fn)
+                    builder
+                        .ins()
+                        .call(option_init_none_ref, &[field_ptr, init_none_fn_val]);
+
+                    builder.ins().jump(after_field, &[]);
+
+                    // Handle Some case: consume event, deserialize value, init to Some
                     builder.switch_to_block(handle_some_block);
+                    // Consume the peeked event
+                    let _consume_result = builder
+                        .ins()
+                        .call(next_event_ref, &[ctx_ptr, raw_event_ptr]);
 
                     // Get Option info
                     let Def::Option(option_def) = &option_shape.def else {
@@ -830,23 +847,23 @@ fn compile_deserializer(module: &mut JITModule, shape: &'static Shape) -> Option
                         }
                     }
 
-                    // Get replace_with function
-                    let replace_with_fn_ptr = option_def.vtable.replace_with as *const u8;
-                    let replace_with_fn_val = builder
-                        .ins()
-                        .iconst(pointer_type, replace_with_fn_ptr as i64);
+                    // Get init_some function
+                    let init_some_fn_ptr = option_def.vtable.init_some as *const u8;
+                    let init_some_fn_val =
+                        builder.ins().iconst(pointer_type, init_some_fn_ptr as i64);
 
                     // Calculate field pointer
                     let field_ptr = builder.ins().iadd(out_ptr, offset_val);
 
-                    // Call jit_option_replace_with_some(field_ptr, value_ptr, replace_with_fn)
+                    // Call jit_option_init_some_from_value(field_ptr, value_ptr, init_some_fn)
                     builder.ins().call(
-                        option_replace_with_some_ref,
-                        &[field_ptr, value_ptr, replace_with_fn_val],
+                        option_init_some_from_value_ref,
+                        &[field_ptr, value_ptr, init_some_fn_val],
                     );
 
                     builder.ins().jump(after_field, &[]);
                     builder.seal_block(check_null_block);
+                    builder.seal_block(handle_none_block);
                     builder.seal_block(handle_some_block);
                 }
                 WriteKind::Vec(_vec_shape) => {
