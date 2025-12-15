@@ -97,20 +97,21 @@ def format_time(ns: float) -> str:
     else:
         return f"{ns/1_000_000:.2f} ms"
 
-def generate_benchmark_section(bench_name: str, operation: str, data: Dict[str, float], bench_id: str) -> str:
+def generate_benchmark_section(bench_name: str, operation: str, divan_data: Dict[str, float],
+                              gungraun_data: Dict[str, Dict[str, int]], bench_id: str) -> str:
     """
-    Generate HTML for one benchmark: table + interactive chart.
+    Generate HTML for one benchmark: table (with both time + instructions) + interactive chart.
     bench_id is used for unique element IDs.
     """
-    if not data:
+    if not divan_data:
         return ""
 
     # Find serde_json baseline and fastest
-    serde_time = data.get('serde_json')
-    fastest_time = min(data.values()) if data.values() else 0
+    serde_time = divan_data.get('serde_json')
+    fastest_time = min(divan_data.values()) if divan_data.values() else 0
 
-    # Sort: fastest first, but keep serde_json as visual baseline in middle of slower entries
-    sorted_targets = sorted(data.items(), key=lambda x: x[1])
+    # Sort: fastest first
+    sorted_targets = sorted(divan_data.items(), key=lambda x: x[1])
 
     html = f"""
     <div class="benchmark-item" id="bench-{bench_id}">
@@ -123,8 +124,8 @@ def generate_benchmark_section(bench_name: str, operation: str, data: Dict[str, 
                         <tr>
                             <th>Target</th>
                             <th>Median Time</th>
-                            <th>vs Fastest</th>
-                            <th>vs serde_json 🎯</th>
+                            <th>Instructions</th>
+                            <th>vs serde 🎯</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -136,8 +137,13 @@ def generate_benchmark_section(bench_name: str, operation: str, data: Dict[str, 
 
         config = TARGETS[target]
 
+        # Look up instruction count for this target
+        # Try to find matching gungraun benchmark
+        gungraun_key = f"{bench_name}_{target}"
+        instructions = gungraun_data.get(gungraun_key, {}).get('Instructions')
+        instructions_str = f"{instructions:,}" if instructions else "-"
+
         # Calculate ratios
-        vs_fastest = time_ns / fastest_time if fastest_time > 0 else 0
         vs_serde = time_ns / serde_time if serde_time and serde_time > 0 else 0
 
         # Determine row class
@@ -149,12 +155,9 @@ def generate_benchmark_section(bench_name: str, operation: str, data: Dict[str, 
         elif target == 'facet_format_jit':
             row_class = "jit-highlight"
 
-        # Format speedup/slowdown
-        vs_fastest_str = f"{vs_fastest:.2f}x" if vs_fastest > 0 else "-"
+        # Format speedup/slowdown vs serde
         vs_serde_str = f"{vs_serde:.2f}x" if vs_serde > 0 else "-"
-
-        speedup_class_fastest = "speedup" if vs_fastest <= 1.1 else "slowdown"
-        speedup_class_serde = "speedup" if vs_serde <= 1.0 else ("neutral" if vs_serde <= 1.5 else "slowdown")
+        vs_serde_class = "speedup" if vs_serde <= 1.0 else ("neutral" if vs_serde <= 2.0 else "slowdown")
 
         html += f"""
                         <tr class="{row_class}" data-target="{target}"
@@ -162,8 +165,8 @@ def generate_benchmark_section(bench_name: str, operation: str, data: Dict[str, 
                             onmouseleave="unhighlightChart('{bench_id}')">
                             <td><span class="emoji">{config['emoji']}</span> {config['label']}</td>
                             <td class="metric">{format_time(time_ns)}</td>
-                            <td class="{speedup_class_fastest}">{vs_fastest_str}</td>
-                            <td class="{speedup_class_serde}">{vs_serde_str}</td>
+                            <td class="metric">{instructions_str}</td>
+                            <td class="{vs_serde_class}">{vs_serde_str}</td>
                         </tr>
 """
 
@@ -470,7 +473,7 @@ def generate_html_report(divan_data: Dict, git_info: Dict) -> str:
 
     return html_head
 
-def generate_sections_html(divan_data: Dict) -> str:
+def generate_sections_html(divan_data: Dict, gungraun_data: Dict) -> str:
     """Generate sections for deserialize and serialize benchmarks"""
     html = ""
 
@@ -497,12 +500,16 @@ def generate_sections_html(divan_data: Dict) -> str:
             # Deserialize section
             if bench_data.get('deserialize'):
                 bench_id = f"{bench_name}_deser"
-                html += generate_benchmark_section(bench_name, 'deserialize', bench_data['deserialize'], bench_id)
+                html += generate_benchmark_section(bench_name, 'deserialize',
+                                                   bench_data['deserialize'],
+                                                   gungraun_data, bench_id)
 
             # Serialize section
             if bench_data.get('serialize'):
                 bench_id = f"{bench_name}_ser"
-                html += generate_benchmark_section(bench_name, 'serialize', bench_data['serialize'], bench_id)
+                html += generate_benchmark_section(bench_name, 'serialize',
+                                                   bench_data['serialize'],
+                                                   gungraun_data, bench_id)
 
     return html
 
@@ -605,79 +612,6 @@ def parse_gungraun_output(text: str) -> Dict[str, Dict[str, int]]:
 
     return results
 
-def generate_gungraun_section(gungraun_data: Dict) -> str:
-    """Generate gungraun instruction count section"""
-    if not gungraun_data:
-        return ""
-
-    html = """
-    <div class="section-header"><h2>🔬 Deterministic Metrics (Gungraun - Instruction Counts)</h2></div>
-    <div class="benchmark-item">
-        <p><em>These measurements are deterministic and reproducible across different machines. Lower is better.</em></p>
-"""
-
-    # Group by benchmark type (simple_struct, nested_struct, etc.)
-    benchmarks_by_type = {}
-    for bench_name in gungraun_data.keys():
-        # Extract base benchmark name (remove target suffix)
-        for target_key in TARGETS.keys():
-            if bench_name.endswith('_' + target_key):
-                base_name = bench_name[:-len(target_key)-1]
-                if base_name not in benchmarks_by_type:
-                    benchmarks_by_type[base_name] = {}
-                benchmarks_by_type[base_name][target_key] = gungraun_data[bench_name]
-                break
-
-    # Generate table for each benchmark type
-    for base_name in sorted(benchmarks_by_type.keys()):
-        targets_data = benchmarks_by_type[base_name]
-
-        html += f"<h3>{base_name.replace('_', ' ').title()}</h3>\n"
-        html += "<table>\n<thead>\n<tr>\n"
-        html += "<th>Target</th><th>Instructions</th><th>L1 Hits</th><th>Estimated Cycles</th><th>vs serde_json</th>\n"
-        html += "</tr>\n</thead>\n<tbody>\n"
-
-        # Sort by instruction count
-        sorted_targets = sorted(targets_data.items(),
-                               key=lambda x: x[1].get('Instructions', float('inf')))
-
-        serde_instructions = targets_data.get('serde_json', {}).get('Instructions')
-
-        for target, metrics in sorted_targets:
-            if target not in TARGETS:
-                continue
-
-            config = TARGETS[target]
-
-            instructions = metrics.get('Instructions', 0)
-            l1_hits = metrics.get('L1 Hits', 0)
-            cycles = metrics.get('Estimated Cycles', 0)
-
-            # Calculate vs serde
-            vs_serde = instructions / serde_instructions if serde_instructions else 0
-            vs_serde_str = f"{vs_serde:.2f}x" if vs_serde > 0 else "-"
-            vs_serde_class = "speedup" if vs_serde <= 1.0 else ("neutral" if vs_serde <= 2.0 else "slowdown")
-
-            # Row class
-            row_class = ""
-            if target == 'serde_json':
-                row_class = "baseline"
-            elif target == 'facet_format_jit':
-                row_class = "jit-highlight"
-
-            html += f'<tr class="{row_class}">\n'
-            html += f'  <td><span class="emoji">{config["emoji"]}</span> {config["label"]}</td>\n'
-            html += f'  <td class="metric">{instructions:,}</td>\n'
-            html += f'  <td class="metric">{l1_hits:,}</td>\n'
-            html += f'  <td class="metric">{cycles:,}</td>\n'
-            html += f'  <td class="{vs_serde_class}">{vs_serde_str}</td>\n'
-            html += '</tr>\n'
-
-        html += "</tbody>\n</table>\n"
-
-    html += "</div>\n"
-    return html
-
 def main():
     if len(sys.argv) < 3:
         print("Usage: parse_bench.py <divan_output.txt> <gungraun_output.txt> [output.html]")
@@ -707,8 +641,7 @@ def main():
 
     # Generate HTML
     html = generate_html_report(divan_data, git_info)
-    html += generate_sections_html(divan_data)
-    html += generate_gungraun_section(gungraun_data)
+    html += generate_sections_html(divan_data, gungraun_data)
     html += generate_interactive_js()
     html += """
         <footer>
