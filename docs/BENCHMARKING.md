@@ -80,18 +80,18 @@ open bench-reports/report-20251215-152959.html
 
 ### Divan Benchmarks (Wall-Clock Time)
 
-Located in `facet-json/benches/vs_format_json.rs`.
+Located in `facet-json/benches/unified_benchmarks_divan.rs` (auto-generated via `cargo xtask gen-benchmarks`).
 
 **Run all benchmarks:**
 ```bash
 cd facet-json
-cargo bench --bench vs_format_json --features cranelift
+cargo bench --bench unified_benchmarks_divan --features cranelift --features jit
 ```
 
 **Run specific benchmark:**
 ```bash
-cargo bench --bench vs_format_json simple_struct --features cranelift
-cargo bench --bench vs_format_json twitter --features cranelift
+cargo bench --bench unified_benchmarks_divan simple_struct --features cranelift --features jit
+cargo bench --bench unified_benchmarks_divan twitter --features cranelift --features jit
 ```
 
 **Available benchmarks:**
@@ -111,19 +111,19 @@ cargo bench --bench vs_format_json twitter --features cranelift
 
 **Targets compared:**
 1. `facet_json` - Legacy interpreter
-2. `facet_json_cranelift` - JSON-specific JIT (requires `--features cranelift`)
+2. `facet_json_cranelift` - JSON-specific JIT (requires `--features cranelift` or alias `--features jit`)
 3. `facet_format_json` - Format-agnostic interpreter
-4. `facet_format_jit` - Format-agnostic JIT ⭐
+4. `facet_format_jit` - Format-agnostic JIT ⭐ (enabled by `--features jit`)
 5. `serde_json` - Industry baseline 🎯
 
 ### Gungraun Benchmarks (Instruction Counts)
 
-Located in `facet-json/benches/gungraun_jit.rs`.
+Located in `facet-json/benches/unified_benchmarks_gungraun.rs` (auto-generated).
 
 **Run benchmarks:**
 ```bash
 cd facet-json
-cargo bench --bench gungraun_jit --features cranelift
+cargo bench --bench unified_benchmarks_gungraun --features cranelift --features jit
 ```
 
 **Prerequisites:**
@@ -194,10 +194,10 @@ uv pip install -e .
 cd facet-json
 
 # Divan
-cargo bench --bench vs_format_json --features cranelift > divan-output.txt 2>&1
+cargo bench --bench unified_benchmarks_divan --features cranelift --features jit > divan-output.txt 2>&1
 
 # Gungraun
-cargo bench --bench gungraun_jit --features cranelift > gungraun-output.txt 2>&1
+cargo bench --bench unified_benchmarks_gungraun --features cranelift --features jit > gungraun-output.txt 2>&1
 ```
 
 **Generate report manually:**
@@ -252,7 +252,7 @@ gungraun:
   steps:
     - Install valgrind
     - Install gungraun-runner@0.17.0
-    - Run: cargo bench --bench gungraun_jit --features cranelift
+    - Run: cargo bench --bench unified_benchmarks_gungraun --features cranelift --features jit
 ```
 
 **Why in CI:**
@@ -292,58 +292,35 @@ For format-agnostic deserialization, we care about:
 
 ## Adding New Benchmarks
 
-### Add to Divan (facet-json/benches/vs_format_json.rs)
+Both Divan and Gungraun benches are generated from `facet-json/benches/benchmarks.kdl`. To add a benchmark:
 
-```rust
-mod my_new_benchmark {
-    use super::*;
-
-    #[derive(Facet, Serialize, Deserialize, Clone, Debug)]
-    struct MyType {
-        // ...
-    }
-
-    static DATA: LazyLock<MyType> = LazyLock::new(|| MyType { /* ... */ });
-    static JSON: LazyLock<String> = LazyLock::new(|| facet_json::to_string(&*DATA));
-
-    #[divan::bench]
-    fn facet_format_jit_deserialize(bencher: Bencher) {
-        bencher.bench(|| {
-            black_box(format_jit::deserialize_with_fallback::<MyType, _>(
-                facet_format_json::JsonParser::new(black_box(JSON.as_bytes())),
-            ))
-        });
-    }
-
-    // Add other targets: facet_format_json, facet_json, facet_json_cranelift, serde_json
+1. **Define the type (if needed).**
+   ```kdl
+   type_def name="MyType" {
+       code """
+#[derive(Debug, PartialEq, Facet, serde::Serialize, serde::Deserialize, Clone)]
+struct MyType {
+    value: u64,
 }
-```
+"""
+   }
+   ```
+2. **Add a benchmark entry** that either embeds JSON or points at a file in `benches/data/`.
+   ```kdl
+   benchmark name="my_type" type="MyType" category="micro" {
+       json "{\"value\": 42}"
+   }
+   ```
+3. **Regenerate the benches.**
+   ```bash
+   cargo xtask gen-benchmarks
+   ```
+   This rewrites `unified_benchmarks_divan.rs` and `unified_benchmarks_gungraun.rs`.
+4. **Re-run the benches** (divan + gungraun) and update the report.
 
-### Add to Gungraun (facet-json/benches/gungraun_jit.rs)
-
-```rust
-fn setup_my_type() -> &'static [u8] {
-    let json = br#"{"field": 42}"#;
-    // Warmup to cache JIT
-    let _ = format_jit::deserialize_with_fallback::<MyType, _>(JsonParser::new(json));
-    json
-}
-
-#[library_benchmark]
-#[bench::cached(setup = setup_my_type)]
-fn my_type_facet_format_jit(json: &[u8]) -> MyType {
-    let parser = JsonParser::new(black_box(json));
-    black_box(format_jit::deserialize_with_fallback::<MyType, _>(parser).unwrap())
-}
-
-// Add to the benchmark group
-library_benchmark_group!(
-    name = jit_benchmarks;
-    benchmarks = ..., my_type_facet_format_jit
-);
-```
-
-**Important:** Always add warmup for JIT benchmarks to measure cached execution, not compilation!
+The generator automatically adds:
+- Divan benches for the 5 targets (facet_format_jit, facet_format_json, facet_json, facet_json_cranelift, serde_json)
+- Gungraun benches (including cached JIT warmups and cranelift groups)
 
 ### Update Parser for New Benchmarks
 
@@ -413,8 +390,9 @@ python3 scripts/parse-bench.py divan.txt gungraun.txt test.html
 ## Files Reference
 
 ### Benchmark Code
-- `facet-json/benches/vs_format_json.rs` - Divan benchmarks (all targets)
-- `facet-json/benches/gungraun_jit.rs` - Gungraun benchmarks (JIT focus)
+- `facet-json/benches/benchmarks.kdl` - Source of truth for generator inputs
+- `facet-json/benches/unified_benchmarks_divan.rs` - Divan benchmarks (auto-generated)
+- `facet-json/benches/unified_benchmarks_gungraun.rs` - Gungraun benchmarks (auto-generated)
 - `facet-json/benches/vs_serde.rs` - Legacy serde comparisons
 
 ### Tooling
@@ -480,4 +458,3 @@ The generated HTML reports include:
 - **Consistent colors** - same target always same color
 - **Tooltips** - hover bar for exact time
 - **No legend clutter** - labels are on bars
-

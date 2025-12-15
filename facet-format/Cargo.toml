@@ -30,3 +30,5 @@ parking_lot = { version = "0.12", optional = true }
 default = []
 # JIT-compiled deserialization using Cranelift - works with any FormatParser
 jit = ["dep:cranelift", "dep:cranelift-jit", "dep:cranelift-module", "dep:cranelift-native", "dep:parking_lot"]
+# Alias to unblock workspace-level `--features cranelift`
+cranelift = ["jit"]

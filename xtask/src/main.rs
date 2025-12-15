@@ -49,8 +49,12 @@ fn gen_benchmarks() {
     match gen_benchmarks::generate_benchmarks(&kdl_path, &divan_path, &gungraun_path) {
         Ok(()) => {
             println!("\n🎉 Success! Run benchmarks with:");
-            println!("   cargo bench --bench unified_benchmarks_divan --features cranelift");
-            println!("   cargo bench --bench unified_benchmarks_gungraun --features cranelift");
+            println!(
+                "   cargo bench --bench unified_benchmarks_divan --features cranelift --features jit"
+            );
+            println!(
+                "   cargo bench --bench unified_benchmarks_gungraun --features cranelift --features jit"
+            );
         }
         Err(e) => {
             eprintln!("❌ Error generating benchmarks: {}", e);

@@ -148,6 +148,11 @@ fn generate_divan_benchmarks(
         output.push_str(&generate_divan_benchmark_module(bench_def)?);
     }
 
+    // Entry point for divan harness
+    output.push_str("fn main() {\n");
+    output.push_str("    divan::main();\n");
+    output.push_str("}\n");
+
     Ok(output)
 }
 

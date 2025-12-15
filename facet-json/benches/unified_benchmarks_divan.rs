@@ -742,3 +742,7 @@ mod options {
         });
     }
 }
+
+fn main() {
+    divan::main();
+}

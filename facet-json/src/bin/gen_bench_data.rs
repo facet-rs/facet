@@ -5,34 +5,40 @@
 use facet::Facet;
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+fn write_json_file(path: PathBuf, data: String) {
+    fs::write(&path, data).unwrap_or_else(|err| {
+        panic!("Failed to write {}: {}", path.display(), err);
+    });
+}
 
 fn main() {
     let data_dir = Path::new("facet-json/benches/data");
-    fs::create_dir_all(data_dir);
+    fs::create_dir_all(data_dir).expect("failed to create benchmark data directory");
 
     // Booleans - 10,000 alternating
     let booleans: Vec<bool> = (0..10000).map(|i| i % 2 == 0).collect();
     let json = facet_json::to_string(&booleans);
-    fs::write(data_dir.join("booleans.json"), json);
+    write_json_file(data_dir.join("booleans.json"), json);
     println!("✅ Generated booleans.json ({} items)", booleans.len());
 
     // Integers - 1,000 multiplied
     let integers: Vec<u64> = (0..1000).map(|i| i * 12345678901234).collect();
     let json = facet_json::to_string(&integers);
-    fs::write(data_dir.join("integers.json"), json);
+    write_json_file(data_dir.join("integers.json"), json);
     println!("✅ Generated integers.json ({} items)", integers.len());
 
     // Floats - 1,000 multiplied
     let floats: Vec<f64> = (0..1000).map(|i| i as f64 * 1.23456789).collect();
     let json = facet_json::to_string(&floats);
-    fs::write(data_dir.join("floats.json"), json);
+    write_json_file(data_dir.join("floats.json"), json);
     println!("✅ Generated floats.json ({} items)", floats.len());
 
     // Short strings - 1,000 items, ~10 chars each
     let short_strings: Vec<String> = (0..1000).map(|i| format!("str_{:06}", i)).collect();
     let json = facet_json::to_string(&short_strings);
-    fs::write(data_dir.join("short_strings.json"), json);
+    write_json_file(data_dir.join("short_strings.json"), json);
     println!(
         "✅ Generated short_strings.json ({} items)",
         short_strings.len()
@@ -43,7 +49,7 @@ fn main() {
         .map(|i| "x".repeat(1000) + &format!("_{}", i))
         .collect();
     let json = facet_json::to_string(&long_strings);
-    fs::write(data_dir.join("long_strings.json"), json);
+    write_json_file(data_dir.join("long_strings.json"), json);
     println!(
         "✅ Generated long_strings.json ({} items)",
         long_strings.len()
@@ -54,7 +60,7 @@ fn main() {
         .map(|i| format!("line_{}\nwith\ttabs\tand \"quotes\" and \\backslashes\\", i))
         .collect();
     let json = facet_json::to_string(&escaped_strings);
-    fs::write(data_dir.join("escaped_strings.json"), json);
+    write_json_file(data_dir.join("escaped_strings.json"), json);
     println!(
         "✅ Generated escaped_strings.json ({} items)",
         escaped_strings.len()
@@ -63,7 +69,7 @@ fn main() {
     // Hashmaps - 1,000 entries
     let hashmaps: HashMap<String, u64> = (0..1000).map(|i| (format!("key_{}", i), i * 2)).collect();
     let json = facet_json::to_string(&hashmaps);
-    fs::write(data_dir.join("hashmaps.json"), json);
+    write_json_file(data_dir.join("hashmaps.json"), json);
     println!("✅ Generated hashmaps.json ({} entries)", hashmaps.len());
 
     // Nested structs - Vec<Outer> with 3-level deep nesting (500 items)
@@ -100,7 +106,7 @@ fn main() {
         })
         .collect();
     let json = facet_json::to_string(&nested_data);
-    fs::write(data_dir.join("nested_structs.json"), json);
+    write_json_file(data_dir.join("nested_structs.json"), json);
     println!(
         "✅ Generated nested_structs.json ({} items)",
         nested_data.len()
@@ -126,7 +132,7 @@ fn main() {
         })
         .collect();
     let json = facet_json::to_string(&options_data);
-    fs::write(data_dir.join("options.json"), json);
+    write_json_file(data_dir.join("options.json"), json);
     println!("✅ Generated options.json ({} items)", options_data.len());
 
     println!("\n🎉 All benchmark data generated!");
