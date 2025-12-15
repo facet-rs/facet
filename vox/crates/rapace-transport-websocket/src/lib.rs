@@ -652,6 +652,16 @@ mod axum_impl {
     static_assertions::assert_impl_all!(AxumTransport: Send, Sync);
 }
 
+// Handle + Driver implementation for native targets
+#[cfg(not(target_arch = "wasm32"))]
+mod handle;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use handle::{
+    DEFAULT_INBOUND_QUEUE_SIZE, DEFAULT_OUTBOUND_QUEUE_SIZE, DriverState, OutboundMsg,
+    WebSocketConfig, WebSocketHandle, into_parts, into_parts_with_config,
+};
+
 // Re-exports for native targets
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{StreamErrorType, WebSocketTransport};
