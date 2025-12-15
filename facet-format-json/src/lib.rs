@@ -10,6 +10,7 @@ mod adapter;
 mod error;
 mod parser;
 mod raw_json;
+#[cfg(feature = "streaming")]
 mod scan_buffer;
 mod scanner;
 mod serializer;

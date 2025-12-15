@@ -346,13 +346,21 @@ impl<'input, const BORROW: bool> SliceAdapter<'input, BORROW> {
             }
             // Scalars: just return their span
             SkipToken::Scalar => Ok(first_token.span),
+            SkipToken::Invalid(ch) => Err(AdapterError {
+                kind: AdapterErrorKind::Scan(ScanErrorKind::UnexpectedChar(ch)),
+                span: first_token.span,
+            }),
             SkipToken::Eof => Err(AdapterError {
                 kind: AdapterErrorKind::Scan(ScanErrorKind::UnexpectedEof("expected value")),
                 span: first_token.span,
             }),
             // These shouldn't appear as first token when skipping a value
-            SkipToken::ObjectEnd | SkipToken::ArrayEnd => Err(AdapterError {
+            SkipToken::ObjectEnd => Err(AdapterError {
                 kind: AdapterErrorKind::Scan(ScanErrorKind::UnexpectedChar('}')),
+                span: first_token.span,
+            }),
+            SkipToken::ArrayEnd => Err(AdapterError {
+                kind: AdapterErrorKind::Scan(ScanErrorKind::UnexpectedChar(']')),
                 span: first_token.span,
             }),
         }
@@ -402,9 +410,9 @@ impl<'input, const BORROW: bool> SliceAdapter<'input, BORROW> {
                             | ScanToken::Number { .. }
                             | ScanToken::True
                             | ScanToken::False
-                            | ScanToken::Null
-                            | ScanToken::Colon
-                            | ScanToken::Comma => SkipToken::Scalar,
+                            | ScanToken::Null => SkipToken::Scalar,
+                            ScanToken::Colon => SkipToken::Invalid(':'),
+                            ScanToken::Comma => SkipToken::Invalid(','),
                             ScanToken::Eof => SkipToken::Eof,
                             ScanToken::NeedMore { .. } => unreachable!(),
                         };
@@ -442,9 +450,9 @@ impl<'input, const BORROW: bool> SliceAdapter<'input, BORROW> {
                         | ScanToken::Number { .. }
                         | ScanToken::True
                         | ScanToken::False
-                        | ScanToken::Null
-                        | ScanToken::Colon
-                        | ScanToken::Comma => SkipToken::Scalar,
+                        | ScanToken::Null => SkipToken::Scalar,
+                        ScanToken::Colon => SkipToken::Invalid(':'),
+                        ScanToken::Comma => SkipToken::Invalid(','),
                         ScanToken::Eof | ScanToken::NeedMore { .. } => unreachable!(),
                     };
 
@@ -478,7 +486,8 @@ enum SkipToken {
     ObjectEnd,
     ArrayStart,
     ArrayEnd,
-    Scalar, // String, Number, true, false, null, colon, comma
+    Scalar,        // String, Number, true, false, null
+    Invalid(char), // colon, comma, etc.
     Eof,
 }
 
@@ -493,6 +502,7 @@ struct SpannedSkipToken {
 // TokenSource trait - unifies slice and streaming adapters
 // ============================================================================
 
+#[cfg(feature = "streaming")]
 use crate::error::{JsonError, JsonErrorKind};
 
 /// Trait for token sources that can be used by the deserializer.
@@ -503,6 +513,7 @@ use crate::error::{JsonError, JsonErrorKind};
 ///
 /// The lifetime parameter `'input` is the lifetime of the input data,
 /// NOT the lifetime of `self`. This is why we don't need GATs.
+#[cfg(feature = "streaming")]
 pub trait TokenSource<'input> {
     /// Get the next token.
     fn next_token(&mut self) -> Result<SpannedAdapterToken<'input>, JsonError>;
@@ -534,6 +545,7 @@ pub trait TokenSource<'input> {
     }
 }
 
+#[cfg(feature = "streaming")]
 impl<'input, const BORROW: bool> TokenSource<'input> for SliceAdapter<'input, BORROW> {
     fn next_token(&mut self) -> Result<SpannedAdapterToken<'input>, JsonError> {
         SliceAdapter::next_token(self).map_err(|e| JsonError {
